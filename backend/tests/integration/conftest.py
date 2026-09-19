@@ -88,6 +88,16 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     return mint_session_token(handle=handle, user_id=None, ttl_s=ttl_s)
 
 
+def room_agent_seat(client, topic_id) -> str:
+    """The seat of the one agent seated in this room — the identity a
+    room-scoped credential (a token or a screen naming the room's stand-in)
+    acts as, and the author of everything the room's agent writes."""
+    rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    seats = [m["member_handle"] for m in rows if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]
+
+
 def session_auth_headers(handle: str) -> dict[str, str]:
     """``Authorization`` header carrying :func:`session_token` for ``handle``."""
     return {"Authorization": f"Bearer {session_token(handle)}"}

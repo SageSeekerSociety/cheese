@@ -4,8 +4,8 @@ import pytest
 
 from app.api.deps import get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import topic_agent_handle
 from app.main import app
+from tests.integration.conftest import room_agent_seat
 
 
 class _RecordingRunner:
@@ -122,6 +122,6 @@ def test_agent_comment_is_attributed_but_does_not_wake_itself(client, runner):
 
     assert r.status_code == 200
     comment = r.json()["data"]
-    assert comment["author"] == topic_agent_handle(tid)
+    assert comment["author"] == room_agent_seat(client, tid)
     assert comment["author_type"] == "ai"
     assert runner.submitted == []

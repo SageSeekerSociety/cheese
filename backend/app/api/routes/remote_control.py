@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.core.db import get_db
@@ -175,7 +175,15 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
     data["execution"] = place.room.session_placement
-    session = await store().create(claims, data)
+    # A credential naming the room's stand-in seat acts as the agent seated
+    # there; the session records who that is, so its questions and answers are
+    # attributed to the same identity every other write of that turn carries.
+    acting = claims.get("a")
+    if acting:
+        acting = await ActorResolver(
+            session=db, bearer=None, cheese_token=""
+        ).seated_agent(place.room_id, acting)
+    session = await store().create({**claims, "a": acting}, data)
     await announce(session)
     return {"session": session}
 

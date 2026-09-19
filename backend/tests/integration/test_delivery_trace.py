@@ -5,7 +5,7 @@ import subprocess
 import uuid
 
 from tests.delivery import delivery_headers
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_agent_seat, session_auth_headers
 from tests.machine_work import machine_commits
 
 
@@ -134,7 +134,7 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
     _accept(client, card["id"])
 
     body = _landed_body(pid)
-    assert f"Cheese-Agent: cheese-{uuid.UUID(room).hex[:12]}" in body
+    assert f"Cheese-Agent: {room_agent_seat(client, room)}" in body
     assert _task_line(pid, room, mine, "ac2c038d44616a2f2", "补 trailer") in body
     assert (
         _task_line(pid, room, theirs, "9f1b7c22e0d341a80", "顺手修 flaky 测试")

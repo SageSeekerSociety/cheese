@@ -13,8 +13,8 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.identity.handles import topic_agent_handle
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import room_agent_seat
 
 
 class _FakeTokens:
@@ -29,11 +29,10 @@ def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
     from tests.integration.conftest import session_auth_headers
 
     pid, room = _project(client, owner="alice")
-    other = client.post(
-        "/topics",
-        json={"project_id": pid, "title": "Other agent", "created_by": "alice"},
-    ).json()["data"]["id"]
-    acting = topic_agent_handle(uuid.UUID(other))
+    default_seat = room_agent_seat(client, room)
+    ops = client.post(f"/projects/{pid}/agents", json={"handle": "ops"})
+    assert ops.status_code == 200, ops.text
+    acting = ops.json()["data"]["seat_handle"]
     added = client.post(
         f"/topics/{room}/members",
         json={"handle": acting, "role": "member", "actor": "alice"},
@@ -41,7 +40,7 @@ def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
     )
     assert added.status_code == 200, added.text
     removed = client.delete(
-        f"/topics/{room}/members/{topic_agent_handle(uuid.UUID(room))}?actor=alice",
+        f"/topics/{room}/members/{default_seat}?actor=alice",
         headers=session_auth_headers("alice"),
     )
     assert removed.status_code == 200, removed.text
@@ -55,7 +54,7 @@ def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
     who, trailers = asyncio.run(read_credit())
     assert who.author == identity.agent_identity(acting)
     assert f"Cheese-Agent: {acting}\n" in trailers + "\n"
-    assert f"Cheese-Agent: {topic_agent_handle(uuid.UUID(room))}" not in trailers
+    assert f"Cheese-Agent: {default_seat}" not in trailers
 
 
 def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(client):
@@ -109,7 +108,7 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
     credited = asyncio.run(read_credit())
     assert credited.reporters == (identity.platform_identity("reporter"),)
     assert credited.coauthors == (identity.platform_identity("coder"),)
-    assert credited.author == identity.agent_identity(topic_agent_handle(room))
+    assert credited.author == identity.agent_identity(room_agent_seat(client, room))
     concluded = client.post(
         f"/topics/{room}/tasks/{task['id']}/close",
         json={"contributor_handles": ["reporter"], "reporter_handle": None},
