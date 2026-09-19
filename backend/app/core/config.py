@@ -224,11 +224,13 @@ class Settings(BaseSettings):
     # role because no production path assigns `SystemRole.SUPER_ADMIN` today —
     # a role check would evaluate to "nobody" and lock the surface for everyone.
     feedback_admin_handles: list[str] = []
-    # How many unresolved reports one handle may keep open at a time. The cap
-    # exists for the agent path (`cheese feedback propose`): a misfiring loop
-    # files one report per turn, and a number in settings is the difference
-    # between a bad afternoon and a flooded queue. People are not capped.
-    feedback_agent_open_quota: int = 20
+    # How many feedback PROPOSAL cards one topic may see per day. The cap exists
+    # for the agent path (`cheese feedback propose`): a misfiring loop proposes
+    # once per turn, and a number in settings is the difference between a bad
+    # afternoon and a topic nobody can read. Proposal cards are the one kind of
+    # "the next step is on a person" that nobody is waiting on, so unlike a
+    # decision request it is safe to drop — and this is what drops it.
+    feedback_proposals_per_topic_per_day: int = 2
     # Which registered profile is the platform default ("our AI pool"). Normally
     # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
     # whole platform on the subscription seat — e.g. a demo where the GLM pool is

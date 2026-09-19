@@ -361,3 +361,35 @@ class FeedbackReadState(UuidPk, Timestamps, Base):
     # The unique constraint already builds this index.
     user_handle: Mapped[str] = mapped_column(String(64))
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class FeedbackProposalDismissal(UuidPk, Base):
+    """「这个不用」，记下来 —— 每条提案只该问一次。
+
+    原型里的「不用」只把组件状态置成 `dismissed`，刷新就回来。服务端必须落一行，
+    否则**同一个问题每轮都会再问一遍**，而这是刷屏最主要的来源：它会让人对整张卡
+    产生免疫，然后是整个反馈入口。
+
+    指纹而不是 block id：同一个问题换一种说法提上来，人不想再看第二遍。指纹算
+    「发生了什么 + 怎么复现」归一化之后的哈希（`services.proposal_fingerprint`），
+    只在新提案进来时查一次。
+
+    `topic_id` 带 CASCADE：这是话题里的一个判断，话题没了它就没有意义。范围是话题
+    而不是全平台 —— 同一个问题在另一个话题里遇到，那里的人还没被问过。
+    """
+
+    __tablename__ = "feedback_proposal_dismissals"
+    __table_args__ = (
+        UniqueConstraint(
+            "topic_id", "fingerprint", name="uq_feedback_proposal_dismissal"
+        ),
+    )
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE")
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    dismissed_by_handle: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

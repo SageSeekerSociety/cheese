@@ -47,6 +47,7 @@ from app.domain.feedback.models import (
     FeedbackStatus,
     FeedbackVisibility,
 )
+from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import FeedbackCreate, FeedbackPatch
 
 #: The admin surface's tiers, in the order the admin tab bar draws them.
@@ -235,8 +236,7 @@ class FeedbackService:
         actor_handle: str,
         actor_user_id: int | None,
         actor_is_agent: bool,
-        submitted_by_handle: str | None = None,
-        submitted_by_user_id: int | None = None,
+        proposal: AcceptedProposal | None = None,
     ) -> Feedback:
         """File a report.
 
@@ -244,7 +244,32 @@ class FeedbackService:
         (`PATCH /admin/feedback/{id}`), because the reporter's own `visibility`
         already covers "do not show this to everyone", and a reporter marking
         their own report as a security matter is a claim, not a fact.
+
+        **An agent cannot publish on its own** (§5.2). Without this branch an
+        agent that went sideways could write straight into the public list; with
+        it, the only way an agent-authored report exists is that a person
+        pressed send on the card. The refusal names the tool so the model gets
+        a next step rather than a dead end.
+
+        When `proposal` is set, authorship comes from the proposal (the agent
+        that found it) and `submitted_by` from the verified caller (the person
+        who sent it) — two fields, not one, so 「芝士提的反馈里有多少真的被人发出
+        去了」 stays answerable. The *content* still comes from the request body:
+        the drawer lets the sender edit before sending, and the person pressing
+        send is accountable for what they send.
         """
+        if actor_is_agent and proposal is None:
+            raise ForbiddenError(
+                "agent 不能直接发布反馈：用 `cheese feedback propose` 提案，"
+                "由人确认后再发送"
+            )
+        if proposal is not None:
+            return await self._create_from_proposal(
+                body,
+                proposal=proposal,
+                submitted_by_handle=actor_handle,
+                submitted_by_user_id=actor_user_id,
+            )
         visibility = body.visibility
         row = await self._repo.add(
             title=body.title,
@@ -263,8 +288,8 @@ class FeedbackService:
             logs=body.logs,
             session_id=body.session_id,
             environment=body.environment,
-            submitted_by_handle=submitted_by_handle,
-            submitted_by_user_id=submitted_by_user_id,
+            submitted_by_handle=None,
+            submitted_by_user_id=None,
             topic_id=body.topic_id,
             project_id=body.project_id,
             priority=body.priority,
@@ -274,6 +299,45 @@ class FeedbackService:
         # a report with no `received` entry would show an empty history for the
         # one event that definitely happened.
         await self._repo.append_timeline(row.id, FeedbackStatus.received, actor_handle)
+        return row
+
+    async def _create_from_proposal(
+        self,
+        body: FeedbackCreate,
+        *,
+        proposal: AcceptedProposal,
+        submitted_by_handle: str,
+        submitted_by_user_id: int | None,
+    ) -> Feedback:
+        row = await self._repo.add(
+            title=body.title,
+            summary=body.summary or body.title,
+            kind=body.kind,
+            visibility=body.visibility,
+            problem=body.problem,
+            author_handle=proposal.author_handle,
+            author_user_id=None,
+            author_is_agent=True,
+            why=body.why,
+            expectation=body.expectation,
+            what_happened=body.what_happened,
+            repro=body.repro,
+            evidence=body.evidence,
+            logs=body.logs,
+            session_id=body.session_id,
+            environment=body.environment,
+            submitted_by_handle=submitted_by_handle,
+            submitted_by_user_id=submitted_by_user_id,
+            topic_id=body.topic_id,
+            project_id=body.project_id,
+            priority=body.priority,
+            tags=body.tags,
+        )
+        # The timeline's first entry names the person, not the agent: the agent
+        # did not move this report into `received`, the person did.
+        await self._repo.append_timeline(
+            row.id, FeedbackStatus.received, submitted_by_handle
+        )
         return row
 
     async def set_status(
@@ -404,27 +468,3 @@ class FeedbackService:
         if row is None:
             raise NotFoundError("反馈不存在")
         await self._repo.add_note(row.id, author_handle, body)
-
-    # --- 配额 ---------------------------------------------------------------
-
-    async def agent_quota_used(self, handle: str) -> int:
-        """How many open reports this handle already has — the agent's budget.
-
-        Counts unresolved reports rather than all of them: the point of the cap
-        is to stop a loop from flooding the queue, and a report that has been
-        closed is no longer in the queue.
-        """
-        return await self._repo.open_count_by([handle])
-
-    async def enforce_agent_quota(self, handle: str) -> None:
-        """Cap an agent's open proposals.
-
-        A `propose` loop that misfires files one report per turn — the cap is the
-        difference between a bad afternoon and a flooded queue. The number lives
-        in `settings` so it can be tuned without a release.
-        """
-        used = await self.agent_quota_used(handle)
-        if used >= settings.feedback_agent_open_quota:
-            raise PreconditionFailedError(
-                f"未解决的反馈已达上限（{settings.feedback_agent_open_quota} 条）"
-            )

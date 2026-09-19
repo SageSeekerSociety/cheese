@@ -69,11 +69,51 @@ class FeedbackCreate(BaseModel):
     topic_id: uuid.UUID | None = None
     project_id: uuid.UUID | None = None
     tags: list[str] = Field(default_factory=list, max_length=20)
-    #: Attribution only — "an agent drafted this, a person pressed send". Never
-    #: an identity: the author is always the verified caller, and the worst a
-    #: forged value can do is give an agent credit it did not earn. This is why
-    #: there is no matching `author_handle` field.
-    submitted_by_handle: str | None = Field(default=None, max_length=64)
+
+
+class FeedbackProposalIn(BaseModel):
+    """The body of ``POST /topics/{topic_id}/feedback-proposals`` — and therefore
+    what `cheese feedback propose` sends.
+
+    The shape is cc's `SendFeedback` draft (§5.0/§5.5), which the requirement
+    asked us to copy: a fixed skeleton, bullets rather than prose, and —
+    the part that matters most — **「谁说的」必须自证**. `user_said` is a required
+    position that has to hold either a quote or the sentence 「用户没有就这个
+    问题说过话」. A required slot with one honest way to fill it beats a prompt
+    begging the model to be truthful.
+    """
+
+    kind: FeedbackKind = FeedbackKind.bug
+    title: str = Field(min_length=1, max_length=300)
+    summary: str = Field(default="", max_length=300)
+    problem: str = Field(default="", max_length=8000)
+    visibility: FeedbackVisibility = FeedbackVisibility.public
+    #: 判断依据 —— 「这不是用户的使用方式问题」的依据。
+    why: str | None = Field(default=None, max_length=4000)
+    expectation: str | None = Field(default=None, max_length=4000)
+    what_happened: str | None = Field(default=None, max_length=4000)
+    repro: str | None = Field(default=None, max_length=8000)
+    evidence: str | None = Field(default=None, max_length=8000)
+    logs: str | None = Field(default=None, max_length=20000)
+    session_id: str | None = Field(default=None, max_length=64)
+    environment: str | None = Field(default=None, max_length=255)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    #: 用户原话，或者那句规定好的「用户没有就这个问题说过话」。必填，理由见类说明。
+    user_said: str = Field(min_length=1, max_length=2000)
+
+
+class FeedbackProposalOut(BaseModel):
+    """A proposal card as the chat column reads it."""
+
+    block_id: uuid.UUID
+    author_handle: str
+    authored_at: datetime
+    payload: dict
+
+
+class FeedbackProposalResult(BaseModel):
+    block_id: uuid.UUID
+    fingerprint: str
 
 
 class FeedbackPatch(BaseModel):
