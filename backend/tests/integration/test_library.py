@@ -248,6 +248,64 @@ def test_the_agent_takes_a_copy_of_a_file_nobody_attached(client):
     assert escape.status_code == 422
 
 
+def test_a_file_the_project_no_longer_wants(client):
+    """扔掉一份资料：它从清单里消失，引用过它的消息也如实说它不在了。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    att = _upload(client, topic_id, "说明.md", "# 说明\n第一行\n".encode())
+    _upload(client, topic_id, "预算表.xlsx", b"budget")
+
+    gone = client.delete(f"/projects/{project_id}/library", params={"path": "说明.md"})
+    assert gone.status_code == 200, gone.text
+    assert [f["path"] for f in _library(client, project_id)] == ["预算表.xlsx"]
+
+    # 那条旧消息里的引用还在，点开它得到的是「东西不在了」，不是别的什么文件。
+    opened = client.get(
+        f"/topics/{topic_id}/preview/file", params={"path": att["path"]}
+    )
+    assert opened.status_code == 422
+    assert "资料库" in opened.json()["message"]
+
+    assert (
+        client.delete(
+            f"/projects/{project_id}/library", params={"path": "说明.md"}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.delete(
+            f"/projects/{project_id}/library", params={"path": "../secret.txt"}
+        ).status_code
+        == 422
+    )
+
+
+def test_the_agent_cannot_throw_away_what_it_was_given(client):
+    """读资料库的是人和 芝士，扔掉它的只有人。"""
+    project_id = _project(client)
+    topic_id = _topic(client, project_id, "房间一")
+    _upload(client, topic_id, "预算表.xlsx", b"budget")
+
+    client.headers.pop("Authorization", None)
+    client.cookies.clear()
+    agent = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project_id, topic_id=topic_id, ttl_s=3600
+        )
+    }
+    refused = client.delete(
+        f"/projects/{project_id}/library",
+        params={"path": "预算表.xlsx", "topic": topic_id},
+        headers=agent,
+    )
+    assert refused.status_code == 403
+
+    listed = client.get(
+        f"/projects/{project_id}/library", params={"topic": topic_id}, headers=agent
+    )
+    assert [f["path"] for f in listed.json()["data"]["data"]] == ["预算表.xlsx"]
+
+
 def test_the_library_is_the_project_members_only(client):
     project_id = _project(client)
     topic_id = _topic(client, project_id, "房间一")
@@ -255,3 +313,9 @@ def test_the_library_is_the_project_members_only(client):
 
     client.headers.update(session_auth_headers("outsider"))
     assert client.get(f"/projects/{project_id}/library").status_code == 403
+    assert (
+        client.delete(
+            f"/projects/{project_id}/library", params={"path": "预算表.xlsx"}
+        ).status_code
+        == 403
+    )

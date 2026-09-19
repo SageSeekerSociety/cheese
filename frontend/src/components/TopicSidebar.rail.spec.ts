@@ -133,7 +133,7 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('全局 / 总览 / 看板 / 日历 / AI 队友 / 成员 是与话题行同语法的列表行，不再是 pills', () => {
+  it('全局 / 总览 / 看板 / 日历 / 资料库 / AI 队友 / 成员 是与话题行同语法的列表行，不再是 pills', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
     expect(titlesIn(container, '.pinned-row')).toEqual([
@@ -141,6 +141,7 @@ describe('C1 置顶导航组', () => {
       '总览',
       '看板',
       '日历',
+      '资料库',
       '导出与发布',
       'AI 队友',
       '成员',

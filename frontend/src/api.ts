@@ -1060,6 +1060,19 @@ export function listProjectLibrary(projectId: string): Promise<ListPayload<Libra
   return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
 }
 
+/** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的
+ *  `download=true` 在这里没有对应的参数，后端不看它。 */
+export function libraryFileRawUrl(projectId: string, path: string): string {
+  return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
+}
+
+export function deleteLibraryFile(projectId: string, path: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/library?path=${encodeURIComponent(path)}`,
+    { method: 'DELETE' }
+  )
+}
+
 // ---- Chat attachments ----
 
 /** 把资料库里已有的一份文件附在这条消息上。返回的形状和一次上传相同。 */

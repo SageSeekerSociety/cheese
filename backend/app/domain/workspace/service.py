@@ -833,7 +833,12 @@ def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -
     """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
     name = library_name(path)
     if name is not None:
-        return _read_text_path(_safe_path(library_root(project_id), name), path)
+        target = _safe_path(library_root(project_id), name)
+        if not target.is_file():
+            # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
+            # 地址没错，是东西不在了。
+            raise ValidationError("这份资料已经不在资料库里")
+        return _read_text_path(target, path)
     return read_room_text_file(project_id, room_id, path)
 
 
@@ -877,6 +882,17 @@ def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
     if not target.is_file():
         raise NotFoundError("资料库里没有这份文件")
     return target.read_bytes()
+
+
+def delete_library_file(project_id: uuid.UUID, name: str) -> None:
+    """扔掉一份资料。
+
+    旧消息里引用它的那枚 chip 随之打不开了，这是对的：那条引用指的就是这一份，而
+    这一份没有了——在它的位置上摆一份别的东西，才是把读者读到的内容换掉。"""
+    target = _safe_path(library_root(project_id), name)
+    if not target.is_file():
+        raise NotFoundError("资料库里没有这份文件")
+    target.unlink()
 
 
 def list_library_files(project_id: uuid.UUID) -> list[dict]:

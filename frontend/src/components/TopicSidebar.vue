@@ -90,6 +90,8 @@ const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
   { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
+  // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
+  { key: 'project-library', label: '资料库', icon: 'mdi-folder-outline' },
   { key: 'project-delivery', label: '导出与发布', icon: 'mdi-export-variant' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
   // 成员紧挨着 AI 队友：这两行答的是同一个问题的两半——这个项目里都有谁。
