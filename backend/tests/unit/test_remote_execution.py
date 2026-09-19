@@ -747,13 +747,14 @@ class RemoteExecutionTests(unittest.TestCase):
             )
 
     def finished_task(self, task_id, timeout=30000):
-        """A task's output once it has actually finished.
+        """A task's output once it has finished, or a failure that says why.
 
-        `TaskOutput` answers `retrieval_status: "timeout"` with whatever the
-        task has written so far when its wait runs out, so asserting on the
-        output without checking that first turns a slow CI box into a failure
-        that reads like broken backgrounding (observed on the runner pool,
-        2026-09-19: `'' != 'done'`).
+        `'' != 'done'` has been failing this file on CI since at least
+        2026-09-19 and says nothing about the cause. `TaskOutput` reports
+        `retrieval_status: "timeout"` when its wait runs out, and `status:
+        "unknown"` for a task this executor no longer holds — both of which
+        come back with the output so far. Checking them here turns the next
+        failure into its own diagnosis instead of a bare string mismatch.
         """
         result = self.invoke(
             "TaskOutput", {"task_id": task_id, "block": True, "timeout": timeout}
@@ -762,6 +763,11 @@ class RemoteExecutionTests(unittest.TestCase):
             result["retrieval_status"],
             "success",
             f"task did not finish within {timeout} ms: {result}",
+        )
+        self.assertEqual(
+            result["task"]["status"],
+            "completed",
+            f"task did not complete: {result}",
         )
         return result
 
