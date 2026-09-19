@@ -29,6 +29,16 @@ const TABS = [
 const ladder = computed(() =>
   STATUS_LADDER.map((value) => ({ value, label: STATUS_META[value].label, dot: STATUS_META[value].dot }))
 )
+
+/**
+ * 卡着开工的三条。放在这一页上而不是只写在方案稿里：核对图的人正好会经过这里，
+ * 而「图看着挺完整」正是这三条最容易沉底的地方。编号是方案稿 §8 里的小节号。
+ */
+const OPEN_QUESTIONS = [
+  { no: '§8.1', what: '平台管理员是谁', why: '不定，管理后台就没有门 —— 今天 /admin/* 前缀不带任何鉴权。' },
+  { no: '§8.3', what: 'security 与 visibility 的关系', why: '它该是 private 之下的子类，还是第二个开关。' },
+  { no: '§8.23', what: '默认筛选的确切口径', why: '隐藏所有已解决的，还是只隐藏已解决的 bug。' },
+] as const
 </script>
 
 <template>
@@ -77,7 +87,24 @@ const ladder = computed(() =>
         <ArchDiagram :diagram="feedbackArch" />
       </div>
 
-      <p class="fd-foot">这一页是原型的一部分，画的是**提案**而不是已实现的系统；接口、迁移和取舍写在方案稿里。</p>
+      <section class="fd-open">
+        <h3 class="fd-open__title">还差三句话，图就完整了</h3>
+        <p class="fd-open__sub">
+          图里那两张虚线框（提案表、未读游标）和下面这三条是同一类东西：不是没画，是<strong>还没定</strong>。
+          定了就画实线。
+        </p>
+        <ul class="fd-open__list">
+          <li v-for="item in OPEN_QUESTIONS" :key="item.no" class="fd-open__item">
+            <span class="fd-open__no">{{ item.no }}</span>
+            <span class="fd-open__what">{{ item.what }}</span>
+            <span class="fd-open__why">{{ item.why }}</span>
+          </li>
+        </ul>
+      </section>
+
+      <p class="fd-foot">
+        这一页是原型的一部分，画的是<strong>提案</strong>而不是已实现的系统；接口、迁移和取舍写在方案稿里。
+      </p>
     </div>
   </div>
 </template>
@@ -187,6 +214,66 @@ const ladder = computed(() =>
 .fd-step__arrow {
   margin-left: 3px;
   color: var(--faint);
+}
+
+.fd-open {
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.fd-open__title {
+  margin-bottom: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fd-open__sub {
+  max-width: 720px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.fd-open__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.fd-open__item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.fd-open__no {
+  width: 44px;
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.fd-open__what {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fd-open__why {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
 }
 
 .fd-foot {
