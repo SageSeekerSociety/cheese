@@ -857,7 +857,7 @@ export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'er
 export interface ProjectMachine {
   id: string
   project_id: string
-  machine_id: number
+  machine_id: number | null
   hostname: string
   login_user: string
   cores: number
