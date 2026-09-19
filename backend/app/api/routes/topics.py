@@ -2427,6 +2427,11 @@ async def decide_document_revisions(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     clean = _clean_artifact_path(body.get("path") or "")
+    if ws.library_name(clean) is not None:
+        # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
+        # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
+        # 栏照常列），能做的只是不动它。
+        raise ValidationError("资料库里的原件不改——让芝士基于它做一份新的")
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
