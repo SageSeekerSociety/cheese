@@ -82,12 +82,21 @@ deployment.
 The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
 `DB_MAX_OVERFLOW=5` on `device-connection`) and the backend's in
 `app/core/config.py`; together they are sized so the two backends of a rollout
-plus the owner fit a 100-connection server. The owner only picks up a pool
-change when it is released, so **a release that changes either side goes out
-owner-first** on a box whose server still has the default 100 (prod, etrip):
-until then the owner holds its old, larger pool, and a backend rollout beside
-it asks the server for more connections than it has — the 2026-09-16 failure.
-dev's server was raised to 200, so the order does not matter there.
+plus the owner fit a 100-connection server.
+
+Which side of that arithmetic a deploy actually moves depends on where the
+change is. A change to the compose file's `device-connection` block is picked
+up by the next ordinary deploy, because compose recreates a service whose
+definition changed (observed on dev, 2026-09-19: the owner came up on the new
+pool without anyone releasing it). A change that lives only in the image —
+`app/core/config.py`, or anything else the backend carries — does not reach the
+owner until it is released, because the deploy leaves its container alone. So
+on a box whose server still has the default 100 (prod, etrip), **a release that
+raises the backend pool without also changing the owner's compose block goes
+out owner-first**: until the owner is released it holds the pool its running
+image was built with, and a backend rollout beside it can ask the server for
+more connections than it has — the 2026-09-16 failure. dev's server was raised
+to 200, so the order does not matter there.
 
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
