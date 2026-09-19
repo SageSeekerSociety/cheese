@@ -746,6 +746,25 @@ class RemoteExecutionTests(unittest.TestCase):
                 "Bash", {"command": "printf y >> count.txt"}, key="same-request"
             )
 
+    def finished_task(self, task_id, timeout=30000):
+        """A task's output once it has actually finished.
+
+        `TaskOutput` answers `retrieval_status: "timeout"` with whatever the
+        task has written so far when its wait runs out, so asserting on the
+        output without checking that first turns a slow CI box into a failure
+        that reads like broken backgrounding (observed on the runner pool,
+        2026-09-19: `'' != 'done'`).
+        """
+        result = self.invoke(
+            "TaskOutput", {"task_id": task_id, "block": True, "timeout": timeout}
+        )
+        self.assertEqual(
+            result["retrieval_status"],
+            "success",
+            f"task did not finish within {timeout} ms: {result}",
+        )
+        return result
+
     def test_reconnect_retains_background_task(self):
         task = self.invoke(
             "Bash",
@@ -754,10 +773,7 @@ class RemoteExecutionTests(unittest.TestCase):
         previous_pid = self.pid
         self.start()
         self.assertEqual(self.pid, previous_pid)
-        result = self.invoke(
-            "TaskOutput",
-            {"task_id": task["backgroundTaskId"], "block": True, "timeout": 5000},
-        )
+        result = self.finished_task(task["backgroundTaskId"])
         self.assertEqual(result["task"]["output"], "background-done")
         self.assertEqual(result["task"]["status"], "completed")
 
@@ -983,10 +999,7 @@ class RemoteExecutionTests(unittest.TestCase):
                 {"subtype": "background_tasks", "tool_use_id": "foreground"},
             )
             result = pending.result(timeout=1)
-            task = self.invoke(
-                "TaskOutput",
-                {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
-            )
+            task = self.finished_task(result["backgroundTaskId"])
             self.assertEqual(task["task"]["output"], "done")
 
     def test_a_foreground_command_past_its_timeout_becomes_a_task_the_room_can_see(
