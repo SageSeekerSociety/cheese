@@ -51,6 +51,7 @@ from app.core.errors import (
 )
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceOffline,
     HubScreen,
     ViewerTransport,
@@ -94,6 +95,15 @@ async def recover_business_state(device_id: str) -> None:
         # connection runs this, so there is nothing here to fix.
         logger.warning(
             "hook subscriptions not recovered: device %s went offline", device_id
+        )
+    except DeviceCallError as exc:
+        # The machine answered with a failure of its own — a runner whose socket
+        # is not up yet, a home that is gone. Its next connection runs this
+        # again, so this is a state to wait out, not a fault to report: at ERROR
+        # it was one alert per reconnect of a machine in that state (「dial unix
+        # /tmp/cheese-execution-…sock: no such file」, 2026-09-19).
+        logger.warning(
+            "hook subscriptions not recovered: device %s said %s", device_id, exc
         )
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
