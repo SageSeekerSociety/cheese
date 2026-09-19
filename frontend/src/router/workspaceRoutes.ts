@@ -101,6 +101,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '日历', hideTabs: true, backTo: 'workspace-project' },
     },
     {
+      // 资料库：用户给这个项目的文件。项目级，所以它在项目这个框里，不在某个话题
+      // 下面——引用它的那条消息可能来自任何一个房间。
+      name: 'project-library',
+      path: 'library',
+      component: () => import('@/views/ProjectLibraryView.vue'),
+      props: true,
+      meta: { title: '资料库', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       name: 'project-agents',
       path: 'agents',
       component: () => import('@/views/ProjectAgentsView.vue'),

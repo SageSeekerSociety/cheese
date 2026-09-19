@@ -470,12 +470,9 @@ async def library_file_raw(
     """
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
-    name = (path or "").strip()
-    parts = name.split("/")
-    if not name or name.startswith("/") or ".." in parts:
-        raise ValidationError("path 必须是资料库里的相对路径")
+    name = _library_path(path)
     data = ws.read_library_file(project_id, name)
-    filename = quote(parts[-1], safe="")
+    filename = quote(name.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
         media_type="application/octet-stream",
@@ -486,6 +483,14 @@ async def library_file_raw(
             "Cache-Control": "private, max-age=3600",
         },
     )
+
+
+def _library_path(raw: str) -> str:
+    """资料库里那一份的名字——它就是地址，所以这里只挡不是名字的东西。"""
+    name = (raw or "").strip()
+    if not name or name.startswith("/") or ".." in name.split("/"):
+        raise ValidationError("path 必须是资料库里的相对路径")
+    return name
 
 
 async def _project_reader(
@@ -514,6 +519,21 @@ async def list_library(
     await _project_reader(db, resolver, project_id, topic)
     files = ws.list_library_files(project_id)
     return ok(page(files, len(files)))
+
+
+@router.delete("/{project_id}/library")
+async def delete_library_file(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """扔掉一份资料。
+
+    这条路不收 `topic`：读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据
+    过不了 `authorize_project`，所以 芝士 连同它自己正在读的那一份都删不掉。"""
+    await ProjectService(db).get_or_404(project_id)
+    actor = await resolver.require_verified_caller(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    ws.delete_library_file(project_id, _library_path(path))
+    return ok({"deleted": True})
 
 
 @router.get("/{project_id}/decisions")
