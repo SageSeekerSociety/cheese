@@ -55,6 +55,17 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+# How long a command the serve process backgrounded is given, after it has
+# ended, to have its output written before TaskOutput answers with what is
+# there. The serve process writes that file on its own schedule and the task is
+# already recorded completed — by its own exit file — by the time it does, so
+# this is a wait for a flush, not for the command. Two seconds was not enough
+# on a loaded CI runner and answered 「」 for a command that had printed; ten
+# sits well inside TaskOutput's own 30 s default, and only a command that never
+# prints anything waits it out.
+OUTPUT_AFTER_EXIT_S = 10.0
+
+
 def socket_path(state):
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
     return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
@@ -813,32 +824,70 @@ class Executor:
 
     def output(self, task_id):
         task = self.task(task_id)
-        record = self.state / "tasks" / task["marker"]
-        if (record / "output").exists():
-            text = (record / "output").read_text(errors="replace")
-        elif task.get("task_id"):
-            output = serve_task_output(self.serve_temp, task["task_id"])
-            text = output.read_text(errors="replace") if output else ""
-        else:
-            text = ""
-        return {**task, "id": task["marker"], "stdout": text, "stderr": ""}
+        return {
+            **task,
+            "id": task["marker"],
+            "stdout": self._written_output(task) or "",
+            "stderr": "",
+        }
+
+    def _written_output(self, task):
+        """What has actually been written for this task, or None if nothing has.
+
+        Two files can hold it. Ours is written once, whole, by `_deliver`. The
+        serve process's `<task_id>.output` it creates when the task starts and
+        fills as the command runs — and a command it backgrounded answers
+        `_deliver` with no stdout at all, so OUR copy for one of those is
+        written empty while the real output is in the serve process's file.
+        Reading ours first and stopping there is what returned 「」 for a
+        command that had just printed 「done」, with the task recorded completed
+        and exit code 0 (#1242, about one run in six).
+
+        So whichever has content answers, and an empty copy of ours only counts
+        when there is no serve-side task to have written the rest.
+        """
+        record = self.state / "tasks" / task["marker"] / "output"
+        if record.exists() and record.stat().st_size:
+            return record.read_text(errors="replace")
+        served = (
+            serve_task_output(self.serve_temp, task["task_id"])
+            if task.get("task_id")
+            else None
+        )
+        if served and served.stat().st_size:
+            return served.read_text(errors="replace")
+        if record.exists() and served is None:
+            return ""
+        return None
 
     def task_output(self, args):
         task_id = args["task_id"]
         marker = self._marker(task_id)
-        record = self.state / "tasks" / marker
         deadline = (
             time.monotonic() + min(max(args.get("timeout", 30000), 0), 600000) / 1000
         )
+        settled_at = None
         while args.get("block", True) and time.monotonic() < deadline:
             task = self.task(marker)
-            recorded = (record / "output").exists() or bool(
-                task.get("task_id")
-                and serve_task_output(self.serve_temp, task["task_id"])
-            )
-            if task["status"] != "running" and (
-                recorded or task["status"] == "unknown"
-            ):
+            if task["status"] == "running":
+                time.sleep(0.1)
+                continue
+            if self._written_output(task) is not None or task["status"] == "unknown":
+                break
+            if not task.get("task_id"):
+                # Ours to write, and `_collect` is still waiting for the serve
+                # process's answer — which arrives after the command's own exit
+                # file, and takes as long as it takes. The deadline is the only
+                # bound here.
+                time.sleep(0.1)
+                continue
+            # A task the serve process backgrounded, ended, with nothing
+            # written for it yet: its output is the serve process's to write
+            # and it is still doing it. Waiting out the whole timeout for one
+            # that will never print anything would be worse than this — a short
+            # grace, then whatever is there.
+            settled_at = settled_at or time.monotonic()
+            if time.monotonic() - settled_at >= OUTPUT_AFTER_EXIT_S:
                 break
             time.sleep(0.1)
         output = self.output(task_id)
