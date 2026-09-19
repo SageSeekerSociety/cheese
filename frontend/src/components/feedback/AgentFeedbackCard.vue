@@ -112,15 +112,15 @@ function onSubmitted(id: string) {
         <!-- 展开区：三段现场。默认收起，见上面那段注释。 -->
         <div v-if="expanded" class="fb-agent-card__evidence mb-3">
           <div class="fb-evidence-block">
-            <div class="t-eyebrow mb-1">WHAT HAPPENED</div>
+            <div class="t-eyebrow mb-1">发生了什么</div>
             <div class="t-body">{{ finding.whatHappened }}</div>
           </div>
           <div class="fb-evidence-block">
-            <div class="t-eyebrow mb-1">REPRO</div>
+            <div class="t-eyebrow mb-1">复现步骤</div>
             <pre class="fb-evidence-pre">{{ finding.repro }}</pre>
           </div>
           <div class="fb-evidence-block">
-            <div class="t-eyebrow mb-1">EVIDENCE</div>
+            <div class="t-eyebrow mb-1">证据</div>
             <div class="t-body">{{ finding.evidence }}</div>
           </div>
           <div v-if="finding.sessionId || finding.environment" class="t-meta">
@@ -142,7 +142,7 @@ function onSubmitted(id: string) {
           </v-btn>
           <v-btn variant="text" color="secondary" size="small" @click="state = 'dismissed'">不用</v-btn>
           <v-spacer />
-          <v-btn size="small" @click="openDrawer">提交反馈</v-btn>
+          <v-btn color="primary" size="small" @click="openDrawer">提交反馈</v-btn>
         </div>
       </div>
     </v-card>
@@ -154,9 +154,8 @@ function onSubmitted(id: string) {
 </template>
 
 <style scoped>
-.fb-agent-card {
-  border-radius: var(--radius-lg);
-}
+/* 圆角不在这里写：VCard 默认的 rounded="xl"(24px) 带 !important，scoped 的 12px
+   压不过它（FeedbackCard.vue 里有同一段说明）。 */
 /* 判断依据用 inset 底色，和上面那句摘要分开：摘要是「发生了什么」，依据是「凭
    什么说这是平台的问题」，两件事不该长得一样。 */
 .fb-agent-card__reason {

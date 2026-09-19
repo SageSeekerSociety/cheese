@@ -132,17 +132,17 @@ function saveNote() {
         </section>
 
         <section v-if="item.whatHappened || item.repro || item.evidence" class="fb-section">
-          <div class="t-eyebrow mb-1">Evidence</div>
+          <div class="t-eyebrow mb-1">现场</div>
           <template v-if="item.whatHappened">
-            <div class="fb-sub">What happened</div>
+            <div class="fb-sub">发生了什么</div>
             <p class="t-body">{{ item.whatHappened }}</p>
           </template>
           <template v-if="item.repro">
-            <div class="fb-sub">Repro</div>
+            <div class="fb-sub">复现步骤</div>
             <pre class="fb-pre">{{ item.repro }}</pre>
           </template>
           <template v-if="item.evidence">
-            <div class="fb-sub">Evidence</div>
+            <div class="fb-sub">证据</div>
             <p class="t-body">{{ item.evidence }}</p>
           </template>
         </section>
@@ -155,7 +155,7 @@ function saveNote() {
         <section v-if="item.sessionId || item.environment" class="fb-section">
           <div class="t-eyebrow mb-1">会话信息</div>
           <div v-if="item.sessionId" class="fb-kv">
-            <span class="t-meta">Session</span>
+            <span class="t-meta">会话</span>
             <code class="fb-code">{{ item.sessionId }}</code>
           </div>
           <div v-if="item.environment" class="fb-kv">
@@ -198,7 +198,8 @@ function saveNote() {
   flex: none;
   align-items: flex-start;
   gap: 8px;
-  padding: 14px 8px 14px 20px;
+  /* 左边 24 和下面 body 的 padding 对齐：标题和正文同一个左边界。 */
+  padding: 16px 8px 16px 24px;
   border-bottom: 1px solid var(--line);
 }
 .min-width-0 {
@@ -208,7 +209,7 @@ function saveNote() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px;
 }
 .fb-admin-drawer__actions {
   display: grid;
@@ -217,13 +218,13 @@ function saveNote() {
   margin-bottom: 16px;
 }
 .fb-section + .fb-section {
-  margin-top: 20px;
-  padding-top: 20px;
+  margin-top: 24px;
+  padding-top: 24px;
   border-top: 1px solid var(--line);
 }
 .fb-sub {
   margin: 8px 0 4px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--muted);
 }
 .fb-pre {
@@ -245,7 +246,7 @@ function saveNote() {
 }
 .fb-code {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text);
 }
 </style>

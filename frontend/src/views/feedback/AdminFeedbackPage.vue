@@ -49,9 +49,9 @@ watch(drawerOpen, (open) => {
   <div class="fb-admin">
     <div v-if="store.role !== 'admin'" class="fb-admin__gate page-container">
       <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-      <div class="t-body mb-1">这一页是管理员后台。</div>
-      <div class="t-meta mb-3">你现在的原型身份是「用户」，看不到管理界面。</div>
-      <v-btn size="small" @click="store.setRole('admin')">以管理员身份查看</v-btn>
+      <div class="t-body mb-1">这一页是管理员后台</div>
+      <div class="t-meta mb-3">你现在的原型身份是「用户」，看不到管理界面</div>
+      <v-btn color="primary" size="small" @click="store.setRole('admin')">以管理员身份查看</v-btn>
       <v-btn variant="text" color="secondary" size="small" to="/feedback">回到反馈中心</v-btn>
     </div>
 
@@ -96,7 +96,12 @@ watch(drawerOpen, (open) => {
             </td>
             <td class="fb-td">{{ item.author }}</td>
             <td class="fb-td">
-              <span :class="item.source === 'agent' ? 'fb-src-agent' : 'c-muted'">{{ SOURCE_LABEL[item.source] }}</span>
+              <!-- 来源这一格和反馈卡、详情页用的是同一个形态（中性 chip + 机器人图标）：
+                  三处说的是同一件事，长得一样才不用重新认。琥珀留给这一页唯一的主操作。 -->
+              <span v-if="item.source === 'agent'" class="chip-neutral">
+                <v-icon size="12">mdi-robot-outline</v-icon>{{ SOURCE_LABEL.agent }}
+              </span>
+              <span v-else class="c-muted">{{ SOURCE_LABEL[item.source] }}</span>
             </td>
             <td class="fb-td">{{ KIND_LABEL[item.kind] }}</td>
             <td class="fb-td"><FeedbackStatusChip :priority="item.priority" /></td>
@@ -104,7 +109,7 @@ watch(drawerOpen, (open) => {
             <td class="fb-td t-meta">{{ relTime(item.createdAt) }}</td>
           </tr>
           <tr v-if="!store.adminItems.length">
-            <td colspan="7" class="fb-td fb-td--empty">这一栏里还没有反馈。</td>
+            <td colspan="7" class="fb-td fb-td--empty">暂无反馈</td>
           </tr>
         </tbody>
       </v-table>
@@ -116,7 +121,7 @@ watch(drawerOpen, (open) => {
 
 <style scoped>
 .fb-admin {
-  padding: 24px 20px 48px;
+  padding: 24px 16px 48px;
 }
 .fb-admin__inner,
 .fb-admin__gate {
@@ -133,7 +138,7 @@ watch(drawerOpen, (open) => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 16px;
 }
 .fb-admin__tabs {
@@ -148,10 +153,21 @@ watch(drawerOpen, (open) => {
 .fb-admin__table {
   background: transparent;
 }
-.fb-th {
-  font-size: 12px !important;
+/* v-table 自己给 th/td 写的是
+   `.v-table > .v-table__wrapper > table > thead > tr > th`（两个 class + 四个元素），
+   单类选择器赢不过它 —— 之前 `.fb-th` 上是两条 !important 就是因为这个。这里把
+   Vuetify 自己的那几层写进选择器（:deep 让 scoped 样式能选到组件渲染出来的节点），
+   权重 (0,3,3) 对 (0,2,4)，正常赢，不再需要 !important。 */
+.fb-admin__table :deep(.v-table__wrapper table) :is(tbody td) {
+  font-size: 13px;
+  color: var(--text);
+  vertical-align: top;
+}
+/* 表头比正文小一档、浅一档：它是标签，不是数据（.t-eyebrow 也是 12px）。 */
+.fb-admin__table :deep(.v-table__wrapper table thead th) {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--faint) !important;
+  color: var(--muted);
   white-space: nowrap;
 }
 .fb-th--title {
@@ -160,15 +176,12 @@ watch(drawerOpen, (open) => {
 .fb-row {
   cursor: pointer;
 }
-.fb-td {
-  font-size: 13.5px;
-  color: var(--text) !important;
-  vertical-align: top;
-}
 .fb-td--title {
   min-width: 240px;
 }
-.fb-td--empty {
+/* 空行那一格也要 :deep：Vuetify 给 td 的 `padding: 0 16px` 比单类选择器权重高，
+   直接写 `.fb-td--empty { padding: 40px 0 }` 是压不过它的（写了也没有上下留白）。 */
+.fb-admin__table :deep(.v-table__wrapper table tbody td.fb-td--empty) {
   padding: 40px 0;
   text-align: center;
   color: var(--faint);
@@ -178,10 +191,5 @@ watch(drawerOpen, (open) => {
   font-weight: 600;
   line-height: 1.45;
   color: var(--ink);
-}
-/* Agent 发现的来源用主题色标出来：在「Agent 发现」那一栏里，这一列是整张表唯一
-   能一眼扫过去的东西。 */
-.fb-src-agent {
-  color: var(--accent-ink);
 }
 </style>

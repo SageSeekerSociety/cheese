@@ -36,6 +36,10 @@ function onSubmitted(id: string) {
   void router.push(`/feedback/${id}`)
 }
 
+/** 空列表有两种：一条都搜不着（有筛选），和一条都没有（没筛选）。这两句话不一样，
+ *  「暂无反馈」配一个「清除筛选」的按钮会让人以为清掉筛选就有东西了。 */
+const hasFilter = computed(() => !!store.query.trim() || store.tab !== 'all')
+
 function clearFilters() {
   store.query = ''
   store.tab = 'all'
@@ -44,7 +48,7 @@ function clearFilters() {
 
 <template>
   <div class="fb-page">
-    <div class="fb-page__inner page-container--wide">
+    <div class="fb-page__inner page-container">
       <header class="fb-head">
         <h1 class="t-page-title">反馈中心</h1>
         <v-spacer />
@@ -81,7 +85,7 @@ function clearFilters() {
           clearable
           class="fb-search"
         />
-        <v-btn prepend-icon="mdi-plus" @click="store.openSubmit()">提交反馈</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" @click="store.openSubmit()">提交反馈</v-btn>
       </div>
 
       <v-tabs v-model="store.tab" density="comfortable" color="primary" class="fb-tabs">
@@ -100,25 +104,25 @@ function clearFilters() {
         />
         <div v-if="!store.visibleItems.length" class="fb-empty">
           <v-icon size="28" class="mb-2">mdi-comment-search-outline</v-icon>
-          <div class="t-body">没有匹配的反馈。</div>
-          <v-btn variant="text" color="secondary" size="small" @click="clearFilters">清除筛选</v-btn>
+          <div class="t-body">{{ hasFilter ? '暂无匹配的反馈' : '暂无反馈' }}</div>
+          <v-btn v-if="hasFilter" variant="text" color="secondary" size="small" @click="clearFilters">清除筛选</v-btn>
         </div>
       </div>
 
-      <p class="t-meta fb-foot">
-        公开反馈对所有用户可见，可以支持、评论。涉及隐私的内容可以在提交时选「私密」，那就只有管理员看得到。
-      </p>
+      <p class="t-meta fb-foot">公开反馈所有人可见；提交时选「私密」的只有管理员能看到</p>
     </div>
 
     <SubmitFeedbackDrawer @submitted="onSubmitted" />
 
-    <v-snackbar v-model="showSubmitted" color="success" :timeout="4000">反馈已提交，感谢你。</v-snackbar>
+    <v-snackbar v-model="showSubmitted" color="success" :timeout="4000">反馈已提交</v-snackbar>
   </div>
 </template>
 
 <style scoped>
 .fb-page {
-  padding: 24px 20px 48px;
+  /* 左右 16 是窄屏的页边距：容器本身居中且有 max-width，宽屏上真正撑开版面的是
+     page-container，不是这 16px。 */
+  padding: 24px 16px 48px;
 }
 .fb-page__inner {
   margin: 0 auto;
@@ -157,7 +161,7 @@ function clearFilters() {
 .fb-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .fb-empty {
   display: flex;

@@ -54,7 +54,8 @@ async function share() {
   <div class="fb-page">
     <div v-if="!item" class="fb-page__inner page-container">
       <div class="fb-state">
-        <div class="t-body">没有这条反馈，它可能被删除了。</div>
+        <div class="t-body">暂无这条反馈</div>
+        <div class="t-meta mb-3">它可能已被删除</div>
         <v-btn variant="text" color="secondary" size="small" @click="router.push('/feedback')">回到反馈中心</v-btn>
       </div>
     </div>
@@ -62,8 +63,8 @@ async function share() {
     <div v-else-if="privateForMe" class="fb-page__inner page-container">
       <div class="fb-state">
         <v-icon size="28" class="mb-2">mdi-lock-outline</v-icon>
-        <div class="t-body mb-1">这条反馈是私密的。</div>
-        <div class="t-meta mb-3">只有管理员能看到它的内容。提交者在提交时选择了「私密」。</div>
+        <div class="t-body mb-1">这条反馈是私密的</div>
+        <div class="t-meta mb-3">只有管理员能看到它的内容</div>
         <v-btn variant="text" color="secondary" size="small" @click="router.push('/feedback')">回到反馈中心</v-btn>
       </div>
     </div>
@@ -89,11 +90,14 @@ async function share() {
             <span v-if="store.role === 'admin'">{{ item.id }} · </span>{{ item.author }} · {{ relTime(item.createdAt) }}
           </div>
 
+          <!-- 「已支持」是中性色（tonal），不是琥珀：琥珀在这一页属于唯一的那个主操作
+               ——发表评论（见页面底部）。状态本身还有文字、图标实心、计数变 --ink
+               三个不依赖颜色的信号。见 docs/design-system.md §0。 -->
           <div class="d-flex align-center flex-wrap ga-2 mb-6">
             <v-btn
-              :variant="item.supportedByMe ? 'flat' : 'outlined'"
-              :color="item.supportedByMe ? 'primary' : 'secondary'"
-              prepend-icon="mdi-thumb-up-outline"
+              :variant="item.supportedByMe ? 'tonal' : 'outlined'"
+              color="secondary"
+              :prepend-icon="item.supportedByMe ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
               :disabled="item.status === 'resolved'"
               @click="store.toggleSupport(item.id)"
             >
@@ -120,20 +124,22 @@ async function share() {
             <p class="t-body">{{ item.expectation }}</p>
           </section>
 
-          <!-- Agent 发现的那一类：现场三段。人提交的反馈没有这三段，整块不出现。 -->
+          <!-- Agent 发现的那一类：现场三段。人提交的反馈没有这三段，整块不出现。
+               三段的小标题写中文，和界面其余部分一致：「REPRO」对第一次看的人来说
+               不是一个词（docs/design-system.md §8.0）。 -->
           <section v-if="item.whatHappened || item.repro || item.evidence" class="fb-section">
             <div class="t-eyebrow mb-2">现场</div>
             <div class="fb-evidence">
               <div v-if="item.whatHappened" class="fb-evidence__block">
-                <div class="t-eyebrow mb-1">WHAT HAPPENED</div>
+                <div class="t-eyebrow mb-1">发生了什么</div>
                 <p class="t-body">{{ item.whatHappened }}</p>
               </div>
               <div v-if="item.repro" class="fb-evidence__block">
-                <div class="t-eyebrow mb-1">REPRO</div>
+                <div class="t-eyebrow mb-1">复现步骤</div>
                 <pre class="fb-pre">{{ item.repro }}</pre>
               </div>
               <div v-if="item.evidence" class="fb-evidence__block">
-                <div class="t-eyebrow mb-1">EVIDENCE</div>
+                <div class="t-eyebrow mb-1">证据</div>
                 <p class="t-body">{{ item.evidence }}</p>
               </div>
             </div>
@@ -151,7 +157,7 @@ async function share() {
                 <p class="t-body fb-comment__body">{{ c.body }}</p>
               </div>
             </div>
-            <div v-else class="t-body c-faint mb-3">还没有人评论。</div>
+            <div v-else class="t-body c-faint mb-3">暂无评论</div>
 
             <div class="fb-comment-form">
               <v-textarea
@@ -162,7 +168,9 @@ async function share() {
                 hide-details
               />
               <div class="d-flex justify-end mt-2">
-                <v-btn :disabled="!commentDraft.trim()" size="small" @click="submitComment">发表评论</v-btn>
+                <v-btn color="primary" :disabled="!commentDraft.trim()" size="small" @click="submitComment">
+                  发表评论
+                </v-btn>
               </div>
             </div>
           </section>
@@ -203,19 +211,21 @@ async function share() {
 
 <style scoped>
 .fb-page {
-  padding: 20px 20px 48px;
+  padding: 16px 16px 48px;
 }
 .fb-page__inner {
   margin: 0 auto;
 }
+/* 负的左边距配自己的内边距：hover 时有块可点的底色，但字仍然和下面的标题左对齐
+   （不加负边距的话，这行会比整页内容右缩 8px）。 */
 .fb-back {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  margin-bottom: 12px;
-  padding: 2px 6px;
+  margin: 0 0 12px -8px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--muted);
   cursor: pointer;
 }
@@ -254,7 +264,7 @@ async function share() {
   border-top: 1px solid var(--line);
 }
 .fb-evidence {
-  padding: 12px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
@@ -276,8 +286,8 @@ async function share() {
 .fb-comments {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-bottom: 20px;
+  gap: 16px;
+  margin-bottom: 24px;
 }
 .fb-comment__author {
   font-size: 13px;
@@ -294,10 +304,10 @@ async function share() {
 .fb-aside {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 .fb-aside__card {
-  padding: 14px;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -306,7 +316,7 @@ async function share() {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 3px 0;
+  padding: 4px 0;
 }
 .fb-aside__num {
   font-family: var(--font-mono);
@@ -320,7 +330,7 @@ async function share() {
   align-items: flex-start;
   gap: 2px;
   width: 100%;
-  padding: 7px 8px;
+  padding: 8px;
   border-radius: var(--radius-md);
   text-align: left;
   cursor: pointer;

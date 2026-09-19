@@ -12,7 +12,12 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 反馈中心列表里的一行。
 //
 // 左边那一列是**支持**，不是点赞：支持数决定排序（热门 Tab），也是管理员判断该先
-// 看哪一条的依据。所以它在卡片最左边、是这张卡上唯一一个实心按钮，其余全是文字。
+// 看哪一条的依据。所以它在卡片最左边、是这张卡上唯一一个带底色的按钮，其余全是文字。
+//
+// 「已支持」用**中性色**（tonal + secondary），不用琥珀：一屏里琥珀只给唯一的主操作
+// （这一页是「提交反馈」），支持是一个可反复切换的状态，它变琥珀会让主操作不再是唯一
+// 那个显眼的东西（docs/design-system.md §0）。状态本身有三个不依赖颜色的信号：实心
+// 的拇指图标、文字、以及计数变 --ink。
 //
 // 整张卡可以点开，支持按钮要 `@click.stop` —— 少了那个 stop，点「支持」会顺手把
 // 详情页也打开。
@@ -32,8 +37,8 @@ const supportable = computed(() => props.item.status !== 'resolved')
       <v-btn
         icon
         size="small"
-        variant="outlined"
-        :color="item.supportedByMe ? 'primary' : 'secondary'"
+        :variant="item.supportedByMe ? 'tonal' : 'outlined'"
+        color="secondary"
         :disabled="!supportable"
         :aria-label="item.supportedByMe ? '取消支持' : '支持这个反馈'"
         :title="supportable ? (item.supportedByMe ? '取消支持' : '支持') : '已解决，无需再支持'"
@@ -65,13 +70,18 @@ const supportable = computed(() => props.item.status !== 'resolved')
 </template>
 
 <style scoped>
+/* 这里**不写** border-radius：VCard 的默认 `rounded="xl"`（24px）走的是
+   `.rounded-xl { border-radius: 24px !important }`，scoped 里写的 12px 压不过它，
+   写了只是死代码（曾经就有一行这样的）。改圆角得改 plugins/vuetify.ts 的默认值，
+   那是全仓 v-card 的事，不在这个组件里做。 */
 .fb-card {
   display: flex;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 16px;
   cursor: pointer;
-  border-radius: var(--radius-lg);
 }
+/* hover 只换底色和描边色，不位移：列表一屏十几行，每行抬 2px 会看成整列在跳
+   （docs/design-system.md §9.1）。 */
 .fb-card:hover {
   border-color: var(--line-2);
   background: var(--fill);
@@ -86,7 +96,7 @@ const supportable = computed(() => props.item.status !== 'resolved')
 }
 .fb-card__count {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
@@ -102,7 +112,7 @@ const supportable = computed(() => props.item.status !== 'resolved')
 }
 .fb-card__summary {
   margin: 0 0 8px;
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--muted);
   /* 摘要只给两行：列表是用来扫的，一条把四行读完就没有列表的意义了。 */

@@ -174,7 +174,7 @@ function submit() {
       <div class="fb-drawer__foot">
         <v-btn variant="text" color="secondary" @click="store.closeSubmit()">取消</v-btn>
         <v-spacer />
-        <v-btn :disabled="!canSubmit" @click="submit">提交反馈</v-btn>
+        <v-btn color="primary" :disabled="!canSubmit" @click="submit">提交反馈</v-btn>
       </div>
     </div>
   </v-navigation-drawer>
@@ -190,21 +190,22 @@ function submit() {
   display: flex;
   flex: none;
   align-items: center;
-  padding: 12px 8px 12px 20px;
+  /* 左边 24 和下面 body 的 padding 对齐：标题和正文同一个左边界。 */
+  padding: 16px 8px 16px 24px;
   border-bottom: 1px solid var(--line);
 }
 .fb-drawer__body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px;
 }
 .fb-drawer__foot {
   display: flex;
   flex: none;
   align-items: center;
   gap: 8px;
-  padding: 12px 20px;
+  padding: 16px 24px;
   border-top: 1px solid var(--line);
 }
 /* Agent 带过来的那一份：说明它从哪来的。用 wash 而不是左边的竖条 —— 这一列的
@@ -215,11 +216,14 @@ function submit() {
   background: var(--fill);
 }
 .fb-radio__title {
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--ink);
 }
+/* 提示文字用 --muted 而不是 --faint：--faint 在浅色主题下只有 2.6:1 的对比度
+   （docs/design-system.md §2.6），那是留给时间戳、编号这类可有可无的信息的，
+   用来写「所有用户可见，可以被支持、被评论」读不清。 */
 .fb-radio__hint {
   font-size: 12px;
-  color: var(--faint);
+  color: var(--muted);
 }
 </style>
