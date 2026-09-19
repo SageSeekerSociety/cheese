@@ -79,6 +79,16 @@ calls finish, and is never called by the normal app deployment workflows. It
 reads the same box-local deploy environment and compose overlays as the app
 deployment.
 
+The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
+`DB_MAX_OVERFLOW=5` on `device-connection`) and the backend's in
+`app/core/config.py`; together they are sized so the two backends of a rollout
+plus the owner fit a 100-connection server. The owner only picks up a pool
+change when it is released, so **a release that changes either side goes out
+owner-first** on a box whose server still has the default 100 (prod, etrip):
+until then the owner holds its old, larger pool, and a backend rollout beside
+it asks the server for more connections than it has — the 2026-09-16 failure.
+dev's server was raised to 200, so the order does not matter there.
+
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
 **Release cloud control** with the full SHA of a commit already merged into
