@@ -79,3 +79,4 @@ jobs:
           name: microcloud-smoke-log
           path: backend/logs/microcloud-smoke.log
           if-no-files-found: warn
+          retention-days: 3

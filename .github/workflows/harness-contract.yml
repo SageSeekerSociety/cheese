@@ -54,4 +54,4 @@ jobs:
             logs/harness-contracts/*/results.xml
             logs/harness-contracts/*/pytest/**/provider-requests.json
             logs/harness-contracts/*/pytest/**/runner.log
-          retention-days: 5
+          retention-days: 3

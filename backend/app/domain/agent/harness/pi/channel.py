@@ -261,7 +261,7 @@ class PiChannel:
         return [
             {
                 "data": base64.b64encode(
-                    ws.read_room_file(
+                    ws.read_attachment(
                         handle.session.project_id,
                         handle.session.topic_id,
                         image["path"],

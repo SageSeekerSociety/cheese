@@ -1,0 +1,79 @@
+name: MCP serve contract
+
+# The executor runs its shell commands through the assigned machine's
+# `claude mcp serve`. Three of the behaviours it relies on are not in any
+# published contract — a command's `cd` outliving the call, a command that
+# leaves the workspace not taking the next one with it, and a backgrounded
+# command's output landing at a path we read directly — so they are checked
+# here instead of being discovered during an upgrade.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/remote_execution/mcp_contract.py'
+      - 'scripts/remote_execution/package.json'
+      - 'backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py'
+      - '.github/workflows/mcp-contract.yml'
+  schedule:
+    # Anthropic publishes most days; a morning report is soon enough to learn
+    # about a broken behaviour before an upgrade is what someone is debugging.
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned:
+    # The build the rooms actually run. Breaking this breaks every room.
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
+      # The script and what it imports are standard library only, so this job
+      # skips `uv sync` and its several minutes.
+      - run: >-
+          python3 scripts/remote_execution/mcp_contract.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/mcp-contract/pinned
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: mcp-contract-pinned-${{ github.sha }}
+          path: tmp/mcp-contract/pinned/
+
+  latest:
+    # The next upgrade, checked before it is what we are debugging. Deliberately
+    # not run on pull requests: a build Anthropic published this morning is not
+    # a reason to hold up somebody's merge.
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: >-
+          npm install --no-save --no-audit --no-fund
+          --prefix scripts/remote_execution @anthropic-ai/claude-code@latest
+      - run: >-
+          python3 scripts/remote_execution/mcp_contract.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --output tmp/mcp-contract/latest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        if: always()
+        with:
+          name: mcp-contract-latest-${{ github.sha }}
+          path: tmp/mcp-contract/latest/
