@@ -1048,12 +1048,12 @@ class RemoteExecutionTests(unittest.TestCase):
             result["backgroundTaskId"],
             [task["task_id"] for task in listed if task["status"] == "running"],
         )
-        task = self.invoke(
-            "TaskOutput",
-            {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
+        task = self.finished_task(result["backgroundTaskId"])
+        self.assertEqual(
+            task["task"]["output"],
+            "done",
+            f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
         )
-        self.assertEqual(task["task"]["output"], "done")
-        self.assertEqual(task["task"]["status"], "completed")
 
     def test_remote_command_hook_can_prevent_a_write(self):
         config = self.workspace / ".claude"

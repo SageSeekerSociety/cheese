@@ -236,16 +236,30 @@ _LEASE_HOLDER = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 # the running sweep goes round again when it finishes.
 _sweeping = False
 _sweep_again = False
+_swept: asyncio.Event | None = None
+_last_counts = {"completed": 0, "pending": 0}
 
 
 async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
-    global _sweeping, _sweep_again
+    """Sweep what is due, and answer for the sweep that covered this call.
+
+    A caller who arrives while one is running does not start a second: the
+    running sweep goes round again for it, and this waits for that round
+    rather than answering with zeros it did not measure.
+    """
+    global _sweeping, _sweep_again, _swept, _last_counts
+    if _swept is None:
+        _swept = asyncio.Event()
     if _sweeping:
         _sweep_again = True
-        return {"completed": 0, "pending": 0}
+        finished = _swept
+        await finished.wait()
+        return dict(_last_counts)
     _sweeping = True
+    _swept = asyncio.Event()
+    finished = _swept
+    counts = {"completed": 0, "pending": 0}
     try:
-        counts = {"completed": 0, "pending": 0}
         while True:
             _sweep_again = False
             for key, value in (await _sweep_once(sessions)).items():
@@ -254,6 +268,8 @@ async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
                 return counts
     finally:
         _sweeping = False
+        _last_counts = dict(counts)
+        finished.set()
 
 
 async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
