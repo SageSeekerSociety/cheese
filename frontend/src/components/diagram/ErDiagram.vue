@@ -88,7 +88,15 @@ const wires = computed<Wire[]>(() => {
     let p2: Point
     let p3: Point
 
-    if (sameColumn) {
+    if (relation.from === relation.to) {
+      // 自引用（评论的 parent_id）。两端落在同一个盒子上，不岔开高度的话
+      // 曲线会出去又原路折回来，看起来像一条没画完的线。
+      const bow = 44
+      p0 = { x: a.x + a.w, y: a.y + a.h * 0.35 }
+      p3 = { x: a.x + a.w, y: a.y + a.h * 0.65 }
+      p1 = { x: p0.x + bow, y: p0.y + 10 }
+      p2 = { x: p3.x + bow, y: p3.y - 10 }
+    } else if (sameColumn) {
       const bow = 60
       p0 = { x: a.x + a.w, y: a.y + a.h / 2 }
       p3 = { x: b.x + b.w, y: b.y + b.h / 2 }
@@ -112,7 +120,8 @@ const wires = computed<Wire[]>(() => {
     )
 
     const mid = bezierPoint(p0, p1, p2, p3, 0.5)
-    const label = relation.label && !sameColumn ? { x: mid.x, y: mid.y - 7, text: relation.label } : null
+    const selfLoop = relation.from === relation.to
+    const label = relation.label && (!sameColumn || selfLoop) ? { x: mid.x, y: mid.y - 7, text: relation.label } : null
 
     out.push({
       key: `${relation.from}-${relation.to}-${index}`,
@@ -176,7 +185,7 @@ const summary = computed(() =>
             :key="entity.id"
             :ref="(el) => setNodeRef(entity.id, el)"
             class="er-card"
-            :class="[cardState(entity.id), { 'is-new': entity.isNew }]"
+            :class="[cardState(entity.id), { 'is-new': entity.isNew, 'is-tentative': entity.tentative }]"
             tabindex="0"
             @mouseenter="active = entity.id"
             @mouseleave="active = null"
@@ -186,6 +195,7 @@ const summary = computed(() =>
             <header class="er-card__head">
               <span class="er-card__name">{{ entity.title }}</span>
               <span v-if="entity.isNew" class="er-card__new">新增</span>
+              <span v-if="entity.tentative" class="er-card__todo">待定</span>
             </header>
             <ul v-if="entity.columns.length" class="er-card__rows">
               <li v-for="column in entity.columns" :key="column.name" class="er-card__row">
@@ -208,6 +218,7 @@ const summary = computed(() =>
       <span class="er__legend-item"><span class="er-legend-line" /> 外键</span>
       <span class="er__legend-item"><span class="er-legend-line is-soft" /> 逻辑关联（无外键）</span>
       <span class="er__legend-item"><span class="er-legend-swatch" /> 本次新建的表</span>
+      <span class="er__legend-item"><span class="er-legend-swatch is-tentative" /> 方案里还没定的表</span>
       <span class="er__legend-item">悬停任意一张表，只看跟它有关的线</span>
     </p>
   </figure>
@@ -299,15 +310,17 @@ const summary = computed(() =>
 .er__cols {
   display: flex;
   align-items: flex-start;
-  gap: 72px;
+  gap: 44px;
   width: max-content;
 }
 
+/* 一栏 236px × 四栏 + 三个 44px 间距 = 1076px，正好落在 1100 的宽容器里。
+   再宽一点就要横向滚动了，所以这个数字跟 `.page-container--wide` 是绑的。 */
 .er__col {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  width: 268px;
+  width: 236px;
   flex: 0 0 auto;
 }
 
@@ -348,6 +361,10 @@ const summary = computed(() =>
   border-color: var(--v-theme-primary);
 }
 
+.er-card.is-tentative {
+  border-style: dashed;
+}
+
 .er-card.is-linked {
   border-color: var(--line-2);
 }
@@ -375,6 +392,14 @@ const summary = computed(() =>
   font-size: 10px;
   color: var(--ok-ink);
   background: var(--ok-wash);
+  border-radius: var(--radius-sm);
+}
+
+.er-card__todo {
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--fill-2);
   border-radius: var(--radius-sm);
 }
 
@@ -470,5 +495,9 @@ const summary = computed(() =>
   background: var(--fill);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-sm);
+}
+
+.er-legend-swatch.is-tentative {
+  border-style: dashed;
 }
 </style>

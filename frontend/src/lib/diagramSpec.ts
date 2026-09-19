@@ -27,6 +27,8 @@ export interface DiagramEntity {
   group?: string
   /** 新建的表还是仓库里已有的表 —— 图上要用不同的描边区分。 */
   isNew?: boolean
+  /** 方案稿里还没定的表。画成虚线框并写明没定什么，别藏起来假装想清楚了。 */
+  tentative?: boolean
   note?: string
   columns: DiagramColumn[]
 }

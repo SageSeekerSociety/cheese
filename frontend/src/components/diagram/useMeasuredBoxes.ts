@@ -32,7 +32,9 @@ export function useMeasuredBoxes(revision: () => unknown) {
       next[id] = { x: rect.left - base.left, y: rect.top - base.top, w: rect.width, h: rect.height }
     }
     boxes.value = next
-    size.value = { w: base.width, h: base.height }
+    // 取 scrollWidth 而不是可见宽度：图画得比容器宽时（表多了一栏就会），
+    // 按可见宽度画 SVG 会把右边的连线裁掉，而裁掉的地方看起来就像「本来就没关系」。
+    size.value = { w: Math.max(base.width, root.scrollWidth), h: Math.max(base.height, root.scrollHeight) }
   }
 
   /** 量尺寸会引起重排，重排又触发 ResizeObserver —— 用 rAF 合并成每帧一次。 */

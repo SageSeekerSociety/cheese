@@ -49,10 +49,37 @@ describe('feedbackEr 的引用完整', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('子表都通过外键挂在主表上', () => {
-    const children = feedbackEr.entities.filter((entity) => entity.group === '子表').map((e) => e.id)
-    const pointed = new Set(feedbackEr.relations.map((relation) => relation.from))
-    expect(children.filter((id) => !pointed.has(id))).toEqual([])
+  it('新建的表都连着至少一条关系 —— 画出来却谁也不连，读的人会以为漏画了', () => {
+    const wired = new Set(feedbackEr.relations.flatMap((relation) => [relation.from, relation.to]))
+    const lonely = feedbackEr.entities
+      .filter((entity) => entity.isNew)
+      .map((entity) => entity.id)
+      .filter((id) => !wired.has(id))
+    expect(lonely).toEqual([])
+  })
+
+  it('标了「待定」的表必须写清楚还没定什么，否则那个标记就是纯噪音', () => {
+    const vague = feedbackEr.entities
+      .filter((entity) => entity.tentative)
+      .filter((entity) => !entity.note || entity.note.length < 10)
+      .map((entity) => entity.id)
+    expect(vague).toEqual([])
+  })
+
+  it('待定的表不许混在「既有表」里 —— 那样分组在替它下结论', () => {
+    const wrong = feedbackEr.entities
+      .filter((entity) => entity.tentative)
+      .filter((entity) => entity.isNew !== true)
+      .map((entity) => entity.id)
+    expect(wrong).toEqual([])
+  })
+
+  it('自引用的两端是同一张表（评论的 parent_id 就是这么挂的）', () => {
+    const loops = feedbackEr.relations.filter((relation) => relation.from === relation.to)
+    expect(loops.length).toBeGreaterThan(0)
+    for (const loop of loops) {
+      expect(feedbackEr.entities.some((entity) => entity.id === loop.from)).toBe(true)
+    }
   })
 })
 
@@ -75,6 +102,18 @@ describe('feedbackArch 的引用完整', () => {
       .filter((node) => !node.kind)
       .map((node) => node.id)
     expect(missing).toEqual([])
+  })
+
+  it('每层不超过六个节点 —— 节点是 150px 定宽，第七个就把整层撑出容器了', () => {
+    const over = feedbackArch.lanes.filter((lane) => lane.nodes.length > 6).map((lane) => lane.id)
+    expect(over).toEqual([])
+  })
+
+  it('边上的文字都很短：它是画在曲线中点上的，长了会盖住旁边的线', () => {
+    const long = feedbackArch.edges
+      .filter((edge) => (edge.label?.length ?? 0) > 8)
+      .map((edge) => `${edge.from}→${edge.to}:${edge.label}`)
+    expect(long).toEqual([])
   })
 
   it('没有孤立节点：画在图上却谁也不连的盒子只会让人猜它是什么意思', () => {

@@ -138,10 +138,13 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
     <p v-if="dangling.length" class="arch__broken">图里有连线指向不存在的节点：{{ dangling.join('、') }}</p>
 
     <p class="arch__legend">
-      <span class="arch__legend-item"><span class="arch-rail is-entry" /> 统一上报入口</span>
-      <span class="arch__legend-item"><span class="arch-rail is-api" /> 服务端</span>
+      <span class="arch__legend-item"><span class="arch-rail is-harness" /> 提交端</span>
+      <span class="arch__legend-item"><span class="arch-rail is-tool" /> 上报契约</span>
+      <span class="arch__legend-item"><span class="arch-rail is-service" /> 服务端</span>
       <span class="arch__legend-item"><span class="arch-rail is-store" /> 存储</span>
-      <span class="arch__legend-item"><span class="arch-rail is-admin" /> 管理后台</span>
+      <span class="arch__legend-item"><span class="arch-rail is-queue" /> 投递</span>
+      <span class="arch__legend-item"><span class="arch-rail is-ui" /> 界面</span>
+      <span class="arch__legend-item"><span class="arch-rail is-note" /> 还没接上的口子</span>
       <span class="arch__legend-item">悬停任意节点，高亮它的上下游</span>
     </p>
   </figure>
@@ -171,6 +174,7 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
 
 .arch__canvas {
   position: relative;
+  overflow-x: auto;
   padding: 4px;
 }
 
@@ -223,10 +227,14 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
   fill: var(--v-theme-primary);
 }
 
+/* 跟 ER 图同一个理由：不换行，溢出就整块横向滚动。每一层必须留在同一行上，
+   层内一折行，同一条数据流的线就会横穿到别的层去。滚动放在画布上而不是每层
+   各自滚 —— 否则各层会滚到不同位置，竖着对不齐。 */
 .arch__lanes {
   display: flex;
   flex-direction: column;
-  gap: 34px;
+  gap: 28px;
+  width: max-content;
 }
 
 .arch__lane {
@@ -250,14 +258,18 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
   display: flex;
   align-items: flex-start;
   gap: 18px;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 
+/* 定宽 150px × 六个节点 + 五个 18px 间距 + 96px 的层名栏 = 1086，塞得进 1100
+   的宽容器。字进不去的就让它断词换行，别把盒子撑开 —— 盒子一宽，整层就要滚。 */
 .arch-node {
   display: flex;
   align-items: stretch;
   gap: 9px;
+  width: 150px;
+  flex: 0 0 auto;
   padding: 9px 12px 9px 0;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -288,11 +300,17 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
   border-radius: var(--radius-sm);
 }
 
-.arch-node__rail.is-entry {
+/* 只有上报契约那一层用琥珀 —— 一屏一个主色的规矩，图里也照办：琥珀色标的是
+   「所有入口最后都收敛到这里」。其余各层用中性色阶区分，不另开颜色。 */
+.arch-node__rail.is-harness {
+  background: var(--text);
+}
+
+.arch-node__rail.is-tool {
   background: var(--v-theme-primary);
 }
 
-.arch-node__rail.is-api {
+.arch-node__rail.is-service {
   background: var(--ok);
 }
 
@@ -300,8 +318,16 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
   background: var(--faint);
 }
 
-.arch-node__rail.is-admin {
+.arch-node__rail.is-queue {
   background: var(--muted);
+}
+
+.arch-node__rail.is-ui {
+  background: var(--line-2);
+}
+
+.arch-node__rail.is-note {
+  background: var(--fill-2);
 }
 
 .arch-node__body {
@@ -313,13 +339,16 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
 .arch-node__label {
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.4;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .arch-node__sub {
   font-size: 11px;
   line-height: 1.5;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .arch__broken {
@@ -356,11 +385,15 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
   border-radius: var(--radius-sm);
 }
 
-.arch-rail.is-entry {
+.arch-rail.is-harness {
+  background: var(--text);
+}
+
+.arch-rail.is-tool {
   background: var(--v-theme-primary);
 }
 
-.arch-rail.is-api {
+.arch-rail.is-service {
   background: var(--ok);
 }
 
@@ -368,7 +401,15 @@ const summary = computed(() => props.diagram.edges.map((edge) => `${edge.from} �
   background: var(--faint);
 }
 
-.arch-rail.is-admin {
+.arch-rail.is-queue {
   background: var(--muted);
+}
+
+.arch-rail.is-ui {
+  background: var(--line-2);
+}
+
+.arch-rail.is-note {
+  background: var(--fill-2);
 }
 </style>
