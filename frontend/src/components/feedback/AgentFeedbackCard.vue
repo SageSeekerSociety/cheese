@@ -109,26 +109,32 @@ function onSubmitted(id: string) {
           <div class="t-body">{{ finding.reason }}</div>
         </div>
 
-        <!-- 展开区：三段现场。默认收起，见上面那段注释。 -->
-        <div v-if="expanded" class="fb-agent-card__evidence mb-3">
-          <div class="fb-evidence-block">
-            <div class="t-eyebrow mb-1">发生了什么</div>
-            <div class="t-body">{{ finding.whatHappened }}</div>
+        <!-- 展开区：三段现场。默认收起，见上面那段注释。
+             高度用 v-expand-transition 过渡（仓库里另外三处也是这么做的）：直接跳
+             出来会让人以为自己点错了 —— 卡片底下凭空多出三行，而按钮上的字同时从
+             「查看详情」变成「收起详情」。它走的是 Vuetify 自己的那组 class，所以
+             style.css 里那条 prefers-reduced-motion 兜底照样管得住它。 -->
+        <v-expand-transition>
+          <div v-if="expanded" class="fb-agent-card__evidence mb-3">
+            <div class="fb-evidence-block">
+              <div class="t-eyebrow mb-1">发生了什么</div>
+              <div class="t-body">{{ finding.whatHappened }}</div>
+            </div>
+            <div class="fb-evidence-block">
+              <div class="t-eyebrow mb-1">复现步骤</div>
+              <pre class="fb-evidence-pre">{{ finding.repro }}</pre>
+            </div>
+            <div class="fb-evidence-block">
+              <div class="t-eyebrow mb-1">证据</div>
+              <div class="t-body">{{ finding.evidence }}</div>
+            </div>
+            <div v-if="finding.sessionId || finding.environment" class="t-meta">
+              <template v-if="finding.sessionId">会话 {{ finding.sessionId }}</template>
+              <template v-if="finding.sessionId && finding.environment"> · </template>
+              <template v-if="finding.environment">{{ finding.environment }}</template>
+            </div>
           </div>
-          <div class="fb-evidence-block">
-            <div class="t-eyebrow mb-1">复现步骤</div>
-            <pre class="fb-evidence-pre">{{ finding.repro }}</pre>
-          </div>
-          <div class="fb-evidence-block">
-            <div class="t-eyebrow mb-1">证据</div>
-            <div class="t-body">{{ finding.evidence }}</div>
-          </div>
-          <div v-if="finding.sessionId || finding.environment" class="t-meta">
-            <template v-if="finding.sessionId">会话 {{ finding.sessionId }}</template>
-            <template v-if="finding.sessionId && finding.environment"> · </template>
-            <template v-if="finding.environment">{{ finding.environment }}</template>
-          </div>
-        </div>
+        </v-expand-transition>
 
         <div class="d-flex align-center flex-wrap ga-2">
           <v-btn

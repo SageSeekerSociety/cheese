@@ -31,9 +31,11 @@ withDefaults(
      * - `site`   现场的一条动作（`PanelSite` 的 `.site-act`，8px 圆点 + 动作 + 参数）
      * - `brief`  一条活打开后的头（`PanelCard`：标题 + 一行元信息 + 简报那一段）
      * - `doc`    实况文档的正文（`DocEditor` 的 `.doc-prose`：小标题 + 几段 28.8px 的行）
+     * - `feedback` 反馈中心的一条（`FeedbackCard` 的 `.fb-card`：左边支持按钮 + 标题 + 两行摘要 + 元信息一行）
+     * - `comment`  反馈详情页的一条评论（`FeedbackCommentsFlat` 的 `.fb-say__item`：作者 + 时间 + 正文）
      * - `text`   一段正文
      */
-    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'brief' | 'doc' | 'text'
+    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'brief' | 'doc' | 'feedback' | 'comment' | 'text'
     /** 画几行。默认值按各自最常见的一屏给，调用点通常不用传。 */
     rows?: number
   }>(),
@@ -50,6 +52,8 @@ const DEFAULT_ROWS: Record<string, number> = {
   site: 5,
   brief: 1,
   doc: 3,
+  feedback: 6,
+  comment: 2,
   text: 3,
 }
 
@@ -164,6 +168,43 @@ function width(i: number): string {
       <div v-for="i in rows || DEFAULT_ROWS.doc" :key="i" class="skel__dsec" :style="{ '--skel-i': i }">
         <div class="skel__bone skel__bone--h2" :style="{ width: i % 2 ? '38%' : '30%' }" />
         <div v-for="j in i % 2 ? 3 : 2" :key="j" class="skel__bone skel__bone--p" :style="{ width: width(i + j) }" />
+      </div>
+    </template>
+
+    <!-- 反馈中心的一条：左边是支持（32px 的正圆按钮 + 计数），右边是标题 + 状态芯片、
+         两行摘要、元信息一行。它和 `card` 不是一回事：看板的卡没有左边那一列，也没有
+         两行摘要；共用一种形态就会有一边对不上。 -->
+    <template v-else-if="variant === 'feedback'">
+      <div v-for="i in rows || DEFAULT_ROWS.feedback" :key="i" class="skel__fb" :style="{ '--skel-i': i }">
+        <div class="skel__fb-vote">
+          <div class="skel__bone skel__bone--vote" />
+          <div class="skel__bone skel__bone--votecount" />
+        </div>
+        <div class="skel__fb-main">
+          <div class="skel__fb-titlerow">
+            <div class="skel__bone skel__bone--fbtitle" />
+            <div class="skel__bone skel__bone--fbchip" />
+          </div>
+          <div class="skel__bone skel__bone--fbsum" :style="{ width: width(i) }" />
+          <!-- 第二行：-webkit-line-clamp 的第二行本来就是半行，所以它固定短一截。 -->
+          <div class="skel__bone skel__bone--fbsum skel__bone--fbsum-last" />
+          <div class="skel__fb-meta">
+            <div class="skel__bone skel__bone--meta skel__bone--fbauthor" />
+            <div class="skel__bone skel__bone--fbtag" />
+            <div class="skel__bone skel__bone--fbtag" />
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 反馈详情页的一条评论：作者 + 相对时间那一行，加下面的正文。 -->
+    <template v-else-if="variant === 'comment'">
+      <div v-for="i in rows || DEFAULT_ROWS.comment" :key="i" class="skel__cmt" :style="{ '--skel-i': i }">
+        <div class="skel__cmt-head">
+          <div class="skel__bone skel__bone--cmtauthor" />
+          <div class="skel__bone skel__bone--meta skel__bone--cmttime" />
+        </div>
+        <div v-for="j in i % 2 ? 2 : 1" :key="j" class="skel__bone skel__bone--line" :style="{ width: width(i + j) }" />
       </div>
     </template>
 
@@ -521,6 +562,120 @@ function width(i: number): string {
 /* 一段的最后一行还要补上段落自己的 12px 下边距。 */
 .skel__dsec .skel__bone--p:last-child {
   margin-bottom: 21px;
+}
+
+/* FeedbackCard 的 .fb-card：padding 16px、gap 12px、1px 描边，外面那层 .fb-list
+   是 8px 的列间距；底色是 --surface（v-card 的默认），不是 --canvas。
+   圆角写 --radius-lg：真卡是 24px（VCard 的 rounded="xl" 默认值，FeedbackCard.vue
+   里有那段说明），而 24px 不在 stylelint 的白名单里，骨架也不该为了观感去动全仓的
+   v-card 默认值。圆角不参与布局，这一处对不上不会让内容挪位。 */
+.skel__fb {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.skel__fb-vote {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 2px;
+}
+/* 支持按钮：v-btn icon size=small —— 32px 的正圆（.v-btn--icon 是 border-radius 50%）。 */
+.skel__bone--vote {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+/* 它下面那一行计数：12px 等宽字，行盒 18px。 */
+.skel__bone--votecount {
+  width: 20px;
+  height: 10px;
+  margin: 4px 0;
+}
+.skel__fb-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+/* 标题那一行：15px × 1.4 = 21px 的行盒，右边跟一枚状态芯片（19px）。 */
+.skel__fb-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.skel__bone--fbtitle {
+  width: 46%;
+  height: 13px;
+  margin: 4px 0;
+}
+/* 状态芯片是胶囊（.fb-chip），高 19px。 */
+.skel__bone--fbchip {
+  width: 56px;
+  height: 19px;
+  flex: none;
+  border-radius: var(--radius-pill);
+}
+/* 摘要两行：13px × 1.6 = 20.8px 的行盒。第一行占满（真文字就是这样），第二行短一截。
+   合计 20.8 × 2 + 卡片自己那 8px 下边距 = 49.6px。 */
+.skel__bone--fbsum {
+  height: 12px;
+  margin: 4px 0 5px;
+}
+.skel__bone--fbsum-last {
+  width: 48%;
+  margin-bottom: 13px;
+}
+/* 元信息一行：作者 · 时间、评论数、来源或标签的芯片。 */
+.skel__fb-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.skel__bone--fbauthor {
+  width: 88px;
+}
+/* 中性 chip：--fill 底、6px 圆角、高 19px。 */
+.skel__bone--fbtag {
+  width: 48px;
+  height: 19px;
+  border-radius: var(--radius-sm);
+}
+
+/* 反馈详情页的一条评论。.fb-say 是 16px 的列间距；一条评论是「作者 13px（行盒
+   19.5px）+ 4px + 正文若干行」。 */
+.skel__cmt {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+}
+.skel__cmt:last-of-type {
+  margin-bottom: 0;
+}
+.skel__cmt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.skel__bone--cmtauthor {
+  width: 72px;
+  height: 11px;
+  margin: 4px 0 5px;
+}
+.skel__bone--cmttime {
+  width: 52px;
+}
+/* 评论的正文是 .t-body（14px × 1.62 ≈ 22.7px），比默认那根骨头多 1px 的行盒。 */
+.skel__cmt .skel__bone--line {
+  margin: 5px 0 6px;
 }
 
 /* 侧栏的 .topic-row：min-height 36px、margin-block 2px；标题从左边 40px 处起

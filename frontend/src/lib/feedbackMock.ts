@@ -35,6 +35,14 @@ export interface FeedbackComment {
   byAgent?: boolean
   body: string
   createdAt: string
+  /**
+   * 这条回复的是哪一条评论（顶层评论的 id）。没有它就是顶层。
+   *
+   * **只有两层**：回复的回复也指向那个顶层父级。这是原型里刻意留着的一条限制，
+   * 因为「要不要无限嵌套」是这一轮要评审的问题之一 —— 三种评论布局里只有一种
+   * 用得上它，另外两种按时间平铺，`parentId` 到了界面上就被丢掉了。
+   */
+  parentId?: string
 }
 
 export interface FeedbackTimelineEntry {
@@ -134,12 +142,18 @@ const HOUR = 3600 * 1000
 const ago = (hours: number) => new Date(Date.now() - hours * HOUR).toISOString()
 const daysAgo = (days: number) => ago(days * 24)
 
-const comment = (id: string, author: string, body: string, hours: number, byAgent = false): FeedbackComment => ({
+const comment = (
+  id: string,
+  author: string,
+  body: string,
+  hours: number,
+  extra: { byAgent?: boolean; parentId?: string } = {}
+): FeedbackComment => ({
   id,
   author,
   body,
   createdAt: ago(hours),
-  byAgent,
+  ...extra,
 })
 
 export function seedFeedback(): FeedbackItem[] {
@@ -161,7 +175,11 @@ export function seedFeedback(): FeedbackItem[] {
       tags: ['附件', '鉴权'],
       comments: [
         comment('c1', 'n1ctheboy', '复现了，同一张图放进文档面板就能看。', 120),
-        comment('c2', '芝士', '已定位到鉴权方式：`<img>` 发不出自定义头，详情见下。', 118, true),
+        comment('c2', '芝士', '已定位到鉴权方式：`<img>` 发不出自定义头，详情见下。', 118, { byAgent: true }),
+        // 这两条是**回复**（parentId 指向 c2），专门留给「楼中楼」那一版布局看的：
+        // 回复的回复也挂在 c2 底下，不往第三层缩进。
+        comment('c4', 'andylizf', '那详情页里的附件预览是怎么拿到图的？走的是另一个域名吗。', 116, { parentId: 'c2' }),
+        comment('c5', '芝士', '同一个接口，但它读的是 blob 而不是 `<img src>`。', 115, { parentId: 'c2' }),
         comment('c3', 'andylizf', '已排进本迭代。', 30),
       ],
       problem:
@@ -191,7 +209,7 @@ export function seedFeedback(): FeedbackItem[] {
       views: 305,
       tags: ['预览', '兼容性'],
       comments: [
-        comment('c1', '芝士', '根因是浏览器太老：pdf.js 用了一个 2025 年 9 月才有的新方法。', 200, true),
+        comment('c1', '芝士', '根因是浏览器太老：pdf.js 用了一个 2025 年 9 月才有的新方法。', 200, { byAgent: true }),
         comment('c2', 'maxiaoyu', '换成最新版 Chrome 就正常了，确认。', 190),
       ],
       problem: '点开面板里的 PDF 只有一屏「无法显示这个文档」，没有任何细节可看。',
@@ -220,7 +238,7 @@ export function seedFeedback(): FeedbackItem[] {
       supportedByMe: false,
       views: 156,
       tags: ['体验'],
-      comments: [comment('c1', '芝士', '同意——上下文正是最值钱的那部分，重打一遍就没了。', 20, true)],
+      comments: [comment('c1', '芝士', '同意——上下文正是最值钱的那部分，重打一遍就没了。', 20, { byAgent: true })],
       problem: '发现是平台的问题之后，要另外打开反馈中心，把刚才聊过的内容重新描述一遍。',
       why: '问题是在对话里发现的，现场也在对话里。换一个页面重新打字，等于让人把最有价值的上下文（复现步骤、会话链接）丢掉。',
       expectation: '对话里能直接提交，自动带上问题摘要和会话链接。',
@@ -325,7 +343,7 @@ export function seedFeedback(): FeedbackItem[] {
         { status: 'resolved', at: daysAgo(14), by: 'wangchangxin' },
       ],
     },
-    /* ---- 私密反馈：只有管理员那侧看得到 ---- */
+    /* ---- 别人提的私密反馈：我看不见，只有他本人和管理员看得见 ---- */
     {
       id: 'FB-1055',
       title: '我的会话记录里出现了别人的文件名',
@@ -354,6 +372,35 @@ export function seedFeedback(): FeedbackItem[] {
       logs: '[12:04:11] docs.recent.load project=p_8812 items=6\n[12:04:11]   item[4] path=users/maxiaoyu/notes.md',
       internalNote: '先按「缓存串了」查，确认不是越权再回。暂时不回复用户。',
       assignee: 'n1ctheboy',
+    },
+    /* ---- 我自己提的私密反馈：对**别人**不存在，对我照常显示 ---- */
+    {
+      id: 'FB-1061',
+      title: '希望个人主页能隐藏我加入的项目',
+      summary: '第三方拿到这个链接，就能看到我参与过哪些项目。',
+      kind: 'suggestion',
+      status: 'triaging',
+      visibility: 'private',
+      source: 'user',
+      priority: 'normal',
+      // 作者写死成「我」是**故意的**：它就是「当前用户自己提的那一条」，好让预览里
+      // 一打开就看得见「私密反馈对提交者本人可见」长什么样（中心页列表里带锁的那张
+      // 卡）。真接后端时这里由 author_id 决定，跟名字无关。
+      author: '我',
+      createdAt: ago(28),
+      supports: 0,
+      supportedByMe: false,
+      views: 4,
+      tags: ['隐私', '个人主页'],
+      comments: [],
+      problem: '个人主页对任何拿到链接的人可见，上面列着我加入过的全部项目。有几个项目我不想让人一眼看到。',
+      why: '分享主页本来只是想让人看到我写的东西，不是把我在哪些项目里出现过一起交出去。',
+      expectation: '能在设置里挑几个项目不显示；默认保持现在的样子。',
+      // 私密反馈**没有** timeline 以外的东西：它不进公开列表，也不参与「热门」排序。
+      timeline: [
+        { status: 'received', at: ago(28), by: '我' },
+        { status: 'triaging', at: ago(20), by: 'andylizf' },
+      ],
     },
     {
       id: 'FB-1053',

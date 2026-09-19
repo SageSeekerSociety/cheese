@@ -13,6 +13,10 @@
  * user/admin 两套界面」。所以它就是一个能切的开关，**不是**一道权限门 —— 它决定
  * 界面显示什么，不决定数据能不能读到。真到了接后端那一步，这个字段就该被删掉，
  * 权限判断回到服务端。
+ *
+ * 「私密反馈谁能看」这一条刻意**不**走那个开关，见下面的 me / visibles：私密不等于
+ * 「只有管理员」，提交者本人也看得见自己提的东西。原型阶段它在客户端算，接后端之后
+ * 它是服务端 WHERE 子句里的一项 —— 前端这层要整个删掉，而不是留着当第二道门。
  */
 
 import type {
@@ -27,6 +31,16 @@ import type {
 import { defineStore } from 'pinia'
 
 import { seedFeedback } from '@/lib/feedbackMock'
+import { myHandle } from '@/me'
+
+/**
+ * 原型专用的假延迟，单位毫秒。
+ *
+ * 它存在的唯一理由是让骨架屏在预览里看得见 —— 数据本来就在内存里，不拖一下的话
+ * 骨架只会闪一帧，评审根本看不见自己要看的东西。**接真接口时这个常量连同它下面
+ * 那个 setTimeout 一起去掉**，那时 loading 由请求本身决定。
+ */
+const LOAD_DEMO_MS = 420
 
 /** 角色存 localStorage：预览时在两个页面之间跳，来回切换会烦人。 */
 const ROLE_KEY = 'cheese.feedback.mockRole'
@@ -85,6 +99,12 @@ export type AdminTab = 'public' | 'private' | 'agent' | 'security'
 export const useFeedbackStore = defineStore('feedback', {
   state: () => ({
     items: seedFeedback(),
+    /**
+     * 是否正在加载。**不分页面**：中心页和详情页不会同时挂着（路由是替换，不是叠加），
+     * 而「数据在不在路上」本来就是一份数据的事。真接口来了这里会拆成按资源的若干份，
+     * 那时列表和详情各等各的。
+     */
+    loading: false,
     role: readRole(),
     query: '',
     tab: 'all' as FeedbackTab,
@@ -97,10 +117,33 @@ export const useFeedbackStore = defineStore('feedback', {
   }),
 
   getters: {
-    /** 公开列表：私密反馈对普通用户**根本不存在**，所以它们在列表层就被滤掉了，
-     *  不是靠界面不画。 */
-    publicItems(state): FeedbackItem[] {
-      return state.items.filter((item) => item.visibility === 'public')
+    /**
+     * 当前用户是谁 —— 「我能不能看到这条私密反馈」的**唯一**判据。
+     *
+     * 取真身的登录身份；原型里没登录（预览就是这种情况）时退化成「我」，本地提交的
+     * 那条正好用同一个值，于是「提完能看见」这条路径在预览里是走得通的。
+     */
+    me(): string {
+      return myHandle() || '我'
+    },
+    /** 这条是不是我提的。判断私密可见性时用它，不要各组件各写一遍 author 比较。 */
+    isMine() {
+      return (item: FeedbackItem): boolean => item.author === this.me
+    },
+    /**
+     * 我**能看见**的反馈：公开的 ∪ 我自己提交的（含私密）。
+     *
+     * 私密不等于「只有管理员能看见」：提交者本人必须看得见自己提的东西，否则他提完
+     * 就再也找不到那一条，也没法回来补充说明——而那正是私密反馈最常见的用法。
+     * 对应的后端查询就是 `WHERE visibility = 'public' OR author_id = :me`。
+     *
+     * 这一条**每次实时算**，不烘进数据也不缓存结果：它是**读的时候**才成立的事实，
+     * 一旦存下来，管理员改了可见性、或者换了登录身份，那份缓存立刻就在说谎。将来接
+     * 后端时它是 WHERE 子句里的一项，前端这层整个删掉。
+     */
+    visibles(state): FeedbackItem[] {
+      const me = this.me
+      return state.items.filter((item) => item.visibility === 'public' || item.author === me)
     },
     byId:
       (state) =>
@@ -116,7 +159,7 @@ export const useFeedbackStore = defineStore('feedback', {
     },
     /** 中心页主区域：Tab + 搜索。 */
     visibleItems(state): FeedbackItem[] {
-      const base: FeedbackItem[] = this.publicItems.filter((item) => matches(item, state.query))
+      const base: FeedbackItem[] = this.visibles.filter((item) => matches(item, state.query))
       if (state.tab === 'hot') {
         // 「热门」= 被支持下过阈值，按支持数排。不按浏览量：浏览是路过，支持是表态。
         return base.filter((i) => i.supports >= 5).sort((a, b) => b.supports - a.supports)
@@ -125,14 +168,17 @@ export const useFeedbackStore = defineStore('feedback', {
         return base.filter((i) => ['triaging', 'planned', 'in_progress'].includes(i.status))
       }
       if (state.tab === 'resolved') return base.filter((i) => i.status === 'resolved')
-      return base
+      // 「全部」里已解决的**沉底，不是滤掉**：它们仍然要搜得到——「这个 bug 到底修了
+      // 没有」是这里最常发生的一次查找，直接滤掉等于让人以为它不存在。但它们也不该
+      // 占着列表最上面那几屏，所以往后放。Array#sort 是稳定的，同类之间保持原顺序。
+      return [...base].sort((a, b) => Number(a.status === 'resolved') - Number(b.status === 'resolved'))
     },
     /** 详情页右侧的「相关反馈」：先按标签重合度，再按支持数。 */
     related() {
       return (id: string): FeedbackItem[] => {
         const self = this.items.find((i) => i.id === id)
         if (!self) return []
-        return this.publicItems
+        return this.visibles
           .filter((i) => i.id !== id)
           .map((i) => ({ item: i, score: i.tags.filter((tag) => self.tags.includes(tag)).length }))
           .filter((entry) => entry.score > 0)
@@ -142,7 +188,7 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
     tabCounts(state) {
-      const base: FeedbackItem[] = this.publicItems.filter((item) => matches(item, state.query))
+      const base: FeedbackItem[] = this.visibles.filter((item) => matches(item, state.query))
       return {
         all: base.length,
         hot: base.filter((i) => i.supports >= 5).length,
@@ -170,30 +216,59 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
 
+    /* ---- 加载 ---- */
+
+    /**
+     * 页面挂载时调一次，用来把「数据还没到」这段时间显式地走一遍（页面据此画骨架）。
+     *
+     * 每一次都重新走，**不做「已经加载过就跳过」的缓存**：这一轮要评审的正是骨架到
+     * 内容的过渡，缓存会让它只在第一次出现。真接口接上之后要不要缓存是另一个决定，
+     * 那时这里就是一句 `await fetchList()`。
+     */
+    async load(): Promise<void> {
+      this.loading = true
+      await new Promise((resolve) => setTimeout(resolve, LOAD_DEMO_MS))
+      this.loading = false
+    },
+
     /* ---- 中心页 ---- */
 
     /**
      * 支持 / 取消支持。**每条每条只算一次**：靠 supportedByMe 记，不是靠加两次
      * 数字再减 —— 那样刷新一次就会多一次。
+     *
+     * 私密反馈**不能支持**：支持是一个公开表态（它决定「热门」怎么排、管理员先看
+     * 哪条），而私密反馈本来就不该让任何人知道它存在。门口这里也拦一道，不只在
+     * 界面上不画按钮 —— 按钮是容易漏的，数据层是判据。
      */
     toggleSupport(id: string) {
       const item = this.byId(id)
-      if (!item) return
+      if (!item || item.visibility === 'private') return
       // → 将来在这里发请求
       item.supportedByMe = !item.supportedByMe
       item.supports += item.supportedByMe ? 1 : -1
     },
 
-    addComment(id: string, author: string, body: string) {
+    /**
+     * 发一条评论。`parentId` 有值就是回复。
+     *
+     * **只有两层，规则收在这里**：回复一条回复时，挂到那条回复所属的顶层评论上，
+     * 而不是把它自己当父级 —— 三个评论布局里只有一个在乎层级，把这条规则写在数据层
+     * 就不会出现「甲平铺、丙嵌套、两边的父子关系还不一样」。
+     */
+    addComment(id: string, author: string, body: string, parentId?: string) {
       const item = this.byId(id)
       const text = body.trim()
       if (!item || !text) return
       // → 将来在这里发请求
+      const parent = parentId ? item.comments.find((c) => c.id === parentId) : undefined
+      const topId = parent?.parentId ?? parent?.id
       const next: FeedbackComment = {
         id: `local-${Date.now()}`,
         author,
         body: text,
         createdAt: new Date().toISOString(),
+        ...(topId ? { parentId: topId } : {}),
       }
       item.comments.push(next)
     },
@@ -241,7 +316,9 @@ export const useFeedbackStore = defineStore('feedback', {
         // Agent 带过来的那条，来源就该是 Agent —— 人只是点了「提交」。
         source: draft.fromAgent ? 'agent' : 'user',
         priority: 'normal',
-        author: '我',
+        // 用**真身**（没登录时才是「我」）：作者字段是可见性判断的输入，
+        // 写死成「我」的话，登录之后自己提的私密反馈会立刻从列表里消失。
+        author: this.me,
         createdAt: now,
         supports: 0,
         supportedByMe: false,

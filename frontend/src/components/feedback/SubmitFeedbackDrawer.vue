@@ -146,7 +146,7 @@ function submit() {
         <v-checkbox v-model="store.draft.attachLogs" label="附带当前会话的日志与环境信息" hide-details class="mb-2" />
 
         <v-alert v-if="showRiskHint" type="warning" density="compact" variant="tonal" class="mb-4">
-          附件和日志里可能包含你的代码、文件路径或对话内容。选「私密」时只有管理员能看到它们。
+          附件和日志里可能包含你的代码、文件路径或对话内容。选「私密」时只有你和平台管理员能看到它们。
         </v-alert>
 
         <div class="t-eyebrow mb-2">可见范围</div>
@@ -163,7 +163,7 @@ function submit() {
             <template #label>
               <div>
                 <div class="fb-radio__title">私密</div>
-                <div class="fb-radio__hint">仅管理员可见</div>
+                <div class="fb-radio__hint">只有你和管理员可见，不进公开列表、不能被支持</div>
               </div>
             </template>
           </v-radio>

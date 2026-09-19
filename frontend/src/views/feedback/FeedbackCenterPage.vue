@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { FeedbackTab } from '@/stores/feedback'
 
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import SubmitFeedbackDrawer from '@/components/feedback/SubmitFeedbackDrawer.vue'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -29,6 +30,13 @@ const TABS: { value: FeedbackTab; label: string }[] = [
 ]
 
 const tabs = computed(() => TABS.map((tab) => ({ ...tab, count: store.tabCounts[tab.value] })))
+
+// 挂载时走一遍加载。**Tab 上的计数不跟着骨架走**：它和列表读的是同一份数据，
+// 而这里只有一份「在不在路上」的状态；真接口来了，两个计数会一起到，那时把它们
+// 一起换成骨架才是对的。现在把它们清空反而会在挑 Tab 的那一行造成一次宽度跳动。
+onMounted(() => {
+  void store.load()
+})
 
 const showSubmitted = ref(false)
 function onSubmitted(id: string) {
@@ -95,7 +103,12 @@ function clearFilters() {
         </v-tab>
       </v-tabs>
 
-      <div class="fb-list">
+      <!-- 骨架**不放进 .fb-list**：那一层是 gap 8 的 flex 列，而骨架的行自带 8px
+           下边距（它得能单独用在任何地方），两处一叠就是 16px，到货那一刻列表会
+           往上收一截 —— 骨架存在的意义正是不让这件事发生。 -->
+      <LoadingSkeleton v-if="store.loading" variant="feedback" :rows="6" />
+
+      <div v-else class="fb-list">
         <FeedbackCard
           v-for="item in store.visibleItems"
           :key="item.id"
@@ -109,7 +122,11 @@ function clearFilters() {
         </div>
       </div>
 
-      <p class="t-meta fb-foot">公开反馈所有人可见；提交时选「私密」的只有管理员能看到</p>
+      <!-- 页脚在加载时先不画：它是「读完了、下面是空的」这句话的一部分，
+           跟着骨架一起出现等于提前说了还没到的话。 -->
+      <p v-if="!store.loading" class="t-meta fb-foot">
+        公开反馈所有人可见；提交时选「私密」的只有你和管理员能看到，别人搜不到、也拿不到链接
+      </p>
     </div>
 
     <SubmitFeedbackDrawer @submitted="onSubmitted" />
