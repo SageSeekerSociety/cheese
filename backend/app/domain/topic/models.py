@@ -165,6 +165,11 @@ class RoomCleanup(UuidPk, Timestamps, Base):
     state: Mapped[str] = mapped_column(String(16), default="pending")
     resources: Mapped[list] = mapped_column(JSON, default=list)
     last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Which sweep is working on this cleanup, until when (see retire.py).
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lease_holder: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class RawTranscript(UuidPk, Timestamps, Base):
