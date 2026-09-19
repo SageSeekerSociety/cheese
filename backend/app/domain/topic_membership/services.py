@@ -17,9 +17,11 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     TOPIC_AGENT_PREFIX,
+    agent_instance_handle,
     looks_like_agent_handle,
     topic_agent_handle,
 )
+from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -357,6 +359,11 @@ class TopicMemberService:
         "who am I", and answering with the shared account would put the collapsed
         identity back into the audit trail.
 
+        Several agents seated: the project's default answers for the room when
+        it is one of them — the room-scoped credentials and the room's own
+        pass (memory dream, git identity) all mean the same one — else the
+        first on the roster.
+
         Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
         the room's (threads do not have one), but the fallback has to stay the
         thread's own, because that is the handle its sandbox was started with.
@@ -364,7 +371,20 @@ class TopicMemberService:
         writes, another on the token it writes them with.
         """
         handles = await self.agent_handles(room_id or topic_id)
-        return handles[0] if handles else topic_agent_handle(topic_id)
+        if not handles:
+            return topic_agent_handle(topic_id)
+        if len(handles) > 1:
+            topic = await self._topics.get(room_id or topic_id)
+            project = (
+                await ProjectRepository(self._session).get(topic.project_id)
+                if topic is not None
+                else None
+            )
+            if project is not None and project.default_agent_instance_id is not None:
+                own = agent_instance_handle(project.default_agent_instance_id)
+                if own in handles:
+                    return own
+        return handles[0]
 
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str

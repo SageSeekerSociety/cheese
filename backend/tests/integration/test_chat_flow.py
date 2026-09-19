@@ -1,12 +1,14 @@
 """End-to-end Phase 0 flow over HTTP + WebSocket (with the stub agent)."""
 
 import asyncio
-import uuid
 
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.memory.models import MemoryLayer, MemoryScope
 from app.domain.memory.store import DbMemoryStore
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
@@ -86,7 +88,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     ]
 
     ack = next(f for f in frames if f["type"] == "reaction")
-    agent = topic_agent_handle(uuid.UUID(topic_id))
+    agent = room_agent_seat(client, topic_id)
     assert ack["reactions"] == [{"emoji": "👀", "count": 1, "authors": [agent]}]
 
     assistant = next(f for f in frames if f["type"] == "event_block")["block"]

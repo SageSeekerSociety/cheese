@@ -11,9 +11,8 @@
 """
 
 import asyncio
-import uuid
 
-from app.domain.identity.handles import topic_agent_handle
+from tests.integration.conftest import room_agent_seat
 
 OWNER = "owner-1"
 
@@ -292,7 +291,7 @@ def test_a_topic_derived_agent_handle_is_not_invited(client, bearer):
         "/topics",
         json={"project_id": project_id, "title": "T", "created_by": OWNER},
     ).json()["data"]["id"]
-    handle = topic_agent_handle(uuid.UUID(topic_id))
+    handle = room_agent_seat(client, topic_id)
 
     r = _invite(client, bearer, project_id, handle)
     assert r.status_code == 422

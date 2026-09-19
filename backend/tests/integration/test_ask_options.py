@@ -1,10 +1,7 @@
 """cheese ask: option questions in the chat, one-click structured answers."""
 
-import uuid
-
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import topic_agent_handle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, room_agent_seat
 
 
 def _topic(client) -> str:
@@ -29,7 +26,7 @@ def test_ask_creates_option_message(client):
     tid = _topic(client)
     blk = _ask(client, tid)
     # Authored by THIS topic's 分身, not the shared platform ``cheese`` account.
-    assert blk["author"] == topic_agent_handle(uuid.UUID(tid))
+    assert blk["author"] == room_agent_seat(client, tid)
     assert blk["kind"] == "message"
     assert blk["meta"]["options"] == ["cursor", "pageStart"]
     # It shows in the timeline like any message.

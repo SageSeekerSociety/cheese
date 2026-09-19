@@ -338,7 +338,7 @@ async def test_release_acknowledgement_requires_connection(
     commands = []
 
     class Control:
-        async def current(self, topic):
+        async def current(self, topic, agent_handle=None):
             return {"id": "session", "status": "active"}
 
         async def enqueue(self, sid, payload, actor):

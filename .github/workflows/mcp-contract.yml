@@ -32,7 +32,11 @@ jobs:
   pinned:
     # The build the rooms actually run. Breaking this breaks every room.
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 10
+    # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
+    # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for
+    # the tests alone is spent before they run, and a job killed by its own
+    # timeout reports as cancelled with no failure to read.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -62,7 +66,11 @@ jobs:
     # a reason to hold up somebody's merge.
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 10
+    # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
+    # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for
+    # the tests alone is spent before they run, and a job killed by its own
+    # timeout reports as cancelled with no failure to read.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

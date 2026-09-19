@@ -66,7 +66,7 @@ def main():
         connections = []
 
         class Control:
-            async def current(self, topic_id):
+            async def current(self, topic_id, agent_handle=None):
                 return {"id": fixture.sid, "status": "active"}
 
             async def enqueue(self, sid, frame, actor):

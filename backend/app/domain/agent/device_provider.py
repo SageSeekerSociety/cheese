@@ -1011,7 +1011,7 @@ class DeviceChannel(Channel):
         from app.domain.agent.remote_control import store
 
         control = store()
-        session = await control.current(str(screen.topic_id))
+        session = await control.current(str(screen.topic_id), screen.agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
@@ -1104,7 +1104,9 @@ class DeviceChannel(Channel):
                 raise ScreenSetupError("Released native MCP did not connect")
             await asyncio.sleep(0.1)
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         """Put this room's platform tools back, and say whether they were gone.
 
         A turn that publishes nothing is the symptom: 芝士 answered in its
@@ -1120,7 +1122,22 @@ class DeviceChannel(Channel):
         """
         from app.domain.agent.remote_control import store
 
-        session = await store().current(str(topic_id))
+        if agent_handle is None:
+            # Whose tools: the agent that answers for this room — the same one
+            # a room-scoped credential acts as. Asked here rather than of the
+            # caller, which reaches this after a turn has already ended.
+            factory = self._session_factory
+            if factory is None:
+                from app.core.db import async_session_factory
+
+                factory = async_session_factory
+            async with factory() as db:
+                from app.domain.topic_membership.services import TopicMemberService
+
+                agent_handle = await TopicMemberService(db).resolve_agent_handle(
+                    topic_id
+                )
+        session = await store().current(str(topic_id), agent_handle)
         if not session or session["status"] != "active":
             return False
         request = self._native_control(session)

@@ -44,7 +44,6 @@ from app.domain.memory.models import (
     MemoryEntry,
     MemoryLayer,
     MemoryScope,
-    agent_project_scope_id,
 )
 
 # Merging across layers keeps the HIGHEST one: a fact that was injected
@@ -236,15 +235,21 @@ async def dream_pools(
     legacy shared pool. Organizing anything it does not read would be organizing
     memory it cannot check.
     """
+    from app.domain.agent_instance.services import AgentInstanceService, memory_pool
+    from app.domain.project.services import ProjectService
     from app.domain.topic.services import TopicService
     from app.domain.topic_membership.services import TopicMemberService
 
     topic = await TopicService(session).get_or_404(topic_id)
-    handle = await TopicMemberService(session).resolve_agent_handle(topic.id)
-    own = (
-        MemoryScope.agent_project,
-        agent_project_scope_id(topic.project_id, handle),
+    project = await ProjectService(session).get_or_404(topic.project_id)
+    # The seat answers "who"; the pool is the agent's, keyed the way its
+    # turns key it (#1200) — a seat-keyed pool is one nothing ever wrote to.
+    agents = AgentInstanceService(session)
+    seat = await TopicMemberService(session).resolve_agent_handle(topic.id)
+    agent = await agents.for_seat_handle(project, seat) or await agents.for_topic(
+        topic, project
     )
+    own = memory_pool(topic.project_id, agent)
     shared = (MemoryScope.project, str(topic.project_id))
     return topic.project_id, own, {own, shared}
 

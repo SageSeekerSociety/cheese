@@ -2216,7 +2216,7 @@ class _Control:
         self._session = {"id": "sess", "status": session_status}
         self.asked: list[str] = []
 
-    async def current(self, _topic_id):
+    async def current(self, _topic_id, _agent_handle=None):
         return self._session
 
     async def enqueue(self, _session_id, payload, _source):
