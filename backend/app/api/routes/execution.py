@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -15,10 +16,11 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     GatewayTimeoutError,
+    NotFoundError,
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import execution
-from app.domain.topic.services import TopicService
+from app.domain.topic.models import Topic
 
 router = APIRouter(tags=["execution"])
 logger = logging.getLogger(__name__)
@@ -48,15 +50,25 @@ async def execute(
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
     if not claims or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
-    place = await TopicService(db).place_or_404(topic_id)
-    if claims.get("p") != str(place.project_id):
+    # The connection owner survives app releases. Loading the full Topic model
+    # makes an unrelated column removal break every tool call on the old owner.
+    room = (
+        await db.execute(
+            select(
+                Topic.id, Topic.project_id, Topic.resource_id, Topic.session_placement
+            ).where(Topic.id == topic_id)
+        )
+    ).one_or_none()
+    if room is None:
+        raise NotFoundError("Topic not found")
+    if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
-    placement = place.room.session_placement
+    placement = room.session_placement
     if (
         not placement
         or claims.get("r") != str(resource_id)
         or placement["resource_id"] != str(resource_id)
-        or (place.room.resource_id or place.room.id) != resource_id
+        or (room.resource_id or room.id) != resource_id
         or placement["execution"].get("kind") != "device"
     ):
         raise ConflictError("Execution generation is no longer current")
