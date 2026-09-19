@@ -68,7 +68,7 @@ class RoomExecutor:
                 }
             )
         )
-        pin = self.owner / ".cheese/claude/versions/2.1.265"
+        pin = self.owner / ".cheese/claude/versions/2.1.277"
         pin.parent.mkdir(parents=True)
         pin.symlink_to(Path(claude).resolve())
         env = {

@@ -172,9 +172,10 @@ class _HookWorkState:
     private_owner: str | None
     acting_agent: str
     # Attribution and memory part ways here, deliberately: `acting_agent` is
-    # this room's 分身 (who did it), while the pool belongs to the agent working
-    # the room (whose memory it is). Resolved at turn start and carried, because
-    # the hook path reaches turn end with no session left open to ask.
+    # the seat of the agent that ran this turn (who did it), while the pool
+    # belongs to that agent across rooms (whose memory it is). Resolved at turn
+    # start and carried, because the hook path reaches turn end with no session
+    # left open to ask.
     agent_pool: tuple[MemoryScope, str] | None
     user_text: str
     started_at: datetime
@@ -1151,7 +1152,9 @@ class ChatService:
         # 和「有人在等、会话却不读了」（`oldest_unread_at`）——把一轮新对话塞进
         # 去，冷启动那一分多钟就会读成「会话不读了」，而那时根本还没有会话。这一
         # 份只管屏幕上那个记号落在哪条消息上，落完就没了。
-        self._awaiting_seen: dict[uuid.UUID, list[tuple[str, list[uuid.UUID]]]] = {}
+        self._awaiting_seen: dict[
+            uuid.UUID, list[tuple[str, list[uuid.UUID], str | None]]
+        ] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1466,7 +1469,12 @@ class ChatService:
         # 同一个回执，两件事：把消息标记成被消费（上面那段说的重放边界），以及在
         # 它身上落下 👀。人说的话才有记号——平台自己塞进去的通知走的是同一条登记，
         # 但它不是谁发的消息，不该被 ack。
-        self.arm_seen_receipt(topic_id, line, list(user_block_ids))
+        self.arm_seen_receipt(
+            topic_id,
+            line,
+            list(user_block_ids),
+            by=state.acting_agent if state else None,
+        )
         entry = (
             line,
             list(user_block_ids),
@@ -1476,17 +1484,22 @@ class ChatService:
         pending.append(entry)
         del pending[:-16]  # a dead session must not grow this forever
         try:
+            # Read the room's status, then deliver with no transaction open: a
+            # row lock held across the device call queues every writer of the
+            # room behind it with a pool connection each (dev outage of
+            # 2026-09-18), and it never held archival off anyway — the archive
+            # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
-                room = await TopicRepository(session).lock(topic_id)
-                if room is None or room.status == TopicStatus.archived:
-                    delivered = False
-                else:
-                    delivered = (
-                        await self._compute.deliver(topic_id, line, images=images)
-                        if images
-                        else await self._compute.deliver(topic_id, line)
-                    )
-                await session.commit()
+                room = await TopicRepository(session).get(topic_id)
+                archived = room is None or room.status == TopicStatus.archived
+            if archived:
+                delivered = False
+            else:
+                delivered = (
+                    await self._compute.deliver(topic_id, line, images=images)
+                    if images
+                    else await self._compute.deliver(topic_id, line)
+                )
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
@@ -2308,7 +2321,8 @@ class ChatService:
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
-                author=event.agent_handle,
+                author=event.agent_handle
+                or (state.acting_agent if state is not None else None),
                 task_id=task_id,
             )
             if payload is not None:
@@ -2441,6 +2455,8 @@ class ChatService:
                     reply_to=state.reply_to if state is not None else None,
                     roster=state.roster if state is not None else None,
                     topic_refs=state.topic_refs if state is not None else [],
+                    author=event.agent_handle
+                    or (state.acting_agent if state is not None else None),
                     eid=eid,
                     platform_unsolicited=platform_unsolicited,
                     continuation_id=(
@@ -2862,9 +2878,15 @@ class ChatService:
     _SEEN_RECEIPT_BACKLOG = 8
 
     def arm_seen_receipt(
-        self, topic_id: uuid.UUID, text: str, block_ids: list[uuid.UUID]
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        block_ids: list[uuid.UUID],
+        by: str | None = None,
     ) -> None:
-        """Say which blocks get 芝士's 👀 when the session says it took ``text``.
+        """Say which blocks get 芝士's 👀 when the session says it took ``text``,
+        and whose 👀 it is — ``by`` is the agent running the turn; None means
+        the room's seat.
 
         Called BEFORE the write, for the same reason the consumed-stamp entry is:
         the receipt can come back before the caller gets its next line in.
@@ -2872,7 +2894,7 @@ class ChatService:
         if not text or not block_ids:
             return
         waiting = self._awaiting_seen.setdefault(topic_id, [])
-        waiting.append((text, list(block_ids)))
+        waiting.append((text, list(block_ids), by))
         # A receipt that never comes (the session died before reading, a harness
         # that does not report one) leaves its entry behind, and this process
         # runs for weeks. The mark is worth nothing once the next messages have
@@ -2891,7 +2913,7 @@ class ChatService:
         if not waiting:
             return
         for entry in list(waiting):
-            text, block_ids = entry
+            text, block_ids, by = entry
             if prompt != text and not (text and prompt.startswith(text)):
                 continue
             waiting.remove(entry)
@@ -2900,7 +2922,7 @@ class ChatService:
             from app.domain.agent.runtime import get_broker
 
             for block_id in block_ids:
-                ack = await self.ack_summon(block_id, topic_id)
+                ack = await self.ack_summon(block_id, topic_id, by=by)
                 if ack is None:
                     continue
                 # 这条不是从 converse 的那个生成器里出去的——回执是会话过一阵子
@@ -2910,16 +2932,19 @@ class ChatService:
             return
 
     async def ack_summon(
-        self, user_block_id: uuid.UUID, topic_id: uuid.UUID
+        self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
     ) -> dict | None:
-        """Add 芝士's 👀 receipt to the summoning user message (idempotent) and
-        return the WS reaction payload. Best-effort: a failed receipt must
-        never kill the turn."""
+        """Add the 👀 receipt of the agent running the turn (``by``, else the
+        room's seat) to the summoning user message (idempotent) and return the
+        WS reaction payload. Best-effort: a failed receipt must never kill the
+        turn."""
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
                 await blocks.add_reaction_if_absent(
-                    user_block_id, "👀", await self._agent_handle(session, topic_id)
+                    user_block_id,
+                    "👀",
+                    by or await self._agent_handle(session, topic_id),
                 )
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
@@ -2995,6 +3020,23 @@ class ChatService:
         pools = [own] + ([legacy] if legacy != own else [])
         pools.append((MemoryScope.project, str(topic.project_id)))
         return await recall_pools(memory, pools)
+
+    async def _acting_handle(
+        self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
+    ) -> str:
+        """The handle this turn authors under: the seat of the agent that was
+        addressed, when it sits on this room's roster.
+
+        A room seats any number of agents, so the one that answers is the one
+        the message named, and its blocks carry that one's seat. A room from
+        before agents had seats of their own (only its room-derived seat on the
+        roster) and a private 1:1 fall through to the room's seat as before.
+        """
+        if agent.instance_id is not None:
+            seat = agent_instance_handle(agent.instance_id)
+            if seat in await TopicMemberService(session).agent_handles(topic_id):
+                return seat
+        return await self._agent_handle(session, topic_id)
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -4261,7 +4303,7 @@ class ChatService:
             is_private = topic.is_private
             # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
             private_owner = topic.private_owner
-            acting_agent = await self._agent_handle(session, topic.id)
+            acting_agent = await self._acting_handle(session, topic.id, agent)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
@@ -4772,7 +4814,9 @@ class ChatService:
         # 这一轮的提示词写下去之前先登记：会话说「收下了」的时候，记号落在召唤它
         # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
         if user_block_id is not None and not is_resume and not platform_turn:
-            self.arm_seen_receipt(topic_id, prompt_text, [user_block_id])
+            self.arm_seen_receipt(
+                topic_id, prompt_text, [user_block_id], by=acting_agent
+            )
         try:
             await self._compute.activate(SessionRef(project_id, topic_id), runtime)
             ready = await runtime.send(

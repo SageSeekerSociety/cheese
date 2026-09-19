@@ -404,3 +404,44 @@ def test_the_tunnel_refuses_a_caller_that_cannot_name_a_topic(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/preview/tunnel?token=not-a-token") as socket:
             socket.receive_bytes()
+
+
+def test_a_tunnel_whose_peer_dropped_is_an_absent_preview_not_a_fault(
+    client, app_preview
+):
+    """The helper's socket dies under a write — the machine went to sleep, the
+    laptop closed — and the hub only hears of it from the write that fails. A
+    page asking for an asset through it is asking for a preview that is not
+    there, which is what an offline app already answers (404), not a fault of
+    this server."""
+    import asyncio
+
+    from starlette.websockets import WebSocket
+
+    from app.api.routes.app_preview import _WebSocketPreviewTransport
+
+    _, topic_id, machine = app_preview
+    _open_preview(client, topic_id)
+    machine.detach()
+
+    async def peer_gone() -> WebSocket:
+        # A real Starlette socket, accepted, whose next write finds the peer gone:
+        # that is the exact path uvicorn takes to a 1006 disconnect.
+        async def receive() -> dict:
+            return {"type": "websocket.connect"}
+
+        async def send(message: dict) -> None:
+            if message["type"] != "websocket.accept":
+                raise OSError("Broken pipe")
+
+        websocket = WebSocket({"type": "websocket"}, receive, send)
+        await websocket.accept()
+        return websocket
+
+    dead = _WebSocketPreviewTransport(asyncio.run(peer_gone()))
+    preview_hub.attach(topic_id, dead)
+    try:
+        response = client.get(preview_origin(topic_id) + "/src/main.ts")
+    finally:
+        preview_hub.detach(topic_id, dead)
+    assert response.status_code == 404, response.text

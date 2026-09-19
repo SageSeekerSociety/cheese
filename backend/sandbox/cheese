@@ -43,6 +43,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import UTC, datetime
@@ -89,6 +90,7 @@ def artifact_kind_for(path: str) -> str:
     name = os.path.basename(path)
     _, dot, suffix = name.rpartition(".")
     return ARTIFACT_KIND_BY_SUFFIX.get("." + suffix.lower(), "html") if dot else "html"
+
 
 DIRECT_MCP_TOOLS = frozenset(
     {
@@ -789,6 +791,147 @@ def source_fingerprint() -> str:
         return "unknown"
 
 
+def _chat_message_text(block: dict) -> str:
+    """Keep typed payloads visible, including fields added by future messages."""
+    lines = [
+        f"[{block.get('created_at', '')}] {block.get('author', '')} "
+        f"({block.get('author_type', '')}, {block.get('kind', '')}) id={block['id']}"
+    ]
+    for key, value in block.items():
+        if key in {"id", "created_at", "author", "author_type", "kind", "content"}:
+            continue
+        if value is not None and value != [] and value != {}:
+            lines.append(
+                f"{key}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}"
+            )
+    lines.append(block.get("content") or "")
+    return "\n".join(lines)
+
+
+_CHAT_TEXT_BUDGET = 12000
+_CHAT_PREVIEW = 1500
+
+
+def _chat_call(name: str, **kwargs) -> str:
+    """A continuation the agent can act on. It reaches these commands as the
+    `cheese_chat_*` tools (cli_worker publishes every leaf of this parser), so
+    the hint is written as that tool call, not as a shell line."""
+    args = ", ".join(
+        f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in kwargs.items()
+    )
+    return f"{name}({args})"
+
+
+def _chat_scope(a) -> dict:
+    scope = {}
+    if a.topic:
+        scope["topic"] = a.topic
+    if getattr(a, "task", None):
+        scope["task"] = a.task
+    return scope
+
+
+def _chat_read(a, parser) -> None:
+    topic = a.topic or _need("CHEESE_TOPIC", TOPIC)
+    base = f"/topics/{urllib.parse.quote(topic, safe='')}/history"
+    if a.chatcmd == "get":
+        if not 1 <= a.length <= _CHAT_TEXT_BUDGET or a.offset < 0:
+            parser.error(
+                f"chat get: length must be 1..{_CHAT_TEXT_BUDGET}, offset >= 0"
+            )
+        if a.json and (a.offset or a.length != _CHAT_TEXT_BUDGET):
+            parser.error("--json returns complete data; omit --offset and --length")
+        block = _call("GET", base + "/" + urllib.parse.quote(a.message_id, safe=""))[
+            "data"
+        ]
+        if a.task is not None and block.get("task_id") != a.task:
+            parser.error("Message does not belong to --task")
+        if a.json:
+            print(json.dumps(block, ensure_ascii=False))
+            return
+        text = _chat_message_text(block)
+        end = a.offset + a.length
+        print(text[a.offset : end])
+        if end < len(text):
+            more = _chat_call(
+                "cheese_chat_get", message_id=a.message_id, offset=end, **_chat_scope(a)
+            )
+            print(f"\n[More text: {more}]")
+        return
+
+    if not 1 <= a.limit <= 500:
+        parser.error("chat: limit must be 1..500")
+    params = {"limit": a.limit}
+    for key, val in (
+        ("before", a.before),
+        ("after", a.after),
+        ("task_id", a.task),
+        ("kind", a.kind),
+        ("author", a.author),
+    ):
+        if val is not None:
+            params[key] = val
+    tool = f"cheese_chat_{a.chatcmd}"
+    own: dict = {}
+    if a.chatcmd == "search":
+        params["q"] = a.query
+        own["query"] = a.query
+    elif a.chatcmd == "replies":
+        params["reply_to"] = a.message_id
+        own["message_id"] = a.message_id
+    data = _call("GET", base + "?" + urllib.parse.urlencode(params))["data"]
+    if a.json:
+        print(json.dumps(data, ensure_ascii=False))
+        return
+
+    def preview(block):
+        text = _chat_message_text(block)
+        if len(text) > _CHAT_PREVIEW:
+            text = (
+                text[:_CHAT_PREVIEW]
+                + "\n[Truncated; "
+                + _chat_call(
+                    "cheese_chat_get", message_id=block["id"], **_chat_scope(a)
+                )
+                + "]"
+            )
+        return text
+
+    remaining = _CHAT_TEXT_BUDGET
+    if parent := data.get("reply_to"):
+        parent_text = "Replying to:\n" + preview(parent) + "\n"
+        print(parent_text)
+        remaining -= len(parent_text) + 1
+    blocks = data.get("data") or []
+    if not blocks:
+        print("No messages matched this conversation and filter.")
+        return
+    # Walk from the requested edge. The next cursor must refer to the last
+    # displayed block, including when the text budget cuts a server page short.
+    selected = []
+    for block in blocks if a.after else reversed(blocks):
+        text = preview(block)
+        if selected and len(text) + 2 > remaining:
+            break
+        selected.append((block, text))
+        remaining -= len(text) + 2
+    if not a.after:
+        selected.reverse()
+    print("\n\n".join(text for _, text in selected))
+    if data.get("has_more") or len(selected) < len(blocks):
+        cursor = selected[-1 if a.after else 0][0]["id"]
+        filters = {k: v for k, v in (("kind", a.kind), ("author", a.author)) if v}
+        more = _chat_call(
+            tool,
+            **own,
+            **_chat_scope(a),
+            **filters,
+            limit=a.limit,
+            **({"after": cursor} if a.after else {"before": cursor}),
+        )
+        print(f"\n[More messages: {more}]")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cheese",
@@ -810,8 +953,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pchat = sub.add_parser(
         "chat",
-        help="主动向当前聊天发送消息",
-        description="用 send 发布用户可见消息。普通输出和最终答复只留在执行现场。",
+        help="发消息，或读取聊天记录、回复和表情",
+        description=(
+            "用 send 发布用户可见消息（普通输出和最终答复只留在执行现场）；"
+            "用 list/get/replies/search 读取已存的聊天记录。"
+        ),
     )
     chatsub = pchat.add_subparsers(dest="chatcmd", required=True)
     psend = chatsub.add_parser("send", help="发布消息；普通输出不会自动进入聊天")
@@ -819,6 +965,76 @@ def build_parser() -> argparse.ArgumentParser:
     psend.add_argument("--file", help="从 UTF-8 文件读取；- 表示标准输入")
     psend.add_argument("--reply-to", help="回复当前聊天中的消息 ID")
     psend.add_argument("--request-id", type=uuid.UUID, help="重试时沿用同一个请求 ID")
+
+    def _chat_scope_args(sp, *, task_help):
+        sp.add_argument("--topic", help="房间 ID（默认当前房间）")
+        sp.add_argument("--task", help=task_help)
+        sp.add_argument(
+            "--json",
+            action="store_true",
+            help="输出完整 JSON（含结构化元信息与表情作者）；文本长度限制不适用",
+        )
+
+    def _chat_page_args(sp):
+        sp.add_argument(
+            "--limit", type=int, default=50, help="每页条数，1..500（默认 50）"
+        )
+        cursors = sp.add_mutually_exclusive_group()
+        cursors.add_argument("--before", help="只读比这条消息 ID 更早的记录")
+        cursors.add_argument("--after", help="只读比这条消息 ID 更新的记录，从早到晚")
+        sp.add_argument(
+            "--kind",
+            help="按存储类型筛选，如 message、attachment、event、comment、doc_node",
+        )
+        sp.add_argument("--author", help="按作者 handle 精确筛选")
+
+    read_note = (
+        "只读，不叫醒任何人、不标记消息已读。文本输出有 12000 字的页预算，"
+        "每条预览 1500 字，超出的部分附带续读的工具调用；--json 返回完整字段。"
+    )
+    plist = chatsub.add_parser(
+        "list",
+        help="读最近的聊天记录（含结构化消息和表情）",
+        description="默认当前房间最近 50 条，从早到晚。" + read_note,
+    )
+    _chat_scope_args(plist, task_help="改读某条任务卡的记录，而不是房间时间线")
+    _chat_page_args(plist)
+    pget = chatsub.add_parser(
+        "get",
+        help="读一条消息的全文",
+        description="读一条记录（任何类型，含任务卡评论和文档节点）。" + read_note,
+    )
+    pget.add_argument("message_id", help="消息 ID")
+    _chat_scope_args(pget, task_help="校验这条消息属于该任务卡")
+    pget.add_argument("--offset", type=int, default=0, help="从第几个字开始（默认 0）")
+    pget.add_argument(
+        "--length",
+        type=int,
+        default=12000,
+        help="本次最多读多少字，1..12000（默认 12000）",
+    )
+    preplies = chatsub.add_parser(
+        "replies",
+        help="列出一条消息的直接回复",
+        description=(
+            "列出直接回复及其被回复的原文；嵌套回复按各条回复的 ID 再读。"
+            "回复查询沿用原消息所在的任务范围。" + read_note
+        ),
+    )
+    preplies.add_argument("message_id", help="被回复的消息 ID")
+    _chat_scope_args(preplies, task_help="校验原消息属于该任务卡")
+    _chat_page_args(preplies)
+    psearch = chatsub.add_parser(
+        "search",
+        help="按文字搜索聊天记录",
+        description=(
+            "对正文、结构化消息信息和引用文字做不区分大小写的字面子串匹配，"
+            "搜的是范围内全部记录而不只是最新一页。" + read_note
+        ),
+    )
+    psearch.add_argument("query", help="要匹配的文字（字面匹配，不是正则）")
+    _chat_scope_args(psearch, task_help="只搜某条任务卡的记录")
+    _chat_page_args(psearch)
 
     pd = sub.add_parser(
         "doc",
@@ -1294,7 +1510,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    a = build_parser().parse_args()
+    parser = build_parser()
+    a = parser.parse_args()
 
     if a.cmd == "chat" and a.chatcmd == "send":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -1319,6 +1536,8 @@ def main() -> None:
             body["reply_to"] = a.reply_to
         result = _call("POST", f"/topics/{topic}/messages", body)
         print(json.dumps(result["data"], ensure_ascii=False))
+    elif a.cmd == "chat":
+        _chat_read(a, parser)
     elif a.cmd == "doc" and a.doccmd == "set":
         topic = _need("CHEESE_TOPIC", TOPIC)
         with open(a.file, encoding="utf-8") as f:

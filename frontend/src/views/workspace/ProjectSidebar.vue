@@ -45,8 +45,8 @@ function onHoverTopic(topicId: string) {
   })
 }
 
-async function onCreateTopic(title: string, agentInstanceId?: string | null) {
-  const topic = await store.create(title, agentInstanceId)
+async function onCreateTopic(title: string) {
+  const topic = await store.create(title)
   if (topic) openTopic(topic.id)
 }
 

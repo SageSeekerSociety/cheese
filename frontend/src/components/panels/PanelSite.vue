@@ -27,14 +27,14 @@ const props = withDefaults(
     // This tab is the one on screen. Load happens on the rising edge, exactly
     // like opening the old drawer did.
     active?: boolean
-    // 这个房间现在交给的那个 AI 队友叫什么。一个项目可以有好几个队友，房间随时
-    // 能换，所以这里不能写死「芝士」——这一栏和对话栏说的是同一个人。
-    agentName?: string
+    // 房间名册 handle → 名字。这一栏给每一行署的是它的作者，和对话栏一个规矩：
+    // 一个房间可以先后交给两个队友，各自的话各自署名，不能写死「芝士」。
+    memberNames?: Record<string, string>
     // 这个房间现在有没有活在跑。现场自己听不到轮次帧（WS 在对话栏那边），而
     // 「最后一组还没完」和「最后一组是上一轮留下的」看起来一模一样。
     working?: boolean
   }>(),
-  { active: false, agentName: '芝士', working: false }
+  { active: false, memberNames: () => ({}), working: false }
 )
 
 const loading = ref(false)
@@ -173,7 +173,7 @@ watch(
 )
 
 function authorLabel(b: Block): string {
-  return b.author_type === 'ai' ? props.agentName : b.author
+  return props.memberNames[b.author] || b.author
 }
 
 function fmtTime(iso: string): string {
@@ -316,8 +316,8 @@ function isLive(index: number): boolean {
             </div>
             <!-- 芝士 speaks — shown as a person, with avatar (like the chat) -->
             <div v-else class="site-msg">
-              <!-- 头像上的字取的是这个房间当前那个队友的名字，和它右边写的名字同一个来源。 -->
-              <CheeseAvatar :size="26" :name="agentName" class="site-msg__av" />
+              <!-- 头像上的字和它右边写的名字同一个来源：这一行的作者。 -->
+              <CheeseAvatar :size="26" :name="authorLabel(b)" class="site-msg__av" />
               <div class="site-msg__main">
                 <div class="site-msg__meta">
                   <span class="site-msg__name">{{ authorLabel(b) }}</span>

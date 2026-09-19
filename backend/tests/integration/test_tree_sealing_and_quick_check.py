@@ -1,5 +1,6 @@
 """Each task owns its code, checks and delivery; rooms keep coordinating."""
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
@@ -174,6 +175,62 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
     assert ws.read_file(project, "child.txt", child.id) == "child"
     client.portal.call(retarget_completed_dependencies, client.test_factory)
     assert github.update_pr.await_count == 1
+
+
+def test_retargeting_holds_no_task_lock_while_github_is_called(client, monkeypatch):
+    """While GitHub is being asked to move the PR's base, the task row stays
+    free for other writers, and a task that closes meanwhile is left alone."""
+    from sqlalchemy import text
+
+    project, room = _room(client)
+    github = AsyncMock()
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_update_pr(number, **kwargs):
+        in_flight.set()
+        await release.wait()
+
+    github.update_pr = slow_update_pr
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+
+    async def seed():
+        async with client.test_factory() as session:
+            parent = await _task(session, project, room, "parent")
+            machine_commits(project, parent.id, {"parent.txt": "parent"})
+            child = await _task(session, project, room, "child", base_task_id=parent.id)
+            machine_commits(project, child.id, {"child.txt": "child"})
+            child.pr_number = 123
+            parent.status = TaskStatus.closed
+            parent.accepted_at = datetime.now(UTC)
+            await session.commit()
+            return child.id, child.base_branch
+
+    child_id, old_base = client.portal.call(seed)
+
+    async def race():
+        sweep = asyncio.create_task(
+            retarget_completed_dependencies(client.test_factory)
+        )
+        await asyncio.wait_for(in_flight.wait(), timeout=5)
+        async with client.test_factory() as session:
+            # NOWAIT fails at once if the sweep were holding the row.
+            child = await session.scalar(
+                text("SELECT id FROM tasks WHERE id = :id FOR UPDATE NOWAIT"),
+                {"id": child_id},
+            )
+            assert child == child_id
+            task = await session.get(Task, child_id)
+            task.status = TaskStatus.closed
+            await session.commit()
+        release.set()
+        await asyncio.wait_for(sweep, timeout=5)
+        async with client.test_factory() as session:
+            saved = await session.get(Task, child_id)
+            assert saved.status == TaskStatus.closed
+            assert saved.base_branch == old_base
+
+    client.portal.call(race)
 
 
 def test_ready_only_changes_existing_pr_review_state(client, monkeypatch):

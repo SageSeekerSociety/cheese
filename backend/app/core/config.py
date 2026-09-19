@@ -46,13 +46,19 @@ class Settings(BaseSettings):
     # that as the rooms mysteriously 401-ing and recovering, several times a day,
     # once per deploy.
     #
-    # So the ceiling is per-process but the budget is shared: 3 x (size +
-    # overflow) has to leave room for the migration the deploy runs and for
-    # anyone holding a psql. 3 x 25 = 75 of the 97 a default PostgreSQL offers
-    # once its superuser reserve is taken out. A box whose server is configured
-    # larger can raise these; a box that adds a fourth pool has to lower them.
-    db_pool_size: int = 15
-    db_max_overflow: int = 10
+    # So the ceiling is per-process but the budget is shared: the two backends
+    # at (size + overflow) each, plus the connection owner's own pool, have to
+    # leave room for the migration the deploy runs and for anyone holding a
+    # psql. The owner registers devices and answers bindings; it never fans out
+    # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
+    # DB_MAX_OVERFLOW=5 and the backends take the rest: 2 x 35 + 10 + 10 = 90
+    # of the 97 a default PostgreSQL offers once its superuser reserve is taken
+    # out (tests/unit/test_db_pool_fits_the_server.py holds this arithmetic). A
+    # box whose server is configured larger can raise these; a box that adds a
+    # fourth pool has to lower them. dev's server was raised to 200 on
+    # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
+    db_pool_size: int = 20
+    db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
@@ -145,7 +151,7 @@ class Settings(BaseSettings):
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
-    private_chat_executor_image: str = "cheese-private-executor:2.1.265"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.277"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.

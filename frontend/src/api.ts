@@ -609,37 +609,13 @@ export function listRoomTasks(
   return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(
-  projectId: string,
-  title: string,
-  parentId?: string,
-  // 谁在这个话题里干活。不传 = 跟着项目的默认走，而且**继续跟着**它变 —— 这和
-  // 「把当前默认抄一份存下来」不是一回事，后者会在换默认时留下一批不动的旧话题。
-  agentInstanceId?: string | null
-): Promise<Topic> {
+export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
   if (parentId) body.parent_id = parentId
-  if (agentInstanceId) body.agent_instance_id = agentInstanceId
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
   })
-}
-
-// ---- 话题用哪个 AI 队友 ----
-
-export interface TopicAgent {
-  topic_id: string
-  instance_id: string | null
-  handle: string
-  type_name: string | null
-  display_name: string
-  /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
-  inherited: boolean
-}
-
-export function getTopicAgent(topicId: string): Promise<TopicAgent> {
-  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`)
 }
 
 // ---- 话题级未读 (Feishu-style badges) ----

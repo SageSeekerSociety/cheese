@@ -50,8 +50,6 @@ from app.domain.agent.market import (
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent_instance.schemas import TopicAgentIn
-from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -156,66 +154,12 @@ async def create_topic(
         title=body.title,
         parent_id=body.parent_id,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
-        agent_instance_id=body.agent_instance_id,
     )
     response = ok(TopicOut.model_validate(topic).model_dump(mode="json"))
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
     await db.commit()
     return response
-
-
-@router.get("/{topic_id}/agent")
-async def get_topic_agent(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Which agent works in this topic, and whether that was chosen here.
-
-    ``inherited`` is what a settings screen needs to render honestly: a topic
-    that never picked one is not "using 芝士", it is *following the project*, and
-    changing the project's default will move it.
-
-    """
-    service = TopicService(db)
-    place = await service.place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    agent = await service.resolve_agent(place.room)
-    return ok(_topic_agent_payload(place.room, agent))
-
-
-@router.put("/{topic_id}/agent")
-async def set_topic_agent(
-    topic_id: uuid.UUID, body: TopicAgentIn, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Hand this topic to a different agent (``instance_id: null`` = back to the
-    project's default).
-
-    Costs nothing and warns about nothing: each agent's conversation here is its
-    own row, so the incoming one starts fresh and the outgoing one's thread is
-    still there if the topic is handed back.
-    """
-    service = TopicService(db)
-    topic = await service.get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    topic, agent = await service.set_agent(topic_id, body.instance_id)
-    await db.commit()
-    return ok(_topic_agent_payload(topic, agent))
-
-
-def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
-    return {
-        "topic_id": str(topic.id),
-        "instance_id": str(agent.instance_id) if agent.instance_id else None,
-        "handle": agent.handle,
-        "type_name": agent.type_name,
-        "display_name": agent.display_name,
-        "inherited": topic.agent_instance_id is None,
-    }
 
 
 def _viewer(actor: Actor) -> str | None:
@@ -466,6 +410,106 @@ async def list_topic_blocks(
             "oldest_id": str(blocks[0].id) if blocks else None,
         }
     )
+
+
+async def _history_block(
+    repo: BlockRepository, room_id: uuid.UUID, block_id: uuid.UUID
+) -> Block:
+    block = await repo.get(block_id)
+    if block is None or block.topic_id != room_id:
+        raise NotFoundError("Message not found in this room")
+    return block
+
+
+@router.get("/{topic_id}/history")
+async def read_chat_history(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    before: uuid.UUID | None = None,
+    after: uuid.UUID | None = None,
+    task_id: uuid.UUID | None = None,
+    reply_to: uuid.UUID | None = None,
+    q: Annotated[str | None, Query(min_length=1, max_length=1000)] = None,
+    kind: BlockKind | None = None,
+    author: str | None = None,
+) -> dict:
+    """Read stored chat, including structured events and reactions.
+
+    Replies are direct children; follow their IDs for nested replies. A reply
+    query inherits its parent's task scope. Search is literal, case-insensitive
+    substring matching over content, metadata and quoted document text.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    if before is not None and after is not None:
+        raise ValidationError("Use before or after, not both")
+    repo = BlockRepository(db)
+    parent = None
+    if reply_to is not None:
+        parent = await _history_block(repo, place.room_id, reply_to)
+        if task_id is not None and parent.task_id != task_id:
+            raise NotFoundError("Message not found in this task")
+        task_id = parent.task_id
+    if task_id is not None:
+        task = await TaskRepository(db).get(task_id)
+        if task is None or task.room_id != place.room_id:
+            raise NotFoundError("Task not found in this room")
+    cursor = None
+    if cursor_id := before or after:
+        cursor = await _history_block(repo, place.room_id, cursor_id)
+        if cursor.task_id != task_id:
+            raise NotFoundError("Cursor not found in this conversation")
+    result = await repo.page_for_topic(
+        place.room_id,
+        task_id=task_id,
+        limit=limit,
+        before=cursor if before else None,
+        after=cursor if after else None,
+        query=q,
+        reply_to=reply_to,
+        author=author,
+        # Document nodes have their own tree. Comments and preview pointers
+        # remain discoverable here; --kind doc_node reads the nodes explicitly.
+        kinds=[kind] if kind else [k for k in BlockKind if k != BlockKind.doc_node],
+    )
+    included = [*result.items, *([parent] if parent else [])]
+    reactions = await repo.reactions_for_blocks([b.id for b in included])
+    serialized = {
+        b.id: {
+            **BlockOut.model_validate(b).model_dump(mode="json"),
+            "reactions": reactions.get(b.id, []),
+        }
+        for b in included
+    }
+    return ok(
+        {
+            "data": [serialized[b.id] for b in result.items],
+            "has_more": result.has_more,
+            "oldest_id": str(result.items[0].id) if result.items else None,
+            "newest_id": str(result.items[-1].id) if result.items else None,
+            "direction": "after" if after else "before",
+            "reply_to": serialized[parent.id] if parent else None,
+        }
+    )
+
+
+@router.get("/{topic_id}/history/{block_id}")
+async def read_chat_message(
+    topic_id: uuid.UUID,
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Read one block of any kind, including a task-card comment or doc node."""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    repo = BlockRepository(db)
+    block = await _history_block(repo, place.room_id, block_id)
+    item = BlockOut.model_validate(block).model_dump(mode="json")
+    item["reactions"] = await repo.reactions_for_block(block_id)
+    return ok(item)
 
 
 @router.get("/{topic_id}/tasks")

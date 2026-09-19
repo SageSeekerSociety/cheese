@@ -96,7 +96,8 @@ def live_stack(monkeypatch):
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=api_port, log_level="error")
     )
-    threading.Thread(target=server.run, daemon=True).start()
+    api_thread = threading.Thread(target=server.run, daemon=True)
+    api_thread.start()
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and not server.started:
         time.sleep(0.05)
@@ -120,7 +121,15 @@ def live_stack(monkeypatch):
     try:
         yield helper_port, meter, api_port
     finally:
+        # Joined, not just told to exit. The thread runs the WHOLE backend app —
+        # DB engine, httpx clients, background tasks — against this worker's
+        # database. Left running, its shutdown proceeds concurrently with the
+        # next test: an httpx client closing after that test's loop is gone is
+        # #665's ExceptionGroup landing on a random victim, and a connection it
+        # still holds is a lock the next test's TRUNCATE waits 300s on (#693).
         server.should_exit = True
+        api_thread.join(timeout=30)
+        assert not api_thread.is_alive(), "the backend never shut down"
         meter.close()
 
 
@@ -212,7 +221,8 @@ def test_the_standalone_tunnel_app_terminates_the_pipe_identically(monkeypatch):
     server = uvicorn.Server(
         uvicorn.Config(tunnel_app, host="127.0.0.1", port=api_port, log_level="error")
     )
-    threading.Thread(target=server.run, daemon=True).start()
+    api_thread = threading.Thread(target=server.run, daemon=True)
+    api_thread.start()
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and not server.started:
         time.sleep(0.05)
@@ -239,7 +249,10 @@ def test_the_standalone_tunnel_app_terminates_the_pipe_identically(monkeypatch):
             client.sendall(b"standalone terminal state")
             assert client.recv(4096) == b"STANDALONE TERMINAL STATE"
     finally:
+        # Same join as live_stack's: told-to-exit is not gone (#665/#693).
         server.should_exit = True
+        api_thread.join(timeout=30)
+        assert not api_thread.is_alive(), "the tunnel app never shut down"
         meter.close()
 
 
@@ -278,46 +291,95 @@ def test_a_restarting_backend_is_ridden_out_not_surfaced(live_stack, monkeypatch
                 b.sendall(data)
         except OSError:
             pass
+        # shutdown, NOT close: the twin _pipe of this pair is blocked in recv()
+        # on one of these very sockets, and close() leaves that recv blocked
+        # forever (a zombie thread) while shutdown() wakes it. The teardown
+        # sweep below owns the close.
         for s in (a, b):
             try:
-                s.close()
+                s.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
 
+    # Everything the forwarder opens or spawns, held where teardown can reach
+    # it: a pipe thread that outlives this test closes its sockets during some
+    # OTHER test, and that other test reports the failure (#693's shape).
+    forwarder_sockets: list[socket.socket] = []
+    pipe_threads: list[threading.Thread] = []
+    stopping = threading.Event()
+
     def _forwarder_comes_up() -> None:
         time.sleep(1.0)  # the client is already inside the patience window
+        if stopping.is_set():  # the test already failed and is tearing down
+            return
         server = socket.socket()
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(("127.0.0.1", late_port))
         server.listen(8)
+        forwarder_sockets.append(server)
         while True:
             try:
                 conn, _ = server.accept()
             except OSError:
                 return
             upstream = socket.create_connection(("127.0.0.1", api_port))
-            threading.Thread(target=_pipe, args=(conn, upstream), daemon=True).start()
-            threading.Thread(target=_pipe, args=(upstream, conn), daemon=True).start()
+            forwarder_sockets.extend((conn, upstream))
+            for a, b in ((conn, upstream), (upstream, conn)):
+                thread = threading.Thread(target=_pipe, args=(a, b), daemon=True)
+                pipe_threads.append(thread)
+                thread.start()
 
-    threading.Thread(target=_forwarder_comes_up, daemon=True).start()
+    forwarder_thread = threading.Thread(target=_forwarder_comes_up, daemon=True)
+    forwarder_thread.start()
 
-    payload = b"held across the deploy window"
-    with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
-        client.settimeout(30)
-        client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
-        # This first read spans the whole patience window: the backend was not
-        # there when the CONNECT went in, and the echo can only arrive after
-        # the helper outwaited the outage.
-        head_echo = client.recv(4096)
-        assert head_echo, "the held CONNECT must complete, not be closed"
-        assert b"CONNECT API.ANTHROPIC.COM:443" in head_echo
-        client.sendall(payload)
-        seen = bytearray()
-        while len(seen) < len(payload):
-            chunk = client.recv(4096)
-            assert chunk, "the pipe must stay open after the ride-out"
-            seen.extend(chunk)
-    assert bytes(seen) == payload.upper()
+    try:
+        payload = b"held across the deploy window"
+        with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
+            client.settimeout(30)
+            client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
+            # This first read spans the whole patience window: the backend was
+            # not there when the CONNECT went in, and the echo can only arrive
+            # after the helper outwaited the outage.
+            head_echo = client.recv(4096)
+            assert head_echo, "the held CONNECT must complete, not be closed"
+            assert b"CONNECT API.ANTHROPIC.COM:443" in head_echo
+            client.sendall(payload)
+            seen = bytearray()
+            while len(seen) < len(payload):
+                chunk = client.recv(4096)
+                assert chunk, "the pipe must stay open after the ride-out"
+                seen.extend(chunk)
+        assert bytes(seen) == payload.upper()
+    finally:
+        # Closing the sockets is what unblocks the threads (accept and recv
+        # both raise OSError on a closed socket), so close first, join after.
+        # Two passes: a forwarder still inside its 1s sleep binds its listener
+        # AFTER the first close sweep, and only the second sweep reaches it.
+        def _sweep() -> None:
+            for leaked in list(forwarder_sockets):
+                # shutdown BEFORE close: close() alone does not wake a recv()
+                # blocked in another thread; shutdown() does.
+                try:
+                    leaked.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                try:
+                    leaked.close()
+                except OSError:
+                    pass
+
+        stopping.set()
+        _sweep()
+        forwarder_thread.join(timeout=5)
+        # The helper retries its ws within 0.2s, so the forwarder may accept a
+        # fresh pipe pair DURING the first sweep — sweep again once it is gone.
+        _sweep()
+        for thread in (forwarder_thread, *list(pipe_threads)):
+            thread.join(timeout=10)
+            if thread.is_alive():
+                _sweep()
+                thread.join(timeout=5)
+            assert not thread.is_alive(), "a forwarder thread outlived the test"
 
 
 def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack):

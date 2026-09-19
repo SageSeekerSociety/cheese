@@ -12,7 +12,7 @@ All Claude Code and RC sessions run on the central device configured by `AGENT_S
 
 Each chat gets a separate execution container with a read-only image and 64 MiB of writable temporary storage. Shell commands, file operations and Cheese CLI run there. The container has no host directory mounts or model credentials. It retains drafts across turns while it lives; releasing the chat removes its scratch files. Published documents remain in platform storage.
 
-Build the executor on the central device with `docker build -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.265 .` from the repository root. `PRIVATE_CHAT_EXECUTOR_IMAGE` selects the installed image. General network access remains available; backend authorization governs platform operations. The configured session host must have this image available before accepting private chats.
+Build the executor on the central device with `docker build -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .` from the repository root. `PRIVATE_CHAT_EXECUTOR_IMAGE` selects the installed image. General network access remains available; backend authorization governs platform operations. The configured session host must have this image available before accepting private chats.
 
 The remaining sections describe ordinary work topics and their selected compute providers.
 

@@ -75,9 +75,9 @@ beforeEach(() => {
   getTerminal.mockResolvedValue({ available: false })
 })
 
-function open(agentName = '芝士') {
+function open(memberNames: Record<string, string> = { 'cheese-t1': '芝士' }) {
   return render(Site, {
-    props: { topic, active: true, agentName },
+    props: { topic, active: true, memberNames },
     global: { plugins: [vuetify] },
   })
 }
@@ -112,7 +112,7 @@ describe('现场还在路上的时候', () => {
 describe('AI 那几行的头像', () => {
   it('头像上的字和它旁边的名字是同一个队友', async () => {
     getTranscript.mockResolvedValue({ data: [aiSaid('a', '看过了')], total: 1 })
-    const { container } = open('评审')
+    const { container } = open({ 'cheese-t1': '评审' })
 
     await waitFor(() => expect(container.querySelector('.site-msg')).not.toBeNull())
     expect(container.querySelector('.site-msg__name')?.textContent?.trim()).toBe('评审')
