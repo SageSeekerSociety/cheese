@@ -27,7 +27,7 @@ class ProjectMachineRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID | None = None,
-        machine_id: int,
+        machine_id: int | None,
         customer_id: int,
         account_id: int,
         offering_id: int,
@@ -174,7 +174,10 @@ class ProjectMachineRepository:
         ai_mode: str | None = None,
         ai_status: AiStatus | None = None,
         seen_at: datetime | None = None,
+        machine_id: int | None = None,
     ) -> ProjectMachine:
+        if machine_id is not None:
+            machine.machine_id = machine_id
         machine.status = status
         if ai_mode is not None:
             machine.ai_mode = ai_mode
@@ -202,6 +205,20 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+
+    async def list_reservations_older_than(
+        self, cutoff: datetime
+    ) -> list[ProjectMachine]:
+        """Rows still waiting for a provider id past the point a create can take."""
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.machine_id.is_(None),
+                ProjectMachine.warm_claim_pending.is_(False),
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.created_at < cutoff,
+            )
+        )
+        return list(result.scalars())
 
     async def mark_released(
         self, machine: ProjectMachine, *, when: datetime
@@ -368,6 +385,7 @@ class ProjectMachineRepository:
         result = await self._session.execute(
             select(ProjectMachine)
             .where(
+                ProjectMachine.machine_id.is_not(None),
                 ProjectMachine.status == MachineStatus.running,
                 ProjectMachine.ai_status == AiStatus.ready,
                 ProjectMachine.ai_mode != desired,

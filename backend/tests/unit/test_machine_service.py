@@ -109,6 +109,12 @@ class FakeMicroCloud:
     async def get_machine(self, machine_id):
         return self.machines.get(machine_id)
 
+    async def find_machine(self, customer_id, hostname):
+        for machine in self.machines.values():
+            if machine.get("hostname") == hostname:
+                return machine
+        return None
+
     async def delete_machine(self, machine_id):
         self.deleted.append(machine_id)
         self.machines.pop(machine_id, None)
@@ -137,9 +143,20 @@ class FakeRepo:
         kwargs.setdefault("warm_claim_pending", False)
         kwargs.setdefault("last_seen_at", None)
         kwargs.setdefault("released_at", None)
+        kwargs.setdefault("created_at", datetime.now(UTC))
         row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
+
+    async def list_reservations_older_than(self, cutoff):
+        return [
+            r
+            for r in self.rows
+            if r.machine_id is None
+            and not r.warm_claim_pending
+            and r.released_at is None
+            and r.created_at < cutoff
+        ]
 
     async def get(self, row_id):
         return next((r for r in self.rows if r.id == row_id), None)
@@ -180,8 +197,18 @@ class FakeRepo:
         ][:limit]
 
     async def set_state(
-        self, machine, *, status, ip, ai_mode=None, ai_status=None, seen_at=None
+        self,
+        machine,
+        *,
+        status,
+        ip,
+        ai_mode=None,
+        ai_status=None,
+        seen_at=None,
+        machine_id=None,
     ):
+        if machine_id is not None:
+            machine.machine_id = machine_id
         machine.status = status
         if ip:
             machine.ip = ip
@@ -350,6 +377,9 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         async def refresh(self, _row):
             return None
 
+        async def commit(self):
+            return None
+
     class _Identities:
         def __init__(self, _session):
             pass
@@ -396,6 +426,9 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
         async def refresh(self, _row):
             return None
 
+        async def commit(self):
+            return None
+
     class _Topics:
         def __init__(self, _session):
             pass
@@ -434,6 +467,9 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
 
     class _Session:
         async def refresh(self, _row):
+            return None
+
+        async def commit(self):
             return None
 
     class _Topics:
@@ -957,3 +993,119 @@ async def test_forgetting_waits_when_ccproxy_revocation_is_unconfirmed(caplog):
     # ...but its row survives for the retry.
     assert machine in await service._repo.list_for_project(project_id)
     assert any("revocation" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_reservation_counts_against_quota_before_the_provider_answers(
+    monkeypatch,
+):
+    """Two rooms of a team at the limit: the second is refused while the
+    first's create is still at the provider, because the row was written
+    before the call — with no lock held across it."""
+    import asyncio
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    monkeypatch.setattr(
+        "app.domain.machine.services.get_machine_limit", AsyncMock(return_value=1)
+    )
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+    original = client.create_machine
+
+    async def slow_create(body):
+        in_flight.set()
+        await release.wait()
+        return await original(body)
+
+    client.create_machine = slow_create
+    project_id = uuid.uuid4()
+    first = asyncio.create_task(
+        service.provision(project_id=project_id, requested_by="a")
+    )
+    await asyncio.wait_for(in_flight.wait(), timeout=5)
+    assert [m.machine_id for m in service._repo.rows] == [None]
+    with pytest.raises(ValidationError, match="1 / 1"):
+        await service.provision(project_id=project_id, requested_by="b")
+    release.set()
+    machine = await asyncio.wait_for(first, timeout=5)
+    assert machine.machine_id == 101 and machine.status == MachineStatus.provisioning
+    assert len(service._repo.rows) == 1
+
+
+async def test_a_failed_create_gives_the_slot_back():
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    async def refused(body):
+        raise MicroCloudError("no capacity", status=503)
+
+    client.create_machine = refused
+    with pytest.raises(MicroCloudError):
+        await service.provision(project_id=uuid.uuid4(), requested_by="a")
+    assert service._repo.rows == []
+
+
+async def test_settling_adopts_a_machine_the_provider_has_and_drops_one_it_does_not():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    old = datetime.now(UTC) - timedelta(hours=1)
+    adopted = await service._repo.add(
+        project_id=uuid.uuid4(),
+        machine_id=None,
+        customer_id=1,
+        account_id=1,
+        offering_id=1,
+        hostname="p-1",
+        login_user="dev",
+        cores=1,
+        memory_mb=512,
+        disk_gb=4,
+        status=MachineStatus.provisioning,
+        ip=None,
+        requested_by="a",
+        created_at=old,
+    )
+    dropped = await service._repo.add(
+        project_id=uuid.uuid4(),
+        machine_id=None,
+        customer_id=1,
+        account_id=1,
+        offering_id=1,
+        hostname="p-2",
+        login_user="dev",
+        cores=1,
+        memory_mb=512,
+        disk_gb=4,
+        status=MachineStatus.provisioning,
+        ip=None,
+        requested_by="a",
+        created_at=old,
+    )
+    fresh = await service._repo.add(
+        project_id=uuid.uuid4(),
+        machine_id=None,
+        customer_id=1,
+        account_id=1,
+        offering_id=1,
+        hostname="p-3",
+        login_user="dev",
+        cores=1,
+        memory_mb=512,
+        disk_gb=4,
+        status=MachineStatus.provisioning,
+        ip=None,
+        requested_by="a",
+    )
+    client.machines[777] = {
+        "id": 777,
+        "hostname": "p-1",
+        "status": "running",
+        "ip": "10.0.0.7",
+        "aiMode": "ccproxy",
+        "aiStatus": "ready",
+    }
+    assert await service.settle_reservations() == 2
+    assert adopted.machine_id == 777 and adopted.status == MachineStatus.running
+    assert adopted.ip == "10.0.0.7"
+    assert dropped not in service._repo.rows
+    assert fresh in service._repo.rows and fresh.machine_id is None
