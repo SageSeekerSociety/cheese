@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     EventConsumer,
@@ -181,6 +181,15 @@ class CodexRuntime:
                     waiting = True
                     logger.warning(
                         "Codex journal waiting for the device topic=%s", topic
+                    )
+                await asyncio.sleep(2)
+            except DeviceCallError as exc:
+                # The machine answered with a failure of its own (see the pi
+                # runtime): waited out, and said once with the machine's words.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "Codex journal waiting for the runner topic=%s: %s", topic, exc
                     )
                 await asyncio.sleep(2)
             except Exception:

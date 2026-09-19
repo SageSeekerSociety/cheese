@@ -24,7 +24,7 @@ from app.core.errors import (
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, key, store
 from app.domain.agent.runtime import get_broker
@@ -381,6 +381,13 @@ async def control_state(
                 )
         except DeviceOffline as exc:
             result["device_offline"] = exc.device_id
+        except DeviceCallError as exc:
+            # The machine answered and its answer was a failure — the runner's
+            # socket not there, the home gone. Same standing as a silence: the
+            # list is unread this poll, and the machine's words go with it so
+            # the reader can see why rather than a 500 painted over the room.
+            result["tasks_unread"] = True
+            result["device_error"] = str(exc)
         except TimeoutError:
             # Not an error the room needs told about: the rest of this response
             # is already correct, and the next poll reads the list again. The
