@@ -1250,8 +1250,11 @@ const seatByHandle = computed(() => {
 // 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
 function displayName(m: Block): string {
   if (m.author_type === 'ai') {
+    // 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是
+    // 人和人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是
+    // 管道，读的人只会当成乱码。身份分叉，显示不分叉。
     if (!rosterLoaded.value) return '芝士'
-    return seatByHandle.value.get(m.author)?.name || m.author
+    return seatByHandle.value.get(m.author)?.name || '芝士'
   }
   return memberByHandle.value.get(m.author)?.name || m.author
 }
