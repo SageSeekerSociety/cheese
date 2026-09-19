@@ -196,9 +196,9 @@ jobs:
             tmp/remote-execution/ci-*/*/summary.json
             tmp/remote-execution/ci-*/*/terminal.txt
             tmp/remote-execution/ci-*/*/request-*.json
-          retention-days: 3
             tmp/remote-execution/ci-*/*/action-*.json
             tmp/remote-execution/ci-*/*/hooks.jsonl
             tmp/remote-execution/ci-*/*/rc*.json*
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
+          retention-days: 3
