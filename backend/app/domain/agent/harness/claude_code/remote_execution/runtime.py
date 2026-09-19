@@ -755,14 +755,19 @@ class Executor:
         with self.task_lock:
             before = task["status"]
             if before in ("running", "unknown"):
+                # The exit trap may write while the process scan is running.
+                # Check its file after that scan before declaring the task lost.
+                pids = self._pids(marker) if not exit_file.exists() else []
                 if exit_file.exists():
-                    code = int(exit_file.read_text() or 1)
-                    task.update(
-                        status="completed" if code == 0 else "failed",
-                        exit_code=code,
-                        finished_at=stamp(),
-                    )
-                elif self._pids(marker):
+                    value = exit_file.read_text()
+                    if value:
+                        code = int(value)
+                        task.update(
+                            status="completed" if code == 0 else "failed",
+                            exit_code=code,
+                            finished_at=stamp(),
+                        )
+                elif pids:
                     task["status"] = "running"
                 elif time.time() - task["started_ts"] > 2:
                     # Nothing wrote an exit status and nothing carries the
@@ -896,17 +901,23 @@ class Executor:
             if time.monotonic() - settled_at >= OUTPUT_AFTER_EXIT_S:
                 break
             time.sleep(0.1)
-        output = self.output(task_id)
+        output = self.task(task_id)
+        written = self._written_output(output)
         return {
             "retrieval_status": "timeout"
             if output["status"] == "running"
+            or (
+                output["status"] in ("completed", "failed")
+                and written is None
+                and not output.get("task_id")
+            )
             else "success",
             "task": {
                 "task_id": task_id,
                 "task_type": "local_bash",
                 "status": output["status"],
                 "description": output["description"],
-                "output": output["stdout"],
+                "output": written or "",
                 "exitCode": output["exit_code"],
             },
         }

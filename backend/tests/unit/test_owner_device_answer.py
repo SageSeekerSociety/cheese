@@ -105,6 +105,19 @@ async def test_the_backend_reads_the_relayed_failure_as_the_hubs_exception() -> 
 
 
 @pytest.mark.anyio
+async def test_the_backend_reads_an_owner_timeout_as_the_hubs_exception(monkeypatch):
+    async def timed_out(*_args, **_kwargs):
+        raise TimeoutError()
+
+    monkeypatch.setattr(device_hub, "call_executor", timed_out)
+    hub = RemoteDeviceHub("http://owner", "test-owner-secret")
+    async with _owner_client() as client:
+        hub._client = client
+        with pytest.raises(TimeoutError, match="machine-7 did not answer"):
+            await hub.call_executor("machine-7", "/state", "ping", {})
+
+
+@pytest.mark.anyio
 async def test_a_502_that_is_not_the_machines_answer_keeps_status_and_body() -> None:
     hub = RemoteDeviceHub("http://owner", "test-owner-secret")
     hub._client = httpx.AsyncClient(

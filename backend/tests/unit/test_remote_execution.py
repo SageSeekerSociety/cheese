@@ -36,6 +36,40 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
+@pytest.mark.parametrize("exit_contents", ["", "0", "7"])
+def test_exit_written_during_process_scan_is_not_reported_as_unknown(
+    tmp_path, monkeypatch, exit_contents
+):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
+    )
+    executor = runtime.Executor(state)
+    marker = "settlement-race"
+    record = state / "tasks" / marker
+    record.mkdir(parents=True)
+    executor.tasks[marker] = {
+        "marker": marker,
+        "status": "running",
+        "started_ts": time.time() - 3,
+        "exit_code": None,
+    }
+
+    def just_exited(_marker):
+        (record / "exit").write_text(exit_contents)
+        return []
+
+    monkeypatch.setattr(executor, "_pids", just_exited)
+    try:
+        assert (
+            executor.task(marker)["status"]
+            == {"": "running", "0": "completed", "7": "failed"}[exit_contents]
+        )
+    finally:
+        executor.close()
+
+
 def test_task_output_waits_for_the_complete_reply(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir()
@@ -65,6 +99,8 @@ def test_task_output_waits_for_the_complete_reply(tmp_path, monkeypatch):
         )
         task_id = result["value"]["backgroundTaskId"]
         assert writing.wait(10)
+        unfinished = executor.task_output({"task_id": task_id, "timeout": 0})
+        assert unfinished["retrieval_status"] == "timeout"
         with ThreadPoolExecutor() as pool:
             pending = pool.submit(
                 executor.task_output, {"task_id": task_id, "timeout": 5000}
@@ -108,6 +144,32 @@ def test_a_background_command_that_finishes_at_once_still_has_an_id_and_an_exit(
             assert report["task"]["output"] == "completed"
             assert report["task"]["exitCode"] == code
             assert report["task"]["status"] == ("completed" if code == 0 else "failed")
+    finally:
+        executor.close()
+
+
+def test_a_native_background_command_can_finish_without_output(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
+    )
+    monkeypatch.setattr(runtime, "OUTPUT_AFTER_EXIT_S", 0.01)
+    executor = runtime.Executor(state)
+    try:
+        result = executor.invoke(
+            {
+                "id": "silent",
+                "tool": "Bash",
+                "args": {"command": "sleep 0.2", "run_in_background": True},
+            }
+        )
+        report = executor.task_output(
+            {"task_id": result["value"]["backgroundTaskId"], "timeout": 5000}
+        )
+        assert report["retrieval_status"] == "success"
+        assert report["task"]["status"] == "completed"
+        assert report["task"]["output"] == ""
     finally:
         executor.close()
 

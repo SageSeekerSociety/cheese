@@ -231,6 +231,9 @@ class RemoteDeviceHub:
             failure = _device_call_failure(response)
             if failure is not None:
                 raise DeviceCallError(failure)
+        if response.status_code == 504:
+            # Preserve the in-process hub's timeout type across the owner boundary.
+            raise TimeoutError(f"Device connection owner timed out: {response.text}")
         response.raise_for_status()
         return response
 

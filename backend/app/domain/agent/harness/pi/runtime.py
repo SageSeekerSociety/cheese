@@ -381,12 +381,24 @@ class PiRuntime:
 
     async def recover(self, device_id=None) -> list[SessionRef]:
         handles = await self.channel.discover(device_id)
+        recovered = []
         for handle in handles:
+            try:
+                async with asyncio.timeout(15):
+                    status = await self.channel.call(handle, "ping", {})
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "pi recovery failed topic=%s device=%s: %s",
+                    handle.session.topic_id,
+                    handle.device_id,
+                    exc,
+                )
+                continue
             await self._attach(handle)
-            status = await self.channel.call(handle, "ping", {})
             if status.get("working") and status.get("work_id"):
                 self.work[handle.session.topic_id] = uuid.UUID(status["work_id"])
-        return [handle.session for handle in handles]
+            recovered.append(handle.session)
+        return recovered
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         if subscription := self.subscriptions.get(session.topic_id):

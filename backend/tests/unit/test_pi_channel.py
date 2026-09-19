@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from app.domain.agent import machine_launcher
-from app.domain.agent.device_hub import HubScreen
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -107,6 +107,8 @@ class Rooms:
     """A topic table, without a database. Rows survive across sessions."""
 
     def __init__(self, placement=None):
+        self.active = False
+        self.extra_rooms = []
         self.room = SimpleNamespace(
             id=TOPIC,
             project_id=PROJECT,
@@ -120,16 +122,22 @@ class Rooms:
 
         class Session:
             async def __aenter__(self):
+                rooms.active = True
                 return self
 
             async def __aexit__(self, *exc):
+                rooms.active = False
                 return False
 
             async def get(self, _model, key):
                 return rooms.room if key == TOPIC else None
 
             async def scalars(self, _statement):
-                return [rooms.room] if rooms.room.session_placement else []
+                return (
+                    [rooms.room, *rooms.extra_rooms]
+                    if rooms.room.session_placement
+                    else []
+                )
 
             async def commit(self):
                 return None
@@ -157,7 +165,7 @@ def channel(monkeypatch):
             DeviceChannel(
                 hub=hub,  # type: ignore[arg-type]
                 device_resolver=resolver,
-                session_factory=rooms.factory(),
+                session_factory=rooms.factory(),  # type: ignore[arg-type]
                 public_base="http://cheese.test",
             )
         )
@@ -271,6 +279,46 @@ async def test_a_restarted_backend_finds_the_session_it_did_not_start(channel):
     found = await channel(rooms, Hub()).discover("dev1")
     assert [handle.state for handle in found] == [started.state]
     assert found[0].agent_handle == "agent-x"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", [DeviceCallError, DeviceOffline, TimeoutError])
+async def test_discovery_releases_database_and_continues_past_a_dead_runner(
+    channel, failure, monkeypatch
+):
+    rooms = Rooms(
+        placement={
+            "device_id": "dev1",
+            "resource_id": str(TOPIC),
+            "channel": DeviceChannel.name,
+            "runtime": {"harness": "pi", "state": "/dead", "agent_handle": "a"},
+        }
+    )
+    other = uuid.uuid4()
+    rooms.extra_rooms.append(
+        SimpleNamespace(
+            id=other,
+            project_id=PROJECT,
+            session_placement={
+                **rooms.room.session_placement,
+                "resource_id": str(other),
+                "runtime": {"harness": "pi", "state": "/alive", "agent_handle": "b"},
+            },
+        )
+    )
+    hub = Hub()
+
+    async def ping(device, state, method, params, **kwargs):
+        assert not rooms.active, "device probes must not retain a database session"
+        assert kwargs["timeout"] == 15
+        if state == "/dead":
+            raise failure("dev1")
+        return {"alive": True, "session_id": "retained"}
+
+    monkeypatch.setattr(hub, "call_executor", ping)
+    found = await channel(rooms, hub).discover("dev1")
+    assert [handle.session.topic_id for handle in found] == [other]
+    assert found[0].session_id == "retained"
 
 
 @pytest.mark.anyio
