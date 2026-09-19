@@ -9,11 +9,12 @@ import json
 import logging
 import uuid
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
@@ -154,6 +155,37 @@ async def test_a_session_that_outlived_the_backend_is_read_not_restarted(tmp_pat
     assert any(isinstance(event, AgentResult) for event in events)
     assert {call.args[2] for call in consumer.await_args_list} == {uuid.UUID(work)}
     assert runner.inputs == [], "recovery must not send the prompt again"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", [DeviceCallError, DeviceOffline, TimeoutError])
+async def test_recovery_continues_when_a_discovered_runner_disappears(
+    tmp_path, failure
+):
+    session, runtime, runner = wire(tmp_path)
+    channel = cast(AsyncMock, runtime.channel)
+    retained = channel.discover.return_value[0]
+    dead = Handle(
+        SessionRef(session.project_id, uuid.uuid4()),
+        "device",
+        "/dead",
+        "dead",
+        "other",
+        tmp_path / "dead" / "entries.sqlite",
+    )
+    channel.discover.return_value = [dead, retained]
+
+    async def call(handle, method, params):
+        if handle == dead:
+            raise failure("device")
+        return await runner.call(handle, method, params)
+
+    channel.call.side_effect = call
+    assert await runtime.recover("device") == [session]
+    assert runtime.holds(session.topic_id)
+    assert not runtime.holds(dead.session.topic_id)
+    assert runner.inputs == []
+    await runtime.close(session)
 
 
 @pytest.mark.anyio
