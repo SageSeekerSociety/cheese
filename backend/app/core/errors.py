@@ -1,3 +1,4 @@
+import contextlib
 from typing import Any
 
 from fastapi import Request
@@ -284,6 +285,40 @@ class GatewayUnavailableError(AppError):
     message = "AI gateway unavailable"
 
 
+def closing_the_socket(handler):  # type: ignore[no-untyped-def]
+    """The same handler, over a WebSocket connection: close it, answer nothing.
+
+    A handler's answer is an HTTP response, and Starlette sends whatever a
+    handler returns down the connection the exception came from — on a socket
+    already accepted that is `websocket.http.response.start`, which uvicorn
+    refuses with 「Expected ASGI message 'websocket.send' or 'websocket.close'」
+    and logs as an application error. The connection owner hit it 1143 times
+    on 2026-09-19 for one machine whose link died between `accept` and the
+    welcome frame: `attach_device` raised DeviceOffline into the `/agent`
+    route, the DeviceOffline handler answered 409, and the 409 had nowhere to
+    go. Each one an alert, for a link that was simply already gone.
+
+    Nothing about the condition changes: the socket is closed (a policy
+    refusal before `accept` still arrives as the 403 it always was), the
+    failure is logged once at WARNING with its name, and no response is sent.
+    """
+
+    async def handle(conn: Request, exc: Exception):  # type: ignore[no-untyped-def]
+        if conn.scope["type"] != "websocket":
+            return await handler(conn, exc)
+        _log.warning(
+            "websocket_closed_on_error",
+            path=conn.url.path,
+            error=type(exc).__name__,
+            detail=str(exc)[:200],
+        )
+        with contextlib.suppress(Exception):  # the peer may be the one that left
+            await conn.close(code=1011)  # type: ignore[attr-defined]
+        return None
+
+    return handle
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register BOTH error frameworks (fusion merge): main's BaseError family +
     HTTP/validation handlers, and cheesex's AppError handler. Called from our
@@ -293,7 +328,6 @@ def register_exception_handlers(app: FastAPI) -> None:
     # the name.
     from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 
-    @app.exception_handler(DeviceOffline)
     async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
         """A machine that is off is an answer, not a fault of this server.
 
@@ -320,7 +354,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             headers={"X-Device-Id": exc.device_id},
         )
 
-    @app.exception_handler(DeviceCallError)
     async def _handle_device_call_error(
         request: Request, exc: DeviceCallError
     ) -> JSONResponse:
@@ -354,7 +387,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             ),
         )
 
-    @app.exception_handler(ClientDisconnect)
     async def _handle_client_disconnect(
         request: Request, _: ClientDisconnect
     ) -> JSONResponse:
@@ -376,7 +408,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             ),
         )
 
-    @app.exception_handler(AppError)
     async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.code,
@@ -411,6 +442,13 @@ def register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
-    app.add_exception_handler(BaseError, base_error_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
+    for exc_type, handler in (
+        (DeviceOffline, _handle_device_offline),
+        (DeviceCallError, _handle_device_call_error),
+        (ClientDisconnect, _handle_client_disconnect),
+        (AppError, _handle_app_error),
+        (BaseError, base_error_handler),
+        (StarletteHTTPException, http_exception_handler),
+        (RequestValidationError, validation_exception_handler),
+    ):
+        app.add_exception_handler(exc_type, closing_the_socket(handler))  # type: ignore[arg-type]
