@@ -1409,6 +1409,25 @@ def build_parser() -> argparse.ArgumentParser:
         "note", nargs="?", default="app", help="一句话说明在跑什么,如 'Vue dev server'"
     )
 
+    plib = sub.add_parser(
+        "library",
+        help="项目资料库:用户给这个项目的文件",
+        description=(
+            "资料库放的是用户给这个项目的文件,按他给的名字。它是项目一级的——\n"
+            "另一个房间上周传的那份,你在这里也拿得到。\n\n"
+            "跟着某条消息发来的资料已经在你工作目录的 library/ 下了,不用再取。\n"
+            "用户提到一份你手上没有的('上周那份预算表'),先 ls 看叫什么,再 get。\n\n"
+            "资料库只读:改它没有意义,要改就改出另一份,原件留在原处。"
+        ),
+    )
+    libsub = plib.add_subparsers(dest="libcmd", required=True)
+    libsub.add_parser("ls", help="列出资料库里的文件(最近给的在前)")
+    plibget = libsub.add_parser(
+        "get", help="取一份到工作目录(默认 library/<名字>,和随消息发来的那份同一个位置)"
+    )
+    plibget.add_argument("name", help="资料库里的名字,如 预算表.xlsx")
+    plibget.add_argument("--out", default=None, help="写到别处(默认 library/<名字>)")
+
     part = sub.add_parser(
         "artifact",
         help="把工作区文件设为交付物(当前预览)",
@@ -1647,6 +1666,30 @@ def main() -> None:
             print(f"这条活现在叫「{r['title']}」。")
         else:
             print(f"话题标题已设为：{a.text}")
+    elif a.cmd == "library":
+        project = _need("CHEESE_PROJECT", PROJECT)
+        # 带上话题:沙箱 token 是为一轮、一个地方铸的,后端要凭它确认这个凭据属于谁。
+        where = f"?topic={urllib.parse.quote(_need('CHEESE_TOPIC', TOPIC))}"
+        if a.libcmd == "ls":
+            rows = _call("GET", f"/projects/{project}/library{where}")["data"]["data"]
+            if not rows:
+                print("资料库里还没有文件")
+            for row in rows:
+                size = row.get("bytes") or 0
+                shown = f"{size / 1024:.0f}K" if size >= 1024 else f"{size}B"
+                print(f"{row['path']}\t{shown}")
+        else:
+            out = a.out or f"library/{a.name}"
+            parent = os.path.dirname(out)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            _raw_request(
+                "GET",
+                f"/projects/{project}/library/raw{where}"
+                f"&path={urllib.parse.quote(a.name)}",
+                None,
+                out=out,
+            )
     elif a.cmd == "fetch":
         # 带上话题:沙箱 token 是带作用域的,后端要凭它确认这个凭据属于谁。
         # 不带的话每一次调用都会被判成 "Agent credential is invalid or expired"。

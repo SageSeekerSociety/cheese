@@ -1741,7 +1741,7 @@ class DeviceChannel(Channel):
         for image in images:
             path = str(image.get("path") or "")
             try:
-                data = ws.read_room_file(screen.project_id, screen.topic_id, path)
+                data = ws.read_attachment(screen.project_id, screen.topic_id, path)
                 await self._hub.put_file(
                     screen.device_id,
                     screen.sid,
