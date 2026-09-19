@@ -34,4 +34,10 @@ export default [
     component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
     meta: { title: '反馈管理', isFullPage: true },
   },
+  {
+    path: '/design/feedback',
+    name: 'FeedbackDesign',
+    component: () => import('@/views/feedback/FeedbackDesignPage.vue'),
+    meta: { title: '数据与架构', isFullPage: true },
+  },
 ] as RouteRecordRaw[]

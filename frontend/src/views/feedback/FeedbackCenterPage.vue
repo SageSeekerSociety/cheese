@@ -60,6 +60,9 @@ function clearFilters() {
       <header class="fb-head">
         <h1 class="t-page-title">反馈中心</h1>
         <v-spacer />
+        <!-- 数据关系与架构关系那两张图。放在这里而不是页脚：它是给人核对方案用的，
+             不是「相关链接」，藏在页脚就没人会点。 -->
+        <v-btn variant="text" color="secondary" size="small" to="/design/feedback"> 数据与架构 </v-btn>
         <!-- 原型身份开关。真接上权限之后这里要整块删掉（见 stores/feedback.ts 的
              注释）：它是给人看两套界面用的，不是权限门。 -->
         <div class="fb-role">
