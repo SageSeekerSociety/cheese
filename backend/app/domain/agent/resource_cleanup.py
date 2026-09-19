@@ -252,8 +252,16 @@ def check_transcripts(home: Path, receipts: list[dict]) -> None:
     expected = {receipt["source"]: receipt for receipt in receipts}
     found = {}
     for path in (home / ".claude/projects").rglob("*.jsonl"):
+        # The same two cases the uploader skips (event_drain.collect_transcripts),
+        # skipped for the same reason: what was uploaded is the set this is
+        # checked against. Claude Code links a resumed session's subagent
+        # transcripts to the original session's files — a link inside the same
+        # home, whose target is uploaded under its own path — and refusing it
+        # here left a room's cleanup failing every minute for five days
+        # (operation a12198c1, 2026-09-13 to 09-19) over a file that was never
+        # in the receipts to begin with.
         if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
-            raise RuntimeError("transcript path escapes its resource")
+            continue
         digest = hashlib.sha256()
         size = 0
         with path.open("rb") as original:

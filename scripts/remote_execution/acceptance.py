@@ -131,7 +131,7 @@ def task_action(name, index):
             for block in tool_results(body)
             if block["tool_use_id"] == f"toolu_acceptance_{index}"
         )
-        task_id = re.search(r"remote-[0-9a-f]{16}", json.dumps(content)).group()
+        task_id = re.search(r"cheese-task-[0-9a-f]{16}", json.dumps(content)).group()
         return {
             "name": name,
             "input": {"task_id": task_id},
