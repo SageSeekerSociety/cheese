@@ -91,16 +91,6 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # A private 1:1's teammate, and nothing else. A room does not have an agent
-    # — it seats members on its roster and the one addressed answers — so for a
-    # room this is NULL, and the migration that made it so moved each room's
-    # former agent onto its roster. It stays only until a DM with a teammate
-    # records that teammate as `private_peer`, the way a DM with a person does.
-    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("agent_instances.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
     # NULL = explicit project default, then the deployment default. Switchable only
     # until the topic has run — i.e. until it has an `agent_sessions` row — after

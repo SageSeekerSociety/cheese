@@ -156,23 +156,15 @@ class TopicMemberService:
         )
 
     async def seed_private(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        owner_handle: str,
-        peer_handle: str | None,
+        self, topic_id: uuid.UUID, *, owner_handle: str, peer_handle: str
     ) -> None:
-        """Seed exactly the two seats a private conversation contains.
-
-        A member↔芝士 DM has the human owner plus this topic's agent seat. A
-        human↔human DM has the canonical owner plus the peer and no agent.
-        Idempotency also repairs private topics created before rosters existed.
+        """Seed exactly the two seats a private conversation contains: the
+        owner, and the peer — a person's handle or a teammate's seat, the same
+        row either way. Idempotency also repairs private topics created before
+        rosters existed.
         """
         await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        if peer_handle is None:
-            await self.ensure_topic_agent_seat(topic_id)
-        else:
-            await self._ensure_member(topic_id, peer_handle, role=TopicRole.member)
+        await self._ensure_member(topic_id, peer_handle, role=TopicRole.member)
 
     async def seed_split(
         self,

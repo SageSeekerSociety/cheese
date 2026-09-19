@@ -209,7 +209,6 @@ async def test_receiving_message_does_not_create_default_agent(client, tmp_path)
         )
         agents = AgentInstanceRepository(session)
         project.default_agent_instance_id = None
-        topic.agent_instance_id = None
         await session.flush()
         for agent in await agents.list_for_project(project.id):
             await agents.delete(agent)
