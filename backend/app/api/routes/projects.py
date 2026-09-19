@@ -63,7 +63,8 @@ from app.domain.agent_instance.services import (
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.actor import Actor
+from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
@@ -308,6 +309,9 @@ def _agent_out(
         id=agent.instance_id,
         project_id=project_id,
         handle=agent.handle,
+        seat_handle=(
+            agent_instance_handle(agent.instance_id) if agent.instance_id else None
+        ),
         type_name=agent.type_name,
         display_name=agent.display_name,
         configuration=AgentConfiguration.model_validate(agent.configuration),
@@ -605,8 +609,9 @@ async def _authorized_place(
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     topic_raw: str,
-) -> Place | None:
-    """Resolve and authorize the caller-named place, when present.
+) -> tuple[Place, Actor] | None:
+    """Resolve and authorize the caller-named place, when present, and say
+    who is calling — the pool a memory goes to is that caller's.
 
     A place, not a room: `cheese remember` is run by whoever is doing the work,
     and that is usually a thread. Resolving only rooms answered 404 for the one
@@ -629,28 +634,37 @@ async def _authorized_place(
         fallback_handle=None, topic_id=place.room_id, project_id=project_id
     )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
-    return place
+    return place, actor
 
 
 async def _agent_memory_scope(
-    db: DbSession, project_id: uuid.UUID, place: Place | None
+    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
 ) -> tuple[MemoryScope, str] | None:
-    """Where the agent working in ``place`` writes what it learns.
+    """Where the agent that is calling writes what it learns.
 
-    Keyed by the AGENT, not by the room: the same 芝士 moving between rooms of
-    one project keeps one pool, which is the whole point of an instance owning
-    its memory. Returns ``None`` when no usable place was supplied, so the
+    Keyed by the AGENT, not by the room: a room seats any number of teammates,
+    and the one running `cheese remember` is the one on the token, so its notes
+    go to its own pool wherever it is working — the same 芝士 moving between
+    rooms keeps one pool. A token that names no saved teammate (an older one, a
+    DM's) writes as the place's default: the DM's own teammate, else the
+    project's. Returns ``None`` when no usable place was supplied, so the
     caller falls back to the shared project pool.
     """
-    if place is None:
+    if caller is None:
         return None
+    place, actor = caller
     project = await ProjectService(db).get_or_404(project_id)
-    agent = await AgentInstanceService(db).for_topic(place.room, project)
+    agents = AgentInstanceService(db)
+    agent = await agents.for_seat_handle(
+        project, actor.handle if actor.is_agent else None
+    )
+    if agent is None:
+        agent = await agents.for_topic(place.room, project)
     return memory_pool(project_id, agent)
 
 
 async def _agent_memory_read_scopes(
-    db: DbSession, project_id: uuid.UUID, place: Place | None
+    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
 ) -> list[tuple[MemoryScope, str]]:
     """Every pool a read on behalf of ``place`` should cover.
 
@@ -663,13 +677,13 @@ async def _agent_memory_read_scopes(
     filled when work was a room of its own, so keying it by the thread would
     look up an id nothing ever wrote under.
     """
-    if place is None:
+    if caller is None:
         return []
-    agent_scope = await _agent_memory_scope(db, project_id, place)
+    agent_scope = await _agent_memory_scope(db, project_id, caller)
     if agent_scope is None:
         return []
     scopes = [agent_scope]
-    legacy = legacy_topic_pool(project_id, place.room_id)
+    legacy = legacy_topic_pool(project_id, caller[0].room_id)
     if legacy != agent_scope:
         scopes.append(legacy)
     return scopes
@@ -704,9 +718,10 @@ async def add_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    place = await _authorized_place(
+    caller = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
+    place = caller[0] if caller else None
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("content 不能为空")
@@ -721,7 +736,7 @@ async def add_memory(
         _authorize_personal_memory_owner(place, owner)
         await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
         return ok({"remembered": True, "layer": layer.value})
-    agent_scope = await _agent_memory_scope(db, project_id, place)
+    agent_scope = await _agent_memory_scope(db, project_id, caller)
     if agent_scope is not None:
         await memory_store(db).remember(*agent_scope, content, layer=layer)
     else:
@@ -747,9 +762,10 @@ async def search_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    place = await _authorized_place(
+    caller = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
+    place = caller[0] if caller else None
     query = (body.get("query") or "").strip()
     if not query:
         raise ValidationError("query 不能为空")
@@ -767,7 +783,7 @@ async def search_memory(
     # happens to sit in says nothing about how well it answers the question, and
     # the caller reads top-down.
     hits = []
-    for scope in await _agent_memory_read_scopes(db, project_id, place):
+    for scope in await _agent_memory_read_scopes(db, project_id, caller):
         hits.extend(await store.search(*scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)

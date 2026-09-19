@@ -29,6 +29,7 @@ class Runner:
 
     def __init__(self):
         self.produced: list[dict] = []
+        self.reads = 0
         self.inputs: list[dict] = []
         self.steers: list[dict] = []
         self.working = False
@@ -40,6 +41,7 @@ class Runner:
         if self.offline:
             raise DeviceOffline("device")
         if method == "entries":
+            self.reads += 1
             since = params.get("since")
             if since is None:
                 return {"entries": list(self.produced)}
@@ -191,6 +193,46 @@ async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
     assert runtime.holds(session.topic_id)
     await runtime.close(session)
     assert not runtime.holds(session.topic_id)
+
+
+@pytest.mark.anyio
+async def test_a_quiet_room_reads_slower_and_a_new_turn_is_read_at_once(tmp_path):
+    """Reading an entry log is a call to the room's device, and a room nobody
+    is talking to answers it with an empty page. At a fixed 100ms that is ten
+    calls a second per room for nothing, so a quiet log has to cost less — and
+    the room still has to answer the moment someone sends into it.
+    """
+    session, runtime, runner = wire(tmp_path)
+    consumer = AsyncMock()
+    runtime.bind_events(consumer)
+    runtime.bind_activity(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
+
+    await runtime.recover("device")
+    await runtime.replay(session, known_texts=set())
+
+    await asyncio.sleep(2.5)
+    quiet = runner.reads
+    assert quiet <= 10, f"a quiet room was read {quiet} times in 2.5s"
+
+    consumer.reset_mock()
+    work = uuid.uuid4()
+    assert await runtime.send(
+        session, "开始", Opening("system"), work_id=work, on_mark=lambda _: None
+    )
+    # The room was reading at its slowest when the message arrived; the entries
+    # it produces must not wait that interval out. The deadline is well under
+    # the slowest read, and generous enough that a slow drain is not read as a
+    # wait nobody cut short.
+    landed: list = []
+    for _ in range(12):
+        await asyncio.sleep(0.05)
+        landed = [call.args[3] for call in consumer.await_args_list]
+        if any(isinstance(event, AgentToolUse) for event in landed):
+            break
+    assert any(isinstance(event, AgentToolUse) for event in landed), landed
+
+    await runtime.close(session)
 
 
 @pytest.mark.anyio

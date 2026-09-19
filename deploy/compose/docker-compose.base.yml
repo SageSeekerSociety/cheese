@@ -23,6 +23,10 @@ services:
       - DEVICE_CONNECTION_URL=
       - DEVICE_CONNECTION_OWNER=1
       - DEPLOYED_VIA_COMPOSE=1
+      # A light database user; the backend pair takes the server's budget
+      # (see db_pool_size in app/core/config.py).
+      - DB_POOL_SIZE=5
+      - DB_MAX_OVERFLOW=5
     command:
       - uvicorn
       - app.device_connection_app:app

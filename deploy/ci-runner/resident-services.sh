@@ -29,6 +29,13 @@ PG_TMPFS_SIZE="${CHEESE_CI_PG_TMPFS:-3g}"
 # reach together, and reaching it is `FATAL: sorry, too many clients already` in
 # whichever run got there second.
 PG_MAX_CONNECTIONS="${CHEESE_CI_PG_MAX_CONNECTIONS:-300}"
+# The data directory is that tmpfs, shared by the machine's two slots, and a
+# run writes about 1 GB. Postgres at its default 1 GB max_wal_size let WAL sit
+# at 600 MB between runs, which with 1 GB of test databases left under 1.5 GB
+# for two runs at once — measured 2026-09-18, every machine in the pool failing
+# every job with ENOSPC the moment both slots were busy. On tmpfs a checkpoint
+# costs nothing, so WAL is kept small and recycled often.
+PG_MAX_WAL_SIZE="${CHEESE_CI_PG_MAX_WAL_SIZE:-256MB}"
 # Redis ships 16 databases; each runner slot takes a block of that many, so the
 # server has to offer more than one block's worth.
 VALKEY_DATABASES="${CHEESE_CI_VALKEY_DATABASES:-64}"
@@ -50,7 +57,8 @@ ensure cheese-ci-postgres \
   --tmpfs "/var/lib/postgresql/data:rw,size=$PG_TMPFS_SIZE" \
   --health-cmd="pg_isready -U postgres" --health-interval=10s \
   --health-timeout=5s --health-retries=5 \
-  "$PG_IMAGE" -c max_connections="$PG_MAX_CONNECTIONS"
+  "$PG_IMAGE" -c max_connections="$PG_MAX_CONNECTIONS" \
+  -c max_wal_size="$PG_MAX_WAL_SIZE" -c min_wal_size=64MB
 
 ensure cheese-ci-valkey \
   -p 127.0.0.1:6389:6379 \

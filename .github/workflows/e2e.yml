@@ -275,13 +275,16 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
-        if: always()
+        # Only a red run's report is ever opened, and the green ones were the
+        # largest tenant of the org's 500MB artifact quota: 454MB of the 945MB
+        # live on 2026-09-18, 78 uploads in a week.
+        if: failure()
         with:
           name: playwright-report
           path: |
             e2e/playwright-report/
             e2e/test-results/
-          retention-days: 7
+          retention-days: 3
 
       # Same reclaim test.yml does, and for the same reason: every run's
       # postgres service container leaves an anonymous volume behind. This job

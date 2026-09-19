@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
 
 import LandingSpark from '@/assets/landing-spark.svg?component'
 import logo from '@/assets/logo-plain.svg?url'
@@ -9,8 +8,6 @@ import HomepageMessage from '@/components/home/HomepageMessage.vue'
 import i18n, { t } from '@/i18n'
 import AccountService from '@/services/account'
 
-const router = useRouter()
-const route = useRoute()
 const loggedIn = computed(() => AccountService.loggedIn)
 const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
 const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
@@ -93,10 +90,6 @@ function moveTab(event: KeyboardEvent, group: 'stage' | 'audience') {
   else audienceId.value = audiences.value[next].id
   buttons[next].focus()
 }
-// Session restoration redirects only the root; /about stays public after sign-in.
-watch([loggedIn, () => route.name], ([isLoggedIn, routeName]) => {
-  if (isLoggedIn && routeName === 'HomeDefault') void router.replace({ name: 'HomeSpaces' })
-})
 </script>
 
 <template>

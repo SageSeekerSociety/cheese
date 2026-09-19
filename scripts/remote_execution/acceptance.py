@@ -134,10 +134,7 @@ def task_action(name, index):
         task_id = re.search(r"remote-[0-9a-f]{16}", json.dumps(content)).group()
         return {
             "name": name,
-            "input": {
-                "task_id": task_id,
-                **({"block": True, "timeout": 5000} if name == "TaskOutput" else {}),
-            },
+            "input": {"task_id": task_id},
         }
 
     return action
@@ -192,9 +189,9 @@ def case(folder, options):
                 "--model",
                 "claude-sonnet-4-6",
                 "--tools",
-                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill",
+                "Read,Edit,Write,Bash,TaskStop,Skill",
                 "--allowedTools",
-                "Read,Edit,Write,Bash,TaskOutput,TaskStop,Skill,mcp__custom__echo,"
+                "Read,Edit,Write,Bash,TaskStop,Skill,mcp__custom__echo,"
                 "mcp__native__chat_send,mcp__native__platform_request,"
                 "mcp__native__cheese_api",
                 "--debug-file",
@@ -241,7 +238,6 @@ def case(folder, options):
                     "run_in_background": True,
                 },
             },
-            task_action("TaskOutput", 4),
             {
                 "name": "Bash",
                 "input": {
@@ -249,7 +245,7 @@ def case(folder, options):
                     "run_in_background": True,
                 },
             },
-            task_action("TaskStop", 6),
+            task_action("TaskStop", 5),
             {"name": "mcp__custom__echo", "input": {"message": "REMOTE_CUSTOM"}},
             {"name": "Skill", "input": {"skill": "remote-check"}},
             {"name": "Bash", "input": {"command": "rg --files -g '*.txt'"}},
@@ -490,11 +486,10 @@ def case(folder, options):
         if options.mode == "normal":
             assert not [r for r in results if r.get("is_error")], results
             assert "BEFORE_EDIT" in json.dumps(results[0])
-            assert "REMOTE_BACKGROUND" in json.dumps(results[5]), results[5]
-            assert "REMOTE_CUSTOM_ENV" in json.dumps(results[8]), results[8]
-            assert "target.txt" in json.dumps(results[10]), results[10]
-            assert "AFTER_EDIT" in json.dumps(results[11]), results[11]
-            assert "REMOTE_BACKGROUND" in json.dumps(results[12]), results[12]
+            assert "REMOTE_CUSTOM_ENV" in json.dumps(results[7]), results[7]
+            assert "target.txt" in json.dumps(results[9]), results[9]
+            assert "AFTER_EDIT" in json.dumps(results[10]), results[10]
+            assert "REMOTE_BACKGROUND" in json.dumps(results[11]), results[11]
             publications = server.state.get("publications", [])
             assert len(publications) == 1, publications
             assert "PLATFORM_API_READ" in json.dumps(results), results
@@ -552,7 +547,11 @@ def case(folder, options):
                         for h in hooks
                         if h.get("hook_event_name") == event
                     ]
-                    for index in range(8):
+                    # The native tool calls the script opens with — Read, Edit,
+                    # Write, Bash, two background Bash, TaskStop — each reach
+                    # the hook exactly once under their own tool_use_id. The
+                    # MCP call after them is receipted under a plugin id.
+                    for index in range(7):
                         assert seen.count(f"toolu_acceptance_{index}") == 1, (
                             event,
                             seen,

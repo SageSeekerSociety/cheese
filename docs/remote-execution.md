@@ -2,7 +2,7 @@
 
 Claude Code runs on the central host. Its native file tools and shell commands execute through a persistent service on the assigned machine. Custom stdio MCP servers also run there, with their configured environment. Cheese RC remains attached to the central terminal; its file previews, diffs and shell task controls go to the executor.
 
-Central sessions require Claude Code 2.1.265. They use the function hook interface enabled by `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, so upgrading Claude Code requires rerunning acceptance. The executor uses the same pinned build's `claude mcp serve` for native file operations and owns shell processes itself.
+Central sessions require Claude Code 2.1.277. They use the function hook interface enabled by `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, so upgrading Claude Code requires rerunning acceptance. The executor uses the same pinned build's `claude mcp serve` for native file operations and owns shell processes itself.
 
 ## Room placement
 

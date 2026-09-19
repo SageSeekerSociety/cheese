@@ -167,6 +167,59 @@ def test_a_task_list_that_never_comes_back_does_not_break_the_state_the_page_pol
         client.portal.call(cleanup)
 
 
+def test_a_machine_that_says_no_does_not_break_the_state_the_page_polls(
+    client, place, monkeypatch
+):
+    """The machine is there and answers the task-list read with a failure of
+    its own — the runner's socket not up yet, the home gone. Same standing as
+    a silence: only the tasks are unknown this poll, and the machine's words go
+    with the answer instead of a 500 painted over the room (the third of the
+    three, after offline and timeout; a dozen a day on 2026-09-18)."""
+    from app.api.routes.remote_control import store
+    from app.domain.agent.device_hub import DeviceCallError
+    from app.domain.agent.remote_control import key
+
+    project, topic = place
+
+    async def create_session():
+        row = await store().create(
+            {"p": project, "t": topic, "exp": int(time.time()) + 3600},
+            {
+                "execution": {
+                    "resource_id": topic,
+                    "execution": {"device_id": "machine-7"},
+                }
+            },
+        )
+        await store().update(row["id"], {"status": "active", "last_seen": time.time()})
+        return row["id"]
+
+    async def the_machine_says_no(_target, _request):
+        raise DeviceCallError(
+            "lstat /home/x/.cheese/home/p/t/.cheese/executor: no such file or directory"
+        )
+
+    monkeypatch.setattr(
+        "app.api.routes.remote_control.private_chat.control", the_machine_says_no
+    )
+    sid = client.portal.call(create_session)
+    try:
+        response = client.get(
+            f"/topics/{topic}/agent/control", headers=session_auth_headers("alice")
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["tasks"] == {}
+        assert data["tasks_unread"] is True
+        assert data["device_error"].endswith("executor: no such file or directory")
+    finally:
+
+        async def cleanup():
+            await store().redis.delete(key(sid), key(topic, "current"))
+
+        client.portal.call(cleanup)
+
+
 def test_reading_a_session_is_open_to_whoever_is_in_the_room(client, place):
     """The page polls this every couple of seconds. Refusing a teammate — agent
     or person — bought nothing: deciding is what has a party under review."""

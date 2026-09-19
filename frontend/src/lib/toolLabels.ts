@@ -45,6 +45,10 @@ export const TOOL_LABELS: Record<string, string> = {
   // backend/tests/unit/test_tool_labels.py 直接对着 CLI 的命令树说出来。
   cheese_chat_send: '发布消息',
   chat_send: '发布消息', // 系统提示里用的名字，两个都注册了
+  cheese_chat_list: '读取聊天记录',
+  cheese_chat_search: '搜索聊天记录',
+  cheese_chat_get: '读取一条消息',
+  cheese_chat_replies: '读取消息回复',
   cheese_doc_set: '更新实况文档',
   cheese_doc_get: '读取实况文档',
   cheese_split: '创建任务',

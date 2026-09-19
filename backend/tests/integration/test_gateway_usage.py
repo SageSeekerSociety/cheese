@@ -452,13 +452,12 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
 
 
 @pytest.mark.anyio
-async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
+async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     client, tmp_path, monkeypatch
 ):
     from app.core.config import settings
     from app.domain.agent_instance.configuration import AgentConfiguration
     from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.topic.repositories import TopicRepository
 
     monkeypatch.setattr(settings, "subscription_enabled", True)
     svc, factory, pid, tid = await _mk_service(
@@ -473,19 +472,24 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
             display_name="Reviewer",
             configuration=AgentConfiguration(model="opus", body="Original role"),
         )
-        topic = await TopicRepository(session).get(tid)
-        topic.agent_instance_id = agent.id
         snapshot = agents.resolved(agent)
         await agents.configure(
             agent, AgentConfiguration(model="fable", body="Edited role")
         )
         await session.commit()
         assert await agents.system_prompt(snapshot) == "Original role"
+        # A later turn addressed to the same teammate resolves it afresh.
+        edited = agents.resolved(agent)
 
+    # A room does not have an agent: which one a turn runs as comes with the
+    # turn. An ongoing turn keeps the snapshot it started with; the next one
+    # sees the edit; a turn nobody addressed runs as the project's default.
     current, _ = await svc._model_kwargs(
         pid, _on_a_machine(), tid, agent=snapshot, acting_agent="reviewer"
     )
-    following, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    following, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
+    )
     default, _ = await svc._model_kwargs(pid, _on_a_machine())
     assert current["model"] == "claude-opus-5"
     assert following["model"] == "claude-fable-5"
@@ -493,7 +497,9 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     assert (
         current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]
     )
-    repeated, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    repeated, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
+    )
     assert (
         repeated["env"]["CHEESE_AGENT_CONFIG"]
         == following["env"]["CHEESE_AGENT_CONFIG"]
@@ -504,7 +510,9 @@ async def test_a_room_uses_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     )
     assert same_turn == current
     assert same_turn["agent_handle"] == "reviewer"
-    different_author, _ = await svc._model_kwargs(pid, _on_a_machine(), tid)
+    different_author, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited
+    )
     assert different_author["agent_handle"] == "ops"
     assert different_author["model"] == following["model"]
     assert (

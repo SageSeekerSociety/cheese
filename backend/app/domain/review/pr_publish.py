@@ -258,8 +258,12 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
         )
     for task_id in wanted:
         try:
+            # Decide on an unlocked read, call GitHub with no transaction open,
+            # then lock the row only to record it. A row lock held across the
+            # GitHub call would queue every other writer of this task behind
+            # it with a pool connection each (dev outage of 2026-09-18).
             async with session_factory() as session:
-                task = await session.get(Task, task_id, with_for_update=True)
+                task = await session.get(Task, task_id)
                 if (
                     task is None
                     or task.status != TaskStatus.open
@@ -275,6 +279,8 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                 base = ancestor.base_branch
                 if base is None:
                     raise ValueError("Parent task has no target branch")
+                seen = (task.base_task_id, task.base_branch, task.pr_number)
+                client = None
                 if task.pr_number is not None:
                     from app.domain.review.services import AcceptService
                     from app.domain.topic.models import Topic
@@ -287,7 +293,18 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                         raise RuntimeError(
                             "Cannot retarget the task PR without its GitHub connection"
                         )
-                    await client.update_pr(task.pr_number, base=base)
+            if client is not None:
+                # Setting the base is idempotent: a sweep that records nothing
+                # below simply sets it again next time.
+                await client.update_pr(seen[2], base=base)
+            async with session_factory() as session:
+                task = await session.get(Task, task_id, with_for_update=True)
+                if (
+                    task is None
+                    or task.status != TaskStatus.open
+                    or (task.base_task_id, task.base_branch, task.pr_number) != seen
+                ):
+                    continue
                 task.base_branch = base
                 TaskService._bind_workspace(task)
                 cards = AcceptCardRepository(session)

@@ -91,13 +91,11 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # WHICH agent works here. NULL = the project's default, so a topic nobody
-    # chose an agent for still resolves without carrying a copy of the default
-    # around (and follows the project when the default changes).
-    #
-    # Changing it destroys nothing: a conversation is keyed by (topic, agent) in
-    # `agent_sessions`, so the new agent looks up a key with no row and starts
-    # fresh while the old one's row stays where it is.
+    # A private 1:1's teammate, and nothing else. A room does not have an agent
+    # — it seats members on its roster and the one addressed answers — so for a
+    # room this is NULL, and the migration that made it so moved each room's
+    # former agent onto its roster. It stays only until a DM with a teammate
+    # records that teammate as `private_peer`, the way a DM with a person does.
     agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_instances.id", ondelete="SET NULL"),
         nullable=True,

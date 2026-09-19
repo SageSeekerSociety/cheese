@@ -13,10 +13,11 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
@@ -271,22 +272,20 @@ async def test_queued_message_retains_selected_teammate(client, tmp_path):
             type_name=None,
             display_name="Second",
         )
-        topic.agent_instance_id = first.id
-        topic_id, second_id = topic.id, second.id
+        members = TopicMemberService(session)
+        for made in (first, second):
+            await members.ensure_agent_seat(topic.id, agent_instance_handle(made.id))
+        topic_id = topic.id
         await session.commit()
     _, original, _, _ = await svc.post_user_message(
-        topic_id, author="u", content="For first", turn_id=None, reply_to=None
+        topic_id, author="u", content="@First For first", turn_id=None, reply_to=None
     )
-    async with factory() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        topic.agent_instance_id = second_id
-        await session.commit()
     await svc.post_user_message(
-        topic_id, author="u", content="For second", turn_id=None, reply_to=None
+        topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
     )
     prepared = await svc._assemble_turn(
         topic_id=topic_id,
-        content="For first",
+        content="@First For first",
         turn_id=original,
         user_block_id=original,
         provision_actor=None,
@@ -378,17 +377,16 @@ async def test_other_teammate_message_waits_for_live_turn(
             type_name=None,
             display_name="Second",
         )
-        topic_id, second_id = topic.id, second.id
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(second.id)
+        )
+        topic_id = topic.id
         await session.commit()
     async for _ in svc.converse(
         topic_id=topic_id, author="u", content="First task", summon=True
     ):
         pass
     await screen.started.wait()
-    async with factory() as session:
-        topic = await TopicRepository(session).get(topic_id)
-        topic.agent_instance_id = second_id
-        await session.commit()
     waiting = asyncio.Event()
     wait = svc.wait_for_recipient
 
@@ -861,6 +859,58 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
         if (block.meta or {}).get("event_type") == "delivery_fallback"
     ]
     assert len(persisted) == 1
+
+
+@pytest.mark.anyio
+async def test_midturn_delivery_holds_no_topic_lock(client, tmp_path, monkeypatch):
+    """While the message is being handed to the machine, the topic row stays
+    free for other writers (dev outage of 2026-09-18: a row lock held across a
+    device call queued every writer of the row with a pool connection each)."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id: uuid.UUID = topic.id
+        await session.commit()
+    _payloads, _block_id, block_ids, _ = await svc.post_user_message(
+        topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
+    )
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_deliver(tid, text, images=None):
+        in_flight.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
+    svc._active_turn_ids[topic_id] = uuid.uuid4()
+    merge = asyncio.create_task(
+        svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+    )
+    await asyncio.wait_for(in_flight.wait(), timeout=5)
+    async with factory() as session:
+        # NOWAIT fails at once if the delivery were holding the row.
+        locked = await session.scalar(
+            text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+            {"id": topic_id},
+        )
+        await session.rollback()
+    assert locked == topic_id
+    release.set()
+    assert await asyncio.wait_for(merge, timeout=5) is True
 
 
 @pytest.mark.anyio

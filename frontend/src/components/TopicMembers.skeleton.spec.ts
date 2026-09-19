@@ -17,7 +17,6 @@ vi.mock('../api', async () => {
   return {
     ...actual,
     listTopicMembers: (...a: unknown[]) => listTopicMembers(...a),
-    getTopicAgent: vi.fn(async () => ({ display_name: '芝士', inherited: true, instance_id: 'a1' })),
     listProjectAgents: vi.fn(async () => ({ data: [] })),
   }
 })

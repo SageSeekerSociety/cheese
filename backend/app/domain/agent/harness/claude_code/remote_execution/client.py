@@ -31,7 +31,7 @@ else:
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     from executor_transport import RemoteClient
 
-PINNED_VERSION = "2.1.265"
+PINNED_VERSION = "2.1.277"
 NATIVE_TOOLS = (
     "Read",
     "Edit",
@@ -40,7 +40,6 @@ NATIVE_TOOLS = (
     "Glob",
     "Grep",
     "NotebookEdit",
-    "TaskOutput",
     "TaskStop",
 )
 REMOTE_CONTROLS = {

@@ -1,6 +1,6 @@
 ---
 name: cheese
-description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。聊天用 chat_send 工具，平台动作用同名的 cheese_* 工具，其余平台 API 用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
+description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。聊天用 chat_send 工具，回看聊天记录用 cheese_chat_* 工具，平台动作用同名的 cheese_* 工具，其余平台 API 用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
 ---
 
 # cheese — 平台操作
@@ -117,6 +117,10 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
+| `cheese_chat_list(topic?, task?, limit?, before?, after?, kind?, author?, json?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条。只读，不叫醒任何人、不标记消息已读。输出末尾带续读的调用，翻更早的照抄它 |
+| `cheese_chat_search(query, topic?, task?, limit?, before?, after?, kind?, author?, json?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
+| `cheese_chat_get(message_id, topic?, task?, json?, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
+| `cheese_chat_replies(message_id, topic?, task?, limit?, before?, after?, kind?, author?, json?)` | 列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 ID 再读 |
 | `cheese_doc_set(file)` | 把工作区里一个文件的内容设为本话题实况文档（整块覆盖）。调用前先 `cheese_doc_get` 记下当前版本；写入冲突时重新 get、合并再 set |
 | `cheese_doc_get()` | 返回当前实况文档。也是拿到写入权的那一步——没读过就写,只有本话题还没文档时才让你建 |
 | `cheese_title(text, task?)` | 修改房间标题；带 `task` 时修改该任务标题 |
@@ -164,3 +168,5 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese_artifact(path='report.html')` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 
 `cheese_*` 工具与平台 CLI 同源：名字和参数来自当前机器安装的 CLI，调用执行同一份逻辑。这些入口均经平台鉴权并记录。
+
+**会话是可丢的，记录不是。** 每一轮只带来还没被读过的新消息；会话新开（部署、机器回收、归档后重开）时你不记得之前聊了什么，房间里的人却默认你记得。这时别猜、别问「之前说到哪了」——用 `cheese_chat_list` 读最近的记录，要找某句原话或某个决定用 `cheese_chat_search`，看某条消息底下的讨论用 `cheese_chat_replies`。查别人的原话和回复关系用这几个；查记下来的事实用 `cheese_recall`，两者不互相覆盖。

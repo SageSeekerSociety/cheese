@@ -8,19 +8,36 @@ to the one that wrote it.
 
 import asyncio
 import time
-import uuid
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.domain.identity.handles import topic_agent_handle
+from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
-def _own_agent(topic_id: str) -> str:
-    """The 分身 a room is seeded with: its own agent-user, not a shared account."""
-    return topic_agent_handle(uuid.UUID(topic_id))
+def _own_agent(client, topic_id: str) -> str:
+    """The agent a room is seeded with — the project's default, on its own seat."""
+    rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    seats = [m["member_handle"] for m in rows if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]
+
+
+def _seat_second_agent(client, project_id: str, topic_id: str, handle: str) -> str:
+    """A second saved teammate in the project, invited into this room. Returns
+    the seat it acts as."""
+    created = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
+    assert created.status_code == 200, created.text
+    seat = created.json()["data"]["seat_handle"]
+    r = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": seat, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    return seat
 
 
 def _seed_agent(handle: str) -> None:
@@ -50,10 +67,10 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
     return project_id, topic_id
 
 
-def _turn(client, topic_id: str) -> list[dict]:
+def _turn(client, topic_id: str, content: str = "hi") -> list[dict]:
     """Run one summoned turn against the stub agent, return its frames."""
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.send_json({"type": "message", "content": content, "summon": True})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -67,59 +84,37 @@ def _ai_authors(client, topic_id: str) -> set[str]:
     return {b["author"] for b in blocks if b["author_type"] == "ai"}
 
 
-def test_default_room_attributes_ai_blocks_to_its_own_agent(client):
-    """The seeded roster carries THIS room's 分身, and its blocks say so —
-    the point of 分身独立身份: two rooms' work is told apart by its author."""
+def test_default_room_attributes_ai_blocks_to_the_seated_agent(client):
+    """The seeded roster carries the project's default agent on its own seat,
+    and its blocks say so — the point of 分身独立身份: work is told apart by
+    its author, and the same agent is the same author in every room."""
     _, topic_id = _project_and_topic(client)
     _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {_own_agent(topic_id)}
+    assert _ai_authors(client, topic_id) == {_own_agent(client, topic_id)}
 
 
-def test_ai_blocks_follow_the_rooms_agent_not_a_fixed_handle(client):
-    """Swap which agent is in the room and the AI blocks change hands.
+def test_ai_blocks_are_authored_by_the_agent_that_was_addressed(client):
+    """Two agents in one room: the one a message names is the one whose seat
+    the reply carries. With a hard-coded string the blocks below would say
+    ``cheese`` whichever teammate did the work."""
+    project_id, topic_id = _project_and_topic(client)
+    ops = _seat_second_agent(client, project_id, topic_id, "ops")
 
-    This is the whole point of resolving the author: with a hard-coded string
-    the blocks below would still say ``cheese`` even though 芝士 is no longer a
-    member of the room.
-    """
-    _, topic_id = _project_and_topic(client)
-    _seed_agent("ops")
-    r = client.post(
-        f"/topics/{topic_id}/members",
-        json={"handle": "ops", "role": "member", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    r = client.delete(
-        f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice",
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-
-    _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {"ops"}
+    _turn(client, topic_id, f"<@{ops}> hi")
+    assert _ai_authors(client, topic_id) == {ops}
 
 
 def test_the_summon_receipt_carries_the_same_agent(client):
     """The 👀 receipt is authored by the platform, so it must agree with the
     message author — otherwise the room shows a reaction from someone absent."""
-    _, topic_id = _project_and_topic(client)
-    _seed_agent("ops")
-    client.post(
-        f"/topics/{topic_id}/members",
-        json={"handle": "ops", "role": "member", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    client.delete(
-        f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice",
-        headers=session_auth_headers("alice"),
-    )
+    project_id, topic_id = _project_and_topic(client)
+    ops = _seat_second_agent(client, project_id, topic_id, "ops")
 
-    _turn(client, topic_id)
+    _turn(client, topic_id, f"<@{ops}> hi")
     # Asked of the durable block, not of the turn's frames: the receipt that
     # places the mark is reported on the harness's own task, so it is not
     # ordered against them.
-    expected = [{"emoji": "👀", "count": 1, "authors": ["ops"]}]
+    expected = [{"emoji": "👀", "count": 1, "authors": [ops]}]
     for _ in range(200):
         blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
         landed = [b["reactions"] for b in blocks if b["reactions"]]
@@ -131,50 +126,56 @@ def test_the_summon_receipt_carries_the_same_agent(client):
         raise AssertionError("the 👀 receipt never landed")
 
 
-def _swap_agent(client, topic_id: str, handle: str) -> None:
-    """Make ``handle`` the room's 芝士 in place of the seeded one."""
-    _seed_agent(handle)
-    client.post(
-        f"/topics/{topic_id}/members",
-        json={"handle": handle, "role": "member", "actor": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    client.delete(
-        f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice",
-        headers=session_auth_headers("alice"),
-    )
+def _acting(project_id: str, topic_id: str, seat: str | None) -> dict[str, str]:
+    """`cheese remember` runs on the acting agent's own token; without one the
+    write lands as the room's default."""
+    if seat is None:
+        return {}
+    return {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project_id, topic_id=topic_id, agent_handle=seat
+        )
+    }
 
 
-def _remember(client, project_id: str, topic_id: str, fact: str) -> None:
+def _remember(
+    client, project_id: str, topic_id: str, fact: str, *, seat: str | None = None
+) -> None:
     r = client.post(
         f"/projects/{project_id}/memory",
         json={"content": fact, "topic": topic_id},
+        headers=_acting(project_id, topic_id, seat),
     )
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
 
 
-def _recall(client, project_id: str, topic_id: str, query: str) -> list[dict]:
+def _recall(
+    client, project_id: str, topic_id: str, query: str, *, seat: str | None = None
+) -> list[dict]:
     return client.post(
         f"/projects/{project_id}/memory/search",
         json={"query": query, "topic": topic_id},
+        headers=_acting(project_id, topic_id, seat),
     ).json()["data"]["hits"]
 
 
-def _hand_room_to_a_new_agent(client, project_id: str, topic_id: str, handle: str):
-    """Put a SECOND agent in this project and give it this room.
+def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> str:
+    """Put a SECOND agent in this project and seat it in this room.
 
-    Which agent works in a room is what keys its memory — deliberately not the
-    roster, which answers the other question (who authored this block). A room
-    can list several agent members while exactly one of them is the 芝士 whose
-    memory the turn reads and writes.
+    Which agent a memory belongs to is decided by who was acting when it was
+    written, not by the room: a room seats any number of teammates, and each
+    writes to its own pool. Returns the seat handle the new one acts as.
     """
     created = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
     assert created.status_code == 200, created.text
-    r = client.put(
-        f"/topics/{topic_id}/agent",
-        json={"instance_id": created.json()["data"]["id"]},
+    seat = created.json()["data"]["seat_handle"]
+    r = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": seat, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
+    return seat
 
 
 def test_the_shared_pool_stays_readable_by_every_agent(client):
@@ -192,7 +193,7 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
         ).json()["data"]["id"]
 
     cheese_room, ops_room = _topic("A"), _topic("B")
-    _hand_room_to_a_new_agent(client, project_id, ops_room, "ops")
+    _seat_a_new_agent(client, project_id, ops_room, "ops")
 
     # No topic → the legacy shared pool.
     client.post(
@@ -259,7 +260,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
         headers=session_auth_headers("alice"),
     )
     _turn(client, topic_id)
-    assert _ai_authors(client, topic_id) == {_own_agent(topic_id)}
+    assert _ai_authors(client, topic_id) == {_own_agent(client, topic_id)}
 
 
 # --- 记忆可见: the agent's own pool has to be listable, not just searchable ---
@@ -304,9 +305,9 @@ def test_listing_covers_every_agent_pool_in_the_project(client):
         ).json()["data"]["id"]
 
     cheese_room, ops_room = _topic("A"), _topic("B")
-    _hand_room_to_a_new_agent(client, project_id, ops_room, "ops")
+    ops = _seat_a_new_agent(client, project_id, ops_room, "ops")
     _remember(client, project_id, cheese_room, "部署脚本在 deploy/deploy.sh")
-    _remember(client, project_id, ops_room, "告警阈值是 p99 500ms")
+    _remember(client, project_id, ops_room, "告警阈值是 p99 500ms", seat=ops)
 
     everything = _list_memory(client, project_id)
     assert {e["content"] for e in everything} == {

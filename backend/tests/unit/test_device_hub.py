@@ -692,3 +692,64 @@ async def test_a_failed_send_takes_the_device_offline_and_leaks_nothing():
     pending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await pending
+
+
+async def test_a_call_whose_own_write_finds_the_link_dead_leaves_no_unread_failure():
+    """The call registers its future, then writes; the write is what discovers
+    the peer gone, and ``drop_transport`` fails the future the writer never
+    gets to await. asyncio reports such a future at collection as 「Future
+    exception was never retrieved」 — an ERROR with no route, for a device the
+    caller has already been told is offline. Several a day on 2026-09-18."""
+    import gc
+
+    hub = DeviceHub()
+    transport = DyingTransport()
+    await hub.attach_device("dev", transport)
+    await hub.on_device_message("dev", {"t": "hello", "executor": True})
+    transport.alive = False
+    unread: list[dict] = []
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _loop, context: unread.append(context))
+    try:
+        with pytest.raises(DeviceOffline):
+            await hub.call_executor("dev", "/state", "ping", {})
+        with pytest.raises(DeviceOffline):
+            await hub.list_screens("dev")
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+    assert unread == []
+
+
+async def test_the_machines_own_failure_arrives_as_a_device_call_error():
+    """The words are the machine's, and the type says so — a caller can tell
+    「the runner's socket is not there」 from a fault of this process."""
+    from app.domain.agent.device_hub import DeviceCallError
+
+    hub, _, task, identifier = await _executor_call()
+    await hub.on_device_message(
+        "dev1",
+        {
+            "t": "execution.result",
+            "id": identifier,
+            "error": "dial unix /tmp/cheese-execution-1000-0c5e.sock: connect: "
+            "no such file or directory",
+        },
+    )
+    with pytest.raises(DeviceCallError, match="no such file"):
+        await task
+    # And the runner's own refusal, which comes back inside the JSON it wrote.
+    hub, _, task, identifier = await _executor_call()
+    data = json.dumps({"error": "Request ID already belongs to different input"})
+    await hub.on_device_message(
+        "dev1",
+        {
+            "t": "execution.data",
+            "id": identifier,
+            "data": base64.b64encode(data.encode()).decode(),
+        },
+    )
+    await hub.on_device_message("dev1", {"t": "execution.result", "id": identifier})
+    with pytest.raises(DeviceCallError, match="Request ID"):
+        await task

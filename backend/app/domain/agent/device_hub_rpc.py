@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from app.domain.agent.device_hub import DeviceOffline, HubScreen
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, HubScreen
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,17 @@ def screen_from_json(value: dict[str, Any]) -> HubScreen:
         if data.get(key):
             data[key] = uuid.UUID(data[key])
     return HubScreen(**data)
+
+
+def _device_call_failure(response: httpx.Response) -> str | None:
+    try:
+        error = response.json().get("error") or {}
+    except ValueError:
+        return None
+    if error.get("name") != "DeviceCallError":
+        return None
+    message = error.get("message")
+    return message if isinstance(message, str) and message else None
 
 
 class RemoteDeviceHub:
@@ -209,6 +220,17 @@ class RemoteDeviceHub:
             offline = response.headers.get("X-Device-Id")
             if offline is not None:
                 raise DeviceOffline(offline)
+        if response.status_code == 502:
+            # The owner relaying the machine's own failure (errors.py,
+            # `_handle_device_call_error`): the same exception the in-process
+            # hub raises, so a caller reads one type on either side of the
+            # owner, and the machine's words arrive instead of `Server error
+            # '500' for url …/call/call_executor`. A 502 that is not that —
+            # nothing between here and the owner sends one today — falls
+            # through with its status and body intact.
+            failure = _device_call_failure(response)
+            if failure is not None:
+                raise DeviceCallError(failure)
         response.raise_for_status()
         return response
 

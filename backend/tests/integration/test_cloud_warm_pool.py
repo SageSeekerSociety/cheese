@@ -294,6 +294,43 @@ def test_concurrent_rooms_take_one_warm_machine_and_create_one_cold(warm_case):
     assert (200, "warm-test") in results
 
 
+def test_second_admission_waits_for_the_claim_without_deadlock(warm_case):
+    """A room admitted again while its warm claim is still at the provider
+    waits for that claim holding no database lock, then sees the claimed
+    machine; the provider is still asked once."""
+    client, topics, actor, cloud = warm_case
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+    original = cloud.claim_warm_machine
+
+    async def slow_claim(machine_id, body):
+        in_flight.set()
+        await release.wait()
+        return await original(machine_id, body)
+
+    cloud.claim_warm_machine = slow_claim
+
+    async def ensure():
+        async with client.test_factory() as session:
+            machine = await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topics[0]), actor=actor
+            )
+            await session.commit()
+            return machine.machine_id, machine.device_id
+
+    async def run():
+        first = asyncio.create_task(ensure())
+        await asyncio.wait_for(in_flight.wait(), timeout=5)
+        second = asyncio.create_task(ensure())
+        await asyncio.sleep(0.3)  # the second is now waiting for the claim
+        release.set()
+        return await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+
+    results = asyncio.run(run())
+    assert results[0] == results[1] == (200, "warm-test")
+    assert len(cloud.claims) == 1
+
+
 def test_timeout_keeps_quota_reserved_and_retry_finishes_same_claim(
     warm_case, monkeypatch
 ):

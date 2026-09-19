@@ -1,6 +1,6 @@
 const execution = __EXECUTION_CONFIG__;
 const native = new Set([
-  "Read", "Edit", "Write", "Bash", "NotebookEdit", "TaskOutput", "TaskStop",
+  "Read", "Edit", "Write", "Bash", "NotebookEdit", "TaskStop",
 ]);
 
 function remotePath(path) {
