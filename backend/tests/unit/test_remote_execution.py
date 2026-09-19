@@ -756,7 +756,7 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertEqual(self.pid, previous_pid)
         result = self.invoke(
             "TaskOutput",
-            {"task_id": task["backgroundTaskId"], "block": True, "timeout": 5000},
+            {"task_id": task["backgroundTaskId"], "block": True, "timeout": 20000},
         )
         self.assertEqual(result["task"]["output"], "background-done")
         self.assertEqual(result["task"]["status"], "completed")
@@ -982,10 +982,19 @@ class RemoteExecutionTests(unittest.TestCase):
                 "control",
                 {"subtype": "background_tasks", "tool_use_id": "foreground"},
             )
-            result = pending.result(timeout=1)
+            result = pending.result(timeout=10)
+            # A blocking read returns the moment the command finishes; the
+            # ceiling only decides how long a BROKEN one hangs. Sized for a
+            # loaded CI box, where a 3-second sleep plus process start-up
+            # overran a 5-second ceiling and the test read an empty output
+            # (#1242) — the command's own duration is not the thing under test.
             task = self.invoke(
                 "TaskOutput",
-                {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
+                {
+                    "task_id": result["backgroundTaskId"],
+                    "block": True,
+                    "timeout": 20000,
+                },
             )
             self.assertEqual(task["task"]["output"], "done")
 
@@ -1009,7 +1018,7 @@ class RemoteExecutionTests(unittest.TestCase):
         )
         task = self.invoke(
             "TaskOutput",
-            {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
+            {"task_id": result["backgroundTaskId"], "block": True, "timeout": 20000},
         )
         self.assertEqual(task["task"]["output"], "done")
         self.assertEqual(task["task"]["status"], "completed")
