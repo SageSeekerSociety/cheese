@@ -268,6 +268,40 @@ def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
     assert original.read_bytes().endswith(b"late result\n")
 
 
+def test_a_linked_subagent_transcript_is_not_a_second_transcript(tmp_path):
+    """Claude Code links a resumed session's subagent transcript to the original
+    session's file. The uploader skips links, so the receipts never name one;
+    the check must skip the same links, or a room that ever resumed a session
+    with subagents can never be cleaned up."""
+    home = tmp_path / "home"
+    original = home / ".claude/projects/p/77d3f6bc/subagents/agent-a.jsonl"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original\n")
+    linked = home / ".claude/projects/p/32a0b25e/subagents/agent-a.jsonl"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(original)
+    receipts = [
+        {
+            "source": str(original.relative_to(home)),
+            "size": 9,
+            "sha256": hashlib.sha256(b"original\n").hexdigest(),
+        }
+    ]
+    cleanup.check_transcripts(home, receipts)
+
+
+def test_a_link_to_a_transcript_outside_the_home_is_still_not_read(tmp_path):
+    outside = tmp_path / "elsewhere/session.jsonl"
+    outside.parent.mkdir(parents=True)
+    outside.write_bytes(b"secret\n")
+    home = tmp_path / "home"
+    linked = home / ".claude/projects/p/session.jsonl"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(outside)
+    # Nothing was uploaded, nothing is found: the link is neither read nor hashed.
+    cleanup.check_transcripts(home, [])
+
+
 @pytest.mark.parametrize("name", ["cheese-preview", "cheese-tunnel"])
 @pytest.mark.parametrize("has_executor", [False, True])
 def test_resource_helpers_stop_even_without_an_executor(tmp_path, name, has_executor):
