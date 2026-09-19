@@ -300,3 +300,85 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
     }
     assert action.await_args.args[2] == str(room_id)
     assert (new_directory / "new.py").read_text() == "new work"
+
+
+async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
+    client, monkeypatch
+):
+    """Every device reconnect asks for a sweep; after a restart that is dozens
+    at once. Only one runs, and the asks are not lost: the running sweep goes
+    round again when it finishes."""
+    import asyncio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    passes = 0
+
+    async def slow_pass(sessions):
+        nonlocal passes
+        passes += 1
+        if passes == 1:
+            started.set()
+            await release.wait()
+        return {"completed": 0, "pending": 0}
+
+    # The app's startup sweep may still be running; this test wants to be the
+    # one that runs.
+    for _ in range(100):
+        if not retire._sweeping:
+            break
+        await asyncio.sleep(0.05)
+    assert not retire._sweeping
+    monkeypatch.setattr(retire, "_sweep_once", slow_pass)
+    first = asyncio.create_task(retire.sweep_retired_storage(client.test_factory))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    # Two more asks while the first is still running: neither starts a sweep.
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 0,
+        "pending": 0,
+    }
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 0,
+        "pending": 0,
+    }
+    assert passes == 1
+    release.set()
+    await asyncio.wait_for(first, timeout=5)
+    assert passes == 2
+
+
+async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
+    client, monkeypatch
+):
+    from datetime import UTC, datetime
+
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    monkeypatch.setattr(retire, "_device_action", AsyncMock())
+    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        operation.lease_until = datetime.now(UTC) + timedelta(minutes=10)
+        operation.lease_holder = "another-backend:1:deadbeef"
+        await session.commit()
+    # Another process is on it: this sweep does not touch it.
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 0,
+        "pending": 0,
+    }
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert operation.state == "pending"
+        assert operation.lease_holder == "another-backend:1:deadbeef"
+        # That process died: its lease ran out.
+        operation.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 1,
+        "pending": 0,
+    }
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert operation.state == "complete"
+        assert operation.lease_until is None and operation.lease_holder is None
