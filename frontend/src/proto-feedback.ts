@@ -18,11 +18,12 @@ import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 import Shell from './proto-shell.vue'
+
 import i18n from '@/i18n'
 import { createDialogPlugin } from '@/plugins/dialog'
 import vuetify from '@/plugins/vuetify'
-import pinia from '@/stores'
 import feedbackRoutes from '@/router/feedback'
+import pinia from '@/stores'
 
 // hash 路由：预览域只按路径找文件，没有 SPA 回退，history 模式下刷新 /feedback
 // 会 404。hash 模式下所有页面都在 / 上，深链（#/feedback/<id>）也能直接打开。
@@ -35,10 +36,4 @@ const router = createRouter({
   ],
 })
 
-createApp(Shell)
-  .use(i18n)
-  .use(vuetify)
-  .use(router)
-  .use(pinia)
-  .use(createDialogPlugin)
-  .mount('#app')
+createApp(Shell).use(i18n).use(vuetify).use(router).use(pinia).use(createDialogPlugin).mount('#app')

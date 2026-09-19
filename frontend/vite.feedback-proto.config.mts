@@ -13,12 +13,7 @@ import svgLoader from 'vite-svg-loader'
 
 export default defineConfig({
   base: './',
-  plugins: [
-    vue({ template: { transformAssetUrls } }),
-    svgLoader(),
-    vueJsx(),
-    vuetify({ autoImport: true }),
-  ],
+  plugins: [vue({ template: { transformAssetUrls } }), svgLoader(), vueJsx(), vuetify({ autoImport: true })],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
