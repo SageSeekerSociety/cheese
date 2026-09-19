@@ -15,7 +15,6 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.topic.repositories import TopicRepository
 from tests.integration.conftest import session_auth_headers
 
 
@@ -139,59 +138,19 @@ def test_a_room_stays_with_its_teammate_when_the_default_moves(client):
     assert _dm_id(client, project_id, "user-1") != room
 
 
-def test_a_dm_from_before_teammates_were_named_keeps_its_history(client):
-    """A room opened before this feature names no teammate and is answered by
-    whatever the default is. Opening it must adopt it, not leave the history
-    behind in an orphan room nobody can reach."""
+def test_a_dm_is_two_members_the_person_and_the_teammates_seat(client):
+    """A 1:1 with a teammate has the same shape as a 1:1 with a person: the
+    owner and the peer on the roster, nothing else — the teammate under its
+    own seat, so the messages it writes there are its own."""
     project_id = _project(client)
-    default = next(a for a in _agents(client, project_id) if a["is_default"])
-
-    async def _legacy_room() -> str:
-        async with client.test_factory() as session:
-            topic = await TopicRepository(session).get_or_create_private(
-                project_id=uuid.UUID(project_id), user_handle="user-1"
-            )
-            await session.commit()
-            return str(topic.id)
-
-    legacy = asyncio.run(_legacy_room())
-    _seed_message(client, project_id, legacy, "cheese")
-
-    assert _dm_id(client, project_id, "user-1", default["handle"]) == legacy
-    # Adopted, so it no longer moves with the project's default.
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    _make_default(client, project_id, reviewer["id"])
-    assert _who_answers(client, legacy) == default["display_name"]
+    dm = _dm_id(client, project_id, "user-1", "reviewer")
 
-
-def test_an_unopened_old_dm_is_settled_before_the_default_moves(client):
-    """The window the pin-on-open path cannot cover: a DM from before this
-    feature that nobody has opened yet. It is answered by the default, so the
-    moment the default changes is the last moment its history can still be
-    attributed to the teammate that actually held it."""
-    project_id = _project(client)
-    first = next(a for a in _agents(client, project_id) if a["is_default"])
-
-    async def _legacy_room() -> str:
-        async with client.test_factory() as session:
-            topic = await TopicRepository(session).get_or_create_private(
-                project_id=uuid.UUID(project_id), user_handle="user-1"
-            )
-            await session.commit()
-            return str(topic.id)
-
-    legacy = asyncio.run(_legacy_room())
-    _seed_message(client, project_id, legacy, "cheese")
-
-    # Nobody opened it; the default moves anyway.
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    _make_default(client, project_id, reviewer["id"])
-
-    # Opening it is what seats its teammate on the roster; a DM nobody has
-    # opened has no roster to ask.
-    assert _dm_id(client, project_id, "user-1", first["handle"]) == legacy
-    assert _who_answers(client, legacy) == first["display_name"]
-    assert _dm_id(client, project_id, "user-1", "reviewer") != legacy
+    rows = client.get(f"/topics/{dm}/members").json()["data"]["data"]
+    assert {(m["member_handle"], m["agent"]) for m in rows} == {
+        ("user-1", False),
+        (reviewer["seat_handle"], True),
+    }
 
 
 def test_unread_is_counted_per_teammate(client):

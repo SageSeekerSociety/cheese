@@ -38,9 +38,14 @@ from app.domain.block.models import (
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import looks_like_agent_handle, names_a_person
+from app.domain.identity.handles import (
+    CHEESE_NAME,
+    agent_instance_handle,
+    looks_like_agent_handle,
+    names_a_person,
+)
 from app.domain.membership.services import MemberService
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
@@ -384,55 +389,31 @@ class TopicService:
         """A 1:1 private chat (spec §1).
 
         With ``peer_handle`` → a person-to-person DM between the two humans
-        (shared by both). Without → the member's 1:1 with the AI teammate named
-        by ``agent_handle``, or with the project's default when nobody named
-        one. One room per teammate, and it stays that teammate's afterwards.
+        (shared by both, so the pair is canonicalized). Without → the member's
+        1:1 with the AI teammate named by ``agent_handle``, or with the
+        project's default when nobody named one. A teammate sits in its DM
+        under its seat handle, the way a person sits under theirs, so a DM is
+        two handles either way and stays that teammate's afterwards.
         """
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        agent_instance_id = None
-        agent_display_name = None
-        if peer_handle is None:
-            agent = await AgentInstanceService(self._session).for_handle(
-                project, agent_handle
-            )
-            agent_instance_id = agent.id
-            agent_display_name = agent.display_name
-            if project.default_agent_instance_id == agent.id:
-                # This member may still have the DM from before rooms named a
-                # teammate. It is this agent's conversation — the default is who
-                # has been answering it — so hand it over rather than leaving it
-                # behind and opening an empty second one.
-                await self._repo.pin_unpinned_agent_dms(
-                    project_id, agent.id, user_handle=user_handle
-                )
+        if peer_handle is not None:
+            owner, peer = sorted((user_handle, peer_handle))
+            title = f"私聊 · {owner} · {peer}"
+        else:
+            agents = AgentInstanceService(self._session)
+            agent = await agents.for_handle(project, agent_handle)
+            await agents.ensure_identity(agent)
+            owner, peer = user_handle, agent_instance_handle(agent.id)
+            title = f"与{agent.display_name or CHEESE_NAME}私聊 · {owner}"
         topic = await self._repo.get_or_create_private(
-            project_id=project_id,
-            user_handle=user_handle,
-            peer_handle=peer_handle,
-            agent_instance_id=agent_instance_id,
-            agent_display_name=agent_display_name,
+            project_id=project_id, owner=owner, peer=peer, title=title
         )
         await TopicMemberService(self._session).seed_private(
-            topic.id,
-            owner_handle=topic.private_owner or user_handle,
-            peer_handle=topic.private_peer,
+            topic.id, owner_handle=owner, peer_handle=peer
         )
         return topic
-
-    async def pin_agent_dms_to_current_default(self, project: Project) -> None:
-        """Settle who owns every unpinned 私聊 in this project, before the
-        project's default teammate changes.
-
-        An unpinned DM is answered by the default, so the moment the default
-        moves is the last moment its history can still be attributed correctly.
-        Called from the agent side (choosing a new default, retiring the current
-        one); a no-op once every DM here has been opened at least once.
-        """
-        agents = AgentInstanceService(self._session)
-        current = await agents.materialize_default(project)
-        await self._repo.pin_unpinned_agent_dms(project.id, current.id)
 
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
