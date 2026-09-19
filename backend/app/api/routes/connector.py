@@ -98,14 +98,10 @@ async def recover_business_state(device_id: str) -> None:
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
-    from app.core.background import spawn
     from app.core.db import async_session_factory
-    from app.domain.topic.retire import sweep_retired_storage
+    from app.domain.topic.retire import request_sweep
 
-    spawn(
-        sweep_retired_storage(async_session_factory),
-        name="cleanup device reconnect",
-    )
+    request_sweep(async_session_factory, name="cleanup device reconnect")
     try:
         # A Cloud topic whose machine just came up has been holding a message;
         # this attach is the last fact it was waiting for, so deliver now instead

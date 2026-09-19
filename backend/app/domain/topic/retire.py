@@ -218,6 +218,44 @@ def _park_worktree(entry: dict, project_id: uuid.UUID) -> None:
         raise RuntimeError("could not detach the retired backend checkout")
 
 
+# One sweep at a time, and at most one more waiting behind it. A sweep is
+# global: it reads every due operation and asks every online machine for its
+# inventory, so N requests in flight ask the same question N times. Each device
+# attaching asks for one (connector.recover_business_state), and every device
+# re-attaches at once when the connection owner is released — on 2026-09-19,
+# 72 of them, each starting a sweep that held a pooled connection per operation
+# across its device calls, which saturated the backend's pool (20 + 15) for
+# ten minutes and turned every other request into a QueuePool alert.
+_sweeping = False
+_sweep_again = False
+
+
+def request_sweep(sessions: SessionFactory, *, name: str) -> None:
+    """Have a sweep run soon: now, or once more after the one already running."""
+    global _sweeping, _sweep_again
+    from app.core.background import spawn
+
+    if _sweeping:
+        _sweep_again = True
+        return
+    _sweeping = True
+    if not spawn(_sweep_until_quiet(sessions), name=name):
+        _sweeping = False
+
+
+async def _sweep_until_quiet(sessions: SessionFactory) -> None:
+    global _sweeping, _sweep_again
+    try:
+        while True:
+            _sweep_again = False
+            await sweep_retired_storage(sessions)
+            if not _sweep_again:
+                return
+    finally:
+        _sweeping = False
+        _sweep_again = False
+
+
 async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
     counts = {"completed": 0, "pending": 0}
     async with sessions() as session:
