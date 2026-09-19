@@ -213,6 +213,16 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
+    # Handles allowed to read and route the whole feedback queue
+    # (`/admin/feedback`). Comma-separated in env. A settings list rather than a
+    # role because no production path assigns `SystemRole.SUPER_ADMIN` today —
+    # a role check would evaluate to "nobody" and lock the surface for everyone.
+    feedback_admin_handles: list[str] = []
+    # How many unresolved reports one handle may keep open at a time. The cap
+    # exists for the agent path (`cheese feedback propose`): a misfiring loop
+    # files one report per turn, and a number in settings is the difference
+    # between a bad afternoon and a flooded queue. People are not capped.
+    feedback_agent_open_quota: int = 20
     # Which registered profile is the platform default ("our AI pool"). Normally
     # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
     # whole platform on the subscription seat — e.g. a demo where the GLM pool is
