@@ -85,7 +85,26 @@ def get_device_service(db: DbSession) -> DeviceService:
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
 
 
+# How many machines are recovered at once. Recovery is per device and every
+# device does it on connect, so a backend restart starts one per machine at the
+# same instant — 71 on dev. Each walks that machine's sessions, and each session
+# takes a database connection and then talks to the machine; unbounded, the
+# burst wants far more connections than the pool has (20 + 15), and what it
+# starves is every OTHER request, which is how a restart came out as minutes of
+# 「QueuePool limit … connection timed out」 on page loads and background jobs
+# (2026-09-19, and the same shape in the 09-18 flood). Nothing is dropped by
+# waiting: a machine queued here is recovered a moment later, and its device
+# link is already up.
+_RECOVERY_AT_ONCE = 4
+_recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
+
+
 async def recover_business_state(device_id: str) -> None:
+    async with _recovering:
+        await _recover_business_state(device_id)
+
+
+async def _recover_business_state(device_id: str) -> None:
     try:
         from app.api.deps import get_chat_service
 
