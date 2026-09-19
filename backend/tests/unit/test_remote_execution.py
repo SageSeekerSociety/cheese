@@ -767,9 +767,23 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertEqual(
             result["task"]["status"],
             "completed",
-            f"task did not complete: {result}",
+            f"task did not complete: {result}{self.task_on_disk(task_id)}",
         )
         return result
+
+    def task_on_disk(self, task_id):
+        """What the executor's own state directory holds for this task.
+
+        The API's answer and the files it is built from can disagree — and
+        which of the two is empty is the whole question when a completed task
+        reports no output.
+        """
+        directory = self.state / "tasks" / task_id
+        return "".join(
+            f"\n  {name}={(directory / name).read_text(errors='replace')!r}"
+            for name in ("status.json", "stdout", "stderr")
+            if (directory / name).exists()
+        )
 
     def test_reconnect_retains_background_task(self):
         task = self.invoke(
@@ -780,7 +794,11 @@ class RemoteExecutionTests(unittest.TestCase):
         self.start()
         self.assertEqual(self.pid, previous_pid)
         result = self.finished_task(task["backgroundTaskId"])
-        self.assertEqual(result["task"]["output"], "background-done")
+        self.assertEqual(
+            result["task"]["output"],
+            "background-done",
+            f"{result}{self.task_on_disk(task['backgroundTaskId'])}",
+        )
         self.assertEqual(result["task"]["status"], "completed")
 
     def test_stop_kills_descendant_ignoring_term(self):
@@ -1006,7 +1024,11 @@ class RemoteExecutionTests(unittest.TestCase):
             )
             result = pending.result(timeout=1)
             task = self.finished_task(result["backgroundTaskId"])
-            self.assertEqual(task["task"]["output"], "done")
+            self.assertEqual(
+                task["task"]["output"],
+                "done",
+                f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
+            )
 
     def test_a_foreground_command_past_its_timeout_becomes_a_task_the_room_can_see(
         self,
