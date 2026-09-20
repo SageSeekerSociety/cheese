@@ -78,6 +78,15 @@ jobs:
               mirrors = ["mirror.gcr.io"]
       - name: Build private execution image
         run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
+      - name: Keep the private image available during tests
+        id: private-image
+        # Cached images retain their creation date. A running container keeps
+        # the disk guard from pruning this job's input between test steps.
+        # The sleep expires at the job's timeout if cleanup cannot run.
+        run: >-
+          docker run --detach --network none --entrypoint sleep
+          --name cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          cheese-private-executor:2.1.277 2700
       - name: Verify real scratch execution
         id: scratch
         run: >-
@@ -104,6 +113,9 @@ jobs:
           backend/.venv/bin/python scripts/remote_execution/private_terminal.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/remote-execution/private-ci-terminal-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Release the private image
+        if: ${{ always() && steps.private-image.outcome == 'success' }}
+        run: docker rm --force cheese-private-ci-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         # Tolerated: this is debug output, and the account's artifact storage
         # filling up is not this change being broken. On 2026-09-16 it reported

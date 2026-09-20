@@ -17,9 +17,9 @@
 # `cheese-private-executor` and runs it a few steps later; on 2026-09-15 a guard
 # firing in this machine's other slot deleted it in between, and the job died on
 # `docker run … exit status 125` with nothing to re-pull, because the image was
-# never fetched from anywhere. So only images older than the grace period go: a
-# job's own build is minutes old, and what actually fills a pool machine is older
-# than that.
+# never fetched from anywhere. The grace period protects newly created images;
+# a cached build retains its original creation date. Jobs that need a local
+# image across steps hold a running container until their tests finish.
 #
 # Docker alone is not enough, and the logs say so: on runner-2 at 9G free the
 # guard fired before every job and reported `9G -> 9G`, because /var/lib/docker
