@@ -122,9 +122,7 @@ export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
   // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
   // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
   let n = 1
-  return items.map((item) =>
-    item.type === 'item' && item.to ? { ...item, shortcut: n++ } : item
-  )
+  return items.map((item) => (item.type === 'item' && item.to ? { ...item, shortcut: n++ } : item))
 }
 
 /**

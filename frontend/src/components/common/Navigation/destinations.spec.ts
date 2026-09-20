@@ -1,15 +1,13 @@
 import type { Project } from '@/cx_types'
+import type { Shell } from '@/lib/shell'
 import type { NavItem } from './types'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './destinations'
 
-import type { Shell } from '@/lib/shell'
-
-import { DEFAULT_SHELL } from '@/lib/shell'
-
 import { setLocale } from '@/i18n'
+import { DEFAULT_SHELL } from '@/lib/shell'
 
 beforeEach(() => setLocale('zh-CN'))
 
@@ -140,19 +138,11 @@ describe('壳决定露出哪几格、什么顺序', () => {
       '项目2',
       '新建项目',
     ])
-    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual([
-      '空间',
-      '工作区',
-      '待办',
-    ])
+    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual(['空间', '工作区', '待办'])
   })
 
   it('底栏按壳给的顺序排', () => {
-    expect(items(tabItems(sources(3, 'p0'), mine)).map((i) => i.title)).toEqual([
-      '工作区',
-      '空间',
-      '待办',
-    ])
+    expect(items(tabItems(sources(3, 'p0'), mine)).map((i) => i.title)).toEqual(['工作区', '空间', '待办'])
   })
 
   it('壳没列出来的格子就不画', () => {

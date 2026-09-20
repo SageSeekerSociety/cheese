@@ -5,8 +5,6 @@ import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { t } from '@/i18n'
-
 import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
@@ -22,11 +20,13 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
-import { avatarColor, avatarInitial } from '../utils/avatar'
 import { myHandle } from '../me'
+import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   projects: Project[]

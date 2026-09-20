@@ -87,17 +87,13 @@ describe('桌面端: 第一屏听壳的', () => {
   it('没声明壳的项目落在看板上 —— 今天的行为，一个字没变', async () => {
     cache = [project('p1')]
     mount()
-    await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } })
-    )
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
   })
 
   it('声明了别的壳就落在别处', async () => {
     cache = [project('p1', OTHER)]
     mount()
-    await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith({ name: OTHER.home, params: { projectId: 'p1' } })
-    )
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: OTHER.home, params: { projectId: 'p1' } }))
     expect(replace).not.toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } })
   })
 
@@ -115,9 +111,7 @@ describe('桌面端: 第一屏听壳的', () => {
     expect(replace, '清单还没落定时跳，就是拿一个还不知道的壳去猜第一屏').not.toHaveBeenCalled()
     store.projects = [project('p1', OTHER)]
     store.projectsSettled = true
-    await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith({ name: OTHER.home, params: { projectId: 'p1' } })
-    )
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: OTHER.home, params: { projectId: 'p1' } }))
   })
 
   it('等完还是没有这个项目 —— 按 default 走，谁都不该卡在这一屏', async () => {
@@ -125,9 +119,7 @@ describe('桌面端: 第一屏听壳的', () => {
     // 让中转地址变成终点。
     mount()
     store.projectsSettled = true
-    await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } })
-    )
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
   })
 
   it('清单还没到货就等着，不拿 default 去猜', async () => {

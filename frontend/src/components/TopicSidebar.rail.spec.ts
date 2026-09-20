@@ -17,9 +17,9 @@ import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setLocale } from '@/i18n'
-
 import TopicSidebar from './TopicSidebar.vue'
+
+import { setLocale } from '@/i18n'
 
 const Sidebar = TopicSidebar as unknown as Component
 

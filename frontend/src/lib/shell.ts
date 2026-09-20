@@ -14,9 +14,9 @@
  */
 import type { Project } from '@/cx_types'
 
-import { t } from '@/i18n'
-
 import DEFAULT_SHELL_JSON from './default-shell.json'
+
+import { t } from '@/i18n'
 
 /** 三个导航面各自的格子与顺序。见 catalog.py 的 `Nav`。 */
 export interface ShellNav {
@@ -52,10 +52,7 @@ export function shellOf(project: Project | null | undefined): Shell {
  * 或者这个项目根本不在我的清单里）和「知道，就是 default」。把后者当前者会让人
  * 白等一屏，把前者当后者会把人送到错的第一屏。
  */
-export function shellFor(
-  projects: readonly Project[] | undefined,
-  projectId: string | null | undefined
-): Shell | null {
+export function shellFor(projects: readonly Project[] | undefined, projectId: string | null | undefined): Shell | null {
   if (!projectId) return null
   const found = projects?.find((p) => p.id === projectId)
   return found ? shellOf(found) : null
@@ -78,11 +75,7 @@ export type ShellSurface = keyof ShellNav
  * 只保留**这一版前端认得**的 key：壳比前端新（服务端先发了第五个壳的名字，而这一版
  * 还没有那个页面）时，多出来的 key 应当是画不出来，而不是画一格点了就 404 的东西。
  */
-export function orderedNav(
-  shell: Shell,
-  surface: ShellSurface,
-  known: readonly string[]
-): string[] {
+export function orderedNav(shell: Shell, surface: ShellSurface, known: readonly string[]): string[] {
   return shell.nav[surface].filter((key) => known.includes(key))
 }
 
@@ -101,8 +94,6 @@ export function projectPagePlan(
   revealed: ReadonlySet<string>
 ): { visible: string[]; more: string[] } {
   const shown = orderedNav(shell, 'project', known)
-  const visible = shown.filter(
-    (key) => !shell.hidden.includes(key) || revealed.has(key)
-  )
+  const visible = shown.filter((key) => !shell.hidden.includes(key) || revealed.has(key))
   return { visible, more: known.filter((key) => !visible.includes(key)) }
 }

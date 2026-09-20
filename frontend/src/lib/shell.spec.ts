@@ -2,9 +2,9 @@ import type { Project } from '@/cx_types'
 
 import { describe, expect, it } from 'vitest'
 
-import { t } from '@/i18n'
-
 import { DEFAULT_SHELL, orderedNav, projectPagePlan, shellFor, shellOf, termParams } from './shell'
+
+import { t } from '@/i18n'
 
 // 侧栏认得的那七格，顺序就是 catalog 里 default 的顺序（`TopicSidebar.vue` 的
 // PROJECT_PAGES）。壳只决定「露哪几格」，认不认得某一格是前端的事。
@@ -59,11 +59,7 @@ describe('shellFor: 「还不知道」和「知道，就是 default」是两件�
 describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   it('按壳给的顺序画', () => {
     const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, tabs: ['inbox', 'spaces', 'workspace'] } })
-    expect(orderedNav(shell, 'tabs', ['spaces', 'workspace', 'inbox'])).toEqual([
-      'inbox',
-      'spaces',
-      'workspace',
-    ])
+    expect(orderedNav(shell, 'tabs', ['spaces', 'workspace', 'inbox'])).toEqual(['inbox', 'spaces', 'workspace'])
   })
 
   it('壳没列的格子不画', () => {
@@ -77,11 +73,7 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   })
 
   it('default 壳下三个面逐格就是今天的样子', () => {
-    expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual([
-      'home',
-      'projects',
-      'add',
-    ])
+    expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual(['home', 'projects', 'add'])
     expect(orderedNav(DEFAULT_SHELL, 'tabs', ['spaces', 'workspace', 'inbox'])).toEqual([
       'spaces',
       'workspace',
@@ -123,7 +115,13 @@ describe('projectPagePlan: 收起是「收起」，永远不是「禁止」', ()
   it('hidden 里的页落进「更多」', () => {
     const shell = shellLike({ hidden: ['calendar', 'project-delivery'] })
     const plan = projectPagePlan(shell, KNOWN, new Set())
-    expect(plan.visible).toEqual(['overview', 'workspace-running', 'project-library', 'project-agents', 'project-members'])
+    expect(plan.visible).toEqual([
+      'overview',
+      'workspace-running',
+      'project-library',
+      'project-agents',
+      'project-members',
+    ])
     expect(plan.more).toEqual(['calendar', 'project-delivery'])
   })
 
@@ -138,7 +136,13 @@ describe('projectPagePlan: 收起是「收起」，永远不是「禁止」', ()
     const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['overview', 'calendar'] } })
     const plan = projectPagePlan(shell, KNOWN, new Set())
     expect(plan.visible).toEqual(['overview', 'calendar'])
-    expect(plan.more).toEqual(['workspace-running', 'project-library', 'project-delivery', 'project-agents', 'project-members'])
+    expect(plan.more).toEqual([
+      'workspace-running',
+      'project-library',
+      'project-delivery',
+      'project-agents',
+      'project-members',
+    ])
   })
 
   it('露出 + 收起 = 认得的全部，一格不多一格不少', () => {

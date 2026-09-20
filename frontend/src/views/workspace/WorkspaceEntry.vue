@@ -42,9 +42,7 @@ const legacyTopic = computed(() => (route.query.topic ? String(route.query.topic
 const shell = computed(
   () => shellFor(loadCachedProjects(myHandle()), props.projectId) ?? shellFor(store.projects, props.projectId)
 )
-const shellSettled = computed(
-  () => shell.value !== null || store.projects.length > 0 || store.projectsSettled
-)
+const shellSettled = computed(() => shell.value !== null || store.projects.length > 0 || store.projectsSettled)
 
 watch(
   [legacyTopic, mdAndUp, shellSettled],

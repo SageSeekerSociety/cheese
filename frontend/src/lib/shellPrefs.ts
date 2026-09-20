@@ -31,11 +31,7 @@ export function loadRevealedPages(handle: string): Set<string> {
 }
 
 /** 记下「这一页他打开过」，返回新的集合。 */
-export function withRevealedPage(
-  revealed: ReadonlySet<string>,
-  page: string,
-  handle: string
-): Set<string> {
+export function withRevealedPage(revealed: ReadonlySet<string>, page: string, handle: string): Set<string> {
   if (revealed.has(page)) return new Set(revealed)
   const next = new Set(revealed)
   next.add(page)
