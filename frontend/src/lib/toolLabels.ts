@@ -54,6 +54,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_split: '创建任务',
   cheese_worktree: '准备工作目录',
   cheese_sync: '同步任务代码',
+  cheese_recover: '恢复任务备份',
   cheese_bind: '认领任务',
   cheese_close_task: '关闭任务',
   cheese_push_fix: '更新任务 PR',

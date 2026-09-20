@@ -1,5 +1,6 @@
 """Repository connection must not turn project access into GitHub access."""
 
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -11,7 +12,8 @@ pytestmark = pytest.mark.usefixtures("github_binding_user")
 
 def _project(client):
     return client.post(
-        "/projects", json={"name": "Binding", "owner_handle": "alice"}
+        "/projects",
+        json={"name": "Binding", "owner_handle": "alice", "forge_kind": "github_app"},
     ).json()["data"]["id"]
 
 
@@ -33,9 +35,9 @@ def test_callback_selects_matching_upstream_not_first_repo(client, monkeypatch):
 
     pid = _project(client)
     monkeypatch.setattr(
-        github_install.ws,
-        "get_upstream",
-        lambda _: "https://github.com/acme/widgets.git",
+        github_install,
+        "_upstream_repo",
+        AsyncMock(return_value="acme/widgets"),
     )
 
     async def repos(_token, _):
@@ -125,7 +127,11 @@ def test_callback_refuses_ambiguous_wrong_or_read_only_repo(
     from app.api.routes import github_install
 
     pid = _project(client)
-    monkeypatch.setattr(github_install.ws, "get_upstream", lambda _: upstream)
+    monkeypatch.setattr(
+        github_install,
+        "_upstream_repo",
+        AsyncMock(return_value="acme/widgets" if upstream else None),
+    )
 
     async def accessible(token, installation_id):
         assert token == "test-github-user-token"

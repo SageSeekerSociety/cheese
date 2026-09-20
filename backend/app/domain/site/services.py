@@ -26,7 +26,7 @@ from app.domain.project.services import ProjectService
 from app.domain.site.models import Site, SiteRelease
 from app.domain.team.services import team_service
 from app.domain.user.services import user_by_handle
-from app.domain.workspace import service as ws
+from app.domain.workspace.forge_files import ProjectFiles
 
 # Publication copies untrusted repository files into platform storage, so bound
 # the allocation before reading blobs. These are bundle limits, not upload limits.
@@ -243,9 +243,10 @@ def _static_entry(files: list[dict], html: bytes) -> bool:
     return not parser.source_files
 
 
-def publication_source(project_id: uuid.UUID) -> dict:
-    revision = ws.accepted_revision(project_id)
-    files = ws.committed_files(project_id, revision)
+async def publication_source(session: AsyncSession, project_id: uuid.UUID) -> dict:
+    reader = ProjectFiles(session, project_id, None)
+    revision = await reader.revision()
+    files = await reader.committed_entries(revision)
     entries = [
         row
         for row in files
@@ -262,7 +263,7 @@ def publication_source(project_id: uuid.UUID) -> dict:
             _validate_bundle(bundle)
         except ValidationError:
             continue
-        html = ws.read_committed_blobs(project_id, [entry["oid"]])[entry["oid"]]
+        html = (await reader.committed_blobs([entry["oid"]]))[entry["oid"]]
         try:
             if _static_entry(bundle, html):
                 candidates.append({"directory": directory, "entry_file": entry["path"]})
@@ -296,17 +297,28 @@ def read_release_file(release: SiteRelease, path: str) -> bytes | None:
         return None
 
 
-def _snapshot(
-    project_id: uuid.UUID, revision: str, directory: str, release_id: uuid.UUID
+async def _snapshot(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    revision: str,
+    directory: str,
+    release_id: uuid.UUID,
 ) -> dict:
-    files = _files_under(ws.committed_files(project_id, revision), directory)
+    reader = ProjectFiles(session, project_id, None)
+    files = _files_under(await reader.committed_entries(revision), directory)
     _validate_bundle(files)
     entry = next((row for row in files if row["relative_path"] == "index.html"), None)
     if entry is None or entry["bytes"] > MAX_ENTRY_BYTES:
         raise ValidationError(BUILD_REQUIRED)
-    blobs = ws.read_committed_blobs(project_id, [row["oid"] for row in files])
+    blobs = await reader.committed_blobs([row["oid"] for row in files])
     if not _static_entry(files, blobs[entry["oid"]]):
         raise ValidationError(BUILD_REQUIRED)
+    return await asyncio.to_thread(
+        _write_snapshot, project_id, release_id, files, blobs
+    )
+
+
+def _write_snapshot(project_id, release_id, files, blobs) -> dict:
     root = Path(settings.workspace_root).resolve() / ".sites" / str(project_id)
     staging = root / f".staging-{release_id}"
     destination = root / str(release_id)
@@ -346,13 +358,11 @@ async def publish_site(
     await session.scalar(
         select(Project).where(Project.id == project_id).with_for_update()
     )
-    revision = await asyncio.to_thread(ws.accepted_revision, project_id)
+    revision = await ProjectFiles(session, project_id, None).revision()
     if revision != expected_source_revision:
         raise ConflictError("项目已采纳的版本发生变化，请刷新后再发布")
     release_id = uuid.uuid4()
-    manifest = await asyncio.to_thread(
-        _snapshot, project_id, revision, directory, release_id
-    )
+    manifest = await _snapshot(session, project_id, revision, directory, release_id)
     release = SiteRelease(
         id=release_id,
         project_id=project_id,

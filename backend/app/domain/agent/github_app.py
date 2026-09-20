@@ -2,7 +2,7 @@
 
 The platform's GitHub credential is the cheesex-app private key. It stays on
 the backend and is NEVER handed to a sandbox. An agent that works on a repo
-calls ``/sandbox/github-token`` with its scoped cheese token; the backend mints
+calls ``/sandbox/forge-token`` with its scoped cheese token; the backend mints
 an installation access token with the App grants on the bound repository.
 GitHub expires it after an hour;
 minting is cached until shortly before expiry, so a burst of calls costs one
@@ -111,7 +111,7 @@ class GitHubAppTokens:
     async def installation_token(self) -> tuple[str, str]:
         """An installation token and its ISO expiry, carrying every grant.
 
-        This is what ``/sandbox/github-token`` hands an agent, so it has to be
+        This is what ``/sandbox/forge-token`` hands an agent, so it has to be
         enough to finish a piece of work: commit, push the branch, open the PR,
         then read the CI it triggered. Nothing is subtracted on the way out —
         see the module docstring.

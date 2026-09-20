@@ -79,7 +79,13 @@ export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 # runner's per-run re-checkout, so the deploy carries them itself — no box-side
 # heal hack needed to re-apply them after each CI redeploy.
 COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
+case " $COMPOSE_OVERLAYS " in
+  *docker-compose.forgejo.yml*) ;;
+  *) COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:+$COMPOSE_OVERLAYS }docker-compose.forgejo.yml" ;;
+esac
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
+FORGE_CUTOVER_PENDING="${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}/forge-migration/cutover-pending"
+FORGE_EXECUTOR_RESTART="$(dirname "$FORGE_CUTOVER_PENDING")/restart-host-executor"
 
 # Only environments wired for sibling agent containers need the large runtime
 # images. Dev's subscription overlay is that signal; production app-only boxes
@@ -117,6 +123,91 @@ ensure_device_connection_owner() {
     waited=$((waited + 2))
   done
   fail "device connection owner is not healthy; the running backend was not touched"
+}
+
+ensure_forgejo() {
+  local container waited=0
+  container="$(dc ps -q forgejo 2>/dev/null | head -n 1 || true)"
+  if [ -z "$container" ] || [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" != true ]; then
+    dc up -d --no-deps forgejo || fail "repository service did not start"
+  fi
+  while [ "$waited" -lt 90 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/healthz" >/dev/null; then
+      log "repository service is healthy; its data volume survives app releases"
+      container="$(dc ps -q forgejo)"
+      python3 "$HERE/bootstrap-forgejo.py" \
+        --container "$container" \
+        --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+        --api-url "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/v1" \
+        || fail "repository administrator setup failed; app release aborted"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "repository service is not healthy; app release aborted"
+}
+
+ensure_forge_events() {
+  [ "$FORGE_EVENTS_LOCAL" = true ] || return 0
+  local waited=0 public_config
+  public_config="$(dc run --rm --no-deps backend python -m scripts.forge_event_public_key)" \
+    || fail "could not export the GitHub App public key"
+  printf '%s' "$public_config" | python3 "$HERE/bootstrap-forgejo.py" \
+    --configure-github-events \
+    --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+    --relay-env "$FORGE_EVENTS_ENV_FILE" \
+    || fail "could not configure GitHub event subscriptions"
+  dc up -d --no-deps forge-events || fail "forge event relay did not start"
+  while [ "$waited" -lt 60 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${FORGE_EVENTS_PORT:-8093}/healthz" >/dev/null; then
+      log "forge event relay is healthy"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "forge event relay is not healthy; app release aborted"
+}
+
+migrate_project_repositories() {
+  local pending=0 legacy
+  # The backend's persistent HOME keeps immutable source backups and receipts.
+  # Check before stopping writers: later releases retain their normal rollout.
+  dc run --rm --no-deps backend python -m scripts.migrate_forge \
+    --backup-root /data/apphome/forge-migration --check || pending=$?
+  case "$pending" in
+    0) log "all project repositories have migration receipts"; return 0 ;;
+    2) ;;
+    *) fail "repository migration preflight failed; running backend was not touched" ;;
+  esac
+  log "pausing repository writers for the first forge migration"
+  mkdir -p "$(dirname "$FORGE_CUTOVER_PENDING")"
+  touch "$FORGE_CUTOVER_PENDING"
+  dc stop backend || fail "could not stop repository writers"
+  # Native sessions can share the legacy worktrees without a Docker mount.
+  # Retain the restart receipt across failures, just like the cutover guard.
+  if command -v systemctl >/dev/null && systemctl is-active --quiet cheese.service; then
+    [ "$(systemctl show cheese.service -p KillMode --value)" = control-group ] \
+      || fail "host executor preserves child processes on stop; quiesce its sessions before retrying migration"
+    touch "$FORGE_EXECUTOR_RESTART"
+    sudo -n systemctl stop cheese.service || fail "could not stop the host executor"
+  fi
+  # This service is absent from the new compose file but may still be running
+  # from the previous release; stop it before freezing its receive-pack store.
+  while IFS= read -r legacy; do
+    [ -z "$legacy" ] || docker stop "$legacy" \
+      || fail "could not stop the previous Git receiver"
+  done < <(docker ps -q \
+    --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter "label=com.docker.compose.service=git")
+  sudo -n python3 "$HERE/check-forge-workspace-writers.py" \
+    "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}" \
+    || fail "legacy workspace users remain; migration has not started"
+  dc run --rm --no-deps backend python -m scripts.migrate_forge \
+    --backup-root /data/apphome/forge-migration --apply --writers-stopped \
+    || fail "repository migration failed; writers remain stopped; retry this release to resume from receipts"
+  log "project repositories migrated; backups and migration.log are in the persistent app home under forge-migration"
 }
 
 reload_api_front_routes() {
@@ -168,6 +259,23 @@ if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
 fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
+
+event_environment="$(python3 "$HERE/bootstrap-forgejo.py" --configure-events \
+  --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+  ${FORGE_EVENTS_ENV_FILE:+--relay-env "$FORGE_EVENTS_ENV_FILE"})" \
+  || fail "event relay configuration failed; running services were not touched"
+eval "$event_environment"
+if [ "$FORGE_EVENTS_LOCAL" = true ]; then
+  COMPOSE_OVERLAYS="$COMPOSE_OVERLAYS $HERE/forge-events/compose.yml"
+  export FORGE_EVENTS_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
+fi
+
+# Every deployment needs a repository service for projects without GitHub.
+# Preparation emits only shell-quoted public addresses, never credentials.
+forge_environment="$(python3 "$HERE/bootstrap-forgejo.py" --prepare \
+  --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}")" \
+  || fail "repository configuration failed; running services were not touched"
+eval "$forge_environment"
 
 # Resolve overlays now that fail() is defined; abort if deploy.env names one that
 # was not checked out, rather than silently deploying without the wiring.
@@ -457,27 +565,20 @@ fi
 
 log_disk "after pull"
 
+ensure_forgejo
+ensure_forge_events
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
 
-# The backend now runs as the same uid as the sandbox's `node` (1000) so the two
-# stop locking each other out of the shared git store — see
-# fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
-# hands once, BEFORE the new backend starts and finds it cannot read them.
-# Idempotent: a marker in each path makes later deploys a no-op.
-# APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
-# and git reads its global config out of there.
+# Persistent files must be readable by the backend's uid (1000), including
+# legacy repository files that the migration archives. Ownership repair uses
+# a marker in each path so later releases leave existing ownership alone.
+# APPHOME contains the backend's persistent configuration and migration receipts.
 #
-# ORDER MATTERS, and it is why this block sits here rather than before the
-# migration. Handing 2.2M files to another uid is the one step of this deploy
-# that cannot be undone by simply not proceeding: whatever fails after it leaves
-# the box holding a backend of one uid and a workspace tree of another, which is
-# a project-wide 422 on the file panel. It ran before the migration and the
-# credential check until 2026-08-11, when the credential check aborted
-# deploy-dev *after* the trees had already moved and took dev down until the
-# next deploy (run 31466502982). So: last fallible step first, irreversible step
-# last, and nothing between it and `dc up` that can fail.
+# Schema and credential checks precede ownership repair. Repository migration
+# follows it because the new backend uid must read the old workspace files;
+# a failed repository migration leaves writers stopped until a release retries.
 VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
 # Create it here, not by letting the bind mount conjure it: a missing source
 # path makes docker create it as root:root, and the backend (uid 1000) then
@@ -518,6 +619,8 @@ OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
   || fail "workspace ownership migration failed — aborting before swap"
 OWNERSHIP_MIGRATED="$(cat "$OWNERSHIP_REPORT" 2>/dev/null || echo no)"
 rm -f "$OWNERSHIP_REPORT"
+
+migrate_project_repositories
 
 # ---- Backend rollout without downtime (boxes with an api-front switch) ----
 # ACTIVE_BACKEND_DIR names the directory the box's host nginx (api-front,
@@ -695,15 +798,6 @@ ensure_device_connection_owner
 reload_api_front_routes
 check_session_base_survives_release
 
-# The repo server, before the frontend that proxies to it. Not one of the
-# optional services below: the front nginx sends every machine fetch and push
-# to `git:8084`, so a deploy that leaves it down answers 502 on the only route
-# a machine has to the code — and it does it quietly, because a bare `git`
-# resolves on a box whose resolver answers for unqualified names, so nginx
-# starts happily and proxies to a stranger instead of refusing its config.
-log "bringing up git…"
-dc up -d git || fail "compose up git failed; machines cannot fetch or push"
-
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \
     || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
@@ -779,6 +873,9 @@ done
 if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
   printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
+  if [ -f "$FORGE_CUTOVER_PENDING" ]; then
+    fail "repository migration completed; refusing to restart the legacy repository writer; retry this release from migration receipts"
+  fi
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to ${PREV_SHA}…"
     # Rolling the images back without rolling the ownership back is not a
@@ -809,6 +906,14 @@ if [ "$code" != ok ]; then
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
+
+# Keep the cutover guard across failed releases until the new app is healthy.
+if [ -f "$FORGE_EXECUTOR_RESTART" ]; then
+  sudo -n systemctl start cheese.service || fail "could not restore the host executor"
+  systemctl is-active --quiet cheese.service || fail "host executor did not become active"
+  rm -f "$FORGE_EXECUTOR_RESTART"
+fi
+rm -f "$FORGE_CUTOVER_PENDING"
 
 # Host clock survives API rollouts. Non-systemd installations must arrange an
 # external minute trigger; startup/reconnect recovery alone is not a timer.

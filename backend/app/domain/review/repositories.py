@@ -281,7 +281,9 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_awaiting_merge_on_active_topics(self) -> list[AcceptCard]:
+    async def list_awaiting_merge_on_active_topics(
+        self, project_id: uuid.UUID | None = None
+    ) -> list[AcceptCard]:
         """Pending PRs and returned batches that can still merge externally.
 
         孤儿卡修复 (2026-08-10): the topic's status is part of the predicate, not
@@ -313,6 +315,8 @@ class AcceptCardRepository:
                 AcceptCard.created_at.desc(),
             )
         )
+        if project_id is not None:
+            stmt = stmt.where(Topic.project_id == project_id)
         cards = []
         seen_trees: set[uuid.UUID] = set()
         for card in (await self._session.scalars(stmt)).all():

@@ -31,6 +31,9 @@ import type {
   FeedbackSupportResult,
   FeedbackVisibility,
   FileContent,
+  FileSource,
+  ForgeAttribution,
+  ForgeConnection,
   GitCommit,
   GithubConnection,
   InboxItem,
@@ -59,7 +62,6 @@ import type {
   TopicProgress,
   TopicWorkSummary,
   UpstreamInfo,
-  UpstreamSyncResult,
   UsageStats,
   UserProfile,
   WaitingItem,
@@ -505,7 +507,8 @@ export function createProject(
   name: string,
   ownerHandle?: string,
   teamId?: number,
-  externalTaskId?: number
+  externalTaskId?: number,
+  forgeKind?: 'forgejo' | 'github_app'
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
@@ -516,6 +519,7 @@ export function createProject(
       // Set when the project is created FROM a 赛题, so the 赛题 can find it
       // again. Absent for a project made from the rail.
       external_task_id: externalTaskId,
+      forge_kind: forgeKind,
     }),
   })
 }
@@ -946,11 +950,6 @@ export function setUpstream(projectId: string, url: string): Promise<UpstreamInf
     body: JSON.stringify({ url }),
   })
 }
-export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
-  return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
-    method: 'POST',
-  })
-}
 
 // 分支保护 (#718): 平台侧的合并规则。GET 附带只读的 merge_method 和
 // github_protection；PUT 是 partial-update，body 里出现哪个键就改哪个。
@@ -961,6 +960,21 @@ export function setBranchProtection(projectId: string, patch: BranchProtectionPa
   return request(`/projects/${encodeURIComponent(projectId)}/branch-protection`, {
     method: 'PUT',
     body: JSON.stringify(patch),
+  })
+}
+
+export function getForgeConnection(projectId: string): Promise<ForgeConnection> {
+  return request(`/projects/${encodeURIComponent(projectId)}/forge`)
+}
+
+export function getForgeAttribution(projectId: string): Promise<ForgeAttribution> {
+  return request(`/projects/${encodeURIComponent(projectId)}/forge-attribution`)
+}
+
+export function setForgeAttribution(projectId: string, requesterCoauthor: boolean | null): Promise<ForgeAttribution> {
+  return request(`/projects/${encodeURIComponent(projectId)}/forge-attribution`, {
+    method: 'PUT',
+    body: JSON.stringify({ requester_coauthor: requesterCoauthor }),
   })
 }
 
@@ -1242,9 +1256,14 @@ export async function uploadAttachment(
 // 读者看到的是一张裂图。要显示图片用下面的 attachmentImageUrl。
 /** `task` 说的是从哪个库读：某个任务工作树上的那一份，还是房间自己的文件（不传）。
  *  同一个路径在两个库里可以是两份不同的文件，所以看谁的文件必须说出来。 */
-export function attachmentRawUrl(topicId: string, path: string, task?: string | null): string {
+export function attachmentRawUrl(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): string {
   const from = task ? `&task=${encodeURIComponent(task)}` : ''
-  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}${from}`
+  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}${from}&source=${source}`
 }
 
 /** 图片附件的字节，取回来做成 <img> 能用的 object URL。
@@ -1260,10 +1279,15 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
-export async function previewFileBytes(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+export async function previewFileBytes(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): Promise<ArrayBuffer> {
   // `download=true` is what makes the raw endpoint serve a non-image at all; it
   // only changes the Content-Disposition, which nothing here reads.
-  const res = await fetch(`${attachmentRawUrl(topicId, path, task)}&download=true`, {
+  const res = await fetch(`${attachmentRawUrl(topicId, path, task, source)}&download=true`, {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
@@ -1278,9 +1302,10 @@ export async function previewFileBytes(topicId: string, path: string, task?: str
 export function documentRevisions(
   topicId: string,
   path: string,
-  task?: string | null
+  task?: string | null,
+  source: FileSource = 'live'
 ): Promise<{ path: string; version: string; revisions: DocumentRevision[] }> {
-  const query = `?path=${encodeURIComponent(path)}` + (task ? `&task=${encodeURIComponent(task)}` : '')
+  const query = `?path=${encodeURIComponent(path)}&source=${source}` + (task ? `&task=${encodeURIComponent(task)}` : '')
   return request<{ path: string; version: string; revisions: DocumentRevision[] }>(
     `/topics/${encodeURIComponent(topicId)}/documents/revisions${query}`
   )
@@ -1312,10 +1337,15 @@ export function decideDocumentRevisions(
 export class PreviewRendererUnavailable extends Error {}
 
 /** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
-export async function previewDocumentPdf(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+export async function previewDocumentPdf(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): Promise<ArrayBuffer> {
   const url =
     `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
-    `?path=${encodeURIComponent(path)}` +
+    `?path=${encodeURIComponent(path)}&source=${source}` +
     (task ? `&task=${encodeURIComponent(task)}` : '')
   const res = await fetch(url, { headers: authHeaders() })
   if (res.ok) return res.arrayBuffer()
@@ -1533,9 +1563,10 @@ export function getGitLog(
 export function getGitDiff(
   projectId: string,
   topicId?: string | null,
-  taskId?: string | null
+  taskId?: string | null,
+  source: FileSource = 'committed'
 ): Promise<{ diff: string }> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+  const t = `?${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
@@ -1551,16 +1582,25 @@ export function getTopicWorkSummary(projectId: string, topicId: string): Promise
 export function listFiles(
   projectId: string,
   topicId?: string | null,
-  taskId?: string | null
-): Promise<ListPayload<WorkspaceFile>> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<WorkspaceFile>>(`/projects/${encodeURIComponent(projectId)}/files${t}`)
+  taskId?: string | null,
+  source: FileSource = 'live'
+): Promise<ListPayload<WorkspaceFile> & { source: FileSource }> {
+  const t = `?${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+  return request<ListPayload<WorkspaceFile> & { source: FileSource }>(
+    `/projects/${encodeURIComponent(projectId)}/files${t}`
+  )
 }
 
 // <img src=…> URL for a workspace file (binary raw endpoint) — the 文件 panel
 // shows images as images instead of Monaco-mangled bytes.
-export function workspaceFileRawUrl(projectId: string, path: string, topicId?: string, taskId?: string | null): string {
-  const t = `&${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+export function workspaceFileRawUrl(
+  projectId: string,
+  path: string,
+  topicId?: string,
+  taskId?: string | null,
+  source: FileSource = 'live'
+): string {
+  const t = `&${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return `${BASE}/projects/${encodeURIComponent(projectId)}/file/raw?path=${encodeURIComponent(path)}${t}`
 }
 
@@ -1568,9 +1608,10 @@ export function readFile(
   projectId: string,
   path: string,
   topicId?: string | null,
-  taskId?: string | null
+  taskId?: string | null,
+  source: FileSource = 'live'
 ): Promise<FileContent> {
-  const t = `&${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+  const t = `&${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<FileContent>(`/projects/${encodeURIComponent(projectId)}/file?path=${encodeURIComponent(path)}${t}`)
 }
 

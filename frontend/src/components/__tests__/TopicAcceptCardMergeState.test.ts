@@ -73,7 +73,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals_required: 1,
     pr_number: null,
     forge: {
-      kind: 'platform',
+      kind: 'forgejo',
       reports_checks: false,
       hosts_proposals: false,
       can_write_remote: false,
@@ -141,6 +141,22 @@ beforeEach(() => {
 })
 
 describe('合的是人看到的那个 commit', () => {
+  it('等待另一条任务时不提供人工放行', async () => {
+    const detail = '等「调整接口」先被采纳，或由芝士调整这条活后重新递交'
+    const { container } = await mountWith([
+      githubCard({
+        merge_state: mergeState({
+          state: 'blocked',
+          who: 'agent',
+          reasons: [{ kind: 'dependency', checks: [], detail }],
+        }),
+      }),
+    ])
+    expect(container.textContent).toContain(detail)
+    expect(acceptButton(container).disabled).toBe(true)
+    expect(container.textContent).not.toContain('人工放行并合并')
+  })
+
   it('a linked project without a PR offers creation instead of a clean acceptance', async () => {
     const pending = githubCard({
       pr_number: null,

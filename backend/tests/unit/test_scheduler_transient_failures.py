@@ -48,7 +48,8 @@ def _scheduler(monkeypatch, failure: Exception) -> tuple[SchedulerService, dict]
     class _AcceptService:
         def __init__(self, _session) -> None: ...
 
-        async def open_pr_card_ids(self) -> list[uuid.UUID]:
+        async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
+            assert project_id is None
             return [card_id]
 
         async def advance_pr_card(self, *_args, **_kwargs) -> None:

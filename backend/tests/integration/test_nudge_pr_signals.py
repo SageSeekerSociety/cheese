@@ -369,9 +369,8 @@ def test_a_stale_pause_note_still_does_not_swallow_a_ci_failure(client, app_worl
     assert len(_nudges(client, tid, "ci_failed")) == 1
 
 
-def test_a_repush_failure_still_outranks_a_ci_failure(client, app_world):
-    """反过来的那一半：重推失败 / 分支分叉意味着芝士的修复根本没到 GitHub，PR 上
-    那片红是旧的。这时候催它再修一遍是催错了对象，必须闭嘴。"""
+def test_a_legacy_backend_push_note_does_not_hide_current_forge_ci(client, app_world):
+    """Machines now push directly; a historical backend note cannot suppress CI."""
     fake = app_world["fake"]
     tid, cid, number, head_sha = _authorized(client, app_world)
     fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
@@ -380,8 +379,8 @@ def test_a_repush_failure_still_outranks_a_ci_failure(client, app_world):
     _poll(client)
     wait_work_idle()
 
-    assert _nudges(client, tid, "ci_failed") == []
-    assert _cards(client, tid)[0]["note"] == "平台自动重推失败"
+    assert len(_nudges(client, tid, "ci_failed")) == 1
+    assert _cards(client, tid)[0]["note"] == "CI 检查未通过：Backend Test: failure"
 
 
 def test_a_green_but_conflicted_pr_summons_the_agent_not_the_merge(client, app_world):
