@@ -34,28 +34,14 @@
         }
       ]
     },
-    "codex": {
-      "records": [
-        {
-          "method": "item/started",
-          "params": {
-            "threadId": "session-1",
-            "item": {
-              "type": "dynamicToolCall",
-              "id": "toolu_1",
-              "tool": "Bash",
-              "arguments": { "command": "pytest -q" }
-            }
-          }
-        }
-      ]
-    }
+    "codex": { "difference": "no-call-id-on-tool-use" }
   },
   "events": [
     {
       "kind": "tool_use",
       "name": "Bash",
-      "input": { "command": "pytest -q" }
+      "input": { "command": "pytest -q" },
+      "call_id": "toolu_1"
     }
   ]
 }

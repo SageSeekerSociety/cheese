@@ -14,7 +14,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 
-export const SOURCE = new URL(
+const SOURCE = new URL(
   "../../app/domain/agent/harness/pi/platform.ts",
   import.meta.url,
 ).href;
