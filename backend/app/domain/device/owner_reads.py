@@ -41,7 +41,6 @@ from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 
-
 #: Which shape of the database this build of the owner reads. Bumped by the
 #: release that moves one of the reads below, and named in
 #: `deploy/deploy-docker.sh` as what a running owner must answer with before an
