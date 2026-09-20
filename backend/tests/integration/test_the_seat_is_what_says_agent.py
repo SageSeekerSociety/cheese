@@ -20,9 +20,9 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, name, owner="alice"):
-    return client.post(
-        "/projects", json={"name": name, "owner_handle": owner}
-    ).json()["data"]
+    return client.post("/projects", json={"name": name, "owner_handle": owner}).json()[
+        "data"
+    ]
 
 
 def _room(client, project, title="Room", created_by="alice"):
