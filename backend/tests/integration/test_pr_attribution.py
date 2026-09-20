@@ -145,6 +145,11 @@ class _FakeClient:
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
 
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        # 递卡后 PR 的正文要改成卡的主题（`sync_pr_text`）。少了这个方法，整条
+        # publish 在落完房间那一行之后炸掉并回滚，房间里什么都不剩。
+        return {"number": number, "title": title, "body": body}
+
     async def open_pr(
         self,
         *,

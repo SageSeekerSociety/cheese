@@ -472,8 +472,9 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     正当的采纳语义——不是降级、不拦人。但这件事要写在卡上（ℹ️ 不是 ⚠️），
     让它和「该走 PR 却没走」的卡一眼可分。
 
-    两种「未接」说的不是同一句话：什么都没填的项目是「未接外部仓库」，填了地址
-    而我们没有写它的凭据的项目**填过**，卡上不能当着他的面说他没填。"""
+    这两种「未接」都填过上游地址（少的是 App 安装，或者那个地址不是 GitHub），
+    所以卡上不能说「本项目未接外部仓库」—— 当着填过地址的人的面说他没填，是把
+    沉默换成一句假话。"""
     from app.domain.agent import github_app
     from app.domain.workspace import service as ws
 
@@ -498,13 +499,10 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     declaration = filed["forge"]["declaration"]
     assert declaration.startswith("ℹ️")
     assert "⚠️" not in declaration
-    if missing == "upstream":
-        # 他填了地址，只是我们推不动它。
-        assert filed["forge"]["has_external_remote"] is True
-        assert "未接外部仓库" not in declaration
-    else:
-        assert filed["forge"]["has_external_remote"] is False
-        assert declaration.startswith("ℹ️ 本项目未接外部仓库")
+    # 地址填过，只是我们推不动它。
+    assert filed["forge"]["has_external_remote"] is True
+    assert filed["forge"]["pushes_to_external_remote"] is False
+    assert "未接外部仓库" not in declaration
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
@@ -584,6 +582,9 @@ def _event_types_settled(client, topic_id: str, needle: str) -> list[str]:
     """房间里那几行是 fire-and-forget 落下的，给事件循环几拍。"""
     import time
 
+    from tests.conftest import wait_work_idle
+
+    wait_work_idle()
     types = _event_types(client, topic_id)
     for _ in range(40):
         if needle in types:
