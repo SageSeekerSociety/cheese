@@ -61,6 +61,12 @@ def session_platform_dirs() -> tuple[str, ...]:
 # directory inside it the platform stages files into. The checkout the agent
 # works in is that home's `room/` (`device_provider._work_dir`), so a name
 # chosen here is a name chosen NOT to be in it.
+#
+# The sandbox CLI carries a copy (`backend/sandbox/cheese`): `cheese library
+# get` writes its default here rather than into the work tree, and the two
+# copies are held together by `tests/unit/test_footprint_root.py`. A file 芝士
+# fetches for itself and a file the platform staged for it are the same kind of
+# file and belong in the same directory.
 STAGED_DIR = "attachments"
 
 #: The checkout, relative to a session's home. Named here because the whole
@@ -86,21 +92,6 @@ class OutsideFootprint(RuntimeError):
     for — a file in the hosted checkout, which the platform does not write into
     at all (结论 49，不变量 I21b).
     """
-
-
-def staged_path(home: str, name: str) -> tuple[str, str]:
-    """Where one staged file goes, as the machine and the session each spell it.
-
-    Two spellings of one destination because the two transports that reach a
-    machine do not share a `$HOME`. The connector runs as the machine's owner,
-    so it is handed the `$HOME`-anchored path and expands it against that home.
-    The executor was launched with `HOME` set to the session's own home, so it
-    is handed the path relative to that and resolves it against `Path.home()`.
-    Handing either one the other's spelling writes a real file in a real
-    directory that nothing will ever look in.
-    """
-    relative = f"{STAGED_DIR}/{name}"
-    return f"{home}/{relative}", relative
 
 
 async def write(
@@ -160,14 +151,26 @@ async def write(
     Returns the absolute path **as the machine reports it** — the backend cannot
     expand that machine's `$HOME`, and the agent is handed this path verbatim.
     """
-    destination, relative = staged_path(home, name)
+    # Two spellings of one destination, because the two transports that reach a
+    # machine do not share a `$HOME`. The connector runs as the machine's owner,
+    # so it is handed the `$HOME`-anchored path and expands it against that home.
+    # The executor was launched with `HOME` set to the session's own home, so it
+    # is handed the path relative to that and resolves it against `Path.home()`.
+    # Handing either one the other's spelling writes a real file in a real
+    # directory that nothing will ever look in.
+    relative = f"{STAGED_DIR}/{name}"
+    destination = f"{home}/{relative}"
     root = f"$HOME/{footprint_root()}/"
     if not destination.startswith(root):
         raise OutsideFootprint(
             f"{destination} is outside $HOME/{footprint_root()}, which is the "
             "whole of what the platform writes on a machine"
         )
-    if f"/{CHECKOUT_DIR}/" in destination.removeprefix(root):
+    # The leading slash is what makes this a SEGMENT test rather than a prefix
+    # one: without it the first segment under the root carries no slash in front
+    # of it, and a `home` of `$HOME/.cheese/room/…` — a checkout sitting
+    # directly under the footprint — would walk straight through.
+    if f"/{CHECKOUT_DIR}/" in "/" + destination.removeprefix(root):
         raise OutsideFootprint(
             f"{destination} is inside the hosted checkout, which the platform "
             "does not write into (结论 49)"

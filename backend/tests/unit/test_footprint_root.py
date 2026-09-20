@@ -27,7 +27,11 @@ from app.domain.agent import (
     resource_cleanup,
 )
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-from app.domain.agent.place import footprint_root, session_platform_dirs
+from app.domain.agent.place import (
+    STAGED_DIR,
+    footprint_root,
+    session_platform_dirs,
+)
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 SANDBOX_CLI = REPOSITORY / "backend/sandbox/cheese"
@@ -94,6 +98,15 @@ def test_the_sandbox_cli_carries_the_root_that_place_chose():
     assert tuple(re.findall(r'"([^"]+)"', declared.group(1))) == (
         session_platform_dirs()
     )
+    # The second name it carries: where an attachment sits in the session's own
+    # home. `cheese library get` writes its default there so that a file 芝士
+    # fetches lands where a file the platform staged lands — the same directory,
+    # spelled twice, and drift between them puts the fetched copy somewhere the
+    # prompt's paths do not point. It is also the copy that keeps the default
+    # OUT of the checkout: a relative default is a path under the work tree.
+    staged = re.search(r'STAGED_DIR = "([^"]+)"', source)
+    assert staged, "the sandbox CLI stopped declaring where an attachment sits"
+    assert staged.group(1) == STAGED_DIR
     for spelled in sorted(
         {name.split("/")[0] for name in SANDBOX_HOME_DIR.findall(source)}
         - {RUNNER_STATE_DIR}

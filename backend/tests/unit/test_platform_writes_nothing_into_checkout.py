@@ -210,8 +210,12 @@ async def test_a_screen_with_an_executor_is_written_through_it(executor):
         "/absolute/p/r",
         # 检出目录本身——这一条是这条规则的原形：一张图片曾经就落在这里。
         "$HOME/.cheese/home/p/r/room",
+        # 检出目录就贴在脚印根下面：它前面没有斜杠，所以「`/room/` 在不在里面」这
+        # 种读法会当场放过它。断言要挡的是这个名字作为**一段**出现，不是它出现在
+        # 第二段以后。
+        "$HOME/.cheese/room/p/r",
     ],
-    ids=["outside", "old-root", "absolute", "the-checkout"],
+    ids=["outside", "old-root", "absolute", "the-checkout", "checkout-first"],
 )
 async def test_a_write_aimed_outside_the_footprint_is_refused(home, executor):
     """瞄错地方的写不是写进去再说，是当场拒绝。

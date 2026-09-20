@@ -13,8 +13,10 @@
 - 房间文件（`.room-files/<project>/<room>/`）只属于一个房间：贴进来的截图没有名
   字，`image.png` 是浏览器替它编的，它只属于那条消息。发布出来的预览产物同理。
 
-一份资料在消息里、在给 agent 的地址里、在字节端点的 query 上都是同一个地址
-`library/<名字>`——**不拷贝**。
+一份资料在消息里、在字节端点的 query 上都是同一个地址 `library/<名字>`——**不拷贝**。
+送上机器的那一份是另一回事：它落在会话 home 的 `attachments/` 下
+（:mod:`app.domain.agent.place`），不落在检出目录里，agent 拿到的是那台机器报回来
+的绝对路径。
 """
 
 import hashlib
