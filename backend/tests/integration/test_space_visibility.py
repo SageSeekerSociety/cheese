@@ -484,10 +484,10 @@ class TestSideDoors:
         self, api_client: TestClient, space_id: int, token: str
     ) -> None:
         for suffix in self.SIDE_DOORS:
-            resp = api_client.get(
-                f"/spaces/{space_id}{suffix}", headers=_auth(token)
+            resp = api_client.get(f"/spaces/{space_id}{suffix}", headers=_auth(token))
+            assert resp.status_code == 404, (
+                f"{suffix} -> {resp.status_code}: {resp.text}"
             )
-            assert resp.status_code == 404, f"{suffix} -> {resp.status_code}: {resp.text}"
             assert _error_name(resp) == "NotFoundError", resp.text
 
     def test_a_private_space_leaks_through_no_sub_resource(
@@ -508,7 +508,9 @@ class TestSideDoors:
             resp = api_client.get(
                 f"/spaces/{space_id}{suffix}", headers=_auth(creator_token)
             )
-            assert resp.status_code == 200, f"{suffix} -> {resp.status_code}: {resp.text}"
+            assert resp.status_code == 200, (
+                f"{suffix} -> {resp.status_code}: {resp.text}"
+            )
 
     def test_a_code_space_leaks_through_no_sub_resource_before_redemption(
         self, user_client: UserCreator, api_client: TestClient
@@ -534,7 +536,9 @@ class TestSideDoors:
             resp = api_client.get(
                 f"/spaces/{space_id}{suffix}", headers=_auth(outsider_token)
             )
-            assert resp.status_code == 200, f"{suffix} -> {resp.status_code}: {resp.text}"
+            assert resp.status_code == 200, (
+                f"{suffix} -> {resp.status_code}: {resp.text}"
+            )
 
     def test_a_removed_member_stops_seeing_the_space(
         self, user_client: UserCreator, api_client: TestClient
