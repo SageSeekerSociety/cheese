@@ -347,7 +347,9 @@ def forge_for(capabilities: ForgeCapabilities) -> Forge:
     """承担这组能力位的那个实现。恰好一个，否则注册表自己有洞。"""
     matched = [cls for cls in FORGES if cls.serves(capabilities)]
     if len(matched) != 1:  # pragma: no cover - a registry bug, not an input
-        raise RuntimeError(f"{len(matched)} forges serve {capabilities}; exactly one must")
+        raise RuntimeError(
+            f"{len(matched)} forges serve {capabilities}; exactly one must"
+        )
     return matched[0](capabilities)
 
 
