@@ -172,6 +172,11 @@ type Verdict struct {
 	Reason   string
 	Detail   string
 	Grant    *Grant
+	// Resolved is the path the question was actually decided about, with the
+	// tilde expanded and symlinks followed. It is carried out of the decision so
+	// that what is opened is what was checked: resolving a second time would open
+	// a path the verdict above never saw.
+	Resolved ResolvedPath `json:"-"`
 }
 
 // Allowed reports whether the request may proceed.
@@ -242,6 +247,7 @@ func Decide(set *GrantSet, req Request) Verdict {
 			Decision: DecisionDenied,
 			Reason:   "no_grant",
 			Detail:   "这个路径不在任何授权目录里",
+			Resolved: resolved,
 		}
 	}
 
@@ -253,6 +259,7 @@ func Decide(set *GrantSet, req Request) Verdict {
 				Reason:   "granted",
 				Detail:   "已授权",
 				Grant:    &grant,
+				Resolved: resolved,
 			}
 		}
 	}
@@ -265,6 +272,7 @@ func Decide(set *GrantSet, req Request) Verdict {
 		Reason:   "read_only_grant",
 		Detail:   "这个目录只授权了读取，不能写入",
 		Grant:    &narrowest,
+		Resolved: resolved,
 	}
 }
 
