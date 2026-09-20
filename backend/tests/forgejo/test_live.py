@@ -23,7 +23,7 @@ from app.api.routes.topics import _source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
-from app.domain.agent.forgejo_tokens import ForgejoTokens, revoke_expired_tokens
+from app.domain.agent.forgejo_tokens import ForgejoTokens, purge_expired_tokens
 from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
@@ -382,7 +382,7 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         async with asyncio.timeout(10):
             while not server.started:
                 await asyncio.sleep(0.01)
-        consumer = asyncio.create_task(events.listen(scheduler))
+        consumer = asyncio.create_task(events.listen(scheduler, db_factory))
         async with asyncio.timeout(10):
             while "test" not in relay.connections:
                 await asyncio.sleep(0.01)
@@ -498,7 +498,7 @@ def _push_with_cli(binding, token, root):
         thread.join(timeout=5)
 
 
-async def test_project_proposal_lifecycle_and_credential_revocation(
+async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     db_factory, monkeypatch, tmp_path
 ):
     from app.api.routes.accept import _pr_checks_payload
@@ -569,6 +569,7 @@ async def test_project_proposal_lifecycle_and_credential_revocation(
             body="Report",
             draft=True,
         )
+        draft = draft.pr
         assert draft["draft"]
         async with db_factory() as session:
             recorded = await session.get(Task, task.id)
@@ -750,6 +751,7 @@ async def test_project_proposal_lifecycle_and_credential_revocation(
             )
             lease.expires_at = datetime.now(UTC) - timedelta(seconds=1)
             await session.commit()
-        assert (await revoke_expired_tokens(db_factory))["revoked"] == 1
-        rejected = await client.get(f"/repos/{binding.repo}")
-        assert rejected.status_code == 401
+        assert (await purge_expired_tokens(db_factory))["deleted"] == 1
+        # Cache cleanup cannot revoke a token before its provider expiration.
+        retained = await client.get(f"/repos/{binding.repo}")
+        assert retained.status_code == 200

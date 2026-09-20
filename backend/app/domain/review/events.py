@@ -68,13 +68,16 @@ async def listen(scheduler, sessions: SessionFactory):
                 await scheduler.open_draft_prs()
                 await scheduler.poll_open_prs()
                 async with asyncio.TaskGroup() as group:
-                    group.create_task(register_subscriptions(socket, sessions))
+                    subscription = group.create_task(
+                        register_subscriptions(socket, sessions)
+                    )
                     async for raw in socket:
                         event = json.loads(raw)
                         if event.get("kind") != "subscription_ack":
                             await scheduler.forge_repository_changed(**event)
                     # A clean socket close must also stop the subscription renewer.
-                    raise ConnectionError("Forge event connection closed")
+                    subscription.cancel()
+                raise ConnectionError("Forge event connection closed")
         except Exception:  # noqa: BLE001 — reconnect; periodic reconciliation remains live
             logger.warning("Forge event relay disconnected; retrying", exc_info=True)
             await asyncio.sleep(10)

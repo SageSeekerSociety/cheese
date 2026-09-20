@@ -1359,6 +1359,20 @@ class GitHubPRMergeBlocked(GitHubPRError):
     """The merge was refused because the PR is not mergeable (conflict)."""
 
 
+@dataclass(frozen=True, slots=True)
+class OpenedPR:
+    """The PR ``open_pr`` opened or adopted, and whose name it went out under.
+
+    ``identity_downgrade`` is the one sentence to put in front of a person when
+    the requester's own credential could not open the PR and the App's was used
+    instead. None on the ordinary paths. It is a return value rather than a log
+    line because a fallback has to be as visible as the failure it covers.
+    """
+
+    pr: dict
+    identity_downgrade: str | None
+
+
 def _as_pr_error[**P, R](
     fn: Callable[P, Awaitable[R]],
 ) -> Callable[P, Coroutine[Any, Any, R]]:
@@ -1429,7 +1443,7 @@ class GitHubPRClient:
         body: str,
         as_user_token: str | None = None,
         draft: bool = False,
-    ) -> dict:
+    ) -> OpenedPR:
         """Open (or find the already-open) PR for a branch.
 
         Re-submitting a card for the same topic must not fail on GitHub's
@@ -1447,9 +1461,16 @@ class GitHubPRClient:
         credential created it, and an App token makes every PR on the platform
         belong to the bot — no avatar, no "opened by you", no filter-by-author
         for the person whose work it is. An App can never impersonate a user,
-        so the only way to open it as them is to use their token. Falls back to
-        the App on any failure: a PR that exists under the wrong name beats no
-        PR at all, and the fallback is invisible to everything downstream.
+        so the only way to open it as them is to use their token.
+
+        When their token cannot open it (they left the org, revoked the
+        authorization, uninstalled the App for themselves) the App opens it
+        instead — a PR that exists under the wrong name beats no PR at all —
+        and the returned :class:`OpenedPR` says so in ``identity_downgrade``.
+        The substitution used to be invisible to everything downstream, which
+        is a fallback quieter than the failure it covers (I26): the person is
+        left believing GitHub simply attributes their work to a bot. The
+        callers put that sentence in the room.
         """
         app_token, _ = await self._tokens.write_token()
         payload: dict[str, object] = {
@@ -1468,24 +1489,21 @@ class GitHubPRClient:
                 )
 
             resp = None
+            downgrade: str | None = None
             if as_user_token:
                 resp = await _create(as_user_token)
                 if resp.status_code == 201:
-                    return resp.json()
+                    return OpenedPR(resp.json(), None)
                 if resp.status_code != 422 or "already exist" not in resp.text:
-                    # Their token may simply not reach this repo (left the org,
-                    # authorization revoked, App uninstalled for them). Not an
-                    # error worth surfacing — the App opens it instead.
-                    logger.info(
-                        "opening PR as the requester failed (HTTP %s); "
-                        "falling back to the App token",
-                        resp.status_code,
+                    downgrade = (
+                        f"你的 GitHub 授权开不了这个 PR（HTTP {resp.status_code}），"
+                        "已改用芝士的 App 身份开——PR 会记在机器人名下，不在你名下。"
                     )
                     resp = None
             if resp is None:
                 resp = await _create(app_token)
                 if resp.status_code == 201:
-                    return resp.json()
+                    return OpenedPR(resp.json(), downgrade)
             if resp.status_code == 422 and "already exist" in resp.text:
                 listing = await client.get(
                     self._url("/pulls"),
@@ -1493,7 +1511,9 @@ class GitHubPRClient:
                     headers=self._headers(app_token),
                 )
                 if listing.status_code == 200 and listing.json():
-                    return listing.json()[0]
+                    # An adopted PR was opened earlier under whatever identity
+                    # opened it then; this call substituted nothing.
+                    return OpenedPR(listing.json()[0], None)
             raise GitHubPRError(
                 f"PR creation failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )

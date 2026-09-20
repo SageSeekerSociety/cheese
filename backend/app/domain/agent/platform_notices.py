@@ -62,6 +62,8 @@ EVENT_MERGE_REFUSED: Final = "merge_refused"
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 #: 验收卡递上来了 —— 从这一刻起验收人手上多了一件事。
 EVENT_CARD_FILED: Final = "card_filed"
+#: 这次交付在产物清单上新建了一项 —— 名字此前没出现过，看一眼是不是要的那个。
+EVENT_ARTIFACT_DECLARED: Final = "artifact_declared"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
@@ -123,6 +125,12 @@ EVENT_PR_REVIEW: Final = "pr_review"
 EVENT_PR_CONFLICT: Final = "pr_conflict"
 # A parent task closed; its dependants need the executor to inspect their base.
 EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
+#: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
+#: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
+EVENT_PR_IDENTITY_DOWNGRADED: Final = "pr_identity_downgraded"
+#: 采纳合完了，改动已经在平台仓库的 main 上，但推回项目自己的远端（gitee、校内
+#: GitLab、自建）没成功 —— 采纳本身是成的，所以这不是 `accept_stopped`。
+EVENT_REMOTE_PUSH_FAILED: Final = "remote_push_failed"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -134,6 +142,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_FILED,
+        EVENT_ARTIFACT_DECLARED,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
@@ -163,6 +172,8 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PR_REVIEW,
         EVENT_PR_CONFLICT,
         EVENT_DEPENDENCY_CLOSED,
+        EVENT_PR_IDENTITY_DOWNGRADED,
+        EVENT_REMOTE_PUSH_FAILED,
     }
 )
 

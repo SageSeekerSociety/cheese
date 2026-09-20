@@ -96,6 +96,16 @@ class AcceptCard(UuidPk, Timestamps, Base):
     # columns): review/services.py falls back to the topic title.
     change_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     change_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 这次交付更新的是哪一项产物 (#1085 结论三). Declared when the card is filed;
+    # the artifact's version moves when the card is accepted. NULL on cards that
+    # predate the manifest, and on a card whose artifact the project later
+    # deleted — the declaration was about a thing that no longer exists, and
+    # inventing a replacement would put a different name on a landed delivery.
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("project_artifacts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[AcceptStatus] = mapped_column(
         Enum(AcceptStatus, native_enum=False, length=16),
         default=AcceptStatus.pending,

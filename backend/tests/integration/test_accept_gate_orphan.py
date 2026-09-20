@@ -97,6 +97,7 @@ def _file_card(client, topic_id: str, reviewer: str = "alice"):
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
@@ -305,6 +306,7 @@ def test_void_rejects_a_card_that_is_already_settled(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",

@@ -12,6 +12,7 @@ services:
       FORGEJO__server__HTTP_PORT: "3000"
       FORGEJO__server__DISABLE_SSH: "true"
       FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__oauth2__ACCESS_TOKEN_EXPIRATION_TIME: "3600"
       FORGEJO__webhook__ALLOWED_HOST_LIST: ${FORGEJO_WEBHOOK_HOSTS:?event relay hostname}
     ports:
       - "127.0.0.1:${FORGEJO_PORT:-3300}:3000"

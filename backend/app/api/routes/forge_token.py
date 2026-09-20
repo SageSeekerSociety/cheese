@@ -189,9 +189,7 @@ async def sandbox_forge_token(
             "project_id": str(project_id),
             "token": access_token,
             "expires_at": expires_at,
-            "expiry_enforcement": "provider"
-            if binding.kind == "github_app"
-            else "platform_revocation",
+            "expiry_enforcement": "provider",
             "repo": binding.repo,
             "url": binding.url,
             "api_url": binding.api_url,

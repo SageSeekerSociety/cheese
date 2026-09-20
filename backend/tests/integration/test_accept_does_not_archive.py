@@ -7,7 +7,12 @@ import uuid
 
 import pytest
 
-from tests.delivery import delivery_headers, delivery_task, delivery_task_id
+from tests.delivery import (
+    delivery_artifact,
+    delivery_headers,
+    delivery_task,
+    delivery_task_id,
+)
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
@@ -39,6 +44,7 @@ def _card(
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            **delivery_artifact(client, topic_id),
             "change_subject": subject,
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",

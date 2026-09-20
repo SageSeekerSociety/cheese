@@ -11,6 +11,30 @@ import httpx
 import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import session_auth_headers
+
+
+def test_unreadable_binding_keeps_cards_visible_and_refuses_accept(client, monkeypatch):
+    from app.domain.project import forge
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    monkeypatch.setattr(
+        forge, "binding_for_project", AsyncMock(side_effect=OSError("unavailable"))
+    )
+    listed = client.get(f"/topics/{tid}/accept-card")
+    assert listed.status_code == 200
+    card = listed.json()["data"]["data"][0]
+    assert card["forge"]["kind"] == "unknown"
+    assert card["merge_state"]["state"] == "unknown"
+    refused = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert refused.status_code == 422
+    assert "无法读取" in refused.json()["message"]
 
 
 def _make_project(client) -> str:
@@ -30,6 +54,7 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",

@@ -21,6 +21,7 @@ import { avatarColor, avatarInitial } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { listProjectTasks } from '@/api'
+import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
@@ -266,9 +267,18 @@ function openTask(task: RoomTask) {
 
 <template>
   <div class="board">
+    <!-- 这一页是项目的落点，所以顶上是项目名：下面两块（做出了什么、看板）各自
+         带自己的标题，答的是这个项目的两个问题——交出去了什么，现在轮到谁。 -->
+    <header v-if="store.projectName" class="board__title">
+      <h1 class="t-page-title">{{ store.projectName }}</h1>
+    </header>
+
+    <!-- 做出了什么：清单为空时它自己整个不出现（#1085 结论三）。 -->
+    <ArtifactManifest :project-id="projectId" />
+
     <header class="board__head">
       <div class="board__head-row">
-        <h1 class="t-title">看板</h1>
+        <h2 class="t-title">看板</h2>
         <!-- 「只看我的」：一个项目上百个房间，「等你」那一列里大部分不是等你。
              登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
         <button v-if="mineHandle" type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
@@ -411,6 +421,13 @@ function openTask(task: RoomTask) {
   box-sizing: border-box;
   min-height: 0;
   padding: 16px 12px 12px;
+}
+.board__title {
+  flex: 0 0 auto;
+  padding: 0 10px 12px;
+}
+.board__title h1 {
+  margin: 0;
 }
 .board__head {
   flex: 0 0 auto;

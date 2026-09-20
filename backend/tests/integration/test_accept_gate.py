@@ -86,6 +86,7 @@ def test_second_card_still_blocked_while_first_is_pending(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
             "routing_reason": "x",

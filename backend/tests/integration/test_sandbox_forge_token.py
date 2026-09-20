@@ -67,9 +67,7 @@ def test_token_identifies_provider_repository_and_expiry(client, configured, kin
     assert data["url"] == binding.url
     assert data["api_url"] == binding.api_url
     assert data["username"] == ("x-access-token" if kind == "github_app" else "acme")
-    assert data["expiry_enforcement"] == (
-        "provider" if kind == "github_app" else "platform_revocation"
-    )
+    assert data["expiry_enforcement"] == "provider"
     assert data["expires_at"] == "2026-09-20T10:00:00Z"
     assert data["permissions"] == "contents: write, issues: read, workflows: write"
     assert response.headers["Cache-Control"] == "no-store"

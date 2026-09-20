@@ -11,6 +11,7 @@ from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPrError,
     MergeResult,
+    OpenedPR,
     PullRequestStatus,
 )
 from app.domain.review.pr_signals import ReviewSignal
@@ -331,7 +332,7 @@ class ForgejoPRClient:
 
     async def open_pr(
         self, *, head, base, title, body, draft=False, as_user_token=None
-    ):
+    ) -> OpenedPR:
         token, _ = await self.tokens.write_token()
         # Matching both refs prevents adopting another task's proposal.
         existing = await self.client.pages(
@@ -339,8 +340,8 @@ class ForgejoPRClient:
         )
         for pr in existing:
             if pr["head"]["ref"] == head and pr["base"]["ref"] == base:
-                return self._proposal(pr)
-        return self._proposal(
+                return OpenedPR(self._proposal(pr), None)
+        pr = self._proposal(
             await self._request(
                 "POST",
                 "/pulls",
@@ -356,6 +357,7 @@ class ForgejoPRClient:
                 },
             )
         )
+        return OpenedPR(pr, None)
 
     async def pr_view(self, number):
         return self._proposal(await self._request("GET", f"/pulls/{number}"))

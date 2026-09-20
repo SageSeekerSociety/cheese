@@ -13,6 +13,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import room_agent_seat
 
@@ -144,6 +145,8 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
 
 class _FakeClient:
     opened: list[dict] = []
+    #: GitHub 拒了交活的人自己的凭据时，`open_pr` 回来的那句话。
+    downgrade: str | None = None
 
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
@@ -159,9 +162,12 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+    ) -> OpenedPR:
         type(self).opened.append({"body": body, "as_user_token": as_user_token})
-        return {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}
+        return OpenedPR(
+            {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"},
+            type(self).downgrade,
+        )
 
 
 def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
@@ -171,6 +177,7 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     from app.domain.workspace import forge_files
 
     _FakeClient.opened = []
+    _FakeClient.downgrade = None
 
     async def _fake_proposal_client(_project_id, _session):
         return _FakeClient("acme", "widgets", _FakeTokens())
@@ -218,6 +225,7 @@ def _card(client, topic_id: str) -> str:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(accept): credit the human, not the bot",
@@ -314,6 +322,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(accept): credit the human, not the bot",
@@ -339,3 +348,46 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     [opened] = _FakeClient.opened
     assert opened["as_user_token"] == "gho_alice"
     assert "Requested-by: alice" in opened["body"]
+
+
+def test_a_pr_opened_under_the_apps_name_tells_the_person_it_was_taken_from(
+    client, monkeypatch
+):
+    """降级不是只进 logger，也不是只在房间里留一行 —— 它点名那个人（I26）。
+
+    这条路跑的时候当事人往往不在（草稿 PR 扫底在后台跑），等他回来看见的就只是
+    GitHub 把他的活算给了机器人。所以这句话要投到他手上，而不是等他回房间翻。
+    """
+    from tests.conftest import seed_user, wait_work_idle
+
+    alice = seed_user(client, "alice")
+    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _FakeClient.downgrade = "你的 GitHub 授权被拒了（token 过期），改用芝士的身份开"
+
+    pid, root = _project(client, owner="alice")
+    _publish(client, pid, root, _card(client, root))
+    wait_work_idle()
+
+    blocks = client.get(f"/topics/{root}/blocks").json()["data"]["data"]
+    (line,) = [
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "pr_identity_downgraded"
+    ]
+    assert line["meta"]["who"] == "human"
+    assert "token 过期" in line["meta"]["detail"]
+
+    r = client.get(
+        "/notifications",
+        params={"type": "ROOM_NOTICE"},
+        headers={"Authorization": f"Bearer {alice}"},
+    )
+    assert r.status_code == 200, r.text
+    rows = [
+        n
+        for n in r.json()["data"]["notifications"]
+        if (n.get("contextMetadata") or {}).get("eventType") == "pr_identity_downgraded"
+    ]
+    (row,) = rows
+    # 通知里读到的和回房间看到的是同一句。
+    assert row["contextMetadata"]["content"] == line["content"]

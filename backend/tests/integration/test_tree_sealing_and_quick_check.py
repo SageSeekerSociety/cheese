@@ -102,6 +102,7 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 reviewer_handle="alice",
                 routing_reason="ready",
                 change_subject="feat: add first result",
+                new_artifact="报告",
             )
             fake = app_world["fake"]
             fake.seed_pr(11, head=first.branch_name)

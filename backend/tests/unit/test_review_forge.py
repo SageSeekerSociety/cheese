@@ -21,6 +21,13 @@ def _pid() -> uuid.UUID:
     return uuid.uuid4()
 
 
+@pytest.fixture(autouse=True)
+def credentials(monkeypatch):
+    from app.domain.project import forge
+
+    monkeypatch.setattr(forge, "tokens_for_project", AsyncMock(return_value=object()))
+
+
 def _session(kind="github_app", host="github.com"):
     session = AsyncMock()
     session.scalar.return_value = SimpleNamespace(
@@ -34,8 +41,8 @@ async def test_a_bound_project_is_the_app_forge() -> None:
     got = await forge_mod.resolve(project_id=_pid(), session=_session())
 
     assert got.kind is forge_mod.ForgeKind.github_app
-    assert got.has_external_checks is True
-    assert got.note == ""
+    assert got.capabilities.reports_checks is True
+    assert got.declaration == ""
 
 
 @pytest.mark.anyio
@@ -44,7 +51,7 @@ async def test_forgejo_binding_uses_proposals_and_external_checks() -> None:
         project_id=_pid(), session=_session("forgejo", "forge.invalid")
     )
     assert got.kind is forge_mod.ForgeKind.forgejo
-    assert got.has_external_checks is True
+    assert got.capabilities.reports_checks is True
 
 
 @pytest.mark.anyio
@@ -53,6 +60,18 @@ async def test_unbound_project_cannot_merge_locally() -> None:
     session.scalar.return_value = None
     with pytest.raises(ValidationError, match="没有代码仓库"):
         await forge_mod.resolve(project_id=_pid(), session=session)
+
+
+@pytest.mark.anyio
+async def test_missing_credentials_do_not_change_the_provider(monkeypatch):
+    from app.domain.project import forge
+
+    monkeypatch.setattr(forge, "tokens_for_project", AsyncMock(return_value=None))
+    got = await forge_mod.resolve(project_id=_pid(), session=_session())
+    assert got.kind is forge_mod.ForgeKind.github_app
+    assert got.capabilities.hosts_proposals is True
+    assert got.capabilities.can_write_remote is False
+    assert got.capabilities.pushes_to_external_remote is False
 
 
 @pytest.mark.anyio
@@ -68,15 +87,16 @@ async def test_an_undeterminable_binding_stops_the_accept() -> None:
         await forge_mod.resolve(project_id=_pid(), session=session)
 
 
-def test_every_kind_answers_every_question() -> None:
+@pytest.mark.anyio
+async def test_every_kind_answers_every_question() -> None:
     """A new forge cannot be added half-way.
 
     Every registered provider declares checks and implements the operations.
     """
     for kind in forge_mod.ForgeKind:
-        got = forge_mod.FORGES[kind]
-        assert isinstance(got.has_external_checks, bool)
-        assert isinstance(got.note, str)
+        got = await forge_mod.resolve(project_id=_pid(), session=_session(kind))
+        assert isinstance(got.capabilities.reports_checks, bool)
+        assert isinstance(got.declaration, str)
 
 
 @pytest.mark.anyio

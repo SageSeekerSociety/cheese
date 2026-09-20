@@ -33,8 +33,6 @@ def relay(client, monkeypatch):
                     project_id=project_id,
                     api_url=binding.api_url,
                     username="project",
-                    account_password=encrypt_text("account-password"),
-                    token_name="test-lease",
                     value=encrypt_text("project-token"),
                     expires_at=datetime.now(UTC) + timedelta(minutes=10),
                 )

@@ -26,6 +26,7 @@ class AcceptCardRepository:
         change_body: str | None = None,
         task_id: uuid.UUID | None = None,
         delivered_task_ids: list[uuid.UUID] | None = None,
+        artifact_id: uuid.UUID | None = None,
     ) -> AcceptCard:
         # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
         # belongs to the room, not to any one card in it.
@@ -38,6 +39,7 @@ class AcceptCardRepository:
             change_subject=change_subject,
             change_body=change_body,
             delivered_task_ids=[str(t) for t in (delivered_task_ids or [])],
+            artifact_id=artifact_id,
         )
         self._session.add(card)
         await self._session.flush()

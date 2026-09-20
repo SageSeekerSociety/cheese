@@ -40,7 +40,7 @@ def periodic_jobs(
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     from app.domain import backend_log
-    from app.domain.agent.forgejo_tokens import revoke_expired_tokens
+    from app.domain.agent.forgejo_tokens import purge_expired_tokens
     from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
@@ -59,9 +59,9 @@ def periodic_jobs(
             lambda: reconcile_repository_webhooks(sessions),
         ),
         PeriodicRunner(
-            "forge credential revocation",
-            30,
-            lambda: revoke_expired_tokens(sessions),
+            "forge credential cache cleanup",
+            3600,
+            lambda: purge_expired_tokens(sessions),
         ),
         PeriodicRunner(
             "scheduler tick", settings.scheduler_interval_seconds, scheduler.tick

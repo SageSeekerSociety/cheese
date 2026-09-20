@@ -689,7 +689,6 @@ class Settings(BaseSettings):
     forgejo_url: str = ""
     forgejo_api_url: str = ""
     forgejo_admin_token: str = ""
-    forge_token_ttl_seconds: int = 3600
     forge_attribution_default: bool = True
     forge_event_relay_url: str = ""
     forge_event_secret: str = ""

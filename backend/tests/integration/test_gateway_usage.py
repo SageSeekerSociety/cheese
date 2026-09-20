@@ -5,6 +5,7 @@ usage table."""
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -25,6 +26,15 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn, stub_compute
+
+
+def _replace_chat_sleep(monkeypatch, sleep):
+    from app.domain.agent import chat
+
+    # Replacing the shared module's sleep also stalls the TestClient's loop monitor.
+    monkeypatch.setattr(
+        chat, "asyncio", SimpleNamespace(**{**vars(asyncio), "sleep": sleep})
+    )
 
 
 def _on_a_machine() -> ClaudeCodeRuntime:
@@ -214,7 +224,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
     fake.days[gw.utc_today()] = (120, 30, 0.02)
     # Simulate LiteLLM's async log lag: the first drain sees nothing — the
@@ -257,7 +267,7 @@ async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
         settling.set()
         await resume.wait()
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", wait_for_rows)
+    _replace_chat_sleep(monkeypatch, wait_for_rows)
     pending = asyncio.create_task(svc._drain_gateway_usage(pid))
     try:
         await asyncio.wait_for(settling.wait(), timeout=2)
@@ -313,7 +323,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
     fake.days[gw.utc_today()] = (80, 20, 0.01)
     fake.lag_calls = 2  # first drain AND its settle retry both miss
@@ -526,7 +536,7 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
     async def _no_sleep(_s):
         return None
 
-    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", _no_sleep)
+    _replace_chat_sleep(monkeypatch, _no_sleep)
     fake = FakeGateway()
     fake.days[gw.utc_today()] = (120, 30, 0.02)
     svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, fake)

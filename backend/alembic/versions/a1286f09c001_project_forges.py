@@ -1,7 +1,7 @@
 """Bind projects to their authoritative forge and persist credential leases.
 
 Revision ID: a1286f09c001
-Revises: b7c2e91f4a03
+Revises: b4e7a1c95d33
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a1286f09c001"
-down_revision = "b7c2e91f4a03"
+down_revision = "b4e7a1c95d33"
 branch_labels = None
 depends_on = None
 
@@ -70,9 +70,7 @@ def upgrade():
         sa.Column("project_id", sa.Uuid(), nullable=False),
         sa.Column("api_url", sa.String(2048), nullable=False),
         sa.Column("username", sa.String(255), nullable=False),
-        sa.Column("account_password", sa.Text(), nullable=False),
-        sa.Column("token_name", sa.String(255), nullable=False, unique=True),
-        sa.Column("value", sa.Text(), nullable=True),
+        sa.Column("value", sa.Text(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
     )
     op.create_index("ix_forge_tokens_project_id", "forge_tokens", ["project_id"])

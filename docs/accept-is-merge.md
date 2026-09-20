@@ -8,8 +8,11 @@ authorize-then-poll default is withdrawn, with its signed escape hatch kept.
 
 A card is the platform's view of a pull request, and accepting it calls the
 merge API — for the exact commit the reviewer was looking at. "Only merge when
-green" is enforced by branch-protection rules configured per project, the way
-GitHub's own protection page works.
+green" READS THE FORGE'S CONCLUSION: a user who has turned on branch protection
+gets that verdict, BLOCKED and all. Where the forge enforces nothing there is
+nothing to read, and the platform judges by the project's own rules on our side
+(`branch_protection` in project settings). Nobody is asked to turn anything on
+in GitHub so that we can work.
 
 ## The shape
 
@@ -119,18 +122,49 @@ the poller closes the batch and synchronizes local main while preserving the
 return, its reviewer and its reviewed revision. A PR closed without merging
 stays unaccepted.
 
+**A project whose remote is not GitHub.** `ExternalRemoteForge`: 采纳 squashes
+into the platform's repo and then PUSHES THE TRUNK to the project's own remote —
+gitee, a campus GitLab, a self-hosted box. Same product as the GitHub lane,
+minus the proposal page and the check results, which that remote does not have.
+It lands on THAT repository's own trunk, which is the branch the sync pulls
+from: the platform's base is always `main`, an upstream's default branch may be
+`master`, and pushing by matching name would leave a stray `main` in a
+`master` repository while its owner received nothing.
+A push that fails after the merge landed is said out loud in the room: the
+change is in our trunk and not on theirs, and only a person can decide what to
+do about that.
+
 **A project with no connected forge.** The platform is its forge (#363): 采纳
 merges the topic branch into the platform's own repo, and the change stays
-there — nothing is pushed to any remote. The card says so in so many words
-(`PLATFORM_FORGE_NOTE`, `review/forge.py`). This is not a degraded mode; it is
-a repository with no CI configured, where accepting is a human decision.
+there — nothing is pushed to any remote. This is not a degraded mode; it is a
+repository with no CI configured, where accepting is a human decision.
 
-Providers in `review/forge.py` declare whether they report checks and implement
-acceptance, proposal-head refresh, polling and signed override. `AcceptService`
-applies shared actor, vote and viewed-revision guards, then calls the selected
-provider. GitHub uses its existing PR operations; the platform provider squashes
-locally without external checks. Adding a provider requires an implementation
-and a binding without changing the shared acceptance entry points.
+Which of the three a project gets is decided by CAPABILITY, never by what its
+upstream URL looks like: `review/forge.py` computes five bits — reports_checks,
+hosts_proposals, can_write_remote, pushes_to_external_remote, identity — from
+three facts the project already has (is our App installed, is there a remote,
+can we write it), and each provider says which capabilities it serves. The bits
+are computed on every resolve and stored nowhere; a stored copy would be a
+second declaration of the same fact. They ride on the card from the moment it is
+described, so "which forge is this, and what can it do" is answered before
+anyone clicks, not by a note written afterwards.
+
+"Can we write it" is ASKED of the remote — a `git push --dry-run` to a ref of
+our own naming, which must pass the remote's authorization and changes nothing
+there — because a URL's scheme is not a credential: `git@` does not put a key on
+the machine and `https://` does not rule a credential helper out. The answer is
+remembered per project and upstream address for a few minutes, because this bit
+sits on the card-rendering read path and asking on every request means an
+unreachable remote decides how long a card list takes and a remote we cannot
+write receives one failed authentication per card opened. When it cannot be
+answered the answer is no, which lands the card on the platform forge saying the
+remote exists and we have no credential for it. Accepting stays fail-closed when the facts cannot be read at
+all; READING a card does not, and shows a card whose forge is `unknown` with
+every bit false, rather than failing the whole card list over one project.
+
+`AcceptService` applies shared actor, vote and viewed-revision guards, then calls
+the selected provider. Adding a provider is a class with a `serves()` predicate;
+the acceptance path does not change.
 
 **Which checks must pass.** Whichever ones the project's own branch protection
 names (`required_checks`, each optionally scoped to the paths that make it

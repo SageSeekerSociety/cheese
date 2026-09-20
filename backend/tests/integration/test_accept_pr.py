@@ -20,6 +20,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
+from app.domain.review.github_pr import OpenedPR
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -48,6 +49,7 @@ def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
@@ -473,7 +475,7 @@ def app_world(client, monkeypatch):
             body: str,
             as_user_token: str | None = None,
             draft: bool = False,
-        ) -> dict:
+        ) -> OpenedPR:
             if head in recorded["prs_by_head"]:
                 adopted = recorded["prs_by_head"][head]
                 recorded["opened"].append(
@@ -486,7 +488,7 @@ def app_world(client, monkeypatch):
                         "adopted": True,
                     }
                 )
-                return adopted
+                return OpenedPR(adopted, None)
             number = 21 + len(recorded["prs_by_head"])
             recorded["opened"].append(
                 {
@@ -509,7 +511,7 @@ def app_world(client, monkeypatch):
                 "node_id": f"PR_node_{head}",
             }
             recorded["prs_by_head"][head] = pr
-            return pr
+            return OpenedPR(pr, None)
 
         async def update_pr(self, number: int, *, title: str, body: str) -> dict:
             recorded["patched"].append({"number": number, "title": title, "body": body})
@@ -1018,7 +1020,7 @@ def test_github_card_without_a_pr_does_not_claim_checks_are_clean(client, app_wo
     card = _cards(client, tid)[0]
     assert card["pr_number"] is None
     assert card["merge_state"]["state"] == "unknown"
-    assert card["has_external_checks"] is True
+    assert card["forge"]["reports_checks"] is True
 
 
 #
@@ -1465,7 +1467,7 @@ def test_existing_pr_cannot_fall_back_to_local_merge_when_binding_disappears(
     assert app_world["fake"].merge_calls == []
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
-    assert card["has_external_checks"] is True
+    assert card["forge"]["reports_checks"] is True
 
 
 def test_another_forge_owns_its_checks_and_accept_operation(
@@ -1483,9 +1485,17 @@ def test_another_forge_owns_its_checks_and_accept_operation(
     merges = []
 
     class AnotherForge:
-        has_external_checks = True
-        note = ""
+        kind = forge_mod.ForgeKind.github_app
+        declaration = ""
         checks_passed = False
+        capabilities = forge_mod.ForgeCapabilities(
+            reports_checks=True,
+            hosts_proposals=True,
+            can_write_remote=True,
+            has_external_remote=True,
+            pushes_to_external_remote=True,
+            identity=forge_mod.ForgeIdentity.user,
+        )
 
         async def accept(self, service, card, topic, decided_by, *, seen_head):
             if not self.checks_passed:
@@ -1507,7 +1517,7 @@ def test_another_forge_owns_its_checks_and_accept_operation(
     monkeypatch.setattr(forge_mod, "resolve", resolve)
     monkeypatch.setattr(ws, "merge_topic", unexpected_local_merge)
     card = _cards(client, tid)[0]
-    assert card["has_external_checks"] is True
+    assert card["forge"]["reports_checks"] is True
     assert card["merge_state"]["state"] == "unknown"
     blocked = _accept(client, cid)
     assert blocked.status_code == 422, blocked.text
@@ -1546,9 +1556,12 @@ def test_another_forge_refreshes_polls_and_merges_the_viewed_revision(
     asyncio.run(attach_proposal())
 
     class AnotherForge(forge_mod.Forge):
-        kind = "test-provider"
-        has_external_checks = True
-        note = ""
+        kind = forge_mod.ForgeKind.github_app
+        declaration = ""
+
+        @classmethod
+        def serves(cls, capabilities):
+            return True
 
         async def refresh_unseen_head(self, service, card, topic, action):
             calls.append("refresh")
@@ -1579,7 +1592,16 @@ def test_another_forge_refreshes_polls_and_merges_the_viewed_revision(
             return card
 
     async def resolve(**_):
-        return AnotherForge()
+        return AnotherForge(
+            forge_mod.ForgeCapabilities(
+                reports_checks=True,
+                hosts_proposals=True,
+                can_write_remote=True,
+                has_external_remote=True,
+                pushes_to_external_remote=True,
+                identity=forge_mod.ForgeIdentity.user,
+            )
+        )
 
     monkeypatch.setattr(forge_mod, "resolve", resolve)
     unseen = _accept(client, cid, head_sha=None)
