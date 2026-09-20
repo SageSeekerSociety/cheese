@@ -60,6 +60,10 @@ def device(tmp_path, monkeypatch):
         }
 
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.do_GET()
+
         def do_PUT(self):
             task, _, snapshot = self.path.rsplit("/", 3)[1:]
             payload = self.rfile.read(int(self.headers["Content-Length"]))

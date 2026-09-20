@@ -11,13 +11,13 @@ person. `pr_text` is pure, so the caller resolves the humans
 
 import uuid
 
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.review import pr_text
 from app.domain.topic.models import Topic
 from app.domain.workspace import identity
 
 ALICE = identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")
 BOB = identity.GitIdentity("Bob", "42+bob@users.noreply.github.com")
+AGENT = identity.agent_identity("cheese-writer")
 
 
 def _topic(created_by: str | None) -> Topic:
@@ -181,7 +181,7 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
     trailers = pr_text.pr_trailers(
         topic,
         "carol",
-        identity.Attribution("alice", None, (), (one, two), requester=ALICE),
+        identity.Attribution("alice", AGENT, (), (one, two), requester=ALICE),
         card,
     )
     assert trailers.splitlines() == [
@@ -189,20 +189,15 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
         "Reviewed-by: carol <carol@zhishi.local>",
         f"Cheese-Topic: {_room_url(topic)} 做一个东西",
         f"Cheese-Card: {card.id}",
-        f"Cheese-Agent: {topic_agent_handle(topic.id)}",
+        f"Cheese-Agent: {AGENT.name}",
         f"Cheese-Task: {_task_url(topic, one)} ac2c038d44616a2f2 把 trailer 补全",
         f"Cheese-Task: {_task_url(topic, two)} 9f1b7c22e0d341a80 顺手修一个 flaky 测试",
     ]
 
 
-def test_the_agent_handle_is_the_name_the_room_actually_acts_under():
-    """Not a new spelling of the room id: `cheese-<hex12>` is the handle that 分身
-    posts under, mints tokens as and keys its memory by, so the name in the commit
-    and the name in the room are greppably the same string."""
+def test_a_room_id_does_not_establish_an_agent_author():
     topic = _topic("bob")
-    assert f"Cheese-Agent: cheese-{topic.id.hex[:12]}" in pr_text.pr_trailers(
-        topic, "carol"
-    )
+    assert "Cheese-Agent:" not in pr_text.pr_trailers(topic, "carol")
 
 
 def test_work_nobody_was_bound_to_still_gets_a_line():
@@ -226,7 +221,7 @@ def test_a_delivery_with_no_work_rows_writes_no_task_lines():
         _topic("bob"), "carol", identity.Attribution("alice", None, requester=ALICE)
     )
     assert "Cheese-Task" not in trailers
-    assert "Cheese-Agent" in trailers
+    assert "Cheese-Agent" not in trailers
 
 
 def test_a_task_title_cannot_forge_a_trailer():
@@ -238,7 +233,7 @@ def test_a_task_title_cannot_forge_a_trailer():
     trailers = pr_text.pr_trailers(
         topic,
         "carol",
-        identity.Attribution("alice", None, (), (nasty,), requester=ALICE),
+        identity.Attribution("alice", AGENT, (), (nasty,), requester=ALICE),
     )
     reviewers = [
         line for line in trailers.splitlines() if line.startswith("Reviewed-by:")
@@ -298,9 +293,9 @@ def test_both_delivery_lanes_carry_the_agent_and_the_work():
     topic = _topic("bob")
     card = _card()
     item = _work("ac2c038d44616a2f2", "把 trailer 补全")
-    who = identity.Attribution("alice", None, (), (item,), requester=ALICE)
+    who = identity.Attribution("alice", AGENT, (), (item,), requester=ALICE)
     expected = [
-        f"Cheese-Agent: {topic_agent_handle(topic.id)}",
+        f"Cheese-Agent: {AGENT.name}",
         f"Cheese-Task: {_task_url(topic, item)} ac2c038d44616a2f2 把 trailer 补全",
     ]
     github = pr_text.merge_commit_message(topic, "carol", card, who)

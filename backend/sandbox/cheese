@@ -483,7 +483,9 @@ def _git_attribution(message_file: str) -> None:
 def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
-    data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
+    data = _call(
+        "GET" if allow_closed else "POST", f"/projects/{project}/git/tasks/{task_id}"
+    )["data"]
     if data["room_id"] != TOPIC:
         raise SystemExit("[cheese] 这条任务不属于当前房间")
     if data["closed"] and not allow_closed:

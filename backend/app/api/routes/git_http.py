@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
-from app.core.sandbox_auth import verify_scoped_token
+from app.core.sandbox_auth import token_agent_handle, verify_scoped_token
 
 router = APIRouter(prefix="/projects", tags=["git"])
 
@@ -112,6 +112,27 @@ async def download_task_snapshot(
     )
 
 
+@router.post("/{project_id}/git/tasks/{task_id}")
+async def open_task_workspace(
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+) -> dict:
+    from app.domain.room_task.services import TaskService
+
+    task = await _task_for(db, project_id, task_id, x_cheese_token)
+    acting = token_agent_handle(x_cheese_token or "")
+    if not acting:
+        raise AuthenticationRequiredError("Opening a task needs an agent identity")
+    if task.status == "closed":
+        raise ValidationError("这条任务已结束，请创建新任务")
+    await TaskService(db).record_author(task, acting)
+    result = await task_workspace(project_id, task_id, db, x_cheese_token)
+    await db.commit()
+    return result
+
+
 @router.get("/{project_id}/git/tasks/{task_id}")
 async def task_workspace(
     project_id: uuid.UUID,
@@ -155,6 +176,7 @@ async def task_workspace(
             "remote": binding.url,
             "forge_kind": binding.kind,
             "forge_repo": binding.repo,
+            "author": str(who.author) if who.author else None,
             "coauthors": [str(person) for person in who.coauthors],
         }
     )

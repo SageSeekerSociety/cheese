@@ -145,11 +145,21 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
     task = delivery_task(client, tid)
 
     async def place():
+        from app.domain.agent_session.services import AgentSessionService
         from app.domain.topic.models import Topic
 
         async with client.test_factory() as session:
             room = await session.get(Topic, tid)
-            room.session_placement = {"execution": {"kind": "device"}}
+            await AgentSessionService(session).remember_place(
+                topic_id=tid,
+                agent_handle="cheese",
+                work_lease={"kind": "device"},
+                runtime_location={
+                    "device_id": "test-device",
+                    "channel": "central",
+                    "resource_id": str(room.resource_id or room.id),
+                },
+            )
             await session.commit()
 
     asyncio.run(place())

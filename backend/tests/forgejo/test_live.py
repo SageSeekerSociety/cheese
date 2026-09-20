@@ -18,7 +18,7 @@ import pytest
 import uvicorn
 from sqlalchemy import select
 
-from app.api.routes.git_http import task_workspace
+from app.api.routes.git_http import open_task_workspace, task_workspace
 from app.api.routes.topics import _source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
@@ -536,7 +536,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         session.add(task)
         await session.commit()
         scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(room.id))
-        metadata = await task_workspace(project.id, task.id, session, scoped)
+        metadata = await open_task_workspace(project.id, task.id, session, scoped)
         assert metadata["data"]["coauthors"] == ["requester <requester@zhishi.local>"]
         project.settings = {"forge_requester_coauthor": requester_credit}
         await session.commit()

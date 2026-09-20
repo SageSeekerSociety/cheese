@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -25,6 +25,19 @@ class TaskService:
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
+
+    async def record_author(self, task: Task, agent_handle: str) -> None:
+        """Keep the first executing agent, including across concurrent opens."""
+        await self._session.execute(
+            update(Task)
+            .where(
+                Task.id == task.id,
+                Task.status == TaskStatus.open,
+                Task.author_handle.is_(None),
+            )
+            .values(author_handle=agent_handle)
+        )
+        await self._session.refresh(task)
 
     async def open_without_pr(self) -> list[Task]:
         rows = await self._session.scalars(

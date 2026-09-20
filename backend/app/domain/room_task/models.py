@@ -134,6 +134,9 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Recorded when an authenticated agent opens the task's worktree. Dispatch
+    # and room membership do not establish who performs the work.
+    author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Historical tasks have no branch of their own. Their original shared
     # delivery is retained as a task, with the original branch and PR.
     branch_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

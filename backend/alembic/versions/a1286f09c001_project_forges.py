@@ -15,6 +15,7 @@ depends_on = None
 
 
 def upgrade():
+    op.add_column("tasks", sa.Column("author_handle", sa.String(64), nullable=True))
     op.create_table(
         "project_forges",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -105,6 +106,7 @@ def upgrade():
 
 
 def downgrade():
+    op.drop_column("tasks", "author_handle")
     op.drop_table("task_snapshots")
     op.drop_table("forge_tokens")
     op.drop_table("project_forges")

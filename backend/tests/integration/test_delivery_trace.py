@@ -52,6 +52,19 @@ def _dispatch(client, room_id: str, title: str) -> str:
     assert r.status_code == 200, r.text
     task_id = r.json()["data"]["id"]
     room = client.get(f"/topics/{room_id}").json()["data"]
+    from app.core.sandbox_auth import mint_scoped_token
+
+    opened = client.post(
+        f"/projects/{room['project_id']}/git/tasks/{task_id}",
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=room["project_id"],
+                topic_id=room_id,
+                agent_handle=room_agent_seat(client, room_id),
+            )
+        },
+    )
+    assert opened.status_code == 200, opened.text
     declare_task(uuid.UUID(room["project_id"]), uuid.UUID(task_id))
     return task_id
 

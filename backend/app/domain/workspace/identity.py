@@ -291,8 +291,12 @@ async def attribution(
             "could not resolve the requester for topic %s", topic.id, exc_info=True
         )
     requester = await _identity_of(session, handle)
-    acting = await TopicMemberService(session).resolve_agent_handle(topic.id)
-    author = agent_identity(acting)
+    if task_id:
+        task = await _thread(session, task_id)
+        acting = getattr(task, "author_handle", None)
+    else:
+        acting = await TopicMemberService(session).resolve_agent_handle(topic.id)
+    author = agent_identity(acting) if acting else None
     tasks: tuple[WorkItem, ...] = ()
     try:
         tasks = await work_items(session, card)

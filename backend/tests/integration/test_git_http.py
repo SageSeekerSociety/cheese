@@ -55,3 +55,84 @@ def test_room_branch_negotiation_endpoint_is_retired(client):
         headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
     )
     assert response.status_code == 404
+
+
+def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_default(
+    client,
+):
+    from app.domain.project.models import Project
+    from app.domain.review.pr_text import pr_trailers
+    from app.domain.topic.models import Topic
+    from app.domain.workspace import identity
+    from tests.integration.conftest import session_auth_headers
+
+    project = client.post(
+        "/projects", json={"name": "Task authors", "owner_handle": "alice"}
+    ).json()["data"]
+    pid, room = project["id"], project["root_topic_id"]
+    task = delivery_task(client, room, commit=False)
+    assert task.created_by == "alice"
+    agents = []
+    for handle in ("writer", "reviewer"):
+        response = client.post(f"/projects/{pid}/agents", json={"handle": handle})
+        assert response.status_code == 200, response.text
+        agent = response.json()["data"]
+        added = client.post(
+            f"/topics/{room}/members",
+            json={"handle": agent["seat_handle"], "role": "member", "actor": "alice"},
+            headers=session_auth_headers("alice"),
+        )
+        assert added.status_code == 200, added.text
+        agents.append(agent)
+    writer, reviewer = agents
+    route = f"/projects/{pid}/git/tasks/{task.id}"
+
+    def headers(agent):
+        return {
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=room, agent_handle=agent["seat_handle"]
+            )
+        }
+
+    assert client.get(route, headers=headers(reviewer)).json()["data"]["author"] is None
+    opened = client.post(route, headers=headers(writer))
+    assert opened.status_code == 200, opened.text
+    expected = str(identity.agent_identity(writer["seat_handle"]))
+    assert opened.json()["data"]["author"] == expected
+
+    async def change_default():
+        async with client.test_factory() as session:
+            current = await session.get(Project, uuid.UUID(pid))
+            current.default_agent_instance_id = uuid.UUID(reviewer["id"])
+            await session.commit()
+
+    client.portal.call(change_default)
+    reopened = client.post(route, headers=headers(reviewer))
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["data"]["author"] == expected
+
+    async def trailers():
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, uuid.UUID(room))
+            who = await identity.attribution(session, topic, task_id=task.id)
+            return pr_trailers(topic, "alice", who)
+
+    assert f"Cheese-Agent: {writer['seat_handle']}" in client.portal.call(trailers)
+
+
+def test_historical_task_does_not_invent_an_agent_author(client):
+    from app.domain.review.pr_text import pr_trailers
+    from app.domain.topic.models import Topic
+    from app.domain.workspace import identity
+
+    project = client.post("/projects", json={"name": "Old task"}).json()["data"]
+    task = delivery_task(client, project["root_topic_id"], commit=False)
+
+    async def read():
+        async with client.test_factory() as session:
+            room = await session.get(Topic, task.room_id)
+            who = await identity.attribution(session, room, task_id=task.id)
+            assert who.author is None
+            return pr_trailers(room, "alice", who)
+
+    assert "Cheese-Agent:" not in client.portal.call(read)
