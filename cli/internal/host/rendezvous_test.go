@@ -124,11 +124,16 @@ func TestFootprintFileIsAtomicAndConfinedToTheFootprint(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, raw)
 	}
 	for _, bad := range []string{
+		// The checkout, which is what this used to be relative to.
 		"uploads/img-a.png",
 		"../escape.png",
 		"/absolute.png",
 		"$HOME/elsewhere/img.png",
 		"$HOME/" + place.Root + "/../escape.png",
+		// Inside the footprint, but not the spelling the server sends. One
+		// destination has one spelling: a second accepted one is a second way
+		// to name the same file, and the next path built by hand takes it.
+		place.Root + "/home/p/r/attachments/img-a.png",
 	} {
 		if _, err := writeFootprintFile(bad, encoded); err == nil {
 			t.Fatalf("unsafe path %q was accepted", bad)
