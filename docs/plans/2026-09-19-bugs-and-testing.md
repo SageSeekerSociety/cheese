@@ -367,23 +367,25 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 **(3) 靠 sleep 撑的（237 处）。** 见 3.2 第 4 条：换假时钟。
 换不掉的只有一种——「它不是返回错答案，是不返回」（#1188 的指数回溯），那一类用一个硬上限当断言，不是用 sleep 当等待。
 
-**(4) skip 的（37 处，CI 上 33 条 skipped）。** 三类分开处置：
+**(4) skip 的（CI 上从 33 条降到 12 条，剩的全是第三类）。** 三类分开处置，前两类已做：
 
-- **最坏的一类，断言不成立就 skip，于是永远绿**：`integration/test_discussion.py:50`
-  （`if task_resp.status_code != 200: pytest.skip(...)`）、`integration/test_task.py:3032/3051/3154/3234`
-  （`if custom_category_id is None: pytest.skip("Custom category was not created")`）。
-  **立刻改成 fail。** 这几条的语义是「前置接口坏了就当这条测试不存在」。
-- **整文件永久 skip，因为被测的东西压根没迁过来**：`integration/test_project.py:9`、
-  `integration/test_notification.py:74`。**删掉**，它们测的东西不存在。
-  `contract/test_projects_contract.py:18` 看着同类，**但不能删**：它的 skip 理由是文件自己写的
-  「`python_client` 没有凭据，所有探针在到达形状之前先 401；port 到 `authed_client` 就是修法，
-  **这是测试夹具的问题，不是契约问题**」——被测的 `/team-projects` 接口存在，
-  `tests/integration/test_team_projects.py` 还在端到端跑它。删了就是删覆盖。
-  处置是**换 `authed_client` 重新打开，缺件即 fail**。
-- **环境缺件就 skip**：改成「缺件即 fail」，并在 job 开头一个显式的 precondition step 里装。
-  `test_harness_contracts.py:90` 已经意识到这个坑（检查 junit xml 里有没有 `skipped`，有就退 1 说 acceptance is incomplete），
-  但它只管那一个 job。推广成一条通用规则：**任何套件在环境要求不满足时必须失败，不是 skip；
-  并且 job 结束时断言「实际执行的用例数 ≥ 预期条数」**（#1236 的教训：夜间 canary 两天报绿，八条测试只跑了一条）。
+- **最坏的一类，断言不成立就 skip，于是永远绿。已做**：`test_discussion.py` 与
+  `test_task.py` 那五处的前置，改成了建立它的那个 fixture 里的断言，
+  所以前置接口坏了是红，不是这条测试消失。
+- **整文件永久 skip，因为被测的东西压根没迁过来。已做**：`integration/test_project.py`
+  与 `integration/test_notification.py` 整删，它们占 33 条里的 18 条。
+  `contract/test_projects_contract.py` 看着同类但不能删：被测的 `/team-projects` 接口存在，
+  `tests/integration/test_team_projects.py` 还在端到端跑它，skip 的理由是夹具缺凭据，
+  不是契约问题。已换 `authed_client` 重开，项目走真路由种下，缺件即 fail。
+- **环境缺件就 skip。还没做**：CI 上剩的 12 条都是它，Meilisearch、codex 二进制、
+  OpenViking 的 key、node、migrations 目录各占几条。改成「缺件即 fail」，
+  并在 job 开头一个显式的 precondition step 里装。判据这一半已经有了：
+  `backend/scripts/assert_suite_ran.py` 的 `assert_suite_ran(junit_xml, *, at_least)`，
+  junit 里有 skipped 就红，实际跑的条数低于本 job 声明的下限也红
+  （#1236 的教训：夜间 canary 两天报绿，八条测试只跑了一条）。
+  今天由 `test_harness_contracts.py`、`remote-execution.yml` 的 private-chat 选集、
+  `mcp-contract.yml` 三处调用；`test.yml` 要等这 12 条退役之后才接得上，
+  现在接上去只会让 main 常红。
 
 ### 3.4 flaky 政策
 
