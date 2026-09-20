@@ -661,12 +661,18 @@ def test_a_push_back_that_fails_is_reported_as_a_push_failure(
     改动确实在平台仓库的 main 上，卡确实是 accepted；再落一条 `accept_stopped`
     会让按类别码分流的告警把一张采纳成功的卡报成半路停下。
     """
+    from app.domain.review import services as review_services
     from app.domain.workspace import service as ws
 
     def _refused(pid, branch, token):
         raise RuntimeError("Permission denied (publickey)")
 
     monkeypatch.setattr(ws, "push_branch", _refused)
+    # 采纳结果那几行开自己的会话，好在调用方回滚之后照样落地；模块级的那个工厂
+    # 在测试里绑着另一个库，所以指回本次测试的。
+    monkeypatch.setattr(
+        review_services, "async_session_factory", client.test_factory
+    )
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)

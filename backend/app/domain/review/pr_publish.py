@@ -446,6 +446,12 @@ async def _report_identity_downgrade(
     (`_open_draft_for_task`) runs while nobody is looking at the room, and by
     the time they come back all they see is GitHub crediting a bot. The person
     is the one `_requester_token` already resolves.
+
+    It writes through a session of its own and commits it. `open_pr_for_card`
+    only ever READS through the session it is handed — the card row is written
+    by `record_pr` on another session, and this one is dropped — so a block
+    written into it would be discarded without a word. What is being reported
+    already happened on GitHub, so it must survive the caller either way.
     """
     if not sentence:
         return
@@ -457,20 +463,25 @@ async def _report_identity_downgrade(
         notice,
     )
 
-    handle = await _requester_of(session, room_id)
-    await announce(
-        session,
-        place_id=room_id,
-        content="PR 开在了芝士名下，不是你名下",
-        meta=notice(
-            EVENT_PR_IDENTITY_DOWNGRADED,
-            severity=SEVERITY_WARN,
-            who=WHO_HUMAN,
-            detail=sentence,
-            detail_label="发生了什么",
-        ),
-        recipients=[handle] if handle else (),
-    )
+    # 从调用方会话的 engine 上开，不用模块级的 `async_session_factory`：测试环境
+    # 把后者绑在另一个库上（同 `services._note_outside_accept_txn`）。
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    async with factory() as own:
+        handle = await _requester_of(own, room_id)
+        await announce(
+            own,
+            place_id=room_id,
+            content="PR 开在了芝士名下，不是你名下",
+            meta=notice(
+                EVENT_PR_IDENTITY_DOWNGRADED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=sentence,
+                detail_label="发生了什么",
+            ),
+            recipients=[handle] if handle else (),
+        )
+        await own.commit()
 
 
 async def _requester_of(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
