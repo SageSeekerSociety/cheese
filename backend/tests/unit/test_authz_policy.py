@@ -8,6 +8,7 @@ from app.domain.authz.policy import (
     authorize_topic_access,
     can_manage_project_members,
     can_manage_roster,
+    refuse_management_action,
     refuse_unauthenticated_chat,
 )
 from app.domain.identity.actor import Actor
@@ -258,3 +259,33 @@ async def test_management_uses_roles_for_people_and_agents(via):
     assert not await _may_manage(actor, roles={"participant": ProjectRole.member})
     assert await _may_manage(actor, roles={"participant": ProjectRole.lead})
     assert await _may_manage(actor, owner="participant")
+
+
+async def _refuse_management(actor, *, bound: set[str] = frozenset()):
+    async def carries_agent_binding(handle: str) -> bool:
+        return handle in bound
+
+    return await refuse_management_action(
+        actor, carries_agent_binding=carries_agent_binding
+    )
+
+
+async def test_a_person_in_their_own_session_may_manage():
+    assert await _refuse_management(_actor("token", "alice")) is None
+
+
+async def test_a_bound_handle_may_not_manage_however_it_arrived():
+    """The allow-list is a list of handles; being on it is not the question."""
+    assert await _refuse_management(_actor("token", "cheese"), bound={"cheese"})
+
+
+async def test_a_scoped_credential_may_not_manage_even_unbound():
+    """A per-screen token proves a call ran inside that screen, unattended —
+    who ends up holding it is a separate question from whether anybody is."""
+    assert await _refuse_management(_actor("cheese", "alice"))
+
+
+async def test_a_claimed_handle_may_not_manage():
+    # `require_admin` is handed None for an unauthenticated caller; the refusal
+    # here is only the agent one, so a claimed handle must still reach that.
+    assert await _refuse_management(_actor("handle", "alice")) is None

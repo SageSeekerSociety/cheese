@@ -20,6 +20,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError
+from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
 from app.domain.feedback.schemas import (
@@ -42,34 +43,30 @@ async def _require_admin(
 ) -> str:
     """The gates every handler in this module passes, in one place.
 
-    `require_admin` answers 「是不是平台管理员」 from the allow-list. Above it,
-    §4.3's 「管理动作 agent 不能做」, asked of two different things because it is
-    two different ways in:
+    Two questions, and the route asks neither itself. `require_admin` answers
+    「是不是平台管理员」 from the allow-list; §4.3's 「管理动作 agent 不能做」 is
+    `authz.policy.refuse_management_action`, which is where 「这个 actor 能干
+    什么」 is answered — the route supplies the DB-backed binding read and
+    raises what comes back.
 
-    - the CREDENTIAL — a management action is taken by somebody in their own
-      session, and a device screen's token (`X-Cheese-Screen`) is a per-screen
-      capability proving only that a call ran inside that screen, unattended;
-    - the PARTICIPANT — whether the handle carries an agent-binding, read here
-      from `IdentityService` rather than carried in on the actor. The allow-list
-      is a list of handles and nothing stops an agent's from being on it, so
-      without this the binding would be the one thing nobody asked.
+    The refusal being reached **from the route body** is the part that is not
+    negotiable: `/admin/*` is not in `_CHEESE_WRITE_PATHS`, that table is a
+    whitelist, so nothing in the middleware looks at this prefix and a refusal
+    left to it would not exist. Reachable, not theoretical: a device screen's
+    token (`X-Cheese-Screen`) resolves on any path, including one with no topic
+    in it, unlike a per-turn `cheese` credential, which `ActorResolver` refuses
+    when there is no project to scope it to.
 
-    Neither subsumes the other, which is why both are here: a handle with no
-    binding can still arrive on a scoped credential, and an agent's handle can
-    still arrive on a session token.
-
-    The refusal is **in the route body**, because `/admin/*` is not in
-    `_CHEESE_WRITE_PATHS` — that table is a whitelist, so nothing in the
-    middleware looks at this prefix and a refusal written anywhere else does not
-    exist. Reachable, not theoretical: a screen token resolves on any path,
-    including one with no topic in it, unlike a per-turn `cheese` credential,
-    which `ActorResolver` refuses when there is no project to scope it to.
+    `db` is threaded in from each handler because answering 「这个 handle 带不带
+    agent 绑定」 is a query: `IdentityService` needs a session, and moving the
+    rule into the policy moved the rule, not the read it depends on.
     """
     who = await resolver.resolve(fallback_handle=None)
-    if who.via == "cheese":
-        raise ForbiddenError("作用域凭证不能执行管理动作，请用本人会话")
-    if await IdentityService(db).is_agent(who.handle):
-        raise ForbiddenError("agent 不能执行管理动作")
+    refusal = await policy.refuse_management_action(
+        who, carries_agent_binding=IdentityService(db).is_agent
+    )
+    if refusal is not None:
+        raise ForbiddenError(refusal)
     return await service.require_admin(who.handle if who.authenticated else None)
 
 
