@@ -786,8 +786,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     The three CI steps are the whole suite only if every test carries one and
     only one of the three markers: a test carrying none runs in no step and is
     reported nowhere — green CI over code nothing checked — and one carrying two
-    is counted, and timed, twice. Neither can be seen in a passing run, which is
-    why this fails the collection rather than warning.
+    is counted, and timed, twice. Neither can be seen in a passing run.
+
+    So a test that declares a layer of its own aborts the collection here
+    rather than being warned about, and a test that declares none has one
+    added. There is no third branch: ``_layer_of`` is total — contract, pure,
+    or integration as the fallback — so "nothing to add" cannot arise.
 
     Derived here rather than written on each test: a marker on the test is a
     second declaration of what its fixture list already says, and the two drift
