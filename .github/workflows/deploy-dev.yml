@@ -77,7 +77,8 @@ jobs:
     # no approval step.
     environment: dev
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 30
+    # The first Forge cutover archives existing workspaces and task recovery bundles.
+    timeout-minutes: 120
     steps:
       - name: Check out the built commit (for the deploy scripts + compose)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

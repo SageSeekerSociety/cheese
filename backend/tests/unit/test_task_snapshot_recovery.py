@@ -9,7 +9,11 @@ import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.domain.project.forge_migration import freeze, task_snapshot
+from app.domain.project.forge_migration import (
+    freeze,
+    task_snapshot,
+    unpack_working_files,
+)
 from tests.unit.test_forge_migration import legacy_repository
 
 
@@ -105,8 +109,15 @@ def test_complete_migration_backup_recovers_without_a_live_task_branch(
     (worktree / "file.txt").write_text("work unavailable from GitHub\n")
     backup = tmp_path / "archive"
     freeze(root, project, backup)
+    expanded = tmp_path / "expanded"
+    unpack_working_files(backup, expanded)
     saved = task_snapshot(
-        backup, task, directory="task", branch="task", include_history=True
+        backup,
+        task,
+        working_files=expanded,
+        directory="task",
+        branch="task",
+        include_history=True,
     )
     body = (backup / saved["file"]).read_bytes()
     monkeypatch.setattr(cli, "_call", lambda *args: {"data": {**saved, "id": "saved"}})

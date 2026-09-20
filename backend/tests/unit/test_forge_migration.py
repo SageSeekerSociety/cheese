@@ -11,6 +11,7 @@ from app.domain.project.forge_migration import (
     push,
     references,
     task_snapshot,
+    unpack_working_files,
 )
 
 
@@ -97,8 +98,17 @@ def test_task_bundle_restores_archived_files_after_source_changes(tmp_path):
     # Resuming uses the archived input even if the old live directory changed.
     (worktree / "file.txt").write_text("later edits\n")
     task = uuid.uuid4()
-    saved = task_snapshot(backup, task, directory="task", branch="task")
-    assert task_snapshot(backup, task, directory="task", branch="task") == saved
+    working_files = tmp_path / "working-files"
+    unpack_working_files(backup, working_files)
+    saved = task_snapshot(
+        backup, task, working_files=working_files, directory="task", branch="task"
+    )
+    assert (
+        task_snapshot(
+            backup, task, working_files=working_files, directory="task", branch="task"
+        )
+        == saved
+    )
     restored = tmp_path / "restored"
     git(tmp_path, "clone", str(backup / "repository.git"), str(restored))
     git(restored, "fetch", str(backup / saved["file"]), f"refs/cheese/snapshots/{task}")
@@ -127,8 +137,15 @@ def test_github_backup_recovers_unpublished_history_in_an_empty_repository(
     backup = tmp_path / "backup"
     freeze(root, project, backup)
     task = uuid.uuid4()
+    working_files = tmp_path / "working-files"
+    unpack_working_files(backup, working_files)
     saved = task_snapshot(
-        backup, task, directory="task", branch="task", include_history=True
+        backup,
+        task,
+        working_files=working_files,
+        directory="task",
+        branch="task",
+        include_history=True,
     )
     restored = tmp_path / "restored"
     restored.mkdir()
@@ -142,3 +159,44 @@ def test_github_backup_recovers_unpublished_history_in_an_empty_repository(
         assert (restored / "new.bin").read_bytes() == b"\x00unfinished\xff"
     else:
         assert saved["snapshot_sha"] == head
+
+
+def test_multiple_tasks_recover_from_one_expanded_checkpoint(tmp_path):
+    root = tmp_path / "workspaces"
+    project = uuid.uuid4()
+    source, first = legacy_repository(root, project)
+    second = first.parent / "second"
+    git(source, "worktree", "add", "-b", "second", str(second))
+    (first / "file.txt").write_text("first unfinished version\n")
+    (second / "file.txt").write_text("second unfinished version\n")
+    backup = tmp_path / "backup"
+    freeze(root, project, backup)
+    working_files = tmp_path / "working-files"
+    unpack_working_files(backup, working_files)
+    archive = backup / "working-files.tar.gz"
+    archive.rename(backup / "retained-working-files.tar.gz")
+    restored = tmp_path / "restored"
+    git(tmp_path, "clone", str(backup / "repository.git"), str(restored))
+    for directory, expected in (
+        ("task", "first unfinished version\n"),
+        ("second", "second unfinished version\n"),
+    ):
+        task = uuid.uuid4()
+        saved = task_snapshot(
+            backup,
+            task,
+            working_files=working_files,
+            directory=directory,
+            branch=directory,
+        )
+        git(
+            restored,
+            "fetch",
+            str(backup / saved["file"]),
+            f"refs/cheese/snapshots/{task}",
+        )
+        git(restored, "checkout", "--detach", saved["snapshot_sha"])
+        assert (restored / "file.txt").read_text() == expected
+        assert (
+            working_files / ".worktrees" / str(project) / directory / "file.txt"
+        ).read_text() == expected

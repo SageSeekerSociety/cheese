@@ -163,10 +163,17 @@ def push(output: Path, url: str, token: str) -> dict[str, str]:
     return after
 
 
+def unpack_working_files(output: Path, destination: Path) -> None:
+    """Expand the frozen project once for all of its task recovery bundles."""
+    with tarfile.open(output / "working-files.tar.gz", "r|gz") as archive:
+        archive.extractall(destination, filter="tar")
+
+
 def task_snapshot(
     output: Path,
     task_id: uuid.UUID,
     *,
+    working_files: Path,
     directory: str,
     branch: str,
     include_history: bool = False,
@@ -189,22 +196,15 @@ def task_snapshot(
             raise ValueError("Task migration bundle checksum mismatch")
         return saved
     head = source["refs"].get(f"refs/heads/{branch}")
+    worktree = working_files / prefix
+    if not worktree.resolve().is_relative_to(working_files.resolve()):
+        raise ValueError("Task directory escapes the expanded checkpoint")
+    if not worktree.is_dir():
+        return None
+    if head is None:
+        raise ValueError(f"Task branch {branch} is missing from the checkpoint")
     with tempfile.TemporaryDirectory(dir=output, prefix="snapshot-") as temporary:
         temporary = Path(temporary)
-        with tarfile.open(output / "working-files.tar.gz") as archive:
-            members = [
-                entry
-                for entry in archive.getmembers()
-                if entry.name == prefix or entry.name.startswith(prefix + "/")
-            ]
-            if not members:
-                return None
-            if head is None:
-                raise ValueError(f"Task branch {branch} is missing from the checkpoint")
-            # The archive was created locally. tar_filter confines writes to
-            # this directory while preserving worktree symlinks as symlinks.
-            archive.extractall(temporary, members=members, filter="tar")
-        worktree = temporary / prefix
         repository = temporary / "builder.git"
         git(temporary, "init", "--bare", str(repository))
         (repository / "objects" / "info" / "alternates").write_text(
