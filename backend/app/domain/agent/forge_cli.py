@@ -257,6 +257,16 @@ def run(name, arguments):
         raise RuntimeError(
             f"This project's repository uses {other}; run {other} instead"
         )
+    if any(
+        arguments[index : index + 2] == ["pr", "merge"]
+        for index in range(len(arguments) - 1)
+    ) and not any(arg in ("--help", "-h") for arg in arguments):
+        print(
+            "[cheese] Merging accepts this task. Use cheese_accept_request "
+            "to submit it for project review.",
+            file=sys.stderr,
+            flush=True,
+        )
     binary = native_binary(name)
     env = dict(os.environ)
     for key in (
