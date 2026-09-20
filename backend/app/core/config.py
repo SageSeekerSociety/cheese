@@ -220,9 +220,16 @@ class Settings(BaseSettings):
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
     # Handles allowed to read and route the whole feedback queue
-    # (`/admin/feedback`). Comma-separated in env. A settings list rather than a
-    # role because no production path assigns `SystemRole.SUPER_ADMIN` today —
-    # a role check would evaluate to "nobody" and lock the surface for everyone.
+    # (`/admin/feedback`). JSON list in env, e.g. '["alice","bob"]'. A settings
+    # list rather than a role because no production path assigns
+    # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
+    # and lock the surface for everyone.
+    #
+    # REQUIRED on a deployment: an empty list is not "no admins configured yet",
+    # it is a feedback queue that accepts submissions and can never be worked —
+    # and the users who submit cannot tell the difference from "nobody has
+    # picked this up yet". `_require_feedback_admins_on_deployment` fails the
+    # boot instead. Local dev and the test suite keep the empty default.
     feedback_admin_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
     # for the agent path (`cheese feedback propose`): a misfiring loop proposes
@@ -988,6 +995,80 @@ class Settings(BaseSettings):
             "Booting on the default silently invalidates every session on the "
             "next restart that loads the real secret — every user is logged "
             f"out with no error (#342). Generate one with: {generate}"
+        )
+
+    @model_validator(mode="after")
+    def _require_feedback_admins_on_deployment(self) -> "Settings":
+        """Fail the boot when a deployment has nobody who can work the queue.
+
+        ``feedback_admin_handles`` is the ONLY thing that opens
+        ``/admin/feedback``: there is no role behind it, no default member set,
+        no way to promote yourself from the UI. Empty therefore does not read as
+        "we have not got round to appointing an admin yet" — it reads, from
+        every seat in the product, as *nobody is looking at this*:
+
+        - A submitter writes a report, watches its status stay at 已收录, and has
+          no way to tell that apart from "someone will get to it". The feedback
+          centre looks fully functional while being a write-only table.
+        - The admin page is unreachable for everyone including the operator, who
+          finds this out by opening it and reading "你的账号不在管理员名单里" —
+          a sentence that names the wrong problem.
+        - The agent-side proposal path still spends its daily quota filing
+          proposals that no one can act on.
+
+        Nothing in the running system can detect that state from the inside,
+        which is why it is checked at boot (#338/#439's rule: an unset
+        credential that degrades silently becomes a loud, boot-time event).
+
+        Same two-signal test as the JWT guard above, for the same #342 reason —
+        ``deployed_via_compose`` is authority because it cannot fall back, and
+        ``environment`` covers deployments that do not run through that compose
+        file. Local dev and the test suite trip neither, so they keep the empty
+        default and the suite still runs with no config.
+
+        RuntimeError rather than ValueError, so the message is not wrapped by
+        pydantic's ValidationError repr (which dumps the whole input dict —
+        including every secret in it) — same reason as the guard above.
+        """
+        # An entry that is empty or whitespace is worse than a missing entry:
+        # the list is non-empty, so this guard passes, and the handle it names is
+        # one that no account can ever authenticate as.
+        blank = [h for h in self.feedback_admin_handles if not h.strip()]
+        if blank:
+            raise RuntimeError(
+                "FEEDBACK_ADMIN_HANDLES contains an empty entry. Handles are "
+                "matched against the account's handle exactly, so an empty "
+                "string can never match anyone — this is a list with a typo in "
+                "it, not a list with an admin in it. Set it to a JSON list of "
+                'handles, e.g. FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\'.'
+            )
+
+        if self.feedback_admin_handles:
+            return self
+
+        if not self.deployed_via_compose and self.environment in (
+            "development",
+            "test",
+        ):
+            return self
+
+        raise RuntimeError(
+            "FEEDBACK_ADMIN_HANDLES is empty on a deployment ("
+            f"ENVIRONMENT reads '{self.environment}'"
+            + (
+                ", started by the deploy compose file"
+                if self.deployed_via_compose
+                else ""
+            )
+            + "). This is the only thing that opens /admin/feedback — with it "
+            "empty, nobody can read or route the feedback queue, and neither a "
+            "submitter nor the agent path can tell that apart from 'nobody has "
+            "picked it up yet'. The whole feedback surface looks healthy and is "
+            "write-only. Set it to the handles that should administer feedback, "
+            'as a JSON list: FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\' (see '
+            "deploy/.env.prod.example). If you are sure nobody should administer "
+            "feedback, set it to a handle you control rather than leaving it "
+            "empty."
         )
 
 

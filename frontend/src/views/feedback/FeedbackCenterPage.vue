@@ -83,12 +83,12 @@ function clearFilters() {
       <header class="fb-head">
         <h1 class="t-page-title">反馈中心</h1>
         <v-spacer />
-        <!-- 数据关系与架构关系那两张图。放在这里而不是页脚：它是给人核对实现用的，
-             不是「相关链接」，藏在页脚就没人会点。 -->
+        <!-- 这里原先还有一个「数据与架构」的入口，通向 /design/feedback。删了：那是
+             给人核对实现用的页面，挂在产品里用户会当成功能点进去；两张图现在在
+             docs/topics/feedback-前端原型.md 里。 -->
         <!-- 「我的反馈」对**所有人**都在（包括没登录的访客，他去了会看到空列表）。
              它不发请求问「我是谁」：清单的边界在服务端，这一页只是那一摞的门。 -->
         <v-btn variant="text" color="secondary" size="small" to="/feedback/mine"> 我的反馈 </v-btn>
-        <v-btn variant="text" color="secondary" size="small" to="/design/feedback"> 数据与架构 </v-btn>
         <!-- 管理后台的入口**只在服务端说我是管理员时出现**。上一轮这里是一个可以拨的
              开关；现在拨不动了，因为拨的其实是「我能不能看见别人的私密反馈」这件事，
              而那件事只能由服务端答。 -->

@@ -919,3 +919,177 @@ def test_two_proposals_that_leave_the_body_blank_are_two_proposals(client):
         f"/topics/{topic}/feedback-proposals", headers=session_auth_headers(REPORTER)
     ).json()["data"]
     assert len(live) == 2
+
+
+# --- 作者头像 ---------------------------------------------------------------
+#
+# 头像不在反馈行上，在 `UserProfile` 上，所以要解析；而注册的每条路径都写死
+# ``default_avatar_id=1``，所以「档案上有个头像 id」不等于「这个人挑过头像」。两条
+# 合起来才是这一组：挑过的给 id，没挑过的给 null，客户端才画得出彩色首字母。
+
+
+def _seed_profiles(client, picks: dict[str, str]) -> dict[str, int]:
+    """给这些 handle 落一份用户档案，返回各自头像素材的 id。
+
+    `picks` 是 handle → ``avatar_type``：``"default"`` 就是注册时人人被写上的那一张，
+    ``"predefined"`` / ``"upload"`` 才是本人挑的、传的。测试库里没有种子头像
+    （``_seed_reference_data`` 只种表情类型），所以这里自己造行 —— 也正因为如此，
+    「默认头像到底是哪一行」在这由测试说了算，而不是一个写死的 1。
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.avatars.models import Avatar
+    from app.domain.user.models import User, UserProfile
+
+    ids: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            now = datetime.now(UTC)
+            for handle, avatar_type in picks.items():
+                avatar = Avatar(
+                    url="",
+                    name=f"{avatar_type}.png",
+                    avatar_type=avatar_type,
+                    created_at=now,
+                    usage_count=0,
+                )
+                s.add(avatar)
+                await s.flush()
+                ids[handle] = avatar.id
+                user = User(
+                    username=handle,
+                    email=f"{handle}@example.com",
+                    created_at=now,
+                    updated_at=now,
+                )
+                s.add(user)
+                await s.flush()
+                s.add(
+                    UserProfile(
+                        user_id=user.id,
+                        nickname=handle.upper(),
+                        intro="",
+                        avatar_id=avatar.id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await s.commit()
+
+    asyncio.run(_seed())
+    return ids
+
+
+def test_cards_report_the_avatar_its_author_picked_and_null_for_everyone_else(client):
+    """列表上的作者头像：挑过的人给 id，没挑过、没档案的人给 null。
+
+    三种情况各是一半的坑：
+
+    * 挑过 → 给 id。头像不在反馈行上，不解析就永远没有。
+    * 没挑过 → **null**。注册时人人都被写上全局默认头像，照原样发出去，所有没挑过的
+      人共用同一张脸；按 handle 派生的彩色首字母至少彼此不同，而认人正是头像唯一的活。
+    * 没有用户档案（cheesex 会话身份、agent 座位）→ 也是 null，不是报错。
+    """
+    ids = _seed_profiles(client, {"fb-picked": "predefined", "fb-plain": "default"})
+    _report(client, "fb-picked", title="挑过头像的人提的")
+    _report(client, "fb-plain", title="没挑过头像的人提的")
+    _report(client, "fb-nobody", title="没有档案的人提的")
+
+    rows = {c["title"]: c for c in _cards(client)}
+    assert rows["挑过头像的人提的"]["author_avatar_id"] == ids["fb-picked"]
+    assert rows["没挑过头像的人提的"]["author_avatar_id"] is None
+    assert rows["没有档案的人提的"]["author_avatar_id"] is None
+
+
+def test_every_face_the_detail_draws_is_resolved_the_same_way(client, as_admin):
+    """详情页一屏里有三种作者：报告的作者、评论的作者、内部备注的作者。
+
+    三条路都走同一张 handle → 头像的表（`FeedbackDetail.from_row`）。分成三处各查一次
+    就是评论一多就 N+1，而且很容易只补上其中一条 —— 那正是「同一个人在列表里有头像、
+    在评论里变成首字母」的来源。这里把三条路都走一遍，包括管理端列表那条。
+    """
+    ids = _seed_profiles(
+        client, {REPORTER: "upload", ADMIN: "predefined", "fb-plain": "default"}
+    )
+    row = _report(client, REPORTER, title="详情页上的三张脸")
+    fid = row["id"]
+    assert row["author_avatar_id"] == ids[REPORTER]
+
+    assert (
+        client.post(
+            f"/feedback/{fid}/comments",
+            json={"body": "补一句"},
+            headers=session_auth_headers(REPORTER),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/admin/feedback/{fid}/notes",
+            json={"body": "内部备注"},
+            headers=session_auth_headers(ADMIN),
+        ).status_code
+        == 200
+    )
+
+    # 非管理员：评论作者带头像，备注整段看不见（不是空字符串，是空数组）。
+    seen = client.get(
+        f"/feedback/{fid}", headers=session_auth_headers("fb-plain")
+    ).json()["data"]
+    assert seen["thread"][0]["author_avatar_id"] == ids[REPORTER]
+    assert seen["notes"] == []
+
+    # 管理员：备注作者也有头像 —— 备注是另一张 `from_row`（`NoteOut`）。
+    admin_detail = client.get(
+        f"/admin/feedback/{fid}", headers=session_auth_headers(ADMIN)
+    ).json()["data"]
+    assert admin_detail["notes"][0]["author_avatar_id"] == ids[ADMIN]
+
+    # 管理端列表走的是自己那份 `_cards`，也要解析，否则同一张卡在两个列表里长得不一样。
+    listed = client.get("/admin/feedback", headers=session_auth_headers(ADMIN)).json()[
+        "data"
+    ]["data"]
+    assert listed[0]["author_avatar_id"] == ids[REPORTER]
+
+
+def test_a_search_reaches_the_body_and_the_author(client, as_admin):
+    """搜索匹配的四列是**标题 + 摘要 + 正文 + 作者**，两个列表共用这一个判据。
+
+    摘要只是正文开头那几十个字，所以有两样东西只搜标题 + 摘要谁都找不回来：正文
+    中段那句话，和「这是谁提的」。而这两样恰恰是提交者回头找自己那条时会用的
+    —— 他记得的是自己写过的一句话，不是当初随手填的标题。
+
+    管理端那一半也钉在这里：两处是两个搜索框，却是同一个问题。判据写成两份之后
+    漂开的表现就是「管理端搜得到、反馈中心搜不到」，而报这个毛病的人在比的正是
+    这两屏。
+    """
+    mine = _report(
+        client,
+        REPORTER,
+        title="滚动位置丢了",
+        problem="翻到第三页再返回，位置回到最顶上，只能重新翻一遍",
+    )
+    _report(
+        client,
+        STRANGER,
+        title="头像一直是灰的",
+        problem="换过头像之后还要刷新一次才显示",
+    )
+
+    def ids(**params: str) -> set[str]:
+        return {card["id"] for card in _cards(client, REPORTER, **params)}
+
+    # 正文中段的话：`summary` 里没有它，标题里更没有。
+    assert ids(q="第三页再返回") == {mine["id"]}
+    # 作者：提交者找自己的那条时最自然的一个词。
+    assert ids(q=REPORTER) == {mine["id"]}
+    assert ids(q="这个词谁都没有") == set()
+
+    listed = client.get(
+        "/admin/feedback",
+        params={"q": "第三页再返回"},
+        headers=session_auth_headers(ADMIN),
+    ).json()["data"]["data"]
+    assert {card["id"] for card in listed} == {mine["id"]}
