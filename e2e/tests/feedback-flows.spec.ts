@@ -107,9 +107,17 @@ test('用户提一条反馈，能看见、能支持、能评论', async ({ page 
   await expect(card).toBeVisible();
   await expect(card.locator('.fb-card__count')).toHaveText('1');
 
-  // 「我提的」这一条云面上还没有界面：`/feedback/mine` 接口在、api.ts 里也包了，
-  // 但没有任何页面调它（只有原型 fixtures 答过它）。所以这里只能从接口确认这层
-  // 数据是对的，界面缺失单独记在话题文档里，不当成这条用例的失败。
+  // 「我的反馈」：从中心页的入口点进去，刚提的这条要在里面，而且支持数跟着走
+  // （同一张卡片，两页读的是同一份服务端数据）。
+  //
+  // 入口那颗按钮是 `to=` 的 `v-btn`，渲染出来是链接不是按钮，所以按 role 找；
+  // 限定在 `.fb-page__inner` 里找，免得撞上外壳导航里同名的东西。
+  await page.locator('.fb-page__inner').getByRole('link', { name: '我的反馈' }).click();
+  const mineCard = page.locator('.fb-card', { hasText: title });
+  await expect(mineCard).toBeVisible();
+  await expect(mineCard.locator('.fb-card__count')).toHaveText('1');
+
+  // 接口这一层也确认一次：这一页的口径就是服务端的口径，两边都得说这条在。
   const mine = (await api(page, 'get', '/feedback/mine?page_size=50')) as { data?: { title: string }[] };
   expect(mine.data?.some((row) => row.title === title), '我提的那条要在 /feedback/mine 里').toBe(true);
 });

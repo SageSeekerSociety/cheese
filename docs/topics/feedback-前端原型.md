@@ -17,11 +17,19 @@
 功能已经实现并推上 PR #1222，**待人工验收**（验收人 wangchangxin）。这一轮推的是新提交，上一轮没有有效批准，所以没有需要作废的批准。
 
 - **后端**：七张新表，迁移 `backend/alembic/versions/b7c2e91f4a03_feedback.py`；三条路由 `/api/feedback`、`/api/admin/feedback`、`/api/topics/{id}/feedback-proposals`；域层在 `backend/app/domain/feedback/`（models / repositories / services / schemas / proposals）。私有反馈的可见性是**读时收窄**：`services.may_see` 一处决定谁能看，仓储层不回答策略问题。
-- **前端**：四个页面读真接口。`stores/feedback.ts` 调 API，上一版那个内存 mock（`lib/feedbackMock.ts`）已经删掉——界面不再是「照着自己编的数据画」。
+- **前端**：五个页面读真接口（反馈中心、反馈详情、**我的反馈**、管理后台、数据与架构）。`stores/feedback.ts` 调 API，上一版那个内存 mock（`lib/feedbackMock.ts`）已经删掉——界面不再是「照着自己编的数据画」。
 - **CLI**：`cheese feedback propose` 进了 argparse 树，三个 harness 同时就有了这个工具（见下）。
 - **合并了 main 的 35 个提交**。合并带出一处**语义**冲突，已修：main 的 `f3a8c5d2e917` 把 agent 身份从「由话题派生」改成「属于 agent 自己」（`agent_instance_handle`），而我的测试原本按话题算 handle 再断言卡片的作者。现在改成从卡片上读作者，断言「是 agent、且不是提单的人」——身份不由反馈代码算。
 - **状态收敛成四级**：`received → in_progress → resolved → deployed`（已收录 / 处理中 / 已修复 / 已上线）。写稿时是五级（`triaging` / `planned` 也在内），验收时看界面发现「评估中」和「处理中」在人眼里是同一件事、「计划中」说不清是谁在动；同时把「修复」和「上线」拆成两档——改完和上线是两件事，同名会让提交者以为自己这边马上就能用了。口径与代价见 <&docs/topics/反馈功能后端设计-方案稿.md> §2.5。
-- **两条端到端实跑**（<&e2e/tests/feedback-flows.spec.ts>）：用户提交 → 列表看见 → 支持 → 评论 → 详情页看到状态；管理员把同一条四级走完，连带指派、优先级、内部备注。真浏览器点的，不是接口层调用。
+- **两条端到端实跑**（<&e2e/tests/feedback-flows.spec.ts>）：用户提交 → 列表看见 → 支持 → 评论 → **在「我的反馈」里找回自己那条** → 详情页看到状态；管理员把同一条四级走完，连带指派、优先级、内部备注。真浏览器点的，不是接口层调用。
+
+### 「我的反馈」（`/feedback/mine`）
+
+补上的一页：`GET /feedback/mine` 从第一版就在，api.ts 里也包了 `listMyFeedback()`，但**没有任何页面调它**——用户提完反馈之后没法在界面上找回自己那条，只能在一屏十几条里翻。
+
+- 清单的边界是**服务端**的定义：我提的 + 我替谁提的（agent 报的、提交人是我）+ 指派给我的。前端不按来源分栏——那需要每条带一个「为什么它在我的清单里」，服务端还没有这个字段，而按 handle 在前端猜一遍等于把可见性规则抄第二份。
+- 卡片直接复用 <&frontend/src/components/feedback/FeedbackCard.vue>：同一条反馈在两页上长得一样，支持按钮也照用（store 的 `_find` / `_patch` 覆盖了 `mineItems`，漏掉的表现是按钮点下去没反应、连错误都不报）。
+- 入口在反馈中心页头「我的反馈」。四种状态（加载中 / 有内容 / 一条没有 / 拉失败）各画各的：拉失败不会说成「你还没有提过反馈」。
 
 **看界面**：预览是开着的，形态是**真页面 + 假数据**。预览通道上没有后端，所以我在预览入口的 `fetch` 那一层接上了假数据（<&frontend/src/proto-feedback-fixtures.ts>），页面本身一行都没改、走的是真接口。页面可交互：能点进详情、能切管理端四栏、能筛选搜索、能在「表与关系」和「数据流」两张图之间切。打包脚本是 <&pack-feedback-prototype.py>，改完页面重跑即可。
 
@@ -92,7 +100,7 @@
 ## 验证
 
 - 后端：`tests/integration/test_feedback.py` + `tests/unit/test_cli_worker.py` 通过。集成测试钉的是**产品判断**（私密对第三方回 404 而不是 403、已解决 bug 沉底、agent 不能自己发布、提案三道限流、退役状态写不进去），不是接口形状。
-- 前端：tsc ratchet 0、eslint 0 error、stylelint 63 基线、反馈相关 vitest 33 条通过。
+- 前端：tsc ratchet 0、eslint 0 error、stylelint 基线、反馈相关 vitest 37 条通过（含「我的反馈」那 4 条：挂载就拉、拉失败不冒充空、空态给提交入口、在这一页点支持计数走服务端）。
 - 端到端：`e2e/tests/feedback-flows.spec.ts` 两条全流程通过（真浏览器，含控制台守卫）。
 - 合并 main 之后以上全部重跑过。
 
@@ -115,10 +123,6 @@ webServer 加了这一条）。`/tmp` 的 inode 在本机是满的，playwright 
 
 按「先做完再好看」的次序，下面几条是**知道在哪、也知道怎么补**、但没塞进这个 PR 的：
 
-- **「我的反馈」没有界面**。接口 `GET /feedback/mine` 和 <&frontend/src/network/api/feedback/index.ts>
-  里的 `listMyFeedback()` 都在，但没有任何页面调用它（store 里都没 import）——整条路上
-  唯一答过它的是原型阶段的假数据。用户想回看自己提过的反馈，今天只能从反馈中心的
-  列表里翻。补法是加一个筛选入口（复用「作者是我」这个条件），不是新接口。
 - **头像文件与头像表不同步**。库里 2/3/4 号（猫咪/柴犬/熊猫，`predefined`）有行、磁盘上
   没有对应文件，于是 `GET /avatars/{id}` 回 404。这不是反馈这一屏的事：**任何新部署的
   项目磁贴都会缺图**，因为种子只给默认头像写了文件。浏览器控制台里那几条 404 就是它，

@@ -42,8 +42,8 @@ const routes: RouteRecordRaw[] = [
   // shape and is distinguished only by the id being numeric.
   ...legacyProjectRedirects,
   workspaceRoutes,
-  // 反馈（纯前端原型）：/feedback、/feedback/:id、/admin/feedback。三条都是顶层
-  // 路由，必须挂在下面的 NotFound 通配**之前**，否则会被它吃掉。
+  // 反馈：/feedback、/feedback/mine、/feedback/:id、/admin/feedback、/design/feedback。
+  // 五条都是顶层路由，必须挂在下面的 NotFound 通配**之前**，否则会被它吃掉。
   ...FeedbackRoutes,
   {
     name: 'preview-open',

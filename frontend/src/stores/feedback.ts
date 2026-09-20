@@ -50,6 +50,7 @@ import {
   listAdminFeedback,
   listFeedback,
   listFeedbackProposals,
+  listMyFeedback,
   markFeedbackRead,
   patchAdminFeedback,
   setAdminFeedbackStatus,
@@ -73,6 +74,7 @@ const PAGE_SIZE = 50
  *  都不是界面状态，放进 state 只会让 Vue 去追踪一个没人渲染的值。 */
 let listSeq = 0
 let adminSeq = 0
+let mineSeq = 0
 let countsSeq = 0
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -160,6 +162,12 @@ export const useFeedbackStore = defineStore('feedback', {
     adminTotal: 0,
     adminLoading: false,
     adminTab: 'public' as AdminTab,
+    /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
+       不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
+       服务端的 WHERE 就不是同一个。 ---- */
+    mineItems: [] as FeedbackCard[],
+    mineTotal: 0,
+    mineLoading: false,
     /* ---- 详情。`detail` 是**当前这一条**；换一条时整个对象换掉。 ---- */
     detail: null as FeedbackDetail | null,
     detailLoading: false,
@@ -265,6 +273,34 @@ export const useFeedbackStore = defineStore('feedback', {
       if (searchTimer) clearTimeout(searchTimer)
       searchTimer = null
       await this.loadList()
+    },
+
+    /* ---- 我的反馈 ---- */
+
+    /** 拉「和我有关的那一摞」：我提的 + 我替谁提的 + 指派给我的。三个来源合成一个
+     *  清单是**服务端**的定义（`/feedback/mine`），前端不再分栏 —— 分栏要有「这条
+     *  为什么在我的清单里」，而那个字段服务端不给；按 handle 在前端猜一遍等于把
+     *  可见性规则抄第二份，抄错的那天就是有人看见不该看见的条目。
+     *
+     *  访客（没登录）拿到的也是这一条路：服务端回空列表而不是 401，所以这里和公开
+     *  列表一样只是「没有」。 */
+    async loadMine(): Promise<void> {
+      const seq = ++mineSeq
+      this.mineLoading = true
+      this.error = null
+      try {
+        const page = await listMyFeedback({ pageSize: PAGE_SIZE })
+        if (seq !== mineSeq) return
+        this.mineItems = page.data
+        this.mineTotal = page.total
+      } catch (error) {
+        if (seq !== mineSeq) return
+        this.error = message(error, '「我的反馈」加载失败')
+        this.mineItems = []
+        this.mineTotal = 0
+      } finally {
+        if (seq === mineSeq) this.mineLoading = false
+      }
     },
 
     /* ---- 详情 ---- */
@@ -386,8 +422,11 @@ export const useFeedbackStore = defineStore('feedback', {
         this.lastSubmittedId = detail.id
         this.draft = emptyDraft()
         // 列表和各种计数都变了：清掉，让下次挂载重新拉，而不是在这里手改数组
-        // （手改的那份迟早和下一页对不上）。
+        // （手改的那份迟早和下一页对不上）。`mineItems` 也得清 —— 刚提的这条
+        // 属于「我提的」，留着旧的会让「我的反馈」少一条，而那正是这一页要回答的
+        // 那个问题。
         this.items = []
+        this.mineItems = []
         return detail.id
       } catch (error) {
         this.error = message(error, '提交失败')
@@ -530,19 +569,24 @@ export const useFeedbackStore = defineStore('feedback', {
 
     /* ---- 内部小工具（下划线开头：不是给页面用的 API） ---- */
 
-    /** 一条反馈现在在**哪一份数据**里。列表里没有就找详情 —— 直接打开/刷新
-     *  `/feedback/<id>` 时两个列表都是空的（那一页不拉列表），而支持按钮只认这一份：
-     *  少了最后那一下，深链进来的页面点「支持」是**一点反应都没有**。 */
+    /** 一条反馈现在在**哪一份数据**里。三份列表都要找。前两份（公开、管理）是
+     *  「点开列表再点支持」，`mineItems` 是同一件事发生在「我的反馈」页上——漏掉它
+     *  的表现是那一页的支持按钮点了没反应（`toggleSupport` 找不到卡片就直接 return，
+     *  连错误都不报）。详情那一份管的是深链进来的页面。
+     *
+     *  列表里没有就找详情：直接打开/刷新 `/feedback/<id>` 时三份列表都是空的
+     *  （那一页不拉列表），而支持按钮只认这一份。 */
     _find(id: string): FeedbackCard | undefined {
       return (
         this.items.find((i) => i.id === id) ??
         this.adminItems.find((i) => i.id === id) ??
+        this.mineItems.find((i) => i.id === id) ??
         (this.detail?.id === id ? this.detail : undefined)
       )
     },
 
     _patch(id: string, patch: Partial<FeedbackCard>): void {
-      for (const list of [this.items, this.adminItems]) {
+      for (const list of [this.items, this.adminItems, this.mineItems]) {
         const card = list.find((i) => i.id === id)
         if (card) Object.assign(card, patch)
       }
