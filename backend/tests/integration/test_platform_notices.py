@@ -127,9 +127,7 @@ def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(client, app
 
     fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
     # ① 核心：房间里没有多出任何一条"人"说的话。
-    assert [b for b in fresh if _by_a_person(b)] == [], (
-        "平台又伪装成人在房间里发言了"
-    )
+    assert [b for b in fresh if _by_a_person(b)] == [], "平台又伪装成人在房间里发言了"
 
     # ② 一行人话。
     _assert_is_a_platform_notice(

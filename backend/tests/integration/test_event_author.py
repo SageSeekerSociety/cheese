@@ -84,9 +84,7 @@ def test_a_person_and_an_agent_sign_the_same_kind_of_message(client, stub_hooks)
         "人和 agent 是同一种参与者，事件行上不该分出两档"
     )
     assert person["author"] == "user-1"
-    assert cheese["author"] == published["author"] != "user-1", (
-        "两句话的区别写在署名上"
-    )
+    assert cheese["author"] == published["author"] != "user-1", "两句话的区别写在署名上"
     assert stub_hooks.last_prompt is None, "这两条都没叫它，一轮也不该开"
 
 
@@ -121,9 +119,7 @@ def test_an_agents_own_turn_output_is_not_an_input(client, stub_hooks):
     assert "开工" not in second, "答过的那句也不重投"
 
 
-def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(
-    client, stub_hooks
-):
+def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub_hooks):
     """④一次发送「文字 + 图片」：下一轮两块都在，而且各只有一份。
 
     图片块不是「没有轮次号」的那一类 —— 一次发送是一件事，附件块落库时带的就是正

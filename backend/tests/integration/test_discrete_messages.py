@@ -83,9 +83,7 @@ def test_result_text_is_not_duplicated_as_extra_block(client):
     topic_id, _frames = _run_turn(client)
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     ai_messages = [
-        b
-        for b in blocks
-        if b["author"].startswith("cheese") and b["kind"] == "message"
+        b for b in blocks if b["author"].startswith("cheese") and b["kind"] == "message"
     ]
     assert ai_messages == []
 
