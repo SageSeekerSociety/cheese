@@ -89,9 +89,16 @@ async def execute(
         trace_id,
         time.monotonic_ns(),
     )
+    # The scope check above is the only database work this request needs.  Do
+    # not acquire a transaction-scoped advisory lock here: the remote executor
+    # call can legitimately stay open for minutes, and holding the request's
+    # AsyncSession across it consumes one QueuePool slot per active tool.  Once
+    # enough tools are in flight, ordinary page reads wait for
+    # db_pool_timeout_s and the whole site appears dead.  The device connection
+    # owner already counts active RPCs and gates executor release, so the
+    # business route must release its database connection before crossing that
+    # boundary.
     try:
-        # Hold admission through the response, including background task creation.
-        await execution.lock_release(db, resource_id, shared=True)
         return await execution.call(
             target, payload.method, payload.params, trace_id=trace_id
         )

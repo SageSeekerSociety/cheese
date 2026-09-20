@@ -532,7 +532,16 @@ async def test_running_executor_does_not_hide_failed_environment(
 
 
 @pytest.mark.anyio
-async def test_executor_release_excludes_new_tool_admission(client, room, monkeypatch):
+async def test_scoped_execution_does_not_hold_admission_connection_during_remote_call(
+    client, room, monkeypatch
+):
+    """A long tool call must not pin the request's database connection.
+
+    Admission is enforced by the device connection owner while the remote call
+    is in flight.  The business route only needs the database for the initial
+    scope check; retaining a transaction-scoped advisory lock here consumes one
+    pool slot for every active tool and makes ordinary page requests time out.
+    """
     project, topic = room
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
@@ -544,36 +553,36 @@ async def test_executor_release_excludes_new_tool_admission(client, room, monkey
             "execution": {"kind": "device", "device_id": "executor"},
         }
         await db.commit()
-    entered = threading.Event()
+
+    entered = asyncio.Event()
+    finish = asyncio.Event()
 
     async def invoke(*args, **kwargs):
         entered.set()
+        await finish.wait()
         return {"value": "kept"}
 
+    async def unexpected_lock(*args, **kwargs):
+        raise AssertionError("a remote tool call must not hold a DB advisory lock")
+
     monkeypatch.setattr(execution, "call", invoke)
+    monkeypatch.setattr(execution, "lock_release", unexpected_lock)
     token = mint_scoped_token(
         project_id=str(project), topic_id=str(topic), resource_id=str(resource)
     )
-    async with client.test_factory() as release:
-        await execution.lock_release(release, resource)
-        request = asyncio.create_task(
-            asyncio.to_thread(
-                client.post,
-                f"/topics/{topic}/execution/{resource}",
-                headers={"X-Cheese-Token": token},
-                json={
-                    "method": "invoke",
-                    "params": {"tool": "Read", "args": {"file_path": "draft.md"}},
-                },
-            )
+    request = asyncio.create_task(
+        asyncio.to_thread(
+            client.post,
+            f"/topics/{topic}/execution/{resource}",
+            headers={"X-Cheese-Token": token},
+            json={"method": "invoke", "params": {}},
         )
-        try:
-            assert not await asyncio.to_thread(entered.wait, 0.2)
-        finally:
-            await release.rollback()
-            response = await asyncio.wait_for(request, 5)
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    finish.set()
+    response = await asyncio.wait_for(request, 5)
+
     assert response.status_code == 200, response.text
-    assert entered.is_set()
     assert response.json() == {"value": "kept"}
 
 
