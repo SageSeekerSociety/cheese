@@ -170,11 +170,7 @@ async function send() {
         <div v-if="!said.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
         <div v-for="b in said" :key="b.id" class="card-msg">
           <span class="card-msg__who t-meta">{{ b.author }}</span>
-          <div
-            v-if="isAgentBlock(b)"
-            class="card-msg__text card-markdown t-body"
-            v-html="renderMarkdown(b.content)"
-          />
+          <div v-if="isAgentBlock(b)" class="card-msg__text card-markdown t-body" v-html="renderMarkdown(b.content)" />
           <span v-else class="card-msg__text t-body">{{ b.content }}</span>
         </div>
       </div>

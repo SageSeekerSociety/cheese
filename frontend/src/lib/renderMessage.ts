@@ -101,13 +101,7 @@ function scanFenceState(text: string, initial: FenceState | null): FenceState | 
 }
 
 function sameLegacyMessageRun(a: Block, b: Block): boolean {
-  if (
-    a.kind !== 'message' ||
-    b.kind !== 'message' ||
-    !isAgentBlock(a) ||
-    !isAgentBlock(b) ||
-    a.author !== b.author
-  ) {
+  if (a.kind !== 'message' || b.kind !== 'message' || !isAgentBlock(a) || !isAgentBlock(b) || a.author !== b.author) {
     return false
   }
   // A real turn id is a hard boundary. Null IDs occur on older affected rows;
