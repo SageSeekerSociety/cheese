@@ -123,6 +123,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         "cheese_bind",
         "cheese_close_task",
         "cheese_decision",
+        "cheese_feedback_propose",
         "cheese_members",
         "cheese_status",
         "cheese_tell",

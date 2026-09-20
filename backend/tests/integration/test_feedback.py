@@ -13,11 +13,17 @@
 """
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
+from anyio.from_thread import BlockingPortal
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.device_hub import HubScreen, device_hub
+from app.domain.feedback.models import Feedback
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.integration.conftest import session_auth_headers
 
@@ -67,6 +73,41 @@ def _cards(client, handle: str | None = None, **params) -> list[dict]:
     r = client.get("/feedback", params=params, headers=headers)
     assert r.status_code == 200, r.text
     return r.json()["data"]["data"]
+
+
+def _mine(client, handle: str) -> list[dict]:
+    r = client.get("/feedback/mine", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def _register_screen(*, project_id=None, topic_id=None, handle: str) -> HubScreen:
+    """A device screen registered straight on the singleton hub.
+
+    Copied from `test_connector_viewer.py`: no live device is needed — the
+    resolver attributes a call carrying this token to its agent-user, and that is
+    the only thing these tests want from it.
+    """
+    screen = HubScreen(
+        sid="s" + uuid.uuid4().hex[:8],
+        device_id="d" + uuid.uuid4().hex[:6],
+        command=["claude"],
+        token=uuid.uuid4().hex,
+        agent_user_id=uuid.uuid4(),
+        agent_handle=handle,
+        project_id=project_id,
+        topic_id=topic_id,
+    )
+    device_hub._screens[screen.sid] = screen
+    device_hub._by_screen_token[screen.token] = screen
+    device_hub._device(screen.device_id).screens[screen.sid] = screen
+    return screen
+
+
+def _unregister(screen: HubScreen) -> None:
+    device_hub._screens.pop(screen.sid, None)
+    device_hub._by_screen_token.pop(screen.token, None)
+    device_hub._devices.pop(screen.device_id, None)
 
 
 def _propose(client, topic: str, token: str, **body) -> dict:
@@ -486,13 +527,320 @@ def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
 
 
 def test_a_report_can_point_at_the_topic_it_came_from(client):
-    """`topic_id` is a plain reference, not a foreign key the report depends on.
+    """`topic_id` says which room it came from, and does not depend on it.
 
-    A report outlives the conversation that produced it — that is the whole
-    reason it is filed in a platform-level inbox and not under the topic.
+    A real foreign key, nullable and `ON DELETE SET NULL` (`models.py`): a
+    report outlives the conversation that produced it — that is the whole reason
+    it is filed in a platform-level inbox and not under the topic.
     """
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
     row = _report(client, REPORTER, topic_id=topic, project_id=project)
     assert row["topic_id"] == topic
     assert uuid.UUID(row["id"])
+
+
+# --- 「我的反馈」和详情必须给同一个答案 ---------------------------------------
+
+
+def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as_admin):
+    """「我的反馈」 是一份**能打开的**清单：里面有的都能开，能开的都在里面。
+
+    Being *assigned* a report is not access to it. §8.9 gives the assignee no
+    management power, and §4.3's visibility union is 提交者 ∪ 管理员. The list used
+    to include the assignee arm unfiltered, so a third party was handed the title
+    and status of a private report on one endpoint while the detail endpoint
+    answered 404 for it — one rule, two answers, depending on which one you asked.
+    A list that disagrees with its own rows is worse than either answer alone,
+    because the client has no way to tell which one lied.
+
+    Written as an agreement over a table of rows rather than as one case: every
+    row below is checked with the same two questions, so a future edit that widens
+    or narrows either side lands here.
+    """
+    mine_private = _report(client, STRANGER, title="我提的私密", visibility="private")
+    mine_public = _report(client, STRANGER, title="我提的公开")
+    theirs_private = _report(
+        client, REPORTER, title="别人提的私密", visibility="private"
+    )
+    theirs_public = _report(client, REPORTER, title="别人提的公开")
+    theirs_security = _report(client, REPORTER, title="别人提的安全")
+
+    for row in (theirs_private, theirs_public, theirs_security):
+        patched = client.patch(
+            f"/admin/feedback/{row['id']}",
+            json={"assignee_handle": STRANGER},
+            headers=session_auth_headers(as_admin),
+        )
+        assert patched.status_code == 200, patched.text
+    # `security` narrows visibility, it never widens it (§8.3) — so this row is
+    # the one an admin flagged, and the assignee is still nobody.
+    flagged = client.patch(
+        f"/admin/feedback/{theirs_security['id']}",
+        json={"security": True},
+        headers=session_auth_headers(as_admin),
+    )
+    assert flagged.status_code == 200, flagged.text
+
+    listed = {card["id"] for card in _mine(client, STRANGER)}
+
+    def openable(row: dict) -> bool:
+        return (
+            client.get(
+                f"/feedback/{row['id']}", headers=session_auth_headers(STRANGER)
+            ).status_code
+            == 200
+        )
+
+    for row in (
+        mine_private,
+        mine_public,
+        theirs_private,
+        theirs_public,
+        theirs_security,
+    ):
+        assert (row["id"] in listed) == openable(row), row["title"]
+
+    # The third arm — 我提的和 agent 替我提的 — is checked from the other side:
+    # the reporter did not write this row (the agent did), and it is still theirs,
+    # private and all.
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    block_id = _propose(client, topic, token).json()["data"]["block_id"]
+    sent = client.post(
+        f"/topics/{topic}/feedback-proposals/{block_id}/accept",
+        json={"title": "agent 替我提的", "visibility": "private"},
+        headers=session_auth_headers(REPORTER),
+    ).json()["data"]
+    assert sent["author_handle"] != REPORTER
+    assert sent["id"] in {card["id"] for card in _mine(client, REPORTER)}
+    assert (
+        client.get(
+            f"/feedback/{sent['id']}", headers=session_auth_headers(REPORTER)
+        ).status_code
+        == 200
+    )
+
+
+def test_an_admin_sees_everything_assigned_to_them_in_their_own_list(client, as_admin):
+    """The narrowing above is for people who are not admins.
+
+    An admin is never narrowed (`may_see`'s second arm), so an admin assigned a
+    private report keeps it in 「我的反馈」 as well as in the 分诊台. Pinned because
+    the obvious way to write the fix — AND `PUBLIC_ONLY` onto the assignee arm for
+    everyone — would have taken it away from them, and nothing else would say so.
+    """
+    row = _report(client, REPORTER, title="指派给管理员的私密", visibility="private")
+    client.patch(
+        f"/admin/feedback/{row['id']}",
+        json={"assignee_handle": as_admin},
+        headers=session_auth_headers(as_admin),
+    )
+    assert row["id"] in {card["id"] for card in _mine(client, as_admin)}
+
+
+# --- 管理端的那个数字 -------------------------------------------------------
+
+
+def test_unassigned_is_the_admin_queues_number_and_appears_nowhere_else(
+    client, as_admin
+):
+    """「还没人管」 is counted over every unresolved row — private and security too —
+    so it is an admin read, and the public endpoints are where it must not be.
+
+    `/feedback/counts` answers anonymous callers on purpose (the bell polls it
+    before anyone signs in), which is what made this one worth a test: the number
+    was riding along on a response that needs no identity at all.
+    """
+    _report(client, REPORTER, title="没人认领的私密", visibility="private")
+    _report(client, REPORTER, title="没人认领的公开")
+
+    assert "unassigned" not in client.get("/feedback/counts").json()["data"]
+    # …nor on the list, which carries the same counts object.
+    listed = client.get("/feedback").json()["data"]["counts"]
+    assert "unassigned" not in listed
+
+    # Not vacuous: the admin, who may open those rows, does get the number.
+    admin = client.get(
+        "/admin/feedback", headers=session_auth_headers(as_admin)
+    ).json()["data"]["counts"]
+    assert admin["unassigned"] >= 2
+
+
+def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
+    """The number on a tab and the rows behind it are one query's answer.
+
+    `hot` means 「支持数 ≥ 5」, and it does not sink resolved *suggestions* — only
+    resolved bugs sink (§8.23). The count used a bare `status != resolved`, so a
+    resolved suggestion was in the list and not in the number, and the tab read
+    「4」 over five cards. One predicate, or the two drift.
+    """
+    idea = _report(client, REPORTER, title="已实现的建议", kind="suggestion")
+    # The threshold the UI reads, not a 5 typed twice.
+    hot_supports = client.get("/feedback/meta").json()["data"]["hot_supports"]
+    for n in range(hot_supports):
+        r = client.post(
+            f"/feedback/{idea['id']}/supports",
+            headers=session_auth_headers(f"fb-supporter-{n}"),
+        )
+        assert r.status_code == 200, r.text
+
+    client.post(
+        f"/admin/feedback/{idea['id']}/status",
+        json={"status": "resolved"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert idea["id"] in {card["id"] for card in page["data"]}
+    assert page["counts"]["hot"] == len(page["data"])
+
+
+def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
+    client, db_session: AsyncSession, _portal: BlockingPortal
+):
+    """An ordering two rows can tie on is not an ordering.
+
+    `sort=supports` ordered by `count(supports) DESC, created_at DESC` and stopped
+    there. `created_at` comes from the application clock, so two rows made in the
+    same millisecond compare equal, and OFFSET paging over a tie can repeat or
+    skip a row between two requests. The `new` branch already broke the tie on
+    `display_no`; this branch did not.
+
+    The two rows are given the same `created_at` and no supports at all, which is
+    that tie exactly. `display_no` decides it: 后建的 first, the same direction the
+    `new` branch sorts.
+
+    Which of two tied rows comes back first is the planner's choice, so this test
+    can pass against an ordering that has no tiebreak at all: it pins the intended
+    direction, and is not by itself proof that the tiebreak is there. That proof
+    is `tests/unit/test_feedback_sort_ordering.py`, which reads the `ORDER BY`.
+    """
+    older = _report(client, REPORTER, title="先建的")
+    newer = _report(client, REPORTER, title="后建的")
+
+    async def _pin_both_to_one_instant() -> None:
+        await db_session.execute(
+            update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
+        )
+        await db_session.flush()
+
+    _portal.call(_pin_both_to_one_instant)
+
+    def page(start: int) -> list[dict]:
+        r = client.get(
+            "/feedback",
+            params={"sort": "supports", "page_size": 1, "page_start": start},
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["data"]
+
+    assert [card["id"] for card in page(0)] == [newer["id"]]
+    # …and paging sees each of them once, in the one order it just promised.
+    assert [card["id"] for card in page(1)] == [older["id"]]
+
+
+# --- agent 与提案卡 ---------------------------------------------------------
+
+
+def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch):
+    """§4.3's second gate, and why it has to be in the route body.
+
+    `/admin/*` is not in `_CHEESE_WRITE_PATHS`, and that table is a whitelist —
+    nothing in the middleware looks at this prefix, so the refusal has to be
+    written here or it does not exist. The handle below is **on the platform
+    admin list**, so the allow-list is not what refuses it; the question being
+    asked is 「是不是人」.
+
+    A device screen's token is the reachable way in: it resolves to its
+    agent-as-user on any path, unlike a per-turn `cheese` credential, which the
+    resolver refuses when there is no project to scope it to. The same handle
+    asked as a *person* is the control — it is allowed through, which is what says
+    the refusal is about being an agent.
+    """
+    agent = "agent-on-the-list"
+    monkeypatch.setattr(settings, "feedback_admin_handles", [agent])
+    screen = _register_screen(handle=agent)
+    try:
+        allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
+        assert allowed.status_code == 200, allowed.text
+
+        refused = client.get(
+            "/admin/feedback", headers={"X-Cheese-Screen": screen.token}
+        )
+        assert refused.status_code == 403, refused.text
+        assert "agent" in refused.json()["message"]
+
+        # A write route too: every handler in the module goes through one helper,
+        # and this is what says the helper is actually on them.
+        wrote = client.post(
+            f"/admin/feedback/{_report(client, REPORTER)['id']}/status",
+            json={"status": "triaging"},
+            headers={"X-Cheese-Screen": screen.token},
+        )
+        assert wrote.status_code == 403, wrote.text
+    finally:
+        _unregister(screen)
+
+
+def test_sending_the_same_card_twice_files_one_report(client):
+    """Sending leaves a record on the card, so the send happens once.
+
+    Before this the card came back on the next load — the send was invisible to
+    `live_cards` — and pressing 「提交反馈」 again filed a second report identical to
+    the first, with the same title, by the same submitter, naming the same agent.
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    block_id = _propose(client, topic, token).json()["data"]["block_id"]
+    url = f"/topics/{topic}/feedback-proposals/{block_id}/accept"
+    body = {
+        "title": "沙箱里 make 装不上依赖",
+        "what_happened": "make 停在 could not resolve host",
+    }
+
+    def send_card():
+        return client.post(
+            url, json=body, headers=session_auth_headers(REPORTER)
+        ).json()["data"]
+
+    first = send_card()
+    again = send_card()
+
+    # The same report, not a twin of it.
+    assert again["id"] == first["id"]
+    assert again["display_id"] == first["display_id"]
+
+    # …and the card is out of the chat column, so the button is not offered again
+    # on the next load either.
+    live = client.get(
+        f"/topics/{topic}/feedback-proposals", headers=session_auth_headers(REPORTER)
+    ).json()["data"]
+    assert live == []
+
+
+def test_two_proposals_that_leave_the_body_blank_are_two_proposals(client):
+    """Two optional fields, both blank, and still two problems.
+
+    「发生了什么」 and 「怎么复现」 are both optional on `FeedbackProposalIn`.
+
+    Hashing only those two made every such proposal share the fingerprint of the
+    empty string, so the second one in a topic was refused with 「这个提案刚提过」 —
+    a claim about its content that the server could not make.
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+
+    first = _propose(client, topic, token, title="第一件事", what_happened=None)
+    second = _propose(client, topic, token, title="第二件事", what_happened=None)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    # Two cards, both live: the dedup did not eat one of them.
+    live = client.get(
+        f"/topics/{topic}/feedback-proposals", headers=session_auth_headers(REPORTER)
+    ).json()["data"]
+    assert len(live) == 2

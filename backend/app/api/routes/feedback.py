@@ -136,6 +136,10 @@ async def get_feedback_counts(
     """
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
+    # No `unassigned` here: it is the admin queue's 「还没人管」, counted over the
+    # private and security rows as well, and this endpoint answers anonymous
+    # callers (the bell polls it before anyone logs in). An admin gets it from
+    # `GET /admin/feedback`. See `FeedbackService.counts`.
     counts = await service.counts(handle=handle)
     payload = FeedbackCounts(
         all=counts["all"],
@@ -144,7 +148,7 @@ async def get_feedback_counts(
         resolved=counts["resolved"],
         unread=counts["unread"],
     )
-    return ok({**payload.model_dump(mode="json"), "unassigned": counts["unassigned"]})
+    return ok(payload.model_dump(mode="json"))
 
 
 @router.post("/read")

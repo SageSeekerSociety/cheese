@@ -163,17 +163,31 @@ class FeedbackService:
     async def list_mine(
         self, *, handle: str, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
-        return await self._repo.list_related_to(handle, limit=limit, offset=offset)
+        return await self._repo.list_related_to(
+            handle,
+            is_admin=self.is_admin(handle),
+            limit=limit,
+            offset=offset,
+        )
 
-    async def counts(self, *, handle: str | None) -> dict[str, int]:
+    async def counts(
+        self, *, handle: str | None, is_admin: bool = False
+    ) -> dict[str, int]:
         """Tab numbers + the bell's unread count, in one call.
 
         `unread` is a live count against a cursor, not a stored flag: a stored
         flag is one row per person per item, and the cursor is one row per person
         — see `FeedbackReadState` and the design note §6.2.
+
+        `unassigned` is added **only for an admin**, and it is the one key here
+        that is not the public tabs' arithmetic: `unassigned_count` counts every
+        unresolved row nobody has picked up, private and security included, so
+        answering it to an anonymous caller would publish a number that describes
+        rows they cannot open. It rides on `/admin/feedback` and nowhere else.
         """
         counts = await self._repo.public_counts()
-        counts["unassigned"] = await self._repo.unassigned_count()
+        if is_admin:
+            counts["unassigned"] = await self._repo.unassigned_count()
         if handle:
             state = await self._repo.get_read_state(handle)
             since = state.last_read_at if state else None

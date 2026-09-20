@@ -170,11 +170,24 @@ async def accept_feedback_proposal(
 
     `actor.is_agent` 如实往下传，不写死 False：agent 自己按发送和直接发布是同一件
     事，拒绝在 `FeedbackService.create` 里，这里不替它开例外。
+
+    发送会在卡上留下「已经发过了」（`mark_accepted`），所以这件事**只会发生一次**：
+    卡片从聊天栏消失，而已经开着旧页面的人再按一次时，这里把第一次那条反馈原样取回来
+    还给他。绝不能变成「又落了一条一模一样的」—— 那第二条与第一条逐字相同，而人只按了
+    一次发送。
     """
     place, actor = await _actor_in_topic(db, resolver, topic_id)
     block = await _require_proposal_block(db, topic_id, block_id)
     payload = proposal_rules.proposal_block_or_404(block)
     service = FeedbackService(db)
+    is_admin = service.is_admin(actor.handle)
+    already = proposal_rules.accepted_feedback_id(block.meta or {})
+    if already is not None:
+        # 同一条卡发两次不是两件事。取回第一条 —— `visible_row` 而不是直接读：
+        # 这条路和详情页共用一条可见性规则，发送者本人（提交者）一定看得到它。
+        row = await service.visible_row(already, handle=actor.handle, is_admin=is_admin)
+        view = await service.detail_of(row, handle=actor.handle, is_admin=is_admin)
+        return ok(view.model_dump(mode="json"))
     # The topic and project come from the URL, not from the body: this endpoint
     # is defined as "send the card in THIS topic", and letting the body name a
     # different one would make the quota and the authorization describe two
@@ -190,8 +203,10 @@ async def accept_feedback_proposal(
             payload=payload, author_handle=block.author
         ),
     )
+    # Written before the commit, so the card's record and the feedback it names are
+    # one transaction: a crash between them would otherwise leave a card that says
+    # it was sent and nothing to show for it.
+    proposal_rules.mark_accepted(block, row.id, handle=actor.handle)
     await db.commit()
-    view = await service.detail_of(
-        row, handle=actor.handle, is_admin=service.is_admin(actor.handle)
-    )
+    view = await service.detail_of(row, handle=actor.handle, is_admin=is_admin)
     return ok(view.model_dump(mode="json"))

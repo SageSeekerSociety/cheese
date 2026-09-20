@@ -655,3 +655,36 @@ def test_a_won_set_remembers_the_version_it_produced(monkeypatch, tmp_path, caps
     cli.main()
 
     assert [c[2]["expected_version"] for c in calls if c[0] == "PUT"] == [7, 8]
+
+
+def test_feedback_propose_refuses_locally_when_there_is_no_topic():
+    """`cheese feedback propose` posts to `/topics/{topic}/feedback-proposals`.
+
+    With nothing in `CHEESE_TOPIC` that path is `/topics//feedback-proposals`,
+    which the server answers 404 — and the CLI then reports *the command* as
+    having failed, exit code 1, with the server's 「话题不存在」 as the reason
+    (`_call` exits on any non-2xx). The refusal belongs where the missing thing
+    is known: here, before the request, naming the variable that is empty.
+
+    Both halves asserted: the refusal, and the path it guards. A guard that also
+    broke the working case would otherwise read as a passing test.
+    """
+    cli = _load()
+    args = {
+        "title": "沙箱里 make 装不上依赖",
+        "kind": "bug",
+        "visibility": "public",
+        "user_said": "用户没有就这个问题说过话",
+    }
+
+    with pytest.raises(ValueError, match="Missing CHEESE_TOPIC"):
+        cli.request_plan("cheese_feedback_propose", args, {"CHEESE_PROJECT": "p"})
+
+    plan = cli.request_plan(
+        "cheese_feedback_propose",
+        args,
+        {"CHEESE_TOPIC": "room", "CHEESE_PROJECT": "p"},
+    )
+    assert plan["method"] == "POST"
+    assert plan["path"] == "/topics/room/feedback-proposals"
+    assert plan["body"]["title"] == "沙箱里 make 装不上依赖"

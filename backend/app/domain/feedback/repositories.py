@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback.models import (
@@ -51,6 +51,30 @@ PUBLIC_ONLY: tuple[Any, ...] = (
     Feedback.visibility == FeedbackVisibility.public,
     Feedback.security.is_(False),
 )
+
+
+def visible_to(handle: str | None, *, is_admin: bool) -> Any:
+    """`FeedbackService.may_see`, spelled as a WHERE clause.
+
+    Only one reader needs it: 「我的反馈」 is an `OR` over three columns, and the
+    third arm (指派给我的) is not by itself a reason to see a row — so it has to
+    be narrowed in the database rather than row by row.
+
+    A second spelling of one rule is exactly the drift `PUBLIC_ONLY` warns about,
+    so this one is not left to trust. `test_feedback.py` files one row per
+    relation and asserts this predicate and `may_see` return the same verdict for
+    every one of them; the arms here are written in `may_see`'s order so the two
+    read as one sentence.
+    """
+    if is_admin:
+        # may_see's second arm: an admin is never narrowed. Said once here rather
+        # than at each call site so the two definitions stay shaped alike.
+        return true()
+    arms: list[Any] = [and_(*PUBLIC_ONLY)]
+    if handle:
+        arms.append(Feedback.author_handle == handle)
+        arms.append(Feedback.submitted_by_handle == handle)
+    return or_(*arms)
 
 
 class FeedbackRepository:
@@ -141,8 +165,15 @@ class FeedbackRepository:
                     FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
                 )
                 .group_by(Feedback.id)
+                # `display_no` as the tiebreak, same as the `new` branch below:
+                # `created_at` comes from the application clock, so two rows made
+                # in the same millisecond compare equal and an OFFSET page can
+                # repeat or skip one between two requests. An ordering that two
+                # rows can tie on is not an ordering.
                 .order_by(
-                    func.count(FeedbackSupport.id).desc(), Feedback.created_at.desc()
+                    func.count(FeedbackSupport.id).desc(),
+                    Feedback.created_at.desc(),
+                    Feedback.display_no.desc(),
                 )
             )
         else:
@@ -237,10 +268,16 @@ class FeedbackRepository:
             .group_by(FeedbackSupport.feedback_id)
             .having(func.count(FeedbackSupport.id) >= HOT_SUPPORTS)
         )
+        # `_tab_where("hot")`, not a second copy of the condition: this is the
+        # number on the tab and the rows behind it, and the two were a
+        # `!= resolved` apart — a resolved suggestion is in the hot list (it does
+        # not sink) but was not in the number, so the tab counted fewer than it
+        # opened. The docstring above promises one definition for list and counts;
+        # this is what that costs when it is not kept.
         hot_count = await self._count(
             [
                 *where,
-                Feedback.status != FeedbackStatus.resolved,
+                *self._tab_where("hot"),
                 Feedback.id.in_(hot.scalar_subquery()),
             ]
         )
@@ -294,19 +331,31 @@ class FeedbackRepository:
         return rows, await self._count(where)
 
     async def list_related_to(
-        self, handle: str, *, limit: int, offset: int
+        self, handle: str, *, is_admin: bool, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
-        """「我的反馈」：我提的 + agent 替我提的 + 指派给我的。
+        """「我的反馈」：我提的 + agent 替我提的 + 指派给我的（且我看得到的）。
 
         One query with an OR rather than three: the list is one list, and the
         `author_handle` / `submitted_by_handle` / `assignee_handle` indexes each
         serve one arm of it.
+
+        The 指派给我的 arm is the only narrowed one. Being handed a report is work,
+        not access — §4.3's visibility union is 提交者 ∪ 管理员, and being the
+        assignee grants no management power (§8.9). So `visible_to` is ANDed onto
+        that arm, and the list answers about a private row exactly what the detail
+        endpoint answers: nothing. Without it this was the one read path that
+        skipped the predicate in the module docstring, handing a third party the
+        title of a report that `may_see` then refused with a 404 — a list that
+        disagrees with its own rows.
         """
         where = [
             or_(
                 Feedback.author_handle == handle,
                 Feedback.submitted_by_handle == handle,
-                Feedback.assignee_handle == handle,
+                and_(
+                    Feedback.assignee_handle == handle,
+                    visible_to(handle, is_admin=is_admin),
+                ),
             )
         ]
         rows = list(
@@ -632,7 +681,15 @@ class FeedbackRepository:
         return ids
 
     async def unassigned_count(self) -> int:
-        """The admin's 「还没人管」 number, asked once per admin list render."""
+        """The admin's 「还没人管」 number, asked once per admin list render.
+
+        Deliberately not narrowed by `PUBLIC_ONLY`: "nobody has picked this up"
+        spans the private and security queues too, and that is the number the
+        分诊台 acts on. It is therefore an **admin-only** read — `FeedbackService.
+        counts` is the only caller and it only asks when the caller is an admin,
+        because this count, unlike the four tabs, describes rows the caller may
+        not be allowed to open.
+        """
         stmt = select(func.count(Feedback.id)).where(
             Feedback.deleted_at.is_(None),
             Feedback.assignee_handle.is_(None),
