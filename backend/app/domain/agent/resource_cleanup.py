@@ -14,7 +14,12 @@ import uuid
 from pathlib import Path
 
 # Every directory the platform has installed a room's own files into, the
-# current one first. Tearing a room down reads what preparing it wrote, and a
+# current one first. A copy of `place.footprint_dirs()`, not a second answer:
+# this file is piped to the machine on stdin and runs there with no `__file__`
+# and nothing of ours importable, so it carries the names; the copy is held to
+# the original by test_footprint_root.py.
+#
+# Tearing a room down reads what preparing it wrote, and a
 # room prepared under an earlier root still has all of it where that launcher
 # put it — it does not move until something prepares the room again, and a room
 # being deleted never will. Reading only where we would install today answers

@@ -50,6 +50,7 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
+from app.domain.agent.place import footprint_dirs, footprint_root
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -290,7 +291,7 @@ def _launch_identity(
                 "agent": agent_configuration,
                 "harness": harness_contract,
                 "target": execution_target,
-                "root": machine_launcher.PLATFORM_DIR,
+                "root": footprint_root(),
             },
             sort_keys=True,
         ).encode()
@@ -390,12 +391,14 @@ def _credential_expiry(token: str) -> int:
     return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
-# Where a place's isolated claude home lives on the device, relative to the
-# device's own `$HOME` (expanded by its shell, never by us). The path is spelled
-# in one place because two sides depend on it agreeing: the launcher that
-# creates it and the retirement that removes it (topic/retire.py).
-DEVICE_HOME_ROOT = "$HOME/.cheese/home"
-DEVICE_WORK_ROOT = "$HOME/.cheese/work"
+# The platform's footprint on the device, and a place's isolated claude home
+# inside it, relative to the device's own `$HOME` (expanded by its shell, never
+# by us). Everything below hangs off `DEVICE_ROOT` so that the launcher that
+# creates these, the retirement that removes them (topic/retire.py) and the
+# connector's `uninstall` are all naming one directory.
+DEVICE_ROOT = f"$HOME/{footprint_root()}"
+DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
+DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/work"
 # Where a PROJECT's rooms share the packages they install, on the machine they
 # share. Per project rather than per room because every room of a project
 # installs the same lockfile, while a room's home is its own — and uv and pnpm
@@ -419,7 +422,7 @@ DEVICE_WORK_ROOT = "$HOME/.cheese/work"
 # this store into an isolated room read-only would give that room the isolation
 # and take the dedup straight back. The two levers are not the same lever, and
 # a design that assumes they are will re-discover 236GB.
-DEVICE_STORE_ROOT = "$HOME/.cheese/store"
+DEVICE_STORE_ROOT = f"{DEVICE_ROOT}/store"
 
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
@@ -434,6 +437,11 @@ def device_store_dir(project_id: uuid.UUID) -> str:
     return f"{DEVICE_STORE_ROOT}/{project_id}"
 
 
+def launcher_path(topic_id: uuid.UUID) -> str:
+    """The launcher file a screen runs, where `_ship_launcher` writes it."""
+    return f"{DEVICE_ROOT}/launch/{topic_id}.sh"
+
+
 # Where a place's environment runner may have been left, relative to that
 # place's home, in precedence order. Every root the platform has ever installed
 # into belongs here, because a place prepared under an earlier one keeps the
@@ -442,11 +450,11 @@ def device_store_dir(project_id: uuid.UUID) -> str:
 # of them keep their state in the same `$HOME/.cheese-environment/status.json`,
 # so whichever one we find answers for the place. Probing only the current root
 # is what made a place prepared by another launcher read as `pending` forever:
-# the ready status was on disk, one directory over. Every place that WRITES the
-# runner has to appear in this list — see test_environment_status_probe.py.
-ENVIRONMENT_RUNNER_PATHS = (
-    "$HOME/.cheese/cheese-environment.py",
-    "$HOME/.claude/cheese-environment.py",
+# the ready status was on disk, one directory over. Which roots those are is
+# `place.footprint_dirs()`, so a root the platform adds or drops reaches the
+# probe by itself — see test_environment_status_probe.py.
+ENVIRONMENT_RUNNER_PATHS = tuple(
+    f"$HOME/{root}/cheese-environment.py" for root in footprint_dirs()
 )
 
 
@@ -461,7 +469,7 @@ async def environment_status(
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
     reset_marker = (
-        'mkdir -p "$HOME/.cheese"; touch "$HOME/.cheese/environment-restart"; '
+        f'mkdir -p "{DEVICE_ROOT}"; touch "{DEVICE_ROOT}/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -489,7 +497,7 @@ async def environment_status(
 
 def _launcher_command(topic_id: uuid.UUID) -> list[str]:
     """What a screen runs: the launcher file `_ship_launcher` wrote for this topic."""
-    return ["bash", "-lc", f'exec bash "$HOME/.cheese/launch/{topic_id}.sh"']
+    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id)}"']
 
 
 class DeviceChannel(Channel):
@@ -890,11 +898,13 @@ class DeviceChannel(Channel):
         instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
-        path = f"$HOME/.cheese/launch/{topic_id}.sh"
+        path = launcher_path(topic_id)
         transfer, exec_env = self._screen_file_refresh(
             home_dir, release_state=release_state, execution_token=execution_token
         )
-        transfer = f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}" && ' + transfer
+        transfer = (
+            f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
+        )
         started = time.monotonic()
         try:
             result = await self._hub.exec(
@@ -945,7 +955,7 @@ class DeviceChannel(Channel):
         token (rotated every turn), and a read of the release marker when the
         caller tracks one. Shared by the launcher ship and the live-screen
         refresh, so both paths write the same files the same way."""
-        hook_dir = f"{home_dir}/.cheese"
+        hook_dir = f"{home_dir}/{footprint_root()}"
         transfer = (
             f'mkdir -p "{hook_dir}"'
             f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"

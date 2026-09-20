@@ -20,6 +20,9 @@ VERSION = "2.1.277"
 # The platform's own directory inside a room's home, and the one it used before.
 # A harness's config dir is the harness's; everything the platform installs —
 # the executor, its helpers, the CLI, the environment runner — lives here.
+# A copy of `place.footprint_dirs()`, not a second answer: this file is exec'd
+# on the machine out of a string, so it cannot import the original; the copy is
+# held to it by test_footprint_root.py.
 PLATFORM_DIR = ".cheese"
 PREVIOUS_PLATFORM_DIR = ".claude"
 

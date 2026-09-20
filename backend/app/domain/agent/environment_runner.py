@@ -75,22 +75,17 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-# Every directory the platform has installed this room's own files into, the
-# current one first. A reset has to stop the executor that is actually running,
-# and a room prepared before the last move has it where that launcher put it —
-# looking only where we would install today finds nothing, skips the stop, and
-# then kills the terminal out from under a daemon that goes on writing the
-# status file this reset is about to read.
-PLATFORM_DIRS = (".cheese", ".claude")
+def platform_dir():
+    """The installation this copy of the runner belongs to.
 
-
-def platform_dir(home):
-    """Where this room's platform files actually are."""
-    for name in PLATFORM_DIRS:
-        directory = home / name
-        if (directory / "executor").exists():
-            return directory
-    return home / PLATFORM_DIRS[0]
+    Read off our own path rather than guessed at. A reset has to stop the
+    executor that is actually running, and a room prepared before the platform
+    last moved its root has that executor where the launcher of the day put it —
+    but so does this file, which that same launcher installed beside it. Whoever
+    started us already made the choice of root; asking again here is how one root
+    gets read while the other is the one in use.
+    """
+    return Path(__file__).parent
 
 
 def read_status(directory: Path) -> dict:
@@ -361,7 +356,7 @@ if __name__ == "__main__":
         status = read_status(root)
         if status["state"] == "preparing":
             raise SystemExit("environment is still preparing")
-        installed = platform_dir(Path.home())
+        installed = platform_dir()
         executor = installed / "execution-owner.json"
         if executor.exists():
             if json.loads(executor.read_text())["resource"] != Path.home().name:

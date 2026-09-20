@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -371,7 +372,7 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
 	return withConfig(&cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the cheese CLI from this machine (service, config, and binary)",
+		Short: "Remove cheese from this machine (service, config, everything it wrote, binary)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			warnScreens(*cfgPath)
 			// Capture the live connector's pid (recorded by `cheese run`) BEFORE anything,
@@ -391,8 +392,12 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
 						"nothing was removed — stop it and run this again", pid)
 			}
-			if err := os.RemoveAll(config.Dir()); err != nil {
-				return fmt.Errorf("remove config %s: %w", config.Dir(), err)
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("locate home directory: %w", err)
+			}
+			if err := removeFootprint(config.Dir(), home); err != nil {
+				return err
 			}
 			exe, err := os.Executable()
 			if err != nil {
@@ -401,10 +406,35 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err := os.Remove(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove binary %s: %w (delete it manually)", exe, err)
 			}
-			fmt.Println("cheese uninstalled — service, config, and binary removed.")
+			fmt.Println("cheese uninstalled — service, config, footprint, and binary removed.")
 			return nil
 		},
 	})
+}
+
+// footprintRoot is the directory under the user's home that the platform writes
+// everything into: session homes, worktrees, the shared package store, the
+// executor and its helpers, the launch scripts. The backend chooses the name in
+// `backend/app/domain/agent/place.py`; this is a copy because nothing Python is
+// importable from here, and `backend/tests/unit/test_footprint_root.py` fails if
+// the two ever disagree.
+const footprintRoot = ".cheese"
+
+// removeFootprint deletes everything `cheese` leaves on a machine: this
+// installation's own config, and the root every room was written under.
+//
+// The footprint is the part that used to survive an uninstall. Nothing in the
+// connector ever created it — the backend's launcher does, over the link — so
+// removing the connector left gigabytes of session homes and package stores on
+// a machine whose owner had just been told cheese was gone, with nothing left
+// installed that knew how to find them.
+func removeFootprint(configDir, home string) error {
+	for _, directory := range []string{configDir, filepath.Join(home, footprintRoot)} {
+		if err := os.RemoveAll(directory); err != nil {
+			return fmt.Errorf("remove %s: %w", directory, err)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
