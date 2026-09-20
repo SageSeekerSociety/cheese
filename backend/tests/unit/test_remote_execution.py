@@ -271,6 +271,109 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         )
 
 
+@pytest.mark.parametrize("custom_cache", [False, True])
+def test_executor_rooms_share_installed_tools(
+    tmp_path, monkeypatch, capsys, custom_cache
+):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+    from tests.unit.test_machine_launcher import _fake_upstream
+
+    bin_dir, downloads = _fake_upstream(tmp_path)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CHEESE_STORE", raising=False)
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "inherited-cache"))
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
+    project = uuid.uuid4()
+    tally = tmp_path / "installations"
+    environment = {
+        "revision": "shared-tools-test",
+        "variables": {"UV_CACHE_DIR": str(tmp_path / "custom-cache")}
+        if custom_cache
+        else {},
+        "setup_script": (
+            f'printf x >> "{tally}"\n'
+            'mkdir -p "$HOME/.local/bin"\n'
+            'printf "#!/bin/sh\\necho shared-tool-ok\\n" '
+            '> "$HOME/.local/bin/shared-test-tool"\n'
+            'chmod +x "$HOME/.local/bin/shared-test-tool"\n'
+            'mkdir -p "$UV_CACHE_DIR"\n'
+            'printf cached > "$UV_CACHE_DIR/setup-marker"\n'
+        ),
+        "startup_script": "",
+    }
+    states = []
+    try:
+        for room_project in (project, project, uuid.uuid4()):
+            resource = uuid.uuid4()
+            home = tmp_path / ".cheese/home" / str(room_project) / str(resource)
+            state = home / ".cheese/executor"
+            states.append(state)
+            payload = payload_for(
+                room_project,
+                resource,
+                {
+                    "CHEESE_API": "http://unused",
+                    "CHEESE_TOKEN": "test",
+                    "CHEESE_ENVIRONMENT": json.dumps(environment),
+                },
+            )
+            bootstrap.configure(payload)
+            capsys.readouterr()
+            font = (
+                tmp_path
+                / ".cheese/toolchain/fonts"
+                / payload["toolchain_fonts"]
+                / "NotoSerifSC-VF.otf"
+            )
+            deadline = time.monotonic() + 10
+            while not font.exists():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            bootstrap.configure(payload)
+            capsys.readouterr()
+            result = runtime.request(
+                state,
+                "invoke",
+                {
+                    "id": "shared-tool",
+                    "tool": "Bash",
+                    "args": {
+                        "command": 'shared-test-tool; printf "%s\\n" "$HOME" '
+                        '"$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" '
+                        '"$npm_config_store_dir" "$npm_config_cache" "$PIP_CACHE_DIR"; '
+                        'typst; pandoc; cat "$TYPST_FONT_PATHS/NotoSerifSC-VF.otf"'
+                    },
+                },
+            )
+            store = tmp_path / ".cheese/store" / str(room_project)
+            cache = tmp_path / "custom-cache" if custom_cache else store / "uv-cache"
+            assert result["value"]["stdout"].splitlines() == [
+                "shared-tool-ok",
+                str(home),
+                str(cache),
+                str(store / "uv-python"),
+                str(store / "pnpm-store"),
+                str(store / "npm-cache"),
+                str(store / "pip-cache"),
+                "typst",
+                "pandoc",
+                "OTTO serif",
+            ]
+            assert (cache / "setup-marker").read_text() == "cached"
+            assert not (home / ".local/bin/shared-test-tool").exists()
+            assert tally.read_text() == ("x" if room_project == project else "xx")
+        assert len(downloads.read_text().splitlines()) == 5
+    finally:
+        for state in states:
+            subprocess.run(
+                [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+                capture_output=True,
+                timeout=15,
+            )
+
+
 def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     """A room as it exists today: its executor installed in `.claude`.
 
