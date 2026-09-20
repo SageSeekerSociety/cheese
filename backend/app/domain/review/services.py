@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Final, NoReturn
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -64,7 +65,12 @@ from app.domain.review import (
 )
 from app.domain.review import forge as forge_mod
 from app.domain.review.merge_state import MergeVerdict, Who, whose_move
-from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
+from app.domain.review.models import (
+    AcceptCard,
+    AcceptStatus,
+    DeliverableKind,
+    GateOutcome,
+)
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.room_task.models import Task, TaskStatus
@@ -374,6 +380,46 @@ def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None
         raise ValidationError(_ARTIFACT_ACTION_MISSING)
 
 
+#: 这一版交出去的是什么 (#1085 结论五)。一份文件、一个地址，或者两个都不给 ——
+#: 那就是交出去这次合并本身（代码仓库这类项目交的就是主干往前走一步）。
+_DELIVERABLE_BOTH = (
+    "--deliver 和 --deliver-url 只能给一个：这次交出去的要么是一份文件，"
+    "要么是一个地址。"
+)
+
+#: 单份交付物的上限。成品不进库，所以这个数管的是平台那块盘，而不是用户的仓库。
+_DELIVERABLE_MAX_BYTES = 80 * 1024 * 1024
+
+
+def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
+    path, url = (deliver or "").strip(), (deliver_url or "").strip()
+    if path and url:
+        raise ValidationError(_DELIVERABLE_BOTH)
+    if url and not url.startswith(("http://", "https://")):
+        raise ValidationError(
+            "--deliver-url 要是一个能打开的网址（http:// 或 https://）"
+        )
+
+
+def _read_deliverable(
+    project_id: uuid.UUID, task_id: uuid.UUID, path: str
+) -> tuple[str, bytes]:
+    """把交付物从这一轮的工作目录里读出来，连同它的文件名。
+
+    读的是任务那棵树 —— 交付物是这条活做出来的，主干上还没有它。
+    """
+    from app.domain.workspace import service as ws
+
+    data = ws.read_file_bytes(project_id, path, task_id)
+    if len(data) > _DELIVERABLE_MAX_BYTES:
+        raise ValidationError(
+            f"{path} 有 {len(data) // 1024 // 1024}MB，超过单份交付物的 "
+            f"{_DELIVERABLE_MAX_BYTES // 1024 // 1024}MB 上限。"
+            "交出去的是一个地址时用 --deliver-url 记地址。"
+        )
+    return PurePosixPath(path).name, data
+
+
 class AcceptService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -492,6 +538,8 @@ class AcceptService:
         change_body: str | None = None,
         artifact: str | None = None,
         new_artifact: str | None = None,
+        deliver: str | None = None,
+        deliver_url: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         task = await TaskService(self._session).require_in_room(topic_id, task_id)
@@ -509,6 +557,7 @@ class AcceptService:
         # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
         # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
         _one_artifact_action(artifact, new_artifact)
+        _one_deliverable(deliver, deliver_url)
         existing = await self._repo.list_for_task(task.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
@@ -528,6 +577,18 @@ class AcceptService:
             await self._projects.get(topic.project_id),
             reviewer_handle,
             from_work=[task],
+        )
+        # 这一版交出去的那一份，在它还存在的时候读下来 (#1085 结论五)。构建产物只
+        # 活在这一轮的工作目录里，采纳时那个目录可能已经不在了 —— 建卡是唯一抓得
+        # 住它的时刻。读在声明之前：路径写错这张卡递不上去，而一张递不上去的卡不该
+        # 在清单上留下一项。
+        handed_over = (deliver or "").strip()
+        snapshot = (
+            await asyncio.to_thread(
+                _read_deliverable, task.project_id, task.id, handed_over
+            )
+            if handed_over
+            else None
         )
         is_new = bool((new_artifact or "").strip())
         declared = (
@@ -549,7 +610,24 @@ class AcceptService:
             change_body=change_body or None,
             delivered_task_ids=[task.id],
             artifact_id=declared.id,
+            deliverable_kind=(
+                DeliverableKind.file
+                if snapshot is not None
+                else DeliverableKind.link
+                if (deliver_url or "").strip()
+                else DeliverableKind.merge
+            ),
+            deliverable_name=snapshot[0] if snapshot else None,
+            deliverable_url=(deliver_url or "").strip() or None,
         )
+        if snapshot is not None:
+            await asyncio.to_thread(
+                ws.write_artifact_snapshot,
+                task.project_id,
+                card.id,
+                snapshot[0],
+                snapshot[1],
+            )
         card.pr_number, card.pr_url = task.pr_number, task.pr_url
         await self._announce_filed(topic, card, task, artifact=declared.name)
         if is_new:
@@ -806,6 +884,17 @@ class AcceptService:
                 "id": str(declared.id),
                 "name": declared.name,
                 "version": declared.version,
+            }
+        )
+        # 这一版交出去的是什么。卡面上要有它，因为验收的人要审的正是这一份：文件
+        # 在递卡那一刻就落下来了，所以他能在点采纳之前打开它。
+        data["deliverable"] = (
+            None
+            if card.deliverable_kind is None
+            else {
+                "kind": card.deliverable_kind.value,
+                "filename": card.deliverable_name,
+                "url": card.deliverable_url,
             }
         )
         data["approvals"] = await self._repo.list_approver_handles(card.id)

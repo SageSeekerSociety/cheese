@@ -545,6 +545,92 @@ async def list_artifacts(
     return ok(page(items, len(items)))
 
 
+@router.get("/{project_id}/artifacts/{artifact_id}")
+async def read_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> dict:
+    """清单上这一项自己的那一页 (#1085 结论二)：现在是第几版，以及交付过的每一版。
+
+    一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
+    纳，它后面几版的号自己往前挪。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    listed = await artifacts.summary(db, row.id)
+    history = await artifacts.versions(db, row.id)
+    return ok(
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "version": listed.version if listed else 0,
+            "delivered_at": (
+                listed.delivered_at.isoformat()
+                if listed and listed.delivered_at
+                else None
+            ),
+            "versions": [
+                {
+                    "number": v.number,
+                    "card_id": str(v.card_id),
+                    "subject": v.subject,
+                    "delivered_at": (
+                        v.delivered_at.isoformat() if v.delivered_at else None
+                    ),
+                    "decided_by": v.decided_by,
+                    "kind": v.kind,
+                    "filename": v.filename,
+                    "url": v.url,
+                }
+                for v in history
+            ],
+        }
+    )
+
+
+@router.get("/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file")
+async def download_artifact_version(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    card_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> Response:
+    """这一版交出去的那一份字节 (#1085 结论五)。
+
+    取的是当时交出去的那个快照，不是现在从源重建一次的结果：半年之后依赖变了、字
+    体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
+    一份。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    version = next(
+        (v for v in await artifacts.versions(db, artifact_id) if v.card_id == card_id),
+        None,
+    )
+    if version is None:
+        raise NotFoundError("这一项没有这一版")
+    if version.kind != "file" or not version.filename:
+        # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
+        raise NotFoundError("这一版交出去的不是一份文件")
+    data = ws.read_artifact_snapshot(project_id, card_id, version.filename)
+    filename = quote(version.filename, safe="")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
 async def _artifact_keeper(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> None:

@@ -22,6 +22,10 @@
       --artifact <产物 id>                     # 交付清单上那一项的新一版
   cheese accept-request mentor-1 "验收证据" --subject "feat: add site" \
       --new-artifact "项目官网"                # 做出了清单上还没有的一样东西
+  cheese accept-request mentor-1 "验收证据" --subject "docs: 结题报告定稿" \
+      --artifact <产物 id> --deliver 报告/结题报告.pdf   # 交出去的那一份
+  cheese accept-request mentor-1 "验收证据" --subject "feat: 上线官网" \
+      --artifact <产物 id> --deliver-url https://...     # 交出去的是一个地址
   cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
@@ -1470,6 +1474,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--new-artifact",
         help="这次交付做出了一样清单上还没有的东西，给它起个真名；返回新的 id",
     )
+    pa.add_argument(
+        "--deliver",
+        help="这次交出去的那一份文件（工作目录里的路径），平台留一份快照；单份最大 80MB",
+    )
+    pa.add_argument(
+        "--deliver-url",
+        help="这次交出去的是一个地址（网站、看板）；只记这个指针",
+    )
     pa.add_argument("--body", help="改动原因和验证说明")
     pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
     pdesc = sub.add_parser(
@@ -1958,6 +1970,8 @@ def main() -> None:
             "change_body": a.body,
             "artifact": a.artifact,
             "new_artifact": a.new_artifact,
+            "deliver": a.deliver,
+            "deliver_url": a.deliver_url,
         }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
@@ -1977,6 +1991,11 @@ def main() -> None:
         # 存在的地方 —— 不印出来,这一轮里没有别的地方读得到。
         if a.new_artifact and art.get("id"):
             print(f"这一项的 id 是 {art['id']}，以后交付它用 --artifact {art['id']}。")
+        # 交付物落没落下来当场说一句:字节只在这一刻读得到,没读到就再也读不到了。
+        if a.deliver:
+            print(f"这一版交出去的是 {a.deliver}，已留存。")
+        elif a.deliver_url:
+            print(f"这一版交出去的是 {a.deliver_url}。")
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。

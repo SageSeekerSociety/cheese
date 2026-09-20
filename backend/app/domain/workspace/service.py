@@ -915,6 +915,44 @@ def list_library_files(project_id: uuid.UUID) -> list[dict]:
     return files
 
 
+def artifact_snapshot_path(
+    project_id: uuid.UUID, card_id: uuid.UUID, name: str
+) -> Path:
+    """这一版交出去的那一份的位置 (#1085 结论五)。
+
+    一版是一次交付，一次交付就是一张采纳了的卡，所以快照按卡分目录：同一项产物的
+    七版互不覆盖，而撤回采纳只改卡的状态、不动字节。
+
+    在资料库旁边（`.library/` / `.artifacts/`），不在 git 里：成品是从源构建出来
+    的，进库就是把五十版 20MB 的幻灯片提交进仓库的那条老路。名字只取最后一段——
+    交付物的地址是「哪一版的那一份」，它在工作目录里的哪个子目录不是它的身份。
+    """
+    leaf = Path(name).name
+    if not leaf or leaf in {".", ".."}:
+        raise ValidationError(f"这不是一个文件名：{name}")
+    root = Path(settings.workspace_root) / ".artifacts" / str(project_id)
+    return (root / str(card_id) / leaf).resolve()
+
+
+def write_artifact_snapshot(
+    project_id: uuid.UUID, card_id: uuid.UUID, name: str, data: bytes
+) -> None:
+    target = artifact_snapshot_path(project_id, card_id, name)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
+def read_artifact_snapshot(
+    project_id: uuid.UUID, card_id: uuid.UUID, name: str
+) -> bytes:
+    target = artifact_snapshot_path(project_id, card_id, name)
+    if not target.is_file():
+        # 交付物落地之前递的那些卡：清单上有这一版，字节从来没有过。说清是哪一
+        # 种，别让它读起来像文件丢了。
+        raise NotFoundError("这一版没有留存文件")
+    return target.read_bytes()
+
+
 def read_preview_file(
     project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
 ) -> bytes:

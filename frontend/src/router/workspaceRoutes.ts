@@ -110,6 +110,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '资料库', hideTabs: true, backTo: 'workspace-project' },
     },
     {
+      // 清单上的一项产物。项目级，和资料库并列：交付它的那个房间可能已经归档，
+      // 而这一项还在，后面每一次交付都算它的新一版。
+      name: 'project-artifact',
+      path: 'artifacts/:artifactId',
+      component: () => import('@/views/ProjectArtifactView.vue'),
+      props: true,
+      meta: { title: '产物', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       name: 'project-agents',
       path: 'agents',
       component: () => import('@/views/ProjectAgentsView.vue'),
