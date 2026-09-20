@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import type { FeedbackProposal } from '@/cx_types'
+
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import SubmitFeedbackDrawer from './SubmitFeedbackDrawer.vue'
 
+import { KIND_LABEL } from '@/lib/feedbackMeta'
+import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 会话里的 Agent 反馈卡：芝士排查完之后，在这里问一句「要提交反馈吗」。
@@ -19,78 +23,109 @@ import { useFeedbackStore } from '@/stores/feedback'
 //                  递上来的卡，如果拒绝它比接受它更费劲，那它就不叫「问一句」了。
 //   * 提交反馈  —— 唯一的实心按钮。
 //
-// 本轮没有后端，所以这张卡的**数据**是本地写死的（finding 的默认值），而它的
-// **行为**是真的：提交走的是和反馈中心同一个 store action，提交完这里会变成一条
-// 已提交凭证并链到那条反馈。接真接口时要改的只有 finding 从哪来。
-export interface AgentFinding {
-  /** 一句话摘要，卡片正文。 */
-  summary: string
-  /** 简短判断依据：为什么这不是使用方式的问题。 */
-  reason: string
-  whatHappened: string
-  repro: string
-  evidence: string
-  sessionId?: string
-  environment?: string
-}
+// 这一轮它接上了真接口，所以三件事换了地方：
+//   * 卡从哪来：`GET /topics/{id}/feedback-proposals`（`live_cards`）。数据是
+//     `Block.meta.feedback_proposal`，不是本地写死的样例。
+//   * 「不用」记在哪：**服务端**，按指纹记（`feedback_proposal_dismissals`）。
+//     原型只是把这一帧的 state 改成 dismissed，刷新就回来 —— 而「我拒绝过这个」
+//     恰恰是最需要跨刷新记住的一句话。
+//   * 发出去的是哪条：走 `accept`（`POST .../{block_id}/accept`），作者从卡上取
+//     （提案的 agent），提交者取调用者（我）。正文以抽屉里那份为准 —— 人要为自己
+//     发出去的东西负责，所以他能改。
+//
+// 卡片正文里最显眼的那一块是**用户原话**（`user_said`）。服务端把它做成必填，
+// 且只认两种填法：引用原话，或者那句「用户没有就这个问题说过话」。把这一条摆在
+// 「判断依据」上面，是这张卡唯一一个不用解释就成立的诚信机制：读的人第一眼看到的
+// 不是芝士的推理，而是这句话有没有根据。
+defineOptions({ name: 'AgentFeedbackCard' })
 
-const props = withDefaults(defineProps<{ finding?: AgentFinding }>(), {
-  finding: () => ({
-    summary: '连续两次上传同名附件时，第二次会静默失败，界面上没有任何提示。',
-    reason: '接口返回 200，但附件列表长度没有变化——这是平台在处理同名文件时的行为，不是你的操作方式。',
-    whatHappened: '你在同一个话题里上传了两次 `error.log`，消息里始终只有第一条附件。',
-    repro: '1. 新建话题\n2. 上传 error.log\n3. 再上传一份同名但内容不同的 error.log\n4. 消息里仍然只有第一条附件',
-    evidence: 'POST /topics/{id}/attachments 返回 200，响应里 attachments 的长度与上传前一致；后端没有同名冲突的提示。',
-    sessionId: 'sess_2f90bd',
-    environment: 'Chrome 141 / Linux / PWA 安装版',
-  }),
-})
+const props = defineProps<{ topicId: string }>()
 
 const store = useFeedbackStore()
 const router = useRouter()
 
-/** ask → 正在问；submitted → 已提交，卡变成凭证；dismissed → 这一轮不再出现。 */
-const state = ref<'ask' | 'submitted' | 'dismissed'>('ask')
-const expanded = ref(false)
-const submittedId = ref<string | null>(null)
+/** 这个话题里还活着的提案。拉不到就是空数组（提案是顺路问一句，不该让对话栏报错）。 */
+const proposals = ref<FeedbackProposal[]>([])
+/** 已经发出去的：block_id → 那条反馈的 id。卡在这一轮里变成一张凭证。 */
+const submitted = ref<Record<string, string>>({})
+/** 已经「不用」的：本地立刻收起。服务端那边同一件事已经落库了。 */
+const dismissed = ref<Set<string>>(new Set())
+/** 展开着的那些（按 block_id）。 */
+const expanded = ref<Set<string>>(new Set())
+/** 抽屉正为哪张卡开着的。抽屉是全局唯一的那一个，所以只需要记一个。 */
+const pending = ref<string | null>(null)
 
-const visible = computed(() => state.value !== 'dismissed')
+async function load() {
+  proposals.value = await store.loadProposals(props.topicId)
+}
 
-function openDrawer() {
+onMounted(load)
+// 换话题就重拉：这个组件在话题之间会被复用（同一个路由，只换参数）。
+watch(() => props.topicId, load)
+
+function visibleCards(): FeedbackProposal[] {
+  return proposals.value.filter((p) => !dismissed.value.has(p.block_id))
+}
+
+function toggleExpanded(blockId: string) {
+  const next = new Set(expanded.value)
+  if (next.has(blockId)) next.delete(blockId)
+  else next.add(blockId)
+  expanded.value = next
+}
+
+function openDrawer(proposal: FeedbackProposal) {
+  const p = proposal.payload
+  pending.value = proposal.block_id
   store.openSubmit({
-    kind: 'bug',
-    title: props.finding.summary,
-    body: props.finding.reason,
-    // 「附带会话日志」默认勾上：这张卡存在的理由就是别让现场丢掉。
-    attachLogs: true,
+    kind: p.kind,
+    title: p.title,
+    body: p.problem,
+    visibility: p.visibility,
+    // 从这张卡进来时现场默认勾上：卡存在的理由就是别让现场丢掉。
+    attachContext: true,
     fromAgent: {
-      whatHappened: props.finding.whatHappened,
-      repro: props.finding.repro,
-      evidence: props.finding.evidence,
-      sessionId: props.finding.sessionId,
-      environment: props.finding.environment,
+      whatHappened: p.what_happened ?? '',
+      repro: p.repro ?? '',
+      evidence: p.evidence ?? '',
+      sessionId: p.session_id ?? undefined,
+      environment: p.environment ?? undefined,
     },
+    proposal: { topicId: props.topicId, blockId: proposal.block_id },
   })
 }
 
-/** 抽屉提交完成 —— 它是全局共享的那一个，所以这里只知道「刚提交了某一条」。
- *  同一个话题里一般只会有一张这样的卡，用它自己的 id 记下来就够了。 */
+/** 「不用」。服务端按**指纹**记，所以同一个问题的另一种说法回来时是另一条，会被再问一次
+ *  —— 那是刻意的：换过说法的那条，值得再问一遍。 */
+function dismiss(proposal: FeedbackProposal) {
+  dismissed.value = new Set([...dismissed.value, proposal.block_id])
+  void store.dismissProposal(props.topicId, proposal.block_id)
+}
+
+/** 抽屉提交完成 —— 它是全局共享的那一个，所以只由**开着它的那张卡**记下来。 */
 function onSubmitted(id: string) {
-  state.value = 'submitted'
-  submittedId.value = id
+  const blockId = pending.value
+  pending.value = null
+  if (!blockId) return
+  submitted.value = { ...submitted.value, [blockId]: id }
 }
 </script>
 
 <template>
-  <template v-if="visible">
-    <v-card v-if="state === 'submitted'" variant="outlined" class="fb-agent-card mt-2">
+  <template v-for="proposal in visibleCards()" :key="proposal.block_id">
+    <v-card v-if="submitted[proposal.block_id]" variant="outlined" class="fb-agent-card mt-2">
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="success" size="19">mdi-check-circle-outline</v-icon>
-          <span class="t-title">已提交为 {{ submittedId }}</span>
+          <span class="t-title">已提交</span>
         </div>
         <div class="t-body mb-3">反馈中心里能看到它的进展。</div>
-        <v-btn variant="outlined" color="secondary" size="small" @click="router.push(`/feedback/${submittedId}`)">
+        <v-btn
+          variant="outlined"
+          color="secondary"
+          size="small"
+          @click="router.push(`/feedback/${submitted[proposal.block_id]}`)"
+        >
           查看这条反馈
         </v-btn>
       </div>
@@ -98,15 +133,27 @@ function onSubmitted(id: string) {
 
     <v-card v-else variant="outlined" class="fb-agent-card mt-2">
       <div class="pa-3">
-        <div class="d-flex align-center ga-2 mb-2">
+        <div class="d-flex align-center ga-2 mb-1">
           <v-icon size="19">mdi-robot-outline</v-icon>
           <span class="t-title">我确认这里更像是平台问题，而不是你的使用方式</span>
         </div>
+        <div class="t-meta mb-2">
+          {{ KIND_LABEL[proposal.payload.kind] }} · {{ proposal.author_handle }} ·
+          {{ relTime(proposal.authored_at) }}
+        </div>
 
-        <div class="t-body mb-2">{{ finding.summary }}</div>
-        <div class="fb-agent-card__reason mb-3">
-          <span class="t-eyebrow">判断依据</span>
-          <div class="t-body">{{ finding.reason }}</div>
+        <div class="t-title mb-2">{{ proposal.payload.title }}</div>
+
+        <!-- 用户原话。**放在判断依据上面**，理由见文件开头：这是这张卡唯一一个
+             不用解释就成立的诚信机制，读的人该先看见它。 -->
+        <div class="fb-agent-card__said mb-3">
+          <div class="t-eyebrow mb-1">你当时说的</div>
+          <div class="t-body fb-agent-card__quote">{{ proposal.payload.user_said }}</div>
+        </div>
+
+        <div v-if="proposal.payload.why" class="fb-agent-card__reason mb-3">
+          <div class="t-eyebrow mb-1">判断依据（为什么这不是你的使用方式）</div>
+          <div class="t-body fb-agent-card__text">{{ proposal.payload.why }}</div>
         </div>
 
         <!-- 展开区：三段现场。默认收起，见上面那段注释。
@@ -115,23 +162,29 @@ function onSubmitted(id: string) {
              「查看详情」变成「收起详情」。它走的是 Vuetify 自己的那组 class，所以
              style.css 里那条 prefers-reduced-motion 兜底照样管得住它。 -->
         <v-expand-transition>
-          <div v-if="expanded" class="fb-agent-card__evidence mb-3">
-            <div class="fb-evidence-block">
+          <div v-if="expanded.has(proposal.block_id)" class="fb-agent-card__evidence mb-3">
+            <div v-if="proposal.payload.what_happened" class="fb-evidence-block">
               <div class="t-eyebrow mb-1">发生了什么</div>
-              <div class="t-body">{{ finding.whatHappened }}</div>
+              <div class="t-body fb-agent-card__text">{{ proposal.payload.what_happened }}</div>
             </div>
-            <div class="fb-evidence-block">
+            <div v-if="proposal.payload.repro" class="fb-evidence-block">
               <div class="t-eyebrow mb-1">复现步骤</div>
-              <pre class="fb-evidence-pre">{{ finding.repro }}</pre>
+              <pre class="fb-evidence-pre">{{ proposal.payload.repro }}</pre>
             </div>
-            <div class="fb-evidence-block">
+            <div v-if="proposal.payload.evidence" class="fb-evidence-block">
               <div class="t-eyebrow mb-1">证据</div>
-              <div class="t-body">{{ finding.evidence }}</div>
+              <div class="t-body fb-agent-card__text">{{ proposal.payload.evidence }}</div>
             </div>
-            <div v-if="finding.sessionId || finding.environment" class="t-meta">
-              <template v-if="finding.sessionId">会话 {{ finding.sessionId }}</template>
-              <template v-if="finding.sessionId && finding.environment"> · </template>
-              <template v-if="finding.environment">{{ finding.environment }}</template>
+            <!-- 日志只给个长度，不铺开：它是最大的一段（上限两万字），而这一屏的
+                 目的是让人决定要不要提交，不是读日志。真正的日志随反馈一起走。 -->
+            <div v-if="proposal.payload.logs" class="fb-evidence-block">
+              <div class="t-eyebrow mb-1">日志</div>
+              <div class="t-meta">已附上（{{ proposal.payload.logs.length }} 字），跟着反馈一起提交</div>
+            </div>
+            <div v-if="proposal.payload.session_id || proposal.payload.environment" class="t-meta">
+              <template v-if="proposal.payload.session_id">会话 {{ proposal.payload.session_id }}</template>
+              <template v-if="proposal.payload.session_id && proposal.payload.environment"> · </template>
+              <template v-if="proposal.payload.environment">{{ proposal.payload.environment }}</template>
             </div>
           </div>
         </v-expand-transition>
@@ -141,14 +194,14 @@ function onSubmitted(id: string) {
             variant="text"
             color="secondary"
             size="small"
-            :prepend-icon="expanded ? 'mdi-chevron-up' : 'mdi-chevron-down'"
-            @click="expanded = !expanded"
+            :prepend-icon="expanded.has(proposal.block_id) ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+            @click="toggleExpanded(proposal.block_id)"
           >
-            {{ expanded ? '收起详情' : '查看详情' }}
+            {{ expanded.has(proposal.block_id) ? '收起详情' : '查看详情' }}
           </v-btn>
-          <v-btn variant="text" color="secondary" size="small" @click="state = 'dismissed'">不用</v-btn>
+          <v-btn variant="text" color="secondary" size="small" @click="dismiss(proposal)">不用</v-btn>
           <v-spacer />
-          <v-btn color="primary" size="small" @click="openDrawer">提交反馈</v-btn>
+          <v-btn color="primary" size="small" @click="openDrawer(proposal)">提交反馈</v-btn>
         </div>
       </div>
     </v-card>
@@ -162,12 +215,24 @@ function onSubmitted(id: string) {
 <style scoped>
 /* 圆角不在这里写：VCard 默认的 rounded="xl"(24px) 带 !important，scoped 的 12px
    压不过它（FeedbackCard.vue 里有同一段说明）。 */
-/* 判断依据用 inset 底色，和上面那句摘要分开：摘要是「发生了什么」，依据是「凭
-   什么说这是平台的问题」，两件事不该长得一样。 */
+/* 用户原话用左边一道竖线引用，判断依据用 inset 底色 —— 两件事不该长得一样：
+   原话是**证据**（不可改写），判断依据是**推理**（可能错）。 */
+.fb-agent-card__said {
+  padding: 8px 10px 8px 12px;
+  border-left: 2px solid var(--line-2);
+}
+.fb-agent-card__quote {
+  font-style: italic;
+  color: var(--text);
+  white-space: pre-wrap;
+}
 .fb-agent-card__reason {
   padding: 8px 10px;
   border-radius: var(--radius-md);
   background: var(--fill);
+}
+.fb-agent-card__text {
+  white-space: pre-wrap;
 }
 .fb-agent-card__evidence {
   padding: 10px 12px;

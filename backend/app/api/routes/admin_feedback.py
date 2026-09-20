@@ -23,7 +23,6 @@ from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
 from app.domain.feedback.schemas import (
     FeedbackCard,
-    FeedbackDetail,
     FeedbackPatch,
     FeedbackStatusIn,
     NoteCreate,
@@ -69,8 +68,8 @@ async def _cards(
 async def _detail(
     service: feedback_services.FeedbackService, row: Feedback, *, handle: str
 ) -> dict:
-    payload = await service.detail_payload(row, handle=handle, is_admin=True)
-    return FeedbackDetail.from_row(row, **payload).model_dump(mode="json")
+    view = await service.detail_of(row, handle=handle, is_admin=True)
+    return view.model_dump(mode="json")
 
 
 @router.get("")

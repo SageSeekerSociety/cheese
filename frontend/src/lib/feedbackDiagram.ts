@@ -1,26 +1,27 @@
 /**
  * feedbackDiagram.ts — 反馈功能的表结构与架构图数据。
  *
- * 内容抄自 `docs/topics/反馈功能后端设计-方案稿.md`：§2.2 / §2.3 / §2.4 是表，
- * §2.5 是状态集，§5.8 是 agent 那条入口，§6.2 是未读。**图里不引入方案稿没有
- * 的东西** —— 图比文字更容易被当成承诺，多一根线就多一个「那就这么做吧」。
+ * **这张图画的是已经落地的东西**：表、关系、链路都对着
+ * `backend/app/domain/feedback/` 与 `backend/app/api/routes/feedback*.py` 核过，
+ * 两侧不一致时以代码为准。方案稿（`docs/topics/反馈功能后端设计-方案稿.md`）是
+ * 这些判断的来龙去脉，图不再引用它还没实现的那些表 —— 图比文字更容易被当成承诺，
+ * 多画一根线就多一个「那就这么做吧」。
  *
- * 方案稿里标了「待定」的表，这里用 `tentative` 标出来：画成虚线框，并写明还没
- * 定什么。藏起来不画会让人以为这块已经想清楚了。
- *
- * 方案稿改了这张图就要跟着改。两边不一致时，方案稿是准的。
+ * 方案稿里写、但**没有实现**的东西不画：附件表、标签关联表、`alerts` 那一套投递。
+ * 它们的去向写在方案稿 §8.1 / §8.2 里。
  */
 import type { DiagramArch, DiagramEr } from './diagramSpec'
 
 export const feedbackEr: DiagramEr = {
   title: '反馈功能的表与关系',
-  subtitle: '六张新表都挂在 feedback 上；话题、项目、会话只是可空的上下文指针。虚线表示没有真外键。',
+  subtitle:
+    '新建七张表：六张挂在 feedback 上，拒绝记忆挂在话题上。话题、项目、会话只是可空的上下文指针。虚线表示没有真外键。',
   entities: [
     {
       id: 'topics',
       title: 'topics',
       group: '上下文与既有表',
-      note: '既有表。删话题不会删反馈，只是 topic_id 置空。',
+      note: '既有表。删话题不会删反馈，只把 topic_id 置空；但会删掉那条话题的拒绝记忆。',
       columns: [{ name: 'id', type: 'Uuid', badge: 'PK' }],
     },
     {
@@ -41,12 +42,10 @@ export const feedbackEr: DiagramEr = {
       id: 'alerts',
       title: 'alerts',
       group: '上下文与既有表',
-      note: '既有表，复用它投递邮件与站内通知。硬不匹配：它的 project_id 非空。',
+      note: '既有表，**没有用它**：project_id 非空，而反馈没有项目（§6.2）。',
       columns: [
         { name: 'id', type: 'Uuid', badge: 'PK' },
-        { name: 'project_id', type: 'Uuid', badge: 'FK', note: '非空' },
-        { name: 'kind', type: 'Enum(16)', note: '加两个值' },
-        { name: 'target_handle', type: 'String(64)' },
+        { name: 'project_id', type: 'Uuid', badge: 'FK', note: '非空，所以绕开' },
       ],
     },
     {
@@ -57,13 +56,13 @@ export const feedbackEr: DiagramEr = {
       note: '索引：(visibility, status, created_at)、(visibility, security, created_at)、author / submitted_by / assignee。',
       columns: [
         { name: 'id', type: 'Uuid', badge: 'PK' },
-        { name: 'display_no', type: 'Integer', badge: 'SEQ', note: 'FB-1042' },
+        { name: 'display_no', type: 'Integer', badge: 'SEQ', note: 'FB-1042，接口里叫 display_id' },
         { name: 'title', type: 'String(300)' },
-        { name: 'summary', type: 'String(300)', note: '服务端截的正文首行' },
+        { name: 'summary', type: 'String(300)', note: '列表那一句' },
         { name: 'kind', type: 'Enum(16)', note: 'bug/suggestion/other' },
         { name: 'status', type: 'Enum(16)', note: '五档，与 timeline 同事务写' },
         { name: 'visibility', type: 'Enum(16)', note: 'public/private' },
-        { name: 'security', type: 'Boolean', note: '与 visibility 正交' },
+        { name: 'security', type: 'Boolean', note: 'private 之下的一层收窄' },
         { name: 'priority', type: 'Enum(16)' },
         { name: 'problem / why / expectation', type: 'Text', note: '人写的三段' },
         { name: 'what_happened / repro / evidence', type: 'Text', note: 'agent 现场三段，可空' },
@@ -72,28 +71,14 @@ export const feedbackEr: DiagramEr = {
         { name: 'environment', type: 'String(255)', note: '快照' },
         { name: 'author_handle', type: 'String(64)', badge: 'IDX', note: '发现者' },
         { name: 'author_user_id', type: 'Integer' },
-        { name: 'author_is_agent', type: 'Boolean' },
+        { name: 'author_is_agent', type: 'Boolean', note: '与 submitted_by 是两个人' },
         { name: 'submitted_by_handle', type: 'String(64)', note: '谁按下提交的' },
         { name: 'assignee_handle', type: 'String(64)', badge: 'IDX', note: '部分索引' },
         { name: 'topic_id', type: 'Uuid', badge: 'FK', note: '可空，SET NULL' },
         { name: 'project_id', type: 'Uuid', badge: 'FK', note: '可空，SET NULL' },
-        { name: 'tags', type: 'JSON', note: 'MVP 不建标签表' },
+        { name: 'tags', type: 'JSON', note: '不建标签表' },
         { name: 'created_at / updated_at', type: 'Timestamps' },
-        { name: 'deleted_at', type: 'DateTime', note: '软删' },
-      ],
-    },
-    {
-      id: 'feedback_attachments',
-      title: 'feedback_attachments',
-      group: '反馈主体',
-      isNew: true,
-      note: '存法待定（§8.7）。硬要求：私密反馈的附件不能有公开 URL。',
-      columns: [
-        { name: 'id', type: 'Uuid', badge: 'PK' },
-        { name: 'feedback_id', type: 'Uuid', badge: 'FK', note: 'CASCADE' },
-        { name: 'name / url / mime_type', type: 'String' },
-        { name: 'size', type: 'Integer' },
-        { name: 'created_at', type: 'DateTime' },
+        { name: 'deleted_at', type: 'DateTime', note: '留着，还没有端点会写它' },
       ],
     },
     {
@@ -118,7 +103,7 @@ export const feedbackEr: DiagramEr = {
       columns: [
         { name: 'id', type: 'Uuid', badge: 'PK' },
         { name: 'feedback_id', type: 'Uuid', badge: 'FK', note: 'CASCADE' },
-        { name: 'parent_id', type: 'Uuid', badge: 'FK', note: '可空，指回本表' },
+        { name: 'parent_id', type: 'Uuid', badge: 'FK', note: '只指顶层评论，可空' },
         { name: 'author_handle', type: 'String(64)' },
         { name: 'author_is_agent', type: 'Boolean' },
         { name: 'body', type: 'Text' },
@@ -130,7 +115,7 @@ export const feedbackEr: DiagramEr = {
       title: 'feedback_timeline',
       group: '流程与通知',
       isNew: true,
-      note: 'append-only。改状态与追加事件必须同一个事务。',
+      note: 'append-only，允许回退再推进。改状态与追加事件必须同一个事务。',
       columns: [
         { name: 'id', type: 'Uuid', badge: 'PK' },
         { name: 'feedback_id', type: 'Uuid', badge: 'FK', note: 'CASCADE' },
@@ -154,28 +139,30 @@ export const feedbackEr: DiagramEr = {
       ],
     },
     {
-      id: 'feedback_proposal',
-      title: 'feedback_proposal',
-      group: '流程与通知',
-      isNew: true,
-      tentative: true,
-      note: '待定：§5.8 说要新建，也可能塞进 alerts 的形状。列还没定，只定了一件事——要有指纹唯一索引。',
-      columns: [
-        { name: 'proposal_fingerprint', type: 'String', badge: 'UQ', note: '唯一索引' },
-        { name: '（其余列待定）', type: '—' },
-      ],
-    },
-    {
       id: 'feedback_read_states',
       title: 'feedback_read_states',
       group: '流程与通知',
       isNew: true,
-      tentative: true,
-      note: '待定：§6.2 的两个做法之一，另一个是全局 (user_handle, last_read_at) 游标。',
+      note: '一人一条游标：未读是「比我上次读的时间更新的动静」，不是逐条已读表。',
       columns: [
-        { name: 'feedback_id', type: 'Uuid', badge: 'FK' },
-        { name: 'user_handle', type: 'String(64)' },
+        { name: 'id', type: 'Uuid', badge: 'PK' },
+        { name: 'user_handle', type: 'String(64)', badge: 'UQ', note: '一人一行' },
         { name: 'last_read_at', type: 'DateTime' },
+        { name: 'created_at / updated_at', type: 'Timestamps' },
+      ],
+    },
+    {
+      id: 'feedback_proposal_dismissals',
+      title: 'feedback_proposal_dismissals',
+      group: '流程与通知',
+      isNew: true,
+      note: '「这个不用」只该问一次。指纹不是 block id：换个说法提上来，人不想再看第二遍。',
+      columns: [
+        { name: 'id', type: 'Uuid', badge: 'PK' },
+        { name: 'topic_id', type: 'Uuid', badge: 'FK', note: 'CASCADE，范围是话题' },
+        { name: 'fingerprint', type: 'String(64)', badge: 'UQ', note: '唯一约束 (topic_id, fingerprint)' },
+        { name: 'dismissed_by_handle', type: 'String(64)' },
+        { name: 'created_at', type: 'DateTime' },
       ],
     },
   ],
@@ -183,21 +170,19 @@ export const feedbackEr: DiagramEr = {
     { from: 'feedback', to: 'topics', cardinality: 'N-1', soft: true, label: '上下文' },
     { from: 'feedback', to: 'projects', cardinality: 'N-1', soft: true, label: '上下文' },
     { from: 'feedback', to: 'agent_sessions', cardinality: 'N-1', soft: true, label: '快照' },
-    { from: 'feedback', to: 'alerts', cardinality: '1-N', soft: true, label: '通知' },
-    { from: 'feedback_attachments', to: 'feedback', cardinality: 'N-1', label: '附件' },
     { from: 'feedback_supports', to: 'feedback', cardinality: 'N-1', label: '支持' },
     { from: 'feedback_comments', to: 'feedback', cardinality: 'N-1', label: '评论' },
     { from: 'feedback_comments', to: 'feedback_comments', cardinality: 'N-1', label: '回复' },
     { from: 'feedback_timeline', to: 'feedback', cardinality: 'N-1', label: '状态事件' },
     { from: 'feedback_notes', to: 'feedback', cardinality: 'N-1', label: '备注' },
-    { from: 'feedback_proposal', to: 'feedback', cardinality: 'N-1', soft: true, label: '采纳后落库' },
-    { from: 'feedback_read_states', to: 'feedback', cardinality: 'N-1', soft: true, label: '未读游标' },
+    { from: 'feedback_proposal_dismissals', to: 'topics', cardinality: 'N-1', label: '拒绝记忆' },
+    { from: 'feedback_read_states', to: 'feedback', cardinality: 'N-1', soft: true, label: '未读' },
   ],
 }
 
 export const feedbackArch: DiagramArch = {
   title: '反馈从哪来、到哪去',
-  subtitle: '四条提交通道最后都收敛到同一条 POST /feedback；agent 那条先成为提案，等人拍板。',
+  subtitle: '两条提交通道最后都落到 feedback 表：人直接写，agent 先成为提案卡、由人在卡上按采纳。',
   lanes: [
     {
       id: 'harness',
@@ -205,8 +190,8 @@ export const feedbackArch: DiagramArch = {
       nodes: [
         { id: 'cc', label: 'Claude Code', sub: 'SendFeedback 提草稿', kind: 'harness' },
         { id: 'agent', label: '芝士会话内反馈卡', sub: '轮次里主动调工具', kind: 'harness' },
-        { id: 'manual', label: '用户手动提交', sub: '/bug · 提交抽屉', kind: 'harness' },
-        { id: 'other', label: '其他 CLI', sub: '待定：同一个工具', kind: 'note' },
+        { id: 'manual', label: '用户手动提交', sub: '反馈中心的提交抽屉', kind: 'harness' },
+        { id: 'other', label: '其他 harness', sub: '同一个 cheese 子命令', kind: 'harness' },
         { id: 'patrol', label: '无屏巡检轮次', sub: '走告警，不给工具', kind: 'note' },
       ],
     },
@@ -223,7 +208,7 @@ export const feedbackArch: DiagramArch = {
       title: '上报契约',
       nodes: [
         { id: 'propose', label: '反馈提案工具', sub: 'cheese_feedback_propose', kind: 'tool' },
-        { id: 'render', label: '渲染提案卡', sub: '平台渲染，非旁白', kind: 'tool' },
+        { id: 'render', label: '渲染提案卡', sub: '一条消息块，不是旁白', kind: 'tool' },
         { id: 'submit', label: '统一提交管道', sub: 'POST /feedback', kind: 'tool' },
       ],
     },
@@ -231,36 +216,33 @@ export const feedbackArch: DiagramArch = {
       id: 'server',
       title: '平台服务端',
       nodes: [
-        { id: 'auth', label: '鉴权', sub: '解析请求里的 Actor', kind: 'service' },
-        { id: 'quota', label: '防刷屏四道', sub: '配额 · 去重 · 拒绝记忆', kind: 'service' },
-        { id: 'idem', label: '幂等键', sub: 'Idempotency-Key', kind: 'service' },
+        { id: 'auth', label: '鉴权', sub: '两族凭据都认的 Actor', kind: 'service' },
+        { id: 'quota', label: '每日配额', sub: '每话题 2 条，可配置', kind: 'service' },
+        { id: 'dedup', label: '指纹去重', sub: '发生了什么 + 怎么复现', kind: 'service' },
         { id: 'api_u', label: '用户侧 API', sub: '列表 · 详情 · 评论', kind: 'service' },
-        { id: 'api_a', label: '管理侧 API', sub: '状态 · 指派 · 备注', kind: 'service' },
+        { id: 'api_a', label: '管理侧 API', sub: '白名单才进得来', kind: 'service' },
         { id: 'meta', label: '元数据接口', sub: 'GET /feedback/meta', kind: 'service' },
       ],
     },
     {
       id: 'storage',
-      title: '存储与投递',
+      title: '存储',
       nodes: [
-        { id: 'store', label: '反馈主表与子表', sub: 'PostgreSQL，带哨兵', kind: 'store' },
-        { id: 'alertsx', label: '既有 alerts', sub: '复用投递渠道', kind: 'store' },
-        { id: 'unread', label: '未读游标', sub: '照话题未读的形状', kind: 'store' },
-        { id: 'queue', label: '投递队列', sub: '邮件与站内推送', kind: 'queue' },
-        { id: 'bell', label: '铃铛事件流', sub: '被回复 · 状态变化', kind: 'queue' },
-        { id: 'awaiting', label: '待办接口', sub: 'GET /awaiting-me', kind: 'queue' },
+        { id: 'store', label: '反馈主表与子表', sub: 'PostgreSQL，单 head', kind: 'store' },
+        { id: 'unread', label: '未读游标', sub: '一人一条，全库', kind: 'store' },
+        { id: 'dismiss', label: '拒绝记忆', sub: '按话题 + 指纹', kind: 'store' },
+        { id: 'alertsx', label: '既有 alerts', sub: '巡检的问题走它', kind: 'store' },
       ],
     },
     {
       id: 'frontend',
       title: '界面',
       nodes: [
-        { id: 'center', label: '反馈中心', sub: '4 个 Tab', kind: 'ui' },
-        { id: 'detail', label: '反馈详情', sub: '编号仅管理员可见', kind: 'ui' },
+        { id: 'center', label: '反馈中心', sub: '4 个 Tab + 未读', kind: 'ui' },
+        { id: 'detail', label: '反馈详情', sub: '支持 · 评论 · 时间线', kind: 'ui' },
         { id: 'drawer', label: '提交抽屉', sub: '唯一的手动写入口', kind: 'ui' },
-        { id: 'card_ui', label: '会话内反馈卡', sub: '挂在时间线末尾', kind: 'ui' },
-        { id: 'admin', label: '管理后台', sub: '独立网页，仅管理员', kind: 'ui' },
-        { id: 'roles', label: '角色接口', sub: 'GET /me/roles', kind: 'ui' },
+        { id: 'card_ui', label: '会话内反馈卡', sub: '挂在对话流里', kind: 'ui' },
+        { id: 'admin', label: '管理后台', sub: '同一 SPA，仅管理员', kind: 'ui' },
       ],
     },
   ],
@@ -270,33 +252,26 @@ export const feedbackArch: DiagramArch = {
     { from: 'ccr', to: 'submit', label: '人确认后送出' },
     { from: 'manual', to: 'submit', label: '同一条管道' },
     { from: 'agent', to: 'propose', label: '主动调用' },
-    { from: 'other', to: 'propose', label: '待定' },
+    { from: 'other', to: 'propose', label: '同一个工具' },
     { from: 'patrol', to: 'alertsx', label: '走告警' },
     { from: 'propose', to: 'quota', label: '过闸' },
-    { from: 'quota', to: 'render', label: '渲染成卡' },
-    { from: 'render', to: 'card_ui', label: '挂到时间线' },
-    { from: 'card_ui', to: 'drawer', label: '点提交' },
+    { from: 'quota', to: 'dedup', label: '查指纹' },
+    { from: 'dedup', to: 'render', label: '渲染成卡' },
+    { from: 'render', to: 'card_ui', label: '挂到对话流' },
+    { from: 'card_ui', to: 'drawer', label: '点采纳' },
     { from: 'drawer', to: 'submit', label: '人按下提交' },
     { from: 'submit', to: 'auth', label: '鉴权' },
-    { from: 'auth', to: 'api_u', label: '放行 / 403' },
-    { from: 'submit', to: 'idem', label: '带幂等键' },
-    { from: 'idem', to: 'store', label: '重试只落一条' },
+    { from: 'auth', to: 'api_u', label: '放行' },
     { from: 'api_u', to: 'store', label: '写入' },
-    { from: 'api_a', to: 'store', label: '改状态同事务' },
-    { from: 'store', to: 'alertsx', label: '状态变更' },
-    { from: 'store', to: 'unread', label: '推进游标' },
-    { from: 'alertsx', to: 'queue', label: '写投递队列' },
-    { from: 'alertsx', to: 'awaiting', label: '进待办' },
-    { from: 'queue', to: 'bell', label: '送达' },
-    { from: 'bell', to: 'detail', label: '点通知' },
-    { from: 'awaiting', to: 'card_ui', label: '待办指向' },
+    { from: 'api_a', to: 'store', label: '改状态' },
+    { from: 'store', to: 'unread', label: '推游标' },
+    { from: 'store', to: 'dismiss', label: '记指纹' },
     { from: 'unread', to: 'center', label: '未读计数' },
     { from: 'center', to: 'api_u', label: '列表查询' },
     { from: 'detail', to: 'api_u', label: '详情与评论' },
-    { from: 'drawer', to: 'api_u', label: '提交后刷新' },
+    { from: 'drawer', to: 'api_u', label: '提交' },
     { from: 'admin', to: 'api_a', label: '管理操作' },
-    { from: 'roles', to: 'admin', label: '是不是管理员' },
-    { from: 'meta', to: 'admin', label: '状态梯子' },
-    { from: 'meta', to: 'center', label: '文案与阈值' },
+    { from: 'meta', to: 'center', label: '词表与阈值' },
+    { from: 'meta', to: 'admin', label: '是不是管理员' },
   ],
 }

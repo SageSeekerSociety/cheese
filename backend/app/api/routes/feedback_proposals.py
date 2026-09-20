@@ -28,7 +28,6 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.feedback import proposals as proposal_rules
 from app.domain.feedback.schemas import (
     FeedbackCreate,
-    FeedbackDetail,
     FeedbackProposalIn,
     FeedbackProposalResult,
 )
@@ -168,6 +167,9 @@ async def accept_feedback_proposal(
 
     正文取请求体而不是卡上的原文：抽屉是预填的，人可以改完再发（原型的流程就是
     「卡 → 提交反馈 → 抽屉 → 提交」），而按下发送的人为自己发出去的东西负责。
+
+    `actor.is_agent` 如实往下传，不写死 False：agent 自己按发送和直接发布是同一件
+    事，拒绝在 `FeedbackService.create` 里，这里不替它开例外。
     """
     place, actor = await _actor_in_topic(db, resolver, topic_id)
     block = await _require_proposal_block(db, topic_id, block_id)
@@ -183,13 +185,13 @@ async def accept_feedback_proposal(
         ),
         actor_handle=actor.handle,
         actor_user_id=actor.user_id,
-        actor_is_agent=False,
+        actor_is_agent=actor.is_agent,
         proposal=proposal_rules.AcceptedProposal(
             payload=payload, author_handle=block.author
         ),
     )
     await db.commit()
-    detail = await service.detail_payload(
+    view = await service.detail_of(
         row, handle=actor.handle, is_admin=service.is_admin(actor.handle)
     )
-    return ok(FeedbackDetail.from_row(row, **detail).model_dump(mode="json"))
+    return ok(view.model_dump(mode="json"))

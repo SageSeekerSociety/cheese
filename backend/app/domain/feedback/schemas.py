@@ -44,12 +44,12 @@ def display_id(row: Feedback) -> str:
 
 
 class FeedbackCreate(BaseModel):
-    """The body of ``POST /feedback`` — also what `cheese feedback propose` sends.
+    """The body of ``POST /feedback``, and of accepting a proposal card.
 
-    ``author_handle`` is absent by construction for people: the author is the
-    verified caller. It exists here for the agent path, where one agent may file
-    on someone else's behalf — the route only honours it for the submitter
-    recorded in ``submitted_by_handle``, never as a free-form claim.
+    There is no ``author_handle`` field, on purpose: the author is the verified
+    caller, never a string the client chose. On the accept path the author comes
+    from the card instead (the agent that found it) and the caller is recorded
+    as the submitter — the route reads both, so the body still carries neither.
     """
 
     kind: FeedbackKind = FeedbackKind.bug

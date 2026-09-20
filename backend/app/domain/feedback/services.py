@@ -18,9 +18,12 @@ each in one place, each revertible without touching a route:
    "nobody" and lock the surface for everyone.
 2. **`security` is a subtype of `private`, not a second axis.** A security report
    is invisible to non-admins exactly as a private one is; the flag only routes
-   it into the admin's security tab. So `security=True` implies private
-   visibility, enforced at write time, and the read predicate needs no special
-   case.
+   it into the admin's security tab. So `security=True` narrows visibility, and
+   the narrowing is applied **at read time** in `may_see` — not by overwriting
+   `visibility` when an admin sets the flag. Two reasons it goes that way:
+   `visibility` is the reporter's own choice and rewriting it would edit their
+   decision behind their back, and deciding who may see a row is a policy
+   question, which the repository deliberately does not answer.
 3. **Resolved items sink, but only bugs.** See `_visible_tab` in repositories —
    a resolved suggestion stays in the list. Hiding suggestions is the wider
    reading and much harder to notice going wrong; this is the narrow one.
@@ -48,7 +51,7 @@ from app.domain.feedback.models import (
     FeedbackVisibility,
 )
 from app.domain.feedback.proposals import AcceptedProposal
-from app.domain.feedback.schemas import FeedbackCreate, FeedbackPatch
+from app.domain.feedback.schemas import FeedbackCreate, FeedbackDetail, FeedbackPatch
 
 #: The admin surface's tiers, in the order the admin tab bar draws them.
 ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
@@ -90,14 +93,19 @@ class FeedbackService:
         return bool(handle) and handle in admin_handles()
 
     def may_see(self, row: Feedback, *, handle: str | None, is_admin: bool) -> bool:
-        """The visibility union, in one line — 私密 + 是我提的.
+        """The visibility union, in one line — 公开 + 私密 + 是我提的.
 
         A private report is visible to admins **and to the person who filed it**:
         the reporter must be able to follow their own report, and the agent that
         filed on their behalf counts as them. Everyone else cannot, and gets 404
-        rather than 403 — see `_require_visible`.
+        rather than 403 — see `visible_row`.
+
+        `security` narrows the public arm, so it is checked in the same breath:
+        a row an admin flagged as a security matter is not public even though the
+        reporter left `visibility` at its default. That flag is set on triage, by
+        someone other than the reporter, and it is the one that must not leak.
         """
-        if row.visibility == FeedbackVisibility.public:
+        if row.visibility == FeedbackVisibility.public and not row.security:
             return True
         if is_admin:
             return True
@@ -197,29 +205,40 @@ class FeedbackService:
 
     async def detail(
         self, feedback_id: uuid.UUID, *, handle: str | None, is_admin: bool
-    ) -> dict:
+    ) -> FeedbackDetail:
         row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
-        return await self.detail_payload(row, handle=handle, is_admin=is_admin)
+        return await self.detail_of(row, handle=handle, is_admin=is_admin)
 
-    async def detail_payload(
+    async def detail_of(
         self, row: Feedback, *, handle: str | None, is_admin: bool
-    ) -> dict:
-        supports = await self._repo.supports_count(row.id)
-        supported = await self._repo.has_support(row.id, handle) if handle else False
+    ) -> FeedbackDetail:
+        """The assembled detail view — schema, not a bag of parts.
+
+        It returns the schema because every caller wants exactly this view and
+        four of them built it by hand as ``FeedbackDetail.from_row(row, **parts)``.
+        One of those copies shipped a ``"row"`` key inside the parts, which
+        collides with the argument of the same name and made every one of them
+        raise; a shape that cannot be mis-unpacked is the fix, not four careful
+        call sites.
+
+        ``notes`` are admin-only: the field is always present so the frontend has
+        one shape, and it is the service that empties it. The empty list is the
+        absence, not a redaction the client is trusted to honour.
+        """
         thread = await self._repo.list_comments(row.id)
-        timeline = await self._repo.list_timeline(row.id)
         activity = await self._repo.latest_activity_of([row.id])
-        notes = await self._repo.list_notes(row.id) if is_admin else []
-        return {
-            "row": row,
-            "supports": supports,
-            "supported": supported,
-            "comments": len(thread),
-            "last_activity_at": activity.get(row.id),
-            "thread": thread,
-            "timeline": timeline,
-            "notes": notes,
-        }
+        return FeedbackDetail.from_row(
+            row,
+            supports=await self._repo.supports_count(row.id),
+            supported=(
+                await self._repo.has_support(row.id, handle) if handle else False
+            ),
+            comments=len(thread),
+            last_activity_at=activity.get(row.id),
+            thread=thread,
+            timeline=await self._repo.list_timeline(row.id),
+            notes=await self._repo.list_notes(row.id) if is_admin else [],
+        )
 
     async def mark_read(self, *, handle: str) -> datetime:
         """Move the cursor to now. Returns the new cursor for the client to echo."""
@@ -251,6 +270,11 @@ class FeedbackService:
         pressed send on the card. The refusal names the tool so the model gets
         a next step rather than a dead end.
 
+        The same rule closes the other door: an agent sending an *existing*
+        proposal is still an agent publishing itself, just in two steps. Both
+        branches sit here rather than in the routes so that neither door depends
+        on a caller remembering to pass the flag honestly.
+
         When `proposal` is set, authorship comes from the proposal (the agent
         that found it) and `submitted_by` from the verified caller (the person
         who sent it) — two fields, not one, so 「芝士提的反馈里有多少真的被人发出
@@ -258,7 +282,7 @@ class FeedbackService:
         the drawer lets the sender edit before sending, and the person pressing
         send is accountable for what they send.
         """
-        if actor_is_agent and proposal is None:
+        if actor_is_agent:
             raise ForbiddenError(
                 "agent 不能直接发布反馈：用 `cheese feedback propose` 提案，"
                 "由人确认后再发送"

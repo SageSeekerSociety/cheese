@@ -111,6 +111,7 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
         "cheese_describe",
         "cheese_doc_get",
         "cheese_doc_set",
+        "cheese_feedback_propose",
         "cheese_fetch",
         "cheese_gh_token",
         "cheese_lock",

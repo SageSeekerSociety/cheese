@@ -64,10 +64,15 @@ _PUNCTUATION = re.compile(r"[^\w一-鿿]+")
 def proposal_fingerprint(*, what_happened: str | None, repro: str | None) -> str:
     """Stable hash of the two fields that describe the problem itself.
 
-    Normalised hard — whitespace collapsed, punctuation dropped, case folded —
-    because the whole point is that a re-worded report of the same problem lands
-    on the same fingerprint. Anything that survives that (the words) is what the
-    two reports genuinely share.
+    Normalised — whitespace collapsed, punctuation dropped, case folded — so the
+    same words typed twice land together even if the model reflowed them.
+
+    **What this does not do**: catch a genuinely rephrased report. Different
+    words hash differently, so "按钮点了没反应" and "点击按钮之后界面没有变化" are
+    two fingerprints and two cards. Catching that needs embeddings, which is a
+    much larger thing than this limit is worth — the daily cap is the backstop
+    for the cases the fingerprint misses. Said plainly here so nobody reads the
+    dedup as stronger than it is.
     """
     raw = "\n".join((what_happened or "", repro or ""))
     normalised = _PUNCTUATION.sub(" ", _WHITESPACE.sub(" ", raw).strip().lower())
@@ -112,11 +117,6 @@ class ProposalService:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
-    async def _proposed_today(self, topic_id: uuid.UUID, fingerprint: str) -> bool:
-        since = datetime.now(UTC) - timedelta(days=1)
-        cards = await self._proposals_since(topic_id, since)
-        return any(card.get("fingerprint") == fingerprint for card in cards)
-
     async def _dismissed(self, topic_id: uuid.UUID) -> set[str]:
         stmt = select(FeedbackProposalDismissal.fingerprint).where(
             FeedbackProposalDismissal.topic_id == topic_id
@@ -128,9 +128,10 @@ class ProposalService:
 
         A card stays in the topic either way (it is a message, and history is
         history) — what this filters is which ones the chat column still offers
-        to send. Dismissed ones drop out by fingerprint, so a re-worded
-        re-proposal of a refused problem also drops out: that re-wording is
-        exactly what the dismissal is supposed to survive.
+        to send. Dismissed ones drop out by fingerprint: a reflowed re-proposal
+        of a refused problem stays out, while a rephrased one gets a new
+        fingerprint and does come back. That is the honest reach of a hash —
+        see `proposal_fingerprint`.
 
         One card per fingerprint even if it was proposed several times, newest
         kept — the card that shows is the one a person can still act on.
@@ -165,24 +166,33 @@ class ProposalService:
     async def check(self, topic_id: uuid.UUID, body: FeedbackProposalIn) -> str:
         """Return the fingerprint, or refuse with the reason.
 
-        Three refusals, each with its own status:
+        Three refusals, one status: **412 for all three**. They differ in wording
+        and in which limit they hit, but the client's correct reaction is the same
+        for every one — stop trying, do not retry later. 409 or 429 would tell a
+        naive caller "try again", which is the wrong instruction for all of them.
 
-        * already-dismissed → 412. The client's fix is not to retry, it is to
-          stop proposing this — so it must not look like a transient error.
-        * already-open-today → 409. A duplicate, not a failure.
-        * over the daily cap → 412. Also not retryable.
+        Ordering is oldest-limit-first on purpose. "You already refused this" is
+        the most specific and the most permanent, so it is answered before "you
+        are out of quota today" — otherwise a refused problem, once the topic is
+        out of quota, would come back as a temporary-looking refusal and get
+        proposed again tomorrow.
+
+        「一天」是滚动的 24 小时，不是自然日：自然日会在午夜清零，于是紧挨着
+        午夜的两分钟里可以提两条一样的。
         """
         fingerprint = proposal_fingerprint(
             what_happened=body.what_happened, repro=body.repro
         )
         if fingerprint in await self._dismissed(topic_id):
             raise PreconditionFailedError("这个提案已经被「不用」过了，不要重复提")
-        if await self._proposed_today(topic_id, fingerprint):
-            raise PreconditionFailedError("这个提案今天已经提过了，不要重复提")
-        since = datetime.now(UTC) - timedelta(days=1)
-        if len(await self._proposals_since(topic_id, since)) >= (
-            settings.feedback_proposals_per_topic_per_day
-        ):
+        # One read serves both remaining limits: the duplicate check and the cap
+        # are the same list of cards, counted two ways.
+        cards = await self._proposals_since(
+            topic_id, datetime.now(UTC) - timedelta(days=1)
+        )
+        if any(card.get("fingerprint") == fingerprint for card in cards):
+            raise PreconditionFailedError("这个提案刚提过，不要重复提")
+        if len(cards) >= settings.feedback_proposals_per_topic_per_day:
             raise PreconditionFailedError("今天这个话题的反馈提案已经够了，明天再说")
         return fingerprint
 

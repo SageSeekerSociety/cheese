@@ -1,24 +1,26 @@
 <script setup lang="ts">
-import type { FeedbackItem } from '@/lib/feedbackMock'
 import type { AdminTab } from '@/stores/feedback'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import AdminFeedbackDetailDrawer from '@/components/feedback/AdminFeedbackDetailDrawer.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
-import { KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMock'
+import { KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
-// 管理员后台的「反馈管理」(原型地址 /admin/feedback)。
+// 管理员后台的「反馈管理」（/admin/feedback）。
 //
 // 需求说它属于**独立的**后台（类似 admin.okcheese.com），不放在用户侧反馈中心里。
 // 所以这一页有自己的外壳和口径，和 /feedback 长得不一样是**故意的**：两边面对的
-// 问题不同——用户侧问「有没有人也遇到这个」，管理侧问「这一条现在该谁动」。同一个
+// 问题不同 —— 用户侧问「有没有人也遇到这个」，管理侧问「这一条现在该谁动」。同一个
 // 界面同时回答这两个问题，结果是两边都不好用。
 //
-// 这一页同时承担原型的角色开关：需求要求「通过 mock role 展示 user/admin 两套
-// 界面」，而最能看出差别的就是这一页 —— 普通身份打开它只会看到一句挡板。
+// 「我是不是管理员」由**服务端**回答（`GET /feedback/meta` 的 `is_admin`，按
+// `settings.feedback_admin_handles` 判定）。原型上有一个可以自己拨的身份开关，
+// 那个东西真接上服务端之后就没有意义了：能不能看这一页不是客户端说了算的，而且
+// 每个管理端接口自己还会再判一次 —— 前端这道判断只是为了不画一个必然全 403 的
+// 空表，不是权限边界。
 defineOptions({ name: 'AdminFeedbackPage' })
 
 const store = useFeedbackStore()
@@ -29,29 +31,43 @@ const TABS: { value: AdminTab; label: string }[] = [
   { value: 'agent', label: 'Agent 发现' },
   { value: 'security', label: '安全问题' },
 ]
-const tabs = computed(() => TABS.map((tab) => ({ ...tab, count: store.adminTabCounts[tab.value] })))
+// 管理端四栏**不显示计数**：服务端的 counts 是给用户侧那四栏（全部/热门/进行中/
+// 已解决）算的，口径不同 —— 拿它填这几栏是编数字。
+const tabs = computed(() => TABS)
 
-const selected = ref<FeedbackItem | null>(null)
+const selectedId = ref<string | null>(null)
 const drawerOpen = ref(false)
 
-function open(item: FeedbackItem) {
-  selected.value = item
+function open(id: string) {
+  selectedId.value = id
   drawerOpen.value = true
 }
 
 // 关掉抽屉时把选中项一起清掉：留着它，下次点另一条之前会先闪一下上一条的内容。
-watch(drawerOpen, (open) => {
-  if (!open) selected.value = null
+function close(open: boolean) {
+  drawerOpen.value = open
+  if (!open) selectedId.value = null
+}
+
+onMounted(async () => {
+  // meta 决定这一页画不画。它可能已经被反馈中心拉过了，这里再调一次是幂等的，
+  // 而直接输地址进来的时候没有它就没法判断。
+  //
+  // **要等**：`loadMeta` 是网络调用，不 await 的话这一行读到的永远是「还不是管理员」，
+  // 于是直接打开/刷新 `/admin/feedback` 看到的是一张空表 —— 表格画出来了，一行没有，
+  // 而人以为「后台里没东西」。这个 bug 是预览里发现的：冷启动进来就是这样，从反馈
+  // 中心点进来反而正常（那边已经把 meta 拉过了），所以只盯着点进来的路径看不出来。
+  await store.loadMeta()
+  if (store.isAdmin) void store.loadAdmin()
 })
 </script>
 
 <template>
   <div class="fb-admin">
-    <div v-if="store.role !== 'admin'" class="fb-admin__gate page-container">
+    <div v-if="!store.isAdmin" class="fb-admin__gate page-container">
       <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
       <div class="t-body mb-1">这一页是管理员后台</div>
-      <div class="t-meta mb-3">你现在的原型身份是「用户」，看不到管理界面</div>
-      <v-btn color="primary" size="small" @click="store.setRole('admin')">以管理员身份查看</v-btn>
+      <div class="t-meta mb-3">你的账号不在管理员名单里，看不到这里的反馈 —— 私密反馈和安全问题对非管理员不存在</div>
       <v-btn variant="text" color="secondary" size="small" to="/feedback">回到反馈中心</v-btn>
     </div>
 
@@ -62,19 +78,37 @@ watch(drawerOpen, (open) => {
           <h1 class="t-page-title">反馈管理</h1>
         </div>
         <v-spacer />
-        <span class="chip-neutral">原型身份：管理员</span>
         <v-btn variant="outlined" color="secondary" size="small" to="/feedback">用户侧反馈中心</v-btn>
-        <v-btn variant="text" color="secondary" size="small" @click="store.setRole('user')">切回用户身份</v-btn>
       </header>
 
-      <v-tabs v-model="store.adminTab" density="comfortable" color="primary" class="fb-admin__tabs">
-        <v-tab v-for="tab in tabs" :key="tab.value" :value="tab.value">
-          {{ tab.label }}
-          <span class="fb-admin__count">{{ tab.count }}</span>
-        </v-tab>
+      <!-- 栏位是服务端的筛选（`?tab=`），不认的值服务端回 400 —— 所以这里切栏位
+           就是重新拉一页，不做本地过滤（本地过滤是第二份实现，两边迟早不一样）。 -->
+      <v-tabs
+        :model-value="store.adminTab"
+        density="comfortable"
+        color="primary"
+        class="fb-admin__tabs"
+        @update:model-value="store.setAdminTab($event as AdminTab)"
+      >
+        <v-tab v-for="tab in tabs" :key="tab.value" :value="tab.value">{{ tab.label }}</v-tab>
       </v-tabs>
 
-      <v-table hover class="fb-admin__table">
+      <v-table v-if="store.adminLoading" class="fb-admin__table">
+        <tbody>
+          <tr>
+            <td class="fb-admin__loading">加载中…</td>
+          </tr>
+        </tbody>
+      </v-table>
+
+      <v-alert v-else-if="store.error && !drawerOpen" type="error" density="compact" variant="tonal" class="mt-4">
+        {{ store.error }}
+        <template #append>
+          <v-btn variant="text" size="small" @click="store.loadAdmin()">重试</v-btn>
+        </template>
+      </v-alert>
+
+      <v-table v-else hover class="fb-admin__table">
         <thead>
           <tr>
             <th class="fb-th fb-th--title">标题</th>
@@ -87,35 +121,45 @@ watch(drawerOpen, (open) => {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in store.adminItems" :key="item.id" class="fb-row" @click="open(item)">
+          <tr v-for="item in store.adminItems" :key="item.id" class="fb-row" @click="open(item.id)">
             <td class="fb-td fb-td--title">
               <div class="fb-td__title">{{ item.title }}</div>
               <div class="t-meta">
-                {{ item.id }}<template v-if="item.assignee"> · @{{ item.assignee }}</template>
+                {{ item.display_id }}<template v-if="item.assignee_handle"> · @{{ item.assignee_handle }}</template>
               </div>
             </td>
-            <td class="fb-td">{{ item.author }}</td>
+            <td class="fb-td">
+              {{ item.author_handle }}
+              <!-- 私密反馈在管理端必须看得出来：它和公开的挤在同一栏里长得一样，
+                   管理员就得靠读正文才发现「这条别人看不到」。 -->
+              <span v-if="item.visibility === 'private'" class="chip-neutral fb-td__flag">
+                <v-icon size="12">mdi-lock-outline</v-icon>私密
+              </span>
+            </td>
             <td class="fb-td">
               <!-- 来源这一格和反馈卡、详情页用的是同一个形态（中性 chip + 机器人图标）：
-                  三处说的是同一件事，长得一样才不用重新认。琥珀留给这一页唯一的主操作。 -->
-              <span v-if="item.source === 'agent'" class="chip-neutral">
+                   三处说的是同一件事，长得一样才不用重新认。琥珀留给这一页唯一的主操作。 -->
+              <span v-if="item.author_is_agent" class="chip-neutral">
                 <v-icon size="12">mdi-robot-outline</v-icon>{{ SOURCE_LABEL.agent }}
               </span>
-              <span v-else class="c-muted">{{ SOURCE_LABEL[item.source] }}</span>
+              <span v-else class="c-muted">{{ SOURCE_LABEL.user }}</span>
             </td>
             <td class="fb-td">{{ KIND_LABEL[item.kind] }}</td>
             <td class="fb-td"><FeedbackStatusChip :priority="item.priority" /></td>
             <td class="fb-td"><FeedbackStatusChip :status="item.status" /></td>
-            <td class="fb-td t-meta">{{ relTime(item.createdAt) }}</td>
+            <td class="fb-td t-meta">{{ relTime(item.created_at) }}</td>
           </tr>
           <tr v-if="!store.adminItems.length">
-            <td colspan="7" class="fb-td fb-td--empty">暂无反馈</td>
+            <td colspan="7" class="fb-td fb-td--empty">这一栏没有反馈</td>
           </tr>
         </tbody>
       </v-table>
     </div>
 
-    <AdminFeedbackDetailDrawer :item="selected" @update:open="drawerOpen = $event" />
+    <!-- 传 id 而不是整行：抽屉里的写操作（改状态、指派、标安全问题）服务端回的
+         **是刷新后的整条详情**，本地那份行数据当场就旧了。让抽屉自己去拉详情，
+         列表和抽屉就不会各持一份可能不一样的说法。 -->
+    <AdminFeedbackDetailDrawer :feedback-id="selectedId" :open="drawerOpen" @update:open="close" />
   </div>
 </template>
 
@@ -144,11 +188,13 @@ watch(drawerOpen, (open) => {
 .fb-admin__tabs {
   border-bottom: 1px solid var(--line);
 }
-.fb-admin__count {
-  margin-left: 6px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+.fb-admin__loading {
+  padding: 40px 0;
+  text-align: center;
   color: var(--faint);
+}
+.fb-td__flag {
+  margin-left: 6px;
 }
 .fb-admin__table {
   background: transparent;

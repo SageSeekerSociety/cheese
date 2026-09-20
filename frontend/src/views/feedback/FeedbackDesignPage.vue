@@ -4,14 +4,17 @@ import { computed, ref } from 'vue'
 import ArchDiagram from '@/components/diagram/ArchDiagram.vue'
 import ErDiagram from '@/components/diagram/ErDiagram.vue'
 import { feedbackArch, feedbackEr } from '@/lib/feedbackDiagram'
-import { STATUS_LADDER, STATUS_META } from '@/lib/feedbackMock'
+import { STATUS_LADDER, STATUS_META } from '@/lib/feedbackMeta'
 
 // /design/feedback —— 数据关系与架构关系。
 //
 // 这一页不是给人「用」的，是给人**核对**的：表开得对不对、agent 那条路绕不绕、
 // 状态机是不是五档。所以它只画关系，不带任何操作 —— 要操作请回反馈中心。
 //
-// 图数据在 lib/feedbackDiagram.ts，内容抄自 docs/topics/反馈功能后端设计-方案稿.md。
+// 图数据在 lib/feedbackDiagram.ts；表和状态机的那部分**已经实现**了，落在
+// backend/app/domain/feedback/（models / repositories / services / proposals），
+// 图和代码不一致时以代码为准，方案的来龙去脉在
+// docs/topics/反馈功能后端设计-方案稿.md。
 defineOptions({ name: 'FeedbackDesignPage' })
 
 const tab = ref<'er' | 'flow'>('er')
@@ -22,22 +25,38 @@ const TABS = [
 ] as const
 
 /**
- * 五档状态。**不在这里另抄一份标签**——`STATUS_META` 和 `STATUS_LADDER` 是前端
- * 唯一一份，页面和组件都从那里取。这里再写一遍，加状态时就会多出一个没人会想起来的
- * 副本（`feedbackMock.ts` 里那条注释抱怨的正是这件事）。
+ * 五档状态。**不在这里另抄一份标签** —— `STATUS_META` 和 `STATUS_LADDER` 是前端
+ * 唯一一份（`lib/feedbackMeta.ts`），页面和组件都从那里取。这里再写一遍，加状态时
+ * 就会多出一个没人会想起来的副本。
+ *
+ * 注意梯子的**真值在服务端**（`GET /feedback/meta` 的 `status_ladder`），这一份是
+ * meta 还没到的那一帧的兜底，也是这一页要对照的那份「设计意图」。
  */
 const ladder = computed(() =>
   STATUS_LADDER.map((value) => ({ value, label: STATUS_META[value].label, dot: STATUS_META[value].dot }))
 )
 
 /**
- * 卡着开工的三条。放在这一页上而不是只写在方案稿里：核对图的人正好会经过这里，
- * 而「图看着挺完整」正是这三条最容易沉底的地方。编号是方案稿 §8 里的小节号。
+ * 方案稿 §8 里曾经卡着开工的三条。它们**已经有实现口径了**（每条都是常量或一处
+ * 判断，改起来是一行），所以这里如实写「定成了什么、在哪」，而不是继续挂着问号 ——
+ * 一页核对用的图上面如果还写着「未定」，读的人不会去代码里找答案，他会以为功能没做。
  */
-const OPEN_QUESTIONS = [
-  { no: '§8.1', what: '平台管理员是谁', why: '不定，管理后台就没有门 —— 今天 /admin/* 前缀不带任何鉴权。' },
-  { no: '§8.3', what: 'security 与 visibility 的关系', why: '它该是 private 之下的子类，还是第二个开关。' },
-  { no: '§8.23', what: '默认筛选的确切口径', why: '隐藏所有已解决的，还是只隐藏已解决的 bug。' },
+const DECIDED = [
+  {
+    no: '§8.1',
+    what: '平台管理员是谁',
+    why: 'settings.feedback_admin_handles（配置项，默认空 = 没人）。空的时候管理端谁都进不去，这是安全的一侧。',
+  },
+  {
+    no: '§8.3',
+    what: 'security 与 visibility 的关系',
+    why: 'security 是 private 之下的一层收窄，不是第二个开关：读的时候 visibility 先判、security 再收窄一次。',
+  },
+  {
+    no: '§8.23',
+    what: '默认筛选的口径',
+    why: '默认列表只沉底**已解决的 bug**；建议和其他的已解决项仍然留在列表里。',
+  },
 ] as const
 </script>
 
@@ -51,8 +70,8 @@ const OPEN_QUESTIONS = [
       </header>
 
       <p class="fd-lede">
-        原型背后那套东西长什么样：表怎么开、谁在写、状态怎么走。图上的每一处都能在
-        <code>docs/topics/反馈功能后端设计-方案稿.md</code> 里找到出处，两边不一致时以方案稿为准。
+        这套东西长什么样：表怎么开、谁在写、状态怎么走。图上的每一处都能在
+        <code>docs/topics/反馈功能后端设计-方案稿.md</code> 里找到出处。
       </p>
 
       <v-tabs v-model="tab" density="comfortable" color="primary" class="fd-tabs">
@@ -88,13 +107,14 @@ const OPEN_QUESTIONS = [
       </div>
 
       <section class="fd-open">
-        <h3 class="fd-open__title">还差三句话，图就完整了</h3>
+        <h3 class="fd-open__title">曾经卡着开工的三条，现在都有答案了</h3>
         <p class="fd-open__sub">
-          图里那两张虚线框（提案表、未读游标）和下面这三条是同一类东西：不是没画，是<strong>还没定</strong>。
-          定了就画实线。
+          这三条当初是「不定就没法写」的问题，方案稿里给的是问句。现在它们是实现里的
+          <strong>三个常量</strong>（一条配置项、一处读时收窄、一句筛选口径）—— 改起来是一行，
+          所以这里写的是定成了什么，而不是继续挂着问号。
         </p>
         <ul class="fd-open__list">
-          <li v-for="item in OPEN_QUESTIONS" :key="item.no" class="fd-open__item">
+          <li v-for="item in DECIDED" :key="item.no" class="fd-open__item">
             <span class="fd-open__no">{{ item.no }}</span>
             <span class="fd-open__what">{{ item.what }}</span>
             <span class="fd-open__why">{{ item.why }}</span>
@@ -103,7 +123,8 @@ const OPEN_QUESTIONS = [
       </section>
 
       <p class="fd-foot">
-        这一页是原型的一部分，画的是<strong>提案</strong>而不是已实现的系统；接口、迁移和取舍写在方案稿里。
+        图上的表和状态机已经实现（<code>backend/app/domain/feedback/</code>），接口、迁移和取舍写在方案稿里；
+        两边不一致时以代码为准。
       </p>
     </div>
   </div>

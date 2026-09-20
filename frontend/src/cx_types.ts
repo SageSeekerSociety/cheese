@@ -1119,3 +1119,180 @@ export interface ProjectAgent {
   is_active: boolean
   created_at?: string | null
 }
+
+// ---- 反馈 (feedback) ----
+//
+// 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
+// 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
+// 变成每次读前端代码都要回去查一遍的事。
+//
+// 三处**故意**不叫原型里的名字：
+//   * `supports` 是计数、`comments` 也是计数（原型里 `comments` 是数组），
+//     详情页的评论在 `FeedbackDetail.thread`。
+//   * 作者是 `author_handle`、时间是 `created_at`：蛇形是这一层的约定。
+//   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
+//     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
+//     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
+export type FeedbackKind = 'bug' | 'suggestion' | 'other'
+export type FeedbackStatus = 'received' | 'triaging' | 'planned' | 'in_progress' | 'resolved'
+export type FeedbackVisibility = 'public' | 'private'
+export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
+
+/** 列表里的一行。计数由后端一并算好（见 `schemas.FeedbackCard`）。 */
+export interface FeedbackCard {
+  id: string
+  /** 「FB-1042」。人念的和粘贴的是这个，`id` 是 uuid，只用来发请求。 */
+  display_id: string
+  kind: FeedbackKind
+  title: string
+  summary: string
+  status: FeedbackStatus
+  priority: FeedbackPriority
+  visibility: FeedbackVisibility
+  /** 安全问题：管理员标的标记，比 private 更窄（见 services.may_see）。 */
+  security: boolean
+  author_handle: string
+  author_is_agent: boolean
+  /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
+  submitted_by_handle: string | null
+  assignee_handle: string | null
+  tags: string[]
+  supports: number
+  comments: number
+  supported: boolean
+  last_activity_at: string | null
+  created_at: string
+}
+
+export interface FeedbackTimelineEntry {
+  status: FeedbackStatus
+  /** 谁推的。人推是 handle，agent 发现的那条是 null。 */
+  by_handle: string | null
+  at: string
+}
+
+/** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以
+ *  层级恒为两层，前端不需要自己判断「这算第几层」。 */
+export interface FeedbackComment {
+  id: string
+  parent_id: string | null
+  author_handle: string
+  author_is_agent: boolean
+  body: string
+  created_at: string
+}
+
+/** 管理员之间的内部备注。**只增不改**，所以是行不是列。 */
+export interface FeedbackNote {
+  id: string
+  author_handle: string
+  body: string
+  created_at: string
+}
+
+export interface FeedbackDetail extends FeedbackCard {
+  problem: string
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  /** 这条反馈是从哪个话题来的。没有话题（harness 在沙箱里撞的墙）时为 null。 */
+  topic_id: string | null
+  project_id: string | null
+  timeline: FeedbackTimelineEntry[]
+  thread: FeedbackComment[]
+  /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
+  notes: FeedbackNote[]
+}
+
+export interface FeedbackCounts {
+  all: number
+  hot: number
+  active: number
+  resolved: number
+  /** 「我的反馈」里未读的条数。 */
+  unread: number
+  /** 管理端才有：还没指派给任何人的条数。 */
+  unassigned?: number
+}
+
+export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
+  counts: FeedbackCounts
+}
+
+/** `GET /feedback/meta` —— 词表。
+ *
+ *  **颜色不在这里**（那是前端的视觉决定，见 lib/feedbackMeta.ts），这里回答的是
+ *  「有哪些取值、按什么顺序流动」。加一个状态是后端改一处的事，前端靠这一份跟上，
+ *  不需要发版。`is_admin` 同理：它由服务端算，前端不猜。 */
+export interface FeedbackMeta {
+  kinds: FeedbackKind[]
+  statuses: FeedbackStatus[]
+  priorities: FeedbackPriority[]
+  visibilities: FeedbackVisibility[]
+  /** 状态梯子：时间线把还没到的步骤也画出来，靠的就是它。 */
+  status_ladder: FeedbackStatus[]
+  tabs: string[]
+  admin_tabs: string[]
+  /** 「热门」的门槛，前端不写死 5。 */
+  hot_supports: number
+  is_admin: boolean
+}
+
+export interface FeedbackSupportResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  supported: boolean
+}
+
+/** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
+export interface FeedbackCreateBody {
+  kind: FeedbackKind
+  title: string
+  summary?: string
+  problem?: string
+  visibility: FeedbackVisibility
+  priority?: FeedbackPriority
+  why?: string | null
+  expectation?: string | null
+  what_happened?: string | null
+  repro?: string | null
+  evidence?: string | null
+  logs?: string | null
+  session_id?: string | null
+  environment?: string | null
+  tags?: string[]
+}
+
+/** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */
+export interface FeedbackProposalPayload {
+  kind: FeedbackKind
+  title: string
+  summary: string
+  problem: string
+  visibility: FeedbackVisibility
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  tags: string[]
+  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
+  user_said: string
+  /** 服务端算的指纹，「不用」和去重都认它。 */
+  fingerprint: string
+}
+
+export interface FeedbackProposal {
+  block_id: string
+  author_handle: string
+  authored_at: string
+  payload: FeedbackProposalPayload
+}

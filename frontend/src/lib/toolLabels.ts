@@ -78,6 +78,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_artifact: '设置交付物',
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
+  cheese_feedback_propose: '提交反馈提案',
   cheese_api: '调用平台接口',
   // 后台任务 — pi 自己没有后台 shell，这五个是平台加的。
   bash_start: '启动后台任务',

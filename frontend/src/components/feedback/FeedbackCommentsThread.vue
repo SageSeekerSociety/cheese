@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import type { FeedbackComment } from '@/lib/feedbackMock'
+import type { FeedbackComment } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
 import { relTime } from '@/lib/relTime'
 
-// 评论布局 **丙：两层折叠**。
+// 评论**只有一种摆法**：两层折叠。
 //
-// 顶层评论一条一条排，回复缩进 24px 挂在它下面，回复多了先折起来。**只有两层**：
-// 回复的回复也挂到同一个顶层评论下（规则在 stores/feedback.ts 的 addComment 里，
-// 不在这里），所以第三层永远不会出现，也就没有「无限嵌套之后左边只剩 40px」那个
-// 经典问题。
+// 上一轮这里是三种布局加一个开关（甲·平铺 / 乙·一条流 / 丙·两层折叠），那是给人
+// 挑的评审道具，不是产品的一部分。挑中的就是这个 —— 理由不是审美，是**服务端记的
+// 就是这一种**：`services.comment` 会把「回复一条回复」折到同一栋楼里（`parent_id`
+// 永远指向顶层），所以数据里天然只有两层，另外两版画的层级关系是客户端自己编的。
 //
-// 它的价值在于讨论真的分叉时还能读：同一件事的三条回复挨在一起，而不是被中间
-// 别人的两句话隔开。代价是**破坏时间顺序** —— 一条十分钟前的顶层评论下面挂着的
-// 可能是刚才才发的回复，而它上面那条顶层评论是两小时前的。
+// 顶层评论一条一条排，回复缩进挂在它下面，回复多了先折起来。第三层永远不会出现，
+// 也就没有「无限嵌套之后左边只剩 40px」那个经典问题。
+//
+// 代价很直白：**破坏时间顺序**。一条十分钟前的顶层评论下面挂着的可能是刚发的回复，
+// 而它上面那条顶层评论是两小时前的。要按时间读的话，看右侧的「进展」卡。
 //
 // 每条评论都能回：顶层的回复进自己的楼里，楼里再回复也还在这栋楼里（会显示成
 // 「回复 X」，因为同一层里说不清是谁回谁）。
@@ -22,11 +24,11 @@ const props = defineProps<{ comments: FeedbackComment[] }>()
 
 const emit = defineEmits<{ reply: [parentId: string, body: string] }>()
 
-const tops = computed(() => props.comments.filter((c) => !c.parentId))
-const repliesOf = (id: string) => props.comments.filter((c) => c.parentId === id)
+const tops = computed(() => props.comments.filter((c) => !c.parent_id))
+const repliesOf = (id: string) => props.comments.filter((c) => c.parent_id === id)
 
-/** 折起来的楼。默认全展开：这一版要评审的正是「回复挂在哪里」，一进来就收起来
- *  等于让人先去点一下才看得到要评的东西。 */
+/** 折起来的楼。默认全展开：这一版的全部价值就是「回复挂在哪」一眼看得见，一进来
+ *  就收起来等于让人先点一下才看得到它想表达的东西。 */
 const folded = ref<Record<string, boolean>>({})
 function toggle(id: string) {
   folded.value[id] = !folded.value[id]
@@ -60,9 +62,9 @@ function send(parentId: string) {
     <div v-for="top in tops" :key="top.id" class="fb-thread__top">
       <div class="fb-thread__item">
         <div class="fb-thread__head">
-          <span class="fb-thread__author">{{ top.author }}</span>
-          <span v-if="top.byAgent" class="chip-neutral">AI 队友</span>
-          <span class="t-meta">{{ relTime(top.createdAt) }}</span>
+          <span class="fb-thread__author">{{ top.author_handle }}</span>
+          <span v-if="top.author_is_agent" class="chip-neutral">AI 队友</span>
+          <span class="t-meta">{{ relTime(top.created_at) }}</span>
           <v-spacer />
           <button class="fb-thread__act" @click="startReply(top.id)">回复</button>
         </div>
@@ -72,7 +74,7 @@ function send(parentId: string) {
           <v-textarea
             v-model="replyDraft"
             autocomplete="off"
-            :placeholder="`回复 ${top.author}`"
+            :placeholder="`回复 ${top.author_handle}`"
             rows="2"
             density="compact"
             hide-details
@@ -103,9 +105,9 @@ function send(parentId: string) {
         <template v-if="!folded[top.id]">
           <div v-for="reply in repliesOf(top.id)" :key="reply.id" class="fb-thread__item">
             <div class="fb-thread__head">
-              <span class="fb-thread__author">{{ reply.author }}</span>
-              <span v-if="reply.byAgent" class="chip-neutral">AI 队友</span>
-              <span class="t-meta">{{ relTime(reply.createdAt) }}</span>
+              <span class="fb-thread__author">{{ reply.author_handle }}</span>
+              <span v-if="reply.author_is_agent" class="chip-neutral">AI 队友</span>
+              <span class="t-meta">{{ relTime(reply.created_at) }}</span>
               <v-spacer />
               <button class="fb-thread__act" @click="startReply(reply.id)">回复</button>
             </div>
@@ -115,13 +117,13 @@ function send(parentId: string) {
               <v-textarea
                 v-model="replyDraft"
                 autocomplete="off"
-                :placeholder="`回复 ${reply.author}`"
+                :placeholder="`回复 ${reply.author_handle}`"
                 rows="2"
                 density="compact"
                 hide-details
               />
               <!-- 楼内回复用中性色，不用琥珀：这一页唯一的主操作是底部的「发表评论」，
-                 琥珀一次只能出现在一个地方（docs/design-system.md §0）。 -->
+                   琥珀一次只能出现在一个地方（docs/design-system.md §0）。 -->
               <div class="fb-thread__form-actions">
                 <v-btn variant="text" color="secondary" size="x-small" @click="replyTo = null">取消</v-btn>
                 <v-btn

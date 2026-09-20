@@ -1,5 +1,6 @@
-// 这一组守的是**抽屉在窄屏上的两处静默失效**——都不是「报错」，是「看着正常但没
-// 反应」，所以只能靠断言把它们钉住。
+// 这一组守的是**抽屉在窄屏上的两处静默失效**：第一处（关着的抽屉盖住整屏）是「看着
+// 正常但没反应」，第二处（附件按钮）是「看着能点但什么都不发生」——两个都不报错，都
+// 只能靠断言钉住。
 import type { Component } from 'vue'
 
 import { h } from 'vue'
@@ -50,15 +51,21 @@ describe('提交反馈抽屉', () => {
     expect(transform).not.toBe('none')
   })
 
-  it('「选择文件」点得到那个藏起来的 input —— 函数式 ref 写成静态的，生产构建里就是死按钮', async () => {
-    const { container, getByText } = renderOnPhone()
-    const input = container.querySelector('input[type=file]') as HTMLInputElement | null
-    expect(input, '没有那个 file input').toBeTruthy()
-    const clicked = vi.fn()
-    input!.click = clicked
+  // 上一版这里守的是「点『选择文件』真的把点击递给那个藏起来的 input」——一个函数式
+  // ref 写成静态的，生产构建里按钮就是死的。**附件上传这一版没有做**（后端没有附件
+  // 字段），所以那条断言的对象不存在了：留着它只会逼出一个人造 input。改成守现在这
+  // 个决定本身 —— 附件还不能选，而且旁边写着为什么。将来接上附件字段时，那条 ref
+  // 的坑会原样回来，这个用例该连同 file input 一起改回去。
+  it('附件还不能选：按钮是灰的，旁边写着为什么 —— 一个能点、点了什么都不发生的按钮更糟', () => {
+    const { container } = renderOnPhone()
 
-    await getByText('选择文件').click()
+    expect(container.querySelector('input[type=file]'), '这一版没有附件上传，不该有藏着的 file input').toBeNull()
 
-    expect(clicked, '按钮没把点击递给 input —— fileInput 多半是 null').toHaveBeenCalled()
+    const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('选择文件')) as
+      | HTMLButtonElement
+      | undefined
+    expect(button, '找不到「选择文件」按钮').toBeTruthy()
+    expect(button!.disabled, '它必须点不动：附件字段后端还没有').toBe(true)
+    expect(container.textContent, '灰按钮旁边得写着为什么').toContain('上传还没接')
   })
 })

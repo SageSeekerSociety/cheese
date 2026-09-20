@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError
+from app.core.errors import AuthenticationRequiredError, BadRequestError
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
     Feedback,
@@ -37,7 +37,6 @@ from app.domain.feedback.schemas import (
     FeedbackCard,
     FeedbackCounts,
     FeedbackCreate,
-    FeedbackDetail,
     FeedbackMeta,
     SupportOut,
 )
@@ -92,8 +91,8 @@ async def _detail(
     handle: str | None,
     is_admin: bool,
 ) -> dict:
-    payload = await service.detail_payload(row, handle=handle, is_admin=is_admin)
-    return FeedbackDetail.from_row(row, **payload).model_dump(mode="json")
+    view = await service.detail_of(row, handle=handle, is_admin=is_admin)
+    return view.model_dump(mode="json")
 
 
 def _is_admin(service: feedback_services.FeedbackService, handle: str | None) -> bool:
@@ -200,7 +199,11 @@ async def list_feedback(
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
     if tab not in feedback_services.PUBLIC_TABS:
-        tab = "all"
+        # Same refusal as the admin list: a tab the server does not know is a
+        # client that has fallen behind, and answering with `all` renders a
+        # plausible page under the wrong heading. A user cannot type a tab name,
+        # so nobody reaches this by hand.
+        raise BadRequestError(f"未知的视图：{tab}")
     rows, total = await service.list_public(
         tab=tab, q=q, sort=sort, limit=page_size, offset=page_start
     )
@@ -248,7 +251,7 @@ async def get_feedback(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
-    """一条反馈的全部内容。看不见的 id 回 404，不是 403 —— 见 `_require_visible`。"""
+    """一条反馈的全部内容。看不见的 id 回 404，不是 403 —— 见 `visible_row`。"""
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
     row = await service.visible_row(

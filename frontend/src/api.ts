@@ -17,6 +17,19 @@ import type {
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
+  FeedbackCard,
+  FeedbackComment,
+  FeedbackCounts,
+  FeedbackCreateBody,
+  FeedbackDetail,
+  FeedbackListPayload,
+  FeedbackMeta,
+  FeedbackNote,
+  FeedbackPriority,
+  FeedbackProposal,
+  FeedbackStatus,
+  FeedbackSupportResult,
+  FeedbackVisibility,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -1694,6 +1707,203 @@ export function listMilestones(projectId: string): Promise<ListPayload<Milestone
 
 export function getContributions(projectId: string): Promise<Contributions> {
   return request<Contributions>(`/projects/${encodeURIComponent(projectId)}/contributions`)
+}
+
+// ---- 反馈 (feedback) ----
+//
+// 平台级的收件箱，前缀是 `/feedback`，**不在任何项目或话题下面**（理由见
+// `backend/app/api/routes/feedback.py`）。只有提案卡那三个函数挂在话题上 ——
+// 提案是一句在某话题里说的话，配额和鉴权都挂在那一边。
+//
+// 路由按「新模块」写：`/feedback/meta`、`/feedback/counts`、`/feedback/mine` 这类
+// 固定段在 `/{feedback_id}` 之前注册，所以不会被当成一个 uuid 吃掉。
+
+/** 查询串拼装。空值一律不出现 —— 发 `?q=` 和发 `?q` 对 FastAPI 的 `str | None`
+ *  是两件事（后者才是「没给」）。 */
+function feedbackQuery(params: Record<string, string | number | null | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') continue
+    search.set(key, String(value))
+  }
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
+/** 词表：有哪些状态、按什么顺序流动、我是不是管理员。 */
+export function getFeedbackMeta(): Promise<FeedbackMeta> {
+  return request<FeedbackMeta>('/feedback/meta')
+}
+
+/** 铃铛和 Tab 上的数字。列表接口也带一份，但铃铛不该为了一个整数拉一整页。 */
+export function getFeedbackCounts(): Promise<FeedbackCounts> {
+  return request<FeedbackCounts>('/feedback/counts')
+}
+
+/** 把未读游标推到此刻。 */
+export function markFeedbackRead(): Promise<{ last_read_at: string }> {
+  return request<{ last_read_at: string }>('/feedback/read', { method: 'POST' })
+}
+
+export interface FeedbackListQuery {
+  tab?: string
+  q?: string
+  sort?: string
+  pageStart?: number
+  pageSize?: number
+}
+
+/** 公开列表。`tab` 不认识时后端回 400 而不是悄悄退回 `all` —— 猜错栏位会让人
+ *  以为「这条反馈不见了」。所以调用方传的 tab 必须来自 `getFeedbackMeta().tabs`。 */
+export function listFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+  return request<FeedbackListPayload>(
+    `/feedback${feedbackQuery({
+      tab: query.tab,
+      q: query.q,
+      sort: query.sort,
+      page_start: query.pageStart,
+      page_size: query.pageSize,
+    })}`
+  )
+}
+
+/** 「我的反馈」：我提的 + 我替谁提的 + 指派给我的。访客拿空列表，不是 401。 */
+export function listMyFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+  return request<FeedbackListPayload>(
+    `/feedback/mine${feedbackQuery({ page_start: query.pageStart, page_size: query.pageSize })}`
+  )
+}
+
+export function getFeedback(feedbackId: string): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/feedback/${encodeURIComponent(feedbackId)}`)
+}
+
+/** 提一条反馈。**agent 不能走这条路** —— 服务端会 403；agent 的入口是提案卡。
+ *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
+export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>('/feedback', { method: 'POST', body: JSON.stringify(body) })
+}
+
+/** 支持。重复点是幂等的，回的是**写完之后**的计数，不是增量 —— 增量会让两个
+ *  同时点的人各自渲染出一个从来没存在过的数字。 */
+export function supportFeedback(feedbackId: string): Promise<FeedbackSupportResult> {
+  return request<FeedbackSupportResult>(`/feedback/${encodeURIComponent(feedbackId)}/supports`, {
+    method: 'POST',
+  })
+}
+
+export function unsupportFeedback(feedbackId: string): Promise<FeedbackSupportResult> {
+  return request<FeedbackSupportResult>(`/feedback/${encodeURIComponent(feedbackId)}/supports`, {
+    method: 'DELETE',
+  })
+}
+
+/** 发一条评论。`parentId` 指向**任意**一条评论：回复的回复由服务端折到顶层，
+ *  层级恒为两层，这个判断不放在客户端（放这里就会有第二份实现对不上）。 */
+export function createFeedbackComment(
+  feedbackId: string,
+  body: string,
+  parentId?: string | null
+): Promise<FeedbackComment> {
+  return request<FeedbackComment>(`/feedback/${encodeURIComponent(feedbackId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body, parent_id: parentId ?? null }),
+  })
+}
+
+export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+/* ---- 管理端 (`/admin/feedback`) ---- */
+
+export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string } = {}): Promise<FeedbackListPayload> {
+  return request<FeedbackListPayload>(
+    `/admin/feedback${feedbackQuery({
+      tab: query.tab,
+      assignee: query.assignee,
+      q: query.q,
+      page_start: query.pageStart,
+      page_size: query.pageSize,
+    })}`
+  )
+}
+
+export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`)
+}
+
+/** 改了哪几项就传哪几项，`undefined` 表示「别动它」。**没有 visibility**：
+ *  公开与否是提交者一次性的选择，管理员能改它就等于那个决定是假的。 */
+export interface FeedbackAdminPatch {
+  priority?: FeedbackPriority
+  assignee_handle?: string | null
+  security?: boolean
+}
+
+export function patchAdminFeedback(feedbackId: string, patch: FeedbackAdminPatch): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+/** 推一个状态。状态和它那条时间线在后端同一个事务里落库，所以这个动作没有
+ *  「只改状态不写历史」的版本。 */
+export function setAdminFeedbackStatus(feedbackId: string, status: FeedbackStatus): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  })
+}
+
+/** 内部备注。**只增不改**：一个字符串列会在两个管理员之间互相覆盖，而「上一版
+ *  写了什么」正是分诊时最需要知道的。 */
+export function createAdminFeedbackNote(feedbackId: string, body: string): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}/notes`, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  })
+}
+
+export type { FeedbackNote }
+
+/* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */
+
+/** 这个话题里**还活着**的提案卡，最新的一张在前。
+ *
+ *  「还活着」由服务端的指纹决定，不由组件状态决定：已经「不用」过的不会回来 ——
+ *  原型的「不用」只活在内存里，刷新就回来。 */
+export function listFeedbackProposals(topicId: string): Promise<FeedbackProposal[]> {
+  return request<FeedbackProposal[]>(`/topics/${encodeURIComponent(topicId)}/feedback-proposals`)
+}
+
+/** 「不用」。落一行；那张卡本身留在话题历史里（「问过」要记得，「以后别再问」
+ *  也要记得）。 */
+export function dismissFeedbackProposal(topicId: string, blockId: string): Promise<{ dismissed: boolean }> {
+  return request<{ dismissed: boolean }>(
+    `/topics/${encodeURIComponent(topicId)}/feedback-proposals/${encodeURIComponent(blockId)}/dismiss`,
+    { method: 'POST' }
+  )
+}
+
+/** 发送：把卡变成一条正式反馈。
+ *
+ *  正文走请求体而不是卡上的原文 —— 抽屉是预填的，人可以改完再发，而按下发送的
+ *  人为自己发出去的东西负责。作者从卡上取（提案的 agent），提交者取验证过的
+ *  调用者，两个字段都不是客户端能填的。 */
+export function acceptFeedbackProposal(
+  topicId: string,
+  blockId: string,
+  body: FeedbackCreateBody
+): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(
+    `/topics/${encodeURIComponent(topicId)}/feedback-proposals/${encodeURIComponent(blockId)}/accept`,
+    { method: 'POST', body: JSON.stringify(body) }
+  )
 }
 
 // Build the absolute WebSocket URL for a topic's chat channel, honoring the

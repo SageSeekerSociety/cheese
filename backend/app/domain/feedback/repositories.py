@@ -36,6 +36,22 @@ from app.domain.feedback.models import (
 #: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
 HOT_SUPPORTS = 5
 
+#: What "public" means, as one reusable predicate. `security` is in here as well
+#: as in `FeedbackService.may_see`, and the duplication is deliberate: the write
+#: path sets the flag and the read path honours it, so the two are separate links
+#: of one chain, and a list query that only checked `visibility` would publish a
+#: security report while the detail endpoint still hid it. The two have to agree,
+#: and this constant is what makes them one definition instead of two copies.
+#:
+#: A tuple, and copied with ``list(...)`` at every use: a shared *mutable* list of
+#: WHERE clauses is one ``extend`` away from growing a clause per request, and the
+#: symptom (a list that narrows a little more every day) is not one you would
+#: trace back here.
+PUBLIC_ONLY: tuple[Any, ...] = (
+    Feedback.visibility == FeedbackVisibility.public,
+    Feedback.security.is_(False),
+)
+
 
 class FeedbackRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -142,18 +158,27 @@ class FeedbackRepository:
     def _tab_where(self, tab: str) -> list[Any]:
         """The four public tabs, defined once so list and counts cannot drift.
 
-        `resolved` items are sunk out of every other tab — the product decision
-        recorded in 方案稿 §8.23, and the narrower of the two readings: a
-        resolved BUG is hidden, resolved suggestions are not. Narrow on purpose,
-        because the wider one hides a suggestion the team still wants visible
-        and is much harder to notice going wrong.
+        A resolved item stops competing for attention, so it sinks out of the
+        working tabs — but only a resolved **bug** does. A resolved suggestion
+        is a feature the team decided to do and then did; it is still worth
+        reading, and hiding it was the wider reading that the product decision
+        (§8.23) did not take. The narrow one is also the easier to notice going
+        wrong: the wide version quietly removes content nobody is looking for.
+
+        Consequence worth stating: the tabs are filters, not a partition. A
+        resolved suggestion is in both `all` and `resolved`, so the tab numbers
+        do not sum to a total. That is the decision, not an accounting bug — if
+        it ever needs to be a partition, this is the one line to change.
         """
         if tab == "resolved":
             return [Feedback.status == FeedbackStatus.resolved]
-        base: list[Any] = [Feedback.status != FeedbackStatus.resolved]
+        sunk = or_(
+            Feedback.status != FeedbackStatus.resolved,
+            Feedback.kind != FeedbackKind.bug,
+        )
         if tab == "active":
             return [
-                *base,
+                sunk,
                 Feedback.status.in_(
                     [
                         FeedbackStatus.triaging,
@@ -162,15 +187,13 @@ class FeedbackRepository:
                     ]
                 ),
             ]
-        return base
+        return [sunk]
 
     async def list_public(
         self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
-        where: list[Any] = [Feedback.visibility == FeedbackVisibility.public]
+        where: list[Any] = list(PUBLIC_ONLY)
         where.extend(self._tab_where(tab))
-        if tab == "hot":
-            where.append(Feedback.status != FeedbackStatus.resolved)
         if q:
             pattern = f"%{q}%"
             where.append(
@@ -205,7 +228,7 @@ class FeedbackRepository:
         Four separate requests would render a row of 0s and then jump, and the
         thing that jumps is the first thing on the page.
         """
-        where: list[Any] = [Feedback.visibility == FeedbackVisibility.public]
+        where = list(PUBLIC_ONLY)
         all_count = await self._count([*where, *self._tab_where("all")])
         active_count = await self._count([*where, *self._tab_where("active")])
         resolved_count = await self._count([*where, *self._tab_where("resolved")])
@@ -248,7 +271,10 @@ class FeedbackRepository:
         elif tab == "security":
             where.append(Feedback.security.is_(True))
         elif tab == "public":
-            where.append(Feedback.visibility == FeedbackVisibility.public)
+            # The same predicate `list_public` uses, so the admin's "public" view
+            # is what the public actually sees. A looser one here would put rows
+            # in front of an admin labelled public that no one else can open.
+            where.extend(PUBLIC_ONLY)
         if assignee:
             where.append(Feedback.assignee_handle == assignee)
         if q:

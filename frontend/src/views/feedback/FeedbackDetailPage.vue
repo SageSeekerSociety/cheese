@@ -1,25 +1,26 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
-import FeedbackCommentsFlat from '@/components/feedback/FeedbackCommentsFlat.vue'
-import FeedbackCommentsRail from '@/components/feedback/FeedbackCommentsRail.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
-import { KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMock'
+import { KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
-import { myHandle } from '@/me'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 公开反馈详情页 (/feedback/:id)。
 //
-// 左边是**这条反馈本身**（描述、方案、评论），右边是**它现在的处境**（走到哪一步、
-// 有多少人在等、还有哪些是同一件事）。这个分工是这块最重要的一个决定：把状态
-// Timeline 放进左边正文里，读的人就会先读它——而它回答的是「我该不该继续关注」，
-// 不是「这条说的是什么」。
+// 左边是**这条反馈本身**（描述、现场、评论），右边是**它现在的处境**（走到哪一步、
+// 有多少人在等）。这个分工是这块最重要的一个决定：把状态 Timeline 放进左边正文里，
+// 读的人就会先读它 —— 而它回答的是「我该不该继续关注」，不是「这条说的是什么」。
+//
+// 三种「看不见」由服务端合成**同一个** 404，这里也就只画一个状态：不存在、别人的
+// 私密反馈、被标成安全问题的，对不相关的人来说长得一模一样。上一轮原型能分开显示
+// （「这条反馈是私密的」），那是客户端手里有全部数据才做得到的 —— 真接上服务端之后
+// 那句话本身就是泄露：它确认了这条反馈存在。
 defineOptions({ name: 'FeedbackDetailPage' })
 
 const store = useFeedbackStore()
@@ -28,56 +29,36 @@ const router = useRouter()
 const { mdAndUp } = useDisplay()
 
 const id = computed(() => String(route.params.id))
-const item = computed(() => store.byId(id.value))
-const related = computed(() => store.related(id.value))
+/** 只在这条详情确实是当前这条时才画它。慢响应后到时页面已经换了条目的情况见
+ *  `store.loadDetail` 里那个 `detailId` 比较。 */
+const item = computed(() => (store.detail?.id === id.value ? store.detail : null))
 
-/** 这条是不是我自己提的。 */
-const mine = computed(() => !!item.value && store.isMine(item.value))
 const isPrivate = computed(() => item.value?.visibility === 'private')
-
-/** **别人**的私密反馈在普通用户眼里不存在：列表层就滤掉了，直达链接也必须挡住 ——
- *  只靠列表不显示，等于谁把链接发出来谁就能看。真接后端时这一层应该在服务端。
- *
- *  判据是「不是我的」，不是「是私密的」：自己提的那条私密反馈在这个页面上和普通
- *  反馈完全一样（一样能补充说明、能看进展），只是不参与公开的支持与分享。 */
-const hiddenPrivate = computed(() => isPrivate.value && !mine.value && store.role !== 'admin')
+/** 不能公开的条目（私密 / 安全问题）：没有支持按钮、没有分享。 */
+const restricted = computed(() => !!item.value && (isPrivate.value || item.value.security))
+const supportable = computed(() => !!item.value && item.value.status !== 'resolved')
 
 const commentDraft = ref('')
 const showCopied = ref(false)
 
-/**
- * 评论布局：**原型专用开关**，三种摆法都做出来给人挑，不是已经定了哪一种。
- *
- *   甲 平铺      —— 今天的形状，按时间一条一条（FeedbackCommentsFlat）
- *   乙 一条流    —— 状态推进和评论混在一条竖线上（FeedbackCommentsRail）
- *   丙 两层折叠  —— 回复缩进挂在顶层评论下（FeedbackCommentsThread）
- *
- * 定下来之后这个开关和另外两版一起删掉，只留选中的那个。
- */
-type CommentLayout = 'flat' | 'rail' | 'thread'
-const commentLayout = ref<CommentLayout>('flat')
-const LAYOUTS: { value: CommentLayout; label: string }[] = [
-  { value: 'flat', label: '甲·平铺' },
-  { value: 'rail', label: '乙·一条流' },
-  { value: 'thread', label: '丙·两层折叠' },
-]
+function reload() {
+  void store.loadDetail(id.value)
+}
 
-// 评论是这一页唯一异步的部分，所以骨架只出现在评论区。**这是原型的取巧**：
-// 真接口多半一次把整条反馈和它的评论一起返回，那时整页都该是骨架 —— 那需要给
-// 「反馈详情」本身再做一个形态（现在没有）。
-onMounted(() => {
-  void store.load()
-})
+onMounted(reload)
+// 从「相关反馈」跳到另一条时组件不会重建（同一个路由，只换参数），所以要自己跟。
+watch(id, reload)
 
-function submitComment(body: string, parentId?: string) {
+async function submitComment(body: string, parentId?: string) {
   if (!item.value) return
-  store.addComment(item.value.id, myHandle() || '我', body, parentId)
+  await store.addComment(item.value.id, body, parentId)
 }
 
 /** 底部那个输入框用完要清空，清空是调用方的事（submitComment 只管一条评论的正文）。 */
-function postComment() {
-  submitComment(commentDraft.value)
+async function postComment() {
+  const body = commentDraft.value
   commentDraft.value = ''
+  await submitComment(body)
 }
 
 async function share() {
@@ -92,19 +73,21 @@ async function share() {
 
 <template>
   <div class="fb-page">
-    <div v-if="!item" class="fb-page__inner page-container">
-      <div class="fb-state">
-        <div class="t-body">暂无这条反馈</div>
-        <div class="t-meta mb-3">它可能已被删除</div>
-        <v-btn variant="text" color="secondary" size="small" @click="router.push('/feedback')">回到反馈中心</v-btn>
-      </div>
+    <!-- 还没问出结果之前也画骨架：先画「暂无这条反馈」再换成内容，等于先说错一句
+         话再收回去，而这两帧之间在读的人眼里是有先后的。
+         容器宽度也要跟到底下那一版（--wide）：骨架是两栏，内容是一栏的话，两块
+         正文在到达那一刻会各挪一次位置。 -->
+    <div v-if="store.detailLoading" class="fb-page__inner page-container--wide">
+      <LoadingSkeleton variant="detail" :rows="3" />
     </div>
 
-    <div v-else-if="hiddenPrivate" class="fb-page__inner page-container">
+    <div v-else-if="!item" class="fb-page__inner page-container">
       <div class="fb-state">
         <v-icon size="28" class="mb-2">mdi-lock-outline</v-icon>
-        <div class="t-body mb-1">这条反馈是私密的</div>
-        <div class="t-meta mb-3">只有提交它的人和管理员能看到它的内容</div>
+        <div class="t-body mb-1">这条反馈打不开</div>
+        <div class="t-meta mb-3">
+          它可能不存在，也可能只有提交它的人和管理员能看到 —— 私密反馈对其他人就是这样，链接也一样打不开
+        </div>
         <v-btn variant="text" color="secondary" size="small" @click="router.push('/feedback')">回到反馈中心</v-btn>
       </div>
     </div>
@@ -126,30 +109,40 @@ async function share() {
             <span v-if="isPrivate" class="chip-neutral" title="私密反馈：只有你和管理员能看到，其他人看不到它">
               <v-icon size="12">mdi-lock-outline</v-icon>私密
             </span>
-            <span v-if="item.source === 'agent'" class="chip-neutral">
+            <span v-if="item.security" class="chip-neutral">
+              <v-icon size="12">mdi-shield-alert-outline</v-icon>安全
+            </span>
+            <span v-if="item.author_is_agent" class="chip-neutral">
               <v-icon size="12">mdi-robot-outline</v-icon>{{ SOURCE_LABEL.agent }}
             </span>
             <span v-for="tag in item.tags" :key="tag" class="chip-neutral">{{ tag }}</span>
           </div>
-          <div class="t-meta mb-4">
-            <span v-if="store.role === 'admin'">{{ item.id }} · </span>{{ item.author }} · {{ relTime(item.createdAt) }}
+          <!-- 编号和作者分两行：`FB-1042` 是给人念、给人粘的，作者名之后那一串
+               才是「什么时候提的」。挤在一行会让编号看着像作者名的一部分。 -->
+          <div class="t-meta mb-1">
+            {{ item.display_id }} · {{ item.author_handle }} · {{ relTime(item.created_at) }}
           </div>
+          <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，
+               因为「这是谁提的」在这条路径上有两个都对但不同的答案。 -->
+          <div v-if="item.submitted_by_handle" class="t-meta mb-4">由 {{ item.submitted_by_handle }} 提交</div>
+          <div v-else class="mb-4" />
 
           <!-- 「已支持」是中性色（tonal），不是琥珀：琥珀在这一页属于唯一的那个主操作
                ——发表评论（见页面底部）。状态本身还有文字、图标实心、计数变 --ink
                三个不依赖颜色的信号。见 docs/design-system.md §0。 -->
-          <!-- 私密反馈两颗按钮都不给：
+          <!-- 私密和安全问题两颗按钮都不给：
                支持是公开表态（它决定「热门」怎么排、管理员先看哪条）；
                分享出去的链接对别人根本打不开，那是个死路 —— 给了反而是骗人。 -->
-          <div v-if="!isPrivate" class="d-flex align-center flex-wrap ga-2 mb-6">
+          <div v-if="!restricted" class="d-flex align-center flex-wrap ga-2 mb-6">
             <v-btn
-              :variant="item.supportedByMe ? 'tonal' : 'outlined'"
+              :variant="item.supported ? 'tonal' : 'outlined'"
               color="secondary"
-              :prepend-icon="item.supportedByMe ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
-              :disabled="item.status === 'resolved'"
+              :prepend-icon="item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
+              :disabled="!supportable"
+              :title="supportable ? '' : '已解决，无需再支持'"
               @click="store.toggleSupport(item.id)"
             >
-              {{ item.supportedByMe ? '已支持' : '支持这个反馈' }}
+              {{ item.supported ? '已支持' : '支持这个反馈' }}
               <span class="fb-support-count">{{ item.supports }}</span>
             </v-btn>
             <v-btn variant="outlined" color="secondary" prepend-icon="mdi-share-variant-outline" @click="share"
@@ -157,30 +150,30 @@ async function share() {
             >
           </div>
 
-          <section class="fb-section">
+          <section v-if="item.problem" class="fb-section">
             <div class="t-eyebrow mb-1">问题描述</div>
-            <p class="t-body">{{ item.problem }}</p>
+            <p class="t-body fb-text">{{ item.problem }}</p>
           </section>
 
           <section v-if="item.why" class="fb-section">
             <div class="t-eyebrow mb-1">为什么需要</div>
-            <p class="t-body">{{ item.why }}</p>
+            <p class="t-body fb-text">{{ item.why }}</p>
           </section>
 
           <section v-if="item.expectation" class="fb-section">
             <div class="t-eyebrow mb-1">期望方案</div>
-            <p class="t-body">{{ item.expectation }}</p>
+            <p class="t-body fb-text">{{ item.expectation }}</p>
           </section>
 
           <!-- Agent 发现的那一类：现场三段。人提交的反馈没有这三段，整块不出现。
                三段的小标题写中文，和界面其余部分一致：「REPRO」对第一次看的人来说
                不是一个词（docs/design-system.md §8.0）。 -->
-          <section v-if="item.whatHappened || item.repro || item.evidence" class="fb-section">
+          <section v-if="item.what_happened || item.repro || item.evidence" class="fb-section">
             <div class="t-eyebrow mb-2">现场</div>
             <div class="fb-evidence">
-              <div v-if="item.whatHappened" class="fb-evidence__block">
+              <div v-if="item.what_happened" class="fb-evidence__block">
                 <div class="t-eyebrow mb-1">发生了什么</div>
-                <p class="t-body">{{ item.whatHappened }}</p>
+                <p class="t-body fb-text">{{ item.what_happened }}</p>
               </div>
               <div v-if="item.repro" class="fb-evidence__block">
                 <div class="t-eyebrow mb-1">复现步骤</div>
@@ -188,42 +181,25 @@ async function share() {
               </div>
               <div v-if="item.evidence" class="fb-evidence__block">
                 <div class="t-eyebrow mb-1">证据</div>
-                <p class="t-body">{{ item.evidence }}</p>
+                <p class="t-body fb-text">{{ item.evidence }}</p>
+              </div>
+              <div v-if="item.session_id || item.environment" class="t-meta fb-evidence__block">
+                <template v-if="item.session_id">会话 {{ item.session_id }}</template>
+                <template v-if="item.session_id && item.environment"> · </template>
+                <template v-if="item.environment">{{ item.environment }}</template>
               </div>
             </div>
           </section>
 
           <section class="fb-section">
             <div class="fb-comments-head">
-              <div class="t-eyebrow">评论 {{ item.comments.length }}</div>
-              <!-- 原型开关，和中心页那个「原型身份」一样是给人看不同摆法的，不是
-                   功能（见上面 commentLayout 的注释）。用中性色：这一页的琥珀属于
-                   「发表评论」。 -->
-              <div class="fb-comments-switch">
-                <span class="t-eyebrow">原型：评论布局</span>
-                <v-btn-toggle v-model="commentLayout" mandatory density="compact" variant="outlined" divided>
-                  <v-btn v-for="l in LAYOUTS" :key="l.value" :value="l.value" size="x-small">
-                    {{ l.label }}
-                  </v-btn>
-                </v-btn-toggle>
-              </div>
+              <div class="t-eyebrow">评论 {{ item.comments }}</div>
             </div>
 
-            <LoadingSkeleton v-if="store.loading" variant="comment" :rows="2" />
-
-            <template v-else>
-              <FeedbackCommentsFlat v-if="commentLayout === 'flat'" :comments="item.comments" />
-              <FeedbackCommentsRail
-                v-else-if="commentLayout === 'rail'"
-                :comments="item.comments"
-                :timeline="item.timeline"
-              />
-              <FeedbackCommentsThread
-                v-else
-                :comments="item.comments"
-                @reply="(parentId: string, body: string) => submitComment(body, parentId)"
-              />
-            </template>
+            <FeedbackCommentsThread
+              :comments="item.thread"
+              @reply="(parentId, body) => submitComment(body, parentId)"
+            />
 
             <div class="fb-comment-form">
               <v-textarea
@@ -243,37 +219,35 @@ async function share() {
         </main>
 
         <aside class="fb-aside">
-          <!-- 选「乙·一条流」时这张卡不画：同一份 timeline 已经在正文的竖线里了，
-               两处都显示迟早会有一处忘了跟着改（这就是乙那一版的取舍，
-               见 FeedbackCommentsRail.vue）。 -->
-          <div v-if="commentLayout !== 'rail'" class="fb-aside__card">
+          <div class="fb-aside__card">
             <div class="t-eyebrow mb-3">进展</div>
-            <FeedbackStatusTimeline :timeline="item.timeline" :status="item.status" />
+            <FeedbackStatusTimeline :timeline="item.timeline" :status="item.status" :ladder="store.statusLadder" />
           </div>
 
           <div class="fb-aside__card">
-            <div class="fb-aside__stat">
-              <span class="t-meta">浏览量</span><span class="fb-aside__num">{{ item.views }}</span>
-            </div>
             <!-- 私密反馈没有「支持人数」这一格：它恒为 0，摆在那里只会让人以为
                  「还没人支持」，而不是「这件事对私密反馈不成立」。 -->
-            <div v-if="!isPrivate" class="fb-aside__stat">
+            <div v-if="!restricted" class="fb-aside__stat">
               <span class="t-meta">支持人数</span><span class="fb-aside__num">{{ item.supports }}</span>
             </div>
             <div class="fb-aside__stat">
-              <span class="t-meta">评论数</span><span class="fb-aside__num">{{ item.comments.length }}</span>
+              <span class="t-meta">评论数</span><span class="fb-aside__num">{{ item.comments }}</span>
             </div>
           </div>
 
-          <div v-if="related.length" class="fb-aside__card">
-            <div class="t-eyebrow mb-3">相关反馈</div>
-            <button v-for="r in related" :key="r.id" class="fb-related" @click="router.push(`/feedback/${r.id}`)">
-              <span class="fb-related__title">{{ r.title }}</span>
-              <span class="t-meta">{{ r.supports }} 人支持</span>
-            </button>
+          <!-- 这条反馈是从哪个话题来的。没有话题的那种（harness 在沙箱里撞的墙）
+               就没有这一格 —— 那正是它要报的那类问题。 -->
+          <div v-if="item.topic_id" class="fb-aside__card">
+            <div class="t-eyebrow mb-2">来源</div>
+            <div class="t-meta">由某个话题里的对话发现</div>
           </div>
         </aside>
       </div>
+
+      <!-- 服务端的原话（412 的「已解决不再接受支持」也走这里）。 -->
+      <v-alert v-if="store.error" type="error" density="compact" variant="tonal" class="mt-4">
+        {{ store.error }}
+      </v-alert>
     </div>
 
     <v-snackbar v-model="showCopied" :timeout="2500">链接已复制</v-snackbar>
@@ -329,6 +303,11 @@ async function share() {
   margin-left: 8px;
   font-family: var(--font-mono);
 }
+/* 用户写的正文是**多段**的（换行要保留），不是一句一句拼接的 —— 不写这个，
+   提交时分的段落到详情页会挤成一整段。 */
+.fb-text {
+  white-space: pre-wrap;
+}
 .fb-section + .fb-section {
   margin-top: 24px;
   padding-top: 24px;
@@ -354,19 +333,12 @@ async function share() {
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* 「评论 N」和那个原型开关同一行：开关是临时的，不该占一行正文的高度。 */
 .fb-comments-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  justify-content: space-between;
   gap: 8px;
   margin-bottom: 12px;
-}
-.fb-comments-switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 .fb-comment-form {
   padding-top: 4px;
@@ -393,24 +365,5 @@ async function share() {
   font-size: 14px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
-}
-.fb-related {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  padding: 8px;
-  border-radius: var(--radius-md);
-  text-align: left;
-  cursor: pointer;
-}
-.fb-related:hover {
-  background: var(--fill);
-}
-.fb-related__title {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text);
 }
 </style>

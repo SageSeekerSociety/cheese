@@ -44,7 +44,11 @@ def upgrade() -> None:
         "feedback",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column(
-            "display_no", sa.Integer(), sa.Sequence("feedback_seq"), nullable=False
+            "display_no",
+            sa.Integer(),
+            sa.Sequence("feedback_seq"),
+            server_default=sa.text("nextval('feedback_seq')"),
+            nullable=False,
         ),
         sa.Column("title", sa.String(length=300), nullable=False),
         sa.Column("summary", sa.String(length=300), nullable=False),

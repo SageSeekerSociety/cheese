@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import type { FeedbackPriority, FeedbackStatus } from '@/lib/feedbackMock'
+import type { FeedbackPriority, FeedbackStatus } from '@/cx_types'
 
 import { computed } from 'vue'
 
-import { PRIORITY_META, STATUS_META } from '@/lib/feedbackMock'
+import { priorityMeta, statusMeta } from '@/lib/feedbackMeta'
 
-// 状态/优先级的那个小药丸。四种状态色分别在卡片、详情页右侧、管理员列表里出现，
-// 所以颜色只能有一份来源（lib/feedbackMock 的 META），否则「评估中」在列表里是黄
-// 的、在详情里是灰的，读的人只会得出「界面在骗我」。
+// 状态/优先级的那个小药丸。它在卡片、详情页、管理员列表里都出现，所以颜色只能有
+// 一份来源（lib/feedbackMeta.ts），否则「评估中」在列表里是黄的、在详情里是灰的，
+// 读的人只会得出「界面在骗我」。
+//
+// **值**来自服务端（`GET /feedback/meta`），颜色来自这里：加一个状态是后端改一处
+// 的事，颜色则是视觉决定、服务端不该知道 token 名。接缝见 lib/feedbackMeta.ts ——
+// 服务端多出一个这里没有的状态时，`statusMeta` 退回中性色而不是渲染空白。
 //
 // 底色 + 文字色成对取自同一组 token（wash / ink）。**不要**只写底色不写文字色：
 // wash 是浅到只能放 ink 的，直接压 --text 上去在浅色主题里是够的、在深色主题里
@@ -18,7 +22,7 @@ const props = defineProps<{
 }>()
 
 const meta = computed(() =>
-  props.priority ? PRIORITY_META[props.priority] : props.status ? STATUS_META[props.status] : null
+  props.priority ? priorityMeta(props.priority) : props.status ? statusMeta(props.status) : null
 )
 </script>
 

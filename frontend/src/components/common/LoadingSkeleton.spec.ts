@@ -23,6 +23,7 @@ const ROW: Record<string, string> = {
   site: '.skel__site',
   brief: '.skel__bblock',
   doc: '.skel__dsec',
+  detail: '.skel__dt-sec',
   text: '.skel__text',
 }
 
@@ -128,6 +129,18 @@ describe('每一行长得像它替代的那一行', () => {
     const row = rows(draw({ variant: 'doc', rows: 1 }), 'doc')[0]
     expect(row.querySelector('.skel__bone--h2')).not.toBeNull()
     expect(row.querySelectorAll('.skel__bone--p').length).toBeGreaterThan(1)
+  })
+
+  it('反馈详情页：正文一栏 + 右边一栏两格', () => {
+    // 这一页是这一份里唯一带栏的形态，而且非带不可：只画左边的话，右栏会在内容
+    // 到达那一刻凭空插进来，正文整块被挤窄一次。
+    const container = draw({ variant: 'detail' })
+    expect(container.querySelector('.skel__dt-main')).not.toBeNull()
+    expect(container.querySelectorAll('.skel__dt-card').length, '右栏那两格').toBe(2)
+    // 标题下面那一行芯片（状态 / 类型 / 来源）和两颗动作按钮：它们是这一页和
+    // 反馈中心列表最容易被认出来的两处，少画就等于骨架不像这一页。
+    expect(container.querySelectorAll('.skel__bone--dtchip').length).toBeGreaterThan(1)
+    expect(container.querySelectorAll('.skel__bone--dtbtn').length).toBe(2)
   })
 
   it('列表行和正文行只有一条线 —— 那两处真的东西上也没有头像', () => {
