@@ -35,11 +35,10 @@ def test_a_project_event_lands_on_the_overview():
     ) == Landing(project_id=PROJECT, topic_id=OVERVIEW, task_id=None)
 
 
-def test_the_overview_is_not_just_any_room():
-    """项目的事只认总览那个房间：`room_id` 给了也不作数。
+def test_a_project_event_without_the_overview_is_refused():
+    """项目的事拿不出总览房间就拒绝，不拿 `room_id` 顶上。
 
-    合成一个参数的那一版里，「项目的事」等于「调用点随手给的房间」，
-    这张表就不封闭了。
+    顶上去的那一版里，「项目的事」等于「调用点随手给的房间」，这张表就不封闭了。
     """
     with pytest.raises(ValueError):
         landing(EventAbout.project, project_id=PROJECT, room_id=ROOM)
@@ -54,6 +53,8 @@ def test_the_overview_is_not_just_any_room():
         # 房间的事带着卡号：那它关于的是那张卡，不是房间。
         (EventAbout.room, {"room_id": ROOM, "task_id": TASK}),
         (EventAbout.project, {"overview_room_id": OVERVIEW, "task_id": TASK}),
+        # 项目的事带着一个房间：总览是从项目行上读出来的，不是调用点挑的。
+        (EventAbout.project, {"room_id": ROOM, "overview_room_id": OVERVIEW}),
         (EventAbout.room, {}),
     ],
 )

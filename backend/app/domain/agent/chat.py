@@ -3215,6 +3215,9 @@ class ChatService:
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
             landed = landing(
                 EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
@@ -3396,6 +3399,9 @@ class ChatService:
             blocks = BlockRepository(session)
             if eid and await blocks.has_eid(topic_id, eid):
                 return None
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
             landed = landing(
                 EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,

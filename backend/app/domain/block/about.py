@@ -74,6 +74,10 @@ def landing(
         case EventAbout.project:
             if overview_room_id is None:
                 raise ValueError("项目的事落项目总览：overview_room_id 不能空")
+            if room_id is not None:
+                raise ValueError(
+                    "项目的事只落项目总览，不认调用点给的房间：room_id 不能给"
+                )
             if task_id is not None:
                 raise ValueError("项目的事不落在卡上：带了 task_id 就该说 task")
             return Landing(
