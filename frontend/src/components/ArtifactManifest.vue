@@ -1,13 +1,22 @@
 <script setup lang="ts">
 // 做出了什么 —— 这个项目交出去的东西，一项一行 (#1085 结论二、三)。
 //
-// 它在项目首页上，不在一个自己的页面里：产物的形态不统一（一份 PDF、一个网址、
-// 一套 typst 工程），任何试图说出「它是什么」的类别名都不成立，所以界面上不出现
-// 类别，只出现这几行东西本身。
+// 它是看板上**最右边那一列**。三列从左到右读是一条流水线（施工中 → 交付中 →
+// 待处理），产物正是这条流水线吐出来的东西，所以它接在后面而不是摞在板上面：摞
+// 上面要占竖直高度，有几项就占多高，板会被挤到只剩一张卡，而这一页不滚。作为一
+// 列，它和别的列一样自己内部滚动，再多产物也挤不着板。
 //
-// 清单为空时这一块整个不显示，加载中也不显示：清单由交付长出来，空清单的意思是
-// 「还什么都没交出去」，那时候人要看的是下面那块板。先画一个空框再把它收掉，比
-// 一次到位更晃眼。
+// 界面上不出现产物的类别：形态不统一（一份 PDF、一个网址、一套 typst 工程），
+// 任何试图说出「它是什么」的类别名都不成立，只出现这几行东西本身。
+//
+// 空的时候这一列留着。它曾经是整块隐藏（#1085 结论三），那是它还摞在板上面的时
+// 候——一列凭空消失会让整个网格错位，而板的规矩是位置本身就是信息。
+//
+// 已发布的网站钉在最上面一行：它也是这个项目交出去的东西，只是只有一个。
+//
+// 列的框和列头由 RunningWorkView 出（`.board-col`），这里只是那一列的内容：四列的
+// 边、圆角、列头语法因此只有一份，改一处四列一起变。件数走 `count` 事件上去——列头
+// 属于那块网格，件数属于这里。
 //
 // 能做的三件事都是人的判断，芝士 做不了：改名（它起错了名字）、合并（两项其实是
 // 同一个东西）、删除（它本来就不该是一项）。
@@ -18,7 +27,10 @@ import { computed, ref, watch } from 'vue'
 import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } from '../api'
 import { relTime } from '../lib/relTime'
 
+import PublishedSite from './PublishedSite.vue'
+
 const props = defineProps<{ projectId: string }>()
+const emit = defineEmits<{ count: [number] }>()
 
 const rows = ref<ProjectArtifact[]>([])
 const actionError = ref('')
@@ -42,10 +54,11 @@ async function load() {
     if (props.projectId !== projectId) return
     rows.value = listed.data
   } catch {
-    // 读不到清单不该把首页变成一条错误：板是这一页的主体，而这一块只在真有东西
-    // 可摆时出现。下一次进这一页会再试一遍。
+    // 读不到清单不该把首页变成一条错误：板是这一页的主体。下一次进这一页会再试
+    // 一遍，这一列这次显示成空的。
     if (props.projectId === projectId) rows.value = []
   }
+  if (props.projectId === projectId) emit('count', rows.value.length)
 }
 
 function version(row: ProjectArtifact): string {
@@ -113,10 +126,12 @@ watch(
 </script>
 
 <template>
-  <section v-if="rows.length" class="made">
-    <h2 class="made__title t-title">做出了什么</h2>
+  <div class="made">
+    <!-- 网站钉在最上面：它也是交出去的东西，但只有一个，所以不排进下面那张清单。 -->
+    <PublishedSite :project-id="projectId" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
+      <li v-if="!rows.length" class="made__empty t-body">暂无产物</li>
       <li v-for="row in rows" :key="row.id" class="made-row">
         <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
         <router-link
@@ -206,28 +221,34 @@ watch(
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-/* 左右和下面那块板的头部对齐：板自己有 12px，头部再补 10px，所以这里也是 10px。 */
+/* 这一格是列头下面剩下的全部高度：`min-height: 0` 那条链要传到 .made__list，它才
+   真的会滚而不是把列撑长。 */
 .made {
-  flex: 0 0 auto;
-  padding: 0 10px 14px;
-}
-.made__title {
-  margin: 0 0 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 /* 错误是给人读的一行字，所以用墨色那一档：`--danger` 是记号（点、边、图标）的
    颜色，浅色主题下拿它写字只有 2.34:1，读不出来。 */
 .made__error {
-  margin: 0 0 8px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 12px 0;
   color: var(--danger-ink);
 }
+/* 清单自己滚，和任务列的 .board-col__list 同一套（`min-height: 0` 才传得下去）。 */
 .made__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   list-style: none;
-  padding: 0;
   margin: 0;
+  padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -237,8 +258,8 @@ watch(
 .made-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 8px 8px 12px;
+  gap: 8px;
+  padding: 8px 4px 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -258,5 +279,10 @@ watch(
 .made-row__when {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
+}
+/* 空列自己说它空。和任务列的空行同一个观感（同样的内边距、同样的 --muted）。 */
+.made__empty {
+  padding: 8px 4px;
+  color: var(--muted);
 }
 </style>

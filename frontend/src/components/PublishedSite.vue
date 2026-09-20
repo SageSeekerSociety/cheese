@@ -1,13 +1,18 @@
 <script setup lang="ts">
 // 网站 —— 这个项目对外的那个地址，以及把已采纳的版本发上去的那一下。
 //
-// 它在项目首页上「做出了什么」旁边，不在一个叫「导出与发布」的页面里：一个发布出
-// 去的网站就是交出去的东西之一，和清单上那几项答的是同一个问题。而那一页除了这一
-// 块之外什么都没有，于是「导出」两个字答应了一件它从来没做过的事。
+// 它钉在首页「做出了什么」那一列的最上面，不在一个叫「导出与发布」的页面里：一个
+// 发布出去的网站就是交出去的东西之一，和那一列里的几项答的是同一个问题。而那一页
+// 除了这一块之外什么都没有，于是「导出」两个字答应了一件它从来没做过的事。
 //
-// 没发布过、也没有东西可发布时整块不出现——和「做出了什么」同一条规矩：首页上的每
-// 一块都该是这个项目现在真有的东西。芝士 在已采纳的版本里备好一个静态站点，这一块
-// 自己就出现了。
+// 它不排进下面那张清单，因为它只有一个：清单上一项是一样东西的历代版本，而网站只
+// 有「线上这一版」这一个状态。
+//
+// 没发布过、也没有东西可发布时这一行不出现——那一列此时只剩产物，或者「暂无产物」。
+// 芝士 在已采纳的版本里备好一个静态站点，这一行自己就出现了。
+//
+// 发布入口和已采纳的版本摆在一个对话框里：一个季度按几次的动作不值得在首页常驻一
+// 个表单，而该发哪一版、发哪个入口是按下去之前必须看清的两件事。
 import type { ProjectSiteInfo } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -21,6 +26,7 @@ const info = ref<ProjectSiteInfo | null>(null)
 const directory = ref('')
 const publishing = ref(false)
 const publishError = ref('')
+const asking = ref(false)
 
 const candidates = computed(() =>
   (info.value?.candidates ?? []).map((candidate) => ({ title: candidate.entry_file, value: candidate.directory }))
@@ -72,6 +78,7 @@ async function load() {
 async function publish() {
   const current = info.value
   if (!canPublish.value || !current?.source_revision) return
+  asking.value = false
   const projectId = props.projectId
   publishing.value = true
   publishError.value = ''
@@ -104,6 +111,7 @@ watch(
     directory.value = ''
     publishing.value = false
     publishError.value = ''
+    asking.value = false
     void load()
   },
   { immediate: true }
@@ -111,10 +119,7 @@ watch(
 </script>
 
 <template>
-  <section v-if="shown && info" class="site">
-    <h2 class="site__title t-title">网站</h2>
-    <p v-if="publishError" role="alert" class="site__error t-meta">{{ publishError }}</p>
-
+  <div v-if="shown && info" class="site">
     <div class="site-row">
       <a
         v-if="info.site"
@@ -127,77 +132,84 @@ watch(
         {{ info.site.url }}
       </a>
       <span v-else class="site-row__url t-body c-muted">暂无已发布的网站</span>
-      <span v-if="info.site" class="site-row__when t-meta c-faint">
-        <code :title="info.site.source_revision">{{ info.site.source_revision.slice(0, 8) }}</code>
-        · {{ info.site.published_by }} · {{ relTime(info.site.published_at) }}
-      </span>
       <v-btn
         v-if="info.can_publish"
-        size="small"
-        variant="outlined"
+        class="site-row__act"
+        size="x-small"
+        variant="text"
         color="primary"
         :disabled="!canPublish"
         :loading="publishing"
-        @click="publish"
+        @click="asking = true"
       >
-        {{ info.site ? '发布更新' : '发布网站' }}
+        {{ info.site ? '发布更新' : '发布' }}
       </v-btn>
     </div>
+    <p v-if="info.site" class="site-row__when t-meta c-faint">
+      <code :title="info.site.source_revision">{{ info.site.source_revision.slice(0, 8) }}</code>
+      · {{ info.site.published_by }} · {{ relTime(info.site.published_at) }}
+    </p>
+    <p v-if="publishError" role="alert" class="site__error t-meta">{{ publishError }}</p>
 
-    <template v-if="info.can_publish">
-      <p v-if="info.unavailable_reason" role="status" class="site__note t-meta c-muted">
-        {{ info.unavailable_reason }}
-      </p>
-      <p v-else-if="!info.candidates.length" class="site__note t-meta c-muted">项目已采纳的版本里没有可发布的网站</p>
-      <p v-else-if="isCurrent" class="site__note t-meta c-faint">线上的就是已采纳的这一版</p>
-      <v-select
-        v-if="candidates.length > 1"
-        v-model="directory"
-        class="site__entry"
-        autocomplete="off"
-        :items="candidates"
-        :disabled="publishing"
-        label="网站入口"
-        variant="outlined"
-        density="compact"
-        hide-details
-      />
-      <p v-else-if="selected && !info.site" class="site__note t-meta c-muted">
-        网站入口：<code>{{ selected.entry_file }}</code>
-      </p>
-    </template>
-  </section>
+    <!-- 发布。按下去之前要看清的是两件事：发的是哪一版，发的是哪个入口。 -->
+    <v-dialog :model-value="asking" max-width="440" @update:model-value="asking = false">
+      <v-card>
+        <v-card-title class="t-title">{{ info.site ? '发布更新' : '发布网站' }}</v-card-title>
+        <v-card-text>
+          <p v-if="info.unavailable_reason" role="status" class="t-body c-muted">{{ info.unavailable_reason }}</p>
+          <p v-else-if="!info.candidates.length" class="t-body c-muted">项目已采纳的版本里没有可发布的网站</p>
+          <template v-else>
+            <p class="t-body mb-4">
+              发布项目已采纳的版本
+              <code v-if="info.source_revision" :title="info.source_revision">
+                {{ info.source_revision.slice(0, 8) }}
+              </code>
+            </p>
+            <v-select
+              v-if="candidates.length > 1"
+              v-model="directory"
+              autocomplete="off"
+              :items="candidates"
+              :disabled="publishing"
+              label="网站入口"
+              variant="outlined"
+              density="compact"
+              hide-details
+            />
+            <p v-else-if="selected" class="t-body">
+              网站入口：<code>{{ selected.entry_file }}</code>
+            </p>
+            <p v-if="isCurrent" class="t-meta c-faint mt-4">线上的就是已采纳的这一版</p>
+            <p v-else class="t-meta c-faint mt-4">发布之后网站持续可访问，后续修改需要再发布一次</p>
+          </template>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" color="on-surface-variant" @click="asking = false">取消</v-btn>
+          <v-btn variant="text" color="primary" :disabled="!canPublish" :loading="publishing" @click="publish">
+            发布
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
 </template>
 
 <style scoped>
-/* 和「做出了什么」、下面那块板左右对齐。 */
+/* 钉在这一列最上面，和下面那张清单之间一条分界线 —— 它和产物不是一类东西。 */
 .site {
   flex: 0 0 auto;
-  padding: 0 10px 14px;
-}
-.site__title {
-  margin: 0 0 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--line);
 }
 .site__error {
-  margin: 0 0 8px;
+  margin: 6px 0 0;
   color: var(--danger-ink);
 }
-.site__note {
-  margin: 8px 0 0;
-}
-.site__entry {
-  margin-top: 10px;
-  max-width: 360px;
-}
-/* 一行：地址在左，线上那一版贴着右边的按钮——和「做出了什么」的行同一个语法。 */
 .site-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 8px 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
+  gap: 6px;
 }
 .site-row__url {
   flex: 1 1 auto;
@@ -211,8 +223,15 @@ watch(
 a.site-row__url:hover {
   text-decoration: underline;
 }
-.site-row__when {
+.site-row__act {
   flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
+}
+/* 线上是哪一版、谁发的、什么时候 —— 第二行，因为这一列窄，挤在地址后面会把地址
+   截成一小段。 */
+.site-row__when {
+  margin: 2px 0 0;
+}
+.site-row__when code {
+  overflow-wrap: anywhere;
 }
 </style>
