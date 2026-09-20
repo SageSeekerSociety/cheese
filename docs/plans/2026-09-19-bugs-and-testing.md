@@ -119,7 +119,9 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
 3. **Go ↔ Python 的线格式**（族 1）。`execution.call` / `execution.data` / `execution.result` 三帧
    由 `backend/tests/fixtures/wire/*.json` 一帧一文件冻住，两侧各读同一批：Python 在
    `tests/contract/test_wire_frames.py`，Go 在 `cli/internal/link/frames_test.go`。
-   写侧的唯一声明是 `device_link.execution_call`，替身侧的唯一声明是 `tests/support/wire.py`。
+   写侧各自只声明一次：下行是 `device_link.execution_call`，上行是
+   `link.ExecutionData` / `link.ExecutionResult`（`executor.go` 调它们，夹具对拍的也是它们）；
+   替身侧的唯一声明是 `tests/support/wire.py`。
    握手那一格还没进夹具：`test_device_connection_lifecycle.py` 发的是 `{"t":"hello","v":3}`，
    而两边的 `PROTOCOL_VERSION` 都是 1。
 4. **生产的连接池**（族 5、11）。`backend/tests/conftest.py:83` 设 `CHEESEX_TEST_NULLPOOL=1`，
@@ -513,8 +515,10 @@ guard 回一句 `Central execution is disabled`。
 
 **(b) 每跳有契约**（缝 C-1 与 C-2）。两条最要紧的：
 1. `execution.call/data/result` 三帧写进 `device_link.py`，加 Go↔Python 的夹具对拍。**已做**：
-   手拼 dict 换成 `device_link.execution_call`，`cli/internal/link/frames_test.go` 与
-   `backend/tests/contract/test_wire_frames.py` 读同一批 `backend/tests/fixtures/wire/*.json`。
+   手拼 dict 换成 `device_link.execution_call`，`executor.go` 里手拼的 `link.Msg` 换成
+   `link.ExecutionData` / `link.ExecutionResult`，`cli/internal/link/frames_test.go` 与
+   `backend/tests/contract/test_wire_frames.py` 读同一批 `backend/tests/fixtures/wire/*.json`
+   并且拿它们去对拍两侧真正在用的那几个构造器。
 2. `room_fixture.py:174-177` 那一行换成真的连接器进程 → 真的 owner app → 真的 runtime，
    同时 `acceptance.py:363` 的 `LocalDeviceHub` 消失（它的 `exec` 就是本机 `subprocess.run`，
    等于把 DeviceHub 整段摘掉）。

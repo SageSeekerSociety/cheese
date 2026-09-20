@@ -1,8 +1,8 @@
 package link
 
 import (
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,8 +16,11 @@ import (
 // link.Msg and the backend's device_link.py from drifting apart in silence.
 //
 // Each frame is asked the two questions that matter at a seam: does Msg read
-// the bytes the backend writes, and does Msg write the bytes the backend
-// expects to read. Nothing here starts a process or opens a socket.
+// the bytes the backend writes, and does the code that writes this frame in
+// production put out the bytes the backend expects to read. The second one is
+// why the answer frames are built by link.ExecutionData / link.ExecutionResult,
+// the constructors cli/internal/host/executor.go itself calls, rather than by
+// Msg literals typed out again here. Nothing starts a process or opens a socket.
 
 const fixtureDir = "../../../backend/tests/fixtures/wire"
 
@@ -110,8 +113,12 @@ func TestExecutionCallIsReadAsAMethodOnOneStateDir(t *testing.T) {
 	}
 }
 
-// The answers the connector writes, built here exactly as executor.go builds
-// them.
+// The answers the connector writes, through the very constructors
+// cli/internal/host/executor.go calls. Rebuilding the Msg literals here instead
+// would check this file against the fixture and leave executor.go unwatched: a
+// renamed frame type, a dropped ID or a stray extra field there would keep
+// every test on both sides green, while the backend's lookup of the call this
+// answers missed and the call hung to its timeout.
 func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 	for _, f := range loadFixtures(t) {
 		if f.Origin != "device" {
@@ -122,17 +129,13 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 			var built Msg
 			switch f.Type {
 			case "execution.data":
-				payload := f.Meaning["payload"].(string)
-				built = Msg{
-					T:    "execution.data",
-					ID:   id,
-					Data: base64.StdEncoding.EncodeToString([]byte(payload)),
-				}
+				built = ExecutionData(id, []byte(f.Meaning["payload"].(string)))
 			case "execution.result":
-				built = Msg{T: "execution.result", ID: id}
+				var failure error
 				if reason := f.Meaning["error"].(string); reason != "" {
-					built.Error = reason
+					failure = errors.New(reason)
 				}
+				built = ExecutionResult(id, failure)
 			default:
 				t.Fatalf("no builder for %s", f.Type)
 			}
@@ -144,7 +147,7 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 // An empty error is not an error: omitempty drops the key, and the backend
 // tells "the machine failed" from "the call finished" by whether it is there.
 func TestACleanResultCarriesNoErrorKey(t *testing.T) {
-	data, err := json.Marshal(Msg{T: "execution.result", ID: "execution-1"})
+	data, err := json.Marshal(ExecutionResult("execution-1", nil))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

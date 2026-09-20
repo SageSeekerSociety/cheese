@@ -97,8 +97,18 @@ class RecordingDevice:
         await self.sent.put(message)
 
     async def next_call(self, timeout: float = 1) -> ExecutionCall:
-        """Wait for the next `execution.call`, skipping the opening `welcome`."""
+        """Wait for the `execution.call`, skipping an `update` pushed after the hello.
+
+        `DeviceHub._update_if_stale` answers a `hello` that names no build with
+        one `update` frame whenever the server has a build to serve, so that
+        frame can land between the handshake and the call. Nothing else may:
+        the doubles this replaced each asserted that the very next frame was the
+        call, and swallowing whatever turned up instead would hide the drift
+        they exist to catch.
+        """
         while True:
             frame = await asyncio.wait_for(self.sent.get(), timeout)
             if frame["t"] == "execution.call":
                 return ExecutionCall.parse(frame)
+            if frame["t"] != "update":
+                raise AssertionError(frame["t"])
