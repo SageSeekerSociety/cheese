@@ -48,7 +48,10 @@ async def _require_admin(
     capability proving only that a call ran inside that screen, unattended.
     Asking instead whether the handle names an agent would answer neither: the
     allow-list is a list of handles and nothing stops an agent's from being on
-    it, which is exactly the case the tests pin.
+    it, which is exactly the case the tests pin. So the condition names the
+    credential it refuses — `via == "cheese"` is every scoped one — rather than
+    spelling it as "authenticated but not a session", which is the same set read
+    one step slower.
 
     §4.3 requires this refusal **in the route body**, because `/admin/*` is not
     in `_CHEESE_WRITE_PATHS` — that table is a whitelist, so nothing in the
@@ -58,8 +61,8 @@ async def _require_admin(
     which `ActorResolver` refuses when there is no project to scope it to.
     """
     who = await resolver.resolve(fallback_handle=None)
-    if who.authenticated and who.via != "token":
-        raise ForbiddenError("agent 不能执行管理动作")
+    if who.via == "cheese":
+        raise ForbiddenError("作用域凭证不能执行管理动作，请用本人会话")
     return await service.require_admin(who.handle if who.authenticated else None)
 
 

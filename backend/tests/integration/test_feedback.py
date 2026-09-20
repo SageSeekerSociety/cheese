@@ -846,7 +846,8 @@ def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch)
             "/admin/feedback", headers={"X-Cheese-Screen": screen.token}
         )
         assert refused.status_code == 403, refused.text
-        assert "agent" in refused.json()["message"]
+        # 拒的是凭证，说出口的也得是凭证——写「agent 不能」会把「按种类拒」重新钉回来。
+        assert "凭证" in refused.json()["message"]
 
         # A write route too: every handler in the module goes through one helper,
         # and this is what says the helper is actually on them.

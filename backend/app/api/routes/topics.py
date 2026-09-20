@@ -710,9 +710,7 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    if not await TopicMemberService(db).holds_an_agent_seat(
-        place.room_id, actor.handle
-    ):
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         runner.submit(
             chat,
             place.room_id,
@@ -1118,9 +1116,7 @@ async def add_comment(
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
 
-    if not await TopicMemberService(db).holds_an_agent_seat(
-        place.room_id, actor.handle
-    ):
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
         runner.submit(
@@ -1453,7 +1449,7 @@ async def publish_chat_message(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     if not actor.authenticated or not await TopicMemberService(db).holds_an_agent_seat(
-        place.room_id, actor.handle
+        place.room, actor.handle
     ):
         raise ForbiddenError("An authenticated agent must publish this message")
     await resolver.authorize_topic(
@@ -1527,7 +1523,7 @@ async def ask_options(
     if actor.authenticated:
         author = actor.handle
         asked_by_agent = await TopicMemberService(db).holds_an_agent_seat(
-            place.room_id, author
+            place.room, author
         )
     else:
         author = await TopicMemberService(db).resolve_agent_handle(

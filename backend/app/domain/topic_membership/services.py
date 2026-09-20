@@ -22,7 +22,7 @@ from app.domain.identity.handles import (
     topic_agent_handle,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicMembership, TopicRole
+from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
@@ -303,19 +303,35 @@ class TopicMemberService:
             and user.id in agent_ids
         ]
 
-    async def holds_an_agent_seat(self, topic_id: uuid.UUID, handle: str) -> bool:
-        """Is ``handle`` sitting in this room as one of its agents?
+    async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
+        """Does ``handle`` answer this room as one of its agents?
 
         The question every caller used to ask of the actor itself ("is this an
         agent?") and answer away from the room it was acting in. A participant
         is not typed; it holds a seat, and the seat is what says an agent
-        answers here — so a teammate seated in ANOTHER room is, in this one,
-        simply not one of its agents, which is what the callers relaying to 芝士
-        and gating ``chat-publish`` actually mean.
+        answers here — so a teammate seated in some OTHER room of some other
+        project is, in this one, simply not one of its agents.
 
-        Pass the ROOM's id: threads have no roster of their own.
+        Two rosters, because a seat in the project is a seat for the project's
+        rooms. The project's root room is the project itself — 总览 mirrors the
+        whole roster — and the agent seated there is precisely the one a project
+        credential authenticates as: ``ProjectAgentCredentialService.agent_handle``
+        names the root room's agent on purpose and borrows no other room's seat.
+        Asking only the destination room would answer "not an agent" for every
+        off-platform 芝士 in every room but the root one, and that answer is the
+        difference between publishing a message and a 403, and between a turn
+        that reads its own question back as unread input and one that does not.
+
+        Pass the ROOM: threads have no roster of their own, and the project the
+        room belongs to is where the second roster is found.
         """
-        return handle in await self.agent_handles(topic_id)
+        if handle in await self.agent_handles(room.id):
+            return True
+        project = await ProjectRepository(self._session).get(room.project_id)
+        root_id = project.root_topic_id if project is not None else None
+        if root_id is None or root_id == room.id:
+            return False
+        return handle in await self.agent_handles(root_id)
 
     async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
         """Seat THIS agent in this room, and return the handle it acts under.

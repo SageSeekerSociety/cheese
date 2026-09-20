@@ -128,12 +128,9 @@ async def propose_feedback(
         # 按钮。和 `/ask` 同一条路：这里也填不出轮次号（CLI 只在 CHEESE_TURN 非空
         # 时才带 X-Cheese-Turn，没有一处产品代码写它），所以由写入端直接说明这是
         # 自己的产出——否则它盖上待读标记，下一轮把自己的提案当成一条没读过的话
-        # 再读一遍。人提的那种照旧是一条待读输入。
-        # 「这是我自己的产出吗」问的是这个房间的席位：提案卡是坐在这里的那位芝士
-        # 落下的，人提的那种照旧是一条待读输入。
-        own_output=await TopicMemberService(db).holds_an_agent_seat(
-            place.room_id, handle
-        ),
+        # 再读一遍。「这是不是我自己的产出」问的是席位：提案卡是这个项目派来答这个
+        # 房间的那位芝士落下的，人提的那种照旧是一条待读输入。
+        own_output=await TopicMemberService(db).holds_an_agent_seat(place.room, handle),
     )
     await db.commit()
     result = FeedbackProposalResult(block_id=block.id, fingerprint=fingerprint)
