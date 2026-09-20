@@ -9,7 +9,6 @@ dependencies = [
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
     "bcrypt>=5.0.0",
-    "claude-agent-sdk>=0.2.101",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
     # Fetching the web for an agent (app.domain.fetch). markdownify converts a
