@@ -119,6 +119,27 @@ ensure_device_connection_owner() {
   fail "device connection owner is not healthy; the running backend was not touched"
 }
 
+ensure_forgejo() {
+  case " $COMPOSE_OVERLAYS " in
+    *docker-compose.forgejo.yml*) ;;
+    *) return 0 ;;
+  esac
+  local container waited=0
+  container="$(dc ps -q forgejo 2>/dev/null | head -n 1 || true)"
+  if [ -z "$container" ] || [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" != true ]; then
+    dc up -d --no-deps forgejo || fail "repository service did not start"
+  fi
+  while [ "$waited" -lt 90 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/healthz" >/dev/null; then
+      log "repository service is healthy; its data volume survives app releases"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "repository service is not healthy; app release aborted"
+}
+
 reload_api_front_routes() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
   local config backup
@@ -692,6 +713,7 @@ rollout_frontend() {
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_device_connection_owner
+ensure_forgejo
 reload_api_front_routes
 check_session_base_survives_release
 

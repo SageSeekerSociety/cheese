@@ -1492,8 +1492,6 @@ class DeviceChannel(Channel):
             project_id=str(project_id),
             topic_id=str(topic_id),
             agent_handle=agent_handle,
-            # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{api_base}/projects/{project_id}/git",
             execution_target=execution_target,
             remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
             ca_pem=ca_pem,
@@ -1509,7 +1507,6 @@ class DeviceChannel(Channel):
         if execution_target is not None:
             # The assigned executor already owns the checkout and its environment.
             for name in (
-                "CHEESE_GIT_REMOTE",
                 "CHEESE_GIT_BRANCH",
                 "CHEESE_BRANCH_URL",
                 "CHEESE_ENVIRONMENT",

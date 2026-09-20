@@ -124,7 +124,8 @@ def pr_trailers(
     # The ROOM is a URL (#189): a uuid in `git log` is a dead end unless the
     # reader already knows this platform's routes, and this line exists so that
     # somebody auditing a commit can get to where the change was made.
-    lines.append(f"Cheese-Topic: {_room_url(topic)}")
+    room_title = " ".join((topic.title or "").split())
+    lines.append(f"Cheese-Topic: {_room_url(topic)} {room_title}".rstrip())
     if card is not None:
         # The CARD stays a bare id, deliberately. There is no route that opens an
         # accept card: `?card=` on the room's page takes a TASK id

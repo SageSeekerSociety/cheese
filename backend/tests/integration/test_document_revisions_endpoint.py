@@ -5,6 +5,7 @@
 不报错，谁也看不出丢了什么。
 """
 
+import asyncio
 import io
 import uuid
 import zipfile
@@ -13,6 +14,11 @@ import pytest
 
 from app.domain.workspace import service as ws
 from tests.delivery import delivery_task
+from tests.integration.test_file_panel_safety import (
+    _put,
+    _worktree,
+    task_machine,  # noqa: F401
+)
 
 pytest.importorskip("lxml", reason="修订解析要用 lxml")
 
@@ -128,6 +134,7 @@ def test_a_decision_with_no_version_is_refused(client, contract):
     assert _decide(client, tid, accept=[1]).status_code == 422
 
 
+@pytest.mark.usefixtures("task_machine")
 def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract):
     """改动那一格看的是任务工作树上的那一份，不是房间交付的那一份。
 
@@ -136,9 +143,18 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
     """
     pid, tid = contract
     task = delivery_task(client, tid)
-    target = ws.topic_worktree(pid, task.id) / PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(_docx(LATER))
+
+    async def place():
+        from app.domain.topic.models import Topic
+
+        async with client.test_factory() as session:
+            room = await session.get(Topic, tid)
+            room.session_placement = {"execution": {"kind": "device"}}
+            await session.commit()
+
+    asyncio.run(place())
+    _put(client, pid, tid, PATH, _docx(LATER))
+    target = _worktree(client, tid) / PATH
 
     read = _listing(client, tid, str(task.id))
     assert [row["number"] for row in read["revisions"]] == [1]

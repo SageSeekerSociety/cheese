@@ -9,6 +9,7 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
+import asyncio
 import importlib
 import logging
 import pkgutil
@@ -226,6 +227,11 @@ async def lifespan(_: FastAPI):
 
     spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
     spawn(watch_loop_lag(), name="event loop lag")
+    forge_events = None
+    if settings.forge_event_relay_url:
+        from app.domain.review.events import listen
+
+        forge_events = asyncio.create_task(listen(scheduler), name="forge events")
 
     # The openviking backend's whole failure mode is silence: a rejected key
     # leaves extraction writing nothing, recall answering empty, and no other
@@ -245,6 +251,9 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            if forge_events is not None:
+                forge_events.cancel()
+                await asyncio.gather(forge_events, return_exceptions=True)
             for job in reversed(jobs):
                 await job.stop()
             if hasattr(hub_runtime, "close"):

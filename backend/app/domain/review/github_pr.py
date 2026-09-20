@@ -1405,6 +1405,10 @@ class GitHubPRClient:
         self._api_base = api_base.rstrip("/")
         self._transport = transport
 
+    @property
+    def tokens(self) -> GitHubAppTokens:
+        return self._tokens
+
     def _url(self, path: str) -> str:
         return f"{self._api_base}/repos/{self._owner}/{self._repo}{path}"
 

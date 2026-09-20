@@ -64,7 +64,8 @@ def machine_commits(
         if known.returncode == 0:
             _git(work, "checkout", "-q", "-B", branch, f"origin/{branch}")
         else:
-            _git(work, "checkout", "-q", "-b", branch)
+            base = ws._task_workspace(place_id)["base"]
+            _git(work, "checkout", "-q", "-b", branch, f"origin/{base}")
         for path, content in files.items():
             target = work / path
             target.parent.mkdir(parents=True, exist_ok=True)

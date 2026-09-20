@@ -14,10 +14,11 @@ for a commit to sweep up, and the old behaviour would pass too.
 import subprocess
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from app.domain.review.services import AcceptService
+from app.domain.project import forge
 from app.domain.workspace import service as ws
 from tests.machine_work import machine_commits
 
@@ -37,8 +38,10 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> uuid.UUID:
     return project_id
 
 
-def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
+@pytest.mark.anyio
+async def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     project: uuid.UUID,
+    monkeypatch,
 ) -> None:
     topic_id = uuid.uuid4()
     ws.bind_task(
@@ -55,7 +58,17 @@ def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     # Somebody is working: a file changed, but nobody said "this is a fix".
     (worktree / "scratch.md").write_text("half a thought\n")
 
-    head = AcceptService(None)._local_topic_branch_head(project, topic_id)  # type: ignore[arg-type]
+    async def data(project_id, session, path):
+        assert project_id == project
+        assert path.startswith("/branches/task%2F")
+        return {"commit": {"sha": before}}
+
+    async def binding(*args):
+        return SimpleNamespace(kind="github_app")
+
+    monkeypatch.setattr(forge, "repository_data", data)
+    monkeypatch.setattr(forge, "binding_for_project", binding)
+    head = await forge.branch_head(project, None, branch)
 
     assert head == before, "读一次分支头不应该产生提交"
     assert _git(repo, "rev-parse", branch) == before, "分支头不应该被读操作推动"
@@ -84,8 +97,10 @@ def test_the_machine_s_own_push_is_what_moves_the_branch(project: uuid.UUID) -> 
     )
 
 
-def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
+@pytest.mark.anyio
+async def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
     project: uuid.UUID,
+    monkeypatch,
 ) -> None:
     task_id = uuid.uuid4()
     ws.bind_task(
@@ -94,5 +109,10 @@ def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
         directory=f"task_{task_id.hex[:8]}",
         base="main",
     )
-    head = AcceptService(None)._local_topic_branch_head(project, task_id)  # type: ignore[arg-type]
+
+    async def absent(*args):
+        return None
+
+    monkeypatch.setattr(forge, "repository_data", absent)
+    head = await forge.branch_head(project, None, ws.branch_for_task(task_id))
     assert head is None

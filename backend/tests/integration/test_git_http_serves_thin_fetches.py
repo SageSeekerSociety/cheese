@@ -1,43 +1,12 @@
-"""A machine can take the history without every file version in it.
-
-Everything a machine fetches crosses this backend, and a project's repo is
-mostly old file contents: measured on cheese's own repository, a whole clone is
-195 MB and the same clone without them 9.6 MB. One 169 MB fetch on dev held the
-event loop for 3.7 s on 2026-09-20, which is what the sandbox CLI's
-`--filter=blob:none` is for — and git refuses that unless the served repo says
-it is allowed.
-"""
+"""A filtered fetch retains the history and supports subsequent pushes."""
 
 import subprocess
 import uuid
 from pathlib import Path
 
-from app.core.sandbox_auth import mint_scoped_token
-
 
 def _project(client) -> str:
     return client.post("/projects", json={"name": "git 项目"}).json()["data"]["id"]
-
-
-def test_the_served_repo_allows_a_fetch_without_old_file_contents(client):
-    from app.domain.workspace import service as ws
-
-    pid = _project(client)
-    # Reach the repo the way a machine does, so it is configured as one.
-    client.get(
-        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
-    )
-    repo: Path = ws.ensure_repo(uuid.UUID(pid))
-
-    value = subprocess.run(
-        ["git", "config", "--get", "uploadpack.allowFilter"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-    assert value == "true", "without this git answers a filtered fetch with an error"
 
 
 def test_a_machine_keeps_the_history_it_fetches_that_way(tmp_path, client):
@@ -48,10 +17,6 @@ def test_a_machine_keeps_the_history_it_fetches_that_way(tmp_path, client):
     from app.domain.workspace import service as ws
 
     pid = _project(client)
-    client.get(
-        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
-    )
     origin: Path = ws.ensure_repo(uuid.UUID(pid))
 
     def git(cwd: Path, *args: str) -> str:
@@ -59,6 +24,8 @@ def test_a_machine_keeps_the_history_it_fetches_that_way(tmp_path, client):
             ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
         )
         return done.stdout.strip()
+
+    git(origin, "config", "uploadpack.allowFilter", "true")
 
     # A branch with a file in it, as a machine's earlier task would have left.
     seed = tmp_path / "seed"

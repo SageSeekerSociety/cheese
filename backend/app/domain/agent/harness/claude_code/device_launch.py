@@ -757,8 +757,8 @@ def on_machine(
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
 
-    ``place`` states facts; what they mean is decided here. A room with a git
-    remote syncs at turn end (a Stop hook), one with an execution target ships
+    ``place`` states facts; what they mean is decided here. A project room
+    syncs at turn end (a Stop hook), one with an execution target ships
     the executor client and hands ``claude`` to it, one whose operator may drive
     it directly runs without the permission prompt, and a CA to trust is a file
     only the script can name an absolute path for.
@@ -766,7 +766,7 @@ def on_machine(
     return launch_holes(
         # A room whose work is done on an executor has nothing of its own to
         # hand back; the executor owns the checkout.
-        sync_on_stop=bool(place.git_remote) and place.execution_target is None,
+        sync_on_stop=bool(place.project_id) and place.execution_target is None,
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         remote_control=place.remote_control,

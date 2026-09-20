@@ -58,7 +58,6 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},
-        "cheese_gh_token": {},
         "cheese_members": {},
         "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
         "cheese_notify": {"title": "notice"},
@@ -470,78 +469,10 @@ class _FakeHTTPResponse:
         return False
 
 
-def _run_gh_token(cli, monkeypatch, permissions: str) -> None:
-    monkeypatch.setattr(
-        cli.urllib.request,
-        "urlopen",
-        lambda _req, timeout=None: _FakeHTTPResponse(
-            {
-                "data": {
-                    "token": "ghs_x",
-                    "repo": "acme/widgets",
-                    "expires_at": "2026-08-12T10:00:00Z",
-                    "permissions": permissions,
-                }
-            }
-        ),
-    )
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "gh-token"])
-    cli.main()
-
-
-def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsys):
-    """The whole point of widening the token: the agent has to LEARN it can
-    read an issue, or it goes on asking a human to paste the body in."""
-    cli = _load()
-    _run_gh_token(
-        cli,
-        monkeypatch,
-        "actions: read, checks: read, contents: read, issues: read, "
-        "metadata: read, pull_requests: read",
-    )
-
-    out, err = capsys.readouterr()
-    assert out.strip() == "ghs_x"  # stdout stays token-only for $(...)
-    assert "repos/acme/widgets/issues/<n>" in err
-    assert "repos/acme/widgets/pulls/<n>" in err
-    assert "repos/acme/widgets/contents/<path>" in err
-
-
-def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, capsys):
-    """Same lesson one step further along. Reading what it may do is only half
-    the job — an agent that can push and open its own PR but was never shown
-    the two commands hands the last step back to a human, which is exactly the
-    stall the read-only token used to cause."""
-    cli = _load()
-    _run_gh_token(
-        cli,
-        monkeypatch,
-        "actions: read, checks: read, contents: write, metadata: read, "
-        "pull_requests: write, workflows: write",
-    )
-
-    _out, err = capsys.readouterr()
-    assert "cheese sync" in err
-    assert "cheese push-fix" in err
-    assert "x-access-token:" not in err
-    assert "gh api repos/acme/widgets/pulls -f head=" not in err
-
-
-def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
-    """An advertised recipe that 403s is worse than no recipe — it burns a turn
-    and teaches the agent the wrong lesson about what it may do. A read-level
-    grant is one of those: `contents: read` must not produce a push recipe."""
-    cli = _load()
-    _run_gh_token(
-        cli, monkeypatch, "actions: read, checks: read, contents: read, metadata: read"
-    )
-
-    _out, err = capsys.readouterr()
-    assert "issues/<n>" not in err
-    assert "pulls/<n>" not in err
-    assert "git push" not in err
-    assert "check-runs" in err  # what it CAN do is still spelled out
-    assert "contents: read" in err
+def test_token_export_command_is_not_exposed():
+    with pytest.raises(SystemExit) as error:
+        _load().build_parser().parse_args(["gh-token"])
+    assert error.value.code == 2
 
 
 def _is_subparsers(action):

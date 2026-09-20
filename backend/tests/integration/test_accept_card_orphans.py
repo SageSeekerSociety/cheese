@@ -13,6 +13,8 @@
 import asyncio
 import uuid
 
+import pytest
+
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
@@ -29,6 +31,7 @@ from tests.integration.test_accept_pr import (
 )
 
 app_world = _app_world_fixture
+pytestmark = pytest.mark.usefixtures("app_world")
 
 
 def _topic(client, topic_id: str) -> dict:
@@ -203,6 +206,7 @@ def test_poller_skips_archived_topics_even_for_a_card_it_never_closed(
 def _flaky_app_tokens(monkeypatch):
     """让平台 App 凭据可开关地失效（None = 拿不到）。"""
     from app.domain.agent import github_app
+    from app.domain.project import forge
     from tests.integration.test_accept_pr import _FakeTokens
 
     holder: dict = {"broken": False}
@@ -211,6 +215,7 @@ def _flaky_app_tokens(monkeypatch):
         return None if holder["broken"] else _FakeTokens()
 
     monkeypatch.setattr(github_app, "github_app_tokens_for_project", tokens_for_project)
+    monkeypatch.setattr(forge, "github_app_tokens_for_project", tokens_for_project)
     return holder
 
 
@@ -273,30 +278,25 @@ def test_cannot_hand_a_second_card_while_one_awaits_accept(client, app_world):
     assert len(_cards(client, tid)) == 1
 
 
-def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkeypatch):
+def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, app_world):
     """卡在合并冲突上时同样不许再递——出路是解冲突后重试采纳，不是新卡。"""
-    from app.domain.workspace import service as ws
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card_response(client, tid).json()["data"]["id"]
-
-    monkeypatch.setattr(
-        ws,
-        "merge_topic",
-        lambda *_a, **_k: {"merged": False, "conflicts": ["a.py"], "reason": "冲突"},
-    )
+    _pid, tid, cid, number, head = _ready_card(client, app_world)
+    fake = app_world["fake"]
+    fake.mergeable_by_number[number] = False
+    fake.mergeable_state_by_number[number] = "dirty"
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": head},
         headers=session_auth_headers("alice"),
     )
-    assert r.status_code == 200, r.text
-    assert _cards(client, tid)[0]["status"] == "conflict"
+    assert r.status_code == 422, r.text
+    assert "dirty" in r.json()["message"]
+    assert _cards(client, tid)[0]["status"] == "pending"
+    assert fake.merge_calls == []
 
     r = _make_card_response(client, tid, reviewer="bob")
     assert r.status_code == 422, r.text
-    assert "冲突" in r.json()["message"]
+    assert "已有待处理的验收卡" in r.json()["message"]
     assert len(_cards(client, tid)) == 1
 
 

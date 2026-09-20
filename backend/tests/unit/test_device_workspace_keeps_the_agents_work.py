@@ -1,5 +1,6 @@
 """Task checkouts preserve independent commits and unfinished work on devices."""
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -54,9 +55,23 @@ def device(tmp_path, monkeypatch):
             "branch": branch,
             "base": "main",
             "closed": False,
+            "remote": str(remote),
+            "coauthors": [],
         }
 
     class Handler(BaseHTTPRequestHandler):
+        def do_PUT(self):
+            task, _, snapshot = self.path.rsplit("/", 3)[1:]
+            payload = self.rfile.read(int(self.headers["Content-Length"]))
+            digest = hashlib.sha256(payload).hexdigest()
+            assert digest == self.headers["X-Content-SHA256"]
+            backups = home / "backups" / task
+            backups.mkdir(parents=True, exist_ok=True)
+            (backups / f"{snapshot}.bundle").write_bytes(payload)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({"data": {"digest": digest}}).encode())
+
         def do_GET(self):
             task = self.path.rsplit("/", 1)[-1]
             self.send_response(200)
@@ -74,7 +89,6 @@ def device(tmp_path, monkeypatch):
         "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
         "CHEESE_PROJECT": project,
         "CHEESE_TOPIC": room,
-        "CHEESE_GIT_REMOTE": str(remote),
         "CHEESE_TOKEN": "test-secret",
         "PATH": str(CLI.parent) + os.pathsep + os.environ["PATH"],
     }.items():
@@ -106,7 +120,7 @@ def test_committing_in_one_task_pushes_only_its_branch(device):
 
 
 def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device):
-    cli, tasks, remote, _ = device
+    cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
     head = git(work, "rev-parse", "HEAD")
@@ -124,8 +138,12 @@ def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device
         "--format=%(refname)",
         f"refs/cheese/snapshots/task/{task}",
     ).splitlines()
-    assert len(refs) == 1
-    assert git(remote, "show", refs[0] + ":same.txt") == "unstaged"
+    assert refs == []
+    (bundle,) = (home / "backups" / task).glob("*.bundle")
+    recovered = home / "recovered"
+    git(home, "clone", str(remote), str(recovered))
+    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert git(recovered, "show", "FETCH_HEAD:same.txt") == "unstaged"
 
 
 def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
@@ -150,6 +168,8 @@ def test_failed_push_leaves_work_and_a_durable_failure_log(device):
     hook.write_text("#!/bin/sh\nexit 1\n")
     hook.chmod(0o755)
     (work / "draft.txt").write_text("keep me")
+    git(work, "add", "draft.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "local work")
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
     log = Path(git(work, "rev-parse", "--absolute-git-dir")) / "cheese-sync.log"
@@ -170,6 +190,8 @@ def test_failed_push_is_spooled_to_the_room_hook(device, monkeypatch):
     reject.write_text("#!/bin/sh\nexit 1\n")
     reject.chmod(0o755)
     (work / "unfinished.txt").write_text("keep me")
+    git(work, "add", "unfinished.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "local work")
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
     report = json.loads((home / "hook.json").read_text())
@@ -180,7 +202,7 @@ def test_failed_push_is_spooled_to_the_room_hook(device, monkeypatch):
 
 
 def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
-    cli, tasks, remote, _ = device
+    cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
     other = tmp_path / "other"
@@ -200,10 +222,11 @@ def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
         cli._sync_task(task)
     assert git(remote, "rev-parse", tasks[task]["branch"]) == remote_head
     assert git(work, "rev-parse", "HEAD") == local_head
-    assert (
-        git(remote, "show", f"refs/cheese/snapshots/task/{task}/{local_head}:local.txt")
-        == "local writer"
-    )
+    (bundle,) = (home / "backups" / task).glob("*.bundle")
+    git(other, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert git(other, "rev-parse", "FETCH_HEAD") == local_head
+    assert git(other, "show", "FETCH_HEAD:local.txt") == "local writer"
+    assert not git(remote, "for-each-ref", "refs/cheese/snapshots")
 
 
 def test_closed_task_sync_preserves_files_without_moving_its_delivered_branch(device):

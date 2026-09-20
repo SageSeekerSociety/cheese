@@ -107,7 +107,10 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
 
     credited = asyncio.run(read_credit())
     assert credited.reporters == (identity.platform_identity("reporter"),)
-    assert credited.coauthors == (identity.platform_identity("coder"),)
+    assert credited.coauthors == (
+        identity.platform_identity("alice"),
+        identity.platform_identity("coder"),
+    )
     assert credited.author == identity.agent_identity(room_agent_seat(client, room))
     concluded = client.post(
         f"/topics/{room}/tasks/{task['id']}/close",
@@ -116,7 +119,10 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
     assert concluded.status_code == 200, concluded.text
     credited = asyncio.run(read_credit())
     assert credited.reporters == ()
-    assert credited.coauthors == (identity.platform_identity("reporter"),)
+    assert credited.coauthors == (
+        identity.platform_identity("alice"),
+        identity.platform_identity("reporter"),
+    )
     preserved = client.post(f"/topics/{room}/tasks/{task['id']}/close", json={})
     assert preserved.status_code == 200, preserved.text
     assert preserved.json()["data"]["contributor_handles"] == ["reporter"]
@@ -142,6 +148,9 @@ class _FakeClient:
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
 
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        return {"number": number, "title": title, "body": body}
+
     async def open_pr(
         self,
         *,
@@ -159,31 +168,29 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     """A GitHub the platform can push to, plus the set of handles that have
     actually connected an account (`connected[handle] -> their token`)."""
     from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
+    from app.domain.workspace import forge_files
 
     _FakeClient.opened = []
 
-    async def _fake_tokens_for_project(_project_id, _session):
-        return _FakeTokens()
+    async def _fake_proposal_client(_project_id, _session):
+        return _FakeClient("acme", "widgets", _FakeTokens())
+
+    async def _fake_branch_head(_project_id, _session, _branch):
+        return "a" * 40
+
+    async def _comparison(_project_id, _session, _path):
+        return {"total_commits": 1, "files": [], "commits": []}
 
     async def _fake_user_token(_session, handle: str) -> str | None:
         return connected.get(handle)
 
-    monkeypatch.setattr(
-        pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project
-    )
-    monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
+    monkeypatch.setattr(pr_publish, "proposal_client", _fake_proposal_client)
+    monkeypatch.setattr(pr_publish, "branch_head", _fake_branch_head)
+    monkeypatch.setattr(forge_files, "branch_head", _fake_branch_head)
+    monkeypatch.setattr(forge_files, "repository_data", _comparison)
     monkeypatch.setattr(
         "app.domain.oauth.services.get_github_user_token_for_handle", _fake_user_token
     )
-    monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
-    )
-    monkeypatch.setattr(
-        ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
-    )
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _project(client, owner: str) -> tuple[str, str]:

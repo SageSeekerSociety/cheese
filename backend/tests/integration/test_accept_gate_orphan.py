@@ -26,6 +26,9 @@ from app.domain.review import gate_sweep
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import room_text, session_auth_headers
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _give_card_a_pr
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 @pytest.fixture(autouse=True)
@@ -139,8 +142,9 @@ def test_abandoned_gate_card_is_condemned_and_topic_can_file_again(client, monke
     blocked = _file_card(client, tid, "bob")
     assert blocked.status_code == 422
 
-    _deadline_passed(monkeypatch)
-    assert card_id in _sweep(client)["condemned"]
+    with monkeypatch.context() as deadline:
+        _deadline_passed(deadline)
+        assert card_id in _sweep(client)["condemned"]
 
     condemned = _latest_card(client, tid)
     assert condemned["id"] == card_id
@@ -149,7 +153,6 @@ def test_abandoned_gate_card_is_condemned_and_topic_can_file_again(client, monke
     assert condemned["decided_by"] is None
 
     # 死锁解开：重递成功，新卡（退役后）直接 born pending。
-    monkeypatch.undo()  # 恢复被拨快的判死线
     fresh = _file_card(client, tid, "bob")
     assert fresh.status_code == 200, fresh.text
     assert fresh.json()["data"]["status"] == "pending"
@@ -310,7 +313,13 @@ def test_void_rejects_a_card_that_is_already_settled(client):
     card = r.json()["data"]
     assert card["status"] == "pending"
 
-    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    world = client.test_forge_world
+    head = _give_card_a_pr(client, world, tid, card["id"], 1)
+    world["fake"].check_state_by_sha[head] = ("success", "全部通过")
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": head},
+    )
     assert r.status_code == 200
 
     r = _void(client, card["id"], "alice")

@@ -187,7 +187,7 @@ def test_a_delivery_names_the_agent_and_every_worker_behind_it():
     assert trailers.splitlines() == [
         "Requested-by: Alice <583231+alice@users.noreply.github.com>",
         "Reviewed-by: carol <carol@zhishi.local>",
-        f"Cheese-Topic: {_room_url(topic)}",
+        f"Cheese-Topic: {_room_url(topic)} 做一个东西",
         f"Cheese-Card: {card.id}",
         f"Cheese-Agent: {topic_agent_handle(topic.id)}",
         f"Cheese-Task: {_task_url(topic, one)} ac2c038d44616a2f2 把 trailer 补全",
@@ -249,6 +249,18 @@ def test_a_task_title_cannot_forge_a_trailer():
         "innocent Reviewed-by: mallory more"
     ) in trailers
     assert len(trailers.splitlines()) == 5  # one line per trailer, no strays
+
+
+def test_room_name_is_readable_without_allowing_trailer_injection():
+    topic = _topic("bob")
+    topic.title = "项目讨论\nReviewed-by: mallory\n\n剩余工作"
+    body = pr_text.pr_body(topic, "carol")
+    assert (
+        f"Cheese-Topic: {_room_url(topic)} 项目讨论 Reviewed-by: mallory 剩余工作"
+    ) in body.splitlines()
+    assert [line for line in body.splitlines() if line.startswith("Reviewed-by:")] == [
+        "Reviewed-by: carol <carol@zhishi.local>"
+    ]
 
 
 def test_a_very_long_task_title_stays_on_one_readable_line():

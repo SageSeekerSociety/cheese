@@ -128,7 +128,7 @@ def test_file_endpoints_survive_the_agent_committing(client):
 
     listed = client.get(
         f"/projects/{pid}/files",
-        params={"topic": str(tid), "task": str(task_id)},
+        params={"topic": str(tid), "task": str(task_id), "source": "committed"},
         headers=_owner(client),
     )
     assert listed.status_code == 200
@@ -137,7 +137,12 @@ def test_file_endpoints_survive_the_agent_committing(client):
 
     body = client.get(
         f"/projects/{pid}/file",
-        params={"topic": str(tid), "task": str(task_id), "path": "note.md"},
+        params={
+            "topic": str(tid),
+            "task": str(task_id),
+            "path": "note.md",
+            "source": "committed",
+        },
         headers=_owner(client),
     )
     assert body.status_code == 200
@@ -149,7 +154,11 @@ def test_file_endpoints_survive_the_agent_committing(client):
     assert (
         client.get(
             f"/projects/{pid}/files",
-            params={"topic": str(other), "task": str(other_task)},
+            params={
+                "topic": str(other),
+                "task": str(other_task),
+                "source": "committed",
+            },
             headers=_owner(client),
         ).status_code
         == 200

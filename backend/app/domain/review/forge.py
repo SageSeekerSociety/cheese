@@ -8,9 +8,10 @@ vote, and viewed-head checks do not depend on the provider's identity.
 import enum
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import urlsplit
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 
@@ -19,15 +20,12 @@ if TYPE_CHECKING:
     from app.domain.review.services import AcceptService
     from app.domain.topic.models import Topic
 
-PLATFORM_FORGE_NOTE = (
-    "ℹ️ 本项目未接 GitHub：采纳即合并进平台仓库的 main（无 PR、无外部 CI）"
-)
-BINDING_UNKNOWN_MESSAGE = "采纳未完成：暂时无法判定项目的 GitHub 绑定状态，稍后重试采纳"
+BINDING_UNKNOWN_MESSAGE = "采纳未完成：暂时无法读取项目的代码仓库，稍后重试采纳"
 
 
 class ForgeKind(enum.StrEnum):
     github_app = "github_app"
-    platform = "platform"
+    forgejo = "forgejo"
 
 
 class Forge(ABC):
@@ -117,52 +115,34 @@ class GitHubForge(Forge):
         )
 
 
-class PlatformForge(Forge):
-    kind = ForgeKind.platform
-    has_external_checks = False
-    note = PLATFORM_FORGE_NOTE
-
-    async def accept(self, service, card, topic, decided_by, *, seen_head):
-        return await service._accept_platform(card, topic, decided_by, note=self.note)
-
-    async def refresh_unseen_head(self, service, card, topic, action) -> NoReturn:
-        raise ValidationError("本项目未接 GitHub，没有可刷新的 PR")
-
-    async def poll(self, service, card, topic, *, chat_service, runner) -> None:
-        return
-
-    async def merge_despite_checks(
-        self,
-        service,
-        card,
-        topic,
-        decided_by,
-        *,
-        seen_head,
-        reason,
-    ):
-        raise ValidationError("本项目没有需要人工放行的外部检查")
+class ForgejoForge(GitHubForge):
+    kind = ForgeKind.forgejo
 
 
 FORGES: dict[ForgeKind, Forge] = {
     ForgeKind.github_app: GitHubForge(),
-    ForgeKind.platform: PlatformForge(),
+    ForgeKind.forgejo: ForgejoForge(),
 }
 
 
 async def resolve(
     *,
     project_id: uuid.UUID,
-    is_github_bound: Callable[[uuid.UUID], Awaitable[bool]],
+    session: AsyncSession,
     proposal_url: str | None = None,
 ) -> Forge:
     """Resolve the authoritative forge; an unreadable binding never falls local."""
-    # An existing proposal retains its forge when the project loses credentials.
-    # Otherwise a temporary disconnect could turn a PR acceptance into a local merge.
-    if proposal_url and urlsplit(proposal_url).hostname == "github.com":
-        return FORGES[ForgeKind.github_app]
+    from app.domain.project.forge import binding_for_project
+
     try:
-        bound = await is_github_bound(project_id)
+        binding = await binding_for_project(project_id, session)
     except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind
         raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
-    return FORGES[ForgeKind.github_app if bound else ForgeKind.platform]
+    if binding is None:
+        raise ValidationError("项目没有代码仓库，采纳尚不可用")
+    if proposal_url and urlsplit(proposal_url).netloc != urlsplit(binding.url).netloc:
+        raise ValidationError("评审所属的托管服务与项目仓库不一致")
+    try:
+        return FORGES[ForgeKind(binding.kind)]
+    except (ValueError, KeyError) as exc:
+        raise ValidationError("项目的代码托管类型无法识别") from exc

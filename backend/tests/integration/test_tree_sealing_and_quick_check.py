@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+from app.domain.project import forge
 from app.domain.project.models import Project
 from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
@@ -12,6 +13,7 @@ from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.workspace import service as ws
+from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
 
 
@@ -23,6 +25,7 @@ def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
             project = Project(name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
+            await forge.provision_repository(project.id, s)
             root = Topic(project_id=project.id, title="root", kind=TopicKind.root)
             s.add(root)
             await s.flush()
@@ -43,7 +46,7 @@ def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
 
 
 async def _task(session, project, room, title, **extra):
-    return await TaskService(session).open_thread(
+    task = await TaskService(session).open_thread(
         project_id=project,
         room_id=room,
         title=title,
@@ -52,6 +55,13 @@ async def _task(session, project, room, title, **extra):
         reviewer_handle="alice",
         **extra,
     )
+    ws.bind_task(
+        task.id,
+        branch=task.branch_name,
+        directory=task.workspace_name,
+        base=task.base_branch,
+    )
+    return task
 
 
 def test_two_tasks_edit_the_same_path_without_sharing_commits(client):
@@ -77,7 +87,7 @@ def test_two_tasks_edit_the_same_path_without_sharing_commits(client):
     )
 
 
-def test_accepting_one_task_leaves_other_tasks_and_room_active(client):
+def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world):
     project, room = _room(client)
 
     async def run():
@@ -93,14 +103,23 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client):
                 routing_reason="ready",
                 change_subject="feat: add first result",
             )
-            await service.accept(card_id=card.id, decided_by="alice")
+            fake = app_world["fake"]
+            fake.seed_pr(11, head=first.branch_name)
+            fake.prs[11]["head_sha"] = delivered_head
+            fake.check_state_by_sha[delivered_head] = ("success", "")
+            card.pr_number, card.pr_head_sha = 11, delivered_head
+            card.pr_url = "https://github.com/acme/widgets/pull/11"
+            await service.accept(
+                card_id=card.id, decided_by="alice", head_sha=delivered_head
+            )
             await session.commit()
             assert first.status == TaskStatus.closed
             assert second.status == TaskStatus.open
             assert (await session.get(Topic, room)).status == "active"
             assert card.task_id == first.id
             assert first.delivered_head == delivered_head
-            assert ws.read_file(project, "a.txt") == "first"
+            assert fake.merge_calls[0]["sha"] == delivered_head
+            assert ws.read_file(project, "a.txt", first.id) == "first"
 
     client.portal.call(run)
 

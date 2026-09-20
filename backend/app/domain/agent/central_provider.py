@@ -261,7 +261,6 @@ class CentralChannel(DeviceChannel):
                     "CHEESE_PROJECT": str(project_id),
                     "CHEESE_TOPIC": str(topic_id),
                     "CHEESE_AUTHOR": agent_handle,
-                    "CHEESE_GIT_REMOTE": f"{api}/projects/{project_id}/git",
                     "CHEESE_GIT_AUTHOR_NAME": agent_handle,
                     "CHEESE_GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
                     "GIT_AUTHOR_NAME": agent_handle,

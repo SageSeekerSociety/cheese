@@ -28,10 +28,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent.github_app import github_app_tokens_for_project
+from app.domain.project.forge import branch_head, proposal_client, status_client
 from app.domain.review import notes
-from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
-from app.domain.workspace import service as ws
+from app.domain.review.forgejo_pr import ForgejoPRClient
+from app.domain.review.github_pr import GitHubPRClient
 
 logger = logging.getLogger("cheesex.pr_publish")
 
@@ -48,7 +48,9 @@ def enabled() -> bool:
     """Cheap pre-check: the GitHub App is configured at all. The per-project
     eligibility (which installation, upstream is a GitHub https remote) is
     resolved in the task itself — it needs the DB and a subprocess."""
-    return bool(settings.github_app_id) and bool(settings.github_app_private_key_path)
+    return bool(settings.forgejo_url) or (
+        bool(settings.github_app_id) and bool(settings.github_app_private_key_path)
+    )
 
 
 def dispatch(
@@ -126,14 +128,9 @@ async def open_pr_for_card(
     Only ever reads through `session`; the card row is written by whoever
     owns it (`record_pr` below, or the accept transaction)."""
     # #192: the installation is resolved from this card's project, not a global.
-    tokens = await github_app_tokens_for_project(project_id, session)
-    if tokens is None:
+    client = await proposal_client(project_id, session)
+    if client is None:
         return None
-    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-    parsed = parse_github_repo(upstream)
-    if parsed is None:
-        return None  # not a GitHub https upstream — PR path not applicable
-    owner, repo_name = parsed
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.services import TaskService
 
@@ -141,11 +138,12 @@ async def open_pr_for_card(
     if card is None or card.task_id is None:
         return None
     task = await TaskService(session).require_in_room(topic_id, card.task_id)
-    if not await asyncio.to_thread(ws.topic_branch_exists, project_id, task.id):
+    if not task.branch_name or not await branch_head(
+        project_id, session, task.branch_name
+    ):
         return None  # discussion-only topic — nothing a PR could carry
 
-    token, _ = await tokens.write_token()
-    branch = await asyncio.to_thread(ws.push_topic_branch, project_id, task.id, token)
+    branch = task.branch_name
     base = task.base_branch
     if base is None:
         raise ValueError("Task has no target branch")
@@ -153,7 +151,6 @@ async def open_pr_for_card(
     title, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
-    client = GitHubPRClient(owner, repo_name, tokens)
     pr = await client.open_pr(
         head=branch,
         base=base,
@@ -185,7 +182,7 @@ async def open_pr_for_card(
 
 
 async def sync_pr_text(
-    client: GitHubPRClient, pr: dict, *, title: str, body: str
+    client: GitHubPRClient | ForgejoPRClient, pr: dict, *, title: str, body: str
 ) -> None:
     """Make the PR on GitHub say what `title`/`body` say — and only then.
 
@@ -202,7 +199,9 @@ async def sync_pr_text(
     pr.update(updated)
 
 
-async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]:
+async def sweep_draft_prs(
+    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
     Commits arrive from different executors through Git; the shared PR poller
@@ -213,11 +212,15 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
-    await retarget_completed_dependencies(session_factory)
+    await retarget_completed_dependencies(session_factory, project_id)
     if not enabled():
         return counts
     async with session_factory() as session:
-        wanted = [t.id for t in await TaskService(session).open_without_pr()]
+        wanted = [
+            t.id
+            for t in await TaskService(session).open_without_pr()
+            if project_id is None or t.project_id == project_id
+        ]
     for task_id in wanted:
         try:
             async with session_factory() as session:
@@ -231,31 +234,36 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
     return counts
 
 
-async def retarget_completed_dependencies(session_factory: async_sessionmaker) -> None:
-    """Retry child PR retargeting without rolling back a parent's completed merge."""
+async def retarget_completed_dependencies(
+    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+) -> None:
+    """Retarget delivered dependencies and persist instructions for the executor."""
     from sqlalchemy.orm import aliased
 
+    from app.domain.agent.announce import announce
+    from app.domain.agent.platform_notices import (
+        EVENT_DEPENDENCY_CLOSED,
+        SEVERITY_INFO,
+        WHO_CHEESE,
+        notice,
+    )
+    from app.domain.block.models import AGENT_NOTICE_META_KEY
+    from app.domain.idempotency import store as idem
+    from app.domain.idempotency.keys import action_key
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.room_task.services import TaskService
 
     parent = aliased(Task)
+    query = (
+        select(Task.id)
+        .join(parent, Task.base_task_id == parent.id)
+        .where(Task.status == TaskStatus.open, parent.status == TaskStatus.closed)
+    )
+    if project_id is not None:
+        query = query.where(Task.project_id == project_id)
     async with session_factory() as session:
-        wanted = list(
-            await session.scalars(
-                select(Task.id)
-                .join(parent, Task.base_task_id == parent.id)
-                .where(
-                    Task.status == TaskStatus.open,
-                    parent.status == TaskStatus.closed,
-                    (
-                        parent.accepted_at.is_not(None)
-                        | parent.delivered_head.is_not(None)
-                    ),
-                    Task.base_branch == parent.branch_name,
-                )
-            )
-        )
+        wanted = list(await session.scalars(query))
     for task_id in wanted:
         try:
             # Decide on an unlocked read, call GitHub with no transaction open,
@@ -271,17 +279,26 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                 ):
                     continue
                 ancestor = await TaskService(session).get(task.base_task_id)
-                if ancestor is None or (
-                    ancestor.accepted_at is None and ancestor.delivered_head is None
-                ):
+                if ancestor is None or ancestor.status != TaskStatus.closed:
                     continue
-                TaskService._bind_workspace(ancestor)
+                delivered = bool(ancestor.accepted_at or ancestor.delivered_head)
                 base = ancestor.base_branch
-                if base is None:
+                if delivered and base is None:
                     raise ValueError("Parent task has no target branch")
                 seen = (task.base_task_id, task.base_branch, task.pr_number)
+                parent_state = (
+                    ancestor.closed_at,
+                    ancestor.accepted_at,
+                    ancestor.delivered_head,
+                )
+                key = action_key(
+                    task.id, "dependency_closed", ancestor.id, *parent_state
+                )
+                if await idem.stored_result(session, key) is not None:
+                    continue
+                retarget = delivered and task.base_branch == ancestor.branch_name
                 client = None
-                if task.pr_number is not None:
+                if retarget and task.pr_number is not None:
                     from app.domain.review.services import AcceptService
                     from app.domain.topic.models import Topic
 
@@ -291,7 +308,7 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                     client = await AcceptService(session)._app_pr_client(room)
                     if client is None:
                         raise RuntimeError(
-                            "Cannot retarget the task PR without its GitHub connection"
+                            "Cannot retarget the task PR without its forge connection"
                         )
             if client is not None:
                 # Setting the base is idempotent: a sweep that records nothing
@@ -305,18 +322,67 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                     or (task.base_task_id, task.base_branch, task.pr_number) != seen
                 ):
                     continue
-                task.base_branch = base
-                TaskService._bind_workspace(task)
+                ancestor = await session.get(Task, task.base_task_id)
+                if (
+                    ancestor is None
+                    or ancestor.status != TaskStatus.closed
+                    or (
+                        ancestor.closed_at,
+                        ancestor.accepted_at,
+                        ancestor.delivered_head,
+                    )
+                    != parent_state
+                ):
+                    continue
+                if not await idem.claim(
+                    session, key, action="dependency_closed", scope_id=str(task.id)
+                ):
+                    continue
+                if retarget:
+                    task.base_branch = base
+                outcome = "已合并" if delivered else "已关闭，未交付"
+                headline = f"父任务{outcome}，子任务需要重新检查依赖"
+                instruction = (
+                    f"任务 {task.id} 的父任务 {ancestor.id} {outcome}。\n"
+                    f'先执行 cd "$(cheese worktree {task.id})"。\n'
+                    + (
+                        f"当前目标分支为 {task.base_branch}。获取远端分支，"
+                        "将本任务的提交整理到目标分支上，解决冲突，重新运行检查并推送。"
+                        "父任务可能采用 squash 合并，请核对补丁，"
+                        "避免重复带入父任务的修改。"
+                        if delivered
+                        else "保留现有工作，检查本任务依赖了哪些尚未交付的修改。"
+                        "根据任务要求决定移除依赖、独立实现或报告无法继续的原因；"
+                        "不要把父任务关闭当作其代码已经合并，也不要自动关闭子任务。"
+                    )
+                    + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
+                )
                 cards = AcceptCardRepository(session)
                 for card in await cards.list_for_task(task.id):
                     if card.status in ("pending", "conflict"):
                         await cards.clear_approvals(card.id)
                         card.auto_merge_armed_by = None
                         card.auto_merge_armed_at = None
-                        card.note = (
-                            f"父任务已采纳，目标分支改为 {base}；"
-                            "请集成目标分支并重新验证。"
-                        )
+                        card.note = headline
+                block = await announce(
+                    session,
+                    place_id=task.room_id,
+                    content=headline,
+                    meta={
+                        **notice(
+                            EVENT_DEPENDENCY_CLOSED,
+                            severity=SEVERITY_INFO,
+                            who=WHO_CHEESE,
+                            detail=instruction,
+                            detail_label="下一步",
+                        ),
+                        AGENT_NOTICE_META_KEY: instruction,
+                        "dependency_task_id": str(task.id),
+                    },
+                )
+                if block is None:
+                    raise ValueError("Task room is missing")
+                await idem.record_result(session, key, {"block_id": str(block.id)})
                 await session.commit()
         except Exception:
             logger.warning(
@@ -384,28 +450,33 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     from app.domain.workspace import identity
 
     project_id = task.project_id
-    tokens = await github_app_tokens_for_project(project_id, session)
-    if tokens is None:
-        return None
-    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-    parsed = parse_github_repo(upstream)
-    if parsed is None:
+    client = await proposal_client(project_id, session)
+    if client is None:
         return None
     branch = task.branch_name
-    if not await asyncio.to_thread(
-        ws.branch_has_commits, project_id, branch, base=task.base_branch
-    ):
+    head = await branch_head(project_id, session, branch)
+    if head is None:
+        return None
+    token, _ = await client.tokens.installation_token()
+    reader = await status_client(project_id, session)
+    from app.domain.project.forge import binding_for_project
+
+    binding = await binding_for_project(project_id, session)
+    if binding is None:
+        return None
+    owner, repo = binding.repo.split("/", 1)
+    difference = await reader.compare_status(
+        owner=owner, repo=repo, base=task.base_branch, head=head, token=token
+    )
+    if difference not in ("ahead", "diverged"):
         return None
     place = await PlaceResolver(session).resolve(task.room_id)
     if place is None:
         return None
     room = place.room
 
-    token, _ = await tokens.write_token()
-    await asyncio.to_thread(ws.push_branch, project_id, branch, token)
     base = task.base_branch
-    who = await identity.attribution(session, room)
-    client = GitHubPRClient(*parsed, tokens)
+    who = await identity.attribution(session, room, task_id=task.id)
     pr = await client.open_pr(
         head=branch,
         base=base,

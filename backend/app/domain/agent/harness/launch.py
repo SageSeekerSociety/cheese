@@ -77,7 +77,7 @@ class MachinePlace:
     """机器说「在哪」—— 一台设备这一侧的那一半。
 
     Everything here is a fact about the room and the machine, never an
-    instruction about what to do with it: this room has a git remote, an
+    instruction about what to do with it: this room belongs to a project, has an
     execution target, a CA to trust, an operator who may drive it directly. One
     harness turns those into a settings file and a version floor; the next one
     ignores most of them. A channel that decided which is which could only ever
@@ -101,7 +101,6 @@ class MachinePlace:
     project_id: str
     topic_id: str
     agent_handle: str
-    git_remote: str | None = None
     execution_target: dict | None = None
     remote_control: bool = False
     ca_pem: str = ""

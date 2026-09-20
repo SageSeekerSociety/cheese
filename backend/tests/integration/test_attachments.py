@@ -109,8 +109,8 @@ def test_upload_and_download_documents(client, filename, content, mime):
         f"/projects/{project_id}/file/raw",
         params={"path": att["path"], "topic": topic_id, "download": "true"},
     )
-    # Room uploads use the attachment route; task files require a task selection.
-    assert workspace.status_code == 422
+    # Room uploads are not files in the project's committed repository.
+    assert workspace.status_code == 404
 
 
 def test_document_reaches_agent_as_file(client, stub_hooks):

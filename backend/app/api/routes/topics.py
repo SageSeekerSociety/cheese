@@ -8,7 +8,7 @@ import shutil
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
@@ -942,7 +942,7 @@ def _card_snapshot(card: AcceptCard) -> dict:
         ),
         "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
         # PR-based accept (#188 §5.1): the agent checks its PR's CI itself
-        # (`cheese gh-token` + gh api) — the snapshot carries the pointer.
+        # (`gh api`) — the snapshot carries the pointer.
         "pr_number": card.pr_number,
         "pr_url": card.pr_url,
         "created_at": card.created_at.isoformat(),
@@ -2181,11 +2181,15 @@ async def _bind_source_task(
     work = await TaskRepository(db).get(task)
     if work is None or work.room_id != room_id or work.branch_name is None:
         raise NotFoundError("Task not found")
-    TaskService._bind_workspace(work)
 
 
-def _source_bytes(
-    project_id: uuid.UUID, room_id: uuid.UUID, path: str, task: uuid.UUID | None
+async def _source_bytes(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    task: uuid.UUID | None,
+    source: Literal["live", "committed"] = "live",
 ) -> bytes:
     """One of this room's files, from whichever store holds it.
 
@@ -2196,10 +2200,13 @@ def _source_bytes(
     each being wired to one store — that wiring is why a document on a branch
     had no view but a raw binary diff.
     """
-    if task is not None:
+    if task is not None or source == "committed":
         if ws.library_name(path) is not None:
             raise ValidationError("资料库里的文件不属于某个任务分支")
-        return ws.read_file_bytes(project_id, path, topic_id=task)
+        from app.domain.workspace.forge_files import ProjectFiles
+
+        data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
+        return data
     return ws.read_attachment(project_id, room_id, path)
 
 
@@ -2366,6 +2373,7 @@ async def list_document_revisions(
     db: DbSession,
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> dict:
     """The tracked changes in a `.docx`, one row per decision a reader makes.
 
@@ -2384,7 +2392,7 @@ async def list_document_revisions(
     clean = _clean_artifact_path(path)
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
@@ -2441,7 +2449,7 @@ async def decide_document_revisions(
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task)
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
@@ -2455,7 +2463,11 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
     if task is not None:
-        ws.write_file_bytes(topic.project_id, clean, made, topic_id=task)
+        from app.domain.workspace.forge_files import ProjectFiles
+
+        await ProjectFiles(db, topic.project_id, task).write_bytes(
+            clean, made, expected
+        )
     else:
         ws.write_room_file(topic.project_id, topic_id, clean, made)
     return ok(
@@ -2686,6 +2698,7 @@ async def attachment_raw(
     resolver: ActorResolverDep,
     download: bool = False,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
@@ -2707,7 +2720,7 @@ async def attachment_raw(
         raise ValidationError("只能读取图片附件")
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -2718,7 +2731,9 @@ async def attachment_raw(
             ),
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": (
+                "no-store" if task or source == "committed" else "private, max-age=3600"
+            ),
         },
     )
 
@@ -2730,6 +2745,7 @@ async def attachment_as_pdf(
     db: DbSession,
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """A Word or PowerPoint deliverable, converted so a browser can show it.
 
@@ -2752,7 +2768,7 @@ async def attachment_as_pdf(
         raise ValidationError("这个格式不能转换为预览")
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
@@ -2774,7 +2790,9 @@ async def attachment_as_pdf(
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": (
+                "no-store" if task or source == "committed" else "private, max-age=3600"
+            ),
         },
     )
 

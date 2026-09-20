@@ -43,6 +43,7 @@ from pathlib import Path
 from app.domain.agent import (
     environment_runner,
     event_drain,
+    forge_cli,
     machine_tunnel,
     preview_tunnel,
     toolchain,
@@ -396,8 +397,7 @@ def screen_env(
             env[name] = value
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
-    if place.git_remote:
-        env["CHEESE_GIT_REMOTE"] = place.git_remote
+    if place.project_id:
         # Who the turn's commits belong to (workspace/identity.py). Absent, the
         # launcher falls back to 芝士 — the same default the in-repo snapshot
         # path uses, so both surfaces agree.
@@ -432,6 +432,7 @@ def launch_script(
     cli_source = (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
         encoding="utf-8"
     )
+    forge_source = Path(forge_cli.__file__).read_text()
     # Shipped by reading each module's own bytes rather than by keeping a second
     # copy here: they are real, linted, unit-tested modules precisely so there is
     # only one version of them to be wrong.
@@ -570,6 +571,10 @@ chmod +x "$HOME/.cheese/cheese-hook"
 cat > "$HOME/.cheese/cheese" <<'CHEESE_PLATFORM_CLI'
 {cli_source}CHEESE_PLATFORM_CLI
 chmod +x "$HOME/.cheese/cheese"
+cat > "$HOME/.cheese/gh" <<'CHEESE_FORGE_CLI'
+{forge_source}CHEESE_FORGE_CLI
+cp "$HOME/.cheese/gh" "$HOME/.cheese/fj"
+chmod +x "$HOME/.cheese/gh" "$HOME/.cheese/fj"
 export PATH="$HOME/.cheese:$PATH"
 {toolchain}cheese_launch_phase files_written
 {credentials}\

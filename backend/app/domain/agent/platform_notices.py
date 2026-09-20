@@ -68,7 +68,7 @@ EVENT_CARD_REJECTED: Final = "card_rejected"
 EVENT_CARD_VOIDED: Final = "card_voided"
 #: 验收卡的描述被更正了 —— 这次改动会在 main 的历史里说什么，变了。
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
-#: 同步上游时合并冲突。
+#: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
@@ -121,6 +121,8 @@ EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
 EVENT_PR_REVIEW: Final = "pr_review"
 #: PR 和它的 base 分支冲突了，GitHub 合不了。
 EVENT_PR_CONFLICT: Final = "pr_conflict"
+# A parent task closed; its dependants need the executor to inspect their base.
+EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -160,6 +162,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PROMPT_REPLAYED,
         EVENT_PR_REVIEW,
         EVENT_PR_CONFLICT,
+        EVENT_DEPENDENCY_CLOSED,
     }
 )
 

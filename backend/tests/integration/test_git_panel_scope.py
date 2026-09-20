@@ -35,7 +35,18 @@ def _turn(
     client, pid: uuid.UUID, tid: uuid.UUID, path: str, content: str, msg: str
 ) -> None:
     """A turn's edits, committed and pushed by the machine that made them."""
-    machine_commits(pid, delivery_task_id(client, tid), {path: content}, msg)
+    task_id = delivery_task_id(client, tid)
+    machine_commits(pid, task_id, {path: content}, msg)
+
+    async def published():
+        from app.domain.room_task.models import Task
+
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            task.pr_number = int(task.id.hex[:6], 16)
+            await session.commit()
+
+    asyncio.run(published())
 
 
 def _log(client, pid, topic=None) -> list[dict]:
@@ -55,6 +66,7 @@ def _diff(client, pid, topic=None) -> str:
         if topic
         else {}
     )
+    params["source"] = "committed"
     return client.get(
         f"/projects/{pid}/git/diff", params=params, headers=_owner(client)
     ).json()["data"]["diff"]

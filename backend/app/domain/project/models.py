@@ -179,3 +179,34 @@ class ProjectGitInstallation(UuidPk, Timestamps, Base):
     repo: Mapped[str] = mapped_column(String(255))
     # The GitHub org or user login the installation lives under.
     account: Mapped[str] = mapped_column(String(255))
+
+
+class ProjectForge(UuidPk, Timestamps, Base):
+    """The single authoritative repository for a project's code and proposals."""
+
+    __tablename__ = "project_forges"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    url: Mapped[str] = mapped_column(String(2048))
+    api_url: Mapped[str] = mapped_column(String(2048))
+    repo: Mapped[str] = mapped_column(String(255))
+    default_branch: Mapped[str] = mapped_column(String(255), default="main")
+    # Only the backend can mint credentials; the account password never leaves it.
+    account_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ForgeToken(UuidPk, Timestamps, Base):
+    """Persisted leases let a restarted backend revoke every expired token."""
+
+    __tablename__ = "forge_tokens"
+    # Revocation must survive project deletion and a crash during the mint.
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    api_url: Mapped[str] = mapped_column(String(2048))
+    username: Mapped[str] = mapped_column(String(255))
+    account_password: Mapped[str] = mapped_column(Text)
+    token_name: Mapped[str] = mapped_column(String(255), unique=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

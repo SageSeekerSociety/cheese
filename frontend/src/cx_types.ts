@@ -563,6 +563,8 @@ export interface WorkspaceFile {
 }
 
 // GET /projects/{id}/file?path=
+export type FileSource = 'live' | 'committed'
+
 export interface FileContent {
   path: string
   // null when the file must not be edited as text: `binary` (a text editor would
@@ -574,6 +576,8 @@ export interface FileContent {
   bytes: number
   binary: boolean
   too_large: boolean
+  source?: FileSource
+  editable?: boolean
 }
 
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
@@ -966,11 +970,6 @@ export interface ProjectComputeConfigs {
 export interface UpstreamInfo {
   url: string | null
 }
-export interface UpstreamSyncResult {
-  synced: boolean
-  commits?: number
-  reason?: string
-}
 
 // GitHub App install flow (#192): a project connects to one repo via
 // cheesex-app, replacing the classic 上游仓库 URL entry for repos it manages.
@@ -978,6 +977,19 @@ export interface GithubConnection {
   connected: boolean
   repo?: string
   account?: string
+}
+
+export interface ForgeConnection {
+  kind: 'forgejo' | 'github_app'
+  connected: boolean
+  repo: string | null
+  url: string | null
+}
+
+export interface ForgeAttribution {
+  requester_coauthor: boolean | null
+  effective: boolean
+  deployment_default: boolean
 }
 
 // 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。

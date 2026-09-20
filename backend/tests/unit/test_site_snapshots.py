@@ -1,5 +1,6 @@
 """Snapshot real Git trees, including binary files and unsafe tree entries."""
 
+import asyncio
 import subprocess
 import uuid
 from datetime import UTC, datetime
@@ -22,6 +23,22 @@ def _git(path, *args):
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    from app.domain.site import services
+
+    class Repository:
+        def __init__(self, session, project_id, task_id):
+            self.project_id = project_id
+
+        async def revision(self):
+            return ws.accepted_revision(self.project_id)
+
+        async def committed_entries(self, revision):
+            return ws.committed_files(self.project_id, revision)
+
+        async def committed_blobs(self, oids):
+            return ws.read_committed_blobs(self.project_id, oids)
+
+    monkeypatch.setattr(services, "ProjectFiles", Repository)
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
     pid = uuid.uuid4()
     repo = ws.ensure_repo(pid)
@@ -38,7 +55,7 @@ def project(tmp_path, monkeypatch):
 
 def _publish(pid, revision):
     release_id = uuid.uuid4()
-    manifest = _snapshot(pid, revision, "web", release_id)
+    manifest = asyncio.run(_snapshot(None, pid, revision, "web", release_id))
     return SiteRelease(
         id=release_id,
         project_id=pid,
@@ -49,6 +66,10 @@ def _publish(pid, revision):
         published_at=datetime.now(UTC),
         published_by="alice",
     )
+
+
+def _source(pid):
+    return asyncio.run(publication_source(None, pid))
 
 
 def test_binary_resources_are_byte_exact_and_revision_does_not_follow_checkout(project):
@@ -66,7 +87,7 @@ def test_symlink_resources_are_refused_instead_of_dereferenced(project, target):
     (repo / "web/link.js").symlink_to(target)
     _git(repo, "add", "web/link.js")
     _git(repo, "commit", "-m", "link resource")
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="符号链接"):
         _publish(pid, ws.accepted_revision(pid))
 
@@ -76,7 +97,7 @@ def test_submodule_is_not_published_as_an_empty_directory(project):
     revision = ws.accepted_revision(pid)
     _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{revision},web/vendor")
     _git(repo, "commit", "-m", "gitlink resource")
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="子模块"):
         _publish(pid, ws.accepted_revision(pid))
 
@@ -86,7 +107,7 @@ def test_oversized_bundle_is_refused_before_copying(project, monkeypatch):
 
     pid, _ = project
     monkeypatch.setattr(services, "MAX_SITE_BYTES", 100)
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="总大小"):
         _publish(pid, ws.accepted_revision(pid))
 
@@ -127,7 +148,7 @@ def test_missing_or_invalid_direct_resources_are_refused(project, html, message)
     pid, repo = project
     old_release = _publish(pid, ws.accepted_revision(pid))
     _entry_commit(repo, html)
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match=message):
         _publish(pid, ws.accepted_revision(pid))
     assert (
@@ -153,7 +174,7 @@ def test_missing_or_invalid_direct_resources_are_refused(project, html, message)
 def test_valid_absolute_and_external_resources_remain_publishable(project, html):
     pid, repo = project
     _entry_commit(repo, html)
-    assert publication_source(pid)["candidates"] == [
+    assert _source(pid)["candidates"] == [
         {"directory": "web", "entry_file": "web/index.html"}
     ]
     assert (
@@ -171,12 +192,12 @@ def test_first_base_href_changes_relative_resource_resolution(project):
         '<base href="/assets/"><base href="/ignored/">'
         '<script src="chunk.js"></script><img src="../image.png">',
     )
-    assert publication_source(pid)["candidates"] == [
+    assert _source(pid)["candidates"] == [
         {"directory": "web", "entry_file": "web/index.html"}
     ]
     release = _publish(pid, ws.accepted_revision(pid))
     assert read_release_file(release, "assets/chunk.js") == b"export const value = 1"
     _entry_commit(repo, '<base href="/missing/"><script src="app.js"></script>')
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="missing/app.js"):
         _publish(pid, ws.accepted_revision(pid))

@@ -1,6 +1,5 @@
 """Task services — reading a room's threads, and the trees they work on."""
 
-import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -27,22 +26,6 @@ class TaskService:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
 
-    @staticmethod
-    def _bind_workspace(task: Task) -> None:
-        if task.branch_name:
-            from app.domain.workspace import service as ws
-
-            if task.workspace_name is None:
-                raise ValidationError("任务分支缺少工作目录记录")
-            if task.base_branch is None:
-                task.base_branch, _ = ws.base_branch_head(task.project_id)
-            ws.bind_task(
-                task.id,
-                branch=task.branch_name,
-                directory=task.workspace_name,
-                base=task.base_branch,
-            )
-
     async def open_without_pr(self) -> list[Task]:
         rows = await self._session.scalars(
             select(Task).where(
@@ -66,8 +49,6 @@ class TaskService:
                 .with_for_update(skip_locked=True)
             )
         ).first()
-        if task is not None:
-            self._bind_workspace(task)
         return task
 
     async def record_pr(self, task: Task, *, number: int, url: str | None) -> Task:
@@ -85,7 +66,6 @@ class TaskService:
         task = await self.get(task_id)
         if task is None or task.room_id != room_id:
             raise NotFoundError("这个房间里没有这条任务")
-        self._bind_workspace(task)
         return task
 
     async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
@@ -238,10 +218,10 @@ class TaskService:
         contributor_handles: list[str] | None = None,
         base_task_id: uuid.UUID | None = None,
     ) -> Task:
-        """Create a task and its worktree before any executor starts writing."""
-        from app.domain.workspace import service as ws
+        """Record a task's branch; its executor creates the worktree on its machine."""
+        from app.domain.project.forge import default_branch
 
-        base, _ = await asyncio.to_thread(ws.base_branch_head, project_id)
+        base = await default_branch(project_id, self._session)
         if base_task_id is not None:
             parent = await self.require_in_room(room_id, base_task_id)
             if parent.branch_name is None:
@@ -265,8 +245,6 @@ class TaskService:
         task.workspace_name = f"task_{task.id.hex[:8]}"
         task.base_branch, task.base_task_id = base, base_task_id
         await self._session.flush()
-        self._bind_workspace(task)
-        await asyncio.to_thread(ws.topic_worktree, project_id, task.id)
         return task
 
     async def threads_for_room(

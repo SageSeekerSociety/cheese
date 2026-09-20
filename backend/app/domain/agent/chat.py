@@ -141,7 +141,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "chat"]
@@ -3502,19 +3501,23 @@ class ChatService:
         if commits is None:
             return None
 
-        def _collect() -> _Changeset | None:
+        async def _collect() -> _Changeset | None:
+            from app.domain.workspace.forge_files import ProjectFiles
+
             fresh = [h for h in commits if h not in known_commits]
             if not fresh:
                 return None
             totals: dict[str, dict] = {}
-            for sha in fresh:
-                for entry in _diff_file_stats(ws.git_diff(project_id, ref=sha)):
-                    acc = totals.setdefault(
-                        entry["path"],
-                        {"path": entry["path"], "added": 0, "removed": 0},
-                    )
-                    acc["added"] += entry["added"]
-                    acc["removed"] += entry["removed"]
+            async with self._sessions() as session:
+                files = ProjectFiles(session, project_id, None)
+                for sha in fresh:
+                    for entry in _diff_file_stats(await files.commit_diff(sha)):
+                        acc = totals.setdefault(
+                            entry["path"],
+                            {"path": entry["path"], "added": 0, "removed": 0},
+                        )
+                        acc["added"] += entry["added"]
+                        acc["removed"] += entry["removed"]
             files = sorted(
                 totals.values(), key=lambda f: (-(f["added"] + f["removed"]), f["path"])
             )
@@ -3523,7 +3526,7 @@ class ChatService:
             return _Changeset(commits=fresh, files=files)
 
         try:
-            return await asyncio.to_thread(_collect)
+            return await _collect()
         except Exception:  # noqa: BLE001 — never fail a turn over its summary
             logger.warning("change summary failed for topic %s", topic_id)
             return None
@@ -3536,23 +3539,20 @@ class ChatService:
         _HookWorkState.known_commits)."""
         try:
             from app.domain.room_task.services import TaskService
+            from app.domain.workspace.forge_files import ProjectFiles
 
             async with self._sessions() as session:
                 tasks = await TaskService(session).list_in_room(topic_id)
-                task_ids = []
+                commits = set()
                 for task in tasks:
                     if task.branch_name:
-                        TaskService._bind_workspace(task)
-                        task_ids.append(task.id)
-            return await asyncio.to_thread(
-                lambda: {
-                    row["hash"]
-                    for task_id in task_ids
-                    for row in ws.git_log(
-                        project_id, limit=_CHANGE_COMMIT_WALK, topic_id=task_id
-                    )
-                }
-            )
+                        history = await ProjectFiles(
+                            session, project_id, task.id
+                        ).history()
+                        commits.update(
+                            row["sha"] for row in history[-_CHANGE_COMMIT_WALK:]
+                        )
+                return commits
         except Exception:  # noqa: BLE001 — no baseline just means no summary
             logger.warning("commit baseline unreadable for topic %s", topic_id)
             return None

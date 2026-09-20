@@ -1,4 +1,4 @@
-"""Resolve agent authors and explicitly declared human contribution credits."""
+"""Resolve agent authors, requester credit policy, and declared contributors."""
 
 import logging
 import uuid
@@ -62,7 +62,7 @@ class Attribution:
     handle: str | None
     #: The platform agent that authored the work.
     author: GitIdentity | None
-    #: Explicitly declared human code contributors.
+    #: Declared contributors and, when enabled, the human requester.
     coauthors: tuple[GitIdentity, ...] = ()
     #: `Cheese-Task:`, one line each. See `work_items`.
     tasks: tuple[WorkItem, ...] = ()
@@ -179,7 +179,8 @@ async def requester_handle(
         if thread is not None:
             if thread.owner_handle and not looks_like_agent_handle(thread.owner_handle):
                 return thread.owner_handle
-            return thread.created_by or None
+            if thread.created_by and not looks_like_agent_handle(thread.created_by):
+                return thread.created_by
     owner = await _roster_owner(session, topic.id)
     if owner and not looks_like_agent_handle(owner):
         return owner
@@ -268,14 +269,20 @@ def _as_uuid(raw: Any) -> uuid.UUID | None:
 
 
 async def attribution(
-    session: Any, topic: "Topic", *, card: Any = None, decided_by: str | None = None
+    session: Any,
+    topic: "Topic",
+    *,
+    card: Any = None,
+    decided_by: str | None = None,
+    task_id: uuid.UUID | None = None,
 ) -> "Attribution":
-    """Resolve the agent author and credits from this delivery's declared tasks.
+    """Resolve the agent author and this task's human credits.
 
-    Ownership alone never establishes a code contribution or a bug report."""
+    Requester coauthorship is an explicit project/deployment policy. Reporter
+    and additional contributor roles still come from task declarations."""
     from app.domain.topic_membership.services import TopicMemberService
 
-    task_id = getattr(card, "task_id", None)
+    task_id = task_id or getattr(card, "task_id", None)
     handle: str | None = None
     try:
         handle = await requester_handle(session, topic, task_id=task_id)
@@ -289,11 +296,30 @@ async def attribution(
     tasks: tuple[WorkItem, ...] = ()
     try:
         tasks = await work_items(session, card)
+        if task_id and not any(item.task_id == task_id for item in tasks):
+            task = await _thread(session, task_id)
+            if task is not None:
+                tasks = (
+                    *tasks,
+                    WorkItem(
+                        task.id,
+                        task.subagent_id,
+                        task.title,
+                        task.reporter_handle,
+                        tuple(task.contributor_handles or ()),
+                    ),
+                )
     except Exception:  # noqa: BLE001 — same rule again: a trailer, not a gate
         logger.warning(
             "could not resolve the work behind topic %s", topic.id, exc_info=True
         )
     coauthors: list[GitIdentity] = []
+    from app.domain.project.services import ProjectService
+
+    project = await ProjectService(session).get(topic.project_id)
+    enabled = requester_credit_enabled((project.settings or {}) if project else {})
+    if enabled and handle and not looks_like_agent_handle(handle):
+        coauthors.append(requester or platform_identity(handle))
     reporters: list[GitIdentity] = []
     for item in tasks:
         for person, credits in [
@@ -312,6 +338,11 @@ async def attribution(
         requester,
         tuple(reporters),
     )
+
+
+def requester_credit_enabled(project_settings: dict) -> bool:
+    override = project_settings.get("forge_requester_coauthor")
+    return settings.forge_attribution_default if override is None else bool(override)
 
 
 async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
