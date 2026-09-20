@@ -1154,6 +1154,11 @@ export interface FeedbackCard {
   security: boolean
   author_handle: string
   author_is_agent: boolean
+  /** 作者**自己挑过**的头像素材 id，前端用 `getAvatarUrl` 拼成 `/avatars/{id}`。
+   *  没挑过是 null —— 后端已经判掉了全局默认头像那一种（`chosen_avatar_ids`），
+   *  所以 null 的含义就是「画彩色首字母」，**不要**退回 `/avatars/default`：
+   *  那会让所有没挑过头像的人共用同一张脸。 */
+  author_avatar_id: number | null
   /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
   submitted_by_handle: string | null
   assignee_handle: string | null
@@ -1179,6 +1184,8 @@ export interface FeedbackComment {
   parent_id: string | null
   author_handle: string
   author_is_agent: boolean
+  /** 同 `FeedbackCard.author_avatar_id`。 */
+  author_avatar_id: number | null
   body: string
   created_at: string
 }
@@ -1187,6 +1194,8 @@ export interface FeedbackComment {
 export interface FeedbackNote {
   id: string
   author_handle: string
+  /** 同 `FeedbackCard.author_avatar_id`。 */
+  author_avatar_id: number | null
   body: string
   created_at: string
 }

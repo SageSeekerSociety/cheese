@@ -32,6 +32,7 @@ each in one place, each revertible without touching a route:
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import FeedbackCreate, FeedbackDetail, FeedbackPatch
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 #: The admin surface's tiers, in the order the admin tab bar draws them.
 ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
@@ -87,6 +89,10 @@ class FeedbackService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = repo.FeedbackRepository(session)
+        # Avatars are not a feedback fact: they hang off `UserProfile`, which is
+        # why resolving one is a second repository rather than a column read.
+        self._users = UserRepository(session)
+        self._profiles = UserProfileRepository(session)
 
     # --- 权限 ---------------------------------------------------------------
 
@@ -215,6 +221,35 @@ class FeedbackService:
         """Newest comment-or-status time per row, for the card's 「刚刚」 line."""
         return await self._repo.latest_activity_of(ids)
 
+    async def chosen_avatars(self, handles: Iterable[str]) -> dict[str, int]:
+        """handle -> the avatar that person actually PICKED, for those who did.
+
+        Two queries for a whole page (handles -> users, users -> profiles) and
+        never one per row: a list, its comments and its notes are all drawn at
+        once, so per-row lookups would be twenty round-trips for twenty faces.
+
+        Someone who never picked one is **absent from the mapping**, not mapped
+        to the global default. Registration writes the default for everybody, so
+        a lookup that fell back to it would hand back the same face for every
+        person who never chose — which is both wrong about them and worse at
+        telling twenty people apart than the coloured initial the client draws
+        instead. The criterion lives in
+        `UserProfileRepository.chosen_avatar_ids` (it recognises the default row
+        by `avatar_type`, since which id holds it is seed data).
+        """
+        wanted = {h for h in handles if h}
+        if not wanted:
+            return {}
+        users = await self._users.get_by_handles(list(wanted))
+        by_user_id = await self._profiles.chosen_avatar_ids(
+            [u.id for u in users.values()]
+        )
+        return {
+            handle: by_user_id[user.id]
+            for handle, user in users.items()
+            if user.id in by_user_id
+        }
+
     async def thread(self, feedback_id: uuid.UUID) -> list[FeedbackComment]:
         return await self._repo.list_comments(feedback_id)
 
@@ -242,6 +277,19 @@ class FeedbackService:
         """
         thread = await self._repo.list_comments(row.id)
         activity = await self._repo.latest_activity_of([row.id])
+        # Notes are admin-only, so resolving faces for them is not extra work a
+        # non-admin pays for: the list is empty and contributes no handles.
+        notes = await self._repo.list_notes(row.id) if is_admin else []
+        # One resolution pass for the report, every comment and every note. The
+        # detail page draws all of them in one screen, so a per-author lookup
+        # would be exactly the N+1 this method's callers avoid for counters.
+        avatars = await self.chosen_avatars(
+            [
+                row.author_handle,
+                *[c.author_handle for c in thread],
+                *[n.author_handle for n in notes],
+            ]
+        )
         return FeedbackDetail.from_row(
             row,
             supports=await self._repo.supports_count(row.id),
@@ -249,10 +297,11 @@ class FeedbackService:
                 await self._repo.has_support(row.id, handle) if handle else False
             ),
             comments=len(thread),
+            avatars=avatars,
             last_activity_at=activity.get(row.id),
             thread=thread,
             timeline=await self._repo.list_timeline(row.id),
-            notes=await self._repo.list_notes(row.id) if is_admin else [],
+            notes=notes,
         )
 
     async def mark_read(self, *, handle: str) -> datetime:
