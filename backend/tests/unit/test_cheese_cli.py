@@ -89,7 +89,7 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     monkeypatch.chdir(folder)
     monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
     monkeypatch.setattr(cli, "TOPIC", "room")
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "artifact", "report.html"])
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "show", "report.html"])
     calls = []
     monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
 
@@ -98,7 +98,7 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     assert calls == [
         (
             "POST",
-            "/topics/room/artifact",
+            "/topics/room/shown",
             {
                 "path": "site/report.html",
                 "as": "html",
@@ -120,7 +120,7 @@ def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
     cli.main()
     assert calls == [["sh", "/preview-up", "5173"]]
     assert api_calls == [
-        ("POST", "/topics/room/artifact", {"path": "Vue dev server", "as": "app"})
+        ("POST", "/topics/room/shown", {"path": "Vue dev server", "as": "app"})
     ]
 
 
