@@ -1,3 +1,4 @@
+import secrets
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -9,6 +10,9 @@ from app.domain.space.models import (
     SpaceAdminRole,
     SpaceCategory,
     SpaceDomainGroup,
+    SpaceInviteCode,
+    SpaceMember,
+    SpaceVisibility,
 )
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -16,6 +20,8 @@ from app.domain.space.repositories import (
     SpaceClassificationTopicsRepository,
     SpaceDomainGroupDomainRepository,
     SpaceDomainGroupRepository,
+    SpaceInviteCodeRepository,
+    SpaceMemberRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
@@ -23,6 +29,15 @@ from app.domain.tag.models import Tag
 
 if TYPE_CHECKING:
     from app.domain.task.repositories import TaskRepository
+
+
+#: What a code minted at space-creation time is worth. Enough to bring in a
+#: class; an admin who wants a different budget mints one explicitly.
+DEFAULT_SPACE_INVITE_CODE_MAX_USES = 50
+
+#: No 0/O/1/I/L — these codes get read aloud and typed in by hand.
+_INVITE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+_INVITE_CODE_LENGTH = 10
 
 
 class SpaceService:
@@ -36,6 +51,8 @@ class SpaceService:
         classification_topics_repo: SpaceClassificationTopicsRepository | None = None,
         domain_group_repo: SpaceDomainGroupRepository | None = None,
         domain_group_domain_repo: SpaceDomainGroupDomainRepository | None = None,
+        member_repo: SpaceMemberRepository | None = None,
+        invite_code_repo: SpaceInviteCodeRepository | None = None,
     ) -> None:
         self._repo = repo
         self._category_repo = category_repo
@@ -45,6 +62,8 @@ class SpaceService:
         self._classification_topics_repo = classification_topics_repo
         self._domain_group_repo = domain_group_repo
         self._domain_group_domain_repo = domain_group_domain_repo
+        self._member_repo = member_repo
+        self._invite_code_repo = invite_code_repo
 
     # ------------------------------------------------------------------
     # Classification topics
@@ -85,11 +104,15 @@ class SpaceService:
     async def exists_by_name(self, name: str) -> bool:
         return await self._repo.exists_by_name(name)
 
-    async def list_spaces(self, *, limit: int, offset: int = 0) -> Sequence[Space]:
-        return await self._repo.list_spaces(limit=limit, offset=offset)
+    async def list_spaces(
+        self, *, limit: int, offset: int = 0, viewer_user_id: int
+    ) -> Sequence[Space]:
+        return await self._repo.list_spaces(
+            limit=limit, offset=offset, visible_to_user_id=viewer_user_id
+        )
 
-    async def count_spaces(self) -> int:
-        return await self._repo.count_spaces()
+    async def count_spaces(self, *, viewer_user_id: int) -> int:
+        return await self._repo.count_spaces(visible_to_user_id=viewer_user_id)
 
     async def list_categories(
         self,
@@ -128,6 +151,7 @@ class SpaceService:
         announcements: list,
         task_templates: list,
         visible_task_limit: int | None = None,
+        visibility: int = SpaceVisibility.PUBLIC.value,
     ) -> Space:
         self._validate_strings(name=name)
         if not isinstance(intro, str) or not isinstance(description, str):
@@ -145,6 +169,7 @@ class SpaceService:
             announcements=normalized_announcements,
             task_templates=normalized_templates,
             visible_task_limit=visible_task_limit,
+            visibility=visibility,
         )
 
         # Default category "General"
@@ -162,6 +187,20 @@ class SpaceService:
                 space_id=space.id,
                 user_id=owner_id,
                 role=SpaceAdminRole.OWNER,
+            )
+
+        # A 凭码 space is unusable without a code, so the creator leaves
+        # creation holding one instead of having to ask for it next.
+        if (
+            visibility == SpaceVisibility.CODE.value
+            and self._invite_code_repo is not None
+        ):
+            await self._invite_code_repo.create_code(
+                space_id=space.id,
+                code=await self._generate_invite_code(),
+                max_uses=DEFAULT_SPACE_INVITE_CODE_MAX_USES,
+                expires_at=None,
+                created_by=owner_id,
             )
 
         return space
@@ -421,6 +460,158 @@ class SpaceService:
         await self._repo.save(space)
 
     # ------------------------------------------------------------------
+    # Membership and invite codes
+    # ------------------------------------------------------------------
+
+    async def list_members(self, space_id: int) -> Sequence[SpaceMember]:
+        if self._member_repo is None:
+            return []
+        return await self._member_repo.list_members(space_id)
+
+    async def join_space(self, *, code: str, user_id: int) -> Space:
+        """Redeem a space invite code, becoming a member.
+
+        Only 凭码 spaces can be joined this way: for a 私人 space the code
+        is not a door (that is the whole difference between the two tiers),
+        and a 公开 space already needs no door.
+        """
+        invite_repo = self._require_invite_code_repo()
+        member_repo = self._require_member_repo()
+
+        invite = await invite_repo.get_by_code(code)
+        if invite is None:
+            raise NotFoundError("Invite code not found", data={"type": "inviteCode"})
+
+        space = await self._repo.get_by_id(invite.space_id)
+        if space is None:
+            raise NotFoundError.for_resource("space", invite.space_id)
+
+        if space.visibility != SpaceVisibility.CODE.value:
+            raise BadRequestError(
+                "This space does not accept invite codes",
+                data={"spaceId": space.id, "visibility": space.visibility},
+            )
+
+        if invite.expires_at is not None and invite.expires_at <= datetime.now(UTC):
+            raise BadRequestError(
+                "Invite code expired", data={"type": "inviteCode", "id": invite.id}
+            )
+
+        # Already in — redeeming again is a no-op rather than burning a use
+        # or failing, so a double-tap on「加入」is not an error.
+        if await member_repo.get_member(space.id, user_id) is not None:
+            return space
+        if self._admin_repo is not None:
+            if await self._admin_repo.get_relation(space.id, user_id) is not None:
+                return space
+
+        if not await invite_repo.consume_use(invite.id):
+            raise BadRequestError(
+                "Invite code exhausted", data={"type": "inviteCode", "id": invite.id}
+            )
+
+        await member_repo.add_member(space_id=space.id, user_id=user_id)
+        return space
+
+    async def leave_space(self, *, space_id: int, user_id: int) -> None:
+        """Stop being a member. Nothing else the person owns is touched."""
+        member_repo = self._require_member_repo()
+        await self._get_space_or_error(space_id)
+
+        # Adminship is granted and revoked by the creator, so it is not
+        # something you put down on your way out; doing it here would be a
+        # second, quieter way to lose the role than /managers.
+        if self._admin_repo is not None:
+            relation = await self._admin_repo.get_relation(space_id, user_id)
+            if relation is not None:
+                if relation.role == SpaceAdminRole.OWNER.value:
+                    raise ForbiddenError(
+                        "The space owner cannot leave. Transfer ownership or "
+                        "delete the space instead."
+                    )
+                raise ForbiddenError(
+                    "Space admins cannot leave. Ask the owner to revoke the role first."
+                )
+
+        member = await member_repo.get_member(space_id, user_id)
+        if member is None:
+            raise NotFoundError("You are not a member of this space")
+        await member_repo.remove_member(member)
+
+    async def remove_member(
+        self,
+        *,
+        space_id: int,
+        target_user_id: int,
+        actor_user_id: int | None,
+    ) -> None:
+        """Drop someone from the space. Owner and admins alike may do this.
+
+        Removal only decides who the space is visible to. Their tasks,
+        submissions and projects are not this space's to delete — the same
+        reason leaving keeps them and deleting a space keeps them.
+        """
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        member_repo = self._require_member_repo()
+
+        if self._admin_repo is not None:
+            relation = await self._admin_repo.get_relation(space_id, target_user_id)
+            if relation is not None:
+                raise BadRequestError(
+                    "That user is an admin of this space. Revoke the role "
+                    "through the managers endpoint instead.",
+                    data={"spaceId": space_id, "userId": target_user_id},
+                )
+
+        member = await member_repo.get_member(space_id, target_user_id)
+        if member is None:
+            raise NotFoundError(
+                "Space member not found",
+                data={"spaceId": space_id, "userId": target_user_id},
+            )
+        await member_repo.remove_member(member)
+
+    async def list_invite_codes(
+        self, *, space_id: int, actor_user_id: int | None
+    ) -> Sequence[SpaceInviteCode]:
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        return await self._require_invite_code_repo().list_codes_for_space(space_id)
+
+    async def create_invite_code(
+        self,
+        *,
+        space_id: int,
+        actor_user_id: int | None,
+        max_uses: int | None = None,
+        expires_at: datetime | None = None,
+    ) -> SpaceInviteCode:
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        await self._get_space_or_error(space_id)
+
+        uses = DEFAULT_SPACE_INVITE_CODE_MAX_USES if max_uses is None else max_uses
+        if isinstance(uses, bool) or not isinstance(uses, int) or uses < 1:
+            raise BadRequestError("maxUses must be a positive integer")
+
+        return await self._require_invite_code_repo().create_code(
+            space_id=space_id,
+            code=await self._generate_invite_code(),
+            max_uses=uses,
+            expires_at=expires_at,
+            created_by=actor_user_id,
+        )
+
+    async def _generate_invite_code(self) -> str:
+        invite_repo = self._require_invite_code_repo()
+        for _ in range(10):
+            candidate = "".join(
+                secrets.choice(_INVITE_CODE_ALPHABET)
+                for _ in range(_INVITE_CODE_LENGTH)
+            )
+            if not await invite_repo.code_exists(candidate):
+                return candidate
+        raise BadRequestError("Could not allocate an invite code, please retry")
+
+    # ------------------------------------------------------------------
     # Domain groups
     # ------------------------------------------------------------------
 
@@ -614,6 +805,18 @@ class SpaceService:
             raise BadRequestError(
                 "visibleTaskLimit must be null or a non-negative integer"
             )
+
+    def _require_member_repo(self) -> SpaceMemberRepository:
+        if self._member_repo is None:
+            raise BadRequestError("Space membership is not configured on this server")
+        return self._member_repo
+
+    def _require_invite_code_repo(self) -> SpaceInviteCodeRepository:
+        if self._invite_code_repo is None:
+            raise BadRequestError(
+                "Space invite codes are not configured on this server"
+            )
+        return self._invite_code_repo
 
     def _require_domain_group_repo(self) -> SpaceDomainGroupRepository:
         if self._domain_group_repo is None:

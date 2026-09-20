@@ -23,6 +23,23 @@ space_user_rank_seq = Sequence("space_user_rank_seq")
 space_admin_relation_seq = Sequence("space_admin_relation_seq")
 space_domain_group_seq = Sequence("space_domain_group_seq")
 space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
+space_member_seq = Sequence("space_member_seq")
+space_invite_code_seq = Sequence("space_invite_code_seq")
+
+
+class SpaceVisibility(int, Enum):
+    """Who can see that a space exists — chosen once, when it is created.
+
+    PUBLIC: every signed-in user sees it, exactly like every space before
+    this existed. CODE: invisible until you redeem one of the space's invite
+    codes, and redeeming one makes you a member — which is what makes it
+    visible. PRIVATE: invisible until someone inside adds you; a code does
+    not help.
+    """
+
+    PUBLIC = 0
+    CODE = 1
+    PRIVATE = 2
 
 
 class Space(Base):
@@ -35,6 +52,12 @@ class Space(Base):
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enable_rank: Mapped[bool] = mapped_column(
         "enable_rank", Boolean, nullable=False, default=False
+    )
+    # Who can see this space exists (SpaceVisibility). PUBLIC is both the
+    # default and what every pre-existing row means, so the column lands
+    # without changing any current behaviour.
+    visibility: Mapped[int] = mapped_column(
+        "visibility", SmallInteger, nullable=False, default=0, server_default="0"
     )
     visible_task_limit: Mapped[int | None] = mapped_column(
         "visible_task_limit", Integer, nullable=True
@@ -200,6 +223,67 @@ class SpaceClassificationTagRelation(Base):
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     tag_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceMember(Base):
+    """A user who is *in* a space — the thing a private space gates on.
+
+    Membership and the admin relation are two different questions: this row
+    says "this space is visible to me and I can be listed among its members",
+    ``SpaceAdminRelation`` says "I may manage it". A space's owner and admins
+    therefore keep seeing it without a row here (the visibility predicate
+    accepts either), and removing a member here takes nothing else away —
+    not their tasks, not their submissions, not their projects.
+    """
+
+    __tablename__ = "space_member"
+
+    id: Mapped[int] = mapped_column(BigInteger, space_member_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceInviteCode(Base):
+    """A code that, when redeemed, makes the redeemer a member of a space.
+
+    Deliberately NOT the platform's ``invite_code`` table (that one admits a
+    person to the platform at registration and has nothing to do with any
+    space); the two share a shape and nothing else, so they share no table.
+    """
+
+    __tablename__ = "space_invite_code"
+
+    id: Mapped[int] = mapped_column(BigInteger, space_invite_code_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    code: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

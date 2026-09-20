@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.space.models import (
@@ -12,8 +12,11 @@ from app.domain.space.models import (
     SpaceClassificationTagRelation,
     SpaceDomainGroup,
     SpaceDomainGroupDomain,
+    SpaceInviteCode,
+    SpaceMember,
     SpaceUserRank,
 )
+from app.domain.space.visibility_service import SpaceVisibilityService
 from app.domain.tag.models import Tag
 
 
@@ -28,14 +31,32 @@ class SpaceRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def list_spaces(self, *, limit: int, offset: int = 0) -> Sequence[Space]:
-        stmt: Select[tuple[Space]] = select(Space).where(Space.deleted_at.is_(None))
+    async def list_spaces(
+        self, *, limit: int, offset: int = 0, visible_to_user_id: int
+    ) -> Sequence[Space]:
+        """Spaces this user is allowed to see — see SpaceVisibilityService.
+
+        There is deliberately no unfiltered variant: a caller that forgets
+        the viewer would hand back another person's private space, and the
+        list page is the easiest place to never notice.
+        """
+        stmt: Select[tuple[Space]] = select(Space).where(
+            Space.deleted_at.is_(None),
+            SpaceVisibilityService.build_visibility_predicate(
+                user_id=visible_to_user_id
+            ),
+        )
         stmt = stmt.order_by(Space.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count_spaces(self) -> int:
-        stmt = select(func.count(Space.id)).where(Space.deleted_at.is_(None))
+    async def count_spaces(self, *, visible_to_user_id: int) -> int:
+        stmt = select(func.count(Space.id)).where(
+            Space.deleted_at.is_(None),
+            SpaceVisibilityService.build_visibility_predicate(
+                user_id=visible_to_user_id
+            ),
+        )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
@@ -57,6 +78,7 @@ class SpaceRepository:
         announcements: list,
         task_templates: list,
         visible_task_limit: int | None = None,
+        visibility: int = 0,
     ) -> Space:
         now = datetime.now(UTC)
         space = Space(
@@ -66,6 +88,7 @@ class SpaceRepository:
             avatar_id=avatar_id,
             enable_rank=enable_rank,
             visible_task_limit=visible_task_limit,
+            visibility=visibility,
             announcements=announcements,
             task_templates=task_templates,
             created_at=now,
@@ -516,3 +539,153 @@ class SpaceDomainGroupDomainRepository:
         )
         result = await self._session.execute(stmt)
         return {int(row[0]) for row in result.all()}
+
+
+class SpaceMemberRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_member(self, space_id: int, user_id: int) -> SpaceMember | None:
+        stmt: Select[tuple[SpaceMember]] = select(SpaceMember).where(
+            SpaceMember.space_id == space_id,
+            SpaceMember.user_id == user_id,
+            SpaceMember.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_members(self, space_id: int) -> Sequence[SpaceMember]:
+        stmt: Select[tuple[SpaceMember]] = (
+            select(SpaceMember)
+            .where(
+                SpaceMember.space_id == space_id,
+                SpaceMember.deleted_at.is_(None),
+            )
+            .order_by(SpaceMember.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def add_member(self, *, space_id: int, user_id: int) -> SpaceMember:
+        """Join, or re-join after having been removed.
+
+        A removed member keeps a soft-deleted row, which is why this revives
+        it instead of inserting a second one — otherwise the same person
+        would accumulate a row per attempt and `list_members` would have to
+        know to deduplicate.
+        """
+        now = datetime.now(UTC)
+        member = await self._get_any_member(space_id, user_id)
+        if member is not None:
+            member.deleted_at = None
+            member.updated_at = now
+            self._session.add(member)
+            await self._session.flush()
+            return member
+
+        member = SpaceMember(
+            space_id=space_id,
+            user_id=user_id,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+        )
+        self._session.add(member)
+        await self._session.flush()
+        return member
+
+    async def remove_member(self, member: SpaceMember) -> None:
+        member.deleted_at = member.updated_at = datetime.now(UTC)
+        await self._session.flush()
+
+    async def _get_any_member(self, space_id: int, user_id: int) -> SpaceMember | None:
+        """Including soft-deleted rows — the caller decides what to do with one."""
+        stmt: Select[tuple[SpaceMember]] = (
+            select(SpaceMember)
+            .where(
+                SpaceMember.space_id == space_id,
+                SpaceMember.user_id == user_id,
+            )
+            .order_by(SpaceMember.id.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+
+class SpaceInviteCodeRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create_code(
+        self,
+        *,
+        space_id: int,
+        code: str,
+        max_uses: int,
+        expires_at: datetime | None,
+        created_by: int | None,
+    ) -> SpaceInviteCode:
+        now = datetime.now(UTC)
+        invite = SpaceInviteCode(
+            space_id=space_id,
+            code=code,
+            max_uses=max_uses,
+            use_count=0,
+            expires_at=expires_at,
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+            deleted_at=None,
+        )
+        self._session.add(invite)
+        await self._session.flush()
+        return invite
+
+    async def list_codes_for_space(self, space_id: int) -> Sequence[SpaceInviteCode]:
+        stmt: Select[tuple[SpaceInviteCode]] = (
+            select(SpaceInviteCode)
+            .where(
+                SpaceInviteCode.space_id == space_id,
+                SpaceInviteCode.deleted_at.is_(None),
+            )
+            .order_by(SpaceInviteCode.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_code(self, code: str) -> SpaceInviteCode | None:
+        stmt: Select[tuple[SpaceInviteCode]] = select(SpaceInviteCode).where(
+            SpaceInviteCode.code == code,
+            SpaceInviteCode.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def code_exists(self, code: str) -> bool:
+        stmt = select(SpaceInviteCode.id).where(SpaceInviteCode.code == code)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def consume_use(self, code_id: int) -> bool:
+        """Spend one use, only if there is one left.
+
+        The limit is enforced inside the UPDATE rather than by reading the
+        row first: two people redeeming the last use at the same moment both
+        read "0 of 1" and both get in otherwise. Returns False when the
+        UPDATE matched nothing, i.e. the code is exhausted.
+        """
+        stmt = (
+            update(SpaceInviteCode)
+            .where(
+                SpaceInviteCode.id == code_id,
+                SpaceInviteCode.deleted_at.is_(None),
+                SpaceInviteCode.use_count < SpaceInviteCode.max_uses,
+            )
+            .values(
+                use_count=SpaceInviteCode.use_count + 1,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return (result.rowcount or 0) > 0

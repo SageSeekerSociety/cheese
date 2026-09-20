@@ -1,5 +1,7 @@
 import json
 import logging
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
@@ -7,7 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.errors import (
+    BadRequestError,
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
@@ -21,6 +28,9 @@ from app.domain.space.models import (
     SpaceAdminRole,
     SpaceCategory,
     SpaceDomainGroup,
+    SpaceInviteCode,
+    SpaceMember,
+    SpaceVisibility,
 )
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -28,11 +38,14 @@ from app.domain.space.repositories import (
     SpaceClassificationTopicsRepository,
     SpaceDomainGroupDomainRepository,
     SpaceDomainGroupRepository,
+    SpaceInviteCodeRepository,
+    SpaceMemberRepository,
     SpaceRepository,
     SpaceUserRankRepository,
 )
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
+from app.domain.space.visibility_service import SpaceVisibilityService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -61,6 +74,7 @@ class CreateSpaceRequest(BaseModel):
         default=None, alias="classificationTopics"
     )
     visible_task_limit: int | None = Field(default=None, alias="visibleTaskLimit")
+    visibility: str = "PUBLIC"
 
     @field_validator("visible_task_limit", mode="before")
     @classmethod
@@ -70,6 +84,18 @@ class CreateSpaceRequest(BaseModel):
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError("visibleTaskLimit must be null or a non-negative integer")
         return value
+
+    @field_validator("visibility", mode="before")
+    @classmethod
+    def _validate_visibility(cls, value: object) -> object:
+        if value is None:
+            return "PUBLIC"
+        if not isinstance(value, str):
+            raise ValueError("visibility must be PUBLIC, CODE or PRIVATE")
+        name = value.strip().upper()
+        if name not in _VISIBILITY_BY_NAME:
+            raise ValueError("visibility must be PUBLIC, CODE or PRIVATE")
+        return name
 
 
 class PatchSpaceRequest(BaseModel):
@@ -132,6 +158,19 @@ class PatchSpaceDomainGroupRequest(BaseModel):
     domains: list[str] | None = None
 
 
+class JoinSpaceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str = Field(..., min_length=1)
+
+
+class CreateSpaceInviteCodeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    max_uses: int | None = Field(default=None, alias="maxUses")
+    expires_at: int | None = Field(default=None, alias="expiresAt")
+
+
 class AddSpaceManagerRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -146,6 +185,13 @@ class PatchSpaceManagerRequest(BaseModel):
 
 
 router = APIRouter(prefix="/spaces", tags=["Spaces"])
+
+_VISIBILITY_BY_NAME = {
+    "PUBLIC": SpaceVisibility.PUBLIC.value,
+    "CODE": SpaceVisibility.CODE.value,
+    "PRIVATE": SpaceVisibility.PRIVATE.value,
+}
+_VISIBILITY_NAME_BY_VALUE = {v: k for k, v in _VISIBILITY_BY_NAME.items()}
 
 
 def _expect_list(value: list | str | None, field: str) -> list:
@@ -173,6 +219,8 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
     classification_topics_repo = SpaceClassificationTopicsRepository(session=db)
     domain_group_repo = SpaceDomainGroupRepository(session=db)
     domain_group_domain_repo = SpaceDomainGroupDomainRepository(session=db)
+    member_repo = SpaceMemberRepository(session=db)
+    invite_code_repo = SpaceInviteCodeRepository(session=db)
     return SpaceService(
         repo,
         category_repo,
@@ -182,6 +230,8 @@ async def get_space_service(db=Depends(get_db)) -> SpaceService:
         classification_topics_repo=classification_topics_repo,
         domain_group_repo=domain_group_repo,
         domain_group_domain_repo=domain_group_domain_repo,
+        member_repo=member_repo,
+        invite_code_repo=invite_code_repo,
     )
 
 
@@ -236,6 +286,20 @@ async def get_space_user_realname_service(
     )
 
 
+async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
+    """404 rather than 403 — a space you may not see is not confirmed to exist.
+
+    Same answer the task routes give for an invisible task, and the same
+    question ``SpaceVisibilityService`` answers for the list query, so a
+    direct link and the list cannot drift apart.
+    """
+    visibility = SpaceVisibilityService(session=db)
+    if not await visibility.can_view_space(space_id=space_id, user_id=user_id):
+        raise NotFoundError(
+            "Resource space not found", data={"type": "space", "id": space_id}
+        )
+
+
 def _space_to_api_model(space: Space) -> dict:
     created_at_ms = int(space.created_at.timestamp() * 1000) if space.created_at else 0
     updated_at_ms = int(space.updated_at.timestamp() * 1000) if space.updated_at else 0
@@ -252,7 +316,34 @@ def _space_to_api_model(space: Space) -> dict:
         "taskTemplates": json.dumps(space.task_templates or []),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
+        "visibility": _VISIBILITY_NAME_BY_VALUE.get(space.visibility, "PUBLIC"),
     }
+
+
+def _invite_code_to_api_model(invite: SpaceInviteCode) -> dict:
+    created_at_ms = (
+        int(invite.created_at.timestamp() * 1000) if invite.created_at else 0
+    )
+    expires_at_ms = (
+        int(invite.expires_at.timestamp() * 1000) if invite.expires_at else None
+    )
+    return {
+        "id": invite.id,
+        "spaceId": invite.space_id,
+        "code": invite.code,
+        "maxUses": invite.max_uses,
+        "useCount": invite.use_count,
+        "expiresAt": expires_at_ms,
+        "createdAt": created_at_ms,
+    }
+
+
+def _member_to_api_model(member: SpaceMember, user_info: dict | None = None) -> dict:
+    joined_at_ms = int(member.created_at.timestamp() * 1000) if member.created_at else 0
+    result: dict = {"userId": member.user_id, "joinedAt": joined_at_ms}
+    if user_info is not None:
+        result["user"] = user_info
+    return result
 
 
 def _category_to_api_model(cat: SpaceCategory) -> dict:
@@ -343,6 +434,33 @@ async def _build_admins_payload(
     return admins_list
 
 
+async def _hydrate_members(
+    members: Sequence[SpaceMember],
+    *,
+    user_repo: UserRepository,
+    profile_repo: UserProfileRepository,
+) -> list[dict]:
+    items: list[dict] = []
+    for member in members:
+        user = await user_repo.get_by_id(member.user_id)
+        profile = (
+            await profile_repo.get_profile_by_user_id(member.user_id) if user else None
+        )
+        user_info = (
+            {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            }
+            if user
+            else {"id": member.user_id, "username": "unknown"}
+        )
+        items.append(_member_to_api_model(member, user_info))
+    return items
+
+
 async def _build_full_space_payload(
     space: Space,
     *,
@@ -384,6 +502,7 @@ async def get_space(
         raise NotFoundError(
             "Resource space not found", data={"type": "space", "id": space_id}
         )
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
 
     categories = None
     if queryCategories:
@@ -449,9 +568,14 @@ async def get_spaces(
     db=Depends(get_db),
 ) -> dict:
     offset = pageStart or 0
-    spaces = await service.list_spaces(limit=pageSize, offset=offset)
-    total = await service.count_spaces()
     viewer_id = auth_user.user_id if auth_user.user_id > 0 else None
+    # A private or 凭码 space this viewer is not in is not merely hidden from
+    # the page — it is not in the page, because the same predicate the detail
+    # route refuses by is the one that removes the row here.
+    spaces = await service.list_spaces(
+        limit=pageSize, offset=offset, viewer_user_id=auth_user.user_id
+    )
+    total = await service.count_spaces(viewer_user_id=auth_user.user_id)
 
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -533,6 +657,7 @@ async def create_space(
         announcements=announcements,
         task_templates=task_templates,
         visible_task_limit=payload.visible_task_limit,
+        visibility=_VISIBILITY_BY_NAME[payload.visibility],
     )
     if classification_topic_ids:
         await service.replace_classification_topics(
@@ -541,10 +666,18 @@ async def create_space(
             actor_user_id=auth_user.user_id,
         )
     space_data = await _build_full_space_payload(space, service=service, db=db)
+    # A 凭码 space is created holding a code (see SpaceService.create_space),
+    # so hand it back here rather than making the creator come and ask.
+    codes = await service.list_invite_codes(
+        space_id=space.id, actor_user_id=auth_user.user_id
+    )
     return {
         "code": 201,
         "message": "Created",
-        "data": {"space": space_data},
+        "data": {
+            "space": space_data,
+            "inviteCode": _invite_code_to_api_model(codes[0]) if codes else None,
+        },
     }
 
 
@@ -604,6 +737,124 @@ async def delete_space(
 ) -> None:
     await service.delete_space(space_id=space_id, actor_user_id=auth_user.user_id)
     return None
+
+
+@router.post(
+    "/join",
+    summary="Join a Space with an invite code",
+)
+async def join_space(
+    payload: JoinSpaceRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    if auth_user.user_id <= 0:
+        raise ForbiddenError("Only signed-in users can join a space")
+    space = await service.join_space(
+        code=payload.code.strip(), user_id=auth_user.user_id
+    )
+    space_data = await _build_full_space_payload(space, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": {"space": space_data}}
+
+
+@router.get(
+    "/{spaceId}/members",
+    summary="List Space Members",
+)
+async def list_space_members(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    members = await service.list_members(space_id)
+    items = await _hydrate_members(
+        members,
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 200, "message": "OK", "data": {"members": items}}
+
+
+@router.delete(
+    "/{spaceId}/members/{userId}",
+    summary="Remove Space Member",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_space_member(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    user_id: Annotated[int, Path(ge=1, alias="userId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> Response:
+    await service.remove_member(
+        space_id=space_id,
+        target_user_id=user_id,
+        actor_user_id=auth_user.user_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{spaceId}/leave",
+    summary="Leave a Space",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def leave_space(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> Response:
+    await service.leave_space(space_id=space_id, user_id=auth_user.user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{spaceId}/invite-codes",
+    summary="List Space Invite Codes",
+)
+async def list_space_invite_codes(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> dict:
+    codes = await service.list_invite_codes(
+        space_id=space_id, actor_user_id=auth_user.user_id
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"inviteCodes": [_invite_code_to_api_model(c) for c in codes]},
+    }
+
+
+@router.post(
+    "/{spaceId}/invite-codes",
+    summary="Create Space Invite Code",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_space_invite_code(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: CreateSpaceInviteCodeRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+) -> dict:
+    expires_at = None
+    if payload.expires_at is not None:
+        expires_at = datetime.fromtimestamp(payload.expires_at / 1000.0, tz=UTC)
+    invite = await service.create_invite_code(
+        space_id=space_id,
+        actor_user_id=auth_user.user_id,
+        max_uses=payload.max_uses,
+        expires_at=expires_at,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"inviteCode": _invite_code_to_api_model(invite)},
+    }
 
 
 @router.get(
@@ -1344,8 +1595,11 @@ async def list_space_admins(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
-    _ = auth_user
+    # Public spaces keep answering to any signed-in user, exactly as before;
+    # 凭码 and 私人 ones answer only to someone who can see the space at all.
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     admins = await service.list_admins(space_id)
     return {
         "code": 200,
