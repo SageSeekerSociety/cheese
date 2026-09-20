@@ -120,17 +120,18 @@ def test_an_agents_own_turn_output_is_not_an_input(client, stub_hooks):
 
 
 def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub_hooks):
-    """④一次发送「文字 + 图片」：下一轮两块都在，而且各只有一份。
+    """④一次发送「文字 + 图片」：两块都是待读输入，中间有人说话也不会丢掉图。
 
     图片块不是「没有轮次号」的那一类 —— 一次发送是一件事，附件块落库时带的就是正
-    文块的 id。只看轮次号的话这张图一个待读标记都不带，于是只剩位置水位兜底，而
-    那条兜底会被之后任何一条拿到回执的消息推过去，图就再也读不到了。
+    文块的 id。所以「有没有轮次号」分不出到达和产出：只看它，这张图就一个待读标记
+    都不带，只剩 `_pending_input_blocks` 的位置水位兜底。而位置水位是会往前走的，
+    之后任何一条芝士说的话都会把它推过这张图 —— 图从此再也读不进任何一轮。
     """
-    _project, topic_id, _headers = _room(client)
-    client.headers.update(session_auth_headers("user-1"))
+    _project, topic_id, headers = _room(client)
     upload = client.post(
         f"/topics/{topic_id}/attachments",
         files={"file": ("screenshot.png", PNG_1PX, "image/png")},
+        headers=session_auth_headers("user-1"),
     )
     assert upload.status_code == 200, upload.text
     att = upload.json()["data"]
@@ -147,8 +148,13 @@ def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub
         while ws.receive_json()["type"] != "done":
             pass
 
+    # 还没人读这张图，芝士就先在房间里说了一句 —— 位置水位越过了它。
+    _cheese_says(client, topic_id, headers, "我先去看别的")
+
     kinds = [b["kind"] for b in _blocks(client, topic_id)]
-    assert kinds == ["message", "attachment"], "一次发送写下两块"
+    assert kinds == ["message", "attachment", "message"], (
+        "一次发送写下两块，芝士那句排在它们后面"
+    )
 
     r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
     assert r.json()["data"]["started"] is True
