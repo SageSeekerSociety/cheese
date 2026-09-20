@@ -71,11 +71,12 @@ async def test_open_pr_creates_with_the_write_token():
         seen.append(request)
         return httpx.Response(201, json={"number": 7, "html_url": "https://pr/7"})
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/abcd1234", base="main", title="做一个东西", body="正文"
     )
 
-    assert pr["number"] == 7
+    assert opened.pr["number"] == 7
+    assert opened.identity_downgrade is None
     [request] = seen
     assert request.url.path == "/repos/acme/widgets/pulls"
     assert request.headers["authorization"] == "Bearer ghs_write"
@@ -97,10 +98,10 @@ async def test_open_pr_finds_the_already_open_pr():
         assert request.url.params["head"] == "acme:topic/abcd1234"
         return httpx.Response(200, json=[{"number": 5, "html_url": "https://pr/5"}])
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/abcd1234", base="main", title="t", body=""
     )
-    assert pr["number"] == 5
+    assert opened.pr["number"] == 5
 
 
 @pytest.mark.anyio
@@ -223,26 +224,31 @@ def _pull_recorder(*, user_status: int = 201, app_status: int = 201):
 async def test_open_pr_uses_the_requester_s_own_token():
     handler, seen = _pull_recorder()
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
     )
 
-    assert pr["number"] == 42
+    assert opened.pr["number"] == 42
+    assert opened.identity_downgrade is None
     assert seen == [("POST", "ghu_alice")]  # the App token never gets a turn
 
 
 @pytest.mark.anyio
-async def test_open_pr_falls_back_to_the_app_when_the_user_cannot():
+async def test_open_pr_falls_back_to_the_app_and_says_so():
     """Their authorization may be revoked, or they may have left the org. A PR
-    under the wrong name beats no PR at all — the accept depends on it."""
+    under the wrong name beats no PR at all — the accept depends on it — but
+    the substitution comes back as a sentence, not as a log line nobody reads
+    (I26). Without it the person only ever sees GitHub crediting a bot."""
     handler, seen = _pull_recorder(user_status=403)
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
     )
 
-    assert pr["number"] == 42
+    assert opened.pr["number"] == 42
     assert seen == [("POST", "ghu_alice"), ("POST", "ghs_write")]
+    assert opened.identity_downgrade
+    assert "403" in opened.identity_downgrade
 
 
 @pytest.mark.anyio
@@ -252,11 +258,12 @@ async def test_open_pr_adopts_an_existing_pr_without_a_second_create():
     token would just earn the same 422."""
     handler, seen = _pull_recorder(user_status=422)
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
     )
 
-    assert pr["number"] == 9
+    assert opened.pr["number"] == 9
+    assert opened.identity_downgrade is None
     assert [method for method, _ in seen] == ["POST", "GET"]
 
 
@@ -264,11 +271,11 @@ async def test_open_pr_adopts_an_existing_pr_without_a_second_create():
 async def test_open_pr_still_works_with_no_user_token_at_all():
     handler, seen = _pull_recorder()
 
-    pr = await _client(handler).open_pr(
+    opened = await _client(handler).open_pr(
         head="topic/1", base="main", title="fix: x", body=""
     )
 
-    assert pr["number"] == 42
+    assert opened.pr["number"] == 42
     assert seen == [("POST", "ghs_write")]
 
 
