@@ -426,7 +426,7 @@ def _conversation_of(client, *, task_id: int, owner: str) -> str:
 
     seed_user(client, owner)
     holder: dict[str, str] = {}
-    cid = "conv-for-{}".format(task_id)
+    cid = f"conv-for-{task_id}"
 
     async def _seed() -> None:
         now = datetime.now(UTC)

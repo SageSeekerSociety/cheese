@@ -99,9 +99,7 @@ async def update_milestone(
     # A milestone carries the project it belongs to, so the write takes the same
     # door as the reads above rather than being reachable by knowing its id.
     current = await MilestoneService(db).get_or_404(milestone_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, project_id=current.project_id
-    )
+    actor = await resolver.resolve(fallback_handle=None, project_id=current.project_id)
     await resolver.authorize_project(actor, project_id=current.project_id)
     milestone = await MilestoneService(db).update(
         milestone_id,

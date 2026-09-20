@@ -3210,14 +3210,10 @@ async def delete_ai_advice_conversation(
         raise ForbiddenError("Authentication required")
     await _ensure_task_visible_for_advice(db=db, task_id=task_id, auth_user=auth_user)
     try:
-        await service.get_conversation(
-            task_id=task_id, conversation_id=conversation_id
-        )
+        await service.get_conversation(task_id=task_id, conversation_id=conversation_id)
     except ValueError as exc:
         raise NotFoundError(str(exc)) from exc
-    await service.delete_conversation(
-        task_id=task_id, conversation_id=conversation_id
-    )
+    await service.delete_conversation(task_id=task_id, conversation_id=conversation_id)
     return {"code": 200, "message": "OK", "data": None}
 
 

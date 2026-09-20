@@ -294,9 +294,7 @@ class TaskAIAdviceService:
             }
         }
 
-    async def delete_conversation(
-        self, *, task_id: int, conversation_id: str
-    ) -> None:
+    async def delete_conversation(self, *, task_id: int, conversation_id: str) -> None:
         """删的也是某一道题的对话 —— 同样按（任务, id）寻址，不是按 id。"""
         convo = await self._conversation_repo.get_by_conversation_id(conversation_id)
         if convo is None or convo.context_id != task_id:
