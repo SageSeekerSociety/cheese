@@ -595,11 +595,15 @@ export type TopicSortOrder = 'asc' | 'desc'
 
 export function listTopics(
   projectId: string,
-  opts?: { sort?: TopicSortField; order?: TopicSortOrder }
+  // `activeSince` (ISO 时刻) 只留那一刻之后有动静的话题——「最近活跃的那些」。
+  // 我的工作那一页用它把每个项目的请求收在一个时间窗口里：一个项目可以有上百个
+  // 房间，全量拉回来只为了看有没有在跑，是拿一屏的时间换一个数字。
+  opts?: { sort?: TopicSortField; order?: TopicSortOrder; activeSince?: string }
 ): Promise<ListPayload<Topic>> {
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
+  if (opts?.activeSince) q.set('active_since', opts.activeSince)
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 

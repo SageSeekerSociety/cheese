@@ -7,6 +7,16 @@
       <v-spacer></v-spacer>
     </div>
     <v-list nav :lines="false">
+      <!-- 我的工作在最上面：这一层里只有它是「我的东西」，也是登录后的落地页
+           （router/home.ts 把 `/` 送到那儿）。 -->
+      <v-list-item
+        rounded="lg"
+        prepend-icon="mdi-clipboard-text-outline"
+        to="/work"
+        :title="t('navigation.myWork')"
+        color="primary"
+      >
+      </v-list-item>
       <v-list-item
         rounded="lg"
         prepend-icon="mdi-view-dashboard"

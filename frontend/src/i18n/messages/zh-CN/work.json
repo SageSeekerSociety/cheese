@@ -1,0 +1,12 @@
+{
+  "allSpaces": "全部空间",
+  "awaiting": "{count} 件等你",
+  "emptyBody": "建一个{project}，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。",
+  "emptyTitle": "从这里开始",
+  "groupTitle": "我的{project}",
+  "lastActivity": "最近活动 {time}",
+  "loading": "正在看你的项目…",
+  "mySpaces": "我加入的空间",
+  "quiet": "最近没有动静",
+  "running": "{count} 个在跑"
+}

@@ -8,6 +8,7 @@ import publicSite from './publicSite.json'
 import questions from './questions.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
+import work from './work.json'
 import users from './users.json'
 
 // Namespaces absent here have no English translation yet. They are listed, key by
@@ -26,4 +27,5 @@ export default {
   tasks,
   spaces,
   notifications,
+  work,
 }
