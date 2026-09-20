@@ -45,10 +45,15 @@ def _sources() -> list[tuple[pathlib.Path, str]]:
 
 
 def _landing_names(tree: ast.AST) -> set[str]:
-    """本模块里哪些名字绑的是 ``landing()`` 的返回值。"""
+    """本模块里哪些名字绑的是 ``landing()`` 的返回值。
+
+    ``landed = landing(…)`` 和 ``landed: Landing = landing(…)`` 都认：后者是
+    ``ast.AnnAssign``，漏掉它守卫就会把一处本来就对的代码判成「调用点自己挑落点」，
+    而守卫误红会把下一个人导去改那处对的代码。
+    """
     names: set[str] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        if not isinstance(node, ast.Assign | ast.AnnAssign):
             continue
         call = node.value
         if not isinstance(call, ast.Call):
@@ -63,7 +68,8 @@ def _landing_names(tree: ast.AST) -> set[str]:
         )
         if called != "landing":
             continue
-        for target in node.targets:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
             if isinstance(target, ast.Name):
                 names.add(target.id)
     return names
@@ -125,6 +131,19 @@ def test_every_event_takes_its_landing_from_the_closed_table():
         "这些事件的落点是调用点自己挑的，不是从 block/about.py 的 landing() 取的：\n"
         + "\n".join(offenders)
     )
+
+
+def test_the_guard_reads_an_annotated_landing_binding():
+    """``landed: Landing = landing(…)`` 和不带标注的写法绑的是同一个东西。
+
+    只认其中一种，守卫就会把一处本来正确的代码判成「调用点自己挑落点」——误红比
+    守不住更坏，它把下一个人导去改那处对的代码。
+    """
+    for source in (
+        "landed = landing(EventAbout.room, project_id=p, room_id=t)",
+        "landed: Landing = landing(EventAbout.room, project_id=p, room_id=t)",
+    ):
+        assert _landing_names(ast.parse(source)) == {"landed"}, source
 
 
 def test_the_guard_can_see_a_call_site_picking_its_own_landing():

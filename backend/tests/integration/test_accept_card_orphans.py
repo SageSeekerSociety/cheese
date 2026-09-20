@@ -110,9 +110,14 @@ def test_archiving_a_card_riding_an_open_pr_revokes_it_and_leaves_the_pr(
     assert fake.merge_calls == []
     assert fake.prs[number]["state"] == "open"
 
-    # 留痕：话题里有一条系统消息说清 PR 被放手了。
-    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-    assert f"停止跟进 PR #{number}" in room_text(blocks)
+    # 留痕：这条「平台放手了」落在那张卡上（结论 14），不落房间主线——要看见它的
+    # 是这张卡的验收人，而他打开的是卡，不是一个刚刚被归档的房间的时间线。
+    card_line = client.get(
+        f"/topics/{tid}/history", params={"task_id": card["task_id"], "limit": 200}
+    ).json()["data"]["data"]
+    assert f"停止跟进 PR #{number}" in room_text(card_line)
+    room_line = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    assert f"停止跟进 PR #{number}" not in room_text(room_line)
 
 
 def test_archiving_revokes_a_pending_card(client):

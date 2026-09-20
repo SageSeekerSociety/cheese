@@ -69,6 +69,7 @@ async def close_cards_for_archived_topic(
     topic_id: uuid.UUID,
     project_id: uuid.UUID,
     topic_title: str,
+    overview_room_id: uuid.UUID,
     by: str,
 ) -> list[AcceptCard]:
     """终结这个房间里所有非终态的验收卡（房间自己的，和它的卡上挂着的）。返回被
@@ -77,7 +78,7 @@ async def close_cards_for_archived_topic(
     幂等：终态的卡不会被再动一次，所以重复归档（或先归档再取消归档再归档）
     不会重复写 note、重复发通知。调用方负责 flush/commit。
     """
-    del topic_title  # 通知落在房间事件里，标题由房间自己带
+    del topic_title  # 通知落在事件里，标题由房间自己带
     cards = await AcceptCardRepository(session).list_everywhere_in_room(topic_id)
     now = datetime.now(UTC)
     changed: list[AcceptCard] = []
@@ -117,8 +118,23 @@ async def close_cards_for_archived_topic(
     await session.flush()
 
     # 留痕：一张开着的 PR 被平台放手了，这件事不能只躺在 note 里。
+    # 落点按结论 14：卡的事落那张卡。为房间本身递的卡（`task_id` 空）没有卡可落，
+    # 而它的房间此刻正在关掉——和归档记录同一个理由（`TopicService._archive_one`）：
+    # 关掉的房间没人再打开它的时间线，而这条 notice 的 `who` 是人，它要的就是有人
+    # 去处理那个未合并的 PR。所以它落项目总览，不落刚关掉的那个房间。
     for card in stranded:
-        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
+        landed = (
+            landing(
+                EventAbout.task,
+                project_id=project_id,
+                room_id=topic_id,
+                task_id=card.task_id,
+            )
+            if card.task_id is not None
+            else landing(
+                EventAbout.project, project_id=project_id, room_id=overview_room_id
+            )
+        )
         await BlockRepository(session).add(
             project_id=landed.project_id,
             topic_id=landed.topic_id,

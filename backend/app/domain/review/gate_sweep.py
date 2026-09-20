@@ -127,10 +127,13 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
     topic = await TopicRepository(session).get(card.topic_id)
     if topic is None:  # pragma: no cover — FK cascade makes this unreachable
         return
+    # 「检查红了」是这张卡的事（结论 14）：判死的是卡，要读到它的是这张卡的
+    # 验收人。房间主线那一档只留给为房间本身递的卡（`task_id` 空）。
     landed = landing(
-        EventAbout.room,
+        EventAbout.task if card.task_id is not None else EventAbout.room,
         project_id=topic.project_id,
         room_id=card.topic_id,
+        task_id=card.task_id,
     )
     await BlockRepository(session).add(
         project_id=landed.project_id,

@@ -697,11 +697,13 @@ class TopicService:
         # 去向与理由见 review/archive.py 的模块 docstring。
         from app.domain.review.archive import close_cards_for_archived_topic
 
+        overview_room = await self._overview_room(topic.project_id)
         await close_cards_for_archived_topic(
             self._session,
             topic_id=topic.id,
             project_id=topic.project_id,
             topic_title=topic.title,
+            overview_room_id=overview_room,
             by=by,
         )
         note = (
@@ -712,9 +714,7 @@ class TopicService:
         # 房间归档是项目的事，不是这个房间的事（结论 14）：房间关掉之后没人再打开
         # 它的时间线，而「少了一个房间」恰恰是项目总览要记的一行。
         landed = landing(
-            EventAbout.project,
-            project_id=topic.project_id,
-            room_id=await self._overview_room(topic.project_id),
+            EventAbout.project, project_id=topic.project_id, room_id=overview_room
         )
         await self._blocks.add(
             project_id=landed.project_id,

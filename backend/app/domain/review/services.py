@@ -3945,7 +3945,14 @@ class AcceptService:
         await self._session.flush()
         await self._session.refresh(card)
 
-        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
+        # 作废的是这张卡，落点就是这张卡（结论 14）：房间主线那一档只留给为房间
+        # 本身递的卡（`task_id` 空）。
+        landed = landing(
+            EventAbout.task if card.task_id is not None else EventAbout.room,
+            project_id=topic.project_id,
+            room_id=topic.id,
+            task_id=card.task_id,
+        )
         await BlockRepository(self._session).add(
             project_id=landed.project_id,
             topic_id=landed.topic_id,
