@@ -115,12 +115,16 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
    `project-cheese-device-offline-header-dropped.md` 是这条缝最完整的证据：#1111 的测试用
    `httpx.MockTransport` **自己造了一个带 `X-Device-Id` 的 409**，而真实 owner 发不出这个 header
    （`core/errors.py` 的 `http_exception_handler` 丢掉 `exc.headers`），于是测试全绿合入、线上一点没变。
-   这三个 MockTransport 用例今天还在 `backend/tests/unit/test_owner_rpc_unexpected_409.py:18-25`。
+   这条缝现在由 `backend/tests/contract/test_peer_states.py` 对着真 owner ASGI app 跑：
+   五种对端状态各一行，`X-Device-Id` 是真 owner 发出来的，不是替身造的。
 3. **Go ↔ Python 的线格式**（族 1）。`execution.call` / `execution.data` / `execution.result` 三帧
-   不在 `device_link.py` 里，是 `device_hub.py:616` 直接拼的 dict，
-   恰好落在那个文件 docstring 承诺的「field-for-field 对 Go struct，drift 由测试发现」之外。
-   `cli/internal/link` 连一个 `_test.go` 都没有。两侧的假连接器可以随便撒谎：
-   `test_device_connection_lifecycle.py:47` 发的是 `{"t":"hello","v":3}`，而两边的 `PROTOCOL_VERSION` 都是 1。
+   由 `backend/tests/fixtures/wire/*.json` 一帧一文件冻住，两侧各读同一批：Python 在
+   `tests/contract/test_wire_frames.py`，Go 在 `cli/internal/link/frames_test.go`。
+   写侧各自只声明一次：下行是 `device_link.execution_call`，上行是
+   `link.ExecutionData` / `link.ExecutionResult`（`executor.go` 调它们，夹具对拍的也是它们）；
+   替身侧的唯一声明是 `tests/support/wire.py`。
+   握手那一格还没进夹具：`test_device_connection_lifecycle.py` 发的是 `{"t":"hello","v":3}`，
+   而两边的 `PROTOCOL_VERSION` 都是 1。
 4. **生产的连接池**（族 5、11）。`backend/tests/conftest.py:83` 设 `CHEESEX_TEST_NULLPOOL=1`，
    `backend/app/core/db.py:46` 据此换成 `NullPool`。**压垮生产的那个对象在测试里根本不存在**。
 5. **部署后的业务健康**（族 12）。`deploy/deploy-docker.sh:593` 打 `/healthz`，
@@ -187,11 +191,12 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
    替身的职责是**强制**契约：它自己就是那份契约的可执行定义，两侧的真实现都要过它。
    **判据是「替身遵守真实协议」** [已定] 结论 59：一个替身只能产出真实现也产得出来的东西；
    它答得出而真实现答不出的，就是撒谎。用什么库无所谓——判据在替身的行为上，不在工具名上。
-   今天不是这样——`audit-toolcall.md` 数出来同一条缝上有三个互不相干的手搓假货
-   （`SocketDevice`、`_OwnerExecutorTransport`、`ExecutorTransport`）；
-   而 `test_owner_rpc_unexpected_409.py` 那三条造了一个**带 `X-Device-Id` 的 409**，
+   执行器那条缝一度不是这样——`audit-toolcall.md` 数出来它上面有三个互不相干的手搓假货，
+   现已收成 `tests/support/wire.py` 一个，由两侧共读的夹具约束；
+   对端状态那几条一度也是这样：它们用 `httpx.MockTransport` 造了一个**带 `X-Device-Id` 的 409**，
    真 owner 当时根本发不出这个 header（`core/errors.py` 丢掉 `exc.headers`）——
    替身撒了谎，没有东西拦它，于是测试全绿合入、线上一点没变。
+   现已收成 `tests/contract/test_peer_states.py` 一张表，header 由真 owner 发出。
 3. **缝的清单分两种来源，不要混。**
    缝 A（结论 29/30/43）、B（23/24/39/40/55/57）、E-1（13/14/15）、E-2（58）、F（21）、G（42/8/54）是 DECISIONS **已经定死的接口**，
    一个接口就是一条缝；接口之外的东西不许有跨模块的约定。
@@ -297,7 +302,7 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
 | **integration** | pytest `-m integration` | 真 Postgres + 真 alembic + 真 ASGI + **生产的 QueuePool** | 2 s | **6 分钟** @ 8 worker | `test.yml` 整体 13 分 25 秒（6838 条） | PR 必过 |
 | **frontend 单元** | `frontend.yml` vitest + eslint + vue-tsc | jsdom，组件与 lib | — | **2 分钟** | install ~40s + eslint ~90s + vitest ~56s ≈ 3 分 06 秒 | PR 必过。**族 6 的 13 个整族长在这一层和下面的 e2e 层**，四层表里原本没有它们的位置 |
 | **pi 扩展** | `test.yml:322` 的 `extension` job，`node --test backend/tests/extension/platform.test.ts` | 无 bundler、无 package.json，手写 pi stub | — | **10 秒** | 2.7 秒 | PR 必过。**缝 A-1 的 TS 侧夹具落在这里** |
-| **Go 单元** | `cli.yml` 的 `go test -race ./...`，`timeout-minutes: 15` | `cli/**/*_test.go` 13 文件 | — | **3 分钟** | 在 15 分钟预算内 | PR 必过。**族 1 的 Go 侧长在这里**；`cli/internal/link` 今天连一个 `_test.go` 都没有，缝 C-1 的夹具解析侧要加在这 |
+| **Go 单元** | `cli.yml` 的 `go test -race ./...`，`timeout-minutes: 15` | `cli/**/*_test.go` 13 文件 | — | **3 分钟** | 在 15 分钟预算内 | PR 必过。**族 1 的 Go 侧长在这里**；缝 C-1 的夹具解析侧是 `cli/internal/link/frames_test.go`，`backend/tests/fixtures/wire/**` 也在 `cli.yml` 的路径过滤里，所以改夹具同样触发这个 job |
 | **deploy shell** | `deploy-scripts-test.yml`，`deploy/tests/*.sh` | 真 bash，fake `df`/fake `docker` | — | **2 分钟** | 小 | PR 必过。**族 7 回收器的两条测试落在这里** |
 | **acceptance** | `remote-execution.yml`（`suite.py` → `acceptance.py`）、`harness-contract.yml` | 钉住的二进制、真容器、真连接器进程、上一个已发布的 owner 镜像 | — | **12 分钟**（不含预热） | 中位 19.8 分钟、最长 192 分钟；`timeout-minutes: 20` 里含 7-13 分钟镜像构建 | 触碰即跑；main 连续 20 次绿之后才当必过门（见第 5 节第 4 条） |
 | **Go 交付 e2e** | `cli.yml` 的 `go test -tags claudee2e -timeout 35m ./e2e/`，MockServer 扮 Anthropic API | 真 Claude Code 进程 + 真 tmux 层 | — | **10 分钟** | `timeout-minutes: 40` | 触碰即跑。**这是全仓唯一证明过「一条 prompt 变成一次真 Bash 工具调用写出文件」的东西**，缝 C-2 要接在它和 `acceptance.py` 之间，不要另起炉灶 |
@@ -347,7 +352,7 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 
 | 今天的文件 | 它断言的事实 | 搬到哪 |
 |---|---|---|
-| `unit/test_owner_timeout_status.py`（#1118）、`test_owner_rpc_unexpected_409.py`（#1111）、`test_owner_device_answer.py`（#1231）、`test_error_response_headers.py`（#1114）、`test_recovery_waits_for_the_machine.py`（#1248） | 对端的五种状态各自还原成什么 | 缝 C-1 的「对端状态编码表」**一张表五行** |
+| 五个按事故命名的文件（#1118 / #1111 / #1231 / #1114 / #1248） | 对端的五种状态各自还原成什么 | **已做**：缝 C-1 的「对端状态编码表」，`backend/tests/contract/test_peer_states.py` 一张表五行，五个文件已删 |
 | `unit/test_recovery_burst_is_bounded.py`（#1250）、`test_device_carries_a_batch_onto_the_next_one.py` | 扇出有上限 | 规模替身（71 台设备）一条 |
 | `unit/test_device_snapshot_poller_survives.py`、`unit/test_event_drain_refusal.py`（#1101） | 后台循环不会静默死掉 | 后台循环基元的一条共用契约测试（第 N 次抛非预期异常 → 第 N+1 次仍跑 + 恰好一条带调用方名字的 ERROR + 被拒条目 10 秒内不超过 6 次请求） |
 | `unit/test_db_pool_fits_the_server.py`（#1103） | 三个池塞得进一个 Postgres | 留着，它已经是正确形状（全仓唯一能写下这个算术的地方） |
@@ -367,23 +372,49 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 **(3) 靠 sleep 撑的（237 处）。** 见 3.2 第 4 条：换假时钟。
 换不掉的只有一种——「它不是返回错答案，是不返回」（#1188 的指数回溯），那一类用一个硬上限当断言，不是用 sleep 当等待。
 
-**(4) skip 的（37 处，CI 上 33 条 skipped）。** 三类分开处置：
+**(4) skip 的（CI 上从 33 条降到 11 条，剩的全是第三类）。** 三类分开处置，前两类已做：
 
-- **最坏的一类，断言不成立就 skip，于是永远绿**：`integration/test_discussion.py:50`
-  （`if task_resp.status_code != 200: pytest.skip(...)`）、`integration/test_task.py:3032/3051/3154/3234`
-  （`if custom_category_id is None: pytest.skip("Custom category was not created")`）。
-  **立刻改成 fail。** 这几条的语义是「前置接口坏了就当这条测试不存在」。
-- **整文件永久 skip，因为被测的东西压根没迁过来**：`integration/test_project.py:9`、
-  `integration/test_notification.py:74`。**删掉**，它们测的东西不存在。
-  `contract/test_projects_contract.py:18` 看着同类，**但不能删**：它的 skip 理由是文件自己写的
-  「`python_client` 没有凭据，所有探针在到达形状之前先 401；port 到 `authed_client` 就是修法，
-  **这是测试夹具的问题，不是契约问题**」——被测的 `/team-projects` 接口存在，
-  `tests/integration/test_team_projects.py` 还在端到端跑它。删了就是删覆盖。
-  处置是**换 `authed_client` 重新打开，缺件即 fail**。
-- **环境缺件就 skip**：改成「缺件即 fail」，并在 job 开头一个显式的 precondition step 里装。
-  `test_harness_contracts.py:90` 已经意识到这个坑（检查 junit xml 里有没有 `skipped`，有就退 1 说 acceptance is incomplete），
-  但它只管那一个 job。推广成一条通用规则：**任何套件在环境要求不满足时必须失败，不是 skip；
-  并且 job 结束时断言「实际执行的用例数 ≥ 预期条数」**（#1236 的教训：夜间 canary 两天报绿，八条测试只跑了一条）。
+- **最坏的一类，断言不成立就 skip，于是永远绿。已做**：`test_discussion.py` 与
+  `test_task.py` 那五处的前置，改成了建立它的那个 fixture 里的断言，
+  所以前置接口坏了是红，不是这条测试消失。
+- **整文件永久 skip 的两个文件整删。已做**：`integration/test_project.py` 与
+  `integration/test_notification.py` 占 33 条里的 18 条，两个都不是「被测的东西没了」，
+  是覆盖已经被别处接手，旧文件只剩一份永久 skip 的重复件。
+  `test_project.py` 被测的接口在 #370 改名为 `/team-projects`（表 `team_project` 也还在，
+  `app/domain/team_project/models.py`），覆盖由 `tests/integration/test_team_projects.py`
+  与 `contract/test_projects_contract.py` 接手；旧用例断 HTTP 201，而新路由答
+  HTTP 200 + body `code: 201`，本来也接不上。
+  `test_notification.py` 测的接口今天还在服务——`/notifications`、`/notifications/unread-count`、
+  `/notifications/status` 都在 `app/api/routes/notifications_flat.py`；它删得掉是因为
+  `contract/test_notifications_flat_functional.py` 与 `contract/test_notifications_contract.py`
+  已经覆盖列表、筛选、未读数、批量 PATCH、单条读删。没人接手的有两条：
+  `PUT /notifications/status {"read": false}` 必须答 400，
+  `PATCH /notifications/{id} {"read": false}` 把单条改回未读必须成立。
+  集体那条拒 false，单条这条收 false，是两个行为。两条都已补进前者，所以整删不丢覆盖。
+  `contract/test_projects_contract.py` 看着同类但不能删：被测的 `/team-projects` 接口存在，
+  `tests/integration/test_team_projects.py` 还在端到端跑它，skip 的理由是夹具缺凭据，
+  不是契约问题。已换 `authed_client` 重开，项目走真路由种下，缺件即 fail。
+- **环境缺件就 skip。还没做**：在一台 Linux 测试机上量到剩 11 条，全是它：
+  Meilisearch 4 条、codex 二进制 4 条、node 1 条、`CHEESE_TEST_CLAUDE` 1 条、
+  OpenViking 的 key 1 条。同一类还有几处 skipif 在那台机器上没触发，
+  因为它装了 tmux、`ln` 和 claude 二进制；换一台缺件的 runner 就会触发，
+  所以它们一样要退役。改成「缺件即 fail」，
+  并在 job 开头一个显式的 precondition step 里装。判据这一半已经有了：
+  `backend/scripts/assert_suite_ran.py` 的 `assert_suite_ran(junit_xml, *, at_least)`，
+  junit 里有 skipped 就红，实际跑的条数低于本 job 声明的下限也红
+  （#1236 的教训：夜间 canary 两天报绿，八条测试只跑了一条）。
+  今天由 `test_harness_contracts.py` 与 `remote-execution.yml` 的 private-chat 选集两处调用。
+  `mcp-contract.yml` 不接：那八条检查里任何一条不成立，`mcp_contract.py` 自己先退 1，
+  跑它的那一步就已经红了，闸门这一步根本轮不到执行——在那里加一道闸门是一道永远不会红的防御。
+  `test.yml` 要等这 11 条退役之后才接得上，现在接上去只会让 main 常红；
+  那一半连同 `test.yml` 的接线记在 #1300，本节的验收要等它才算到。
+
+  第三类里混进来过一条不是环境问题的：`unit/test_regression_round12.py` 的
+  「迁移链只有一个头」按相对路径找 `migrations/versions`，而真目录是
+  `backend/alembic/versions`，于是它在任何 cwd 下都 skip，从没跑过。
+  这个事实由 `test.yml` 的 `Exactly one alembic head` 步骤断——它问 alembic 自己，
+  比手搓解析严（那条用例刻意容忍「最终会收敛的 fork」，alembic 那步要求恰好一个头），
+  所以用例删，不复活。
 
 ### 3.4 flaky 政策
 
@@ -511,8 +542,11 @@ guard 回一句 `Central execution is disabled`。
 若属实，按结论 22 处理：要么真在机器上跑，要么如实标不可用。
 
 **(b) 每跳有契约**（缝 C-1 与 C-2）。两条最要紧的：
-1. `execution.call/data/result` 三帧写进 `device_link.py`，加 Go↔Python 的夹具对拍。
-   判据：`device_hub.py:616` 那个手拼 dict 消失；`cli/internal/link` 有 `_test.go`。
+1. `execution.call/data/result` 三帧写进 `device_link.py`，加 Go↔Python 的夹具对拍。**已做**：
+   手拼 dict 换成 `device_link.execution_call`，`executor.go` 里手拼的 `link.Msg` 换成
+   `link.ExecutionData` / `link.ExecutionResult`，`cli/internal/link/frames_test.go` 与
+   `backend/tests/contract/test_wire_frames.py` 读同一批 `backend/tests/fixtures/wire/*.json`
+   并且拿它们去对拍两侧真正在用的那几个构造器。
 2. `room_fixture.py:174-177` 那一行换成真的连接器进程 → 真的 owner app → 真的 runtime，
    同时 `acceptance.py:363` 的 `LocalDeviceHub` 消失（它的 `exec` 就是本机 `subprocess.run`，
    等于把 DeviceHub 整段摘掉）。

@@ -1,7 +1,7 @@
 """the project's artifact manifest, and what a delivery declares into it
 
 Revision ID: b4e7a1c95d33
-Revises: f3a8c5d2e917
+Revises: b7c2e91f4a03
 Create Date: 2026-09-20 15:00:00
 
 一个项目做出来的东西，一项一行（#1085 结论二、三）：名字就是身份。清单由交付长出
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b4e7a1c95d33"
-down_revision: str | Sequence[str] | None = "f3a8c5d2e917"
+down_revision: str | Sequence[str] | None = "b7c2e91f4a03"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

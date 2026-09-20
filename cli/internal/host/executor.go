@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -71,11 +70,7 @@ func (h *Host) runExecutor(m link.Msg) {
 	h.execMu.Unlock()
 	defer func() { h.execMu.Lock(); delete(h.execs, m.ID); h.execMu.Unlock() }()
 	err := executorExchange(ctx, m.Path, m.Stdin, func(data []byte) error {
-		return h.conn.Send(link.Msg{T: "execution.data", ID: m.ID, Data: base64.StdEncoding.EncodeToString(data)})
+		return h.conn.Send(link.ExecutionData(m.ID, data))
 	})
-	result := link.Msg{T: "execution.result", ID: m.ID}
-	if err != nil {
-		result.Error = err.Error()
-	}
-	_ = h.conn.Send(result)
+	_ = h.conn.Send(link.ExecutionResult(m.ID, err))
 }

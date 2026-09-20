@@ -1,7 +1,6 @@
 """Session placement survives storage while execution stays on the room machine."""
 
 import asyncio
-import base64
 import hashlib
 import json
 import os
@@ -40,6 +39,7 @@ from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
+from tests.support import wire
 
 
 @pytest.mark.anyio
@@ -79,14 +79,6 @@ async def test_execution_survives_an_unrelated_room_column_rename(
                 text("ALTER TABLE topics RENAME COLUMN retired_title TO title")
             )
             await db.commit()
-
-
-class _OwnerExecutorTransport:
-    def __init__(self) -> None:
-        self.sent: asyncio.Queue[dict] = asyncio.Queue()
-
-    async def send_json(self, msg: dict[str, Any]) -> None:
-        await self.sent.put(msg)
 
 
 @pytest.fixture
@@ -634,7 +626,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     device_hub._devices.clear()
     device_connection_app._release_draining = False
     device_connection_app._active_rpc_calls = 0
-    connector = _OwnerExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("executor", connector)
     await connector.sent.get()
     await device_hub.on_device_message(
@@ -654,21 +646,14 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             waiter = asyncio.create_task(
                 owner.post(endpoint, headers={"X-Cheese-Token": token}, json=payload)
             )
-            outbound = await asyncio.wait_for(connector.sent.get(), 1)
-            assert outbound["t"] == "execution.call"
-            assert outbound["path"] == dialled
+            call = await connector.next_call()
+            assert call.path == dialled
             encoded = json.dumps({"result": {"content": "executor file"}}).encode()
             await device_hub.on_device_message(
-                "executor",
-                {
-                    "t": "execution.data",
-                    "id": outbound["id"],
-                    "data": base64.b64encode(encoded).decode(),
-                },
+                "executor", wire.execution_data(call.id, encoded)
             )
             await device_hub.on_device_message(
-                "executor",
-                {"t": "execution.result", "id": outbound["id"], "error": ""},
+                "executor", wire.execution_result(call.id)
             )
             response = await asyncio.wait_for(waiter, 2)
             assert response.status_code == 200, response.text

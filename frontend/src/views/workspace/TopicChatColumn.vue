@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import ChatPanel from '@/components/ChatPanel.vue'
+import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 
@@ -92,6 +93,13 @@ defineExpose({
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
+        <!-- Agent 反馈卡。和采纳框同一个位置：都是「这一轮结束时，平台要人做的
+             一个决定」。
+             什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
+             （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
+             「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
+             换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
+        <AgentFeedbackCard :topic-id="topic.id" />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
