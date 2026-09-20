@@ -77,6 +77,7 @@ class PullRequestStatus:
     #: Empty only for a fake/older payload; callers fall back to the derived
     #: name, which is what the personal-token lane always used.
     head_ref: str = ""
+    base_ref: str = ""
     #: GitHub's `mergeable`. **Three-valued on purpose**: True = git can merge
     #: it, False = it conflicts with the base, and None = GitHub has not
     #: finished computing it yet (it does that asynchronously on the first
@@ -213,6 +214,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
     return PullRequestStatus(
         head_sha=data["head"]["sha"],
         head_ref=str(data["head"].get("ref") or ""),
+        base_ref=str((data.get("base") or {}).get("ref") or ""),
         state=str(data.get("state") or ""),
         merged=merged,
         # Anything that isn't a real bool stays None — "GitHub hasn't said

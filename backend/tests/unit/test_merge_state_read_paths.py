@@ -32,6 +32,7 @@ def _payload(**extra: object) -> dict:
         "merged_at": None,
         "merge_commit_sha": None,
         "head": {"sha": "deadbeef", "ref": "topic/abc"},
+        "base": {"ref": "task/parent"},
         "mergeable": True,
     }
     base.update(extra)
@@ -79,6 +80,7 @@ async def test_poller_lane_surfaces_mergeable_state():
 
     assert status.mergeable_state == "behind"
     assert status.head_sha == "deadbeef"
+    assert status.base_ref == "task/parent"
 
 
 # ---- 读路径二：GitHubPRClient.pr_status（per-repo App 形态）-----------------
@@ -111,3 +113,4 @@ async def test_per_repo_lane_surfaces_mergeable_state():
     assert status.mergeable_state == "dirty"
     assert status.mergeable is False
     assert status.head_ref == "topic/abc"
+    assert status.base_ref == "task/parent"

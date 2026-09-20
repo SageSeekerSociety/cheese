@@ -318,6 +318,7 @@ class FakeGitHubPrClient:
         return github_pr.PullRequestStatus(
             head_sha=pr["head_sha"],
             head_ref=pr["head"],
+            base_ref=pr["base"],
             state=pr["state"],
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
@@ -678,6 +679,71 @@ def _set_merge_since(client, card_id: str, iso: str) -> None:
 
 
 # ============================ 点击 = 当场合并 ================================
+
+
+@pytest.mark.parametrize("parent_closed", [False, True])
+@pytest.mark.parametrize("action", ["accept", "override", "auto"])
+def test_dependent_task_cannot_be_accepted_before_its_parent_is_delivered(
+    client, app_world, parent_closed, action
+):
+    from app.domain.room_task.models import Task, TaskStatus
+
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    child_id = delivery_task_id(client, tid)
+
+    async def dependency():
+        async with client.test_factory() as session:
+            parent = Task(
+                project_id=_uuid.UUID(pid),
+                room_id=_uuid.UUID(tid),
+                title="Required change",
+                branch_name="task/parent",
+                base_branch="main",
+                status=TaskStatus.closed if parent_closed else TaskStatus.open,
+            )
+            session.add(parent)
+            await session.flush()
+            child = await session.get(Task, child_id)
+            child.base_task_id = parent.id
+            child.base_branch = parent.branch_name
+            await session.commit()
+
+    asyncio.run(dependency())
+    fake.prs[number]["base"] = "task/parent"
+    fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+    fake.merge_sha_by_number[number] = "child-merge"
+    _protect(client, pid, auto_merge_allowed=True)
+    assert _approve(client, cid, "alice").status_code == 200
+    assert _arm(client, cid, "alice").status_code == 200
+    if action == "accept":
+        response = _accept(client, cid)
+        assert response.status_code == 422, response.text
+    elif action == "override":
+        response = _merge_anyway(client, cid, "alice")
+        assert response.status_code == 422, response.text
+    _poll(client)
+    assert fake.merge_calls == []
+    assert _cards(client, tid)[0]["merge_state"]["state"] == "blocked"
+
+    # A native CLI retarget to another unfinished branch does not resolve it.
+    fake.prs[number]["base"] = "task/another"
+    _poll(client)
+    assert fake.merge_calls == []
+    assert _cards(client, tid)[0]["merge_state"]["state"] == "blocked"
+
+    # The agent can resubmit against the trunk; reviews of the old diff expire
+    # even if the head commit did not change during that retarget.
+    fake.prs[number]["base"] = "main"
+    _poll(client)
+    card = _cards(client, tid)[0]
+    assert card["approvals"] == []
+    assert card["auto_merge"]["armed_by"] is None
+    assert card["pr_head_sha"] is None
+    _poll(client)
+    assert fake.merge_calls == []
+    assert _accept(client, cid).status_code == 200
+    assert len(fake.merge_calls) == 1
 
 
 def test_accept_merges_the_pr_on_the_spot_when_clean(client, app_world):

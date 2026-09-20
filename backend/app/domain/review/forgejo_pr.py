@@ -85,6 +85,7 @@ class ForgejoClient:
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
             head_ref=data["head"]["ref"],
+            base_ref=str((data.get("base") or {}).get("ref") or ""),
             state=data["state"],
             merged=merged,
             merge_commit_sha=data.get("merge_commit_sha") if merged else None,

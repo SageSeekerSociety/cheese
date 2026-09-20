@@ -1321,6 +1321,54 @@ class AcceptService:
 
         return await status_client(project_id, self._session)
 
+    async def _dependency_block_reason(
+        self, card: AcceptCard, status: "PullRequestStatus"
+    ) -> str | None:
+        if card.task_id is None:
+            return None
+        task = await TaskService(self._session).get(card.task_id)
+        if task is None or task.base_task_id is None:
+            return None
+        parent = await TaskService(self._session).get(task.base_task_id)
+        if parent is None or not status.base_ref:
+            return "暂时无法确认这条活需要等待的任务，请稍后刷新"
+        if status.base_ref == parent.branch_name:
+            return f"等「{parent.title}」先被采纳，或由芝士调整这条活后重新递交"
+        if status.base_ref != task.base_branch:
+            return "这条活的对照已改变，请刷新后重新查看"
+        return None
+
+    async def _sync_dependency_target(
+        self, card: AcceptCard, status: "PullRequestStatus"
+    ) -> bool:
+        """Record a native PR retarget and invalidate reviews of its previous diff."""
+        from app.domain.project.forge import default_branch
+
+        if card.task_id is None or not status.base_ref:
+            return False
+        task = await TaskService(self._session).get(card.task_id)
+        if (
+            task is None
+            or task.base_task_id is None
+            or task.base_branch == status.base_ref
+        ):
+            return False
+        if status.base_ref != await default_branch(task.project_id, self._session):
+            return False
+        task.base_branch = status.base_ref
+        # The agent explicitly chose a different target on the forge. A later
+        # parent-close sweep must not overwrite that decision.
+        task.base_task_id = None
+        for related in await self._repo.list_for_task(task.id):
+            if related.status in (AcceptStatus.pending, AcceptStatus.conflict):
+                await self._repo.clear_approvals(related.id)
+                related.auto_merge_armed_by = None
+                related.auto_merge_armed_at = None
+                related.pr_head_sha = None
+                related.merge_state = None
+        await self._session.flush()
+        return True
+
     async def _pr_verdict(
         self,
         *,
@@ -1415,6 +1463,15 @@ class AcceptService:
             github_enforces=enforces,
             draft=status.draft,
         )
+        dependency = await self._dependency_block_reason(card, status)
+        if dependency:
+            verdict = MergeVerdict(
+                state="blocked",
+                reasons=(
+                    merge_state.MergeReason(kind="dependency", detail=dependency),
+                ),
+            )
+            return verdict, "agent", protection, False, runs
         return verdict, whose_move(verdict), protection, enforces, runs
 
     def _write_merge_mirror(
@@ -2120,6 +2177,9 @@ class AcceptService:
         if status.state == "closed":
             await self._note_pr_closed_unmerged(card=card, topic=topic)
             await self._session.flush()
+            return
+
+        if await self._sync_dependency_target(card, status):
             return
 
         live = status.head_sha
@@ -3334,6 +3394,13 @@ class AcceptService:
 
         owner, repo = await self._pr_repo_of(card, topic)
         client = await self._status_client(topic.project_id)
+        status = await client.pull_request_status(
+            owner=owner, repo=repo, number=card.pr_number, token=creds.read
+        )
+        if not status.merged:
+            dependency = await self._dependency_block_reason(card, status)
+            if dependency:
+                raise ValidationError(dependency)
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
         state: str | None = None
         try:

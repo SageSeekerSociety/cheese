@@ -74,6 +74,7 @@ async def test_draft_is_adopted_then_filed_and_merged_at_reviewed_commit():
         owner="acme", repo="docs", number=7, token="project-token"
     )
     assert not status.draft
+    assert status.base_ref == "main"
     result = await client.merge_pull_request(
         owner="acme", repo="docs", number=7, token="project-token", sha="reviewed"
     )
