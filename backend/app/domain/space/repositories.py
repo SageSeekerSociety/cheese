@@ -688,4 +688,5 @@ class SpaceInviteCodeRepository:
             )
         )
         result = await self._session.execute(stmt)
-        return (result.rowcount or 0) > 0
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
