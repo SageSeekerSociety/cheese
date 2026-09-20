@@ -140,10 +140,9 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
         HARNESS_PACKAGE / "codex/behaviour.py",
         HARNESS_PACKAGE / "pi/behaviour.py",
     }
+
     def writes_a_pin(path: Path) -> bool:
-        return any(
-            pin in literal for literal in _string_literals(path) for pin in pins
-        )
+        return any(pin in literal for literal in _string_literals(path) for pin in pins)
 
     stray = [
         f"{path.relative_to(APP)}: {pin}"
