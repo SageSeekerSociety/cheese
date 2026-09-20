@@ -46,6 +46,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
@@ -3944,9 +3945,18 @@ class AcceptService:
         await self._session.flush()
         await self._session.refresh(card)
 
-        await BlockRepository(self._session).add(
+        # 作废的是这张卡，落点就是这张卡（结论 14）：房间主线那一档只留给为房间
+        # 本身递的卡（`task_id` 空）。
+        landed = landing(
+            EventAbout.task if card.task_id is not None else EventAbout.room,
             project_id=topic.project_id,
-            topic_id=topic.id,
+            room_id=topic.id,
+            task_id=card.task_id,
+        )
+        await BlockRepository(self._session).add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="cheese",
             author_type=AuthorType.system,
             content=f"<@{decided_by}> 作废了这张验收卡",
