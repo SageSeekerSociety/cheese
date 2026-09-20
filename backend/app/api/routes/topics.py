@@ -1580,7 +1580,7 @@ async def summon_agent(
     )
     if chat.has_running_turn(place.room_id):
         return ok({"started": False, "reason": "working"})
-    if not await chat.has_unread_human_input(place.room_id):
+    if not await chat.has_unread_input(place.room_id):
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在

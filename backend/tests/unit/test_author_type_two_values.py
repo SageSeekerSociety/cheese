@@ -15,20 +15,43 @@
 一个准；而 ``author_type.value in {"human": 0, "ai": 0}`` 里旧值是一个**字符串字面
 量**，名字从来没出现过 —— 活跃度统计就是这样漏过去的，它不会报错，只会安静地把两
 个数字都算成 0。所以第二条不去追字面量（``"human"``/``"ai"`` 在别的地方有别的意
-思），而是追**把 ``author_type`` 当字符串读**这件事本身：``author_type.value`` 和
-``author_type == "..."``。档位是一个两档枚举，取出它的字符串再拿去对照或做键，问的
-一定是它答不了的那个问题。
+思），而是追**把 ``author_type`` 当字符串读**这件事本身：``author_type.value``、
+``author_type == "..."`` 和 ``block["author_type"] == "..."``。档位是一个两档枚
+举，取出它的字符串再拿去对照或做键，问的一定是它答不了的那个问题。
+
+**扫的不止 ``backend/app``。** 写进真实数据库的不只是服务进程：种子脚本
+（``backend/scripts/seed_demo.py`` 写在 ``docs/workflows.md`` 的开发流程里）、
+一次性回填脚本、evals 和 probe 都连着同一张 ``blocks`` 表。漏掉它们，P8b 的
+``UPDATE ... WHERE author_type IN ('human','ai')`` 跑完之后下一次 seed 就把旧值写
+回去了；而读旧值的那几处从此一条也匹配不上 —— 不报错，只是把数字安静地算成 0。
+
+两处不扫，各有理由：``backend/tests`` 里的 fixture 是**手写的存量行**，
+``block/authorship.py`` 的旧值容忍正是要读它们，而 P8b 删掉那两档时这些 fixture
+会在 import 时就炸开，响得不能再响；``backend/alembic`` 是已经发生过的历史，迁移
+里的字面量改一个字都是在改历史。
 """
 
 import ast
 import pathlib
 
-APP_ROOT = pathlib.Path(__file__).resolve().parents[2] / "app"
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+# 连着同一张 blocks 表的、活的代码。
+SCANNED = ("backend/app", "backend/scripts", "scripts", "evals")
 
 _LEGACY = {"human", "ai"}
 
 # 只有这一个模块读得到旧值：它就是把旧值翻译成「参与者」的那一层。
-ALLOWED = {"domain/block/authorship.py"}
+ALLOWED = {"backend/app/domain/block/authorship.py"}
+
+
+def _sources() -> list[tuple[pathlib.Path, str]]:
+    """被扫的每个文件，连同它在仓库里的路径。"""
+    found: list[tuple[pathlib.Path, str]] = []
+    for root in SCANNED:
+        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+            found.append((path, path.relative_to(REPO_ROOT).as_posix()))
+    return found
 
 
 def _legacy_author_type_lines(tree: ast.AST) -> list[int]:
@@ -51,6 +74,10 @@ def _author_type_as_a_string_lines(tree: ast.AST) -> list[int]:
     def names_the_column(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
             return node.id == "author_type"
+        if isinstance(node, ast.Subscript):
+            # `block["author_type"]`：JSON 那一侧读的是同一列，问的是同一个问题。
+            key = node.slice
+            return isinstance(key, ast.Constant) and key.value == "author_type"
         return isinstance(node, ast.Attribute) and node.attr == "author_type"
 
     def against_a_string(node: ast.Compare) -> bool:
@@ -77,12 +104,11 @@ def _author_type_as_a_string_lines(tree: ast.AST) -> list[int]:
 
 def test_only_authorship_reads_the_two_legacy_author_types() -> None:
     offenders: list[str] = []
-    for path in sorted(APP_ROOT.rglob("*.py")):
-        rel = path.relative_to(APP_ROOT).as_posix()
+    for path, rel in _sources():
         if rel in ALLOWED:
             continue
         for lineno in _legacy_author_type_lines(ast.parse(path.read_text())):
-            offenders.append(f"backend/app/{rel}:{lineno}")
+            offenders.append(f"{rel}:{lineno}")
 
     assert not offenders, (
         "这些地方还在用事件行的档位回答「是人还是芝士」：\n  "
@@ -96,17 +122,22 @@ def test_only_authorship_reads_the_two_legacy_author_types() -> None:
 
 def test_the_allowlist_has_no_stale_entries() -> None:
     """改了名或删了文件的豁免要跟着删，否则守卫上就留了个洞。"""
-    missing = [rel for rel in sorted(ALLOWED) if not (APP_ROOT / rel).is_file()]
+    missing = [rel for rel in sorted(ALLOWED) if not (REPO_ROOT / rel).is_file()]
     assert not missing, f"ALLOWED 里的文件已经不存在了：{missing}"
+
+
+def test_every_scanned_root_still_exists() -> None:
+    """扫描根改了名，守卫就一个文件都不扫了，而且照样是绿的。"""
+    missing = [root for root in SCANNED if not (REPO_ROOT / root).is_dir()]
+    assert not missing, f"扫描根已经不存在了：{missing}"
 
 
 def test_no_one_reads_the_author_type_column_as_a_string() -> None:
     """取出档位的字符串，为的只会是拿它去对照旧值 —— 而它已经答不了那个问题。"""
     offenders: list[str] = []
-    for path in sorted(APP_ROOT.rglob("*.py")):
-        rel = path.relative_to(APP_ROOT).as_posix()
+    for path, rel in _sources():
         for lineno in _author_type_as_a_string_lines(ast.parse(path.read_text())):
-            offenders.append(f"backend/app/{rel}:{lineno}")
+            offenders.append(f"{rel}:{lineno}")
 
     assert not offenders, (
         "这些地方把事件行的档位取成字符串再用：\n  "

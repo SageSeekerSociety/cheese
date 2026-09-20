@@ -56,6 +56,7 @@ class BlockRepository:
         mime_type: str | None = None,
         meta: dict | None = None,
         created_at: datetime | None = None,
+        own_output: bool = False,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -87,8 +88,14 @@ class BlockRepository:
         # 于是「一句话 + 一张图」里那张图落回上面那段注释说的位置水位兜底，而那正
         # 是会把它永久丢掉的那条路。所以判据是**署名是 agent** 且**落在某一轮里**
         # 才算那一轮自己的产出；人说的话不论有没有轮次号都是输入。
+        #
+        # `own_output` 是调用方直接给出的答案，给那种「署名是 agent、平台这边却
+        # 填不出轮次号」的写入端用：远程控制里芝士问出口的那句话由平台代写进房间
+        # （`api/routes/remote_control.py` 的 `voice_pending`），而问话的那一轮跑
+        # 在机器上，平台没有它的轮次号。它在等**人**回答，不是在等自己读一遍。
         if (
-            is_participant(author_type)
+            not own_output
+            and is_participant(author_type)
             and kind in (BlockKind.message, BlockKind.attachment)
             and not (looks_like_agent_handle(author) and turn_id is not None)
         ):

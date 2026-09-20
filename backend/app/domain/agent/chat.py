@@ -1728,8 +1728,12 @@ class ChatService:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
 
-    async def has_unread_human_input(self, topic_id: uuid.UUID) -> bool:
-        """Whether anything a person said is still waiting to reach 芝士.
+    async def has_unread_input(self, topic_id: uuid.UUID) -> bool:
+        """Whether anything said in the room is still waiting to reach 芝士.
+
+        「一个人说的」不再是判据：人和 agent 是同一种参与者（结论 1），一个 AI
+        队友说进房间的一句话同样是没人读过的输入。不算数的是芝士**自己跑出来的
+        产出** —— 那一条在写入端就不带待读标记（`BlockRepository.add`）。
 
         「忘了 @」的补救按钮问的就是这一句，所以它必须和真正组装 prompt 时问的
         是同一个问题 —— 同一个 `_pending_input_blocks`，不是一份近似的复制品。
@@ -3083,6 +3087,7 @@ class ChatService:
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
+        own_output: bool = False,
     ) -> dict | None:
         """Persist output immediately; only explicit publications enter chat.
 
@@ -3095,7 +3100,12 @@ class ChatService:
         Returns None when ``continuation_id`` says this exact message already
         landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
-        caller treats None as "nothing to broadcast"."""
+        caller treats None as "nothing to broadcast".
+
+        ``own_output`` 告诉轮次输入账目：这一条是作者自己跑出来的产出，不是谁对
+        房间说的一句待读的话。默认不必填 —— 「署名是 agent 且落在某一轮里」已经
+        答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
+        口的那句话）。"""
         # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
         # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
         # 三条路都经过这个方法,拦在门口才不会有一条漏网。
@@ -3206,6 +3216,7 @@ class ChatService:
                 turn_id=turn_id,
                 meta=meta,
                 created_at=at,
+                own_output=own_output,
             )
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).

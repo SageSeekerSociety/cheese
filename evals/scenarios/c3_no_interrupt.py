@@ -8,7 +8,7 @@
 
 import asyncio
 
-from evals.lib.client import ai_messages, human_messages, new_id
+from evals.lib.client import agent_blocks, ai_messages, human_messages, new_id
 from evals.lib.context import EvalContext
 from evals.lib.records import Check, Scenario, ScenarioOutcome
 
@@ -48,7 +48,7 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
         for f in flat_frames
         if f.get("type") in ("turn_active", "assistant_block", "tool", "reaction")
     ]
-    ai_blocks_any = [b for b in blocks if b["author_type"] == "ai"]
+    ai_blocks_any = agent_blocks(blocks)
 
     checks = [
         Check(
