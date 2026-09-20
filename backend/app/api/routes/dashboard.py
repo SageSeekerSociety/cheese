@@ -26,7 +26,16 @@ async def project_overview(
 ) -> dict:
     """事维度总览 — for a verified caller; 等你处理的事 shows THEIR items plus
     broadcasts, never other members' mailboxes (those ids/titles used to leak
-    here unauthenticated)."""
+    here unauthenticated).
+
+    ``resolve_recipient`` answers whose mailbox this is, which is a different
+    question from whether this caller may look at this project at all — and it
+    answered the second one with "anybody signed in". The card it returns
+    carries the roster with roles and every topic's title and status, i.e. the
+    same project content ``/contributions`` and ``/usage`` next door guard, so
+    the 项目成员 door comes first and the mailbox is resolved behind it."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     viewer = await resolver.resolve_recipient(
         requested=None, project_id=project_id, allow_anonymous=False
     )
@@ -50,7 +59,15 @@ async def member_summary(
     ``user_handle`` says whose page this is, not who is asking — the caller is
     resolved like on /overview above, and ``waiting_on_you`` is trimmed to what
     the viewer may see (this route used to hand the named member's inbox to
-    anyone unauthenticated)."""
+    anyone unauthenticated).
+
+    The half that is the same for everyone is still project content: the names
+    of the members who started these topics, the topics' titles and statuses,
+    and how much each of them wrote this week. So the 项目成员 door is here too,
+    and it is the door that decides, not the mailbox — being signed in is not
+    being in the project."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     viewer = await resolver.resolve_recipient(
         requested=None, project_id=project_id, allow_anonymous=False
     )
