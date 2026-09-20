@@ -141,6 +141,10 @@ async def task_workspace(
 
     room = await TopicService(db).get_or_404(task.room_id)
     who = await identity.attribution(db, room, task_id=task.id)
+    from app.domain.project.forge import ensure_author_email
+
+    if who.author:
+        await ensure_author_email(project_id, db, who.author.email)
     return ok(
         {
             "task_id": str(task.id),

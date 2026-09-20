@@ -479,6 +479,10 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
 
     base = task.base_branch
     who = await identity.attribution(session, room, task_id=task.id)
+    from app.domain.project.forge import ensure_author_email
+
+    if who.author:
+        await ensure_author_email(project_id, session, who.author.email)
     opened = await client.open_pr(
         head=branch,
         base=base,
@@ -625,6 +629,10 @@ async def _pr_text(
         return branch, f"Cheese-Topic: {topic_id}"
     topic = place.room
     who = await identity.attribution(session, topic, card=card)
+    from app.domain.project.forge import ensure_author_email
+
+    if who.author:
+        await ensure_author_email(topic.project_id, session, who.author.email)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.

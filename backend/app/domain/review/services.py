@@ -1560,6 +1560,12 @@ class AcceptService:
         attribution = await identity.attribution(
             self._session, topic, card=card, decided_by=decided_by
         )
+        from app.domain.project.forge import ensure_author_email
+
+        if attribution.author:
+            await ensure_author_email(
+                topic.project_id, self._session, attribution.author.email
+            )
         try:
             result = await client.merge_pull_request(
                 owner=owner,
@@ -2456,6 +2462,12 @@ class AcceptService:
         attribution = await identity.attribution(
             self._session, topic, card=card, decided_by=armer
         )
+        from app.domain.project.forge import ensure_author_email
+
+        if attribution.author:
+            await ensure_author_email(
+                topic.project_id, self._session, attribution.author.email
+            )
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -3343,6 +3355,10 @@ class AcceptService:
         who = await identity.attribution(
             self._session, topic, card=card, decided_by=decided_by
         )
+        from app.domain.project.forge import ensure_author_email
+
+        if who.author:
+            await ensure_author_email(topic.project_id, self._session, who.author.email)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,

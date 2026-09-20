@@ -419,7 +419,7 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         await asyncio.wait_for(serving, 10)
 
 
-def _push_with_cli(binding, token, root):
+def _push_with_cli(binding, token, root, author):
     class TokenEndpoint(BaseHTTPRequestHandler):
         def do_GET(self):
             assert self.path == "/sandbox/forge-token"
@@ -483,9 +483,9 @@ def _push_with_cli(binding, token, root):
             "-C",
             "checkout",
             "-c",
-            "user.name=Test Agent",
+            f"user.name={author.name}",
             "-c",
-            "user.email=agent@users.invalid",
+            f"user.email={author.email}",
             "commit",
             "-m",
             "Write report",
@@ -498,8 +498,9 @@ def _push_with_cli(binding, token, root):
         thread.join(timeout=5)
 
 
+@pytest.mark.parametrize("requester_credit", [True, False])
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
-    db_factory, monkeypatch, tmp_path
+    db_factory, monkeypatch, tmp_path, requester_credit
 ):
     from app.api.routes.accept import _pr_checks_payload
     from app.domain.review import services as review_services
@@ -537,15 +538,21 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(room.id))
         metadata = await task_workspace(project.id, task.id, session, scoped)
         assert metadata["data"]["coauthors"] == ["requester <requester@zhishi.local>"]
-        project.settings = {"forge_requester_coauthor": False}
+        project.settings = {"forge_requester_coauthor": requester_credit}
         await session.commit()
         metadata = await task_workspace(project.id, task.id, session, scoped)
-        assert metadata["data"]["coauthors"] == []
+        assert metadata["data"]["coauthors"] == (
+            ["requester <requester@zhishi.local>"] if requester_credit else []
+        )
+        from app.domain.workspace.identity import attribution
+
+        author = (await attribution(session, room, task_id=task.id)).author
+        assert author is not None
     tokens = ForgejoTokens(binding, sessions=db_factory)
     token, _ = await tokens.installation_token()
     owner, repo = binding.repo.split("/", 1)
     publisher = ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
-    reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path)
+    reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path, author)
     chat = object.__new__(ChatService)
     chat._sessions = db_factory
     baseline = await chat._known_commits(binding.project_id, room.id)
@@ -588,6 +595,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                 "branch": "task/report",
                 "content": base64.b64encode(b"appendix\n").decode(),
                 "message": "Add appendix",
+                "author": {"name": author.name, "email": author.email},
             },
         )
         assert updated.status_code == 201, updated.text
@@ -666,6 +674,12 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert merged_commit.status_code == 200, merged_commit.text
         message = merged_commit.json()["commit"]["message"]
+        merged_author = merged_commit.json()["commit"]["author"]
+        assert merged_author["name"] == author.name
+        assert merged_author["email"] == author.email
+        assert (
+            "Co-authored-by: requester <requester@zhishi.local>" in message
+        ) == requester_credit
         assert f"Cheese-Card: {card.id}" in message
         assert f"/topics/{room.id}" in message
         assert f"card={task.id}" in message

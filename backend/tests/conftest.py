@@ -450,6 +450,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     remote_data = forge_files.repository_data
     remote_tokens = forge_files.tokens_for_project
     remote_status = forge_files.status_client
+    remote_author_email = forge.ensure_author_email
 
     async def provision_repository(project_id, session, **kwargs):
         existing = await forge.binding_for_project(project_id, session)
@@ -481,6 +482,10 @@ def stub_project_forge(monkeypatch, tmp_path):
     async def test_repository(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
         return binding is not None and binding.api_url == "https://forge.test/api/v1"
+
+    async def ensure_author_email(project_id, session, email, **kwargs):
+        if not await test_repository(project_id, session):
+            await remote_author_email(project_id, session, email, **kwargs)
 
     async def branch_head(project_id, session, branch):
         if not await test_repository(project_id, session):
@@ -621,6 +626,7 @@ def stub_project_forge(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
     monkeypatch.setattr(forge, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)

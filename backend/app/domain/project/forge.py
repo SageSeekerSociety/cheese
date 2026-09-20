@@ -44,6 +44,38 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
     raise GatewayUnavailableError("项目的代码托管类型无法识别")
 
 
+async def ensure_author_email(
+    project_id: uuid.UUID,
+    session: AsyncSession,
+    email: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> None:
+    """Associate an agent's commits with the project's Forgejo PR account."""
+    binding = await binding_for_project(project_id, session)
+    if binding is None or binding.kind != "forgejo":
+        return
+    if not binding.account_password:
+        raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+    endpoint = binding.api_url.rstrip("/") + "/user/emails"
+    auth = (binding.repo.split("/", 1)[0], decrypt_text(binding.account_password))
+    async with httpx.AsyncClient(transport=transport, timeout=30, auth=auth) as client:
+        response = await client.get(endpoint)
+        if response.status_code != 200:
+            raise GatewayUnavailableError("无法读取代码托管账号的作者邮箱")
+        emails = response.json()
+        if not any(row["email"] == email for row in emails):
+            response = await client.post(endpoint, json={"emails": [email]})
+            if response.status_code == 422:
+                # Concurrent tasks can register the same project agent.
+                response = await client.get(endpoint)
+            if response.status_code not in (200, 201):
+                raise GatewayUnavailableError("无法登记代码托管账号的作者邮箱")
+            emails = response.json()
+        if not any(row["email"] == email and row["verified"] for row in emails):
+            raise GatewayUnavailableError("代码托管服务尚未验证 agent 的作者邮箱")
+
+
 async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
     binding = await binding_for_project(project_id, session)
     if binding is None:
