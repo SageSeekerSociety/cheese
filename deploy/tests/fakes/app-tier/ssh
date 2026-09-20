@@ -13,11 +13,17 @@ if [[ "$remote_command" == *com.docker.compose.service* ]]; then
     printf 'frontend\trepo/frontend:%s\trunning\tUp 1 minute (healthy)\n' \
       "$frontend_tag"
   fi
+  if [ "$scenario" != "git_absent" ]; then
+    printf 'git\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+  fi
 else
   printf 'cheese-backend-1 repo/backend:%s\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
     [ "$scenario" = "frontend_stale" ] && frontend_tag="old9999"
     printf 'cheese-frontend-1 repo/frontend:%s\n' "$frontend_tag"
+  fi
+  if [ "$scenario" != "git_absent" ]; then
+    printf 'cheese-git-1 repo/backend:%s\n' "$tag"
   fi
 fi

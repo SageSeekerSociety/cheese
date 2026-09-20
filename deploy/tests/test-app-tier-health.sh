@@ -44,6 +44,50 @@ test_deploy_rejects_absent_frontend() {
   echo "PASS: deploy rejects an absent frontend"
 }
 
+# The deploy that first carried the repo server brought up backend and
+# frontend, reported success, and left that server down - so every machine
+# fetch and push answered 502, on the release that had just moved them there.
+# Nothing was wrong with the container: the deploy never started it, and
+# nothing checked. Both halves of that are asserted here.
+test_deploy_rejects_absent_git() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=git_absent \
+    APP_TIER_MAIN_SHA=testsha \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml"; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded with no git container"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: deploy rejects an absent git"
+}
+
+test_deploy_starts_git() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  grep -F 'up -d git' "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "deploy never brought the git container up"
+  }
+  rm -rf "$run_dir"
+  echo "PASS: deploy brings the git container up"
+}
+
 test_deploy_accepts_healthy_pair() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
@@ -1024,6 +1068,8 @@ case "$CASE" in
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
     test_deploy_rejects_absent_frontend
+    test_deploy_rejects_absent_git
+    test_deploy_starts_git
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
     test_local_deploy_installs_owner_from_verified_backend_image
