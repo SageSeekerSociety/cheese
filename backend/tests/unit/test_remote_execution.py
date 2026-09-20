@@ -517,10 +517,18 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             changed
         ).decode()
         before = source.read_bytes()
+        payload["env"]["CHEESE_TOKEN"] = "refreshed-while-busy"
         bootstrap.configure(payload)
         deferred = json.loads(capsys.readouterr().out)
         assert deferred["upgrade_pending"] is True
         assert deferred["pid"] == original["pid"]
+        assert (home / ".cheese/cheese-preview.token").read_text() == (
+            "refreshed-while-busy"
+        )
+        assert (
+            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
+            == "refreshed-while-busy"
+        )
         assert source.read_bytes() == before
         assert ready()["pid"] == original["pid"]
         (home / "room/release").touch()

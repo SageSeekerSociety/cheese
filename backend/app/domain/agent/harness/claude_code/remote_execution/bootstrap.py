@@ -250,6 +250,8 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             config["mcp_servers"] = json.loads(mcp.read_text()).get("mcpServers", {})
         state = platform_dir / "executor"
         state.mkdir(exist_ok=True, mode=0o700)
+        (platform_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
+        (platform_dir / "cheese-preview.token").chmod(0o600)
         if (state / "config.json").exists():
             previous = json.loads((state / "config.json").read_text())
             source = (
@@ -332,8 +334,6 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                         timeout=30,
                     )
         activate_release(platform_dir, release, contents)
-        (platform_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
-        (platform_dir / "cheese-preview.token").chmod(0o600)
         if payload.get("environment"):
             directory = home / ".cheese-environment"
             directory.mkdir(exist_ok=True, mode=0o700)
