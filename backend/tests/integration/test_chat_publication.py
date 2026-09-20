@@ -28,6 +28,18 @@ def room(client):
     return topic["id"], {"X-Cheese-Token": token}
 
 
+def private_room(client):
+    """一个成员和项目队友的私聊，外加那个队友的凭据。"""
+    project = client.post(
+        "/projects", json={"name": "Publication", "owner_handle": "user-1"}
+    ).json()["data"]
+    topic = client.get(
+        f"/projects/{project['id']}/private-chat", params={"user_handle": "user-1"}
+    ).json()["data"]
+    token = mint_scoped_token(project_id=project["id"], topic_id=topic["id"])
+    return topic["id"], {"X-Cheese-Token": token}
+
+
 def publish(client, topic, headers, content="我先核对当前流程。", **extra):
     return client.post(
         f"/topics/{topic}/messages",
@@ -165,6 +177,50 @@ def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks)
     )
     assert "chat_send" in stub_hooks.last_system_prompt
     assert "chat_send" in stub_hooks.last_prompt
+
+
+def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
+    """私聊和房间共用一条发布路径 (结论 19).
+
+    A private chat used to publish its own terminal reply, which is why its
+    agent was told not to call chat_send there. Two rooms, two publication
+    rules and two prompts were one product behaviour with two implementations.
+    """
+    topic, headers = private_room(client)
+    stub_hooks.reply = "这段是终端里的最终答复。"
+    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "帮我记一下偏好", "summon": True})
+        frames = []
+        while True:
+            frame = ws.receive_json()
+            frames.append(frame)
+            if frame["type"] in ("done", "error"):
+                break
+    assert not any(frame["type"] == "assistant_block" for frame in frames)
+
+    def room_messages():
+        history = client.get(f"/topics/{topic}/blocks", headers=headers)
+        assert history.status_code == 200, history.text
+        return [
+            block["content"]
+            for block in history.json()["data"]["data"]
+            if block["kind"] == "message" and block["author_type"] == "ai"
+        ]
+
+    # Nothing published, nothing in the room — and the reply is not lost, it is
+    # in activity where a room's terminal output goes.
+    assert room_messages() == []
+    activity = client.get(f"/topics/{topic}/blocks", headers=headers).json()["data"]
+    assert [
+        block["content"]
+        for block in activity["data"]
+        if block["kind"] == "event" and block["content"] == stub_hooks.reply
+    ]
+
+    # One chat_send, exactly one message.
+    sent = publish(client, topic, headers, "记好了，偏好写进文档了。")
+    assert sent.status_code == 200, sent.text
+    assert room_messages() == ["记好了，偏好写进文档了。"]
 
 
 def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memory(

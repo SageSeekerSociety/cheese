@@ -1456,9 +1456,7 @@ class ChatService:
             for image in images
         )
         state = self._hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt(
-            "\n".join(lines), is_private=bool(state and state.is_private)
-        )
+        line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -2456,8 +2454,9 @@ class ChatService:
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
             elif event.text.strip():
-                # Private chats publish the direct reply; work topics retain
-                # terminal output in activity and publish through Cheese CLI.
+                # Terminal output, the final response included, stays in
+                # activity: a reply reaches the room only through chat_send,
+                # in a private chat exactly as in any other room.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -2473,7 +2472,6 @@ class ChatService:
                     continuation_id=(
                         state.continuation_id if state is not None else None
                     ),
-                    publish=bool(state and state.is_private),
                 )
                 if payload is not None:
                     if state is not None:
@@ -4684,7 +4682,7 @@ class ChatService:
         )
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
-        prompt_text = publication_prompt(prompt_text, is_private=is_private)
+        prompt_text = publication_prompt(prompt_text)
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
             "elapsed_ms=%.3f unix_ms=%.3f",

@@ -8,8 +8,8 @@ the goal, necessary background, conclusions and next steps.
 The terminal agent publishes chat explicitly. MessageDisplay, Stop and recovered
 terminal output stay in activity records. Tool activity, running state, platform
 errors and decision cards remain visible through their existing interfaces.
-Tool-free private chat publishes its model response directly because it has no
-CLI. Native RC controls are independent of this publication path.
+A private chat publishes the same way a room does. Native RC controls are
+independent of this publication path.
 
 ## Sending a message
 
