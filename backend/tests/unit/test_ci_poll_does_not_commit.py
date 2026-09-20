@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.review.services import AcceptService
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.machine_work import machine_commits
 
 

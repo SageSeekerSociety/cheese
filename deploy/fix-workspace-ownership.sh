@@ -24,7 +24,7 @@
 #
 # Env:
 #   AGENT_UID / AGENT_GID   target ownership (default 1000, must match
-#                           app.domain.workspace.service.AGENT_UID)
+#                           app.domain.repository.service.AGENT_UID)
 #   FORCE_OWNERSHIP_FIX     set to 1 to ignore the marker and re-walk
 #   OWNERSHIP_REPORT_FILE   if set, `migrated` or `noop` is written here so the
 #                           caller can tell whether this run actually moved

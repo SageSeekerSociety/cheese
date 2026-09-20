@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from app.core.errors import ValidationError
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.delivery import delivery_task_id
 from tests.machine_work import declare_task, machine_commits
 
@@ -297,7 +297,7 @@ def test_merge_squashes_the_branch_into_one_authored_commit(client):
     does — the whole branch lands as ONE squash commit carrying the caller's
     message, authored by the human the work belongs to, committed by 芝士.
     `--no-ff` used to drag every branch commit (含芝士的自动快照) into main."""
-    from app.domain.workspace import identity
+    from app.domain.repository import identity
 
     pid = _mkproject(client)
     tid = uuid.uuid4()
@@ -346,7 +346,7 @@ def test_merge_squashes_the_branch_into_one_authored_commit(client):
 def test_merge_without_an_author_falls_back_to_cheese(client):
     """Nobody resolvable behind the topic (no GitHub connection) degrades to the
     platform identity, never to an invented address."""
-    from app.domain.workspace import identity
+    from app.domain.repository import identity
 
     pid = _mkproject(client)
     tid = uuid.uuid4()

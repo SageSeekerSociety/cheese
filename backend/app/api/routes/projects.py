@@ -96,8 +96,9 @@ from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
-from app.domain.workspace import upstream_conflict
+from app.domain.library import service as library
+from app.domain.repository import service as ws
+from app.domain.repository import upstream_conflict
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -472,7 +473,7 @@ async def library_file_raw(
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
     name = _library_path(path)
-    data = ws.read_library_file(project_id, name)
+    data = library.read_library_file(project_id, name)
     filename = quote(name.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -518,7 +519,7 @@ async def list_library(
     room that has never seen that file."""
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
-    files = ws.list_library_files(project_id)
+    files = library.list_library_files(project_id)
     return ok(page(files, len(files)))
 
 
@@ -636,7 +637,7 @@ async def delete_library_file(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    ws.delete_library_file(project_id, _library_path(path))
+    library.delete_library_file(project_id, _library_path(path))
     return ok({"deleted": True})
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 # 固定话题 id → 旧算法（branch_for_task(topic).replace("/", "_")）当时产出的
 # 目录名，写死。任何让这一列变动的改动都会搬走线上已经存在的工作区。

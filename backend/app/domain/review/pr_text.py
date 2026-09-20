@@ -12,7 +12,7 @@ from app.domain.identity.handles import topic_agent_handle
 from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
-from app.domain.workspace import identity
+from app.domain.repository import identity
 
 #: What `Cheese-Task:` writes where a 分身 id would go, for work no worker was
 #: ever bound to. A placeholder rather than a shorter line, so every one of these

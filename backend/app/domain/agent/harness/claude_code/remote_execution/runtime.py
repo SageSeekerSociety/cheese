@@ -973,8 +973,18 @@ class Executor:
                 }
             )
         if kind == "stage_file":
-            path = (self.root / params["path"]).resolve()
-            path.relative_to(self.root)
+            # In this home, and never in the checkout under it. `HOME` here is
+            # the session's own — the room's home on a machine we borrow, or the
+            # container for a private chat — so a file staged against it is
+            # inside the platform's footprint and outside the repository the
+            # agent is working in (结论 49，不变量 I21b). This used to resolve
+            # against `self.root`, which IS that checkout, so every attachment
+            # left an untracked file in somebody's repository.
+            home = Path.home().resolve()
+            path = (home / params["path"]).resolve()
+            path.relative_to(home)
+            if path.is_relative_to(self.root.resolve()):
+                raise ValueError("the platform does not write into the checkout")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(base64.b64decode(params["data"], validate=True))
             return {"path": str(path)}

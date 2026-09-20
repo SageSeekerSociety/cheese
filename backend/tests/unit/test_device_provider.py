@@ -224,7 +224,7 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
     monkeypatch.setattr(
-        "app.domain.agent.device_provider.ws.read_room_file",
+        "app.domain.agent.device_provider.library.read_room_file",
         lambda project, room, path: b"exact-image-bytes",
     )
 

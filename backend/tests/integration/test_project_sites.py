@@ -9,7 +9,7 @@ import pytest
 
 from app.core.config import settings
 from app.domain.site.services import get_current_release, read_release_file
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.integration.conftest import session_auth_headers
 from tests.machine_work import declare_task, machine_commits
 

@@ -73,7 +73,7 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
-from app.domain.workspace import identity
+from app.domain.repository import identity
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -515,7 +515,7 @@ class AcceptService:
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         if not await asyncio.to_thread(
             ws.branch_has_commits,
@@ -644,7 +644,7 @@ class AcceptService:
         Best-effort throughout: a git read that fails, or a room that won't take
         the message, must never stop someone filing a card.
         """
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         def migrations(topic_id: uuid.UUID) -> list[str]:
             try:
@@ -825,13 +825,17 @@ class AcceptService:
         caps = forge.capabilities if forge is not None else None
         # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
         # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
+        #
+        # 「项目有没有绑外部仓库」不在这里（不变量 I21②）。它是一个能力位，由
+        # `PlatformForge` 读去决定卡上说哪句话，说完就已经在 `declaration` 里；
+        # 再发一遍，就是把那个布尔摆到产品面前请它自己分叉，而这正是按能力分派
+        # 要取消的那件事。
         data["forge"] = (
             {
                 "kind": forge.kind.value,
                 "reports_checks": caps.reports_checks,
                 "hosts_proposals": caps.hosts_proposals,
                 "can_write_remote": caps.can_write_remote,
-                "has_external_remote": caps.has_external_remote,
                 "pushes_to_external_remote": caps.pushes_to_external_remote,
                 "identity": caps.identity.value,
                 "declaration": forge.declaration,
@@ -844,7 +848,6 @@ class AcceptService:
                 "reports_checks": False,
                 "hosts_proposals": False,
                 "can_write_remote": False,
-                "has_external_remote": False,
                 "pushes_to_external_remote": False,
                 "identity": forge_mod.ForgeIdentity.platform.value,
                 "declaration": forge_mod.FORGE_UNKNOWN_DECLARATION,
@@ -1306,7 +1309,7 @@ class AcceptService:
         # trailers, authored by the acting agent (committer stays 芝士). The
         # message and author are resolved HERE because merge_topic has no DB
         # session to read the card or the roster with.
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         if card.task_id is None:
             raise ValidationError("历史验收卡没有可合并的任务")
@@ -1455,7 +1458,7 @@ class AcceptService:
         read the branch takes the same road as a failure to push it: a report,
         not a raise.
         """
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         accepted = await self._accept_platform(card, topic, decided_by)
         branch: str | None = None
@@ -1531,7 +1534,7 @@ class AcceptService:
         """
         import subprocess
 
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         repo_path = ws.ensure_repo(project_id)
         branch = ws.branch_for_task(topic_id)
@@ -1562,7 +1565,7 @@ class AcceptService:
         also returns True, but the caller has already excluded that case."""
         import subprocess
 
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         if not remote_head or not local_head:
             return False
@@ -1626,7 +1629,7 @@ class AcceptService:
         scope. `_advance_pr_checks`'s up-front merged-check now returns before
         this function on the first tick that observes the merge, so the loop —
         and the noise — stops on its own."""
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         if card.task_id is None:
             raise ValidationError("历史验收卡没有可同步的任务")
@@ -1714,7 +1717,7 @@ class AcceptService:
         else resolved from the project's upstream and backfilled onto the card
         (pr_publish records only pr_number/pr_url at filing time)."""
         from app.domain.review.github_pr import parse_github_repo
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         if card.pr_repo and "/" in card.pr_repo:
             owner, _, repo = card.pr_repo.partition("/")
@@ -1750,7 +1753,7 @@ class AcceptService:
         a conflicted PR is `dirty` no matter what its checks say, but a red
         check on it is still 芝士's to fix and must still reach it)."""
         from app.domain.project.protection import branch_protection_of
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         project = await self._projects.get(topic.project_id)
         protection = branch_protection_of(project)
@@ -2240,7 +2243,7 @@ class AcceptService:
         is not a GitHub https remote)."""
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         tokens = await github_app_tokens_for_project(topic.project_id, self._session)
         if tokens is None:
@@ -3373,7 +3376,7 @@ class AcceptService:
         """
         try:
             from app.domain.agent.github_app import github_app_read_token_for_project
-            from app.domain.workspace import service as ws
+            from app.domain.repository import service as ws
 
             token = await github_app_read_token_for_project(
                 topic.project_id, self._session
@@ -3426,7 +3429,7 @@ class AcceptService:
 
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import parse_github_repo
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         upstream = await asyncio.to_thread(ws.get_upstream, project_id)
         tokens = await github_app_tokens_for_project(project_id, self._session)
@@ -3507,7 +3510,7 @@ class AcceptService:
         row lock this doomed transaction still holds. Everything the note and
         notification need is read while the instances are live, before the
         rollback expires them."""
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         card_id = card.id
         subject = (card.change_subject or "").strip()

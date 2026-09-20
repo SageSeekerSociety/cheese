@@ -13,7 +13,7 @@ import uuid
 
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.delivery import delivery_task, delivery_task_id
 from tests.machine_work import machine_commits
 

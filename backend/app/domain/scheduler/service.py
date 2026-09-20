@@ -20,7 +20,7 @@ from app.domain.agent.github_app import github_app_read_token_for_project
 from app.domain.block.models import AuthorType, Block
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
 from app.domain.project.repositories import ProjectRepository
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
 
@@ -264,7 +264,7 @@ class SchedulerService:
         cannot pile up duplicates, and a project with no owner is skipped rather
         than dispatched into nowhere."""
         from app.api.deps import get_work_runner
-        from app.domain.workspace import upstream_conflict
+        from app.domain.repository import upstream_conflict
 
         runner = get_work_runner()
         synced = 0

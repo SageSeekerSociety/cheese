@@ -57,9 +57,13 @@ def test_the_connector_uninstalls_the_root_the_platform_writes():
     that has drifted removes nothing while reporting that it did. Only the name
     is checked here; that `uninstall` still reaches `removeFootprint` is checked
     in Go, where the identifier resolves — `cli/internal/daemoncmd/daemoncmd_test.go`.
+
+    One declaration on that side too: `cli/internal/place` is read by the
+    uninstall and by the writer that refuses a server-sent file aimed outside
+    the root, and neither spells it itself.
     """
-    source = (REPOSITORY / "cli/internal/daemoncmd/daemoncmd.go").read_text()
-    declared = re.search(r'footprintRoot\s*=\s*"([^"]+)"', source)
+    source = (REPOSITORY / "cli/internal/place/place.go").read_text()
+    declared = re.search(r'Root\s*=\s*"([^"]+)"', source)
     assert declared, "the connector stopped declaring a footprint root"
     assert declared.group(1) == footprint_root()
 

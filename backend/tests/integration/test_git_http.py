@@ -48,7 +48,7 @@ def test_another_projects_token_is_not_a_key_to_this_one(client):
 def test_pushing_is_enabled_on_the_repo(client):
     """git-http-backend refuses receive-pack unless the repo opts in, so a push
     would 403 with everything else correct."""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _project(client)
     client.get(
@@ -74,7 +74,7 @@ def test_a_push_reaches_the_files_the_panel_reads(client):
     endpoint exists to prevent, and it cannot report itself (`cheese-sync` is a
     Stop hook; raising takes the turn down).
     """
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
     from tests.machine_work import machine_commits
 
     pid = _project(client)
@@ -108,7 +108,7 @@ def test_a_push_still_lands_after_the_worktree_directory_is_deleted(client):
     """
     import shutil
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
     from tests.machine_work import machine_commits
 
     pid = _project(client)

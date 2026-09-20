@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 
 def _run(cwd: Path, *args: str) -> str:

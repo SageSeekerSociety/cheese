@@ -275,7 +275,7 @@ def test_cannot_hand_a_second_card_while_one_awaits_accept(client, app_world):
 
 def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkeypatch):
     """卡在合并冲突上时同样不许再递——出路是解冲突后重试采纳，不是新卡。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)

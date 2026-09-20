@@ -19,7 +19,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
 

@@ -8,7 +8,7 @@ and that a save which lost a race comes back as a conflict rather than a 200.
 import hashlib
 import uuid
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.delivery import delivery_task_id
 
 BINARY = bytes(range(256)) * 8

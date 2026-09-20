@@ -69,7 +69,7 @@ from app.domain.agent.service import (
     AgentToolUse,
     proves_output,
 )
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 logger = logging.getLogger(__name__)
 
@@ -590,6 +590,12 @@ def _prompt_with_native_images(
     rendezvous socket, enqueued where a keystroke lands, and the mention has not
     been re-verified on that path. Either way the mention is the delivery, and it
     only works for a file that is actually on the machine the screen runs on.
+
+    The paths are absolute now, and outside the checkout: the platform stages an
+    attachment in the session's home rather than in the repository the agent is
+    working in (结论 49，不变量 I21b), and only the machine can spell that
+    directory, so `place.write` hands back what the machine answered and this
+    mentions it verbatim.
 
     ``missing`` is for the ones that are not. They get a sentence instead of a
     mention, because the alternative shapes are both worse: @-mentioning a path

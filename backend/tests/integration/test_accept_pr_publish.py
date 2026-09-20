@@ -136,7 +136,7 @@ def pr_world(monkeypatch):
     from app.domain.agent import github_app
     from app.domain.review import github_pr as github_pr_module
     from app.domain.review import services as review_services
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     _FakeClient.calls = []
     _FakeClient.view = {
@@ -198,7 +198,7 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
     conclusions for the card's PR via the App's checks:read token, at the PR's
     real head sha."""
     from app.api.routes import accept as accept_routes
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     class _Tokens:
         async def installation_token(self) -> tuple[str, str]:
@@ -277,7 +277,7 @@ def test_pr_checks_answers_available_false_when_github_is_unreachable(
     import httpx
 
     from app.api.routes import accept as accept_routes
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     class _Tokens:
         async def installation_token(self) -> tuple[str, str]:
@@ -324,7 +324,7 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     """The old guard only wrapped the two GitHub calls; everything before them
     (token mint, upstream read) could still 500. Same contract applies."""
     from app.api.routes import accept as accept_routes
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     class _Tokens:
         async def installation_token(self) -> tuple[str, str]:
@@ -366,7 +366,7 @@ def test_an_unreadable_workspace_does_not_take_the_card_list_down(
     一个项目的 git 坏了，所有项目的卡都打不开。现在卡照常下发，只是它如实说自己
     这会儿读不出托管方，按钮也因此灰着。
     """
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     def _boom(_pid):
         raise OSError("workspace unavailable")
@@ -440,7 +440,7 @@ def _enable_app_pr(monkeypatch) -> None:
 
     from app.core.config import settings
     from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(settings, "github_app_id", 12345)
     monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
@@ -468,7 +468,7 @@ def test_legacy_discussion_card_on_bound_project_accepts_without_forge_label(
     什么都没绕过，也不该戴「未接 GitHub」的标。（带交付主张的卡在同样的
     分支缺失下必须停下——见 test_accept_pr.py 的回归用例。）"""
     from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -516,7 +516,7 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     而那个地址我们推不动 —— 远端自己这么回答的。所以卡上不能说「本项目未接外部
     仓库」：当着填过地址的人的面说他没填，是把沉默换成一句假话。"""
     from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -543,10 +543,11 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     declaration = filed["forge"]["declaration"]
     assert declaration.startswith("ℹ️")
     assert "⚠️" not in declaration
-    # 地址填过，只是我们推不动它。
-    assert filed["forge"]["has_external_remote"] is True
+    # 地址填过，只是我们推不动它——卡上说的是哪一句，而不是这个布尔本身：
+    # 产品判断不读「有没有绑外部仓库」（不变量 I21②），实现替它读完了。
     assert filed["forge"]["pushes_to_external_remote"] is False
     assert "未接外部仓库" not in declaration
+    assert "has_external_remote" not in filed["forge"]
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
@@ -574,7 +575,7 @@ def test_unbound_project_with_github_upstream_pushes_nothing(
     or fetch runs against GitHub — there is no credential it could run with.
     The card says so, in the forge's words, once."""
     from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -648,7 +649,7 @@ def campus_gitlab(pr_world, monkeypatch):
     不由地址的 scheme 回答：这个项目的凭据是有的。
     """
     from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     async def _no_tokens(_pid, _session):
         return None
@@ -672,7 +673,7 @@ def test_accepting_pushes_the_trunk_back_to_the_projects_own_remote(
 
     卡上先说了这件事（I23），采纳再做到它。
     """
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pushed: list[tuple] = []
     monkeypatch.setattr(
@@ -715,7 +716,7 @@ def test_an_upstream_whose_trunk_is_master_gets_its_master_not_a_new_main(
     里凭空多出一条没人看的 `main`，他的 `master` 一个 commit 都收不到 —— 本来要
     消灭的那次沉默，换了个分支名活下来。同步从哪条拉，就推回哪条。
     """
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(ws, "synced_upstream_branch", lambda pid: "master")
     pushed: list[tuple] = []
@@ -751,7 +752,7 @@ def test_a_push_back_that_fails_is_reported_as_a_push_failure(
     会让按类别码分流的告警把一张采纳成功的卡报成半路停下。
     """
     from app.domain.review import services as review_services
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     def _refused(pid, branch, token, *, remote_branch=None):
         raise RuntimeError("Permission denied (publickey)")
@@ -801,7 +802,7 @@ def test_a_branch_name_that_cannot_be_read_is_reported_the_same_way(
     三者互相打架。所以读分支名失败也是上报，不是抛。
     """
     from app.domain.review import services as review_services
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     def _cannot_read(pid):
         raise ws.WorkspacePermissionError("git rev-parse: Permission denied")

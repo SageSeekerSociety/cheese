@@ -11,7 +11,7 @@ import subprocess
 import uuid
 
 from app.api.routes.git_http import _configure_for_push
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.machine_work import declare_task, machine_commits
 
 

@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.machine_work import declare_task
 
 BACKEND_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"

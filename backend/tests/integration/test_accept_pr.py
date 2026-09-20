@@ -435,7 +435,7 @@ def app_world(client, monkeypatch):
     from app.domain.review import pr_publish
     from app.domain.review import services as review_services
     from app.domain.review.services import AcceptService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     fake = FakeGitHubPrClient()
     recorded: dict = {
@@ -1161,7 +1161,7 @@ def _strip_delivery_claim(client, card_id: str) -> None:
 def _branchless_noop_merge(app_world, monkeypatch) -> None:
     """树的分支不存在时 `ws.merge_topic` 真实的返回值——旧路径正是把这个 no-op
     当成功吞掉的（2026-09-07 卡 40be3e1a）。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     def _noop(pid, tid, **_kwargs):
         app_world["local_merges"].append(tid)
@@ -1176,7 +1176,7 @@ def test_a_delivery_claim_on_a_branchless_tree_stops_the_accept(
     """回归（2026-09-07 卡 40be3e1a）：绑定项目 + 树分支缺失 + 卡带交付主张。
     改动被推到了别的分支，树的分支从未存在——开不出 PR，本地合并是 no-op，
     旧路径把卡标成 accepted，而改动没有合进任何地方。现在必须停下、原因落卡。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -1204,7 +1204,7 @@ def test_a_legacy_discussion_card_still_accepts_on_a_branchless_tree(
 ):
     """真正的纯讨论卡（存量、无 change_subject）不误伤：没有交付主张，no-op
     本地合并什么都没绕过，采纳照常完成。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -1226,7 +1226,7 @@ def test_a_legacy_discussion_card_still_accepts_on_a_branchless_tree(
 def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkeypatch):
     """有活才有卡：绑定项目上树的分支不存在时，递卡当场被拒，错误信息点名
     该推哪条分支——而不是等到采纳时才发现无从交付。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -1270,14 +1270,14 @@ def _room_open_tree_branch(client, topic_id: str) -> str | None:
 
 
 def _branch_of_record(client, topic_id: str) -> str:
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     return ws.branch_for_task(delivery_task_id(client, topic_id))
 
 
 def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
     """「分支存在」= 有人往它上面推过东西。芝士推一条就往 `pushed` 里加一条。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     def _exists(_project_id, topic_id) -> bool:
         return ws.branch_for_task(topic_id) in pushed
@@ -1385,7 +1385,7 @@ def test_another_forge_owns_its_checks_and_accept_operation(client, monkeypatch)
     from app.core.errors import ValidationError
     from app.domain.review import forge as forge_mod
     from app.domain.review.models import AcceptStatus
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -1779,7 +1779,7 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
 def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     client, app_world, monkeypatch, sync_fails
 ):
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     sync_calls = []
 
@@ -2091,7 +2091,7 @@ def test_merge_anyway_is_refused_once_the_card_is_settled(client, app_world):
 
 
 def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     repo_path = ws.ensure_repo(project_id)
     branch = ws.branch_for_task(topic_id)
@@ -2110,7 +2110,7 @@ def test_push_fix_puts_the_local_commit_on_the_pr_on_demand(
     是 push-fix。这里驱动真实的本地 git 读取（`_local_topic_branch_head` 恢复成
     真实实现），只有到 github.com 的网络一跳是假的。"""
     from app.domain.review.services import AcceptService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     # app_world 默认把本地 head 钉成 None；这条测试要真的读 git。
     monkeypatch.setattr(
@@ -2168,7 +2168,7 @@ def test_push_fix_declines_a_doomed_non_fast_forward_and_says_so(
     client, app_world, monkeypatch
 ):
     from app.domain.review.services import AcceptService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(
         AcceptService,
@@ -2241,7 +2241,7 @@ def test_a_failed_post_merge_sync_is_annotated_not_fatal(
 ):
     """合完同步本地 base 失败不能吞掉采纳本身——合并已是事实，卡如实带上
     「本地同步待补」。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     def _sync_fails(_pid, token=None):
         raise RuntimeError("fetch upstream failed")
@@ -2269,13 +2269,13 @@ def test_a_failed_post_merge_sync_is_annotated_not_fatal(
 
 def _disk_branch(client, place_id: str) -> str:
     """磁盘这一层说的「这个地方现在写哪条分支」——分身 commit 时用的就是它。"""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     return ws.branch_for_task(delivery_task_id(client, place_id))
 
 
 def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     done = subprocess.run(
         ["git", "merge-base", "--is-ancestor", sha, branch],
@@ -2419,7 +2419,7 @@ def test_one_batch_failing_does_not_cost_the_next_one_its_pr(
     blown: list[str] = []
 
     async def _explode_once(self, tree, *, number, url):
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         if ws.branch_for_task(tree.id) == doomed and not blown:
             blown.append(doomed)

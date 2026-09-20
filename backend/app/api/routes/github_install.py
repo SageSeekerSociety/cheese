@@ -46,7 +46,7 @@ from app.domain.project.repositories import (
 from app.domain.project.services import ProjectService
 from app.domain.review.github_pr import parse_github_repo
 from app.domain.user.repositories import UserRepository
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["github"])

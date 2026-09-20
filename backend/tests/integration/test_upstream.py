@@ -96,7 +96,7 @@ def test_link_sync_and_resync(client, tmp_path):
 def test_sync_conflict_aborts_and_names_files(client, tmp_path):
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -171,7 +171,7 @@ def test_accept_leaves_the_upstream_untouched(client, tmp_path):
     assert r.status_code == 200
 
     # The merge landed on the platform's base …
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     assert ws.read_file(puid, "work.txt") == "accepted work\n"
     # … and the upstream is exactly as it was: no dogfood/<topic>, no new ref.
@@ -187,7 +187,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     芝士 to resolve, and a retry after resolution completes the accept."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _project(client)
     r = client.post(
@@ -264,7 +264,7 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     sync that aborted."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -332,7 +332,7 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     and stopped, and the project could never pull again."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -383,7 +383,7 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     # Asserted on the prompt itself, NOT on the block it eventually becomes:
     # `runner.submit` is fire-and-forget, so reading the topic's blocks here is
     # a race — it passed locally and failed in CI on the very first run.
-    from app.domain.workspace.upstream_conflict import _prompt
+    from app.domain.repository.upstream_conflict import _prompt
 
     prompt = _prompt(["hello.txt"], _uuid.UUID(tid))
     assert "验收卡" in prompt
@@ -399,7 +399,7 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     already resolved, and the room would fill with identical dead tasks."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -441,7 +441,7 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
 
     from app.domain.agent.chat import ChatService
     from app.domain.scheduler.service import SchedulerService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -482,7 +482,7 @@ def _bind_to_app(monkeypatch) -> list[str | None]:
     """The project has an App installation; returns the tokens each
     sync_upstream call was handed, while the real sync still runs."""
     from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     async def _tokens(_pid, _session):
         return _AppReadTokens()
@@ -511,7 +511,7 @@ async def test_scheduler_fetches_a_bound_project_as_the_app(
 
     from app.domain.agent.chat import ChatService
     from app.domain.scheduler.service import SchedulerService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -550,7 +550,7 @@ def _fetch_env(monkeypatch, tmp_path, *, token: str | None, via=None) -> dict:
     import uuid as _uuid
 
     from app.core.errors import ValidationError
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     fetches: list[dict] = []
 
@@ -608,7 +608,7 @@ def _trunk_lookup(
 ) -> tuple[str | None, dict]:
     """What the PR-open path learns the upstream's trunk is called, and the env
     the `ls-remote` that asked ran with."""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     asked: list[dict] = []
 
@@ -645,7 +645,7 @@ def test_materializing_a_conflict_refetches_with_the_same_credential(
 ):
     """The re-fetch that materializes a sync conflict reads the upstream the way
     the sync did: as the App when bound, with nothing when not."""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     via = ws.prepare_upstream_conflict_resolution
     bound = _fetch_env(monkeypatch, tmp_path, token="ghs_read", via=via)
@@ -663,7 +663,7 @@ def test_conflict_handoff_fetches_a_bound_project_as_the_app(
     private upstream, and the one the sync itself just used."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -707,7 +707,7 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
 
     from app.domain.agent.chat import ChatService
     from app.domain.scheduler.service import SchedulerService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -768,7 +768,7 @@ def test_repeated_syncs_add_no_commits_of_their_own(client, tmp_path):
     nothing the platform invented."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -799,7 +799,7 @@ def test_a_base_left_ahead_by_old_empty_merges_is_realigned(client, tmp_path):
     upstream instead."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -834,7 +834,7 @@ def test_local_content_the_upstream_lacks_is_merged_not_discarded(client, tmp_pa
     before it was bound. Fast-forwarding there would throw the work away."""
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -867,7 +867,7 @@ async def test_a_failed_sync_is_not_counted_as_a_synced_one(
     """
     from app.domain.agent.chat import ChatService
     from app.domain.scheduler.service import SchedulerService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -903,7 +903,7 @@ async def test_a_conflict_with_no_owner_to_ask_is_named_rather_than_dropped(
     from app.domain.agent.chat import ChatService
     from app.domain.project.repositories import ProjectRepository
     from app.domain.scheduler.service import SchedulerService
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     up = _make_upstream(tmp_path)
     pid = _project(client)

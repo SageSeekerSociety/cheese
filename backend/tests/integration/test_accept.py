@@ -118,7 +118,7 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
 
 
 def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -375,7 +375,7 @@ def test_revoke_404_for_missing_card(client):
 def _main_log(pid: str, fmt: str) -> str:
     import subprocess
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     return subprocess.run(
         ["git", "log", "-1", f"--format={fmt}", "main"],
@@ -394,7 +394,7 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
     so nothing may dress the wait up as an unknown (#718 的词表)."""
     import subprocess
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
     from tests.machine_work import machine_commits
 
     pid = _make_project(client)
@@ -458,7 +458,7 @@ def test_conflict_card_reads_dirty(client, stub_hooks):
     The card then says dirty (芝士处理中), not clean."""
     import subprocess
 
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
     from tests.machine_work import machine_commits
 
     pid = _make_project(client)

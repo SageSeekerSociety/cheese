@@ -27,7 +27,7 @@ import asyncio
 import uuid
 
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.conftest import wait_work_idle
 
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
@@ -217,7 +217,7 @@ class _RecordingRunner:
 def test_upstream_conflict_lands_as_one_line_event(client, monkeypatch):
     """冲突文件清单进 `meta.detail`，而且是**完整**清单 —— 给芝士的正文为了可读
     只列前 15 个，展开区不该跟着缩水。"""
-    from app.domain.workspace import upstream_conflict
+    from app.domain.repository import upstream_conflict
 
     pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     files = [f"pkg/mod_{i}.py" for i in range(20)]

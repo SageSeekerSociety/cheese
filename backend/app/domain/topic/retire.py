@@ -26,7 +26,7 @@ from app.domain.machine.services import MachineService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.topic.retire")
 

@@ -54,7 +54,7 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
     (numeric id, login) of the account they linked — both halves matter: the id
     is what GitHub matches a no-reply address on."""
     from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     _FakeClient.opened = []
 

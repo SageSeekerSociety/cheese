@@ -14,7 +14,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 CHEESE_NAME = "芝士"
 CHEESE_EMAIL = "cheese@zhishi.local"

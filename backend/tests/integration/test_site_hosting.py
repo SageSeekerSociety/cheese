@@ -7,7 +7,7 @@ import pytest
 from app.core.config import settings
 from app.core.tokens import verify_session_token
 from app.domain.site.hosting import content_origin, mint_site_token
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.integration.conftest import session_auth_headers, session_token
 from tests.machine_work import declare_task, machine_commits
 

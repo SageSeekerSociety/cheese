@@ -682,8 +682,6 @@ export interface ForgeInfo {
   reports_checks: boolean
   hosts_proposals: boolean
   can_write_remote: boolean
-  /** 填了远端地址没有。和 can_write_remote 分开：填了而我们推不动是第三种情况。 */
-  has_external_remote: boolean
   pushes_to_external_remote: boolean
   identity: 'user' | 'platform'
   declaration: string

@@ -29,7 +29,7 @@ from app.domain.identity.actor import Actor
 from app.domain.room_task.place import Place
 from app.domain.site.hosting import content_origin
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
+from app.domain.library import service as library
 
 AUTH_PATH = "/_cheese/session"
 GRANT_TTL = 30
@@ -265,7 +265,7 @@ class PreviewHostMiddleware:
             return Response(status_code=405)
         relative = request.url.path.lstrip("/") or PurePosixPath(entry).name
         data = await asyncio.to_thread(
-            ws.read_preview_file, project, topic_id, entry, relative
+            library.read_preview_file, project, topic_id, entry, relative
         )
         media = (
             mime

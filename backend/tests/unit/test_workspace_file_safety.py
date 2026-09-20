@@ -19,8 +19,8 @@ import uuid
 import pytest
 
 from app.core.errors import ConflictError, ValidationError
-from app.domain.workspace import service as ws
-from app.domain.workspace.textfile import MAX_TEXT_BYTES, content_version
+from app.domain.repository import service as ws
+from app.domain.textfile import MAX_TEXT_BYTES, content_version
 
 PID = uuid.uuid4()
 

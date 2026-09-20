@@ -20,7 +20,7 @@
 import uuid
 from pathlib import Path
 
-from app.domain.workspace.service import (
+from app.domain.repository.service import (
     SANDBOX_TOPICS_ROOT,
     _worktree_path,
     bind_task,

@@ -20,7 +20,7 @@ def _project(client) -> str:
 
 
 def test_the_served_repo_allows_a_fetch_without_old_file_contents(client):
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _project(client)
     # Reach the repo the way a machine does, so it is configured as one.
@@ -45,7 +45,7 @@ def test_a_machine_keeps_the_history_it_fetches_that_way(tmp_path, client):
     reasons with — the log, a diff against the base — still works, and the push
     back still works. Against a local repo here, since what is under test is
     git's behaviour on the shape the CLI asks for, not the HTTP hop."""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     pid = _project(client)
     client.get(

@@ -9,7 +9,8 @@ from app.api.preview_host import cookie_name, mint_preview_token, preview_origin
 from app.core.config import settings
 from app.core.tokens import verify_session_token
 from app.domain.site.hosting import content_origin, mint_site_token
-from app.domain.workspace import service as ws
+from app.domain.library import service as library
+from app.domain.repository import service as ws
 from tests.integration.conftest import session_auth_headers, session_token
 from tests.integration.test_app_preview_proxy import (
     _open_preview,
@@ -39,7 +40,7 @@ def static_preview(client, preview_config):
         "nested/asset.txt": "nested asset",
     }
     for path, content in assets.items():
-        ws.write_room_file(project_id, topic_id, "web/" + path, content.encode())
+        library.write_room_file(project_id, topic_id, "web/" + path, content.encode())
     return project_id, topic_id, html, assets
 
 
@@ -249,7 +250,7 @@ def test_static_preview_tracks_selected_artifact_directory(client, static_previe
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
-    ws.write_room_file(project_id, topic_id, "other/main.js", b"second module")
+    library.write_room_file(project_id, topic_id, "other/main.js", b"second module")
     origin = preview_origin(topic_id)
     assert client.get(origin + "/").text == "selected second page"
     assert client.get(origin + "/main.js").text == "second module"
@@ -262,7 +263,7 @@ def test_static_preview_rejects_hidden_traversal_and_symlink_escape(
 ):
     project_id, topic_id, _, _ = static_preview
     _open_preview(client, topic_id)
-    tree = ws.room_files_root(project_id, topic_id)
+    tree = library.room_files_root(project_id, topic_id)
     (tree / "secret.txt").write_text("outside selected directory")
     (tree / "web/.env").write_text("private value")
     (tree / "web/.hidden").mkdir()

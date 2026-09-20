@@ -30,7 +30,7 @@ def _github_world(
 ):
     """Point the connect route's GitHub + workspace seams at fakes."""
     from app.api.routes import github_install
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     calls: dict[str, int] = {"list": 0, "repos": 0}
 

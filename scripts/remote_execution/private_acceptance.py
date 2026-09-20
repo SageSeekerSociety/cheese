@@ -140,17 +140,20 @@ HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
         def controls():
             import base64
 
-            client.control(
+            # Staged beside the checkout, never in it (结论 49): the control
+            # resolves its path against the executor's own HOME and refuses
+            # anything landing under the workspace, so the assertion is on the
+            # absolute path it answers with rather than on a guess.
+            landed = client.control(
                 {
                     "subtype": "stage_file",
-                    "path": "uploads/input.txt",
+                    "path": "attachments/input.txt",
                     "data": base64.b64encode(b"input data").decode(),
                 }
-            )
+            )["path"]
+            assert not landed.startswith("/work/"), landed
             assert (
-                client.control(
-                    {"subtype": "read_file", "path": "/work/uploads/input.txt"}
-                )["contents"]
+                client.control({"subtype": "read_file", "path": landed})["contents"]
                 == "input data"
             )
             assert (

@@ -3,7 +3,7 @@
 import uuid
 from pathlib import Path
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.integration.conftest import session_auth_headers
 
 

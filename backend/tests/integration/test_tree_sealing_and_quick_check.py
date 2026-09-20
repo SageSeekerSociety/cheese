@@ -11,7 +11,7 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.machine_work import machine_commits
 
 

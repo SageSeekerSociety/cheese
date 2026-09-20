@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task
 from tests.integration.conftest import chat_ws_url

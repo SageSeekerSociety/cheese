@@ -120,7 +120,7 @@ async def lifespan(_: FastAPI):
     # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
     # panel just 422s for every topic in the project. Say it out loud at boot.
     try:
-        from app.domain.workspace import service as _ws
+        from app.domain.repository import service as _ws
 
         for problem in _ws.audit_workspace_ownership():
             get_logger("cheesex.runtime").error(

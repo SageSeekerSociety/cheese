@@ -66,7 +66,7 @@ from app.domain.topic.repositories import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 # Titles are AI-generated (the agent names a topic via `cheese title`), never
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts

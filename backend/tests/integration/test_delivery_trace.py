@@ -89,7 +89,7 @@ def _accept(client, card_id: str) -> None:
 
 
 def _landed_body(project_id: str, ref: str = "main") -> str:
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     return subprocess.run(
         ["git", "log", "-1", "--format=%B", ref],

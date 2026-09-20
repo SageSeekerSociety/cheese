@@ -39,7 +39,7 @@ def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch
     reads out of the backend's own checkout of it. A checkout that does not
     move with the branch shows nothing — the push looks like it did nothing."""
     from app.api.routes.git_http import _configure_for_push
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
@@ -112,7 +112,7 @@ def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
     fast-forward that discarded them would lose work to make a listing fresher,
     which is the wrong trade in every case.
     """
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
@@ -131,7 +131,7 @@ def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
 
 
 def test_a_clean_workspace_picks_the_push_up(tmp_path, monkeypatch):
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws2"))
     project, topic = uuid.uuid4(), uuid.uuid4()

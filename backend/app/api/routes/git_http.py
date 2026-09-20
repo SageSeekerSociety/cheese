@@ -28,7 +28,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sandbox_auth import verify_scoped_token
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 router = APIRouter(prefix="/projects", tags=["git"])
 

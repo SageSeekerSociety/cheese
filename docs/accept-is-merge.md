@@ -140,10 +140,14 @@ there — nothing is pushed to any remote. This is not a degraded mode; it is a
 repository with no CI configured, where accepting is a human decision.
 
 Which of the three a project gets is decided by CAPABILITY, never by what its
-upstream URL looks like: `review/forge.py` computes five bits — reports_checks,
-hosts_proposals, can_write_remote, pushes_to_external_remote, identity — from
-three facts the project already has (is our App installed, is there a remote,
-can we write it), and each provider says which capabilities it serves. The bits
+upstream URL looks like: `review/forge.py` computes six bits — reports_checks,
+hosts_proposals, can_write_remote, has_external_remote,
+pushes_to_external_remote, identity — from three facts the project already has
+(is our App installed, is there a remote, can we write it), and each provider
+says which capabilities it serves. Five of them ride on the card;
+`has_external_remote` is read by `PlatformForge` alone, to decide which of two
+sentences the card carries, and is not sent — a product judgement reads the
+capability it needs, never "did this project bind a repository". The bits
 are computed on every resolve and stored nowhere; a stored copy would be a
 second declaration of the same fact. They ride on the card from the moment it is
 described, so "which forge is this, and what can it do" is answered before

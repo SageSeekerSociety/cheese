@@ -619,7 +619,7 @@ both sides ARE the same uid:
 - sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
   `backend/sandbox/Dockerfile` asserts the uid at build time.
 - backend: `backend/Dockerfile` creates its user with uid/gid **1000** to match.
-- single source of truth: `app.domain.workspace.service.AGENT_UID`, pinned
+- single source of truth: `app.domain.repository.service.AGENT_UID`, pinned
   against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,

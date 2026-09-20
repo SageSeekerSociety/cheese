@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
 from tests.machine_work import machine_commits

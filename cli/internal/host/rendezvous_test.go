@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/gorilla/websocket"
 )
@@ -85,23 +86,43 @@ func TestFirstAndCachedPromptsAreEachDeliveredOnce(t *testing.T) {
 	}
 }
 
-func TestWriteScreenFileIsAtomicAndConfinedToUploads(t *testing.T) {
-	work := t.TempDir()
+// A server-sent file lands under the platform's footprint and nowhere else.
+//
+// The rejected paths are the point, and `room/` among them most of all: the
+// screen's checkout lives there, and a file the platform writes into it is an
+// untracked file in a repository whose owner never added it and that `cheese
+// uninstall` does not remove (结论 49). The server checks the same rule before
+// it sends; this is the half that holds when some caller builds a path wrong.
+func TestFootprintFileIsAtomicAndConfinedToTheFootprint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	raw := []byte("\x89PNG\r\n\x1a\nimage")
 	encoded := base64.StdEncoding.EncodeToString(raw)
 
-	if err := writeScreenFile(work, "uploads/img-a.png", encoded); err != nil {
-		t.Fatalf("writeScreenFile: %v", err)
+	wire := "$HOME/" + place.Root + "/home/p/r/attachments/img-a.png"
+	landed, err := writeFootprintFile(wire, encoded)
+	if err != nil {
+		t.Fatalf("writeFootprintFile: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(work, "uploads", "img-a.png"))
+	want := filepath.Join(home, place.Root, "home", "p", "r", "attachments", "img-a.png")
+	if landed != want {
+		t.Fatalf("landed at %q, want %q", landed, want)
+	}
+	got, err := os.ReadFile(want)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != string(raw) {
 		t.Fatalf("got %q, want %q", got, raw)
 	}
-	for _, bad := range []string{"../escape.png", "/absolute.png", "src/main.go"} {
-		if err := writeScreenFile(work, bad, encoded); err == nil {
+	for _, bad := range []string{
+		"uploads/img-a.png",
+		"../escape.png",
+		"/absolute.png",
+		"$HOME/elsewhere/img.png",
+		"$HOME/" + place.Root + "/../escape.png",
+	} {
+		if _, err := writeFootprintFile(bad, encoded); err == nil {
 			t.Fatalf("unsafe path %q was accepted", bad)
 		}
 	}

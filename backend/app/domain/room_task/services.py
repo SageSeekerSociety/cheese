@@ -30,7 +30,7 @@ class TaskService:
     @staticmethod
     def _bind_workspace(task: Task) -> None:
         if task.branch_name:
-            from app.domain.workspace import service as ws
+            from app.domain.repository import service as ws
 
             if task.workspace_name is None:
                 raise ValidationError("任务分支缺少工作目录记录")
@@ -239,7 +239,7 @@ class TaskService:
         base_task_id: uuid.UUID | None = None,
     ) -> Task:
         """Create a task and its worktree before any executor starts writing."""
-        from app.domain.workspace import service as ws
+        from app.domain.repository import service as ws
 
         base, _ = await asyncio.to_thread(ws.base_branch_head, project_id)
         if base_task_id is not None:

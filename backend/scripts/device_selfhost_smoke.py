@@ -74,7 +74,7 @@ async def main() -> int:
     from app.domain.device.models import DeviceProjectRow
     from app.domain.project.models import Project
     from app.domain.user.models import User
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     # 1. Resolve the actor + the device-backed project straight from the DB, so the
     #    smoke test needs no password and no hand-recorded ids.
