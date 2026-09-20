@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -719,9 +720,12 @@ def _recover_task(task_id):
     data = _call("GET", f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest")[
         "data"
     ]
-    worktree = _task_worktree(task_id, allow_closed=True)
-    admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
-    bundle = admin / f"cheese-recovery-{data['id']}.bundle"
+    recovery_root = Path.home() / ".cheese" / "recovered"
+    recovery_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    recovered = recovery_root / f"{task_id}-{data['snapshot_sha'][:12]}"
+    if recovered.exists():
+        raise RuntimeError(f"Recovery directory already exists: {recovered}")
+    bundle = recovery_root / f".cheese-recovery-{data['id']}.bundle"
     _raw_request(
         "GET",
         f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{data['id']}",
@@ -732,16 +736,36 @@ def _recover_task(task_id):
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     if digest != data["digest"]:
         raise RuntimeError("Task backup checksum failed; no files were restored")
-    _git_task(worktree, "bundle", "verify", str(bundle))
-    _git_task(worktree, "bundle", "unbundle", str(bundle))
-    recovery_root = Path.home() / ".cheese" / "recovered"
-    recovery_root.mkdir(parents=True, exist_ok=True)
-    recovered = recovery_root / f"{task_id}-{data['snapshot_sha'][:12]}"
-    if recovered.exists():
-        raise RuntimeError(f"Recovery directory already exists: {recovered}")
-    _git_task(
-        worktree, "worktree", "add", "--detach", str(recovered), data["snapshot_sha"]
-    )
+    # gitformat-bundle: prerequisite records start with '-', before the blank
+    # line ending the header. Complete migration bundles need no live branch.
+    needs_base = False
+    with bundle.open("rb") as stream:
+        if stream.readline() not in (b"# v2 git bundle\n", b"# v3 git bundle\n"):
+            raise RuntimeError("Invalid task backup format")
+        while (line := stream.readline()) != b"\n":
+            if not line:
+                raise RuntimeError("Incomplete task backup header")
+            needs_base |= line.startswith(b"-")
+    if needs_base:
+        worktree = _task_worktree(task_id, allow_closed=True)
+        _git_task(worktree, "bundle", "verify", str(bundle))
+        _git_task(worktree, "bundle", "unbundle", str(bundle))
+        _git_task(
+            worktree,
+            "worktree",
+            "add",
+            "--detach",
+            str(recovered),
+            data["snapshot_sha"],
+        )
+    else:
+        with tempfile.TemporaryDirectory(dir=recovery_root) as temporary:
+            staging = Path(temporary) / "files"
+            _git_task(recovery_root, "init", str(staging))
+            _git_task(staging, "bundle", "verify", str(bundle))
+            _git_task(staging, "bundle", "unbundle", str(bundle))
+            _git_task(staging, "checkout", "--detach", data["snapshot_sha"])
+            staging.rename(recovered)
     bundle.unlink()
     print(f"已恢复到独立目录：{recovered}\n原工作目录和评审分支均未覆盖。")
 

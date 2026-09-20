@@ -164,7 +164,12 @@ def push(output: Path, url: str, token: str) -> dict[str, str]:
 
 
 def task_snapshot(
-    output: Path, task_id: uuid.UUID, *, directory: str, branch: str
+    output: Path,
+    task_id: uuid.UUID,
+    *,
+    directory: str,
+    branch: str,
+    include_history: bool = False,
 ) -> dict | None:
     """Build a recoverable task bundle from the immutable archive."""
     source = json.loads((output / "source.json").read_text())
@@ -174,7 +179,11 @@ def task_snapshot(
     saved_path = output / f"task-{task_id}.json"
     if saved_path.exists():
         saved = json.loads(saved_path.read_text())
-        if saved["directory"] != directory or saved["branch"] != branch:
+        if (
+            saved["directory"] != directory
+            or saved["branch"] != branch
+            or saved.get("include_history", False) != include_history
+        ):
             raise ValueError("Task workspace changed after the migration checkpoint")
         if digest(output / saved["file"]) != saved["digest"]:
             raise ValueError("Task migration bundle checksum mismatch")
@@ -222,18 +231,23 @@ def task_snapshot(
         git(repository, "read-tree", head, env=env)
         git(repository, "add", "-A", env=env)
         tree = git(repository, "write-tree", env=env).strip()
-        if tree == git(repository, "rev-parse", head + "^{tree}", env=env).strip():
+        clean = tree == git(repository, "rev-parse", head + "^{tree}", env=env).strip()
+        if clean and not include_history:
             return None
-        snapshot = git(
-            repository,
-            "commit-tree",
-            tree,
-            "-p",
-            head,
-            "-m",
-            f"Uncommitted work for task {task_id}",
-            env=env,
-        ).strip()
+        snapshot = (
+            head
+            if clean
+            else git(
+                repository,
+                "commit-tree",
+                tree,
+                "-p",
+                head,
+                "-m",
+                f"Uncommitted work for task {task_id}",
+                env=env,
+            ).strip()
+        )
         ref = f"refs/cheese/snapshots/{task_id}"
         git(repository, "update-ref", ref, snapshot, env=env)
         bundle = output / f"task-{task_id}-{snapshot}.bundle"
@@ -245,7 +259,7 @@ def task_snapshot(
                 "create",
                 str(pending_bundle),
                 ref,
-                f"^{head}",
+                *([] if include_history else [f"^{head}"]),
                 env=env,
             )
             git(repository, "bundle", "verify", str(pending_bundle), env=env)
@@ -257,6 +271,7 @@ def task_snapshot(
         ):
             raise ValueError("Existing task bundle has different contents")
         saved = {
+            "include_history": include_history,
             "directory": directory,
             "branch": branch,
             "head_sha": head,

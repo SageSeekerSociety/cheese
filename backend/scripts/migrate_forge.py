@@ -46,10 +46,10 @@ async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
         ):
             log.info("project=%s status=skip reason=awaiting_github", project_id)
             return "skipped"
-        if binding is not None and binding.kind == "github_app":
-            log.info("project=%s status=skip reason=github_authority", project_id)
-            return "skipped"
         source = Path(settings.workspace_root).resolve() / str(project_id)
+        if binding is not None and binding.kind == "github_app" and not source.exists():
+            log.info("project=%s status=skip reason=no_local_repository", project_id)
+            return "skipped"
         project_backup = backups / str(project_id)
         completed = project_backup / "completed.json"
         if completed.exists():
@@ -83,23 +83,30 @@ async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
             project_id, session, initialize=not source.exists()
         )
         if checkpoint is not None:
-            tokens = await tokens_for_project(project_id, session)
-            token, _ = await tokens.installation_token()
-            url = (
-                binding.api_url.removesuffix("/api/v1").rstrip("/")
-                + f"/{binding.repo}.git"
-            )
-            refs = await asyncio.to_thread(push, output, url, token)
-            if refs:
-                async with httpx.AsyncClient(timeout=30) as client:
-                    response = await client.patch(
-                        f"{binding.api_url}/repos/{binding.repo}",
-                        headers={"Authorization": "token " + token},
-                        json={"default_branch": checkpoint["default_branch"]},
-                    )
-                    response.raise_for_status()
-                binding.default_branch = checkpoint["default_branch"]
-            log.info("project=%s status=refs_verified count=%s", project_id, len(refs))
+            if binding.kind == "forgejo":
+                tokens = await tokens_for_project(project_id, session)
+                token, _ = await tokens.installation_token()
+                url = (
+                    binding.api_url.removesuffix("/api/v1").rstrip("/")
+                    + f"/{binding.repo}.git"
+                )
+                refs = await asyncio.to_thread(push, output, url, token)
+                if refs:
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        response = await client.patch(
+                            f"{binding.api_url}/repos/{binding.repo}",
+                            headers={"Authorization": "token " + token},
+                            json={"default_branch": checkpoint["default_branch"]},
+                        )
+                        response.raise_for_status()
+                    binding.default_branch = checkpoint["default_branch"]
+                log.info(
+                    "project=%s status=refs_verified count=%s", project_id, len(refs)
+                )
+            else:
+                # GitHub remains authoritative. Local-only history stays in the
+                # immutable archive and self-contained private task bundles.
+                log.info("project=%s status=local_refs_archived", project_id)
             tasks = list(
                 await session.scalars(select(Task).where(Task.project_id == project_id))
             )
@@ -114,6 +121,7 @@ async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
                     task.id,
                     directory=task.workspace_name,
                     branch=task.branch_name,
+                    include_history=binding.kind == "github_app",
                 )
                 if backup is None:
                     log.info("task=%s status=skip reason=no_local_changes", task.id)

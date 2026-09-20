@@ -109,3 +109,36 @@ def test_task_bundle_restores_archived_files_after_source_changes(tmp_path):
     assert git(source, "show", ":file.txt") == "staged\n"
     assert references(backup / "repository.git") == frozen["refs"]
     assert freeze(root, project, backup) == frozen
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_github_backup_recovers_unpublished_history_in_an_empty_repository(
+    tmp_path, dirty
+):
+    root = tmp_path / "workspaces"
+    project = uuid.uuid4()
+    _, worktree = legacy_repository(root, project)
+    (worktree / "new.txt").unlink()
+    (worktree / "file.txt").write_text("unpublished commit\n")
+    git(worktree, "commit", "-am", "Work absent from GitHub")
+    head = git(worktree, "rev-parse", "HEAD").strip()
+    if dirty:
+        (worktree / "new.bin").write_bytes(b"\x00unfinished\xff")
+    backup = tmp_path / "backup"
+    freeze(root, project, backup)
+    task = uuid.uuid4()
+    saved = task_snapshot(
+        backup, task, directory="task", branch="task", include_history=True
+    )
+    restored = tmp_path / "restored"
+    restored.mkdir()
+    git(restored, "init")
+    git(restored, "bundle", "verify", str(backup / saved["file"]))
+    git(restored, "fetch", str(backup / saved["file"]), f"refs/cheese/snapshots/{task}")
+    git(restored, "checkout", "--detach", saved["snapshot_sha"])
+    assert (restored / "file.txt").read_text() == "unpublished commit\n"
+    assert git(restored, "show", f"{head}:file.txt") == "unpublished commit\n"
+    if dirty:
+        assert (restored / "new.bin").read_bytes() == b"\x00unfinished\xff"
+    else:
+        assert saved["snapshot_sha"] == head

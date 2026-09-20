@@ -9,6 +9,9 @@ import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+from app.domain.project.forge_migration import freeze, task_snapshot
+from tests.unit.test_forge_migration import legacy_repository
+
 
 def test_dirty_work_restores_separately_without_changing_staged_content(
     monkeypatch, tmp_path
@@ -85,3 +88,39 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
     assert (recovered / "untracked.bin").read_bytes() == b"\x00\xffbackup"
     assert git("rev-parse", "HEAD") == head
     assert git("show", ":report.txt") == "staged"
+
+
+def test_complete_migration_backup_recovers_without_a_live_task_branch(
+    monkeypatch, tmp_path
+):
+    source = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
+    loader = SourceFileLoader("migration_recovery_cli", str(source))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    cli = importlib.util.module_from_spec(spec)
+    loader.exec_module(cli)
+    monkeypatch.setenv("HOME", str(tmp_path / "fresh-machine"))
+    project, task = uuid.uuid4(), uuid.uuid4()
+    root = tmp_path / "old-machine"
+    _, worktree = legacy_repository(root, project)
+    (worktree / "file.txt").write_text("work unavailable from GitHub\n")
+    backup = tmp_path / "archive"
+    freeze(root, project, backup)
+    saved = task_snapshot(
+        backup, task, directory="task", branch="task", include_history=True
+    )
+    body = (backup / saved["file"]).read_bytes()
+    monkeypatch.setattr(cli, "_call", lambda *args: {"data": {**saved, "id": "saved"}})
+    monkeypatch.setattr(
+        cli,
+        "_raw_request",
+        lambda method, path, data, output: Path(output).write_bytes(body),
+    )
+
+    def unavailable(*args, **kwargs):
+        raise AssertionError("Recovery must not require the deleted remote branch")
+
+    monkeypatch.setattr(cli, "_task_worktree", unavailable)
+    cli._recover_task(str(task))
+    recovered = next((tmp_path / "fresh-machine/.cheese/recovered").iterdir())
+    assert (recovered / "file.txt").read_text() == "work unavailable from GitHub\n"
+    assert (recovered / "new.txt").read_bytes() == b"untracked\x00bytes"
