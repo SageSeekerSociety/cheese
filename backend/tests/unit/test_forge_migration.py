@@ -75,6 +75,41 @@ def test_migration_refuses_a_different_remote_without_overwriting(tmp_path):
     assert references(destination) == before
 
 
+def test_migration_archives_a_preserved_registered_worktree(tmp_path):
+    root = tmp_path / "workspaces"
+    project = uuid.uuid4()
+    source, worktree = legacy_repository(root, project)
+    preserved = root / ".preserved" / "cleanup" / str(project) / "task"
+    preserved.parent.mkdir(parents=True)
+    git(source, "worktree", "move", str(worktree), str(preserved))
+    git(preserved, "checkout", "--detach")
+    (preserved / "file.txt").write_text("preserved unfinished work\n")
+    before = references(source)
+    backup = tmp_path / "backup"
+    saved = freeze(root, project, backup)
+    relative = str(preserved.relative_to(root))
+    assert relative in saved["archived_paths"]
+    restored = tmp_path / "restored"
+    unpack_working_files(backup, restored)
+    assert (
+        restored / relative / "file.txt"
+    ).read_text() == "preserved unfinished work\n"
+    assert (restored / relative / "new.txt").read_bytes() == b"untracked\x00bytes"
+    assert references(source) == before
+    assert freeze(root, project, backup) == saved
+
+
+def test_migration_refuses_registered_worktree_outside_workspace_root(tmp_path):
+    root = tmp_path / "workspaces"
+    project = uuid.uuid4()
+    source, worktree = legacy_repository(root, project)
+    external = tmp_path / "external"
+    git(source, "worktree", "move", str(worktree), str(external))
+    with pytest.raises(ValueError, match="outside the workspace root"):
+        freeze(root, project, tmp_path / "backup")
+    assert (external / "new.txt").read_bytes() == b"untracked\x00bytes"
+
+
 def test_corrupted_backup_cannot_be_resumed(tmp_path):
     root = tmp_path / "workspaces"
     project = uuid.uuid4()
