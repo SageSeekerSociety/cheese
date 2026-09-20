@@ -1366,7 +1366,20 @@ class AcceptService:
         branch: str | None = None
         try:
             branch, _ = await asyncio.to_thread(ws.base_branch_head, topic.project_id)
-            await asyncio.to_thread(ws.push_branch, topic.project_id, branch, None)
+            # 推回**上游自己那条**分支，不是本地这条的同名分支。平台的基线恒为
+            # `main`，上游的默认分支可以是 `master`，而同步正是把 `upstream/master`
+            # 拉进本地 `main` 的：同名推过去，老师的仓库里会凭空多出一条没人看的
+            # `main`，他的 `master` 一个 commit 都收不到。同步从哪条拉，就推回哪条。
+            target = await asyncio.to_thread(
+                ws.synced_upstream_branch, topic.project_id
+            )
+            await asyncio.to_thread(
+                ws.push_branch,
+                topic.project_id,
+                branch,
+                None,
+                remote_branch=target,
+            )
         except Exception as exc:  # noqa: BLE001 — the merge already happened
             logger.exception(
                 "accept merged but the push to the project's remote failed "

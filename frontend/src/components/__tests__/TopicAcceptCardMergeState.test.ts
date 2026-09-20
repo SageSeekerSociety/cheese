@@ -313,6 +313,34 @@ describe('平台 lane：采纳纯粹是人的判断', () => {
     expect(container.textContent).not.toContain('状态更新中')
   })
 
+  it('托管方读不出来的卡：采纳灰，灰的理由就是卡上那句话', async () => {
+    // 这一档不是平台 lane，只是长得像：能力位一位都不敢说是，所以
+    // `reports_checks` 也是 false。后端这会儿真去采纳会拒（同一个读不出），
+    // 闸门和采纳必须是同一条线——按钮亮着就是请人去撞一个 422。
+    const { container } = await mountWith([
+      card({
+        forge: {
+          kind: 'unknown',
+          reports_checks: false,
+          hosts_proposals: false,
+          can_write_remote: false,
+          has_external_remote: false,
+          pushes_to_external_remote: false,
+          identity: 'platform',
+          declaration: 'ℹ️ 暂时读不出这个项目的托管方：采纳先等一下，稍后重试',
+        },
+        merge_state: mergeState({
+          state: 'unknown',
+          who: 'platform',
+          reasons: [{ kind: 'no_signal', checks: [], detail: '暂时读不出这个项目的托管方' }],
+        }),
+      }),
+    ])
+
+    expect(acceptButton(container).disabled).toBe(true)
+    expect(container.querySelector('span[title*="暂时读不出这个项目的托管方"]')).toBeTruthy()
+  })
+
   it('上次合并撞了冲突的卡照样能点重试', async () => {
     const { container } = await mountWith([
       card({

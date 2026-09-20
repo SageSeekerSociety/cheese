@@ -126,6 +126,10 @@ stays unaccepted.
 into the platform's repo and then PUSHES THE TRUNK to the project's own remote —
 gitee, a campus GitLab, a self-hosted box. Same product as the GitHub lane,
 minus the proposal page and the check results, which that remote does not have.
+It lands on THAT repository's own trunk, which is the branch the sync pulls
+from: the platform's base is always `main`, an upstream's default branch may be
+`master`, and pushing by matching name would leave a stray `main` in a
+`master` repository while its owner received nothing.
 A push that fails after the merge landed is said out loud in the room: the
 change is in our trunk and not on theirs, and only a person can decide what to
 do about that.
@@ -148,10 +152,13 @@ anyone clicks, not by a note written afterwards.
 "Can we write it" is ASKED of the remote — a `git push --dry-run` to a ref of
 our own naming, which must pass the remote's authorization and changes nothing
 there — because a URL's scheme is not a credential: `git@` does not put a key on
-the machine and `https://` does not rule a credential helper out. It is answered
-once per request, and when it cannot be answered the answer is no, which lands
-the card on the platform forge saying the remote exists and we have no
-credential for it. Accepting stays fail-closed when the facts cannot be read at
+the machine and `https://` does not rule a credential helper out. The answer is
+remembered per project and upstream address for a few minutes, because this bit
+sits on the card-rendering read path and asking on every request means an
+unreachable remote decides how long a card list takes and a remote we cannot
+write receives one failed authentication per card opened. When it cannot be
+answered the answer is no, which lands the card on the platform forge saying the
+remote exists and we have no credential for it. Accepting stays fail-closed when the facts cannot be read at
 all; READING a card does not, and shows a card whose forge is `unknown` with
 every bit false, rather than failing the whole card list over one project.
 

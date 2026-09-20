@@ -163,8 +163,8 @@ async def test_a_remote_we_cannot_write_is_not_called_unbound() -> None:
 async def test_a_proposal_elsewhere_does_not_make_it_a_github_project() -> None:
     """卡上有一条提案页链接，不等于可以对这个项目调 GitHub 的合并 API。
 
-    短路的依据是「这一页证明了什么」：GitHub 上的一个 PR 证明装了 App；别处来的
-    一条 URL 什么都没证明，照常按项目的事实分派。
+    并进事实的依据是「这一页证明了什么」：GitHub 上的一个 PR 证明有人在托管它；
+    别处来的一条 URL 什么都没证明，照常按项目自己的事实算能力位。
     """
     got = await forge_mod.resolve(
         project_id=_pid(),
@@ -201,6 +201,24 @@ async def test_an_existing_proposal_keeps_its_forge_without_credentials(facts) -
 
     assert got.kind is forge_mod.ForgeKind.github_app
     assert got.capabilities.hosts_proposals is True
+
+
+@pytest.mark.anyio
+async def test_a_card_with_a_proposal_stops_when_the_facts_cannot_be_read() -> None:
+    """提案页也不能让分派绕开事实。
+
+    「这个 URL 像不像 github.com」是一条事实（这一页证明有人在托管它），不是一条
+    分派规则——它并进事实里，事实整个读不出来的时候就没有东西可并。停住是可重试
+    的，而且它照样不会变成一次本地合并：这条路唯一的去处是「稍后重试采纳」。
+    """
+    with pytest.raises(ValidationError) as caught:
+        await forge_mod.resolve(
+            project_id=_pid(),
+            facts=_explodes,
+            proposal_url="https://github.com/acme/widgets/pull/42",
+        )
+
+    assert "读不出" in str(caught.value)
 
 
 # ---- 注册表本身 --------------------------------------------------------------

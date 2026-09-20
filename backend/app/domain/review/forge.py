@@ -35,7 +35,7 @@ import enum
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, NoReturn
 from urllib.parse import urlsplit
 
@@ -326,16 +326,6 @@ class PlatformForge(Forge):
 #: （#363 自己的判据）。
 FORGES: tuple[type[Forge], ...] = (GitHubForge, ExternalRemoteForge, PlatformForge)
 
-#: 一个打得开的 GitHub 提案页所证明的那组事实：有人在托管它（装了 App），它在一个
-#: 外部远端上，而且那个远端是我们自己推上去的（所以写得动）。三条都是这一页已经证明
-#: 了的，不是为了短路编出来的默认值——短路只在提案页确实在 GitHub 上时才走。
-_PROPOSAL_ON_GITHUB = ProjectForgeFacts(
-    github_app_installed=True,
-    has_external_remote=True,
-    remote_write_credential=True,
-)
-
-
 def _is_github_proposal(proposal_url: str | None) -> bool:
     """这条提案页链接是不是 GitHub 上的一个 PR。"""
     if not proposal_url:
@@ -359,17 +349,34 @@ async def resolve(
     facts: Callable[[uuid.UUID], Awaitable[ProjectForgeFacts]],
     proposal_url: str | None = None,
 ) -> Forge:
-    """这次采纳走哪个托管方。读不出事实就停住，绝不摸黑挑一条。"""
-    # 卡上已经有一个 GitHub 提案页，就说明有一个托管方在托管它——凭据一时读不到也
-    # 不能把一次 PR 采纳变成一次本地合并（#362 的另一条进路）。
-    # host 判断留着：它不是「这个 URL 像不像 github.com」式的分派（分派在下面按能力
-    # 位走），而是「这一页证明了什么」的判据。今天写 `pr_url` 的只有 GitHub 那条路
-    # （`pr_publish.py`、`services.py`、`room_task/services.py`），别处来的提案页什么
-    # 都没证明，拿它去调 GitHub 的合并 API 是对一个没装 App 的项目动手。
-    if _is_github_proposal(proposal_url):
-        return forge_for(capabilities_of(_PROPOSAL_ON_GITHUB))
+    """这次采纳走哪个托管方。读不出事实就停住，绝不摸黑挑一条。
+
+    **分派只有最后那一句**：能力位交给注册表。「这个 URL 像不像 github.com」不在
+    分派里（ARCH §4.5）——它是一条**事实**：卡上已经有一个打得开的 GitHub 提案页，
+    就说明有一个托管方在托管这次改动，它在一个外部远端上，而且那一页是我们自己推
+    上去的。所以它在算能力位**之前**并进事实，判据留在事实那一侧，分派保持纯粹按
+    能力位；加一个提供者仍然只是往 `FORGES` 里加一个类。
+
+    这一条为什么非要在：今天写 `pr_url` 的只有 GitHub 那条路（`pr_publish.py`、
+    `services.py`、`room_task/services.py`），而凭据一时读成空不能把一次 PR 采纳变
+    成一次本地合并（#362 的另一条进路）。别处来的提案页什么都没证明，照常按项目的
+    事实分派。
+
+    事实整个读不出来（抛异常）时仍然停住，哪怕卡上有提案页：停住是可重试的，而摸黑
+    挑一条不是——它照样绝不会变成一次本地合并。
+
+    并事实这一步在这里而不在 `facts` 那个回调里：回调的答案是**项目**的事实、按项
+    目缓存，把某一张卡的提案页并进去会跟着缓存跑到同一个项目的别的卡上。
+    """
     try:
         observed = await facts(project_id)
     except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind
         raise ValidationError(FACTS_UNKNOWN_MESSAGE) from exc
+    if _is_github_proposal(proposal_url):
+        observed = replace(
+            observed,
+            github_app_installed=True,
+            has_external_remote=True,
+            remote_write_credential=True,
+        )
     return forge_for(capabilities_of(observed))

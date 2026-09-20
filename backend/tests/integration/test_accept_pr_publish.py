@@ -658,6 +658,9 @@ def campus_gitlab(pr_world, monkeypatch):
     )
     monkeypatch.setattr(ws, "can_push_upstream", lambda pid: True)
     monkeypatch.setattr(ws, "base_branch_head", lambda pid: ("main", "deadbeef"))
+    # 上游默认分支叫什么，由上游说了算；这个老师的仓库跟平台同名。叫 `master` 的
+    # 那一档是下面的负向对照。
+    monkeypatch.setattr(ws, "synced_upstream_branch", lambda pid: "main")
     return pr_world
 
 
@@ -674,7 +677,10 @@ def test_accepting_pushes_the_trunk_back_to_the_projects_own_remote(
     monkeypatch.setattr(
         ws,
         "push_branch",
-        lambda pid, branch, token: pushed.append((branch, token)) or branch,
+        lambda pid, branch, token, *, remote_branch=None: pushed.append(
+            (branch, remote_branch)
+        )
+        or branch,
     )
 
     pid = _make_project(client)
@@ -694,9 +700,47 @@ def test_accepting_pushes_the_trunk_back_to_the_projects_own_remote(
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
-    assert [branch for branch, _token in pushed] == ["main"]
+    assert pushed == [("main", "main")]
     # 那个远端不是 GitHub，一次 GitHub 调用都不该发生。
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
+
+
+def test_an_upstream_whose_trunk_is_master_gets_its_master_not_a_new_main(
+    client, campus_gitlab, monkeypatch
+):
+    """负向对照：老师的仓库默认分支叫 `master`。
+
+    平台侧的基线恒为 `main`，同步做的是把 `upstream/master` 拉进本地的 `main`。
+    两侧按同名推回去，`git push` 返回 0、卡上写着「已推回该远端」，而老师的仓库
+    里凭空多出一条没人看的 `main`，他的 `master` 一个 commit 都收不到 —— 本来要
+    消灭的那次沉默，换了个分支名活下来。同步从哪条拉，就推回哪条。
+    """
+    from app.domain.workspace import service as ws
+
+    monkeypatch.setattr(ws, "synced_upstream_branch", lambda pid: "master")
+    pushed: list[tuple] = []
+    monkeypatch.setattr(
+        ws,
+        "push_branch",
+        lambda pid, branch, token, *, remote_branch=None: pushed.append(
+            (branch, remote_branch)
+        )
+        or branch,
+    )
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "accepted"
+    assert pushed == [("main", "master")]
 
 
 def test_a_push_back_that_fails_is_reported_as_a_push_failure(
@@ -710,7 +754,7 @@ def test_a_push_back_that_fails_is_reported_as_a_push_failure(
     from app.domain.review import services as review_services
     from app.domain.workspace import service as ws
 
-    def _refused(pid, branch, token):
+    def _refused(pid, branch, token, *, remote_branch=None):
         raise RuntimeError("Permission denied (publickey)")
 
     monkeypatch.setattr(ws, "push_branch", _refused)

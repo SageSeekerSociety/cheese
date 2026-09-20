@@ -124,7 +124,12 @@ const needsPr = computed(() => !!pendingCard.value?.forge.hosts_proposals && pen
 const MERGEABLE_STATES = ['clean', 'unstable']
 const acceptBlockedTitle = computed<string | null>(() => {
   const card = pendingCard.value
-  if (!card || platformLane.value || needsPr.value) return null
+  if (!card) return null
+  // 托管方读不出来的那一档（forge.kind === 'unknown'）：能力位一位都不敢说是，所以
+  // 它看起来像平台 lane，但它不是 —— 后端这会儿真去采纳会按同一个失败 422 拒掉。
+  // 闸门和采纳是同一条线，那就灰在这里，理由用卡上已经写着的那一句。
+  if (card.forge.kind === 'unknown') return card.forge.declaration
+  if (platformLane.value || needsPr.value) return null
   if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
   return ['现在采纳不会合并', ...why].join('：')
