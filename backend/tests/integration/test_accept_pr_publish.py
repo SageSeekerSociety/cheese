@@ -615,9 +615,7 @@ def test_unbound_project_with_github_upstream_pushes_nothing(
 def _event_types(client, topic_id: str) -> list[str]:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return [
-        (b.get("meta") or {}).get("event_type")
-        for b in blocks
-        if b["kind"] == "event"
+        (b.get("meta") or {}).get("event_type") for b in blocks if b["kind"] == "event"
     ]
 
 
@@ -718,9 +716,7 @@ def test_a_push_back_that_fails_is_reported_as_a_push_failure(
     monkeypatch.setattr(ws, "push_branch", _refused)
     # 采纳结果那几行开自己的会话，好在调用方回滚之后照样落地；模块级的那个工厂
     # 在测试里绑着另一个库，所以指回本次测试的。
-    monkeypatch.setattr(
-        review_services, "async_session_factory", client.test_factory
-    )
+    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)

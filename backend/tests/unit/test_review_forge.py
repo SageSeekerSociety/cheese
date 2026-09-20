@@ -117,9 +117,7 @@ async def test_a_writable_non_github_remote_is_its_own_lane() -> None:
     """
     got = await forge_mod.resolve(
         project_id=_pid(),
-        facts=_answers(
-            _facts(has_external_remote=True, remote_write_credential=True)
-        ),
+        facts=_answers(_facts(has_external_remote=True, remote_write_credential=True)),
     )
 
     assert got.kind is forge_mod.ForgeKind.external_remote
