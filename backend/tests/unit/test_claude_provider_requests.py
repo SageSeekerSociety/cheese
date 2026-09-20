@@ -20,8 +20,10 @@ from tests.support.harness_prompts import event_prompts, system_prompt
 @pytest.mark.skipif(shutil.which("claude") is None, reason="Claude binary required")
 @pytest.mark.parametrize("event_name", event_prompts())
 async def test_real_claude_provider_receives_complete_platform_prompt(
-    tmp_path, event_name
+    tmp_path, event_name, _pg_schema
 ):
+    # The turn this drives reads the device's row, so it needs a migrated
+    # database — see the note in test_system_prompt_delivery.py.
     requests = []
 
     class Provider(BaseHTTPRequestHandler):

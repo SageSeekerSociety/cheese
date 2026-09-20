@@ -860,6 +860,16 @@ def pytest_runtest_teardown(item: pytest.Item):
     """
     yield
     names = getattr(item, "fixturenames", ())
+    # A pure test has no database behind it, so it cannot have leaked a
+    # transaction on one — and the name check below cannot tell that on its own:
+    # three files define their own local ``client``, a fake HTTP client or a
+    # four-route FastAPI app, which shadows the fixture this hook is named after
+    # and matches here all the same. That cost every one of them a connection to
+    # the maintenance database per test, and in the pure CI step, which runs with
+    # no database reachable at all, it was an error at teardown on a test that
+    # had passed.
+    if item.get_closest_marker("pure") is not None:
+        return
     if not ({"client", "python_client", "db_factory"} & set(names)):
         return
     leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
