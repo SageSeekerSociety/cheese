@@ -147,6 +147,21 @@ ensure_forgejo() {
   fail "repository service is not healthy; app release aborted"
 }
 
+ensure_forge_events() {
+  [ "$FORGE_EVENTS_LOCAL" = true ] || return 0
+  local waited=0
+  dc up -d --no-deps forge-events || fail "forge event relay did not start"
+  while [ "$waited" -lt 60 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${FORGE_EVENTS_PORT:-8093}/healthz" >/dev/null; then
+      log "forge event relay is healthy"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "forge event relay is not healthy; app release aborted"
+}
+
 migrate_project_repositories() {
   local pending=0 legacy
   # The backend's persistent HOME keeps immutable source backups and receipts.
@@ -225,6 +240,16 @@ if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
 fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
+
+event_environment="$(python3 "$HERE/bootstrap-forgejo.py" --configure-events \
+  --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+  ${FORGE_EVENTS_ENV_FILE:+--relay-env "$FORGE_EVENTS_ENV_FILE"})" \
+  || fail "event relay configuration failed; running services were not touched"
+eval "$event_environment"
+if [ "$FORGE_EVENTS_LOCAL" = true ]; then
+  COMPOSE_OVERLAYS="$COMPOSE_OVERLAYS $HERE/forge-events/compose.yml"
+  export FORGE_EVENTS_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
+fi
 
 # Every deployment needs a repository service for projects without GitHub.
 # Preparation emits only shell-quoted public addresses, never credentials.
@@ -522,6 +547,7 @@ fi
 log_disk "after pull"
 
 ensure_forgejo
+ensure_forge_events
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"

@@ -9,6 +9,7 @@ mkdir -p "$ROOT/.tmp"
 forge_test_env="$(mktemp "$ROOT/.tmp/forge-env.XXXXXX")"
 printf 'FRONTEND_URL=https://cheese.example\n' > "$forge_test_env"
 export BACKEND_ENV_FILE="$forge_test_env"
+export FORGE_EVENTS_ENV_FILE="$forge_test_env.events"
 export FORGEJO_URL=https://cheese.example/forge/
 
 # deploy-docker.sh CREATES the openviking memory dir (it must exist before the
@@ -26,7 +27,7 @@ export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
 # And the transcript archives, once more the same shape.
 export TRANSCRIPTS_HOST_PATH="$ROOT/.tmp/transcripts-$$"
 export APPHOME_HOST_PATH="$ROOT/.tmp/apphome-$$"
-trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env"' EXIT
+trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -309,7 +310,7 @@ test_deploy_warns_when_the_session_base_will_not_survive() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/session-base.XXXXXX")"
   envf="$run_dir/backend.env"
-  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
+  printf 'FRONTEND_URL=https://cheese.example\nAGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
   out="$(PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -329,7 +330,7 @@ test_deploy_warns_when_the_session_base_will_not_survive() {
   esac
   # And it must stay quiet for an address the deploy leaves alone — a warning
   # on every deploy is a warning nobody reads.
-  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
+  printf 'FRONTEND_URL=https://cheese.example\nAGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
   out="$(PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -1046,6 +1047,7 @@ test_forge_migration_release() {
       || result=1
     [ "$result" = "$expected" ] || fail "forge $mode returned $result: $run_dir/release.log"
     grep -F 'docker-compose.forgejo.yml' "$run_dir/docker.log" >/dev/null || fail "default forge service was not included"
+    grep -F 'up -d --no-deps forge-events' "$run_dir/docker.log" >/dev/null || fail "event relay was not started"
     grep -Fx bootstrap "$run_dir/docker.log" >/dev/null || fail "admin provisioning did not run"
     case "$mode" in
       first|apply_failed|health_failed)

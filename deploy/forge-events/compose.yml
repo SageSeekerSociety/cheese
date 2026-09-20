@@ -10,7 +10,7 @@ services:
     env_file:
       - ${FORGE_EVENTS_ENV_FILE:?path to the relay-specific secrets file}
     ports:
-      - "127.0.0.1:8093:8093"
+      - "127.0.0.1:${FORGE_EVENTS_PORT:-8093}:8093"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8093/healthz"]
       interval: 15s
@@ -18,6 +18,6 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: journald
+      driver: ${FORGE_EVENTS_LOG_DRIVER:-journald}
       options:
         tag: "{{.Name}}"

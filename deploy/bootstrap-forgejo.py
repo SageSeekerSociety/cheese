@@ -1,17 +1,145 @@
 #!/usr/bin/env python3
-"""Provision the deployment admin and save its token in the backend env file."""
+"""Provision the deployment's Forgejo admin and persistent event relay settings."""
 
 import argparse
 import json
 import logging
 import os
 from pathlib import Path
+import secrets
 import shlex
 import subprocess
 import tempfile
 import urllib.request
 from urllib.parse import urlsplit
 import uuid
+
+
+def environment_values(content: str) -> dict[str, str]:
+    values = {}
+    for line in content.splitlines():
+        key, separator, value = line.strip().removeprefix("export ").partition("=")
+        if not separator or not key.startswith(("FORGE", "FRONTEND_URL")):
+            continue
+        # Compose accepts unquoted JSON; shell tokenization would remove its quotes.
+        if value.startswith("{"):
+            json.loads(value)
+            values[key] = value
+        else:
+            parts = shlex.split(value, comments=True)
+            if len(parts) > 1:
+                raise ValueError(f"Invalid {key} in backend environment")
+            values[key] = parts[0] if parts else ""
+    return values
+
+
+def save_environment(path: Path, updates: dict[str, str]) -> None:
+    original = path.read_text() if path.exists() else ""
+    lines = [
+        line
+        for line in original.splitlines()
+        if line.strip().removeprefix("export ").partition("=")[0] not in updates
+    ]
+    content = (
+        "\n".join(lines + [f"{key}={value}" for key, value in updates.items()]) + "\n"
+    )
+    if content == original:
+        return
+    if path.exists():
+        atomic_private(
+            path.with_name(path.name + "." + uuid.uuid4().hex + ".bak"), original
+        )
+    atomic_private(path, content)
+
+
+def configure_events(backend_env: Path, relay_env: Path) -> None:
+    values = environment_values(backend_env.read_text())
+    keys = ("FORGE_EVENT_RELAY_URL", "FORGE_WEBHOOK_URL", "FORGE_EVENT_SECRET")
+    configured = [bool(values.get(key)) for key in keys]
+    if any(configured) and not all(configured):
+        raise ValueError(
+            "Event relay requires its connection URL, webhook URL and secret together"
+        )
+    relay_values = (
+        environment_values(relay_env.read_text()) if relay_env.exists() else {}
+    )
+    routes = json.loads(relay_values.get("FORGE_EVENT_RELAY_KEYS", "{}"))
+    if all(configured):
+        webhook = urlsplit(values["FORGE_WEBHOOK_URL"])
+        connection = urlsplit(values["FORGE_EVENT_RELAY_URL"])
+        if (
+            webhook.scheme not in {"http", "https"}
+            or connection.scheme != {"http": "ws", "https": "wss"}.get(webhook.scheme)
+            or connection.netloc != webhook.netloc
+            or connection.path != webhook.path.rstrip("/") + "/connect"
+            or not webhook.hostname
+            or webhook.username
+            or webhook.password
+            or webhook.query
+            or webhook.fragment
+            or connection.query
+            or connection.fragment
+        ):
+            raise ValueError(
+                "Event relay URLs must identify one HTTP(S) webhook and its WS(S) connection"
+            )
+        deployment = webhook.path.rstrip("/").rsplit("/", 1)[-1]
+        if (
+            deployment
+            in {
+                values.get("FORGE_EVENT_LOCAL_DEPLOYMENT"),
+                relay_values.get("FORGE_EVENT_LOCAL_DEPLOYMENT"),
+            }
+            and routes.get(deployment) != values["FORGE_EVENT_SECRET"]
+        ):
+            raise ValueError(
+                "The local event relay credential differs from the backend credential"
+            )
+        local = routes.get(deployment) == values["FORGE_EVENT_SECRET"]
+    else:
+        public = urlsplit(values.get("FRONTEND_URL", ""))
+        if (
+            public.scheme not in {"http", "https"}
+            or not public.hostname
+            or public.username
+            or public.password
+            or public.query
+            or public.fragment
+        ):
+            raise ValueError(
+                "Set FRONTEND_URL before configuring the local event relay"
+            )
+        # Save the relay first. A retry after an interrupted backend write reuses it.
+        deployment = (
+            relay_values.get("FORGE_EVENT_LOCAL_DEPLOYMENT") or uuid.uuid4().hex
+        )
+        secret = routes.get(deployment) or secrets.token_hex(32)
+        routes[deployment] = secret
+        save_environment(
+            relay_env,
+            {
+                "FORGE_EVENT_LOCAL_DEPLOYMENT": deployment,
+                "FORGE_EVENT_RELAY_KEYS": json.dumps(routes, separators=(",", ":")),
+            },
+        )
+        base = values["FRONTEND_URL"].rstrip("/") + "/api/forge/events/" + deployment
+        save_environment(
+            backend_env,
+            {
+                "FORGE_EVENT_RELAY_URL": base.replace("http", "ws", 1) + "/connect",
+                "FORGE_WEBHOOK_URL": base,
+                "FORGE_EVENT_SECRET": secret,
+                "FORGE_EVENT_LOCAL_DEPLOYMENT": deployment,
+            },
+        )
+        local = True
+    # These values are consumed by the deployment shell; credentials stay in files.
+    print("export FORGE_EVENTS_LOCAL=" + ("true" if local else "false"))
+    print("export FORGE_EVENTS_ENV_FILE=" + shlex.quote(str(relay_env.resolve())))
+    print(
+        "export FORGE_EVENTS_UPSTREAM="
+        + ("forge-events:8093" if local else "backend:8081")
+    )
 
 
 def atomic_private(path: Path, content: str) -> None:
@@ -32,11 +160,19 @@ def main() -> None:
     parser.add_argument("--container")
     parser.add_argument("--backend-env", type=Path, required=True)
     parser.add_argument("--prepare", action="store_true")
+    parser.add_argument("--configure-events", action="store_true")
+    parser.add_argument("--relay-env", type=Path)
     parser.add_argument("--api-url", default="http://127.0.0.1:3300/api/v1")
     parser.add_argument("--docker-context")
     args = parser.parse_args()
     # Refuse a wrong path before creating an administrator or issuing a token.
     original = args.backend_env.read_text()
+    if args.configure_events:
+        configure_events(
+            args.backend_env,
+            args.relay_env or args.backend_env.parent / ".forge-events.env",
+        )
+        return
     if args.prepare:
         values = {}
         for line in original.splitlines():

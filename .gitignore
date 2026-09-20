@@ -6,6 +6,8 @@
 .env.local
 .env.*.bak
 .forgejo-admin-token
+.forge-events.env
+.forge-events.env.*.bak
 *.env.local
 
 # ---- Logs & scratch (project-local, not versioned) ----

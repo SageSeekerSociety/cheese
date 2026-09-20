@@ -59,6 +59,9 @@ emit_named_rows() {
 }
 
 emit_contract_rows() {
+  if [ "${FORGE_EVENTS_LOCAL:-false}" = true ]; then
+    printf 'forge-events\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+  fi
   if [ "$scenario" != forgejo_absent ]; then
     printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
   fi
