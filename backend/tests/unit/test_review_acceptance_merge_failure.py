@@ -7,6 +7,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.project.models import AiMode
+from app.domain.review import forge as review_forge
 from app.domain.review import services as review_services
 from app.domain.review.models import AcceptStatus
 from app.domain.review.services import AcceptService
@@ -72,9 +73,15 @@ def _accept_service(
     service._projects = AsyncMock()
     service._projects.get.return_value = project
     service._enforce_protocol = AsyncMock()
-    # Unbound project: the platform is the forge and the local merge is the
+    # Nothing bound: the platform is the forge and the local merge is the
     # accept (#363) — the lane under test here.
-    service._github_bound = AsyncMock(return_value=False)
+    service._forge_facts = AsyncMock(
+        return_value=review_forge.ProjectForgeFacts(
+            github_app_installed=False,
+            has_external_remote=False,
+            remote_write_credential=False,
+        )
+    )
     monkeypatch.setattr(review_services.TaskService, "require_in_room", AsyncMock())
     service._mark_task_merged = AsyncMock()
     service._stamp_delivery = AsyncMock()

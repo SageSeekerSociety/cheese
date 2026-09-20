@@ -137,7 +137,11 @@ describe('一张卡按卡渲染', () => {
     getRoomTask.mockResolvedValue({
       ...card({ brief: '**Goal**', conclusion: '[Read the report](https://example.com/report)' }),
       blocks: [
-        block({ id: 'ai', author_type: 'ai', content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>' }),
+        block({
+          id: 'ai',
+          author: 'cheese-room1',
+          content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>',
+        }),
         block({ id: 'human', content: '**keep this literal**' }),
       ],
     })
@@ -248,7 +252,16 @@ function acceptCard(over: Partial<AcceptCard> = {}): AcceptCard {
       checked_at: null,
       since: null,
     } as MergeStateInfo,
-    has_external_checks: false,
+    forge: {
+      kind: 'platform',
+      reports_checks: false,
+      hosts_proposals: false,
+      can_write_remote: false,
+      has_external_remote: false,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',
+    },
     auto_merge: { allowed: false, armed_by: null, armed_at: null },
     ...over,
   } as AcceptCard

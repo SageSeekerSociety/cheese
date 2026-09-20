@@ -1,0 +1,54 @@
+name: Recover dev Docker
+
+# Manual recovery for the dev box when Docker or the self-hosted runner has
+# become unresponsive.  This deliberately uses no checkout or third-party
+# actions: recovery must still work when GitHub downloads or the repository
+# workspace is the thing that is slow.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  restart-docker:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 10
+    steps:
+      - name: Inspect Docker before restart
+        run: |
+          set -euo pipefail
+          echo "runner=$RUNNER_NAME host=$(hostname)"
+          df -h / | tail -1
+          free -m | head -3 || true
+          timeout 20 docker info
+
+      - name: Restart Docker service
+        run: |
+          set -euo pipefail
+          if ! sudo -n true 2>/dev/null; then
+            echo "::error::runner has no passwordless sudo; Docker cannot be recovered automatically"
+            exit 1
+          fi
+          sudo systemctl restart docker
+
+      - name: Wait for Docker and verify the dev stack
+        run: |
+          set -euo pipefail
+          ready=false
+          for attempt in $(seq 1 30); do
+            if timeout 10 docker info >/dev/null 2>&1; then
+              ready=true
+              echo "Docker is ready after attempt $attempt"
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then
+            echo "::error::Docker did not become ready after restart"
+            exit 1
+          fi
+
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo "===== buildx ====="
+          timeout 30 docker buildx ls

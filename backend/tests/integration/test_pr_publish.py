@@ -8,6 +8,7 @@ card; any failure leaves the card PR-less (the accept path then falls back).
 import asyncio
 import uuid
 
+from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 
 
@@ -28,6 +29,7 @@ def _make_card(client, topic_id: str, **extra) -> str:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -71,7 +73,7 @@ class _FakeClient:
         body: str,
         as_user_token: str | None = None,
         draft: bool = False,
-    ) -> dict:
+    ) -> OpenedPR:
         record = {
             "head": head,
             "base": base,
@@ -83,7 +85,7 @@ class _FakeClient:
         type(self).opened.append(record)
         if head in type(self).existing:
             # GitHub's "a pull request already exists" → the caller adopts it.
-            return type(self).existing[head]
+            return OpenedPR(type(self).existing[head], None)
         pr = {
             "number": 42,
             "html_url": "https://github.com/acme/widgets/pull/42",
@@ -93,7 +95,7 @@ class _FakeClient:
             "node_id": f"PR_node_{head}",
         }
         type(self).existing[head] = pr
-        return pr
+        return OpenedPR(pr, None)
 
     async def update_pr(self, number: int, *, title: str, body: str) -> dict:
         type(self).patched.append({"number": number, "title": title, "body": body})

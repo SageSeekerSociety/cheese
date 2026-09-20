@@ -55,6 +55,14 @@ def _blocks(client, topic_id: str) -> list[dict]:
     return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
+def _by_a_person(b: dict) -> bool:
+    """这一条是一个人说的：档位说「参与者」，而署名不是芝士的。
+
+    档位只分得出参与者和平台，「是人还是芝士」在署名上 —— 这条测试要的正是后者。
+    """
+    return b["author_type"] != "system" and not b["author"].startswith("cheese")
+
+
 def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 10.0):
     """等那条系统事件落库。
 
@@ -119,9 +127,7 @@ def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(client, app
 
     fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
     # ① 核心：房间里没有多出任何一条"人"说的话。
-    assert [b for b in fresh if b["author_type"] == "human"] == [], (
-        "平台又伪装成人在房间里发言了"
-    )
+    assert [b for b in fresh if _by_a_person(b)] == [], "平台又伪装成人在房间里发言了"
 
     # ② 一行人话。
     _assert_is_a_platform_notice(
@@ -184,7 +190,7 @@ def test_merge_refused_lands_as_one_line_event(client, app_world):
     event = _wait_for_event(client, tid, "merge_refused")
 
     fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
-    assert [b for b in fresh if b["author_type"] == "human"] == []
+    assert [b for b in fresh if _by_a_person(b)] == []
     _assert_is_a_platform_notice(
         event, event_type="merge_refused", severity="error", who="cheese"
     )

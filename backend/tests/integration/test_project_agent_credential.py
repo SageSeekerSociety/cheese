@@ -292,7 +292,7 @@ def test_it_reaches_the_cheese_write_surface_in_every_topic(client):
             headers=_cred(token),
         )
         assert r.status_code == 200, r.text
-        assert r.json()["data"]["author_type"] == "ai"
+        assert r.json()["data"]["author"].startswith("cheese")
 
 
 def test_it_reaches_the_project_level_write_surface(client):
@@ -360,7 +360,6 @@ def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
     doc = _write_doc(client, tid, token)
     assert doc.status_code == 200, doc.text
     assert doc.json()["data"]["author"] == room_agent
-    assert doc.json()["data"]["author_type"] == "ai"
 
     events = [b for b in _blocks(client, tid) if b["kind"] == "event"]
     edit_events = [b for b in events if "编辑了文档" in b["content"]]
@@ -368,14 +367,13 @@ def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
     assert edit_events[-1]["author"] == room_agent
     assert edit_events[-1]["content"] == "芝士 编辑了文档"
     assert edit_events[-1]["author_type"] == "system"
-    assert edit_events[-1]["meta"]["editor_type"] == "ai"
 
     decision = client.post(
         f"/topics/{tid}/decision",
         json={"decision": "记一笔"},
         headers=_cred(token),
     )
-    assert decision.json()["data"]["author_type"] == "ai"
+    assert decision.json()["data"]["author"] == room_agent
 
 
 # --- 不能改坏既有的路径 -----------------------------------------------------------

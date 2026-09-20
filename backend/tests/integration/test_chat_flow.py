@@ -93,11 +93,11 @@ def test_blocks_empty_then_populated_after_chat(client):
 
     assistant = next(f for f in frames if f["type"] == "event_block")["block"]
     assert assistant["content"] == "Hello world"
-    assert assistant["author_type"] == "ai"
+    assert assistant["author"] == agent
 
     user = next(f for f in frames if f["type"] == "user_block")["block"]
     assert user["content"] == "你好芝士"
-    assert user["author_type"] == "human"
+    assert user["author"] == "user-1"
     # Explicit null distinguishes a new pending input from an unmarked legacy
     # block. A later exact receipt replaces it with the consuming turn id.
     assert user["meta"]["consumed_turn"] is None
@@ -105,10 +105,10 @@ def test_blocks_empty_then_populated_after_chat(client):
     # Neither displayed text nor Stop publishes a chat message.
     r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
-    assert [b["author_type"] for b in blocks] == ["human", "ai"]
+    assert [b["author"] for b in blocks] == ["user-1", agent]
     assert blocks[1]["meta"]["progress"] is True
     assert blocks[1]["meta"]["in_room"] is False
-    assert not any(b["author_type"] == "ai" and b["kind"] == "message" for b in blocks)
+    assert not any(b["author"] == agent and b["kind"] == "message" for b in blocks)
     assert blocks[0]["meta"]["consumed_turn"]
 
 
@@ -225,7 +225,7 @@ def test_message_without_summon_does_not_invoke_cheese(client):
     assert types == ["user_block", "done"]  # no 👀 ack / assistant_block
 
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
+    assert [b["author"] for b in blocks] == ["user-1"]  # only the human msg
 
 
 def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
