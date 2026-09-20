@@ -127,7 +127,7 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
                 project_id=uuid.UUID(project_id),
                 user_handle=handle,
                 role=ProjectRole.member,
-                actor=Actor(handle="alice", user_id=None, is_agent=False, via="token"),
+                actor=Actor(handle="alice", user_id=None, via="token"),
             )
             await s.commit()
 

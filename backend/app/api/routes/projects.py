@@ -64,7 +64,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
+from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
@@ -102,23 +102,6 @@ from app.domain.workspace import upstream_conflict
 logger = logging.getLogger("cheesex.projects")
 
 
-def _is_a_real_person(handle: str | None) -> bool:
-    """Could this handle ever match a human account?
-
-    `anonymous` is what an unidentified caller resolves to: nobody, so no owner.
-    An agent handle is somebody, and can hold a project role like anybody else —
-    it is excluded here only because this answers "is there a person to name in
-    the log", and naming 芝士 as the person answers nothing.
-
-    Advisory only — this decides whether to LOG, never whether to allow. That
-    is why `looks_like_agent_handle` is fair game here despite its docstring
-    forbidding it in authorization: nothing downstream branches on the answer.
-    """
-    return (
-        bool(handle) and handle != "anonymous" and not looks_like_agent_handle(handle)
-    )
-
-
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -152,18 +135,24 @@ async def create_project(
     owner_handle = body.owner_handle or (
         who.handle if who.authenticated and who.handle else None
     )
-    if not _is_a_real_person(owner_handle):
+    if not owner_handle or owner_handle == ANONYMOUS_HANDLE:
         # Silence is how this got expensive (#315). A project whose owner is not
         # a real person can be repaired — PUT /{id}/owner exists now — but
         # nothing else in the system will ever mention it: all seven readers of
         # the field fall back to `lead` without erroring, so the gap surfaces
         # only as "why can only one person do anything here", six days later.
         #
-        # The check is "a real person", not "not empty", because the empty case
+        # The check covers `anonymous` as well as empty, because the empty case
         # is no longer the one that happens. `resolve()` hands back the literal
         # handle `anonymous` rather than nothing, so an unidentified creator now
         # produces a *populated* owner column that still matches no user — the
         # same collapse onto `lead`, wearing a value.
+        #
+        # It does NOT ask whether the owner is a person. An agent instance is a
+        # participant and holds a project role like anybody else, so a handle
+        # that names one is an owner this log has nothing to warn about; reading
+        # the handle's SHAPE to decide otherwise was the platform guessing at a
+        # participant's kind from its name.
         logger.warning(
             "project created without a real owner name=%r owner=%r",
             body.name,
@@ -779,9 +768,12 @@ async def _agent_memory_scope(
     place, actor = caller
     project = await ProjectService(db).get_or_404(project_id)
     agents = AgentInstanceService(db)
-    agent = await agents.for_seat_handle(
-        project, actor.handle if actor.is_agent else None
-    )
+    # The seat handle answers for itself: `for_seat_handle` matches it against
+    # the project's saved teammates and returns None for a person, the shared
+    # `cheese` seat and a room-derived one. Pre-filtering by "is the caller an
+    # agent" asked a second, coarser question whose only effect was to skip a
+    # lookup that already says no.
+    agent = await agents.for_seat_handle(project, actor.handle)
     if agent is None:
         agent = await agents.for_topic(place.room, project)
     return memory_pool(project_id, agent)

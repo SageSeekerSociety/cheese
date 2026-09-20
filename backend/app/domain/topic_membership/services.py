@@ -303,6 +303,20 @@ class TopicMemberService:
             and user.id in agent_ids
         ]
 
+    async def holds_an_agent_seat(self, topic_id: uuid.UUID, handle: str) -> bool:
+        """Is ``handle`` sitting in this room as one of its agents?
+
+        The question every caller used to ask of the actor itself ("is this an
+        agent?") and answer away from the room it was acting in. A participant
+        is not typed; it holds a seat, and the seat is what says an agent
+        answers here — so a teammate seated in ANOTHER room is, in this one,
+        simply not one of its agents, which is what the callers relaying to 芝士
+        and gating ``chat-publish`` actually mean.
+
+        Pass the ROOM's id: threads have no roster of their own.
+        """
+        return handle in await self.agent_handles(topic_id)
+
     async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
         """Seat THIS agent in this room, and return the handle it acts under.
 

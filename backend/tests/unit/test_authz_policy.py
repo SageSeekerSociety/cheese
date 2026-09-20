@@ -20,8 +20,8 @@ PID = uuid.uuid4()
 TID = uuid.uuid4()
 
 
-def _actor(via: str, handle: str = "u", is_agent: bool = False) -> Actor:
-    return Actor(handle=handle, user_id=None, is_agent=is_agent, via=via)
+def _actor(via: str, handle: str = "u") -> Actor:
+    return Actor(handle=handle, user_id=None, via=via)
 
 
 def _adapters(*, role=None, project_member=False):
@@ -53,11 +53,12 @@ async def test_claimed_identity_does_not_grant_access():
     )
 
 
-@pytest.mark.parametrize(
-    "via,is_agent", [("token", False), ("token", True), ("cheese", True)]
-)
-async def test_membership_grants_and_revokes_access_equally(via, is_agent):
-    actor = _actor(via, is_agent=is_agent)
+@pytest.mark.parametrize("via", ["token", "cheese"])
+async def test_membership_grants_and_revokes_access_equally(via):
+    """Membership decides, and the policy has no way to ask what KIND of
+    participant it is holding — the two credentials differ only in how the
+    identity was proven."""
+    actor = _actor(via)
     assert await _access(actor, role=TopicRole.member)
     assert await _access(actor, project_member=True)
     assert not await _access(actor, project_member=False)
@@ -109,7 +110,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     )
     assert (
         await _access(
-            _actor("cheese", is_agent=True),
+            _actor("cheese"),
             is_private=True,
             role=None,
         )
@@ -117,7 +118,7 @@ async def test_private_topic_allows_only_authenticated_roster_members():
     )
     assert (
         await _access(
-            _actor("cheese", is_agent=True),
+            _actor("cheese"),
             is_private=True,
             role=TopicRole.member,
         )
@@ -250,11 +251,9 @@ async def test_claimed_handle_may_not_manage_members():
     assert await _may_manage(_actor("handle", "anonymous")) is False
 
 
-@pytest.mark.parametrize(
-    "via,is_agent", [("token", False), ("token", True), ("cheese", True)]
-)
-async def test_management_uses_roles_for_people_and_agents(via, is_agent):
-    actor = _actor(via, "participant", is_agent=is_agent)
+@pytest.mark.parametrize("via", ["token", "cheese"])
+async def test_management_uses_roles_for_people_and_agents(via):
+    actor = _actor(via, "participant")
     assert not await _may_manage(actor)
     assert not await _may_manage(actor, roles={"participant": ProjectRole.member})
     assert await _may_manage(actor, roles={"participant": ProjectRole.lead})

@@ -33,6 +33,7 @@ from app.domain.feedback.schemas import (
 )
 from app.domain.feedback.services import FeedbackService
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["feedback"])
 
@@ -128,7 +129,11 @@ async def propose_feedback(
         # 时才带 X-Cheese-Turn，没有一处产品代码写它），所以由写入端直接说明这是
         # 自己的产出——否则它盖上待读标记，下一轮把自己的提案当成一条没读过的话
         # 再读一遍。人提的那种照旧是一条待读输入。
-        own_output=actor.is_agent,
+        # 「这是我自己的产出吗」问的是这个房间的席位：提案卡是坐在这里的那位芝士
+        # 落下的，人提的那种照旧是一条待读输入。
+        own_output=await TopicMemberService(db).holds_an_agent_seat(
+            place.room_id, handle
+        ),
     )
     await db.commit()
     result = FeedbackProposalResult(block_id=block.id, fingerprint=fingerprint)
@@ -174,8 +179,9 @@ async def accept_feedback_proposal(
     正文取请求体而不是卡上的原文：抽屉是预填的，人可以改完再发（原型的流程就是
     「卡 → 提交反馈 → 抽屉 → 提交」），而按下发送的人为自己发出去的东西负责。
 
-    `actor.is_agent` 如实往下传，不写死 False：agent 自己按发送和直接发布是同一件
-    事，拒绝在 `FeedbackService.create` 里，这里不替它开例外。
+    这条路不替调用者声明「按发送的是不是 agent」：`FeedbackService.create` 自己去
+    问这个 handle 带不带 agent 绑定。agent 自己按发送和直接发布是同一件事，拒绝就在
+    那里，这里不替它开例外，也不再有一个可以传错的参数。
 
     发送会在卡上留下「已经发过了」（`mark_accepted`），所以这件事**只会发生一次**：
     卡片从聊天栏消失，而已经开着旧页面的人再按一次时，这里把第一次那条反馈原样取回来
@@ -204,7 +210,6 @@ async def accept_feedback_proposal(
         ),
         actor_handle=actor.handle,
         actor_user_id=actor.user_id,
-        actor_is_agent=actor.is_agent,
         proposal=proposal_rules.AcceptedProposal(
             payload=payload, author_handle=block.author
         ),

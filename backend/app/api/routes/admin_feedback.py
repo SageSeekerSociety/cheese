@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import ForbiddenError
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
 from app.domain.feedback.schemas import (
@@ -37,27 +36,15 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def _require_admin(
     service: feedback_services.FeedbackService, resolver: ActorResolver
 ) -> str:
-    """The two gates every handler in this module passes, in one place.
+    """The gate every handler in this module passes, in one place.
 
-    `require_admin` answers 「是不是平台管理员」. The check above it answers
-    「是不是人」, and they are separate questions: the allow-list is a list of
-    handles, and an agent handle can be on it (`cheese` seats agents in rooms and
-    a room's stand-in handle is derivable from the room). §4.3 requires the
-    management surface to refuse an agent **explicitly, in the route body**,
-    because `/admin/*` is not in `_CHEESE_WRITE_PATHS` — the middleware is a
-    whitelist and this prefix is not on it, so nothing else would stop one.
-
-    Reachable, not theoretical: a device screen's token (`X-Cheese-Screen`)
-    resolves to its agent-as-user on any path, including one with no topic in it —
-    unlike a per-turn `cheese` credential, which `ActorResolver` refuses when
-    there is no project to scope it to.
-
-    Agent first, then the allow-list, so the refusal an agent gets does not depend
-    on whether it happens to be listed.
+    Both halves of it — 「是不是 agent」 and 「是不是平台管理员」 — live in
+    `FeedbackService.require_admin`, so this surface has ONE answer to 「你能做
+    什么」 and it is reached with a handle, not with a flag the route resolved
+    somewhere else. `/admin/*` is not in `_CHEESE_WRITE_PATHS`, so the middleware
+    whitelist stops nothing here and that answer is the only one there is.
     """
     who = await resolver.resolve(fallback_handle=None)
-    if who.is_agent:
-        raise ForbiddenError("agent 不能执行管理动作")
     return await service.require_admin(who.handle if who.authenticated else None)
 
 

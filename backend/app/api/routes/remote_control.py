@@ -453,11 +453,15 @@ def not_its_own(session: dict, actor: Actor) -> None:
     credential would have carried, derived from its place the way
     `mint_scoped_token` derives it. That is still the session answering for
     itself, and without it every session already running would be unguarded.
+
+    Being this session is the whole question: the handle a session runs under is
+    an agent's either way, so also asking whether the actor was an agent added a
+    second, weaker answer to a question this one had already settled.
     """
     mine = session.get("agent_handle") or topic_agent_handle(
         uuid.UUID(session["topic_id"])
     )
-    if actor.is_agent and actor.handle == mine:
+    if actor.handle == mine:
         raise ForbiddenError("A session cannot decide its own controls")
 
 

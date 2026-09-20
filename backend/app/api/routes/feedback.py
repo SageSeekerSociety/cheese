@@ -240,7 +240,6 @@ async def create_feedback(
         body,
         actor_handle=who.handle,
         actor_user_id=who.user_id,
-        actor_is_agent=who.is_agent,
     )
     return ok(
         await _detail(
@@ -297,7 +296,6 @@ async def create_feedback_comment(
         body.parent_id,
         actor_handle=who.handle,
         actor_user_id=who.user_id,
-        actor_is_agent=who.is_agent,
         is_admin=service.is_admin(who.handle),
     )
     return ok(CommentOut.model_validate(comment).model_dump(mode="json"))

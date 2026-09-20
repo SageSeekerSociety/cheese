@@ -402,7 +402,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     authority = AsyncMock()
     monkeypatch.setattr(service, "require_use_authority", authority)
-    actor = Actor(handle="owner", user_id=1, is_agent=False, via="token")
+    actor = Actor(handle="owner", user_id=1, via="token")
 
     first = await service.ensure_topic_machine(topic.id, actor=actor)
     second = await service.ensure_topic_machine(topic.id)
