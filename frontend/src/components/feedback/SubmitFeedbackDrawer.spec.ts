@@ -1,5 +1,5 @@
 // 这一组守的是**抽屉在窄屏上的两处静默失效**：第一处（关着的抽屉盖住整屏）是「看着
-// 正常但没反应」，第二处（附件按钮）是「看着能点但什么都不发生」——两个都不报错，都
+// 正常但没反应」，第二处（附件那一块）是「摆着一个按不动的东西，谁都不报错」——两个都
 // 只能靠断言钉住。
 import type { Component } from 'vue'
 
@@ -10,7 +10,7 @@ import { VApp, VMain } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import SubmitFeedbackDrawer from './SubmitFeedbackDrawer.vue'
 
@@ -51,21 +51,19 @@ describe('提交反馈抽屉', () => {
     expect(transform).not.toBe('none')
   })
 
-  // 上一版这里守的是「点『选择文件』真的把点击递给那个藏起来的 input」——一个函数式
-  // ref 写成静态的，生产构建里按钮就是死的。**附件上传这一版没有做**（后端没有附件
-  // 字段），所以那条断言的对象不存在了：留着它只会逼出一个人造 input。改成守现在这
-  // 个决定本身 —— 附件还不能选，而且旁边写着为什么。将来接上附件字段时，那条 ref
-  // 的坑会原样回来，这个用例该连同 file input 一起改回去。
-  it('附件还不能选：按钮是灰的，旁边写着为什么 —— 一个能点、点了什么都不发生的按钮更糟', () => {
+  // 再上一版这里守的是「点『选择文件』真的把点击递给那个藏起来的 input」——一个函数式
+  // ref 写成静态的，生产构建里按钮就是死的。后来退成「按钮灰着 + 旁边写一句『上传还没
+  // 接』」：一个按不动的按钮占着一个操作位，旁边那行字解释的是**我们**还没做什么，而读
+  // 的人只想知道自己能提交什么 —— 摆着它比不摆更难看。**这一版整块拿掉了**，所以这条
+  // 用例现在守的是「它不在」，不是「它长什么样」。将来接上附件字段时，file input 和那
+  // 条 ref 的坑会原样回来，这个用例该连同它们一起改回去。
+  it('没有附件这一块：既不摆一个按不动的按钮，也不写一行「我们还没做」', () => {
     const { container } = renderOnPhone()
 
     expect(container.querySelector('input[type=file]'), '这一版没有附件上传，不该有藏着的 file input').toBeNull()
 
-    const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('选择文件')) as
-      | HTMLButtonElement
-      | undefined
-    expect(button, '找不到「选择文件」按钮').toBeTruthy()
-    expect(button!.disabled, '它必须点不动：附件字段后端还没有').toBe(true)
-    expect(container.textContent, '灰按钮旁边得写着为什么').toContain('上传还没接')
+    const attach = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.includes('选择文件'))
+    expect(attach, '禁用的「选择文件」不该留在提交抽屉里').toHaveLength(0)
+    expect(container.textContent, '更不该留一行字解释我们还没做什么').not.toContain('上传还没接')
   })
 })
