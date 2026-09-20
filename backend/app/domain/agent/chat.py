@@ -261,8 +261,9 @@ class _TurnContext:
     topic_stage: TopicStage | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
-    # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。
-    artifacts: list[dict]
+    # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
+    # 去过东西」，None 是「这间房间不交付」（私聊）。
+    artifacts: list[dict] | None
 
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
@@ -4361,16 +4362,19 @@ class ChatService:
                     await topics.list_for_project(topic.project_id),
                     exclude_id=topic.id,
                 )
-            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。
-            artifact_rows = (
-                []
+            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。私聊里不交付，所以
+            # 那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，前者要说话
+            # （第一次交付只能新建），后者一个字都不说，所以这里给的是 None 而不是 []。
+            artifact_refs = (
+                None
                 if is_private
-                else await project_artifacts.list_for_project(session, topic.project_id)
+                else [
+                    {"id": str(a.id), "name": a.name, "version": a.version}
+                    for a in await project_artifacts.list_for_project(
+                        session, topic.project_id
+                    )
+                ]
             )
-            artifact_refs = [
-                {"id": str(a.id), "name": a.name, "version": a.version}
-                for a in artifact_rows
-            ]
             project_id = topic.project_id
             # This agent's conversation here, not just any: a room may host
             # several agents and each resumes its own (agent_session/models.py).
