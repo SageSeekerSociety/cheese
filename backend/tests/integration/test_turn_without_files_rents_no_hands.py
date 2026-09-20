@@ -216,8 +216,11 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     """
     project, topic = room
     alice = session_auth_headers("alice")
+    # 一道等人回答的题：它同时走时间线、通知投递和 `/awaiting-me` 三条路。
     said = client.post(
-        f"/topics/{topic}/comments", json={"content": "先记一句"}, headers=alice
+        f"/topics/{topic}/ask",
+        json={"question": "先记一句", "options": ["记", "不记"]},
+        headers=alice,
     )
     assert said.status_code == 200, said.text
 
