@@ -201,182 +201,196 @@ class CentralChannel(DeviceChannel):
 
         executor_id, agent_user_id, agent_handle = precheck
         factory = self._session_factory or async_session_factory
+        # Short transactions with the machine work between them, not one that
+        # spans it. The room's row lock used to be taken on the first read and
+        # held until the harness had started — through an executor install
+        # (`_hub.exec`, up to 11 minutes) and an environment build
+        # (`_wait_executor`, up to an hour). One starting room therefore held a
+        # pool connection for that whole stretch, and queued every writer of its
+        # row (a title, an archive, a read mark, an un-archive) behind it, each
+        # of those holding a connection of its own while it waited.
+        #
+        # Nothing between the reads and the publish writes anything, so the lock
+        # was guarding the publish alone — and the publish is atomic on its own
+        # below.
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
             mark("room_lock")
             resource = room.resource_id or room.id
-            sessions = AgentSessionService(db)
+            is_private = room.is_private
             # Where THIS conversation was, resolved from its own row. A stale
             # one — an older generation of the room, or hands that have since
             # been handed to another executor — is no place at all: this turn
             # rents again rather than being refused for not matching what some
             # other session in the same room happens to be holding.
-            place = await sessions.place(
+            place = await AgentSessionService(db).place(
                 topic_id, session.agent_handle, harness=session.harness
             )
-            if place is not None and (
-                place.resource_id != str(resource)
-                or (place.lease or {}).get("device_id") != executor_id
-            ):
-                place = None
-            center = place.machine if place else settings.agent_session_device_id
-            if not center or not self._hub.is_online(center):
-                raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
-            values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
-            token = bind_resource_token(token, str(resource))
-            if place is None and launch.resume_session_id:
-                await launch.execution.transfer_history(
-                    self._hub,
-                    executor_id,
-                    center,
-                    project_id,
-                    resource,
-                    launch.resume_session_id,
-                )
-            if room.is_private:
-                target = private_chat.execution_target(
-                    project_id, topic_id, resource, device_id=center
-                )
-                values.update(CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal")
-                if owner:
-                    values["CHEESE_OWNER"] = owner
-            else:
-                if center == executor_id:
-                    raise ScreenSetupError("项目执行机器与中心会话机器需要分别配置")
-                api = await self.executor._device_api_base(executor_id)
-                mark("executor_route")
-                execute_env = {
-                    **values,
-                    "CHEESE_API": api,
-                    "CHEESE_TOKEN": token,
-                    "CHEESE_PROJECT": str(project_id),
-                    "CHEESE_TOPIC": str(topic_id),
-                    "CHEESE_AUTHOR": agent_handle,
-                    "CHEESE_GIT_REMOTE": f"{api}/projects/{project_id}/git",
-                    "CHEESE_GIT_AUTHOR_NAME": agent_handle,
-                    "CHEESE_GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
-                    "GIT_AUTHOR_NAME": agent_handle,
-                    "GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
-                    "CHEESE_PREVIEW_URL": _preview_ws_url(api),
-                    "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
-                }
-                info = None
-                if place is not None and place.lease:
-                    try:
-                        running = await execution.call(
-                            place.lease, "ping", {}, hub=self._hub
-                        )
-                    except httpx.HTTPStatusError as exc:
-                        if exc.response.status_code != 500:
-                            raise
-                        running = {}
-                    except RuntimeError:
-                        # A stopped executor must take the installation path.
-                        running = {}
-                    if launch.execution.can_prepare(running):
-                        info = await execution.call(
-                            place.lease,
-                            "prepare",
-                            launch.execution.payload_for(
-                                project_id, resource, execute_env, running.get("files")
-                            ),
-                            hub=self._hub,
-                        )
-                if info is None:
-                    # Exclude scoped tool admission until the replacement is ready.
-                    await execution.lock_release(db, resource)
-                    result = await self._hub.exec(
-                        executor_id,
-                        ["python3", "-"],
-                        stdin=launch.execution.script(
-                            project_id, resource, execute_env
-                        ),
-                        timeout=660,
-                    )
-                    if result.get("exit") != 0 or result.get("truncated"):
-                        raise ScreenSetupError(
-                            result.get("stderr") or "执行环境启动失败"
-                        )
-                    info = json.loads(result["stdout"])
-                mark("executor_launch")
-                if info.get("upgrade_pending"):
-                    logger.info(
-                        "executor_upgrade_deferred topic=%s release=%s desired=%s",
-                        topic_id,
-                        info.get("release"),
-                        info.get("desired_release"),
-                    )
-                target = {
-                    "kind": "device",
-                    "resource_id": str(resource),
-                    "device_id": executor_id,
-                    "home": device_home_dir(project_id, resource),
-                    # Where the installation actually put the executor, asked of
-                    # the installation. Whoever reaches it later must not derive
-                    # this: that reader runs in the device connection owner,
-                    # which an app deploy leaves alone — see
-                    # `agent.execution.executor_state`.
-                    "state": info["state"],
-                    "release": info.get("release"),
-                    "upgrade_pending": info.get("upgrade_pending", False),
-                    "desired_release": info.get("desired_release"),
-                    "workspace": info["workspace"],
-                    "mcp_servers": info["mcp_servers"],
-                    "url": (
-                        f"{await self._device_api_base(center)}"
-                        f"/topics/{topic_id}/execution/{resource}"
-                    ),
-                }
-                has_environment = bool(values.get("CHEESE_ENVIRONMENT"))
-                # Bootstrap already checked the running executor and its environment
-                # in one process. Fresh or unfinished environments still wait here.
-                if not info.get("pid") or (
-                    has_environment and info.get("environment_status") != "ready"
-                ):
-                    await self._wait_executor(
-                        project_id, topic_id, resource, target, has_environment
-                    )
-                target["context_tree"] = (
-                    info["context_tree"]
-                    if "context_tree" in info
-                    else await self._context_tree(topic_id, target, started_at)
-                )
-                mark("executor_ready")
-            location = {
-                "device_id": center,
-                "resource_id": str(resource),
-                "channel": self.name,
+        if place is not None and (
+            place.resource_id != str(resource)
+            or (place.lease or {}).get("device_id") != executor_id
+        ):
+            place = None
+        center = place.machine if place else settings.agent_session_device_id
+        if not center or not self._hub.is_online(center):
+            raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
+        values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
+        token = bind_resource_token(token, str(resource))
+        if place is None and launch.resume_session_id:
+            await launch.execution.transfer_history(
+                self._hub,
+                executor_id,
+                center,
+                project_id,
+                resource,
+                launch.resume_session_id,
+            )
+        if is_private:
+            target = private_chat.execution_target(
+                project_id, topic_id, resource, device_id=center
+            )
+            values.update(CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal")
+            if owner:
+                values["CHEESE_OWNER"] = owner
+        else:
+            if center == executor_id:
+                raise ScreenSetupError("项目执行机器与中心会话机器需要分别配置")
+            api = await self.executor._device_api_base(executor_id)
+            mark("executor_route")
+            execute_env = {
+                **values,
+                "CHEESE_API": api,
+                "CHEESE_TOKEN": token,
+                "CHEESE_PROJECT": str(project_id),
+                "CHEESE_TOPIC": str(topic_id),
+                "CHEESE_AUTHOR": agent_handle,
+                "CHEESE_GIT_REMOTE": f"{api}/projects/{project_id}/git",
+                "CHEESE_GIT_AUTHOR_NAME": agent_handle,
+                "CHEESE_GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
+                "GIT_AUTHOR_NAME": agent_handle,
+                "GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
+                "CHEESE_PREVIEW_URL": _preview_ws_url(api),
+                "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
             }
-            if runtime_factory is not None:
-                location["runtime"] = runtime_factory(resource)
-            await sessions.remember_place(
+            info = None
+            if place is not None and place.lease:
+                try:
+                    running = await execution.call(
+                        place.lease, "ping", {}, hub=self._hub
+                    )
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 500:
+                        raise
+                    running = {}
+                except RuntimeError:
+                    # A stopped executor must take the installation path.
+                    running = {}
+                if launch.execution.can_prepare(running):
+                    info = await execution.call(
+                        place.lease,
+                        "prepare",
+                        launch.execution.payload_for(
+                            project_id, resource, execute_env, running.get("files")
+                        ),
+                        hub=self._hub,
+                    )
+            if info is None:
+                result = await self._hub.exec(
+                    executor_id,
+                    ["python3", "-"],
+                    stdin=launch.execution.script(project_id, resource, execute_env),
+                    timeout=660,
+                )
+                if result.get("exit") != 0 or result.get("truncated"):
+                    raise ScreenSetupError(result.get("stderr") or "执行环境启动失败")
+                info = json.loads(result["stdout"])
+            mark("executor_launch")
+            if info.get("upgrade_pending"):
+                logger.info(
+                    "executor_upgrade_deferred topic=%s release=%s desired=%s",
+                    topic_id,
+                    info.get("release"),
+                    info.get("desired_release"),
+                )
+            target = {
+                "kind": "device",
+                "resource_id": str(resource),
+                "device_id": executor_id,
+                "home": device_home_dir(project_id, resource),
+                # Where the installation actually put the executor, asked of
+                # the installation. Whoever reaches it later must not derive
+                # this: that reader runs in the device connection owner,
+                # which an app deploy leaves alone — see
+                # `agent.execution.executor_state`.
+                "state": info["state"],
+                "release": info.get("release"),
+                "upgrade_pending": info.get("upgrade_pending", False),
+                "desired_release": info.get("desired_release"),
+                "workspace": info["workspace"],
+                "mcp_servers": info["mcp_servers"],
+                "url": (
+                    f"{await self._device_api_base(center)}"
+                    f"/topics/{topic_id}/execution/{resource}"
+                ),
+            }
+            has_environment = bool(values.get("CHEESE_ENVIRONMENT"))
+            # Bootstrap already checked the running executor and its environment
+            # in one process. Fresh or unfinished environments still wait here.
+            if not info.get("pid") or (
+                has_environment and info.get("environment_status") != "ready"
+            ):
+                await self._wait_executor(
+                    project_id, topic_id, resource, target, has_environment
+                )
+            target["context_tree"] = (
+                info["context_tree"]
+                if "context_tree" in info
+                else await self._context_tree(topic_id, target, started_at)
+            )
+            mark("executor_ready")
+        location = {
+            "device_id": center,
+            "resource_id": str(resource),
+            "channel": self.name,
+        }
+        if runtime_factory is not None:
+            location["runtime"] = runtime_factory(resource)
+        # The room is still on the generation this was prepared for, and the
+        # lease naming it is published, in one transaction. Checked after the
+        # publish instead, it left a published lease for a generation that had
+        # just been rotated away; checked with it, either the un-archive lands
+        # first and this raises before a harness starts, or this lands first and
+        # the un-archive's own `forget_room` deletes the lease again — after
+        # which the executor route admits nothing for it (`execution.py` reads
+        # that same row) and the screen is retired like any other orphan.
+        #
+        # The central bootstrap calls the scoped executor endpoint before it can
+        # start Claude, so ownership is published before the screen is opened.
+        async with factory() as db:
+            room = await TopicService(db).lock_for_execution(topic_id)
+            if (room.resource_id or room.id) != resource:
+                raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")
+            await AgentSessionService(db).remember_place(
                 topic_id=topic_id,
                 agent_handle=session.agent_handle,
                 harness=session.harness,
                 work_lease=target,
                 runtime_location=location,
             )
-            # The central bootstrap calls the scoped executor endpoint before it
-            # can start Claude. Publish ownership before opening the screen.
             await db.commit()
-            room = await TopicService(db).lock_for_execution(topic_id)
-            await db.refresh(room)
-            mark("placement_committed")
-            if (room.resource_id or room.id) != resource:
-                raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")
-            values.pop("CHEESE_ENVIRONMENT", None)
-            values["CHEESE_EXECUTION_TARGET"] = json.dumps(target)
-            # Retain the room lock until the selected harness finishes starting.
-            yield PreparedSession(
-                device_id=center,
-                agent_user_id=agent_user_id,
-                agent_handle=agent_handle,
-                project_id=project_id,
-                topic_id=topic_id,
-                token=token,
-                env=values,
-            )
-            mark("screen_ready")
+        mark("placement_committed")
+        values.pop("CHEESE_ENVIRONMENT", None)
+        values["CHEESE_EXECUTION_TARGET"] = json.dumps(target)
+        yield PreparedSession(
+            device_id=center,
+            agent_user_id=agent_user_id,
+            agent_handle=agent_handle,
+            project_id=project_id,
+            topic_id=topic_id,
+            token=token,
+            env=values,
+        )
+        mark("screen_ready")
         self._subscription_devices[topic_id] = center
 
     async def _wait_executor(
