@@ -31,7 +31,7 @@ concurrency:
 jobs:
   pinned:
     # The build the rooms actually run. Breaking this breaks every room.
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
     # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for
     # the tests alone is spent before they run, and a job killed by its own
@@ -65,7 +65,7 @@ jobs:
     # not run on pull requests: a build Anthropic published this morning is not
     # a reason to hold up somebody's merge.
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
     # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for
     # the tests alone is spent before they run, and a job killed by its own
