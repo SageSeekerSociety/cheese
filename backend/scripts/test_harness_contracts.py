@@ -12,7 +12,7 @@ from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
 
 # Every case in the list below is expected to run: this job installs the pinned
 # claude and codex binaries itself, so nothing here has an environment excuse.
-EXPECTED_CASES = 40
+EXPECTED_CASES = 39
 
 
 def main() -> int:
@@ -33,6 +33,14 @@ def main() -> int:
             for target in node.targets
         )
     )
+    # The two harnesses whose pin IS an npm package. pi is not one: it is a
+    # per-platform tarball off the vendor's GitHub releases, served to machines
+    # by the platform itself (app/domain/machine/pi_dist.py), and its npm
+    # install path was retired. So pi's share of the harness contract is held
+    # where it needs no binary at all — the fixture set under
+    # tests/fixtures/harness-contract/, read here by
+    # tests/contract/test_harness_contract.py and on pi's own side by the
+    # `extension` job in test.yml.
     packages = [f"@anthropic-ai/claude-code@{claude_version}", "@openai/codex@0.154.0"]
     (run / "inputs.json").write_text(json.dumps({"packages": packages}, indent=2))
     print(f"Contract evidence: {run}", flush=True)
@@ -73,7 +81,6 @@ def main() -> int:
         str(run / "results.xml"),
         "--basetemp",
         str(run / "pytest"),
-        "tests/unit/test_harness_prompt_contract.py",
         "tests/unit/test_codex_app_server.py",
         "tests/unit/test_codex_session.py",
         "tests/unit/test_codex_runner.py",

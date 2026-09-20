@@ -1,0 +1,46 @@
+{
+  "verb": "backlog",
+  "why": "结论 43: a background thread is part of the contract, and what makes it usable is that its events can be attributed to it. A subagent that starts and dies having called nothing is invisible unless the start is an event of its own — which is exactly the case a reader needs told.",
+  "readers": ["python"],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "hook_event_name": "SubagentStart",
+          "agent_id": "sub-1",
+          "agent_type": "general-purpose",
+          "session_id": "session-1"
+        },
+        {
+          "hook_event_name": "SubagentStop",
+          "agent_id": "sub-1",
+          "agent_type": "general-purpose",
+          "last_assistant_message": "查到了"
+        }
+      ]
+    },
+    "codex": {
+      "records": [
+        {
+          "method": "thread/started",
+          "params": {
+            "thread": {
+              "id": "sub-1",
+              "parentThreadId": "session-1",
+              "agentRole": "general-purpose"
+            }
+          }
+        },
+        {
+          "method": "turn/completed",
+          "params": { "threadId": "sub-1", "turn": { "status": "completed" } }
+        }
+      ]
+    },
+    "pi": { "difference": "no-subagent-threads" }
+  },
+  "events": [
+    { "kind": "subagent_start", "agent_id": "sub-1", "agent_type": "general-purpose" },
+    { "kind": "subagent_stop", "agent_id": "sub-1" }
+  ]
+}
