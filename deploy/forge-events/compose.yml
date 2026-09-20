@@ -1,5 +1,8 @@
 # Public ingress shared by deployments that connect outward over WebSocket.
 # The env file contains FORGE_EVENT_RELAY_KEYS as a JSON deployment/secret map.
+# A shared GitHub App posts to /forge/events/github-app, signed with
+# FORGE_EVENT_GITHUB_SECRET. FORGE_EVENT_GITHUB_INSTALLATIONS maps installation
+# IDs to authorized deployments, for example {"123":["dev","production"]}.
 services:
   forge-events:
     image: ${FORGE_EVENTS_IMAGE:?pin the backend image containing the relay}

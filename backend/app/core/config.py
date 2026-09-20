@@ -695,6 +695,9 @@ class Settings(BaseSettings):
     forge_event_secret: str = ""
     # Only the public relay loads the deployment -> shared secret mapping.
     forge_event_relay_keys: dict[str, str] = {}
+    forge_event_github_secret: str = ""
+    # GitHub App installation ID -> deployments authorized for that installation.
+    forge_event_github_installations: dict[str, list[str]] = {}
     forge_webhook_url: str = ""
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---

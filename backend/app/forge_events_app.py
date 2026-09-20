@@ -1,7 +1,7 @@
 """Public forge webhook ingress with deployment-initiated WebSocket delivery.
 
-Run one worker per relay. A disconnected or busy deployment gets HTTP 503 so
-the forge can retry; deployments also reconcile periodically after lost events.
+Run one worker per relay. A disconnected or busy deployment gets HTTP 503.
+Deployments reconcile periodically after lost events, including failed deliveries.
 Only repository invalidations cross the socket, never webhook bodies or tokens.
 """
 
@@ -59,6 +59,82 @@ async def connect(socket: WebSocket, deployment: str):
             connections.pop(deployment)
 
 
+async def signed_payload(request: Request, secret: str, *, kind: str) -> dict:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_BODY:
+            raise HTTPException(413)
+    if kind == "forgejo":
+        signature = request.headers.get("x-forgejo-signature", "")
+    else:
+        signature = request.headers.get("x-hub-signature-256", "")
+        if not signature.startswith("sha256="):
+            raise HTTPException(401)
+        signature = signature.removeprefix("sha256=")
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(401)
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise HTTPException(400) from None
+    if not isinstance(payload, dict):
+        raise HTTPException(400)
+    return payload
+
+
+def repository_name(payload: dict) -> str | None:
+    repository = payload.get("repository") or {}
+    if not isinstance(repository, dict):
+        raise HTTPException(400)
+    repo = repository.get("full_name")
+    if not repo:
+        return None
+    if not isinstance(repo, str) or len(repo) > 512 or repo.count("/") != 1:
+        raise HTTPException(400)
+    return repo
+
+
+async def deliver(deployment: str, event: dict) -> bool:
+    connection = connections.get(deployment)
+    if connection is None:
+        return False
+    try:
+        async with asyncio.timeout(5), connection.lock:
+            await connection.socket.send_json(event)
+    except (OSError, RuntimeError, TimeoutError):
+        return False
+    return True
+
+
+@app.post("/forge/events/github-app", status_code=202)
+async def receive_github_app(request: Request):
+    secret = settings.forge_event_github_secret
+    if not secret:
+        raise HTTPException(404)
+    payload = await signed_payload(request, secret, kind="github_app")
+    repo = repository_name(payload)
+    if repo is None:
+        return {"accepted": True}
+    installation = payload.get("installation")
+    if not isinstance(installation, dict) or type(installation.get("id")) is not int:
+        raise HTTPException(400)
+    # The relay operator grants routes; a deployment cannot claim an installation.
+    deployments = settings.forge_event_github_installations.get(
+        str(installation["id"]), []
+    )
+    results = await asyncio.gather(
+        *(
+            deliver(name, {"kind": "github_app", "repo": repo})
+            for name in set(deployments)
+        )
+    )
+    if not all(results):
+        raise HTTPException(503, "A deployment could not receive the event")
+    return {"accepted": True}
+
+
 @app.post("/forge/events/{deployment}", status_code=202)
 @app.post("/forge/events/{deployment}/{project_id}", status_code=202)
 async def receive(
@@ -69,42 +145,14 @@ async def receive(
         raise HTTPException(404)
     if project_id is not None:
         secret = project_secret(secret, project_id)
-    body = bytearray()
-    async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > MAX_BODY:
-            raise HTTPException(413)
-    if "x-forgejo-signature" in request.headers:
-        kind = "forgejo"
-        signature = request.headers["x-forgejo-signature"]
-    else:
-        kind = "github_app"
-        signature = request.headers.get("x-hub-signature-256", "")
-        if not signature.startswith("sha256="):
-            raise HTTPException(401)
-        signature = signature.removeprefix("sha256=")
-    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        raise HTTPException(401)
-    try:
-        payload = json.loads(body)
-        repository = payload.get("repository") or {}
-        repo = repository.get("full_name")
-    except (ValueError, AttributeError):
-        raise HTTPException(400) from None
-    if not repo:
-        return {"accepted": True}  # App pings and installation events have no repo.
-    if not isinstance(repo, str) or len(repo) > 512 or repo.count("/") != 1:
-        raise HTTPException(400)
-    connection = connections.get(deployment)
-    if connection is None:
-        raise HTTPException(503, "Deployment is disconnected")
-    try:
-        async with asyncio.timeout(5), connection.lock:
-            event = {"kind": kind, "repo": repo}
-            if project_id is not None:
-                event["project_id"] = str(project_id)
-            await connection.socket.send_json(event)
-    except (OSError, RuntimeError, TimeoutError):
-        raise HTTPException(503, "Deployment could not receive the event") from None
+    kind = "forgejo" if "x-forgejo-signature" in request.headers else "github_app"
+    payload = await signed_payload(request, secret, kind=kind)
+    repo = repository_name(payload)
+    if repo is None:
+        return {"accepted": True}
+    event = {"kind": kind, "repo": repo}
+    if project_id is not None:
+        event["project_id"] = str(project_id)
+    if not await deliver(deployment, event):
+        raise HTTPException(503, "Deployment could not receive the event")
     return {"accepted": True}

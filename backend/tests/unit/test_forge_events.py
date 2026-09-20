@@ -74,8 +74,13 @@ def client(monkeypatch):
     assert not relay.connections
 
 
-def signed(kind="github_app", secret="first-secret", repo="owner/project"):
-    body = json.dumps({"repository": {"full_name": repo}, "private": "discard me"})
+def signed(
+    kind="github_app", secret="first-secret", repo="owner/project", installation=None
+):
+    payload = {"repository": {"full_name": repo}, "private": "discard me"}
+    if installation is not None:
+        payload["installation"] = {"id": installation}
+    body = json.dumps(payload)
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
     header, value = (
         ("X-Forgejo-Signature", digest)
@@ -261,3 +266,106 @@ def test_project_hook_cannot_subscribe_or_sign_for_another_project(client):
             ).status_code
             == 401
         )
+
+
+def test_shared_app_routes_installations_without_cross_deployment_delivery(
+    client, monkeypatch
+):
+    monkeypatch.setattr(relay.settings, "forge_event_github_secret", "app-secret")
+    monkeypatch.setattr(
+        relay.settings,
+        "forge_event_github_installations",
+        {"11": ["first"], "22": ["second"]},
+    )
+    with (
+        client.websocket_connect(
+            "/forge/events/first/connect",
+            headers={"Authorization": "Bearer first-secret"},
+        ) as first,
+        client.websocket_connect(
+            "/forge/events/second/connect",
+            headers={"Authorization": "Bearer second-secret"},
+        ) as second,
+    ):
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=11),
+            ).status_code
+            == 202
+        )
+        assert first.receive_json() == {"kind": "github_app", "repo": "owner/project"}
+
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=22, repo="other/project"),
+            ).status_code
+            == 202
+        )
+        # An incorrectly broadcast first event would be ahead of this one.
+        assert second.receive_json() == {"kind": "github_app", "repo": "other/project"}
+        assert (
+            client.post(
+                "/forge/events/first", **signed(repo="owner/marker")
+            ).status_code
+            == 202
+        )
+        assert first.receive_json()["repo"] == "owner/marker"
+
+
+def test_shared_app_delivers_to_online_subscribers_when_another_is_offline(
+    client, monkeypatch
+):
+    monkeypatch.setattr(relay.settings, "forge_event_github_secret", "app-secret")
+    monkeypatch.setattr(
+        relay.settings, "forge_event_github_installations", {"11": ["first", "second"]}
+    )
+    with client.websocket_connect(
+        "/forge/events/first/connect", headers={"Authorization": "Bearer first-secret"}
+    ) as first:
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=11),
+            ).status_code
+            == 503
+        )
+        assert first.receive_json() == {"kind": "github_app", "repo": "owner/project"}
+        with client.websocket_connect(
+            "/forge/events/second/connect",
+            headers={"Authorization": "Bearer second-secret"},
+        ) as second:
+            assert (
+                client.post(
+                    "/forge/events/github-app",
+                    **signed(
+                        secret="app-secret", installation=11, repo="owner/reconnected"
+                    ),
+                ).status_code
+                == 202
+            )
+            expected = {"kind": "github_app", "repo": "owner/reconnected"}
+            assert first.receive_json() == expected
+            assert second.receive_json() == expected
+
+
+def test_deployment_key_cannot_forge_shared_app_events(client, monkeypatch):
+    monkeypatch.setattr(relay.settings, "forge_event_github_secret", "app-secret")
+    assert (
+        client.post("/forge/events/github-app", **signed(installation=11)).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/forge/events/github-app", **signed(secret="app-secret")
+        ).status_code
+        == 400
+    )
+    # Installations not assigned to Cheese deployments do not receive events.
+    assert (
+        client.post(
+            "/forge/events/github-app", **signed(secret="app-secret", installation=99)
+        ).status_code
+        == 202
+    )
