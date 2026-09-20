@@ -305,3 +305,36 @@ def test_a_deployment_with_no_gateway_admin_api_still_runs_its_own_model(monkeyp
     assert asyncio.run(gateway_catalog.refresh(None)) is False
     assert {item["id"] for item in model_choices({})} == {"the-configured-one"}
     assert initial_model({}) == "the-configured-one"
+
+
+@pytest.mark.anyio
+async def test_a_gateway_that_is_not_up_yet_is_asked_again_soon(monkeypatch):
+    """The gateway is a stack of its own, started and restarted independently of
+    the app, so the app can easily boot first. Waiting a full refresh interval
+    to ask again would leave the deployment serving fewer models than it has,
+    for minutes, after an ordinary restart."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "agent_model", "the-configured-one")
+    monkeypatch.setattr(gateway_catalog, "FIRST_ANSWER_RETRY_SECONDS", 0.01)
+
+    answers = [
+        httpx.Response(502),
+        httpx.Response(200, json={"data": [_routes("arrived-late")]}),
+    ]
+    late = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=httpx.MockTransport(lambda request: answers.pop(0)),
+    )
+
+    task = asyncio.get_running_loop().create_task(gateway_catalog.keep_fresh(late))
+    try:
+        # Until it answers, the deployment runs on the model it is configured for.
+        assert {item["id"] for item in model_choices({})} == {"the-configured-one"}
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if "arrived-late" in {item["id"] for item in model_choices({})}:
+                break
+        assert "arrived-late" in {item["id"] for item in model_choices({})}
+    finally:
+        task.cancel()

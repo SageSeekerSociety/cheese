@@ -31,6 +31,14 @@ logger = logging.getLogger(__name__)
 # faster buys nothing and costs a request per interval forever.
 REFRESH_INTERVAL_SECONDS = 300.0
 
+# How long to wait before trying again while the catalogue has NEVER been
+# answered. The gateway is a stack of its own, started and restarted
+# independently of the app, so the app can easily boot first — and a deployment
+# serving its floor is serving fewer models than it has. That is worth a handful
+# of quick retries; being a few minutes late to notice a model ADDED to a
+# gateway we are already talking to is not.
+FIRST_ANSWER_RETRY_SECONDS = 5.0
+
 
 @dataclass
 class _State:
@@ -120,4 +128,7 @@ async def keep_fresh(gateway: LlmGateway | None) -> None:
             await refresh(gateway)
         except Exception:  # noqa: BLE001 — a refresh must never kill its own loop
             logger.warning("gateway catalogue refresh failed", exc_info=True)
-        await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
+        answered = _state.models is not None
+        await asyncio.sleep(
+            REFRESH_INTERVAL_SECONDS if answered else FIRST_ANSWER_RETRY_SECONDS
+        )
