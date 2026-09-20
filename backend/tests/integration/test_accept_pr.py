@@ -442,8 +442,6 @@ def app_world(client, monkeypatch):
     fake = FakeGitHubPrClient()
     recorded: dict = {
         "fake": fake,
-        "pushes": [],
-        "repushes": [],
         "local_merges": [],
         "opened": [],
         "patched": [],
@@ -618,25 +616,6 @@ def app_world(client, monkeypatch):
     monkeypatch.setattr(
         ws, "sync_upstream", lambda pid, token=None: {"synced": True, "commits": 1}
     )
-
-    def _push(pid, tid, token):
-        branch = ws.branch_for_task(tid)
-        recorded["pushes"].append({"topic": tid, "token": token, "branch": branch})
-        return branch
-
-    monkeypatch.setattr(ws, "push_topic_branch", _push)
-
-    def _push_branch(pid, branch, token):
-        recorded["pushes"].append({"branch": branch, "token": token})
-        return branch
-
-    monkeypatch.setattr(ws, "push_branch", _push_branch)
-
-    def _repush(pid, tid, *, owner, repo, remote_branch, token):
-        recorded["repushes"].append({"remote_branch": remote_branch, "token": token})
-        return {"head_sha": f"sha-{remote_branch}-2", "remote_branch": remote_branch}
-
-    monkeypatch.setattr(ws, "push_topic_branch_for_github_pr", _repush)
 
     def _local_merge(pid, tid, **_kwargs):
         recorded["local_merges"].append(tid)
@@ -2222,8 +2201,6 @@ def test_push_fix_observes_machine_push_and_disarms_old_approval(client, app_wor
     assert second_head != first_head
     assert _cards(client, tid)[0]["pr_head_sha"] == second_head
     assert _cards(client, tid)[0]["auto_merge"]["armed_by"] is None
-    assert app_world["pushes"] == []
-    assert app_world["repushes"] == []
     assert fake.merge_calls == []
 
     again = client.post(
@@ -2243,8 +2220,6 @@ def test_push_fix_reports_unreachable_forge_without_pushing(client, app_world):
 
     assert pushed["pushed"] is False
     assert "HTTP 502" in pushed["reason"]
-    assert app_world["pushes"] == []
-    assert app_world["repushes"] == []
     card = _cards(client, tid)[0]
     assert "读不到这个 PR 的状态" in card["note"]
     assert card["note_level"] == "error"

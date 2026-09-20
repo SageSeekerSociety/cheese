@@ -389,37 +389,3 @@ class TestReapOrphanedMergeWorktrees:
         ws._reap_orphaned_merge_worktrees(repo, pid)
 
         assert fresh.exists()
-
-
-class TestSandboxAvailability:
-    """`sandbox_available` gates every caller that would otherwise fail inside
-    `docker run`, so it has to mean "usable", not "installed"."""
-
-    def test_missing_binary_is_unavailable(self, monkeypatch):
-        monkeypatch.setattr(ws.shutil, "which", lambda _name: None)
-        ws._sandbox_probe = None
-        assert ws.sandbox_available() is False
-
-    def test_installed_but_dead_daemon_is_unavailable(self, monkeypatch):
-        """The case that actually happens, and the one the old binary-only check
-        got wrong: docker on PATH, daemon not started."""
-        monkeypatch.setattr(ws.shutil, "which", lambda _name: "/usr/bin/docker")
-        monkeypatch.setattr(
-            ws.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1)
-        )
-        ws._sandbox_probe = None
-        assert ws.sandbox_available() is False
-
-    def test_live_daemon_is_available_and_probed_once(self, monkeypatch):
-        monkeypatch.setattr(ws.shutil, "which", lambda _name: "/usr/bin/docker")
-        calls = []
-
-        def _run(*a, **k):
-            calls.append(a)
-            return subprocess.CompletedProcess(a, 0)
-
-        monkeypatch.setattr(ws.subprocess, "run", _run)
-        ws._sandbox_probe = None
-        assert ws.sandbox_available() is True
-        assert ws.sandbox_available() is True
-        assert len(calls) == 1, "the probe is cached, not paid per call"

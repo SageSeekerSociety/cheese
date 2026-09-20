@@ -9,6 +9,7 @@ from app.core.errors import GatewayUnavailableError
 from app.domain.project import forge
 from app.domain.project.models import Project, ProjectForge
 from app.domain.project.repositories import ProjectGitInstallationRepository
+from scripts import migrate_forge
 from tests.integration.conftest import session_auth_headers
 
 
@@ -68,8 +69,6 @@ def test_github_choice_can_connect_without_cross_forge_migration(client):
 def test_migration_leaves_pending_github_choice_unprovisioned(
     client, monkeypatch, tmp_path
 ):
-    from scripts import migrate_forge
-
     response = client.post(
         "/projects", json={"name": "Awaiting GitHub", "forge_kind": "github_app"}
     )

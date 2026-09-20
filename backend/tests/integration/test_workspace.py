@@ -174,26 +174,6 @@ def test_read_missing_file_raises(client):
         ws.read_file(pid, "rec/cf.py")  # base tree → not found (isolation)
 
 
-def test_exec_in_sandbox_runs_code_and_blocks_network(client):
-    if not ws.sandbox_available():
-        pytest.skip("docker not available")
-    pid = _mkproject(client)
-    tid = uuid.uuid4()
-    _native_edit(pid, tid, "m.py", "print('hi from sandbox')\n")
-
-    res = ws.exec_in_sandbox(pid, "python m.py", topic_id=tid)
-    assert res["exit_code"] == 0
-    assert "hi from sandbox" in res["stdout"]
-
-    # --network none → outbound network is blocked (isolation).
-    net = ws.exec_in_sandbox(
-        pid,
-        "python -c \"import urllib.request as u; u.urlopen('http://example.com',timeout=3)\"",
-        topic_id=tid,
-    )
-    assert net["exit_code"] != 0
-
-
 def test_git_diff_rejects_option_injection(client):
     pid = _mkproject(client)
     r = client.get(
