@@ -490,7 +490,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     monkeypatch.setattr(service, "require_use_authority", AsyncMock())
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     for topic_id in list(topics)[:2]:
         await service.ensure_topic_machine(topic_id, actor=actor)
