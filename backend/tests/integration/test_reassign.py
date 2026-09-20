@@ -13,6 +13,7 @@ def _topic_and_card(client) -> str:
         f"/topics/{t['id']}/tasks/{delivery_task_id(client, t['id'])}/accept-card",
         headers=delivery_headers(client, t["id"]),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "user-1",
         },

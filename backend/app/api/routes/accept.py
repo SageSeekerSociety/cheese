@@ -99,6 +99,7 @@ async def create_accept_card(
         routing_reason=body.routing_reason,
         change_subject=body.change_subject,
         change_body=body.change_body,
+        artifact=body.artifact,
         task_id=task_id,
     )
     # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the

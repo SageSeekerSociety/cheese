@@ -38,6 +38,7 @@ def _file_card(client, topic_id: str, reviewer: str = "alice") -> dict:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
@@ -94,6 +95,7 @@ def test_second_card_still_blocked_while_first_is_pending(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
             "routing_reason": "x",

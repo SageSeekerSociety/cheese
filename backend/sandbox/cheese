@@ -18,7 +18,8 @@
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong
-  cheese accept-request mentor-1 "验收证据" --subject "feat: add report"
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add report" \
+      --artifact "结题报告"                    # 本次交付更新清单上的哪一项
   cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
@@ -1303,6 +1304,11 @@ def build_parser() -> argparse.ArgumentParser:
         "reason", nargs="?", default="", help="验收证据和需要对方检查的内容"
     )
     pa.add_argument("--subject", required=True, help="英文 Conventional Commit 标题")
+    pa.add_argument(
+        "--artifact",
+        required=True,
+        help="本次更新的是哪一项产物，用它的真名；清单上没有的名字会新建一项",
+    )
     pa.add_argument("--body", help="改动原因和验证说明")
     pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
     pdesc = sub.add_parser(
@@ -1784,6 +1790,7 @@ def main() -> None:
             "routing_reason": a.reason,
             "change_subject": a.subject,
             "change_body": a.body,
+            "artifact": a.artifact,
         }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
@@ -1793,7 +1800,11 @@ def main() -> None:
         task = _task_id(a.task)
         _sync_task(task)
         r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card", payload)["data"]
-        print(f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}。")
+        named = (r.get("artifact") or {}).get("name") or a.artifact
+        print(
+            f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}"
+            f"，本次更新《{named}》。"
+        )
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。

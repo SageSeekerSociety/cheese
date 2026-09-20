@@ -157,6 +157,7 @@ def test_accept_leaves_the_upstream_untouched(client, tmp_path):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
             "routing_reason": "",
@@ -210,6 +211,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
             "routing_reason": "",
@@ -301,6 +303,7 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
             "routing_reason": "",

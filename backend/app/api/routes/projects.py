@@ -70,6 +70,7 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
+from app.domain.project import artifacts
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -519,6 +520,29 @@ async def list_library(
     await _project_reader(db, resolver, project_id, topic)
     files = ws.list_library_files(project_id)
     return ok(page(files, len(files)))
+
+
+@router.get("/{project_id}/artifacts")
+async def list_artifacts(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
+) -> dict:
+    """产物清单：这个项目交出去的东西，一项一行 (#1085 结论二、三)。
+
+    清单只读，而且没有配套的新建入口：它由交付长出来 —— 递卡时点名的名字不在清单
+    上就当场多一项。所以这里没有 POST，不是还没做。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    rows = await artifacts.list_for_project(db, project_id)
+    items = [
+        {
+            "id": str(a.id),
+            "name": a.name,
+            "version": a.version,
+            "delivered_at": a.delivered_at.isoformat() if a.delivered_at else None,
+        }
+        for a in rows
+    ]
+    return ok(page(items, len(items)))
 
 
 @router.delete("/{project_id}/library")

@@ -211,6 +211,7 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": handle,
             "routing_reason": "自己验",

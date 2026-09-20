@@ -41,6 +41,7 @@ def _post_card(client, place_id: str, subject: str):
         f"/topics/{place_id}/tasks/{delivery_task_id(client, place_id)}/accept-card",
         headers=delivery_headers(client, place_id),
         json={
+            "artifact": "报告",
             "change_subject": subject,
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
