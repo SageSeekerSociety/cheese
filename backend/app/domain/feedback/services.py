@@ -53,7 +53,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import FeedbackCreate, FeedbackDetail, FeedbackPatch
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import chosen_avatars_by_handle
 
 #: The admin surface's tiers, in the order the admin tab bar draws them.
 ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
@@ -89,10 +89,6 @@ class FeedbackService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = repo.FeedbackRepository(session)
-        # Avatars are not a feedback fact: they hang off `UserProfile`, which is
-        # why resolving one is a second repository rather than a column read.
-        self._users = UserRepository(session)
-        self._profiles = UserProfileRepository(session)
 
     # --- 权限 ---------------------------------------------------------------
 
@@ -222,33 +218,20 @@ class FeedbackService:
         return await self._repo.latest_activity_of(ids)
 
     async def chosen_avatars(self, handles: Iterable[str]) -> dict[str, int]:
-        """handle -> the avatar that person actually PICKED, for those who did.
+        """Faces for one screenful of feedback — report, comments and notes.
 
-        Two queries for a whole page (handles -> users, users -> profiles) and
-        never one per row: a list, its comments and its notes are all drawn at
-        once, so per-row lookups would be twenty round-trips for twenty faces.
+        A thin pass-through: the lookup itself is the user domain's, because
+        "which avatar did this person pick" is a fact about `UserProfile` and
+        the rule for reading it (a person who never chose is **absent**, not
+        mapped to the global default) belongs to the domain that owns the
+        column. See `chosen_avatars_by_handle`.
 
-        Someone who never picked one is **absent from the mapping**, not mapped
-        to the global default. Registration writes the default for everybody, so
-        a lookup that fell back to it would hand back the same face for every
-        person who never chose — which is both wrong about them and worse at
-        telling twenty people apart than the coloured initial the client draws
-        instead. The criterion lives in
-        `UserProfileRepository.chosen_avatar_ids` (it recognises the default row
-        by `avatar_type`, since which id holds it is seed data).
+        It stays a method here so the five call sites — the public centre, the
+        thread, a single new comment and the admin queue — ask for "the faces on
+        this page" once, instead of each one importing another domain's service
+        and re-deciding which handles are worth resolving.
         """
-        wanted = {h for h in handles if h}
-        if not wanted:
-            return {}
-        users = await self._users.get_by_handles(list(wanted))
-        by_user_id = await self._profiles.chosen_avatar_ids(
-            [u.id for u in users.values()]
-        )
-        return {
-            handle: by_user_id[user.id]
-            for handle, user in users.items()
-            if user.id in by_user_id
-        }
+        return await chosen_avatars_by_handle(self._session, handles)
 
     async def thread(self, feedback_id: uuid.UUID) -> list[FeedbackComment]:
         return await self._repo.list_comments(feedback_id)
