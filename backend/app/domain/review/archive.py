@@ -123,18 +123,17 @@ async def close_cards_for_archived_topic(
     # 关掉的房间没人再打开它的时间线，而这条 notice 的 `who` 是人，它要的就是有人
     # 去处理那个未合并的 PR。所以它落项目总览，不落刚关掉的那个房间。
     for card in stranded:
-        landed = (
-            landing(
+        if card.task_id is not None:
+            landed = landing(
                 EventAbout.task,
                 project_id=project_id,
                 room_id=topic_id,
                 task_id=card.task_id,
             )
-            if card.task_id is not None
-            else landing(
+        else:
+            landed = landing(
                 EventAbout.project, project_id=project_id, room_id=overview_room_id
             )
-        )
         await BlockRepository(session).add(
             project_id=landed.project_id,
             topic_id=landed.topic_id,

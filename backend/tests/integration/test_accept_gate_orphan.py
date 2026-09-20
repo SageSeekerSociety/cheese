@@ -116,6 +116,11 @@ def _deadline_passed(monkeypatch) -> None:
     monkeypatch.setattr(gate_sweep, "GATE_STALE_GRACE_S", 0)
 
 
+#: 判死那条事件在卡上的那一行。房间里另有一行「检查结果丢了……」——那是叫醒芝士
+#: 去重递的召唤，不是这条事件，所以断言落点必须认准这一句。
+_CONDEMNED = "检查没跑完，这张验收卡已判死"
+
+
 def _card_line_text(client, topic_id: str) -> str:
     """那张卡的线上说了什么 —— 一行 content 加上折叠起来的 meta.detail。
 
@@ -187,13 +192,14 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     while time.time() < deadline:
         wait_work_idle()
         text = _card_line_text(client, tid)
-        if "检查没跑完" in text:
+        if _CONDEMNED in text:
             break
         time.sleep(0.05)
-    assert "检查没跑完" in text
+    assert _CONDEMNED in text
     assert "重新递" in text
-    # 而且它不在房间主线上：验收人打开的是卡。
-    assert "检查没跑完" not in _room_line_text(client, tid)
+    # 判死是这张卡的事，落的就是这张卡（结论 14）——房间主线上没有它。房间里那一
+    # 行是另一回事：叫醒芝士去重递的召唤，收件人是房间里的芝士。
+    assert _CONDEMNED not in _room_line_text(client, tid)
 
 
 def test_sweep_is_idempotent(client, monkeypatch):
