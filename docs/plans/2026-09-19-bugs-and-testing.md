@@ -115,7 +115,8 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
    `project-cheese-device-offline-header-dropped.md` 是这条缝最完整的证据：#1111 的测试用
    `httpx.MockTransport` **自己造了一个带 `X-Device-Id` 的 409**，而真实 owner 发不出这个 header
    （`core/errors.py` 的 `http_exception_handler` 丢掉 `exc.headers`），于是测试全绿合入、线上一点没变。
-   这三个 MockTransport 用例今天还在 `backend/tests/unit/test_owner_rpc_unexpected_409.py:18-25`。
+   这条缝现在由 `backend/tests/contract/test_peer_states.py` 对着真 owner ASGI app 跑：
+   五种对端状态各一行，`X-Device-Id` 是真 owner 发出来的，不是替身造的。
 3. **Go ↔ Python 的线格式**（族 1）。`execution.call` / `execution.data` / `execution.result` 三帧
    由 `backend/tests/fixtures/wire/*.json` 一帧一文件冻住，两侧各读同一批：Python 在
    `tests/contract/test_wire_frames.py`，Go 在 `cli/internal/link/frames_test.go`。
@@ -192,9 +193,10 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
    它答得出而真实现答不出的，就是撒谎。用什么库无所谓——判据在替身的行为上，不在工具名上。
    执行器那条缝一度不是这样——`audit-toolcall.md` 数出来它上面有三个互不相干的手搓假货，
    现已收成 `tests/support/wire.py` 一个，由两侧共读的夹具约束；
-   而 `test_owner_rpc_unexpected_409.py` 那三条造了一个**带 `X-Device-Id` 的 409**，
+   对端状态那几条一度也是这样：它们用 `httpx.MockTransport` 造了一个**带 `X-Device-Id` 的 409**，
    真 owner 当时根本发不出这个 header（`core/errors.py` 丢掉 `exc.headers`）——
    替身撒了谎，没有东西拦它，于是测试全绿合入、线上一点没变。
+   现已收成 `tests/contract/test_peer_states.py` 一张表，header 由真 owner 发出。
 3. **缝的清单分两种来源，不要混。**
    缝 A（结论 29/30/43）、B（23/24/39/40/55/57）、E-1（13/14/15）、E-2（58）、F（21）、G（42/8/54）是 DECISIONS **已经定死的接口**，
    一个接口就是一条缝；接口之外的东西不许有跨模块的约定。
@@ -350,7 +352,7 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 
 | 今天的文件 | 它断言的事实 | 搬到哪 |
 |---|---|---|
-| `unit/test_owner_timeout_status.py`（#1118）、`test_owner_rpc_unexpected_409.py`（#1111）、`test_owner_device_answer.py`（#1231）、`test_error_response_headers.py`（#1114）、`test_recovery_waits_for_the_machine.py`（#1248） | 对端的五种状态各自还原成什么 | 缝 C-1 的「对端状态编码表」**一张表五行** |
+| 五个按事故命名的文件（#1118 / #1111 / #1231 / #1114 / #1248） | 对端的五种状态各自还原成什么 | **已做**：缝 C-1 的「对端状态编码表」，`backend/tests/contract/test_peer_states.py` 一张表五行，五个文件已删 |
 | `unit/test_recovery_burst_is_bounded.py`（#1250）、`test_device_carries_a_batch_onto_the_next_one.py` | 扇出有上限 | 规模替身（71 台设备）一条 |
 | `unit/test_device_snapshot_poller_survives.py`、`unit/test_event_drain_refusal.py`（#1101） | 后台循环不会静默死掉 | 后台循环基元的一条共用契约测试（第 N 次抛非预期异常 → 第 N+1 次仍跑 + 恰好一条带调用方名字的 ERROR + 被拒条目 10 秒内不超过 6 次请求） |
 | `unit/test_db_pool_fits_the_server.py`（#1103） | 三个池塞得进一个 Postgres | 留着，它已经是正确形状（全仓唯一能写下这个算术的地方） |
