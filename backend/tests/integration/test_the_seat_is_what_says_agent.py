@@ -52,7 +52,7 @@ def test_publishing_needs_a_seat_in_this_room_not_an_agent_shaped_caller(client)
     roster = client.get(
         f"/topics/{topic['id']}/members", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
-    seats = [row["handle"] for row in roster if row["agent"]]
+    seats = [row["member_handle"] for row in roster if row["agent"]]
     assert seats, roster
     for seat in seats:
         removed = client.delete(
