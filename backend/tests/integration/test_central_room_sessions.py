@@ -792,7 +792,7 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     )
     assert created.status_code == 200, created.text
     rc = created.json()["session"]
-    assert rc["execution"] == placement
+    assert rc["execution"] == {"resource_id": str(resource), "execution": target}
     result = client.post(
         f"/topics/{topic}/agent/control",
         headers=session_auth_headers("alice"),
