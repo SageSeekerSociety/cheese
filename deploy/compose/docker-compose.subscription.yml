@@ -22,6 +22,10 @@
 # being committed it survives the runner's per-run re-checkout (which is what
 # forced a box-side heal hack before this existed).
 services:
+  git:
+    volumes:
+      # Repositories contain absolute worktree paths shared with the backend.
+      - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
   backend:
     group_add:
       - "${DOCKER_GID:-989}"
