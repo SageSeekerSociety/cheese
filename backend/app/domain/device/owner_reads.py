@@ -22,12 +22,12 @@ What is NOT covered yet: the device row itself (`DeviceService.verify_token`)
 and project/topic membership, which still load their models through
 repositories shared with the business backend.
 
-Outliving the app cuts the other way as well: a release that moves a read to a
-new shape leaves THIS process reading the old one until somebody releases it
-separately, and a room whose tool calls stop working is not the way to find
-that out. So the owner says what it reads (:data:`SCHEMA_READS`) and
-`deploy/deploy-docker.sh` refuses to switch the backend over an owner that
-answers with anything else.
+Outliving the app cuts the other way as well: a release that moves a read onto
+a shape only the new backend writes leaves THIS process reading the old one
+until somebody releases it separately. So a read is moved in the release
+BEFORE the one that moves the write — this build reads the session rows and
+falls back to the room column, so it serves whichever of the two the running
+backend writes, and it can be released at any point between the two.
 """
 
 import uuid
@@ -40,12 +40,6 @@ from app.domain.agent_session.models import AgentSession
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
-
-#: Which shape of the database this build of the owner reads. Bumped by the
-#: release that moves one of the reads below, and named in
-#: `deploy/deploy-docker.sh` as what a running owner must answer with before an
-#: app release may switch the backend to writing that shape.
-SCHEMA_READS = "session-place-on-agent-sessions"
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,12 +71,12 @@ async def session_places(
     """Every session sitting in this place: where its process runs, and the
     hands it rented. A room seats several agents, so this is a list.
 
-    The second read is the deploy window, not a second source of truth. The
-    release that moved the location onto the session does not replace this
-    process, so between the backend switching over and the owner's own release
-    this is the only process still running the previous shape — and every room
-    that already had a screen open recorded its location on the room. A place
-    that has a session row is answered by that row and this never runs.
+    The second read is the deploy window, not a second source of truth. An app
+    release does not replace this process, so this build goes out on its own
+    and before the release that moves the write — and until that one is out,
+    the running backend is still recording a room's location on the room, as
+    is every room that already had a screen open. A place that has a session
+    row is answered by that row and this never runs.
 
     P19 drops `topics.session_placement`; this branch goes with it, in the same
     commit, because by then it can only return nothing.

@@ -97,15 +97,8 @@ dc() {
     -p "$PROJECT" "$@"
 }
 
-# The database shape this release of the app writes, as `owner_reads.py` names
-# it. The owner is NOT replaced by an app release, so a release that moves one
-# of the owner's reads onto a new shape has to check that the owner made the
-# same move first — otherwise every tool call it admits goes on asking a column
-# the new backend has stopped writing, and the rooms find out before we do.
-REQUIRED_OWNER_READS="${REQUIRED_OWNER_READS:-session-place-on-agent-sessions}"
-
 ensure_device_connection_owner() {
-  local container started=false waited=0 healthy=false reads
+  local container started=false waited=0
   container="$(dc ps -q device-connection 2>/dev/null | head -n 1 || true)"
   if [ -n "$container" ] && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
     log "leaving device connection owner $container running across this app release"
@@ -116,29 +109,14 @@ ensure_device_connection_owner() {
     started=true
   fi
   while [ "$waited" -lt 60 ]; do
-    if reads="$(curl -fsS -m 3 "http://127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}/healthz" 2>/dev/null)"; then
-      healthy=true
-      break
+    if curl -fsS -m 3 "http://127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}/healthz" >/dev/null 2>&1; then
+      [ "$started" = false ] || log "device connection owner is healthy"
+      return
     fi
     sleep 2
     waited=$((waited + 2))
   done
-  [ "$healthy" = true ] \
-    || fail "device connection owner is not healthy; the running backend was not touched"
-  [ "$started" = false ] || log "device connection owner is healthy"
-  case "$reads" in
-    *"\"$REQUIRED_OWNER_READS\""*)
-      log "device connection owner reads $REQUIRED_OWNER_READS"
-      ;;
-    *)
-      # Stopping here is the safe end of this: the migrations above only added,
-      # the running backend still writes what the running owner reads, and both
-      # keep serving. Release the owner, then run this deploy again — in that
-      # order, because the owner released first still reads what the old
-      # backend writes and the backend released first does not.
-      fail "the running device connection owner does not read $REQUIRED_OWNER_READS (it answered: ${reads:-nothing}); run deploy/release-device-connection.sh $SHA and deploy again. The running backend was not touched"
-      ;;
-  esac
+  fail "device connection owner is not healthy; the running backend was not touched"
 }
 
 reload_api_front_routes() {

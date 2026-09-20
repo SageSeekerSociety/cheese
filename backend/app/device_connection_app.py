@@ -16,7 +16,6 @@ from app.core.errors import register_exception_handlers
 from app.core.obs import configure_logging
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub_rpc import screen_to_json
-from app.domain.device import owner_reads
 
 # The same logging as the business backend: plain tracebacks rendered off the
 # hot path, secrets scrubbed, application INFO lines visible. Left to structlog's
@@ -80,14 +79,8 @@ app.include_router(execution_router, dependencies=[Depends(admit_execution_reque
 
 
 @app.get("/healthz")
-async def healthz() -> dict[str, bool | str]:
-    """Alive, and which shape of the database this build reads.
-
-    An app release does not replace this process, so it is the one process that
-    can be left reading a column the new backend has stopped writing. The
-    deploy asks here before it switches the backend over.
-    """
-    return {"ok": True, "reads": owner_reads.SCHEMA_READS}
+async def healthz() -> dict[str, bool]:
+    return {"ok": True}
 
 
 @app.post("/internal/device-connection/release-drain")

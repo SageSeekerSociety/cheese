@@ -115,10 +115,7 @@ class CentralChannel(DeviceChannel):
                 center
             ):
                 self._subscription_devices[room_id] = center
-                # One screen per room is what the hub can hand back today, so a
-                # room whose second agent is also placed is re-adopted once.
-                if room_id not in {scope[1] for scope in scopes}:
-                    scopes.append((project_id, room_id, center))
+                scopes.append((project_id, room_id, center))
         found = await self.restore_screens(scopes)
         # Finish consuming turns that began before this deployment. Their next
         # opening transfers the transcript; no new prompt starts on the old host.

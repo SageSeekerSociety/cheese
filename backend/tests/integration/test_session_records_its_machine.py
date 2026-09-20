@@ -185,3 +185,45 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
         )
         await db.commit()
         assert await sessions.has_run(topic) is True
+
+
+@pytest.mark.anyio
+async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
+    client, room, monkeypatch
+):
+    """换过骨架的房间，冷启动只归最后落位的那条会话——其他通道一概不认领。
+
+    会话行按 (房间, agent, 骨架) 各占一行，而换骨架的时候没有任何地方去把旧那行
+    的位置清空，所以这样的房间带着两行非空的 ``runtime_location``。房间的屏只有
+    一块：把两行都发给各条通道，中心通道会照着那条陈旧的 claude-code 行去认领这
+    块其实是 pi 开的屏，pi 通道也认领同一块，房间归最后恢复完的那条。
+    """
+    project, topic = room
+    del project
+    for harness in ("claude-code", "pi"):
+        async with client.test_factory() as db:
+            await AgentSessionService(db).remember_place(
+                topic_id=topic,
+                agent_handle="ada",
+                harness=harness,
+                work_lease=None,
+                runtime_location={
+                    "device_id": "center",
+                    "resource_id": str(topic),
+                    "channel": "device",
+                    "runtime": {"harness": harness, "state": INSTALLED["state"]},
+                },
+            )
+            await db.commit()
+
+    async with client.test_factory() as db:
+        placed = await AgentSessionService(db).placed_sessions()
+    assert [(row[1], row[3]) for row in placed] == [(topic, "pi")]
+
+    central = channel(client, monkeypatch)
+    central.restore_screens = AsyncMock(return_value=[])
+    central.executor.discover = AsyncMock(return_value=[])
+
+    await central.discover()
+
+    assert central.restore_screens.await_args.args[0] == []

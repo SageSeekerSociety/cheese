@@ -161,11 +161,20 @@ class AgentSessionRepository:
         return list(result.scalars())
 
     async def placed_everywhere(self) -> list[tuple[AgentSession, uuid.UUID]]:
-        """Every placed session with its project, for a channel's cold start.
+        """Each room's last-placed session with its project, for a cold start.
 
         A channel re-adopts what outlived the backend, and to do that it needs
         the project each session belongs to; the room is the only thing that
         knows, so the join happens once here rather than one query per row.
+
+        One row per room, and the same rule ``placed_in_room`` and
+        ``harness_in_room`` already answer by: a room has one screen and it
+        belongs to whichever session last opened one. A room that ran
+        claude-code and now runs pi keeps both session rows — nothing clears
+        the location of the one that stopped — so handing every channel every
+        row has each of them recognise its own harness and claim that single
+        screen, and the room ends up owned by whichever channel finished
+        restoring last.
         """
         result = await self._session.execute(
             select(AgentSession, Topic.project_id)
@@ -173,6 +182,12 @@ class AgentSessionRepository:
             .where(
                 AgentSession.task_id.is_(None),
                 AgentSession.runtime_location.is_not(None),
+            )
+            .distinct(AgentSession.topic_id)
+            .order_by(
+                AgentSession.topic_id,
+                AgentSession.placed_at.desc(),
+                AgentSession.id,
             )
         )
         return [(row[0], row[1]) for row in result.all()]
