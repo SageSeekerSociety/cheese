@@ -973,18 +973,25 @@ class Executor:
                 }
             )
         if kind == "stage_file":
-            # In this home, and never in the checkout under it. `HOME` here is
-            # the session's own — the room's home on a machine we borrow, or the
-            # container for a private chat — so a file staged against it is
-            # inside the platform's footprint and outside the repository the
-            # agent is working in (结论 49，不变量 I21b). This used to resolve
-            # against `self.root`, which IS that checkout, so every attachment
-            # left an untracked file in somebody's repository.
+            # Under this executor's own `HOME`, which is the whole rule here.
+            # `HOME` is whatever the launcher chose as the platform's directory
+            # for this session: the room's home on a machine we borrow, where
+            # the checkout is the sibling `room/`; or `/work/.home` inside a
+            # private chat's container, where the workspace is scratch and there
+            # is no repository at all. This used to resolve against `self.root`,
+            # which on a room executor IS the hosted checkout — so every
+            # attachment left an untracked file in somebody's repository
+            # (结论 49，不变量 I21b).
+            #
+            # The receiver does not also re-derive where the checkout is. It
+            # cannot: `self.root` is a repository in one of those two cases and
+            # scratch in the other, and a check that treated them alike would
+            # refuse every private chat's attachments. Which `HOME` sits where
+            # is the launcher's choice, and the caller that picks the
+            # destination (`agent/place.py`) is where the checkout is ruled out.
             home = Path.home().resolve()
             path = (home / params["path"]).resolve()
             path.relative_to(home)
-            if path.is_relative_to(self.root.resolve()):
-                raise ValueError("the platform does not write into the checkout")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(base64.b64decode(params["data"], validate=True))
             return {"path": str(path)}

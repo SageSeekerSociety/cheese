@@ -140,10 +140,12 @@ HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
         def controls():
             import base64
 
-            # Staged beside the checkout, never in it (结论 49): the control
-            # resolves its path against the executor's own HOME and refuses
-            # anything landing under the workspace, so the assertion is on the
-            # absolute path it answers with rather than on a guess.
+            # Into the executor's own HOME (结论 49): a staged file is the
+            # platform's, so it goes where that executor's platform directory
+            # is, at the relative path the control was given. Asked of the
+            # container rather than written down here, because which directory
+            # that is belongs to whoever launched it.
+            home = shell("printf %s \"$HOME\"")["stdout"].strip()
             landed = client.control(
                 {
                     "subtype": "stage_file",
@@ -151,7 +153,7 @@ HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
                     "data": base64.b64encode(b"input data").decode(),
                 }
             )["path"]
-            assert not landed.startswith("/work/"), landed
+            assert landed == f"{home}/attachments/input.txt", (landed, home)
             assert (
                 client.control({"subtype": "read_file", "path": landed})["contents"]
                 == "input data"
