@@ -196,6 +196,16 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
         str(uuid.UUID(payload["resource"])),
     )
     home = owner / ".cheese/home" / project / resource
+    store = owner / ".cheese/store" / project
+    package_env = {
+        "UV_CACHE_DIR": str(store / "uv-cache"),
+        "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
+        "npm_config_store_dir": str(store / "pnpm-store"),
+        "npm_config_cache": str(store / "npm-cache"),
+        "PIP_CACHE_DIR": str(store / "pip-cache"),
+    }
+    variables = (payload.get("environment") or {}).get("variables", {})
+    package_env.update({key: variables[key] for key in package_env if key in variables})
     work = home / "room"
     platform_dir = home / PLATFORM_DIR
     config_dir = home / ".claude"
@@ -214,11 +224,12 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             ):
                 env.pop(name)
         env.update(payload["env"])
+        env.update(package_env)
         env.update(
             HOME=str(home),
             CLAUDE_CONFIG_DIR=str(config_dir),
             CHEESE_WORK=str(work),
-            CHEESE_STORE=str(owner / ".cheese/store" / project),
+            CHEESE_STORE=str(store),
             CHEESE_WORKTREE_ROOT=str(work),
             CHEESE_PREVIEW_UP=str(release / "cheese-preview-up"),
             PATH=os.pathsep.join(
@@ -233,6 +244,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             name: value
             for name, value in env.items()
             if name in payload["env"]
+            or name in package_env
             or name
             in {
                 "HOME",
