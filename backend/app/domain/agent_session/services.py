@@ -72,9 +72,17 @@ class AgentSessionService:
         rows = await self._repo.placed_in_room(room_id)
         return [place for row in rows if (place := row.place()) is not None]
 
-    async def harnesses_in_room(self, room_id: uuid.UUID) -> set[str]:
-        """Which harnesses are running in this room right now."""
-        return {row.harness for row in await self._repo.placed_in_room(room_id)}
+    async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
+        """Which harness the room's one pane belongs to, if anything is on it.
+
+        One name and not a set: a room has a single screen, and it shows the
+        program of whichever session last opened one. A room that seats a
+        claude-code teammate and is now running pi has two session rows and one
+        black pane — answering "some session here draws" would put that pane in
+        front of a person and take the 施工记录 timeline away to do it.
+        """
+        placed = await self._repo.placed_in_room(room_id)
+        return placed[0].harness if placed else None
 
     async def placed_sessions(
         self,

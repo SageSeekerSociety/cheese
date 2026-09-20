@@ -62,13 +62,13 @@ def channel(client, monkeypatch, executors=("executor",)):
     return central
 
 
-async def _open(central, project, topic, agent, executor):
+async def _open(central, project, topic, agent, executor, *, resume=None):
     """One turn of one agent's session, through the resolution entry."""
     await central.ensure_ready(
         session=SessionRef(project, topic, agent, "claude-code"),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
-        launch=ClaudeLaunch("System"),
+        launch=ClaudeLaunch("System", resume_session_id=resume),
         precheck=(executor, 1, agent),
     )
 
@@ -109,47 +109,56 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
 
 
 @pytest.mark.anyio
-async def test_a_session_that_moves_machine_keeps_what_it_said(client, room):
-    """搬一台会话机，上一轮说过的话还在这条会话名下。"""
+async def test_a_session_that_moves_machine_keeps_what_it_said(
+    client, room, monkeypatch
+):
+    """搬一台会话机，下一轮在新机器上仍然接着上一轮自己说过的话。
+
+    ``--resume`` 只在冷启动时用得上，而搬机器正是冷启动：所以「引用得上上一轮」
+    的全部证据，就是送到新机器的那份启动计划带着上一轮的续接指针。
+    """
     project, topic = room
-    del project
+    central = channel(client, monkeypatch, executors=("hands-a",))
+
+    await _open(central, project, topic, "ada", "hands-a")
+    # 骨架交回一个可续的 token——写侧和真正跑完一轮时走的是同一个入口。
     async with client.test_factory() as db:
-        sessions = AgentSessionService(db)
-        await sessions.remember_place(
-            topic_id=topic,
-            agent_handle="ada",
-            work_lease={"kind": "device", "device_id": "hands-a"},
-            runtime_location={
-                "device_id": "center",
-                "resource_id": str(topic),
-                "channel": "device",
-            },
-        )
-        await sessions.remember(
+        await AgentSessionService(db).remember(
             topic_id=topic, agent_handle="ada", resume_token="conversation-1"
         )
         await db.commit()
 
+    # 搬家：进程换一台会话机，手上那棵工作树不动。
     async with client.test_factory() as db:
-        await AgentSessionService(db).remember_place(
+        sessions = AgentSessionService(db)
+        before = await sessions.place(topic, "ada")
+        assert before is not None and before.machine == "center"
+        await sessions.remember_place(
             topic_id=topic,
             agent_handle="ada",
-            work_lease={"kind": "device", "device_id": "hands-a"},
+            work_lease=before.lease,
             runtime_location={
                 "device_id": "center-two",
-                "resource_id": str(topic),
-                "channel": "device",
+                "resource_id": before.resource_id,
+                "channel": before.channel,
             },
         )
         await db.commit()
 
+    central._hub.call_executor.return_value = {
+        **INSTALLED,
+        "pid": 123,
+        "capabilities": ["prepare"],
+        "context_tree": {"generation": "fixture", "entries": {}},
+    }
+    # 下一轮：续接指针是从这条会话行上读出来的，和 `chat.py` 读的是同一处。
     async with client.test_factory() as db:
-        sessions = AgentSessionService(db)
-        moved = await sessions.place(topic, "ada")
-        resumes_by = await sessions.resume_token(topic, "ada")
-    assert moved is not None
-    assert moved.machine == "center-two"
-    assert resumes_by == "conversation-1"
+        resumes_by = await AgentSessionService(db).resume_token(topic, "ada")
+    await _open(central, project, topic, "ada", "hands-a", resume=resumes_by)
+
+    opened = central._ensure_screen.await_args.kwargs
+    assert opened["device_id"] == "center-two", opened
+    assert opened["launch"].resume_session_id == "conversation-1", opened
 
 
 @pytest.mark.anyio

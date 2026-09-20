@@ -730,6 +730,56 @@ async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
 
 
 @pytest.mark.anyio
+async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
+    client, room, monkeypatch
+):
+    """手就在会话机上的那条会话没有租约，它不该把执行路由拖成 500。
+
+    pi 每一轮都把 `work_lease` 写成「没有」。只要「没租到手」落库时成了 JSON 的
+    `null` 而不是 SQL NULL，`work_lease IS NOT NULL` 这条谓词就在说谎：那一行被
+    选进候选，读的人拿到 None，一个本该干净的 409 变成 500。一个房间里同时坐着
+    pi 和 claude-code 两条会话时——换骨架，或者两个队友各跑各的骨架——就会撞上。
+    """
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        await AgentSessionService(db).remember_place(
+            topic_id=topic,
+            agent_handle="pi-teammate",
+            harness="pi",
+            work_lease=None,
+            runtime_location={
+                "device_id": "center",
+                "resource_id": str(resource),
+                "channel": "device",
+            },
+        )
+        await db.commit()
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    endpoint = f"/topics/{topic}/execution/{resource}"
+    payload = {"method": "invoke", "params": {"tool": "Read"}}
+    headers = {"X-Cheese-Token": token}
+
+    # 房间里只有那条没有租约的会话：这一代没有手可借。
+    assert client.post(endpoint, headers=headers, json=payload).status_code == 409
+
+    # 旁边坐下一个真租了手的队友，借的就是它那一份。
+    target = {"kind": "device", "device_id": "executor", "resource_id": str(resource)}
+    async with client.test_factory() as db:
+        await place_session(db, topic, resource, target)
+        await db.commit()
+    call = AsyncMock(return_value={"content": "executor file"})
+    monkeypatch.setattr("app.domain.agent.execution.call", call)
+
+    response = client.post(endpoint, headers=headers, json=payload)
+    assert response.status_code == 200, response.text
+    assert call.await_args.args[0] == target
+
+
+@pytest.mark.anyio
 async def test_scoped_execution_and_rc_use_platform_owned_target(
     client, room, monkeypatch
 ):

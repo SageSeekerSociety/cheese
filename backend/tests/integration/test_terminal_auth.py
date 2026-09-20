@@ -119,3 +119,44 @@ async def test_a_harness_that_draws_nothing_keeps_the_timeline(client, monkeypat
     ).json()["data"]
 
     assert data["available"] is False, data
+
+
+@pytest.mark.anyio
+async def test_a_room_that_has_since_switched_harness_keeps_the_timeline(
+    client, monkeypatch
+):
+    """换骨架的房间留着旧那条会话行，而屏只有一块——归最后开它的那条。
+
+    会话行按 (房间, agent, 骨架) 各占一行，所以先跑 claude-code 后换 pi 的房间
+    同时带着两行。屏是 pi 开的，里面什么都没有；照着「这里有过一条 claude-code
+    会话」回答可看，就是把那块黑屏摆到人脸前，还把 施工记录 收走。
+    """
+    from app.domain.agent_session.services import AgentSessionService
+    from tests.integration.test_connector_viewer import _login
+
+    monkeypatch.setattr(terminal, "_device_screen_id", _screen_open("s-11"))
+
+    _project, topic = _project_topic(client)
+    token = _login(client, "alice")
+    for harness in ("claude-code", "pi"):
+        async with client.test_factory() as session:
+            await AgentSessionService(session).remember_place(
+                topic_id=uuid.UUID(topic["id"]),
+                agent_handle="agent",
+                harness=harness,
+                work_lease=None,
+                runtime_location={
+                    "device_id": "dev",
+                    "resource_id": topic["id"],
+                    "channel": "device",
+                    "runtime": {"harness": harness},
+                },
+            )
+            await session.commit()
+
+    data = client.get(
+        f"/topics/{topic['id']}/terminal",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()["data"]
+
+    assert data["available"] is False, data

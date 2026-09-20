@@ -118,9 +118,17 @@ class AgentSession(UuidPk, Timestamps, Base):
     resume_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # 这条会话的工作机器租约：手在哪、这一代的工作区在哪、装到了什么程度。
     # 房间不租手（结论 60）——同一个房间里的两个队友各租各的，各自迁移互不影响。
-    work_lease: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #
+    # ``none_as_null=True``：没租到手要落成 SQL NULL。默认那一档会把 Python 的
+    # ``None`` 序列化成 JSON ``'null'`` 存进去，于是 ``work_lease IS NOT NULL``
+    # 对「手就在会话机上」的 pi 会话也为真，读的人拿到的却是 ``None``。
+    work_lease: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
     # 这条会话的进程在哪台会话机上，连同开它的通道与骨架的运行状态。
-    runtime_location: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    runtime_location: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
 
     def place(self) -> SessionPlace | None:
         """这条会话在哪——地点解析的唯一入口。

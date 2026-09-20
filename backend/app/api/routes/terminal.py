@@ -51,19 +51,17 @@ def _device_screen_id(topic_id: uuid.UUID) -> str | None:
 async def _screen_is_watchable(db: AsyncSession, room_id: uuid.UUID) -> bool:
     """Does this room's harness put anything in the pane it was started in?
 
-    The sessions sitting in this room are the only place this is known — the
-    screen itself carries no harness. There is one pane per room, so a room
-    running any harness that draws on it is watchable; a room that has never run
-    has no session and gets the default, which is the harness a room without an
-    opinion runs.
+    The session sitting in this room is the only place this is known — the
+    screen itself carries no harness. There is one pane per room and it belongs
+    to whichever session last opened one, so that session is asked and no other:
+    a room whose claude-code teammate has been replaced by pi still carries the
+    older row, and reading it would promise a pane that stays black. A room that
+    has never run has no placed session and gets the default, which is the
+    harness a room without an opinion runs.
     """
-    names = await AgentSessionService(db).harnesses_in_room(room_id) or {
-        harness_name(None)
-    }
-    return any(
-        (harness := HARNESSES.get(name)) is None or harness.draws_on_its_screen
-        for name in names
-    )
+    name = await AgentSessionService(db).harness_in_room(room_id)
+    harness = HARNESSES.get(harness_name(name))
+    return harness is None or harness.draws_on_its_screen
 
 
 @router.get("/{topic_id}/terminal")
