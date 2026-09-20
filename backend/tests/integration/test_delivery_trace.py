@@ -92,7 +92,7 @@ def _deliver(
 
     async def attach_pr():
         from app.domain.review.repositories import AcceptCardRepository
-        from app.domain.workspace.service import branch_for_task
+        from tests.support.git_store import branch_for_task
 
         async with client.test_factory() as session:
             card = await AcceptCardRepository(session).get(uuid.UUID(result["id"]))

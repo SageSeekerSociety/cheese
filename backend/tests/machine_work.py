@@ -1,12 +1,4 @@
-"""What a machine that owns its own tree does, for tests that need a commit.
-
-Nothing on the platform writes anybody's working tree, so this is the only way a
-commit reaches a topic branch: the machine clones the project's repo over git,
-commits, and pushes the branch back (`api/routes/git_http.py` serves the same
-thing over HTTP). A test that wants work on a branch does it the way the real
-thing does, rather than reaching into the platform's own checkout — which is
-also what keeps these tests honest if that checkout ever changes shape.
-"""
+"""Clone, commit and push as an executor against the test forge's Git store."""
 
 import shutil
 import subprocess
@@ -14,7 +6,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from app.domain.workspace import service as ws
+from tests.support import git_store
 
 CHEESE_NAME = "芝士"
 CHEESE_EMAIL = "cheese@zhishi.local"
@@ -22,8 +14,9 @@ CHEESE_EMAIL = "cheese@zhishi.local"
 
 def declare_task(project_id: uuid.UUID, task_id: uuid.UUID) -> None:
     """Declare delivery ownership explicitly in filesystem-only unit fixtures."""
-    base, _ = ws.base_branch_head(project_id)
-    ws.bind_task(
+    repo = git_store.ensure_repo(project_id)
+    base = git_store.git(repo, "symbolic-ref", "--short", "HEAD").strip()
+    git_store.bind_task(
         task_id,
         branch=f"task/{task_id.hex[:8]}",
         directory=f"task_{task_id.hex[:8]}",
@@ -48,8 +41,8 @@ def machine_commits(
     author: tuple[str, str] = (CHEESE_NAME, CHEESE_EMAIL),
 ) -> str:
     """Write `files` on this place's branch and push it back. Returns the sha."""
-    repo = ws.ensure_repo(project_id)
-    branch = ws.branch_for_task(place_id)
+    repo = git_store.ensure_repo(project_id)
+    branch = git_store.branch_for_task(place_id)
     work = Path(tempfile.mkdtemp(prefix="cheese-machine-"))
     try:
         _git(work.parent, "clone", "-q", str(repo), str(work))
@@ -64,7 +57,7 @@ def machine_commits(
         if known.returncode == 0:
             _git(work, "checkout", "-q", "-B", branch, f"origin/{branch}")
         else:
-            base = ws._task_workspace(place_id)["base"]
+            base = git_store.task(place_id)["base"]
             _git(work, "checkout", "-q", "-b", branch, f"origin/{base}")
         for path, content in files.items():
             target = work / path

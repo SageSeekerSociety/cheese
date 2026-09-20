@@ -5,8 +5,8 @@ import uuid
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
-from app.domain.workspace import service as ws
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 
 def delivery_task(client, room_id, *, new=False, commit=True):
@@ -39,7 +39,7 @@ def delivery_task(client, room_id, *, new=False, commit=True):
         return None
     cache[room_id] = task
     # This fixture's local repository represents the executor/remote Git store.
-    ws.bind_task(
+    git_store.bind_task(
         task.id,
         branch=task.branch_name,
         directory=task.workspace_name,

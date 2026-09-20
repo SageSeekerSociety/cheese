@@ -14,10 +14,10 @@ def test_a_machine_keeps_the_history_it_fetches_that_way(tmp_path, client):
     reasons with — the log, a diff against the base — still works, and the push
     back still works. Against a local repo here, since what is under test is
     git's behaviour on the shape the CLI asks for, not the HTTP hop."""
-    from app.domain.workspace import service as ws
+    from tests.support import git_store
 
     pid = _project(client)
-    origin: Path = ws.ensure_repo(uuid.UUID(pid))
+    origin: Path = git_store.ensure_repo(uuid.UUID(pid))
 
     def git(cwd: Path, *args: str) -> str:
         done = subprocess.run(

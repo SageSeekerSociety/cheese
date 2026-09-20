@@ -440,7 +440,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     from app.domain.project import forge
     from app.domain.project.models import Project, ProjectForge
     from app.domain.workspace import forge_files
-    from app.domain.workspace import service as ws
+    from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
 
@@ -469,7 +469,7 @@ def stub_project_forge(monkeypatch, tmp_path):
         )
         session.add(binding)
         await session.flush()
-        ws.ensure_repo(project_id)  # The fake forge owns this test-only Git store.
+        git_store.ensure_repo(project_id)
         return binding
 
     async def read_default_branch(project_id, session):
@@ -485,12 +485,10 @@ def stub_project_forge(monkeypatch, tmp_path):
     async def branch_head(project_id, session, branch):
         if not await test_repository(project_id, session):
             return await remote_head(project_id, session, branch)
-        repo = ws._repo(project_id)
+        repo = git_store.path(project_id)
         if not repo.exists():
             return None
-        result = ws._run_subprocess(
-            ["git", "rev-parse", "--verify", branch], repo, 20, None
-        )
+        result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
         return result.stdout.strip() if result.returncode == 0 else None
 
     async def tokens_for_project(project_id, session):
@@ -510,14 +508,14 @@ def stub_project_forge(monkeypatch, tmp_path):
             return await remote_status(project_id, session)
 
         async def compare_status(*, base, head, **kwargs):
-            repo = ws._repo(project_id)
+            repo = git_store.path(project_id)
             revisions = [
-                ws._git(repo, "rev-parse", revision).strip()
+                git_store.git(repo, "rev-parse", revision).strip()
                 for revision in (base, head)
             ]
             if revisions[0] == revisions[1]:
                 return "identical"
-            result = ws._run_subprocess(
+            result = git_store.run(
                 ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
             )
             return "ahead" if result.returncode == 0 else "diverged"
@@ -531,11 +529,11 @@ def stub_project_forge(monkeypatch, tmp_path):
 
         if not await test_repository(project_id, session):
             return await remote_data(project_id, session, path, **kwargs)
-        repo = ws._repo(project_id)
+        repo = git_store.path(project_id)
         route = unquote(urlsplit(path).path)
         if route.startswith("/git/commits/") and route.endswith(".diff"):
             revision = route.removeprefix("/git/commits/").removesuffix(".diff")
-            return ws._git(repo, "show", "--format=", revision)
+            return git_store.git(repo, "show", "--format=", revision)
 
         def commits(revision):
             return [
@@ -543,16 +541,16 @@ def stub_project_forge(monkeypatch, tmp_path):
                     "sha": sha,
                     "commit": {
                         "author": {
-                            "name": ws._git(
+                            "name": git_store.git(
                                 repo, "show", "-s", "--format=%an", sha
                             ).strip()
                         },
-                        "message": ws._git(
+                        "message": git_store.git(
                             repo, "show", "-s", "--format=%B", sha
                         ).strip(),
                     },
                 }
-                for sha in ws._git(
+                for sha in git_store.git(
                     repo, "rev-list", "--max-count=50", revision
                 ).splitlines()
             ]
@@ -571,11 +569,13 @@ def stub_project_forge(monkeypatch, tmp_path):
                 )
             )
             assert task is not None
-            return ws._git(repo, "diff", f"{task.base_branch}...{task.branch_name}")
+            return git_store.git(
+                repo, "diff", f"{task.base_branch}...{task.branch_name}"
+            )
         if route.startswith("/git/trees/"):
             revision = route.removeprefix("/git/trees/")
             tree = []
-            for row in ws._git(repo, "ls-tree", "-zl", revision).split("\0"):
+            for row in git_store.git(repo, "ls-tree", "-zl", revision).split("\0"):
                 if not row:
                     continue
                 metadata, name = row.split("\t", 1)
@@ -603,13 +603,13 @@ def stub_project_forge(monkeypatch, tmp_path):
         return {
             "commits": commits(f"{base}..{head}"),
             "total_commits": int(
-                ws._git(repo, "rev-list", "--count", f"{base}..{head}")
+                git_store.git(repo, "rev-list", "--count", f"{base}..{head}")
             ),
             "files": [
                 {"filename": name, "status": statuses[status]}
                 for status, name in (
                     row.split("\t", 1)
-                    for row in ws._git(
+                    for row in git_store.git(
                         repo,
                         "diff",
                         "--no-renames",

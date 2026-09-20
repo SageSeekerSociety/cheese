@@ -26,6 +26,7 @@ from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import room_text, session_auth_headers
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 REPO = "acme/widgets"
 
@@ -560,9 +561,9 @@ def app_world(client, monkeypatch):
         return "main"
 
     async def branch_head(project_id, session, branch):
-        repo = ws._repo(project_id)
-        head = ws._git(repo, "rev-parse", branch).strip()
-        ahead = int(ws._git(repo, "rev-list", "--count", f"main..{head}"))
+        repo = git_store.path(project_id)
+        head = git_store.git(repo, "rev-parse", branch).strip()
+        ahead = int(git_store.git(repo, "rev-list", "--count", f"main..{head}"))
         fake.compare_status_by_pair.setdefault(
             ("main", head), "ahead" if ahead else "identical"
         )
@@ -573,14 +574,14 @@ def app_world(client, monkeypatch):
 
         assert path.startswith("/compare/"), path
         base, head = unquote(path.removeprefix("/compare/")).split("...")
-        repo = ws._repo(project_id)
+        repo = git_store.path(project_id)
         return {
             "total_commits": int(
-                ws._git(repo, "rev-list", "--count", f"{base}..{head}")
+                git_store.git(repo, "rev-list", "--count", f"{base}..{head}")
             ),
             "files": [
                 {"filename": name}
-                for name in ws._git(
+                for name in git_store.git(
                     repo, "diff", "--name-only", f"{base}...{head}"
                 ).splitlines()
             ],
@@ -1338,9 +1339,8 @@ def _room_open_tree_branch(client, topic_id: str) -> str | None:
 
 
 def _branch_of_record(client, topic_id: str) -> str:
-    from app.domain.workspace import service as ws
 
-    return ws.branch_for_task(delivery_task_id(client, topic_id))
+    return git_store.branch_for_task(delivery_task_id(client, topic_id))
 
 
 def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
@@ -1348,7 +1348,7 @@ def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
     from app.domain.workspace import service as ws
 
     def _exists(_project_id, topic_id) -> bool:
-        return ws.branch_for_task(topic_id) in pushed
+        return git_store.branch_for_task(topic_id) in pushed
 
     monkeypatch.setattr(ws, "topic_branch_exists", _exists)
 
@@ -2161,10 +2161,9 @@ def test_merge_anyway_is_refused_once_the_card_is_settled(client, app_world):
 
 
 def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
-    from app.domain.workspace import service as ws
 
-    repo_path = ws.ensure_repo(project_id)
-    branch = ws.branch_for_task(topic_id)
+    repo_path = git_store.ensure_repo(project_id)
+    branch = git_store.branch_for_task(topic_id)
     return subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", branch],
         capture_output=True,
@@ -2271,17 +2270,15 @@ def test_remote_merge_needs_no_backend_repository_sync(client, app_world, monkey
 
 def _disk_branch(client, place_id: str) -> str:
     """磁盘这一层说的「这个地方现在写哪条分支」——分身 commit 时用的就是它。"""
-    from app.domain.workspace import service as ws
 
-    return ws.branch_for_task(delivery_task_id(client, place_id))
+    return git_store.branch_for_task(delivery_task_id(client, place_id))
 
 
 def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
-    from app.domain.workspace import service as ws
 
     done = subprocess.run(
         ["git", "merge-base", "--is-ancestor", sha, branch],
-        cwd=ws.ensure_repo(_uuid.UUID(project_id)),
+        cwd=git_store.ensure_repo(_uuid.UUID(project_id)),
         capture_output=True,
         text=True,
     )
@@ -2421,9 +2418,8 @@ def test_one_batch_failing_does_not_cost_the_next_one_its_pr(
     blown: list[str] = []
 
     async def _explode_once(self, tree, *, number, url):
-        from app.domain.workspace import service as ws
 
-        if ws.branch_for_task(tree.id) == doomed and not blown:
+        if git_store.branch_for_task(tree.id) == doomed and not blown:
             blown.append(doomed)
             raise RuntimeError("DB 抽风")
         return await original(self, tree, number=number, url=url)

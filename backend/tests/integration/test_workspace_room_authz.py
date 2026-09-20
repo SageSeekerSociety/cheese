@@ -6,13 +6,13 @@ import uuid
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.workspace import service as ws
 from app.domain.workspace.textfile import content_version
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_file_panel_safety import _put, _worktree
 from tests.integration.test_file_panel_safety import task_machine as task_machine
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 
 def _connect_workspace(client, project, room):
@@ -186,7 +186,7 @@ def test_matching_room_agent_can_read_its_own_work(client):
 
 def test_project_diff_cannot_name_a_private_branch(client, private_workspace):
     project, tid = private_workspace
-    branch = ws.branch_for_task(delivery_task_id(client, tid))
+    branch = git_store.branch_for_task(delivery_task_id(client, tid))
     response = client.get(
         f"/projects/{project['id']}/git/diff",
         params={"ref": branch},
@@ -215,12 +215,12 @@ def test_project_diff_still_reads_accepted_history(client, private_workspace):
     machine_commits(
         pid, delivery_task_id(client, tid), {"public.txt": "accepted content\n"}
     )
-    assert ws.merge_topic(
+    assert git_store.merge_task(
         pid,
         delivery_task_id(client, tid),
         message="feat: accept public work\n\nRequested-by: alice",
-    )["merged"]
-    accepted = ws.accepted_revision(pid)
+    )
+    accepted = git_store.head(pid)
     for ref in ("main", accepted):
         response = client.get(
             f"/projects/{pid}/git/diff",

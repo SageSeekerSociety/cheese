@@ -12,9 +12,10 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind
-from app.domain.workspace import service as ws
+from app.domain.workspace.forge_files import ProjectFiles
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 
 def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
@@ -55,7 +56,7 @@ async def _task(session, project, room, title, **extra):
         reviewer_handle="alice",
         **extra,
     )
-    ws.bind_task(
+    git_store.bind_task(
         task.id,
         branch=task.branch_name,
         directory=task.workspace_name,
@@ -79,12 +80,17 @@ def test_two_tasks_edit_the_same_path_without_sharing_commits(client):
     head_b = machine_commits(project, second.id, {"result.txt": "second\n"})
     assert first.branch_name != second.branch_name
     assert head_a != head_b
-    assert ws.read_file(project, "result.txt", first.id) == "first\n"
-    assert ws.read_file(project, "result.txt", second.id) == "second\n"
     assert first.subagent_id is None and second.subagent_id is None
-    assert not any(
-        ref["hash"] == head_a for ref in ws.git_log(project, topic_id=second.id)
-    )
+
+    async def check_files():
+        async with client.test_factory() as session:
+            a = ProjectFiles(session, project, first.id)
+            b = ProjectFiles(session, project, second.id)
+            assert (await a.text("result.txt", "committed"))["content"] == "first\n"
+            assert (await b.text("result.txt", "committed"))["content"] == "second\n"
+            assert not any(ref["hash"] == head_a for ref in await b.history())
+
+    client.portal.call(check_files)
 
 
 def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world):
@@ -120,7 +126,12 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
             assert card.task_id == first.id
             assert first.delivered_head == delivered_head
             assert fake.merge_calls[0]["sha"] == delivered_head
-            assert ws.read_file(project, "a.txt", first.id) == "first"
+            assert (
+                git_store.git(
+                    git_store.path(project), "show", f"{delivered_head}:a.txt"
+                )
+                == "first"
+            )
 
     client.portal.call(run)
 
@@ -139,8 +150,14 @@ def test_a_dependency_uses_the_parent_branch_and_reports_only_its_own_diff(clien
     parent, child = client.portal.call(run)
     machine_commits(project, child.id, {"child.txt": "child"})
     assert child.base_branch == parent.branch_name
-    assert ws.read_file(project, "parent.txt", child.id) == "parent"
-    assert ws.topic_changed_files(project, child.id) == ["child.txt"]
+
+    async def check_files():
+        async with client.test_factory() as session:
+            files = ProjectFiles(session, project, child.id)
+            assert (await files.text("parent.txt", "committed"))["content"] == "parent"
+            assert await files.changed_files() == ["child.txt"]
+
+    client.portal.call(check_files)
 
 
 def test_quick_checks_belong_to_the_checked_task_and_do_not_gate_work(client):
@@ -179,7 +196,7 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
             return parent, child
 
     parent, child = client.portal.call(seed)
-    original = ws.git_log(project, topic_id=child.id)[0]["hash"]
+    original = git_store.head(project, child.branch_name)
     client.portal.call(retarget_completed_dependencies, client.test_factory)
     github.update_pr.assert_awaited_once_with(123, base=parent.base_branch)
 
@@ -189,10 +206,11 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
             assert saved.base_branch == parent.base_branch
             assert saved.base_task_id == parent.id
             assert saved.status == TaskStatus.open
+            files = ProjectFiles(session, project, child.id)
+            assert (await files.text("child.txt", "committed"))["content"] == "child"
 
     client.portal.call(check)
-    assert ws.git_log(project, topic_id=child.id)[0]["hash"] == original
-    assert ws.read_file(project, "child.txt", child.id) == "child"
+    assert git_store.head(project, child.branch_name) == original
     client.portal.call(retarget_completed_dependencies, client.test_factory)
     assert github.update_pr.await_count == 1
 
