@@ -138,6 +138,7 @@ export type PlatformNotice =
       count: number
       occurrences: NoticeOccurrence[]
     }
+  | { mode: 'agent-status'; line: string; updatedAt: string; occurrences: NoticeOccurrence[] }
   /** 老样子：居中、灰、12px、一行。 */
   | { mode: 'plain' }
 
@@ -255,6 +256,21 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   const error = backendErrorPresentation(block)
   if (error) return { mode: 'backend-error', error }
 
+  if (str(m?.event_type) === 'cloud_provisioning') {
+    const latest = run[run.length - 1] ?? block
+    const state = str(meta(latest)?.state)
+    return {
+      mode: 'agent-status',
+      line: state === 'ready' ? '运行环境已就绪' : state === 'waiting' ? '正在准备运行环境' : latest.content,
+      updatedAt: latest.created_at,
+      occurrences: run.map((item) => ({
+        line: item.content,
+        label: item.content,
+        detail: str(meta(item)?.detail),
+      })),
+    }
+  }
+
   if (str(m?.detail)) {
     return {
       mode: 'fold',
@@ -272,6 +288,8 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
 function foldKey(block: Block): string | null {
   const m = meta(block)
+  // Cloud lifecycle updates share one row even when the final event has no detail.
+  if (str(m?.event_type) === 'cloud_provisioning') return 'cloud_provisioning'
   // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
   // 摆出来。事故卡和后端报错各自只有一份正文/traceback，折进去就真丢了；而老事件
   // 压根没有 event_type，误折会把两件不同的事说成一件。
