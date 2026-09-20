@@ -262,6 +262,29 @@ class LocalDirectoryService:
             fingerprint=_fingerprint(applicable),
         )
 
+    async def device_grants(self, device_id: str) -> DeviceGrants:
+        """Every live grant on this machine, both scopes — what the device is sent.
+
+        The difference from :meth:`effective_grants` is deliberate and is the
+        reason this method exists. ``effective_grants`` answers 「what applies to
+        this project」, which is the question the platform asks; the device is sent
+        the whole live set because the device is the side that knows which piece
+        of work is asking, per request, and evaluates project scope itself
+        (``localfs.Grant.CoversProject`` on the Go side).
+
+        Filtering here instead would drop every project-scoped grant — the device
+        would be sent only the user-scoped ones, i.e. exactly the wider and more
+        dangerous kind would be the only kind that ever worked, and the narrower
+        kind would silently do nothing.
+        """
+        live = await self._repo.list_grants_for_device(device_id)
+        live.sort(key=lambda g: g.key)
+        return DeviceGrants(
+            device_id=device_id,
+            grants=tuple(live),
+            fingerprint=_fingerprint(live),
+        )
+
     # -- the decision ------------------------------------------------------
 
     async def authorize(self, request: AuthorizeRequest) -> Verdict:

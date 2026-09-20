@@ -168,6 +168,9 @@ class HubDevice:
     exec_seq: int = 0
     call_seq: int = 0
     file_seq: int = 0
+    # 本机目录授权: one counter for both directions of the localfs channel (a grant
+    # push and a read/write/list op), since they share one result future map.
+    local_fs_seq: int = 0
     exec_pending: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict
     )
@@ -177,6 +180,7 @@ class HubDevice:
         default_factory=dict
     )
     session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    local_fs_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connection_generation: int = 0
 
@@ -539,6 +543,67 @@ class DeviceHub:
         finally:
             device.file_pending.pop(file_id, None)
 
+    # -- 本机目录授权 (server -> device, awaited) ---------------------------
+
+    async def push_local_fs_grants(
+        self,
+        device_id: str,
+        grants: list[dict[str, Any]],
+        *,
+        timeout: float = 20,
+    ) -> dict[str, Any]:
+        """Hand this machine its grant set and await the fingerprint it now holds.
+
+        Raises ``DeviceOffline`` at once when the machine has no link — rather
+        than sending into the void and timing out. That is not a failure of the
+        grant: the platform is the authoritative record either way, and the set is
+        pushed again when the device reattaches. A caller that has just recorded a
+        grant must therefore catch this and carry on, which is exactly the
+        degradation 「本机离线时项目照常可用」 describes.
+        """
+        device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
+        device.local_fs_seq += 1
+        grants_id = f"g{device.local_fs_seq}"
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        device.local_fs_pending[grants_id] = future
+        try:
+            await device.send(
+                device_link.local_fs_grants(
+                    grants_id=grants_id, device_id=device_id, grants=grants
+                )
+            )
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            device.local_fs_pending.pop(grants_id, None)
+
+    async def local_fs_op(
+        self,
+        device_id: str,
+        op: dict[str, Any],
+        *,
+        timeout: float = 60,
+    ) -> dict[str, Any]:
+        """Read, write or list inside a granted directory on this machine.
+
+        Returns the device's ``localfs.Reply``. A refusal comes back as a normal
+        result with ``decision == "denied"`` — it is an answer, not a transport
+        failure, and the reason in it is what the person is shown.
+        """
+        device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
+        device.local_fs_seq += 1
+        op_id = f"o{device.local_fs_seq}"
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        device.local_fs_pending[op_id] = future
+        try:
+            await device.send(device_link.local_fs_op(op_id=op_id, op=op))
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            device.local_fs_pending.pop(op_id, None)
+
     # -- exec (server -> device, awaited) ----------------------------------
 
     async def exec(
@@ -771,6 +836,16 @@ class DeviceHub:
                 else device.session_pending
             )
             fut = pending.get(msg.id)
+            if fut is not None and not fut.done():
+                if msg.error:
+                    fut.set_exception(DeviceCallError(msg.error))
+                else:
+                    fut.set_result(msg.value)
+            return
+        if msg.t in ("localfs.grants.result", "localfs.op.result"):
+            # One map for both: the id is unique per device across the channel, and
+            # an o/g prefix already says which kind answered.
+            fut = device.local_fs_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
                     fut.set_exception(DeviceCallError(msg.error))

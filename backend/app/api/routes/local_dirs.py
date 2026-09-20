@@ -14,6 +14,13 @@ own machines:
 * ``GET    /connector/my/access-log`` — every decision across the owner's
   machines, allowed and denied alike.
 
+Authorizing and revoking both push the machine's whole live grant set at it (see
+``app.domain.local_fs.enforcement``) and report what happened in a ``delivery``
+field beside the grant. The push is best-effort on purpose: the owner's computer
+is not always on, and a grant that could only be created while it happened to be
+online would make 「本机离线时项目照常可用」 false at the first step. The grant is
+recorded either way, and the set is pushed again when the machine reattaches.
+
 Two things this module deliberately does NOT have. There is no endpoint that
 lets a directory be attached to anything shareable — a grant is not a resource
 and has no id another user may be handed (本机目录不参与共享). And no endpoint
@@ -35,8 +42,10 @@ from app.core.errors import (
     UnauthorizedError,
     ValidationError,
 )
+from app.domain.agent.device_hub import device_hub
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
 from app.domain.local_fs.records import (
     AccessRecord,
@@ -100,6 +109,20 @@ def _grant_view(grant: DirectoryGrant) -> dict[str, Any]:
     }
 
 
+def _delivery_view(outcome: PushOutcome) -> dict[str, Any]:
+    """What to tell the owner about the trip to their machine.
+
+    Kept OUT of the grant view rather than added to it: the grant's own fields are
+    a deliberately closed set (see the sharing guard test), and 「下发成功了没有」
+    is a fact about one attempt, not a property of the grant.
+    """
+    return {
+        "delivered": outcome.delivered,
+        "reason": outcome.reason,
+        "detail": outcome.detail,
+    }
+
+
 def _access_view(record: AccessRecord) -> dict[str, Any]:
     return {
         "id": str(record.id),
@@ -159,7 +182,11 @@ async def grant_directory(
         # is actionable and 「拒绝访问」 is not.
         raise ValidationError(refused.detail) from refused
     await db.commit()
-    return _grant_view(grant)
+    # After the commit, not before: the grant is now the authoritative record, and
+    # a machine that is offline has not made it any less real. A failure here is
+    # reported, never raised — see the module docstring.
+    outcome = await push_grants(service, device_hub, device_id)
+    return {**_grant_view(grant), "delivery": _delivery_view(outcome)}
 
 
 @router.delete("/my/devices/{device_id}/directories/{grant_id}")
@@ -177,7 +204,11 @@ async def revoke_directory(
     if grant is None or grant.device_id != device_id:
         raise NotFoundError("这条授权不存在")
     await db.commit()
-    return {"revoked": True, "id": str(grant.id)}
+    # Pushed immediately, and that is the point of a revocation: the device holds
+    # its own copy and would otherwise keep honoring a grant its owner has just
+    # taken away until something else happened to re-send the set.
+    outcome = await push_grants(service, device_hub, device_id)
+    return {"revoked": True, "id": str(grant.id), "delivery": _delivery_view(outcome)}
 
 
 @router.get("/my/access-log")
