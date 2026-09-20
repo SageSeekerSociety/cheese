@@ -64,14 +64,8 @@ func loadFixtures(t *testing.T) []fixture {
 func TestFixtureFramesSurviveMsg(t *testing.T) {
 	for _, f := range loadFixtures(t) {
 		t.Run(f.name, func(t *testing.T) {
-			raw, err := json.Marshal(f.Frame)
-			if err != nil {
-				t.Fatalf("re-encode fixture: %v", err)
-			}
 			var m Msg
-			if err := json.Unmarshal(raw, &m); err != nil {
-				t.Fatalf("unmarshal into Msg: %v", err)
-			}
+			decodeFrame(t, f.Frame, &m)
 			if m.T != f.Type {
 				t.Fatalf("type: got %q, fixture says %q", m.T, f.Type)
 			}

@@ -56,7 +56,7 @@ class ExecutionCall:
             id=frame["id"],
             path=frame["path"],
             stdin=frame["stdin"],
-            timeout=int(frame.get("timeout", 0)),
+            timeout=int(frame["timeout"]),
         )
 
     @property
