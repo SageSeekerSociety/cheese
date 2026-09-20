@@ -361,6 +361,24 @@ jobs:
             docker tag mirror.gcr.io/library/python:3.12-slim python:3.12-slim
           fi
 
+      # tests/pinned_claude.py: every command an executor runs goes through the
+      # pinned build's `mcp serve`, so the remote-execution tests need the
+      # binary itself. The pool has it preinstalled; a hosted runner does not.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install the pinned Claude Code build
+        run: |
+          version="$(python3 - <<'PY'
+          import ast, pathlib
+          src = pathlib.Path("app/domain/agent/harness/claude_code/remote_execution/client.py").read_text()
+          print(next(ast.literal_eval(n.value) for n in ast.parse(src).body
+                     if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "PINNED_VERSION" for t in n.targets)))
+          PY
+          )"
+          npm install --prefix "$RUNNER_TEMP/claude-tools" --no-audit --no-fund "@anthropic-ai/claude-code@$version"
+          echo "CHEESE_TEST_CLAUDE=$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" --version
       - name: Run tests
         env:
           # DATABASE_URL and TEST_PG_BASE come from the slot step above: the
