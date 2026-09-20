@@ -30,6 +30,7 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.services import AlertService
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
@@ -636,10 +637,16 @@ class TopicService:
             # Why it stopped has to be readable IN the thread that stopped: the
             # room's own archive note lands on the room, and whoever opens the
             # thread later sees work that simply ended mid-sentence.
-            await self._blocks.add(
+            landed = landing(
+                EventAbout.task,
                 project_id=thread.project_id,
-                topic_id=topic.id,
+                room_id=topic.id,
                 task_id=thread.id,
+            )
+            await self._blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=by,
                 author_type=AuthorType.system,
                 content=f"随父话题「{topic.title}」一同归档",
@@ -691,9 +698,11 @@ class TopicService:
             if cascaded_from
             else f"<@{by}> 归档了话题"
         )
+        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
         await self._blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=by,
             author_type=AuthorType.system,
             content=note,
@@ -731,9 +740,11 @@ class TopicService:
         topic.archived_at = None
         topic.cleanup_due_at = None
         topic.cleanup_id = None
+        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
         await self._blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=by,
             author_type=AuthorType.system,
             content=f"<@{by}> 取消归档，话题恢复活跃",
@@ -900,13 +911,14 @@ class TopicService:
         reads the live row (`GET /topics/{id}/tasks`) for that, which is also
         where the derived markers get theirs — one answer, not two.
         """
+        # The ROOM's main line: the whole point is that the room sees the work
+        # leave. Filing it on the thread would put it exactly where everyone not
+        # doing the work is not looking.
+        landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
         return await self._blocks.add(
-            project_id=room.project_id,
-            topic_id=room.id,
-            # The ROOM's main line: the whole point is that the room sees the
-            # work leave. Filing it on the thread would put it exactly where
-            # everyone not doing the work is not looking.
-            task_id=None,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="system",
             author_type=AuthorType.system,
             content=f"派出一条活：{task.title}",
@@ -1192,9 +1204,15 @@ class TopicService:
                 "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
-        notice = await self._blocks.add(
+        landed = landing(
+            EventAbout.room,
             project_id=topic.project_id,
-            topic_id=place.room_id,
+            room_id=place.room_id,
+        )
+        notice = await self._blocks.add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=author,
             author_type=AuthorType.system,
             content=f"{actor} 编辑了文档",

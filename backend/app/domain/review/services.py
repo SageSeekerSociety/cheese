@@ -46,6 +46,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
@@ -3944,9 +3945,11 @@ class AcceptService:
         await self._session.flush()
         await self._session.refresh(card)
 
+        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
         await BlockRepository(self._session).add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="cheese",
             author_type=AuthorType.system,
             content=f"<@{decided_by}> 作废了这张验收卡",

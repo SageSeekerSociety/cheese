@@ -39,6 +39,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import notes
@@ -117,9 +118,11 @@ async def close_cards_for_archived_topic(
 
     # 留痕：一张开着的 PR 被平台放手了，这件事不能只躺在 note 里。
     for card in stranded:
+        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
         await BlockRepository(session).add(
-            project_id=project_id,
-            topic_id=topic_id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="cheese",
             author_type=AuthorType.system,
             content=f"话题归档，平台停止跟进 PR #{card.pr_number}",
