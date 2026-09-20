@@ -2,10 +2,10 @@
 
 两条缝，两条判据：
 
-**缝一：这条凭证能不能替这个房间发言。** 席位即授权 —— 撤销是删一行，不是等
-token 过期。凭证本身没变、也没过期，但它名下的那位已经不在这个房间的名册上了，
-所以它在这里不再是「这个房间的芝士」。原来这里问的是调用者**是不是** agent
-（一个在信任边界解析、八条路由之外才被读到的布尔），于是撤了席位照样发得出来。
+**缝一：这条凭证能不能替这个房间发言。** 席位即授权。一个属于这个项目、因而进得来
+这些房间的队友，在它**没有席位**的那个房间里不能以这个房间的名义说话；坐下之后同一条
+凭证就可以。原来这里问的是调用者**是不是** agent（一个在信任边界解析、八条路由之外才
+被读到的布尔），而那个答案在整个项目里都一样，于是没坐下的那位照样发得出来。
 
 **缝二（I9b）：一个 agent 实例只能在建它的那个项目里持有席位。** 人没有这条限制
 ——被邀请到哪就去哪。这是「谁拥有这个参与者」的直接后果：实例由建它的项目拥有，
@@ -42,28 +42,43 @@ def _publish(client, topic_id, headers):
 
 def test_publishing_needs_a_seat_in_this_room_not_an_agent_shaped_caller(client):
     project = _project(client, "Seat is the grant")
-    topic = _room(client, project)
-    headers = {"X-Cheese-Token": mint_scoped_token(
-        project_id=project["id"], topic_id=topic["id"]
-    )}
+    room = _room(client, project)
 
-    assert _publish(client, topic["id"], headers).status_code == 200
+    made = client.post(
+        f"/projects/{project['id']}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    )
+    assert made.status_code == 200, made.text
+    seat = agent_instance_handle(made.json()["data"]["id"])
 
-    roster = client.get(
-        f"/topics/{topic['id']}/members", headers=session_auth_headers("alice")
-    ).json()["data"]["data"]
-    seats = [row["member_handle"] for row in roster if row["agent"]]
-    assert seats, roster
-    for seat in seats:
-        removed = client.delete(
-            f"/topics/{topic['id']}/members/{seat}",
-            headers=session_auth_headers("alice"),
+    # On the project's roster, so it is allowed to act in this project's rooms.
+    # This room is not where it sits.
+    joined = client.post(
+        f"/projects/{project['id']}/members",
+        json={"user_handle": seat, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert joined.status_code == 200, joined.text
+
+    headers = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project["id"], topic_id=room["id"], agent_handle=seat
         )
-        assert removed.status_code == 200, removed.text
-
-    # Same token, same TTL, same caller. What changed is the roster.
-    refused = _publish(client, topic["id"], headers)
+    }
+    refused = _publish(client, room["id"], headers)
     assert refused.status_code == 403, refused.text
+
+    seated = client.post(
+        f"/topics/{room['id']}/members",
+        json={"handle": seat, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert seated.status_code == 200, seated.text
+
+    # Same credential, same room, same participant. What changed is the seat.
+    allowed = _publish(client, room["id"], headers)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["data"]["author"] == seat
 
 
 def test_a_teammate_seats_only_in_the_project_that_built_it(client):
