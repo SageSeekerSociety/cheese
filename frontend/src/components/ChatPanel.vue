@@ -2125,7 +2125,7 @@ onBeforeUnmount(() => {
                   <div class="sys-meta">
                     {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
                   </div>
-                  <pre class="sys-detail">{{ occ.detail }}</pre>
+                  <pre v-if="occ.detail" class="sys-detail">{{ occ.detail }}</pre>
                 </div>
               </div>
             </details>
