@@ -1453,7 +1453,7 @@ class ClaudeCodeRuntime:
         be a cold start, and no caller can know in advance which one that is.
         """
         started = time.monotonic()
-        precheck = await self._channel.precheck(session.project_id, session.topic_id)
+        precheck = await self._channel.precheck(session)
         logger.info(
             "session setup phase=precheck topic=%s elapsed_ms=%d",
             session.topic_id,
@@ -1467,8 +1467,7 @@ class ClaudeCodeRuntime:
             agent_handle=opening.agent_handle,
         )
         screen = await self._channel.ensure_ready(
-            project_id=session.project_id,
-            topic_id=session.topic_id,
+            session=session,
             token=token,
             env=opening.env,
             memory_scope=opening.memory_scope,
@@ -1590,6 +1589,7 @@ class ClaudeCodeRuntime:
         turn_id: uuid.UUID | None = None,
         images: list[dict] | None = None,
         agent_handle: str | None = None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
@@ -1598,11 +1598,12 @@ class ClaudeCodeRuntime:
                 is_error=True,
             )
             return
+        session = SessionRef(project_id, topic_id, session_agent, self.harness)
 
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
         try:
-            precheck = await self._channel.precheck(project_id, topic_id)
+            precheck = await self._channel.precheck(session)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc),
@@ -1623,8 +1624,7 @@ class ClaudeCodeRuntime:
         try:
             try:
                 screen = await self._channel.ensure_ready(
-                    project_id=project_id,
-                    topic_id=topic_id,
+                    session=session,
                     token=token,
                     env=env,
                     memory_scope=memory_scope,

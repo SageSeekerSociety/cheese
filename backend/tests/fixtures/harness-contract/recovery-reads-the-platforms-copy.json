@@ -1,0 +1,6 @@
+{
+  "verb": "restore",
+  "why": "结论 29's other half: 「恢复从平台副本恢复」. Today's `recover` finds sessions that outlived this process and starts listening again — it recovers from the MACHINE. Nothing in the contract rebuilds a session from the copy the platform holds, which is what moving a session to another machine needs, so there is no verb here to drive.",
+  "readers": ["python"],
+  "xfail": "P18 adds the verb and the session move that needs it (a conversation carried to a second machine, the next turn able to quote what the last one said). Until then this scenario names the hole, and its one reader is the guard in test_harness_contract.py asserting `AgentRuntime` has no such verb — the day P18 adds it, that guard turns red and this file goes with it. There are deliberately no steps: steps against a verb nobody has written are red on the call name, which says nothing about the product."
+}

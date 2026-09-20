@@ -698,7 +698,7 @@ async def say_on_task(
         topic_id=place.room_id,
         task_id=task.id,
         author=actor.handle,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=content,
         kind=BlockKind.message,
     )
@@ -1106,7 +1106,7 @@ async def add_comment(
         # would post a thread's comment onto the room for everyone to read.
         topic_id=topic_id,
         author=author,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
@@ -1221,7 +1221,7 @@ async def edit_topic_doc(
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
     )
     # Publish only committed edits: connected teammates can immediately read
     # the new document and the same persisted contribution record.
@@ -1511,26 +1511,31 @@ async def ask_options(
         raise ValidationError("question is required")
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
+    # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
+    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese ask` 只在 CHEESE_TURN
+    # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
+    # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
+    # 直接说明（`own_output`）：不说明的话这道题会盖上待读标记，「忘了 @」的补救按钮
+    # 不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝士刚问出口的这道
+    # 题，它对着自己的问题再答一遍。人在房间里问出的那种照旧是一条待读输入。
+    if actor.authenticated:
+        author, asked_by_agent = actor.handle, actor.is_agent
+    else:
+        author = await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        )
+        asked_by_agent = True
     blk = await BlockRepository(db).add(
         project_id=place.project_id,
         # The place id: `add` splits it, so a thread's question is asked in the
         # thread rather than shouted into the room around it.
         topic_id=topic_id,
-        author=(
-            actor.handle
-            if actor.authenticated
-            else await TopicMemberService(db).resolve_agent_handle(
-                topic_id, room_id=place.room_id
-            )
-        ),
-        author_type=(
-            AuthorType.human
-            if actor.authenticated and not actor.is_agent
-            else AuthorType.ai
-        ),
+        author=author,
+        author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
+        own_output=asked_by_agent,
     )
     # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
     # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
@@ -1584,7 +1589,7 @@ async def summon_agent(
     )
     if chat.has_running_turn(place.room_id):
         return ok({"started": False, "reason": "working"})
-    if not await chat.has_unread_human_input(place.room_id):
+    if not await chat.has_unread_input(place.room_id):
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
@@ -1711,11 +1716,7 @@ async def record_decision(
                 topic_id, room_id=place.room_id
             )
         ),
-        author_type=(
-            AuthorType.human
-            if actor.authenticated and not actor.is_agent
-            else AuthorType.ai
-        ),
+        author_type=AuthorType.participant,
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
@@ -2280,7 +2281,7 @@ async def set_artifact(
         author=await TopicMemberService(db).resolve_agent_handle(
             topic_id, room_id=place.room_id
         ),
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content=path,
         kind=BlockKind.artifact,
         mime_type=mime,

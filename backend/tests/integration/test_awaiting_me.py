@@ -36,6 +36,7 @@ def _file_card(client, room: str, reviewer: str) -> None:
         f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file a card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
