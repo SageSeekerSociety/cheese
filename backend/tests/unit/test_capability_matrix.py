@@ -18,13 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.capability import (
-    BUILT_IN_DIFFERENCES,
-    EVENT_DIFFERENCES,
-    BuiltIn,
-    Declaration,
-    Difference,
-)
+from app.domain.agent.capability import BuiltIn, Declaration, Difference
 from app.domain.agent.capability import matrix as matrix_module
 from app.domain.agent.capability.matrix import MatrixIncomplete, declarations, matrix
 from app.core.config import Settings
@@ -127,7 +121,9 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
     """版本号在哪几个文件里出现过，是一张白名单，而白名单是棘轮。
 
     多一个文件写下同一个字符串就红：pin 被抄第二遍的那一刻，「升级要改几处」
-    这件事就已经没有人知道了。还清一处（改成引用常量）要回来删掉那一行。
+    这件事就已经没有人知道了。还清一处（改成引用常量）而忘了回来删掉那一行，也
+    红：一条陈旧的豁免会一声不响地把那个文件重新对复制品开放，而白名单读起来跟
+    没还过一样。两个方向都断言，名单才是一张清单而不是一道单向棘轮。
 
     找的是裸版本号，不是 ``"2.1.277"`` 这样带引号的一整个字面量：嵌在字符串中间
     的那一份（``private.py`` 的 ``IMAGE``）在带引号的匹配下天然隐身，而它恰恰是
@@ -145,6 +141,11 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
         HARNESS_PACKAGE / "codex/behaviour.py",
         HARNESS_PACKAGE / "pi/behaviour.py",
     }
+    def writes_a_pin(path: Path) -> bool:
+        return any(
+            pin in literal for literal in _string_literals(path) for pin in pins
+        )
+
     stray = [
         f"{path.relative_to(APP)}: {pin}"
         for path in sorted(HARNESS_PACKAGE.rglob("*.py"))
@@ -153,6 +154,14 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
         if any(pin in literal for literal in _string_literals(path))
     ]
     assert not stray, "版本号在适配层里被抄了第二遍：\n  " + "\n  ".join(stray)
+    settled = sorted(
+        str(path.relative_to(APP)) for path in allowed if not writes_a_pin(path)
+    )
+    assert not settled, (
+        "这几处已经不写版本号字面量了，豁免却还留着：\n  "
+        + "\n  ".join(settled)
+        + "\n把它们从 allowed 里删掉。"
+    )
 
 
 # --- 2. 矩阵没有空格（I6） ---------------------------------------------------
@@ -176,33 +185,6 @@ def test_a_cell_left_empty_is_refused_rather_than_drawn(monkeypatch) -> None:
         verified_against="9.9.9",
     )
     monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: blank)
-    with pytest.raises(MatrixIncomplete):
-        matrix()
-
-
-def test_every_difference_code_belongs_to_exactly_one_axis() -> None:
-    """一份枚举，两条轴，每条码正好归一条。
-
-    没有这条守卫，往 ``Difference`` 里加一条码就会落在谁也没认领的地方：两侧的
-    校验各自不认它，而它在表上跟一条真的码长得一模一样。
-    """
-    assert BUILT_IN_DIFFERENCES | EVENT_DIFFERENCES == set(Difference)
-    assert not BUILT_IN_DIFFERENCES & EVENT_DIFFERENCES
-
-
-def test_a_code_from_the_other_axis_is_not_an_answer(monkeypatch) -> None:
-    """「待办这一格：报不出会话 id」——跨轴的胡话，也得红。
-
-    合并成一份码之后这是唯一挡得住它的地方：它是一条真的 ``Difference``，所以
-    「要么有、要么一条码」这句话本身已经拦不住它了。
-    """
-    nonsense = Declaration(
-        pinned_version="9.9.9",
-        built_ins=frozenset(),
-        how_disabled=dict.fromkeys(BuiltIn, Difference.NO_SESSION_ID_OF_ITS_OWN),
-        verified_against="9.9.9",
-    )
-    monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: nonsense)
     with pytest.raises(MatrixIncomplete):
         matrix()
 
@@ -263,7 +245,12 @@ def _capability_bits() -> list[str]:
 
 @functools.cache
 def _readers(bit: str) -> dict[str, list[str]]:
-    """实现目录之外，读这个能力位的地方：函数全名 → 出现处。"""
+    """实现目录之外，读这个能力位的地方：读点的全名 → 出现处。
+
+    类也压进这个全名，所以 key 是「文件::类.方法」。只压函数的话，同一个文件里
+    两个类各有一个同名方法、各自解释同一个布尔，就折叠成一个 key——而这正是下面
+    那条守卫要抓的东西。
+    """
     found: dict[str, list[str]] = {}
     for path in sorted(APP.rglob("*.py")):
         if path.is_relative_to(HARNESS_PACKAGE):
@@ -273,7 +260,9 @@ def _readers(bit: str) -> dict[str, list[str]]:
 
         def walk(node: ast.AST, scope: list[str] = scope, path: Path = path) -> None:
             for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
                     scope.append(child.name)
                     walk(child)
                     scope.pop()

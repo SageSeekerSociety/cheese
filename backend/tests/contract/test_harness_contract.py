@@ -35,11 +35,6 @@ import uuid
 import pytest
 
 from app.domain.agent import service
-from app.domain.agent.capability import (
-    BUILT_IN_DIFFERENCES,
-    EVENT_DIFFERENCES,
-    Difference,
-)
 from app.domain.agent.harness import HARNESSES, AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.claude_code.hook_events import MessageAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
@@ -60,14 +55,6 @@ OPENING = Opening(system_prompt="CONTRACT")
 
 #: What the room calls each event. The word in a fixture, the class in the code.
 KIND_OF = {name: entry["class"] for name, entry in VOCABULARY["events"].items()}
-
-
-def _axis(axis: str) -> set[str]:
-    """夹具里归在这条轴上的码。两个 reader 认的都是这一份。"""
-    return {
-        code for code, word in VOCABULARY["differences"].items() if word["axis"] == axis
-    }
-
 
 SCENARIO_KEYS = {
     "name",
@@ -164,25 +151,6 @@ def test_a_word_lists_the_fields_that_event_cannot_do_without(word: str) -> None
     assert set(VOCABULARY["events"][word]["required"]) == required
 
 
-def test_the_difference_codes_are_the_platforms_one_closed_list() -> None:
-    """差异码是全平台一份，不是这个目录一份，而且轴也记在这一份里。
-
-    这里的散文归这个文件（TypeScript 那侧只读得到 JSON），码本身归
-    ``capability.Difference``（功能矩阵要拿它填格子）。两边分头长的那一天，一张
-    矩阵会开始用另一张矩阵不认识的码——所以两份的成员必须一模一样。
-
-    轴同理，而且更要紧：轴只写在 Python 里的时候，TypeScript 那个 reader 认全部
-    八条，于是一个场景填一条「平台关不掉」的码，在 extension 那边绿、在这边红，
-    一份夹具两个 reader 读出两份规矩。轴记进夹具，两侧才都读得到它。
-    """
-    assert set(VOCABULARY["differences"]) == {code.value for code in Difference}
-    for code, word in VOCABULARY["differences"].items():
-        assert word["why"].strip(), code
-        assert word["axis"] in ("event", "built-in"), code
-    assert _axis("event") == {code.value for code in EVENT_DIFFERENCES}
-    assert _axis("built-in") == {code.value for code in BUILT_IN_DIFFERENCES}
-
-
 def test_the_six_verbs_are_all_there_and_a_runtime_can_keep_them() -> None:
     """Six, not the five the docstring lists — ``deliver`` is the sixth, and its
     own docstring says it and ``send`` will be one call some day. Until they
@@ -215,10 +183,7 @@ def test_a_scenario_is_written_in_the_word_list(scenario: dict) -> None:
         for name, cell in scenario["harnesses"].items():
             assert set(cell) in ({"records"}, {"difference"}), name
             if "difference" in cell:
-                # 事件那条轴上的五条，不是整份词汇表：另外三条说的是「平台关不掉
-                # 骨架自带的某样东西」，填进一个场景里就是一句跨轴的胡话。轴读的
-                # 是夹具，跟 TypeScript 那侧同一个来源。
-                assert cell["difference"] in _axis("event"), name
+                assert cell["difference"] in VOCABULARY["differences"]
         for event in scenario["events"]:
             word = VOCABULARY["events"][event["kind"]]
             assert set(word["required"]) <= set(event), event

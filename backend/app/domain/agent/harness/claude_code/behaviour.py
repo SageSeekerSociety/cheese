@@ -20,13 +20,24 @@ def declaration() -> Declaration:
         pinned_version=CLAUDE_PINNED_VERSION,
         built_ins=frozenset({BuiltIn.ASK, BuiltIn.TODO}),
         how_disabled={
-            # `cli.DISALLOWED_TOOLS` 同时进 argv 的 --disallowedTools 和
-            # settings.json 的 deny 两侧，所以感知侧和启动侧说的是同一句拒绝。
-            # 关掉它是必须的而不是偏好：交互式 claude 把选项器画在 screen 里，
-            # 没有人够得着，于是一轮就挂在那里等一个永远不会来的按键。
+            # 这一格是有条件的，两侧的条件是同一个。启动侧：
+            # `--disallowedTools` 只长在 `CLAUDE_BASE_ARGS` 上
+            # （cli.py 的 CLAUDE_BASE_CMD → device_launch.py 的
+            # CLAUDE_BASE_ARGS），而 remote-control 那条启动串整个把它换掉了。
+            # 感知侧：session_launch.py 的 hooks_settings 写 deny 时同样问一句
+            # remote_control。
+            # 非 RC 里关掉它是必须的而不是偏好：交互式 claude 把选项器画在
+            # screen 里，没有人够得着，于是一轮就挂在那里等一个永远不会来的按
+            # 键。RC 会话有回答通道，问题答得掉，所以平台故意留着它自带的这一
+            # 份——这一格写成无条件的「已关闭」，下一个核表的人就核不出 RC 那一
+            # 半。
             BuiltIn.ASK: (
-                f"harness/claude_code/cli.py 的 DISALLOWED_TOOLS={DISALLOWED_TOOLS}，"
-                "启动参数与 settings.json 两侧同时拒绝；平台的等价物是 `cheese ask`"
+                "非 remote-control 会话：harness/claude_code/cli.py 的 "
+                f"DISALLOWED_TOOLS={DISALLOWED_TOOLS} 进启动参数的 "
+                "--disallowedTools，harness/claude_code/session_launch.py 的 "
+                "hooks_settings 同时把它写进 settings.json 的 deny；"
+                "remote-control 会话两侧都不拒绝，答案走 RC 通道。"
+                "平台的等价物是 `cheese ask`"
             ),
             # TodoWrite 自带一份任务清单，平台的活（split / ready / close-task）
             # 是另一份。今天平台没有关掉它：`agent/chat.py` 的现场动词表里它是

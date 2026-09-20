@@ -1,5 +1,5 @@
 {
-  "why": "The closed vocabulary every scenario in this directory is written in: the six verbs of the harness contract, the events a harness may produce, and the difference codes a harness may answer with when it cannot fill a cell. Both readers load this file first and refuse a scenario that steps outside it — which is what stops the set growing a word only one language understands. The code list is the whole platform's, not this directory's: `app/domain/agent/capability.Difference` is the same closed set in Python, and a guard in `tests/contract/test_harness_contract.py` keeps the two equal. One list, but not one axis: an `event` code says a harness cannot report something, which is what a scenario in this directory answers with; a `built-in` code says the platform cannot turn off something a harness brings, which is what the capability matrix answers with. A cell filled from the other axis is nonsense that reads exactly like a real code, so each reader accepts only the axis it is about, and the same guard keeps this file's split equal to Python's.",
+  "why": "The closed vocabulary every scenario in this directory is written in: the six verbs of the harness contract, the events a harness may produce, and the codes a harness may answer with when it cannot produce one. Both readers load this file first and refuse a scenario that steps outside it — which is what stops the set growing a word only one language understands.",
   "verbs": ["ensure", "send", "backlog", "deliver", "interrupt", "close"],
   "events": {
     "message": {
@@ -44,37 +44,10 @@
     }
   },
   "differences": {
-    "no-tool-failure-signal": {
-      "axis": "event",
-      "why": "This harness reports nothing when a tool call fails, so a failed step reaches the room looking exactly like one that worked. A cell filled with this is a hole named, not a hole excused."
-    },
-    "no-call-id-on-tool-use": {
-      "axis": "event",
-      "why": "This harness's tool call reaches the room carrying no id of its own. Its record has one, but that id arrives as the DELIVERY's id and nothing later names the call — this harness reports no failure for a call either (see no-tool-failure-signal) — so a failure here would have no step to mark."
-    },
-    "no-subagent-threads": {
-      "axis": "event",
-      "why": "This harness runs no second worker inside a session, so nothing can be attributed to one."
-    },
-    "no-subagent-tool-return": {
-      "axis": "event",
-      "why": "This harness reports that a subagent stopped, but never what it handed back as a tool return."
-    },
-    "no-session-id-of-its-own": {
-      "axis": "event",
-      "why": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
-    },
-    "not-built-in": {
-      "axis": "built-in",
-      "why": "This harness brings no implementation of this product concept, so there is nothing for the platform to turn off. Only claimed where the platform's own code is the evidence — it had to build the thing itself."
-    },
-    "no-off-switch": {
-      "axis": "built-in",
-      "why": "This harness brings its own implementation of this product concept and the platform has no way to turn it off yet. 结论 48 的「暂缺」."
-    },
-    "not-checked-against-the-pin": {
-      "axis": "built-in",
-      "why": "Nobody has read this harness's own implementation of this product concept against the pinned build. Also 「暂缺」, but the kind one act of checking removes."
-    }
+    "no-tool-failure-signal": "This harness reports nothing when a tool call fails, so a failed step reaches the room looking exactly like one that worked. A cell filled with this is a hole named, not a hole excused.",
+    "no-call-id-on-tool-use": "This harness's tool call reaches the room carrying no id of its own. Its record has one, but that id arrives as the DELIVERY's id and nothing later names the call — this harness reports no failure for a call either (see no-tool-failure-signal) — so a failure here would have no step to mark.",
+    "no-subagent-threads": "This harness runs no second worker inside a session, so nothing can be attributed to one.",
+    "no-subagent-tool-return": "This harness reports that a subagent stopped, but never what it handed back as a tool return.",
+    "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
   }
 }

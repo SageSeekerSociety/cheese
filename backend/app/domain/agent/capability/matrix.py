@@ -4,10 +4,10 @@
 关掉、这份声明对着哪个钉住的版本验证过。本模块是那件事的汇总侧：把三份声明并
 成一张表，并且**在生成的时候就不让任何一格是空的**（不变量 I6）。
 
-一格只有三种可能：一句「怎么关的」（那就是「有」），或者 ``BUILT_IN_DIFFERENCES``
-里的一条码；那份名单是封闭的，所以「这一格我说不清」这句话本身也得选一个已经存
-在的说法，而不是随手写一行散文，也不能借用另一条轴上的码来冒充一个回答。这是结论 48 的第三条判据，也是这张表跟一张 README
-里的表格唯一的区别。
+一格只有两种可能：一句「怎么关的」（那就是「有」），或者 ``Difference`` 里的一
+条码；那份名单是封闭的，所以「这一格我说不清」这句话本身也得选一个已经存在的说
+法，而不是随手写一行散文。这是结论 48 的第三条判据，也是这张表跟一张 README 里
+的表格唯一的区别。
 
 **钉住的版本号只写一处。** 每个骨架的适配层各一个常量，声明引用它；
 ``backend/scripts/test_harness_contracts.py`` 装二进制的时候问的也是这里，而不
@@ -16,12 +16,7 @@
 **这张表只覆盖骨架。** 地点与托管方的两张随 P22、P30 各自交付，形状照抄这里。
 """
 
-from app.domain.agent.capability import (
-    BUILT_IN_DIFFERENCES,
-    BuiltIn,
-    Declaration,
-    Difference,
-)
+from app.domain.agent.capability import BuiltIn, Declaration, Difference
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, PI
 from app.domain.agent.harness.claude_code import declaration as claude_code_declaration
 from app.domain.agent.harness.codex import declaration as codex_declaration
@@ -64,14 +59,6 @@ def matrix() -> dict[str, dict[BuiltIn, str | Difference]]:
         for concept in BuiltIn:
             cell = declared.how_disabled.get(concept)
             if isinstance(cell, Difference):
-                # 码是全平台一份，轴不是：事件契约那侧的码填进这张表是一句跨轴
-                # 的胡话，而胡话在表上跟一条真的差异码长得一模一样。
-                if cell not in BUILT_IN_DIFFERENCES:
-                    raise MatrixIncomplete(
-                        f"{name} 的「{concept}」填了 {cell.value}，那是事件契约"
-                        "那条轴上的码。这张表只认 "
-                        f"{sorted(code.value for code in BUILT_IN_DIFFERENCES)}。"
-                    )
                 if cell is Difference.NOT_BUILT_IN and concept in declared.built_ins:
                     raise MatrixIncomplete(
                         f"{name} 说它自带「{concept}」，这一格却填了「不自带」。"
