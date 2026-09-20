@@ -12,6 +12,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -21,6 +22,56 @@ VERSION = "2.1.277"
 # the executor, its helpers, the CLI, the environment runner — lives here.
 PLATFORM_DIR = ".cheese"
 PREVIOUS_PLATFORM_DIR = ".claude"
+
+
+class UpgradeDeferred(Exception):
+    def __init__(self, info):
+        self.info = info
+
+
+def stage_release(platform_dir, payload):
+    contents = {
+        name: (
+            base64.b64decode(payload["files"][name])
+            if name in payload["files"]
+            else (platform_dir / name).read_bytes()
+        )
+        for name in payload.get("file_names", payload["files"])
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()},
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    releases = platform_dir / "executor-releases"
+    releases.mkdir(exist_ok=True)
+    release = releases / digest
+    if not release.exists():
+        staged = releases / (digest + "." + uuid.uuid4().hex)
+        staged.mkdir(mode=0o700)
+        for name, data in contents.items():
+            relative = Path(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("Executor file must be inside its release")
+            path = staged / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o700)
+        (staged / "executor-files.json").write_text(json.dumps(list(contents)))
+        staged.rename(release)
+    return release, contents
+
+
+def activate_release(platform_dir, release, names):
+    # Stable entrypoints select a release; running executors use the recorded path.
+    for name in [*names, "executor-files.json"]:
+        destination = platform_dir / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(destination.name + ".next")
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(release / name)
+        temporary.replace(destination)
 
 
 def binary(owner, api, verified=None):
@@ -50,6 +101,15 @@ def binary(owner, api, verified=None):
                 timeout=15,
             )
             if result.returncode == 0 and result.stdout.split()[0] == VERSION:
+                if candidate != destination:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = destination.with_name(
+                        destination.name + "." + uuid.uuid4().hex
+                    )
+                    shutil.copyfile(candidate, temporary)
+                    temporary.chmod(0o700)
+                    temporary.replace(destination)
+                    return str(destination)
                 if verified is not None:
                     verified[str(candidate)] = identity
                 return str(candidate)
@@ -142,40 +202,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     with (platform_dir / "executor-bootstrap.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         stop_previous_root(home)
-        if refresh_runtime:
-            source = platform_dir / "remote-execution/runtime.py"
-            state = platform_dir / "executor"
-            if source.exists() and (state / "config.json").exists():
-                runtime = runpy.run_path(str(source))
-                try:
-                    info = runtime["request"](state, "ping")
-                except (ConnectionError, FileNotFoundError):
-                    info = None
-                expected = hashlib.sha256(
-                    base64.b64decode(payload["files"]["remote-execution/runtime.py"])
-                ).hexdigest()
-                if info and info.get("runtime_sha256") != expected:
-                    tasks = runtime["request"](
-                        state, "control", {"subtype": "background_tasks"}
-                    )["tasks"]
-                    if any(task["status"] == "running" for task in tasks):
-                        raise RuntimeError(
-                            "Executor update is waiting for running commands to finish"
-                        )
-        for name, content in payload["files"].items():
-            destination = platform_dir / name
-            destination.relative_to(platform_dir)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            decoded = base64.b64decode(content)
-            # Keep unchanged CLI sources from invalidating the worker's preload.
-            if not destination.exists() or destination.read_bytes() != decoded:
-                destination.write_bytes(decoded)
-            destination.chmod(0o700)
-        if "file_names" in payload:
-            manifest = platform_dir / "executor-files.json"
-            contents = json.dumps(payload["file_names"])
-            if not manifest.exists() or manifest.read_text() != contents:
-                manifest.write_text(contents)
+        release, contents = stage_release(platform_dir, payload)
         env = dict(os.environ)
         for name in list(env):
             if (
@@ -189,23 +216,15 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             CLAUDE_CONFIG_DIR=str(config_dir),
             CHEESE_WORK=str(work),
             CHEESE_WORKTREE_ROOT=str(work),
-            CHEESE_PREVIEW_UP=str(platform_dir / "cheese-preview-up"),
-            PATH=str(platform_dir) + os.pathsep + env.get("PATH", ""),
+            CHEESE_PREVIEW_UP=str(release / "cheese-preview-up"),
+            PATH=os.pathsep.join(
+                (
+                    str(release / "remote-execution/bin"),
+                    str(release),
+                    env.get("PATH", ""),
+                )
+            ),
         )
-        if payload.get("environment"):
-            # Retained executors also need the pinned task configuration when
-            # their helpers are upgraded without rerunning room initialization.
-            directory = home / ".cheese-environment"
-            directory.mkdir(exist_ok=True, mode=0o700)
-            configuration = directory / "config.json"
-            if (
-                not configuration.exists()
-                or json.loads(configuration.read_text()) != payload["environment"]
-            ):
-                runner = runpy.run_path(str(platform_dir / "cheese-environment.py"))
-                runner["write_json"](configuration, payload["environment"])
-        (platform_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
-        (platform_dir / "cheese-preview.token").chmod(0o600)
         scoped_env = {
             name: value
             for name, value in env.items()
@@ -224,16 +243,113 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             "claude": binary(owner, env["CHEESE_API"], verified),
             "env": scoped_env,
             "mcp_servers": {},
+            "release": str(release),
         }
         mcp = work / ".mcp.json"
         if mcp.exists():
             config["mcp_servers"] = json.loads(mcp.read_text()).get("mcpServers", {})
         state = platform_dir / "executor"
         state.mkdir(exist_ok=True, mode=0o700)
+        (platform_dir / "cheese-preview.token").write_text(env["CHEESE_TOKEN"])
+        (platform_dir / "cheese-preview.token").chmod(0o600)
+        if (state / "config.json").exists():
+            previous = json.loads((state / "config.json").read_text())
+            source = (
+                Path(previous.get("release", platform_dir))
+                / "remote-execution/runtime.py"
+            )
+            runtime = runpy.run_path(str(source))
+            try:
+                info = runtime["request"](state, "ping")
+            except (ConnectionError, FileNotFoundError):
+                info = None
+            if info:
+                unchanged = {"env", "claude", "release"}
+                if {k: v for k, v in previous.items() if k not in unchanged} != {
+                    k: v for k, v in config.items() if k not in unchanged
+                }:
+                    raise RuntimeError(
+                        "Executor configuration changed; restart the room environment"
+                    )
+                environment_file = state / "environment.json"
+                if environment_file.exists() and json.loads(
+                    environment_file.read_text()
+                ) != payload.get("environment"):
+                    raise RuntimeError(
+                        "Environment dependencies changed; "
+                        "create a new execution environment"
+                    )
+                changed = (
+                    previous.get("release") != str(release)
+                    or previous.get("claude") != config["claude"]
+                    or info.get("upgrading", False)
+                )
+                if changed:
+                    if not refresh_runtime:
+                        raise RuntimeError(
+                            "Executor release changed; prepare an idle upgrade"
+                        )
+                    if "idle_upgrade" in info.get("capabilities", []):
+                        ready = runtime["request"](
+                            state,
+                            "begin_upgrade",
+                            {"release": str(release), "claude": config["claude"]},
+                        )["ready"]
+                    else:
+                        # Existing installations are admitted under the backend's
+                        # exclusive release lock until they gain local admission.
+                        tasks = runtime["request"](
+                            state, "control", {"subtype": "background_tasks"}
+                        )["tasks"]
+                        ready = not any(task["status"] == "running" for task in tasks)
+                    if not ready:
+                        if info.get("protocol_version", 1) != payload.get(
+                            "protocol_version", 1
+                        ):
+                            raise RuntimeError(
+                                "Executor protocol upgrade is waiting for running work"
+                            )
+                        refreshed = {**previous.get("env", {}), **payload["env"]}
+                        runtime["request"](state, "configure", {"env": refreshed})
+                        info.update(
+                            state=str(state),
+                            mcp_servers=list(previous.get("mcp_servers", {})),
+                            upgrade_pending=True,
+                            desired_release=str(release),
+                        )
+                        if payload.get("environment"):
+                            runner = runpy.run_path(
+                                str(
+                                    Path(previous.get("release", platform_dir))
+                                    / "cheese-environment.py"
+                                )
+                            )
+                            info["environment_status"] = runner["read_status"](
+                                home / ".cheese-environment"
+                            )["state"]
+                        raise UpgradeDeferred(info)
+                    subprocess.run(
+                        [sys.executable, str(source), "stop", "--state", str(state)],
+                        check=True,
+                        timeout=30,
+                    )
+        activate_release(platform_dir, release, contents)
+        if payload.get("environment"):
+            directory = home / ".cheese-environment"
+            directory.mkdir(exist_ok=True, mode=0o700)
+            runner = runpy.run_path(str(release / "cheese-environment.py"))
+            runner["write_json"](directory / "config.json", payload["environment"])
         yield home, config, state, env
 
 
 def configure(payload):
+    try:
+        configure_idle(payload)
+    except UpgradeDeferred as deferred:
+        print(json.dumps(deferred.info))
+
+
+def configure_idle(payload):
     with prepared(payload, Path.home(), refresh_runtime=True) as (
         home,
         config,
@@ -244,74 +360,41 @@ def configure(payload):
         work = Path(config["workspace"])
         scoped_env = config["env"]
         log = platform_dir / "executor-bootstrap.log"
-        sys.path.insert(0, str(platform_dir / "remote-execution"))
-        runtime = runpy.run_path(str(platform_dir / "remote-execution/runtime.py"))
+        release = Path(config["release"])
+        runtime = runpy.run_path(str(release / "remote-execution/runtime.py"))
 
         if (state / "config.json").exists():
-            previous = json.loads((state / "config.json").read_text())
             try:
                 info = runtime["request"](state, "ping")
             except (ConnectionError, FileNotFoundError):
                 info = None
             if info:
-                if {
-                    k: v for k, v in previous.items() if k not in {"env", "claude"}
-                } != {k: v for k, v in config.items() if k not in {"env", "claude"}}:
-                    raise RuntimeError(
-                        "Executor configuration changed; restart the room environment"
+                runtime["request"](state, "configure", {"env": scoped_env})
+                if payload.get("environment"):
+                    runner = runpy.run_path(str(release / "cheese-environment.py"))
+                    info["environment_status"] = runner["read_status"](
+                        home / ".cheese-environment"
+                    )["state"]
+                print(
+                    json.dumps(
+                        {
+                            **info,
+                            "mcp_servers": list(config["mcp_servers"]),
+                            "state": str(state),
+                        }
                     )
-                binary_changed = previous.get("claude") != config["claude"]
-                if binary_changed:
-                    tasks = runtime["request"](
-                        state, "control", {"subtype": "background_tasks"}
-                    )["tasks"]
-                    if any(task["status"] == "running" for task in tasks):
-                        raise RuntimeError(
-                            "Executor update is waiting for running commands to finish"
-                        )
-                if (
-                    not binary_changed
-                    and info.get("runtime_sha256") == runtime["SOURCE_SHA256"]
-                ):
-                    runtime["request"](state, "configure", {"env": scoped_env})
-                    if payload.get("environment"):
-                        runner = runpy.run_path(
-                            str(platform_dir / "cheese-environment.py")
-                        )
-                        info["environment_status"] = runner["read_status"](
-                            home / ".cheese-environment"
-                        )["state"]
-                    print(
-                        json.dumps(
-                            {
-                                **info,
-                                "mcp_servers": list(config["mcp_servers"]),
-                                "state": str(state),
-                            }
-                        )
-                    )
-                    return
-                subprocess.run(
-                    [
-                        sys.executable,
-                        str(platform_dir / "remote-execution/runtime.py"),
-                        "stop",
-                        "--state",
-                        str(state),
-                    ],
-                    check=True,
-                    timeout=15,
                 )
+                return
         runtime["write_json"](state / "config.json", config)
         runtime["write_json"](state / "environment.json", payload.get("environment"))
         runtime["write_json"](
             platform_dir / "execution-owner.json", {"resource": home.name}
         )
         with log.open("a") as output:
-            subprocess.Popen(
+            process = subprocess.Popen(
                 [
                     sys.executable,
-                    str(platform_dir / "remote-execution/bootstrap.py"),
+                    str(release / "remote-execution/bootstrap.py"),
                     str(state),
                 ],
                 cwd=work,
@@ -321,6 +404,25 @@ def configure(payload):
                 stderr=output,
                 start_new_session=True,
             )
+        deadline = time.monotonic() + 600
+        while True:
+            if process.poll() is not None:
+                if payload.get("environment"):
+                    runner = runpy.run_path(str(release / "cheese-environment.py"))
+                    status = runner["read_status"](home / ".cheese-environment")
+                    if status["state"] == "failed":
+                        info = {"environment_status": "failed"}
+                        break
+                raise RuntimeError(
+                    "Executor startup failed; inspect executor-bootstrap.log"
+                )
+            try:
+                info = runtime["request"](state, "ping")
+                break
+            except (ConnectionError, FileNotFoundError):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Executor readiness timed out") from None
+                time.sleep(0.1)
         # The caller records this rather than deriving it: the process that
         # reaches the executor later is released separately from the one that
         # installs it, so a directory named in both is a directory two builds
@@ -328,6 +430,7 @@ def configure(payload):
         print(
             json.dumps(
                 {
+                    **info,
                     "workspace": str(work),
                     "mcp_servers": list(config["mcp_servers"]),
                     "state": str(state),
@@ -346,7 +449,9 @@ def run(state):
         str(state),
     ]
     if configuration:
-        runner = runpy.run_path(str(state.parent / "cheese-environment.py"))
+        runner = runpy.run_path(
+            str(Path(__file__).resolve().parent.parent / "cheese-environment.py")
+        )
         raise SystemExit(
             runner["run"](configuration, Path.home() / ".cheese-environment", command)
         )
