@@ -13,7 +13,6 @@ import type {
   BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
-  Contributions,
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
@@ -48,7 +47,6 @@ import type {
   ProjectEnvironmentInfo,
   ProjectInvitation,
   ProjectMemberRow,
-  ProjectOverview,
   ProjectSite,
   ProjectSiteInfo,
   ReactionAgg,
@@ -996,11 +994,6 @@ export function deleteOAuthConnection(userId: string, connectionId: number): Pro
   })
 }
 
-// 项目总览 / 收件箱 (eval G2/G3).
-export function getOverview(projectId: string): Promise<ProjectOverview> {
-  return request<ProjectOverview>(`/projects/${encodeURIComponent(projectId)}/overview`)
-}
-
 // The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
 // project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
 export function getProjectForTeam(teamId: number): Promise<Project | null> {
@@ -1015,6 +1008,14 @@ export function getInbox(projectId: string, targetHandle: string): Promise<ListP
 
 export function markRead(alertId: string): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' })
+}
+
+// 拍板。答复之后这一条不再等人，收件箱里就没有它了。
+export function resolveAlert(alertId: string, chosen: string): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ chosen }),
+  })
 }
 
 export function sendFeedback(alertId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
@@ -1859,12 +1860,6 @@ export function getCalendar(projectId: string): Promise<ListPayload<MilestoneFul
 // All milestones (any status), for showing done ones faded.
 export function listMilestones(projectId: string): Promise<ListPayload<MilestoneFull>> {
   return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
-}
-
-// ---- 贡献图 (§10.1) ----
-
-export function getContributions(projectId: string): Promise<Contributions> {
-  return request<Contributions>(`/projects/${encodeURIComponent(projectId)}/contributions`)
 }
 
 // ---- 反馈 (feedback) ----

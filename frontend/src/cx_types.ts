@@ -439,37 +439,25 @@ export interface TopicMemberRow {
   created_at: string
 }
 
-// GET /api/projects/{id}/overview
-export interface ProjectOverview {
-  project_id: string
-  name: string
-  // 一页纸总结. The overview extends the project card, so it may carry summary.
-  summary?: string
-  topic_count: number
-  // status -> count, e.g. {active: 3, archived: 1, draft: 0}
-  topics_by_status: Record<string, number>
-  // handle -> the items waiting on that person.
-  waiting_on_you: Record<string, TopicRef[]>
-  next_milestone: Milestone | null
-  upcoming_milestones: Milestone[]
-  members: ProjectMember[]
-  [key: string]: unknown
-}
-
 // GET /api/projects/{id}/inbox?target_handle=
-// A notification / decision request addressed to a handle.
+// 等你决定的那几条：还没拍板的决策请求，加上点名给你的验收卡。
+// 字段照抄后端的 AlertOut —— 写成 `read` / `source_handle` 这类界面上顺口的名字，
+// 收到的就永远是 undefined，而界面会把它读成「一条都没读过」。
 export interface InboxItem {
   id: string
+  project_id: string
+  topic_id: string | null
+  level: string
   kind: string
+  target_handle: string | null
   title: string
   body: string
-  target_handle: string
-  source_handle: string | null
-  read: boolean
+  // 决策请求的选项放在 payload.options 里：有选项才答得了。
+  payload: { options?: unknown; [key: string]: unknown }
+  read_at: string | null
+  resolved_at: string | null
   feedback: 'up' | 'down' | null
   created_at: string
-  topic_id: string | null
-  [key: string]: unknown
 }
 
 // ---- 机构看板 / Space 看板 (eval F3) ----
@@ -776,14 +764,6 @@ export interface MilestoneFull {
   source_topic_id: string | null
   auto_pinned: boolean
   created_at: string
-}
-
-// ---- 贡献图 (§10.1) ----
-
-// GET /projects/{id}/contributions
-export interface Contributions {
-  by_author_type: { human: number; ai: number; system: number }
-  by_author: Record<string, number>
 }
 
 // ---- 资源池市场 (design v3: AI 池 + 算力池) ----

@@ -87,11 +87,11 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '项目文档', hideTabs: true, backTo: 'workspace-project' },
     },
     {
-      name: 'overview',
+      // 总览退役了：它答的每一个问题都有一处答得更准的地方——谁在等你、交出去了
+      // 什么、对外的地址，都在项目首页上；成员在名册页；额度在项目设置里。发出去
+      // 的旧链接落到首页。
       path: 'overview',
-      component: () => import('@/views/OverviewView.vue'),
-      props: true,
-      meta: { title: '总览', hideTabs: true, backTo: 'workspace-project' },
+      redirect: (to) => ({ name: 'workspace-running', params: { projectId: to.params.projectId } }),
     },
     {
       name: 'calendar',
@@ -132,11 +132,10 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
     },
     {
-      name: 'project-delivery',
+      // 「导出与发布」退役了：它整页只有一块「发布网站」，而发布出去的地址就是这个
+      // 项目交出去的东西之一，现在摆在首页的清单旁边。
       path: 'delivery',
-      component: () => import('@/views/ProjectDeliveryView.vue'),
-      props: true,
-      meta: { title: '导出与发布', hideTabs: true, backTo: 'workspace-project' },
+      redirect: (to) => ({ name: 'workspace-running', params: { projectId: to.params.projectId } }),
     },
     {
       // 名册页和单人主页共用 `members` 这一段路径，父子关系就是它们的关系：

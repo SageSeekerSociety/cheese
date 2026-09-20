@@ -387,14 +387,16 @@ watch(
 <template>
   <div ref="panelElement" class="panel-preview">
     <div class="preview-head">
+      <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
+           想把它发出去，这是唯一要跳出去的一下。 -->
       <v-btn
         v-if="projectId"
-        :to="{ name: 'project-delivery', params: { projectId } }"
+        :to="{ name: 'workspace-running', params: { projectId } }"
         size="small"
         variant="text"
         class="c-muted"
       >
-        导出与发布
+        发布网站
       </v-btn>
       <v-spacer />
       <template v-if="previewUrl || previewFile">

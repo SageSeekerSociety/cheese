@@ -69,7 +69,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 对话 | `components/ChatPanel.vue` | 飞书群聊式；只显示 message + 系统行（doc/decision/🔧 事件不混入）；本地时区 |
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
 | 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/决策/周报) + 成员(私聊从名册进)；右缘可拖拽调宽 |
-| 项目总览 | `views/OverviewView.vue` | 一页纸总结 + 等你处理的事 + 里程碑 + 话题分布 + 人/AI 贡献 + 成员 |
+| 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定 + 做出了什么 + 网站 + 看板（按「该谁动」分列） |
 | 日历 | `views/CalendarView.vue` | 里程碑倒排 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |
 | 个人主页 | `views/MemberView.vue` | 封面+头像+技能+芝士眼中的TA+参与项目；本项目中：发起/在忙/本周贡献 |
@@ -145,10 +145,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
 - **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）对所有人可见。
-- **决策请求拍板**：`decision_request` 带选项，铃铛里渲染成**一键选项按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。
+- **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
 - **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
-- **实现**：`NotificationService`（`backend/app/domain/notification/`）；接口 `GET /api/projects/{id}/notifications`、`/inbox`、`POST /api/notifications/{id}/{read|feedback|resolve}`。前端 `App.vue` 铃铛。
+- **实现**：`AlertService`（`backend/app/domain/alert/`）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`。前端 `components/NeedsYou.vue`。
 
 ### 3.8 里程碑 / 日历 / 调度  ✅ / 🟡
 
@@ -158,7 +158,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.9 仪表盘（总览 / 看板 / 个人主页）  ✅ / 🟡
 
-- **项目总览**（`DashboardService.project_overview`）：一页纸总结（`POST /api/projects/{id}/summary` 由芝士生成）、等你处理的事、里程碑、话题×状态、人/AI 贡献、成员。🟡「风险」板块未做。
+- **项目首页**（`views/workspace/RunningWorkView.vue`）：等你决定（项目收件箱）、做出了什么（产物清单）、网站（已发布的 Site）、看板（按「该谁动」分列）。🟡 人/AI 贡献统计没有落点。
 - **机构看板**（`/spaces/{id}/dashboard`）：每个团队一行 + **最近活动时间**、人/AI 比例；**停滞按时间判定**（>7 天无活动）。
 - **个人主页**（`/users/{handle}/profile`）：跨项目简历。**贡献只算本人 human 块**（排除 system 生命周期块）、发起话题数排除私聊（Batch D）。
 - **成员页**（`/projects/{id}/members/{handle}/summary`）：发起的话题 + **在忙的话题** + **本周贡献**（Batch D）。

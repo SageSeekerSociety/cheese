@@ -1,4 +1,4 @@
-"""Aggregation endpoints — project overview + Space board (evals F3/G2)."""
+"""Aggregation endpoints — 成员页 + Space board (evals F3/G2)."""
 
 import asyncio
 import uuid
@@ -53,7 +53,7 @@ def test_member_summary_has_active_and_weekly(client, bearer):
     )
     _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
 
-    # The member page resolves the viewer like /overview does — read as user-1.
+    # The member page resolves the viewer from the credential — read as user-1.
     s = client.get(
         f"/projects/{pid}/members/user-1/summary",
         headers=session_auth_headers("user-1"),
@@ -62,41 +62,6 @@ def test_member_summary_has_active_and_weekly(client, bearer):
     assert s["weekly_contributions"] == 1
     # root topic is active and user-1 contributed → it shows under 在忙的话题.
     assert any(t["id"] == root for t in s["topics_active"])
-
-
-def test_project_overview(client, bearer):
-    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
-        "data"
-    ]
-    pid = p["id"]
-    client.post(
-        f"/projects/{pid}/members",
-        json={"user_handle": "user-1"},
-        headers=bearer("user-1"),  # the project owner
-    )
-    client.post(
-        f"/projects/{pid}/milestones",
-        json={"title": "中期", "due_date": "2030-01-01T00:00:00Z"},
-    )
-    # A decision request addressed to user-1 → should appear in 等你处理的事.
-    client.post(
-        f"/projects/{pid}/alerts",
-        json={
-            "level": "light",
-            "kind": "decision_request",
-            "title": "选哪个方案",
-            "target_handle": "user-1",
-        },
-    )
-
-    ov = client.get(
-        f"/projects/{pid}/overview", headers=session_auth_headers("user-1")
-    ).json()["data"]
-    assert ov["name"] == "P"
-    assert ov["topic_count"] >= 1  # root topic auto-created
-    assert ov["next_milestone"]["title"] == "中期"
-    assert "user-1" in ov["waiting_on_you"]
-    assert any(m["handle"] == "user-1" for m in ov["members"])
 
 
 def test_space_board_lists_linked_teams(client):
@@ -116,11 +81,3 @@ def test_space_board_empty_for_space_without_links(client):
     space_id = seed_space(client, "空书院")
     board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 0
-
-
-def test_overview_404_for_missing_project(client):
-    r = client.get(
-        "/projects/00000000-0000-0000-0000-000000000000/overview",
-        headers=session_auth_headers("user-1"),
-    )
-    assert r.status_code == 404
