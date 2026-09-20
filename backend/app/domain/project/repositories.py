@@ -30,6 +30,7 @@ class ProjectRepository:
         ai_mode: AiMode = AiMode.collaborative,
         team_id: int | None = None,
         external_task_id: int | None = None,
+        intent: str = "",
     ) -> Project:
         project = Project(
             name=name,
@@ -37,6 +38,7 @@ class ProjectRepository:
             ai_mode=ai_mode,
             team_id=team_id,
             external_task_id=external_task_id,
+            intent=intent,
         )
         self._session.add(project)
         await self._session.flush()
