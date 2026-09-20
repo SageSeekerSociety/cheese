@@ -87,6 +87,31 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_collective_status_refuses_to_unread_everything(
+    authed_client: AsyncClient,
+) -> None:
+    """``PUT /notifications/status`` marks all read and nothing else.
+
+    The collective route takes a boolean, and the only value it accepts is
+    ``true``: there is no "mark my whole inbox unread" operation, and a client
+    that sends ``false`` must be told so rather than have the request silently
+    do nothing or, worse, turn every read notification back to unread.
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    read_already = await _seed(factory, read=True)
+    await _seed(factory, read=False)
+
+    resp = await authed_client.put("/notifications/status", json={"read": False})
+    assert resp.status_code == 400
+
+    # The inbox is exactly as it was: one unread, and the read one still read.
+    resp = await authed_client.get("/notifications/unread-count")
+    assert resp.json()["data"]["count"] == 1
+    resp = await authed_client.get(f"/notifications/{read_already}")
+    assert resp.json()["data"]["notification"]["read"] is True
+
+
+@pytest.mark.anyio
 async def test_cursor_pagination_round_trip(authed_client: AsyncClient) -> None:
     """Seed 3 rows with distinct timestamps and page through them 2-at-a-time,
     round-tripping the opaque ``nextStart`` cursor back into ``pageStart``."""

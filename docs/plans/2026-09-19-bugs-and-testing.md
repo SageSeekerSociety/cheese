@@ -372,8 +372,14 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 - **最坏的一类，断言不成立就 skip，于是永远绿。已做**：`test_discussion.py` 与
   `test_task.py` 那五处的前置，改成了建立它的那个 fixture 里的断言，
   所以前置接口坏了是红，不是这条测试消失。
-- **整文件永久 skip，因为被测的东西压根没迁过来。已做**：`integration/test_project.py`
-  与 `integration/test_notification.py` 整删，它们占 33 条里的 18 条。
+- **整文件永久 skip 的两个文件整删。已做**：`integration/test_project.py` 与
+  `integration/test_notification.py` 占 33 条里的 18 条，但整删的理由不是同一条。
+  `test_project.py` 测的 gantt 式 int Project REST API 确实没迁过来，表在 fusion merge 里就删了。
+  `test_notification.py` 测的接口今天还在服务——`/notifications`、`/notifications/unread-count`、
+  `/notifications/status` 都在 `app/api/routes/notifications_flat.py`；它删得掉是因为
+  `contract/test_notifications_flat_functional.py` 与 `contract/test_notifications_contract.py`
+  已经覆盖列表、筛选、未读数、批量 PATCH、单条读删，唯一没人接手的那条负向用例
+  （`PUT /notifications/status {"read": false}` 必须 400）已补进前者，所以整删不丢覆盖。
   `contract/test_projects_contract.py` 看着同类但不能删：被测的 `/team-projects` 接口存在，
   `tests/integration/test_team_projects.py` 还在端到端跑它，skip 的理由是夹具缺凭据，
   不是契约问题。已换 `authed_client` 重开，项目走真路由种下，缺件即 fail。
@@ -383,9 +389,10 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
   `backend/scripts/assert_suite_ran.py` 的 `assert_suite_ran(junit_xml, *, at_least)`，
   junit 里有 skipped 就红，实际跑的条数低于本 job 声明的下限也红
   （#1236 的教训：夜间 canary 两天报绿，八条测试只跑了一条）。
-  今天由 `test_harness_contracts.py`、`remote-execution.yml` 的 private-chat 选集、
-  `mcp-contract.yml` 三处调用；`test.yml` 要等这 12 条退役之后才接得上，
-  现在接上去只会让 main 常红。
+  今天由 `test_harness_contracts.py` 与 `remote-execution.yml` 的 private-chat 选集两处调用。
+  `mcp-contract.yml` 不接：那八条检查里任何一条不成立，`mcp_contract.py` 自己先退 1，
+  跑它的那一步就已经红了，闸门这一步根本轮不到执行——在那里加一道闸门是一道永远不会红的防御。
+  `test.yml` 要等这 12 条退役之后才接得上，现在接上去只会让 main 常红。
 
 ### 3.4 flaky 政策
 
