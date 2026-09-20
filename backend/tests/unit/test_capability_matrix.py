@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference
+from app.domain.agent.capability import (
+    BUILT_IN_DIFFERENCES,
+    EVENT_DIFFERENCES,
+    BuiltIn,
+    Declaration,
+    Difference,
+)
 from app.domain.agent.capability import matrix as matrix_module
 from app.domain.agent.capability.matrix import MatrixIncomplete, declarations, matrix
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, Harness
@@ -127,6 +133,46 @@ def test_a_cell_left_empty_is_refused_rather_than_drawn(monkeypatch) -> None:
         verified_against="9.9.9",
     )
     monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: blank)
+    with pytest.raises(MatrixIncomplete):
+        matrix()
+
+
+def test_every_difference_code_belongs_to_exactly_one_axis() -> None:
+    """一份枚举，两条轴，每条码正好归一条。
+
+    没有这条守卫，往 ``Difference`` 里加一条码就会落在谁也没认领的地方：两侧的
+    校验各自不认它，而它在表上跟一条真的码长得一模一样。
+    """
+    assert BUILT_IN_DIFFERENCES | EVENT_DIFFERENCES == set(Difference)
+    assert not BUILT_IN_DIFFERENCES & EVENT_DIFFERENCES
+
+
+def test_a_code_from_the_other_axis_is_not_an_answer(monkeypatch) -> None:
+    """「待办这一格：报不出会话 id」——跨轴的胡话，也得红。
+
+    合并成一份码之后这是唯一挡得住它的地方：它是一条真的 ``Difference``，所以
+    「要么有、要么一条码」这句话本身已经拦不住它了。
+    """
+    nonsense = Declaration(
+        pinned_version="9.9.9",
+        built_ins=frozenset(),
+        how_disabled=dict.fromkeys(BuiltIn, Difference.NO_SESSION_ID_OF_ITS_OWN),
+        verified_against="9.9.9",
+    )
+    monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: nonsense)
+    with pytest.raises(MatrixIncomplete):
+        matrix()
+
+
+def test_a_cell_that_denies_what_the_declaration_claims_is_refused(monkeypatch) -> None:
+    """自相矛盾的两个方向都查：写了关闭动作却说不自带，和自带却填「不自带」。"""
+    contradictory = Declaration(
+        pinned_version="9.9.9",
+        built_ins=frozenset({BuiltIn.TODO}),
+        how_disabled=dict.fromkeys(BuiltIn, Difference.NOT_BUILT_IN),
+        verified_against="9.9.9",
+    )
+    monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: contradictory)
     with pytest.raises(MatrixIncomplete):
         matrix()
 

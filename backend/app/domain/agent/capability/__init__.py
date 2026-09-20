@@ -35,7 +35,9 @@ class Difference(StrEnum):
 
     前五条是事件契约那张表在用的（一个骨架报不出某个事件），后三条是本表在用的
     （平台关不掉某个自带实现）。同一个枚举，因为「说不清的那一格填什么」在几张
-    矩阵上是同一个问题——分成两份的那一天，两份就会开始漂。
+    矩阵上是同一个问题——分成两份的那一天，两份就会开始漂。一份枚举不等于一格可
+    以随便填哪条：哪条码属于哪条轴，见下面的 ``BUILT_IN_DIFFERENCES`` 与
+    ``EVENT_DIFFERENCES``。
     """
 
     NO_TOOL_FAILURE_SIGNAL = "no-tool-failure-signal"
@@ -53,6 +55,33 @@ class Difference(StrEnum):
     #: 还没有人对着钉住的那个 build 读过这一格。也是「暂缺」的一种，但它是一次
     #: 核查就能消掉的那一种，所以跟上一条分开记。
     NOT_CHECKED_AGAINST_THE_PIN = "not-checked-against-the-pin"
+
+
+#: 「平台关不掉某个自带实现」那条轴上能填的码，也就是功能矩阵认的那三条。
+BUILT_IN_DIFFERENCES = frozenset(
+    {
+        Difference.NOT_BUILT_IN,
+        Difference.NO_OFF_SWITCH,
+        Difference.NOT_CHECKED_AGAINST_THE_PIN,
+    }
+)
+
+#: 「一个骨架报不出某个事件」那条轴上能填的码，也就是事件契约的场景认的那五条。
+EVENT_DIFFERENCES = frozenset(
+    {
+        Difference.NO_TOOL_FAILURE_SIGNAL,
+        Difference.NO_CALL_ID_ON_TOOL_USE,
+        Difference.NO_SUBAGENT_THREADS,
+        Difference.NO_SUBAGENT_TOOL_RETURN,
+        Difference.NO_SESSION_ID_OF_ITS_OWN,
+    }
+)
+# 两份都是逐条写出来的，不是一份减另一份：写成补集，往 ``Difference`` 里加一条
+# 码就会悄悄落到另一条轴上，而那条轴的校验从此放它过去。两份必须正好切开整个
+# 枚举，守卫在 ``tests/unit/test_capability_matrix.py``。
+#
+# 一条码只属于一条轴：跨轴填的那一格（「待办」这一格填「报不出会话 id」）是一句
+# 胡话，而胡话跟一条真的差异码在表上长得一模一样，所以两侧各自只认自己那一份。
 
 
 @dataclass(frozen=True, slots=True)

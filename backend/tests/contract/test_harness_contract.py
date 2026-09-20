@@ -35,7 +35,7 @@ import uuid
 import pytest
 
 from app.domain.agent import service
-from app.domain.agent.capability import Difference
+from app.domain.agent.capability import EVENT_DIFFERENCES, Difference
 from app.domain.agent.harness import HARNESSES, AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.claude_code.hook_events import MessageAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
@@ -196,7 +196,9 @@ def test_a_scenario_is_written_in_the_word_list(scenario: dict) -> None:
         for name, cell in scenario["harnesses"].items():
             assert set(cell) in ({"records"}, {"difference"}), name
             if "difference" in cell:
-                assert cell["difference"] in VOCABULARY["differences"]
+                # 事件那条轴上的五条，不是整份词汇表：另外三条说的是「平台关不掉
+                # 骨架自带的某样东西」，填进一个场景里就是一句跨轴的胡话。
+                assert cell["difference"] in {code.value for code in EVENT_DIFFERENCES}
         for event in scenario["events"]:
             word = VOCABULARY["events"][event["kind"]]
             assert set(word["required"]) <= set(event), event
