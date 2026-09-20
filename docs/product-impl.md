@@ -11,7 +11,7 @@
 
 CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓库，里面用**话题**组织工作，
 **芝士**（AI 队友，本体协调 + 分身干活）**在隔离沙箱容器里**（一个房间一个容器，房间里每个话题一个 tmux 会话）用原生工具干活、用 `cheese` CLI 改平台状态，**文档是状态、对话是过程**，
-**采纳＝当场 merge（不归档，归档是人的另一个动作）**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 `claude-agent-sdk`
+**采纳＝当场 merge（不归档，归档是人的另一个动作）**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 Claude Code（作为骨架之一，经 hooks 与平台对话）
 路由到智谱 GLM。
 
 ---
@@ -184,7 +184,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **分层**：Route → Service → Repository → Model（`backend/app/api/routes/` → `domain/**/services.py` → `repositories.py` → `models.py`）。路由自动发现。
 - **后端**：Python 3.13、FastAPI、SQLAlchemy 2.0 async（asyncpg）、PostgreSQL、Alembic 迁移、Pydantic v2。响应封套 `{code,message,data}`，错误用 `app.core.errors`。
 - **前端**：Vue 3 + TS + Vite + Vuetify 4 + vue-router + TipTap（实况文档）+ marked/DOMPurify。
-- **AI**：`claude-agent-sdk` → `claude` CLI（经 `cli_path` shim 进**每话题 Docker 沙箱**）→ GLM（`ANTHROPIC_BASE_URL`/`AUTH_TOKEN`/`AGENT_MODEL` 在 `backend/.env`，`AGENT_SANDBOX_ENABLED`/`SANDBOX_*` 控沙箱）。平台动作走容器里的 `cheese` CLI（Claude Code Skill）+ token 鉴权；无 MCP。
+- **AI**：芝士是跑在中心会话机上的 Claude Code 进程（`harness/claude_code/`），文件与命令通过执行器落在房间的机器上；模型请求经平台的计量代理（订阅）或网关（API-key 供应商）出去；平台动作走 `cheese` CLI + token 鉴权。
 - **VCS**：git。每个项目一个主仓，话题用 git worktree 检出在自己的分支上；提交由分身自己做，平台只读分支（采纳/diff 走 git）。
 - **测试**：`backend/tests/`（unit/integration/contract），内存 SQLite + StubAgent，行为测试。当前 **121 passed**，ruff/pyright/vue-tsc 全绿。真模型 smoke 脚本 `backend/scripts/smoke_*.py`，真实全流程 `scripts/sim_real.py`。
 
