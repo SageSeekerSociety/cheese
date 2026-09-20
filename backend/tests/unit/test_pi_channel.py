@@ -149,13 +149,6 @@ class Rooms:
             async def get(self, _model, key):
                 return rooms.room if key == TOPIC else None
 
-            async def scalars(self, _statement):
-                return (
-                    [rooms.room, *rooms.extra_rooms]
-                    if rooms.room.session_placement
-                    else []
-                )
-
             async def commit(self):
                 return None
 
