@@ -293,10 +293,19 @@ function counts(): FeedbackCounts {
   }
 }
 
+/** `FB-1042` → 1042。后端排的是 `display_no`（整数），不是字符串。 */
+function displayNo(item: FeedbackCard): number {
+  return Number(item.display_id.replace(/\D/g, '')) || 0
+}
+
 function sorted(list: FeedbackDetail[]): FeedbackCard[] {
-  // 真接口在后端排序（`ORDER BY last_activity_at DESC`），预览这一层自己排一次。
-  // 空串兜底只是为了让这个假实现通过类型检查：真数据里这一列总是有值。
-  return [...list].sort((a, b) => ((a.last_activity_at ?? '') < (b.last_activity_at ?? '') ? 1 : -1))
+  // 真接口在后端排序，见 `backend/app/domain/feedback/repositories.py` 的 `_list_stmt`：
+  // 默认口径是 `ORDER BY created_at DESC, display_no DESC`。前端从来不传 `sort`，
+  // 所以这条就是实际口径。`last_activity_at` **不参与排序**（后端只把它当展示字段挂在卡上），
+  // 这里排它是错的；改成 `created_at` 再比一遍编号兜底（同一秒提交的两条才有这个需要）。
+  return [...list].sort((a, b) =>
+    a.created_at === b.created_at ? displayNo(b) - displayNo(a) : a.created_at < b.created_at ? 1 : -1
+  )
 }
 
 function listPage(url: URL, tab: string): { data: FeedbackCard[]; total: number; counts: FeedbackCounts } {

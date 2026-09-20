@@ -15,20 +15,20 @@ import type { DiagramArch, DiagramEr } from './diagramSpec'
 export const feedbackEr: DiagramEr = {
   title: '反馈功能的表与关系',
   subtitle:
-    '新建七张表：六张挂在 feedback 上，拒绝记忆挂在话题上。话题、项目、会话只是可空的上下文指针。虚线表示没有真外键。',
+    '新建七张表：六张挂在 feedback 上，拒绝记忆挂在话题上。话题与项目是真外键（可空，删掉只把指针置空），会话只存 id 快照。虚线表示没有真外键。',
   entities: [
     {
       id: 'topics',
       title: 'topics',
       group: '上下文与既有表',
-      note: '既有表。删话题不会删反馈，只把 topic_id 置空；但会删掉那条话题的拒绝记忆。',
+      note: '既有表。topic_id 是真外键（可空，SET NULL）：删话题不会删反馈，只把指针置空；但会删掉那条话题的拒绝记忆。',
       columns: [{ name: 'id', type: 'Uuid', badge: 'PK' }],
     },
     {
       id: 'projects',
       title: 'projects',
       group: '上下文与既有表',
-      note: '既有表。同上；反馈中心是平台级的，不按项目隔离。',
+      note: '既有表。project_id 同样是真外键（可空，SET NULL）；反馈中心是平台级的，不按项目隔离。',
       columns: [{ name: 'id', type: 'Uuid', badge: 'PK' }],
     },
     {
@@ -167,8 +167,10 @@ export const feedbackEr: DiagramEr = {
     },
   ],
   relations: [
-    { from: 'feedback', to: 'topics', cardinality: 'N-1', soft: true, label: '上下文' },
-    { from: 'feedback', to: 'projects', cardinality: 'N-1', soft: true, label: '上下文' },
+    // topics / projects 是**真外键**（可空，`ondelete='SET NULL'`），所以画实线；
+    // 只有会话那条是逻辑关联：`session_id` 存的是 64 位字符串快照，删会话不牵动反馈。
+    { from: 'feedback', to: 'topics', cardinality: 'N-1', label: '上下文' },
+    { from: 'feedback', to: 'projects', cardinality: 'N-1', label: '上下文' },
     { from: 'feedback', to: 'agent_sessions', cardinality: 'N-1', soft: true, label: '快照' },
     { from: 'feedback_supports', to: 'feedback', cardinality: 'N-1', label: '支持' },
     { from: 'feedback_comments', to: 'feedback', cardinality: 'N-1', label: '评论' },
