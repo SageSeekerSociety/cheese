@@ -335,6 +335,10 @@ def test_resolve_attributes_the_decision_to_the_verified_caller(client):
 
 def test_overview_requires_auth_and_shows_only_the_callers_items(client):
     pid = _project(client)
+    # Both handles are teammates by intent: the property under test is that
+    # membership gets you the board, not that it gets you someone else's mail.
+    _add_member(client, pid, "alice")
+    _add_member(client, pid, "bob")
     _decision(client, pid, "alice的事", target="alice")
     _decision(client, pid, "bob的事", target="bob")
     r = client.post(
@@ -422,6 +426,9 @@ def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
     member's inbox with no auth at all, so anyone could harvest anybody's
     pending decisions (titles + ids) by naming them in the URL."""
     pid = _project(client)
+    # Alice is bob's teammate here: she may read the page, just not his inbox.
+    _add_member(client, pid, "bob")
+    _add_member(client, pid, "alice")
     _notify(client, pid, "bob拍板", target="bob", kind="decision_request")
     _notify(client, pid, "谁来都行", kind="decision_request")
 

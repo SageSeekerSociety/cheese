@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
     is_global_sandbox_token,
@@ -35,6 +39,7 @@ from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
 from app.domain.identity.services import IdentityService
+from app.domain.project.repositories import ProjectRepository
 from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
@@ -455,7 +460,15 @@ class ActorResolver:
         )
 
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
-        """Require a verified participant with project membership."""
+        """Require a verified participant with project membership.
+
+        A project that is not there is 404, not 403: the id is a UUID and
+        answering "you are not a member of it" about a project that does not
+        exist is a claim the guard cannot support. Not-found used to be what
+        every one of these routes answered, and the two are told apart by
+        looking — membership first, so a member's own request pays no extra
+        read.
+        """
         if not settings.authz_enforce_topic_access:
             return
         self.reject_failed_credential(actor)
@@ -465,6 +478,8 @@ class ActorResolver:
             raise AuthenticationRequiredError("Login required to access a project")
         if await self._is_project_member(project_id, actor.handle):
             return
+        if await ProjectRepository(self._session).get(project_id) is None:
+            raise NotFoundError("项目不存在")
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError("你不是这个项目的成员，无权查看")
 
