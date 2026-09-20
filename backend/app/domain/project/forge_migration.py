@@ -98,7 +98,8 @@ def freeze(root: Path, project_id: uuid.UUID, output: Path) -> dict:
                 # Cleanup may retain registered worktrees under .preserved.
                 sources.append(worktree)
     archive = output / "working-files.tar.gz"
-    with tarfile.open(archive, "w:gz", dereference=False) as bundle:
+    # Writers stay paused for this backup; favor speed over archive size.
+    with tarfile.open(archive, "w:gz", compresslevel=1, dereference=False) as bundle:
         for source in sources:
             bundle.add(source, arcname=str(source.relative_to(root)))
     git(
