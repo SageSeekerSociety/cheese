@@ -147,6 +147,8 @@ async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
                             snapshot_sha=backup["snapshot_sha"],
                             digest=backup["digest"],
                         )
+                    # A later upload failure must not roll back completed task backups.
+                    await session.commit()
                     log.info(
                         "task=%s status=snapshot_saved digest=%s",
                         task.id,
