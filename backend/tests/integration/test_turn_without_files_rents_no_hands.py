@@ -217,9 +217,7 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     project, topic = room
     alice = session_auth_headers("alice")
     said = client.post(
-        f"/topics/{topic}/messages",
-        json={"content": "先记一句", "request_id": str(uuid.uuid4())},
-        headers=alice,
+        f"/topics/{topic}/comments", json={"content": "先记一句"}, headers=alice
     )
     assert said.status_code == 200, said.text
 
