@@ -13,7 +13,12 @@
 
 import uuid
 
+import pytest
+
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.test_accept_pr import app_world as app_world
+
+pytestmark = pytest.mark.usefixtures("app_world")
 
 _SUBJECT = "chore(test): file an accept card"
 

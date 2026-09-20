@@ -28,6 +28,7 @@ class RoomExecutor:
         self.work = self.home / "room"
         self.state = self.home / ".cheese/executor"
         repository = folder / "task-origin"
+        self.remote = str(repository)
         repository.mkdir()
         (repository / "backend").mkdir()
         (repository / "backend/dependency-version").write_text("1")
@@ -76,7 +77,6 @@ class RoomExecutor:
             "CHEESE_TOKEN": "room-fixture-token",
             "CHEESE_PROJECT": str(project),
             "CHEESE_TOPIC": str(resource),
-            "CHEESE_GIT_REMOTE": str(repository),
             "GIT_AUTHOR_NAME": "fixture",
             "GIT_AUTHOR_EMAIL": "fixture@example.test",
             "GIT_COMMITTER_NAME": "fixture",
@@ -147,12 +147,17 @@ class RoomExecutor:
                                 "branch": f"task/{executor.task}",
                                 "base": "main",
                                 "closed": False,
+                                "remote": executor.remote,
+                                "coauthors": [],
                             }
                         }
                     )
                 return super().do_GET()
 
             def do_POST(self):
+                if self.path == f"/projects/{executor.project}/git/tasks/{executor.task}":
+                    self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    return self.do_GET()
                 if self.path != "/execution":
                     return super().do_POST()
                 assert self.headers.get("X-Cheese-Token") == "room-fixture-token"

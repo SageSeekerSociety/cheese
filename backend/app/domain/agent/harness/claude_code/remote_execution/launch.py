@@ -7,7 +7,13 @@ import json
 import time
 from pathlib import Path
 
-from app.domain.agent import cli_worker, environment_runner, preview_tunnel, toolchain
+from app.domain.agent import (
+    cli_worker,
+    environment_runner,
+    forge_cli,
+    preview_tunnel,
+    toolchain,
+)
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import CHEESE_SYNC_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
@@ -40,6 +46,8 @@ def file_sources():
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
         "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
         "remote-execution/bin/cheese": Path(cli_client.__file__).read_text(),
+        "remote-execution/bin/gh": Path(forge_cli.__file__).read_text(),
+        "remote-execution/bin/fj": Path(forge_cli.__file__).read_text(),
         "cheese-environment.py": Path(environment_runner.__file__).read_text(),
         "cheese-toolchain": toolchain_fetcher(),
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),

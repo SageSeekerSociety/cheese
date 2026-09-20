@@ -46,8 +46,9 @@ describe('项目设置', () => {
     expect(groupOf('>分支保护<')).toBe('交付')
   })
 
-  it('仓库那一组里是三块连接：上游、GitHub 仓库、GitHub 账号', () => {
-    expect(groupOf('>上游仓库<')).toBe('仓库')
+  it('仓库组包含托管状态、GitHub 仓库地址与连接设置', () => {
+    expect(groupOf('>代码仓库<')).toBe('仓库')
+    expect(groupOf('>GitHub 仓库地址<')).toBe('仓库')
     expect(groupOf('>连接 GitHub 仓库<')).toBe('仓库')
     expect(groupOf('>连接 GitHub 账号<')).toBe('仓库')
   })

@@ -8,14 +8,34 @@
 后面那几版的号自己往前挪。
 """
 
+import asyncio
 import uuid
 
 import pytest
 
+from app.domain.agent import execution
+from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
+from app.domain.topic.models import Topic
 from tests.delivery import delivery_artifact, delivery_headers, delivery_task
 from tests.integration.conftest import session_auth_headers
-from tests.machine_work import machine_commits
+from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
+from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
+
+
+@pytest.fixture(autouse=True)
+def task_machine(client, monkeypatch, tmp_path):
+    executor = object.__new__(Executor)
+    executor.env = {"HOME": str(tmp_path / "machine")}
+    client.test_machine_home = tmp_path / "machine"
+
+    async def call(target, method, params):
+        assert target["kind"] == "device" and method == "task_fs"
+        return executor.task_fs(params)
+
+    monkeypatch.setattr(execution, "call", call)
 
 
 def _project(client) -> str:
@@ -27,7 +47,25 @@ def _project(client) -> str:
 def _room(client, project_id: str, title: str = "做一个东西") -> str:
     r = client.post("/topics", json={"project_id": project_id, "title": title})
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    room_id = r.json()["data"]["id"]
+
+    async def place():
+        async with client.test_factory() as session:
+            room = await session.get(Topic, uuid.UUID(room_id))
+            await AgentSessionService(session).remember_place(
+                topic_id=room.id,
+                agent_handle="cheese",
+                work_lease={"kind": "device"},
+                runtime_location={
+                    "device_id": "test-device",
+                    "channel": "central",
+                    "resource_id": str(room.resource_id or room.id),
+                },
+            )
+            await session.commit()
+
+    asyncio.run(place())
+    return room_id
 
 
 def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
@@ -38,24 +76,38 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
     """
     task = delivery_task(client, room_id, new=again)
     if files:
-        machine_commits(task.project_id, task.id, files)
+        for name, content in files.items():
+            path = client.test_machine_home / ".cheese/tasks" / str(task.id) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
     body = {
         "change_subject": "docs(report): finalise the report",
         "reviewer_handle": "alice",
         **delivery_artifact(client, room_id),
         **declared,
     }
-    return client.post(
+    response = client.post(
         f"/topics/{room_id}/tasks/{task.id}/accept-card",
         headers=delivery_headers(client, room_id),
         json=body,
     )
+    if response.status_code == 200:
+        world = client.artifact_forge
+        head = _give_card_a_pr(
+            client,
+            world,
+            room_id,
+            response.json()["data"]["id"],
+            number=100 + len(world["fake"].prs),
+        )
+        world["fake"].check_state_by_sha[head] = ("success", "All checks passed")
+    return response
 
 
 def _accept(client, card_id: str):
     r = client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card_id)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text

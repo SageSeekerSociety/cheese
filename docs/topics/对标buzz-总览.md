@@ -513,19 +513,7 @@ wangchangxin 盘出来的数是「27 个活着的话题只有 4 张卡在流转�
 
 > **分支对 main 的 diff 非空 + 无验收卡 = 做完了没交。** 一条 `jj diff --stat` 就够。
 
-这和 <&docs/topics/并行话题冲突预警设计.md> 的 P0 是**同一个函数的两种用法**：那边遍历开着的话题算「文件重叠」，这边遍历开着的话题算「diff 是否非空」。`touched_files(repo, ref, base)` 一次实现，两处受益。
-
-**建议合并成一件事做**，别当两个需求排期。
-
-## 衍生设计：并行话题冲突预警（待拍板，未开工）
-
-起因是 wangchangxin 反馈「conflict 现在经常遇到」。查 Buzz 怎么做的，答案是 **它没有登记表，它从 git 算**——`check-branch-skew.sh` 取「main 改过的文件」∩「本分支改过的文件」，非空就拦 push。
-
-> **注意**：这条「从 git 算而不是让人报」的**思路**成立，是本设计的地基；但它那个**具体脚本**只做文件名交集，抓不到语义冲突（alembic 分叉就是反例，已被 #264 的 `check-migration-fork.py` 证伪并取代）。设计文档里的 P2 从一开始就是按语义冲突写的，未受影响。
-
-完整设计、对「登记表」方案的四条保留意见、以及三条局限，见 <&docs/topics/并行话题冲突预警设计.md>。
-
-一句话：**同样的目的，算出来而不是报上来。** 地基（`branch_for_topic`、`merge_topic` 单一入口、同项目共仓、`summon` 通路）全部已存在。
+2026-08-11 的冲突预警提案见[历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/topics/并行话题冲突预警设计.md)。它所依赖的平台本地仓库接口已随 forge 迁移移除。
 
 ---
 

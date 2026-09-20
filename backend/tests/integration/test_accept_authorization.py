@@ -9,6 +9,10 @@ could accept/reject/revoke any card by simply naming the right handle.
 
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import _make_card as _make_card
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _make_project(client) -> str:
@@ -23,28 +27,16 @@ def _make_topic(client, project_id: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
-    r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
-        headers=delivery_headers(client, topic_id),
-        json={
-            "new_artifact": "报告",
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
-        },
-    )
-    assert r.status_code == 200
-    return r.json()["data"]["id"]
-
-
 def test_accept_without_auth_401(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid, "alice")
 
     # No Authorization header at all — a fully anonymous caller.
-    r = client.post(f"/accept-cards/{cid}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
+    )
     assert r.status_code == 401
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
@@ -61,7 +53,7 @@ def test_accept_by_non_reviewer_403_even_with_matching_body_field(client):
     # token) must win over the self-reported body field.
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
@@ -79,7 +71,7 @@ def test_accept_by_routed_reviewer_succeeds(client):
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
@@ -117,7 +109,7 @@ def test_revoke_without_auth_401(client):
     cid = _make_card(client, tid, "alice")
     client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
 
@@ -138,7 +130,7 @@ def test_revoke_ignores_spoofed_body_identity(client):
     cid = _make_card(client, tid, "alice")
     client.post(
         f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers("alice"),
     )
 

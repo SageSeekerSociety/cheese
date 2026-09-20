@@ -53,7 +53,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals_required: 1,
     pr_number: null,
     forge: {
-      kind: 'platform',
+      kind: 'forgejo',
       reports_checks: false,
       hosts_proposals: false,
       can_write_remote: false,

@@ -12,7 +12,9 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
     monkeypatch.setattr(settings, "subscription_enabled", True)
 
     async def run():
-        project = await ProjectService(db_session).create(name="Agents")
+        project = await ProjectService(db_session).create(
+            name="Agents", forge_kind="github_app"
+        )
         service = AgentInstanceService(db_session)
         first = await service.create(
             project_id=project.id,

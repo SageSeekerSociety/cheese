@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CASE="${1:-all}"
 FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
+export APP_TIER_REAL_PYTHON="$(command -v python3)"
+mkdir -p "$ROOT/.tmp"
+forge_test_env="$(mktemp "$ROOT/.tmp/forge-env.XXXXXX")"
+printf 'FRONTEND_URL=https://cheese.example\n' > "$forge_test_env"
+export BACKEND_ENV_FILE="$forge_test_env"
+export FORGE_EVENTS_ENV_FILE="$forge_test_env.events"
+export FORGEJO_URL=https://cheese.example/forge/
 
 # deploy-docker.sh CREATES the openviking memory dir (it must exist before the
 # bind mount, or docker makes it root-owned and the backend cannot write it).
@@ -19,7 +26,8 @@ export CLAUDE_CACHE_HOST_PATH="$ROOT/.tmp/claude-cache-$$"
 export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
 # And the transcript archives, once more the same shape.
 export TRANSCRIPTS_HOST_PATH="$ROOT/.tmp/transcripts-$$"
-trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$"' EXIT
+export APPHOME_HOST_PATH="$ROOT/.tmp/apphome-$$"
+trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -42,50 +50,6 @@ test_deploy_rejects_absent_frontend() {
   fi
   rm -rf "$run_dir"
   echo "PASS: deploy rejects an absent frontend"
-}
-
-# The deploy that first carried the repo server brought up backend and
-# frontend, reported success, and left that server down - so every machine
-# fetch and push answered 502, on the release that had just moved them there.
-# Nothing was wrong with the container: the deploy never started it, and
-# nothing checked. Both halves of that are asserted here.
-test_deploy_rejects_absent_git() {
-  mkdir -p "$ROOT/.tmp"
-  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
-  if PATH="$FAKE_BIN:$PATH" \
-    APP_TIER_SCENARIO=git_absent \
-    APP_TIER_MAIN_SHA=testsha \
-    DEPLOY_HEALTH_ATTEMPTS=1 \
-    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
-    HOME="$run_dir" \
-    "$ROOT/deploy/deploy-docker.sh" testsha \
-      "$ROOT/deploy/compose/docker-compose.base.yml"; then
-    rm -rf "$run_dir"
-    fail "deploy succeeded with no git container"
-  fi
-  rm -rf "$run_dir"
-  echo "PASS: deploy rejects an absent git"
-}
-
-test_deploy_starts_git() {
-  mkdir -p "$ROOT/.tmp"
-  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
-  docker_log="$run_dir/docker.log"
-  PATH="$FAKE_BIN:$PATH" \
-    APP_TIER_SCENARIO=healthy \
-    APP_TIER_MAIN_SHA=testsha \
-    APP_TIER_DOCKER_LOG="$docker_log" \
-    DEPLOY_HEALTH_ATTEMPTS=1 \
-    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
-    HOME="$run_dir" \
-    "$ROOT/deploy/deploy-docker.sh" testsha \
-      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
-  grep -F 'up -d git' "$docker_log" >/dev/null || {
-    rm -rf "$run_dir"
-    fail "deploy never brought the git container up"
-  }
-  rm -rf "$run_dir"
-  echo "PASS: deploy brings the git container up"
 }
 
 test_deploy_accepts_healthy_pair() {
@@ -346,7 +310,7 @@ test_deploy_warns_when_the_session_base_will_not_survive() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/session-base.XXXXXX")"
   envf="$run_dir/backend.env"
-  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
+  printf 'FRONTEND_URL=https://cheese.example\nAGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
   out="$(PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -366,7 +330,7 @@ test_deploy_warns_when_the_session_base_will_not_survive() {
   esac
   # And it must stay quiet for an address the deploy leaves alone — a warning
   # on every deploy is a warning nobody reads.
-  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
+  printf 'FRONTEND_URL=https://cheese.example\nAGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
   out="$(PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -1037,7 +1001,116 @@ test_healthy_current_pair_passes() {
   echo "PASS: one healthy current backend/frontend pair passes"
 }
 
+test_missing_forge_fails_health_check() {
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=forgejo_absent \
+    APP_TIER_MAIN_SHA=abc1234 docker ps -a --format \
+      '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
+    | "$ROOT/deploy/check-app-tier.sh" abc1234; then
+    fail "healthy app containers hid the missing repository service"
+  fi
+  echo "PASS: a missing repository service fails deployment health"
+}
+
+test_forge_migration_release() {
+  local run_dir mode expected check apply result scenario native_stop writer_check migration
+  mkdir -p "$ROOT/.tmp"
+  for mode in first completed check_failed writers_remain preserved_children apply_failed health_failed retry_health_failed retry_completed; do
+    run_dir="$(mktemp -d "$ROOT/.tmp/forge-release.XXXXXX")"
+    check=2 apply=0 expected=0 scenario=healthy
+    case "$mode" in
+      completed) check=0 ;;
+      check_failed) check=1; expected=1 ;;
+      writers_remain|preserved_children) expected=1 ;;
+      apply_failed) apply=1; expected=1 ;;
+      health_failed) scenario=rollback; expected=1 ;;
+      retry_health_failed)
+        scenario=rollback; check=0; expected=1
+        mkdir -p "$run_dir/apphome/forge-migration"
+        touch "$run_dir/apphome/forge-migration/cutover-pending"
+        touch "$run_dir/apphome/forge-migration/restart-host-executor"
+        ;;
+      retry_completed)
+        check=0
+        mkdir -p "$run_dir/apphome/forge-migration"
+        touch "$run_dir/apphome/forge-migration/cutover-pending"
+        touch "$run_dir/apphome/forge-migration/restart-host-executor"
+        ;;
+    esac
+    result=0
+    PATH="$FAKE_BIN:$PATH" \
+      APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+      APP_TIER_SCENARIO="$scenario" \
+      APPHOME_HOST_PATH="$run_dir/apphome" \
+      APP_TIER_FORGE_CHECK="$check" APP_TIER_FORGE_APPLY="$apply" \
+      APP_TIER_HOST_EXECUTOR=active \
+      APP_TIER_HOST_KILL_MODE="$([ "$mode" = preserved_children ] && echo process || echo control-group)" \
+      APP_TIER_WORKSPACE_WRITERS="$([ "$mode" = writers_remain ] && echo 1 || echo 0)" \
+      COMPOSE_OVERLAYS=docker-compose.subscription.yml \
+      FORGEJO_URL=https://forge.example/forge/ FORGEJO_WEBHOOK_HOSTS=relay.example \
+      DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+      "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/release.log" 2>&1 \
+      || result=1
+    if [ "$result" != "$expected" ]; then
+      cat "$run_dir/release.log" >&2
+      fail "forge $mode returned $result: $run_dir/release.log"
+    fi
+    grep -F 'docker-compose.forgejo.yml' "$run_dir/docker.log" >/dev/null || fail "default forge service was not included"
+    grep -F 'up -d --no-deps forge-events' "$run_dir/docker.log" >/dev/null || fail "event relay was not started"
+    grep -Fx bootstrap "$run_dir/docker.log" >/dev/null || fail "admin provisioning did not run"
+    case "$mode" in
+      preserved_children)
+        if grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null; then
+          fail "migration ran while stopping the connector would preserve its children"
+        fi
+        ;;
+      writers_remain)
+        grep -F 'systemctl stop cheese.service' "$run_dir/docker.log" >/dev/null || fail "native executor stayed running"
+        if grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null; then
+          fail "migration ran with remaining workspace users"
+        fi
+        ;;
+      first|apply_failed|health_failed)
+        grep -F 'stop backend' "$run_dir/docker.log" >/dev/null || fail "writers stayed running"
+        grep -F 'stop legacy-git-container' "$run_dir/docker.log" >/dev/null || fail "Git receiver stayed running"
+        grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null || fail "migration did not run"
+        native_stop="$(log_line "$run_dir/docker.log" 'systemctl stop cheese.service')"
+        writer_check="$(log_line "$run_dir/docker.log" workspace-writers-checked)"
+        migration="$(log_line "$run_dir/docker.log" '--apply --writers-stopped')"
+        [ "$native_stop" -lt "$writer_check" ] && [ "$writer_check" -lt "$migration" ] \
+          || fail "migration started before native writers were quiesced"
+        ;;
+      completed|check_failed|retry_health_failed|retry_completed)
+        if grep -F 'stop backend' "$run_dir/docker.log" >/dev/null; then
+          fail "$mode stopped the running backend"
+        fi
+        ;;
+    esac
+    if [ "$mode" = health_failed ] || [ "$mode" = retry_health_failed ]; then
+      grep -F 'refusing to restart the legacy repository writer' "$run_dir/release.log" >/dev/null || fail "migration allowed a legacy rollback"
+      if grep -F 'compose-up-env BACKEND_IMAGE=repo/backend:oldsha' "$run_dir/docker.log" >/dev/null; then
+        fail "legacy backend resumed writing after migration"
+      fi
+    elif [ "$expected" = 1 ] && grep -F 'up -d backend frontend' "$run_dir/docker.log" >/dev/null; then
+      fail "$mode started the app despite a failed migration"
+    fi
+    if [ "$expected" = 0 ] && [ -f "$run_dir/apphome/forge-migration/cutover-pending" ]; then
+      fail "successful release retained its cutover guard"
+    fi
+    if [ "$mode" = first ] || [ "$mode" = retry_completed ]; then
+      grep -F 'systemctl start cheese.service' "$run_dir/docker.log" >/dev/null || fail "native executor was not restored"
+      [ ! -f "$run_dir/apphome/forge-migration/restart-host-executor" ] || fail "restart receipt was not consumed"
+    elif grep -F 'systemctl start cheese.service' "$run_dir/docker.log" >/dev/null; then
+      fail "$mode resumed native writers prematurely"
+    fi
+    rm -rf "$run_dir"
+    echo "PASS: forge release $mode"
+  done
+}
+
 case "$CASE" in
+  forge-health) test_missing_forge_fails_health_check ;;
+  forge-migration) test_forge_migration_release ;;
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   connection-owner) test_deploy_keeps_connection_owner_running ;;
@@ -1067,9 +1140,9 @@ case "$CASE" in
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
+    test_missing_forge_fails_health_check
+    test_forge_migration_release
     test_deploy_rejects_absent_frontend
-    test_deploy_rejects_absent_git
-    test_deploy_starts_git
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
     test_local_deploy_installs_owner_from_verified_backend_image

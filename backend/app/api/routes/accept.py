@@ -1,8 +1,6 @@
 """Accept-card / Review routes — the 验收 state machine (spec §4.4, §6.3)."""
 
-import asyncio
 import logging
-import shlex
 import uuid
 from typing import Annotated
 
@@ -13,11 +11,9 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, BaseError
+from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
-    EVENT_ACCEPT_CONFLICT,
     EVENT_CARD_REJECTED,
     SEVERITY_WARN,
     WHO_CHEESE,
@@ -25,13 +21,9 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.identity.actor import Actor
+from app.domain.project.forge import proposal_client
 from app.domain.review import pr_publish
-from app.domain.review.github_pr import (
-    GitHubPRClient,
-    GitHubPRError,
-    parse_github_repo,
-)
-from app.domain.review.models import AcceptStatus
+from app.domain.review.github_pr import GitHubPRError
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
@@ -45,7 +37,6 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -210,7 +201,7 @@ async def topic_pr_checks(
         await _task_actor(topic_id, task, db, resolver)
     try:
         return ok(await _pr_checks_payload(topic_id, db, task_id=task))
-    except BaseError:
+    except NotFoundError:
         raise  # 404 for a topic that does not exist stays a 404
     except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above
         logger.exception("pr-checks read failed for topic %s", topic_id)
@@ -233,15 +224,9 @@ async def _pr_checks_payload(
     if card is None or card.pr_number is None:
         return {"available": False}
     topic = await svc._topic_or_404(topic_id)
-    # #192: the installation to mint from is resolved per-project, not global.
-    tokens = await github_app_tokens_for_project(topic.project_id, db)
-    if tokens is None:
+    client = await proposal_client(topic.project_id, db)
+    if client is None:
         return {"available": False}
-    upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
-    parsed = parse_github_repo(upstream)
-    if parsed is None:
-        return {"available": False}
-    client = GitHubPRClient(*parsed, tokens)
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
@@ -279,8 +264,6 @@ async def accept_card(
     body: AcceptDecision,
     db: DbSession,
     resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
@@ -289,61 +272,6 @@ async def accept_card(
     card = await svc.accept(
         card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
     )
-    if card.status == AcceptStatus.conflict:
-        # 冲突不采纳 (spec §6.3): 芝士 first. Materialize the conflicted merge in
-        # the topic's workspace, then dispatch a resolve turn. The reviewer
-        # retries accept when 芝士 reports done.
-        topic_id = card.topic_id
-        task = await TaskService(db).get(card.task_id) if card.task_id else None
-        actionable = task is not None and task.status == TaskStatus.open
-        files = None
-        preparation = "未取得冲突文件清单，需检查任务分支与目标分支。"
-        try:
-            if not actionable or card.task_id is None:
-                raise ValueError("验收卡没有可执行的任务")
-            files = await asyncio.to_thread(
-                ws.prepare_conflict_resolution,
-                (await AcceptService(db)._topic_or_404(topic_id)).project_id,
-                card.task_id,
-            )
-            preparation = "平台已在任务分支准备冲突提交。"
-        except Exception:  # noqa: BLE001 — dispatch anyway; the agent can dig
-            logger.exception("prepare_conflict_resolution failed for %s", topic_id)
-        listing = "、".join(files[:15]) if files else "未取得冲突文件清单"
-        action = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
-        if actionable and task is not None:
-            branch = shlex.quote(f"origin/{task.branch_name}")
-            action = (
-                f'先执行 cd "$(cheese worktree {card.task_id})"，该命令会获取平台分支。'
-                "先保留本地未提交的工作，"
-                f"再执行 git merge {branch} 合入平台任务分支。"
-                "若平台未准备成功，检查并合入任务实际目标分支。"
-                "解决冲突标记，保留双方意图，跑相关测试并提交。"
-                f"执行 cheese sync --task {card.task_id} 并确认成功。"
-                + ("再用 cheese push-fix 更新原 PR。" if card.pr_number else "")
-                + "简短汇报解决思路和验证结果，请验收人重新点采纳。"
-            )
-        runner.submit(
-            chat,
-            topic_id,
-            author="system",
-            content=(
-                f"采纳任务 {card.task_id} 时合并冲突了。{preparation}"
-                f"冲突文件：{listing}。{action}"
-            ),
-            summon=actionable,
-            # 平台提示统一契约: 一行给房间，冲突文件清单进 meta.detail。detail 给的
-            # 是**完整**清单（content 里那份为了可读只列前 15 个），收起来不等于删掉。
-            nudge_event="采纳时合并冲突"
-            + (f"，{len(files)} 个文件" if files is not None else "，未取得文件清单"),
-            nudge_meta=notice(
-                EVENT_ACCEPT_CONFLICT,
-                severity=SEVERITY_WARN,
-                who=WHO_CHEESE,
-                detail="\n".join(files) if files else preparation,
-                detail_label="冲突文件",
-            ),
-        )
     return ok(await svc.describe(card))
 
 

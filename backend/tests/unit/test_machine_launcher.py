@@ -243,7 +243,6 @@ def _place(**overrides) -> MachinePlace:
             "project_id": "P",
             "topic_id": "T",
             "agent_handle": "ops",
-            "git_remote": "https://cheese.example/api/projects/P/git",
             **overrides,
         }
     )

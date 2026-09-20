@@ -1036,55 +1036,17 @@ so the native tool is denied outright rather than left as a trap」）。
 
 ### 4.5 托管方接口
 
-`Forge` ABC（`review/forge.py`）：四个操作 + 一组能力位，三个实现。能力位是
-`ForgeCapabilities`，由 `capabilities_of()` 从 `ProjectForgeFacts`（装没装 App、有没有
-远端、有没有写那个远端的凭据）纯函数算出来 [已定]，上位依据是 #363 那张 provider 表；
-`resolve()` 不问「这个 URL 像不像 github.com」，它按能力位查 `FORGES` 注册表。
+`review/forge.py` 中的 `Forge` 定义采纳、刷新评审版本、状态同步和人工覆盖检查后的合并操作。
+`resolve()` 根据项目保存的 `ProjectForge` 绑定选择 GitHub 或 Forgejo；绑定缺失或不可读时，
+采纳停止并给出原因。
 
-| 能力位 | 它说的事实 |
-|---|---|
-| `reports_checks` | 这个托管方跑不跑检查、平台能不能读到结论 |
-| `hosts_proposals` | 改动在外部有没有一个可以被人打开的提案页 |
-| `can_write_remote` | 我们有没有写那个远端的凭据——对远端做一次 `git push --dry-run` 到一个新 ref 问出来的（`workspace/service.py can_push_upstream`），不按地址形状猜；答案按（项目，地址）在进程里记 10 分钟 |
-| `has_external_remote` | 项目填没填一个外部 git 远端 |
-| `pushes_to_external_remote` | `has_external_remote` ∧ `can_write_remote` |
-| `identity` | 提案与合并署谁的名（用户的，还是平台的 App） |
+新项目默认使用部署内的 Forgejo。选择 GitHub 的项目可以等待仓库连接，已连接的项目继续以
+GitHub 为代码仓库。机器直接克隆、提交和推送，无法直连时使用认证中转。后端从 Forge 读取
+已提交的文件，从任务机器读取尚未提交的文件。
 
-`has_external_remote` 单独占一位，是因为「没填地址」和「填了地址我们推不动」在
-`pushes_to_external_remote` 上都是否，而卡上要说的不是同一句话：后者被告知「本项目
-未接外部仓库」，等于当着填过地址的人的面说他没填。
-
-| 实现 | reports_checks | hosts_proposals | pushes_to_external_remote | 对应哪种项目 |
-|---|---|---|---|---|
-| GitHub | 是 | 是 | 是 | 绑了 GitHub |
-| 外部远端 | 否 | 否 | **是** | 有 git 远端但不是 GitHub（gitee、校内 GitLab、自建） |
-| 平台 | 否 | 否 | 否 | 什么都没绑，或者填了地址而我们没有写它的凭据（两种情况 `declaration` 不同） |
-
-**中间这一档是 `ExternalRemoteForge`**：采纳 squash 进平台仓库的 main，**并把 main 推回
-项目自己的远端**（`review/services.py` 的 `_accept_external_remote`）；少掉的只有外部检查
-和提案页，那是那个远端本来就没有的。判据在 `forge.py` 一处，不在 `services.py`——
-`services.py` 只负责读那三个事实，挑哪一档由 `serves()` 自己答。
-
-**它不存在的时候会发生什么**（这一档就是为它建的）：一个用校内 GitLab 的老师填了自己的
-仓库地址、点了同步、看见历史进来了，于是合理地认为这是双向的。此后每一次采纳都只落在平台
-自己的仓库里，他的 GitLab 一个 commit 都收不到，**没有任何一句话告诉他**。
-反过来，一个填了地址但没给我们写权限的项目，会拿到一个永远推不上去的 forge——
-所以 `can_write_remote` 和 `has_external_remote` 必须是**合取**，缺一半就落平台那一档，
-而那一档必须说得出「远端在，我们没有写它的凭据」，否则只是把沉默换成一句假话。
-
-#### 评审发生在用户所在的地方
-
-[已定] 结论 51。这是托管方接口上的一条产品规则，不是实现之间的差异：
-
-- **代码项目的用户在 forge**：评审就在那个提案页（PR）上——讨论、逐行意见、批准都发生在那里，
-  **房间里只放一条链接**。不把 PR 的评论搬回时间线做第二份，两份评审就是两个真相（I4a）。
-- **文档项目的用户不在 forge**：评审在**房间和卡片**里，**forge 只是存档**——
-  它照旧收下改动与历史（版本、差异由文件自带，#1086），但没有人被要求去那里看。
-- **判据是「这个项目的用户在哪」，不是「托管方实现是谁」**：
-  同一个 `GitHubForge` 既服务代码项目也服务文档项目，评审落点不因此改变；
-  `hosts_proposals=是` 只说明外部存在一个可以被打开的提案页，不说明评审该发生在那里。
-- **与结论 50 的关系**：评审在 PR 上进行，用的是用户**已经在用**的那套东西，不要求他为我们改任何设置；
-  平台在那一侧只读结论（`reports_checks`），不去那里建第二套流程。
+所有项目都在 Cheese 面板评审。面板意见同步到 Forge，外部评论在面板显示并标明来源。
+Forge 记录代码、检查和合并结果；外部合并会同步为任务已交付。具体采纳规则见
+[采纳流程](../accept-is-merge.md)。
 
 ### 4.6 模型供给为什么不是第四个接口
 

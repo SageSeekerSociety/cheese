@@ -153,7 +153,7 @@ describe('点一个文件，落在它真的在的那一格', () => {
     await clickChip(container, 'src/b.ts')
 
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null)
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', null, 'committed')
     // 不是文档也不是图片，预览显示不了它，所以连问都不问。
     expect(readPreviewFile).not.toHaveBeenCalled()
   })

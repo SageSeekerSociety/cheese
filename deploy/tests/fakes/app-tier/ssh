@@ -6,6 +6,9 @@ tag="${APP_TIER_MAIN_SHA:-testsha}"
 remote_command="${*: -1}"
 
 if [[ "$remote_command" == *com.docker.compose.service* ]]; then
+  if [ "$scenario" != forgejo_absent ]; then
+    printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
+  fi
   printf 'backend\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
@@ -13,17 +16,11 @@ if [[ "$remote_command" == *com.docker.compose.service* ]]; then
     printf 'frontend\trepo/frontend:%s\trunning\tUp 1 minute (healthy)\n' \
       "$frontend_tag"
   fi
-  if [ "$scenario" != "git_absent" ]; then
-    printf 'git\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
-  fi
 else
   printf 'cheese-backend-1 repo/backend:%s\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
     [ "$scenario" = "frontend_stale" ] && frontend_tag="old9999"
     printf 'cheese-frontend-1 repo/frontend:%s\n' "$frontend_tag"
-  fi
-  if [ "$scenario" != "git_absent" ]; then
-    printf 'cheese-git-1 repo/backend:%s\n' "$tag"
   fi
 fi

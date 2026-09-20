@@ -9,6 +9,7 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
+import asyncio
 import importlib
 import logging
 import pkgutil
@@ -116,19 +117,6 @@ async def lifespan(_: FastAPI):
             "agent identity backfill skipped", reason=str(exc)[:120]
         )
 
-    # The backend and the in-container agent share one git store and must run as
-    # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
-    # panel just 422s for every topic in the project. Say it out loud at boot.
-    try:
-        from app.domain.workspace import service as _ws
-
-        for problem in _ws.audit_workspace_ownership():
-            get_logger("cheesex.runtime").error(
-                "workspace_ownership", problem=problem, uid=_ws.AGENT_UID
-            )
-    except Exception:  # noqa: BLE001 — a diagnostic must never block boot
-        get_logger("cheesex.runtime").exception("workspace ownership audit failed")
-
     # The `cheese` CLI is now staged into each topic's session dir from THIS
     # build (ws.session_dir) instead of an operator-maintained host checkout. A
     # box still setting the retired var is the exact configuration that served a
@@ -226,6 +214,13 @@ async def lifespan(_: FastAPI):
 
     spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
     spawn(watch_loop_lag(), name="event loop lag")
+    forge_events = None
+    if settings.forge_event_relay_url:
+        from app.domain.review.events import listen
+
+        forge_events = asyncio.create_task(
+            listen(scheduler, async_session_factory), name="forge events"
+        )
 
     # The openviking backend's whole failure mode is silence: a rejected key
     # leaves extraction writing nothing, recall answering empty, and no other
@@ -245,6 +240,9 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            if forge_events is not None:
+                forge_events.cancel()
+                await asyncio.gather(forge_events, return_exceptions=True)
             for job in reversed(jobs):
                 await job.stop()
             if hasattr(hub_runtime, "close"):
