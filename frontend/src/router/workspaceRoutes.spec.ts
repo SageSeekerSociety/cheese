@@ -38,7 +38,6 @@ describe('the project frame', () => {
     ['/docs/decisions', 'project-docs'],
     ['/overview', 'overview'],
     ['/calendar', 'calendar'],
-    ['/agents', 'project-agents'],
     ['/library', 'project-library'],
     ['/settings', 'project-settings'],
     ['/delivery', 'project-delivery'],
@@ -51,6 +50,15 @@ describe('the project frame', () => {
     expect(resolved.matched[0].path).toBe('/projects/:projectId')
     expect(resolved.matched.length).toBeGreaterThan(1)
     expect(resolved.params.projectId).toBe(PROJECT)
+  })
+
+  // AI 队友并进了项目设置，而发出去的 /agents 链接还在外面。重定向只在真正导航
+  // 时才跑，所以这里 push 而不是 resolve。
+  it('sends the old /agents page to the project settings', async () => {
+    const r = router()
+    await r.push(`/projects/${PROJECT}/agents`)
+    expect(r.currentRoute.value.name).toBe('project-settings')
+    expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/settings`)
   })
 
   it('renders a sidebar and a content view at the frame level', () => {
