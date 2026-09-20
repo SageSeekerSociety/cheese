@@ -117,10 +117,11 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
    （`core/errors.py` 的 `http_exception_handler` 丢掉 `exc.headers`），于是测试全绿合入、线上一点没变。
    这三个 MockTransport 用例今天还在 `backend/tests/unit/test_owner_rpc_unexpected_409.py:18-25`。
 3. **Go ↔ Python 的线格式**（族 1）。`execution.call` / `execution.data` / `execution.result` 三帧
-   不在 `device_link.py` 里，是 `device_hub.py:616` 直接拼的 dict，
-   恰好落在那个文件 docstring 承诺的「field-for-field 对 Go struct，drift 由测试发现」之外。
-   `cli/internal/link` 连一个 `_test.go` 都没有。两侧的假连接器可以随便撒谎：
-   `test_device_connection_lifecycle.py:47` 发的是 `{"t":"hello","v":3}`，而两边的 `PROTOCOL_VERSION` 都是 1。
+   由 `backend/tests/fixtures/wire/*.json` 一帧一文件冻住，两侧各读同一批：Python 在
+   `tests/contract/test_wire_frames.py`，Go 在 `cli/internal/link/frames_test.go`。
+   写侧的唯一声明是 `device_link.execution_call`，替身侧的唯一声明是 `tests/support/wire.py`。
+   握手那一格还没进夹具：`test_device_connection_lifecycle.py` 发的是 `{"t":"hello","v":3}`，
+   而两边的 `PROTOCOL_VERSION` 都是 1。
 4. **生产的连接池**（族 5、11）。`backend/tests/conftest.py:83` 设 `CHEESEX_TEST_NULLPOOL=1`，
    `backend/app/core/db.py:46` 据此换成 `NullPool`。**压垮生产的那个对象在测试里根本不存在**。
 5. **部署后的业务健康**（族 12）。`deploy/deploy-docker.sh:593` 打 `/healthz`，
@@ -187,8 +188,8 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
    替身的职责是**强制**契约：它自己就是那份契约的可执行定义，两侧的真实现都要过它。
    **判据是「替身遵守真实协议」** [已定] 结论 59：一个替身只能产出真实现也产得出来的东西；
    它答得出而真实现答不出的，就是撒谎。用什么库无所谓——判据在替身的行为上，不在工具名上。
-   今天不是这样——`audit-toolcall.md` 数出来同一条缝上有三个互不相干的手搓假货
-   （`SocketDevice`、`_OwnerExecutorTransport`、`ExecutorTransport`）；
+   执行器那条缝一度不是这样——`audit-toolcall.md` 数出来它上面有三个互不相干的手搓假货，
+   现已收成 `tests/support/wire.py` 一个，由两侧共读的夹具约束；
    而 `test_owner_rpc_unexpected_409.py` 那三条造了一个**带 `X-Device-Id` 的 409**，
    真 owner 当时根本发不出这个 header（`core/errors.py` 丢掉 `exc.headers`）——
    替身撒了谎，没有东西拦它，于是测试全绿合入、线上一点没变。
@@ -297,7 +298,7 @@ I3 的后半（「`topics` 表不许出现执行层的列」）在上一版里�
 | **integration** | pytest `-m integration` | 真 Postgres + 真 alembic + 真 ASGI + **生产的 QueuePool** | 2 s | **6 分钟** @ 8 worker | `test.yml` 整体 13 分 25 秒（6838 条） | PR 必过 |
 | **frontend 单元** | `frontend.yml` vitest + eslint + vue-tsc | jsdom，组件与 lib | — | **2 分钟** | install ~40s + eslint ~90s + vitest ~56s ≈ 3 分 06 秒 | PR 必过。**族 6 的 13 个整族长在这一层和下面的 e2e 层**，四层表里原本没有它们的位置 |
 | **pi 扩展** | `test.yml:322` 的 `extension` job，`node --test backend/tests/extension/platform.test.ts` | 无 bundler、无 package.json，手写 pi stub | — | **10 秒** | 2.7 秒 | PR 必过。**缝 A-1 的 TS 侧夹具落在这里** |
-| **Go 单元** | `cli.yml` 的 `go test -race ./...`，`timeout-minutes: 15` | `cli/**/*_test.go` 13 文件 | — | **3 分钟** | 在 15 分钟预算内 | PR 必过。**族 1 的 Go 侧长在这里**；`cli/internal/link` 今天连一个 `_test.go` 都没有，缝 C-1 的夹具解析侧要加在这 |
+| **Go 单元** | `cli.yml` 的 `go test -race ./...`，`timeout-minutes: 15` | `cli/**/*_test.go` 13 文件 | — | **3 分钟** | 在 15 分钟预算内 | PR 必过。**族 1 的 Go 侧长在这里**；缝 C-1 的夹具解析侧是 `cli/internal/link/frames_test.go`，`backend/tests/fixtures/wire/**` 也在 `cli.yml` 的路径过滤里，所以改夹具同样触发这个 job |
 | **deploy shell** | `deploy-scripts-test.yml`，`deploy/tests/*.sh` | 真 bash，fake `df`/fake `docker` | — | **2 分钟** | 小 | PR 必过。**族 7 回收器的两条测试落在这里** |
 | **acceptance** | `remote-execution.yml`（`suite.py` → `acceptance.py`）、`harness-contract.yml` | 钉住的二进制、真容器、真连接器进程、上一个已发布的 owner 镜像 | — | **12 分钟**（不含预热） | 中位 19.8 分钟、最长 192 分钟；`timeout-minutes: 20` 里含 7-13 分钟镜像构建 | 触碰即跑；main 连续 20 次绿之后才当必过门（见第 5 节第 4 条） |
 | **Go 交付 e2e** | `cli.yml` 的 `go test -tags claudee2e -timeout 35m ./e2e/`，MockServer 扮 Anthropic API | 真 Claude Code 进程 + 真 tmux 层 | — | **10 分钟** | `timeout-minutes: 40` | 触碰即跑。**这是全仓唯一证明过「一条 prompt 变成一次真 Bash 工具调用写出文件」的东西**，缝 C-2 要接在它和 `acceptance.py` 之间，不要另起炉灶 |
@@ -511,8 +512,9 @@ guard 回一句 `Central execution is disabled`。
 若属实，按结论 22 处理：要么真在机器上跑，要么如实标不可用。
 
 **(b) 每跳有契约**（缝 C-1 与 C-2）。两条最要紧的：
-1. `execution.call/data/result` 三帧写进 `device_link.py`，加 Go↔Python 的夹具对拍。
-   判据：`device_hub.py:616` 那个手拼 dict 消失；`cli/internal/link` 有 `_test.go`。
+1. `execution.call/data/result` 三帧写进 `device_link.py`，加 Go↔Python 的夹具对拍。**已做**：
+   手拼 dict 换成 `device_link.execution_call`，`cli/internal/link/frames_test.go` 与
+   `backend/tests/contract/test_wire_frames.py` 读同一批 `backend/tests/fixtures/wire/*.json`。
 2. `room_fixture.py:174-177` 那一行换成真的连接器进程 → 真的 owner app → 真的 runtime，
    同时 `acceptance.py:363` 的 `LocalDeviceHub` 消失（它的 `exec` 就是本机 `subprocess.run`，
    等于把 DeviceHub 整段摘掉）。
