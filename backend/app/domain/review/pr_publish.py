@@ -246,6 +246,7 @@ async def retarget_completed_dependencies(
     from app.domain.block.models import AGENT_NOTICE_META_KEY
     from app.domain.idempotency import store as idem
     from app.domain.idempotency.keys import action_key
+    from app.domain.review.models import AcceptStatus
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.room_task.services import TaskService
@@ -338,6 +339,17 @@ async def retarget_completed_dependencies(
                     task.base_branch = base
                 outcome = "已合并" if delivered else "已关闭，未交付"
                 headline = f"父任务{outcome}，子任务需要重新检查依赖"
+                cards = AcceptCardRepository(session)
+                parent_card = (await cards.latest_by_task([ancestor.id])).get(
+                    ancestor.id
+                )
+                rejection = (
+                    parent_card
+                    if not delivered
+                    and parent_card is not None
+                    and parent_card.status == AcceptStatus.rejected
+                    else None
+                )
                 instruction = (
                     f"任务 {task.id} 的父任务 {ancestor.id} {outcome}。\n"
                     f'先执行 cd "$(cheese worktree {task.id})"。\n'
@@ -353,7 +365,12 @@ async def retarget_completed_dependencies(
                     )
                     + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
                 )
-                cards = AcceptCardRepository(session)
+                if rejection is not None:
+                    instruction += f"\n父任务最近一张验收卡 {rejection.id} 被驳回。" + (
+                        f"驳回理由原文：\n{rejection.note}"
+                        if rejection.note
+                        else "验收人没有填写驳回理由。"
+                    )
                 for card in await cards.list_for_task(task.id):
                     if card.status in ("pending", "conflict"):
                         await cards.clear_approvals(card.id)
@@ -374,6 +391,15 @@ async def retarget_completed_dependencies(
                         ),
                         AGENT_NOTICE_META_KEY: instruction,
                         "dependency_task_id": str(task.id),
+                        "dependency_rejection": (
+                            {
+                                "card_id": str(rejection.id),
+                                "decided_by": rejection.decided_by,
+                                "reason": rejection.note,
+                            }
+                            if rejection is not None
+                            else None
+                        ),
                     },
                 )
                 if block is None:

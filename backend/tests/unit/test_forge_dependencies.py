@@ -1,6 +1,6 @@
 """Dependency outcomes survive restarts and ask the executor to restack."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.domain.block.models import Block
 from app.domain.project.models import Project
-from app.domain.review.models import AcceptApproval, AcceptCard
+from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
 from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
@@ -103,6 +103,52 @@ async def test_failed_retarget_retries_before_announcing(db_factory, monkeypatch
     await retarget_completed_dependencies(db_factory)
     async with db_factory() as session:
         assert len(list(await session.scalars(select(Block)))) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("latest_status", [AcceptStatus.rejected, AcceptStatus.pending])
+@pytest.mark.parametrize("reason", ["", "保留原接口。\n不要引入新的外部依赖。"])
+async def test_dependency_notice_preserves_only_current_rejection(
+    db_factory, latest_status, reason
+):
+    parent, _ = await seed(db_factory, delivered=False)
+    async with db_factory() as session:
+        session.add(
+            AcceptCard(
+                topic_id=parent.room_id,
+                task_id=parent.id,
+                reviewer_handle="reviewer",
+                status=AcceptStatus.rejected,
+                note="Superseded review",
+                created_at=datetime.now(UTC) - timedelta(days=1),
+            )
+        )
+        current = AcceptCard(
+            topic_id=parent.room_id,
+            task_id=parent.id,
+            reviewer_handle="reviewer",
+            status=latest_status,
+            note=reason,
+            decided_by="reviewer" if latest_status == AcceptStatus.rejected else None,
+        )
+        session.add(current)
+        await session.commit()
+    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(db_factory)
+    async with db_factory() as session:
+        blocks = list(await session.scalars(select(Block)))
+        assert len(blocks) == 1
+        meta = blocks[0].meta
+        assert "Superseded review" not in meta["agent_notice"]
+        if latest_status == AcceptStatus.rejected:
+            assert meta["dependency_rejection"] == {
+                "card_id": str(current.id),
+                "decided_by": "reviewer",
+                "reason": reason,
+            }
+            assert (reason or "没有填写驳回理由") in meta["agent_notice"]
+        else:
+            assert meta["dependency_rejection"] is None
 
 
 @pytest.mark.anyio
