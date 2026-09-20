@@ -10,10 +10,12 @@ forge's conclusion" is to hold a forge whose conclusion we set.
 running, unknown — and it records every action the accept path asked of it, in
 order, so a test can assert both what came back and what was called.
 
-It is a double, not a mock of our own code: it implements the real `Forge` ABC
-and is resolved through the real `forge_for`, so a capability bit added to the
-interface breaks it here rather than leaving a test that passes against a shape
-nothing has any more.
+It is a double, not a mock of our own code: it implements the real `Forge` ABC,
+so a capability bit or an operation added to the interface breaks it here rather
+than leaving a test that passes against a shape nothing has any more. It is not
+picked by `forge_for` — `serves()` is always False and a test hands the instance
+over directly, because a real project's facts can never produce a forge whose
+conclusion the test dictates.
 """
 
 from __future__ import annotations
@@ -45,18 +47,19 @@ class LedgerForge(forge_mod.Forge):
     """A forge whose conclusion a test dictates, and whose calls it can read."""
 
     kind = forge_mod.ForgeKind.external_remote
-    declaration = "ℹ️ 假托管方"
+
+    @property
+    def declaration(self) -> str:
+        return "ℹ️ 假托管方"
 
     def __init__(
         self,
         capabilities: forge_mod.ForgeCapabilities,
         *,
         conclusion: Conclusion = "green",
-        proposal_url: str | None = None,
     ) -> None:
         super().__init__(capabilities)
         self.conclusion: Conclusion = conclusion
-        self.proposal_url = proposal_url
         #: 采纳流程对这个托管方做过的每一个动作，按顺序。
         self.calls: list[tuple] = []
 
@@ -109,6 +112,7 @@ def code_project_forge(**kwargs) -> LedgerForge:
             reports_checks=True,
             hosts_proposals=True,
             can_write_remote=True,
+            has_external_remote=True,
             pushes_to_external_remote=True,
             identity=forge_mod.ForgeIdentity.user,
         ),
@@ -123,6 +127,7 @@ def doc_project_forge(**kwargs) -> LedgerForge:
             reports_checks=False,
             hosts_proposals=False,
             can_write_remote=True,
+            has_external_remote=True,
             pushes_to_external_remote=True,
             identity=forge_mod.ForgeIdentity.platform,
         ),

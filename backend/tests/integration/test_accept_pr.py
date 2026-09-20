@@ -1399,6 +1399,7 @@ def test_another_forge_owns_its_checks_and_accept_operation(client, monkeypatch)
             reports_checks=True,
             hosts_proposals=True,
             can_write_remote=True,
+            has_external_remote=True,
             pushes_to_external_remote=True,
             identity=forge_mod.ForgeIdentity.user,
         )
@@ -1503,6 +1504,7 @@ def test_another_forge_refreshes_polls_and_merges_the_viewed_revision(
                 reports_checks=True,
                 hosts_proposals=True,
                 can_write_remote=True,
+                has_external_remote=True,
                 pushes_to_external_remote=True,
                 identity=forge_mod.ForgeIdentity.user,
             )

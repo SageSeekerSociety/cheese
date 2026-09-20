@@ -141,6 +141,43 @@ async def test_a_project_with_nothing_bound_is_the_platform_forge() -> None:
 
 
 @pytest.mark.anyio
+async def test_a_remote_we_cannot_write_is_not_called_unbound() -> None:
+    """填了校内 GitLab 地址、我们没有写它的凭据 —— 这次采纳确实只落在平台仓库里，
+    但卡上不能当着他的面说他没填地址。
+
+    两句话都是 ℹ️：这不是故障，是这个项目今天的样子。
+    """
+    got = await forge_mod.resolve(
+        project_id=_pid(),
+        facts=_answers(_facts(has_external_remote=True)),
+    )
+    unbound = await forge_mod.resolve(project_id=_pid(), facts=_answers(_facts()))
+
+    assert got.kind is forge_mod.ForgeKind.platform
+    assert "未接外部仓库" not in got.declaration
+    assert "未接外部仓库" in unbound.declaration
+    assert got.declaration != unbound.declaration
+    for sentence in (got.declaration, unbound.declaration):
+        assert sentence.startswith("ℹ️")
+
+
+@pytest.mark.anyio
+async def test_a_proposal_elsewhere_does_not_make_it_a_github_project() -> None:
+    """卡上有一条提案页链接，不等于可以对这个项目调 GitHub 的合并 API。
+
+    短路的依据是「这一页证明了什么」：GitHub 上的一个 PR 证明装了 App；别处来的
+    一条 URL 什么都没证明，照常按项目的事实分派。
+    """
+    got = await forge_mod.resolve(
+        project_id=_pid(),
+        facts=_answers(_facts(has_external_remote=True, remote_write_credential=True)),
+        proposal_url="https://forge.example/proposals/42",
+    )
+
+    assert got.kind is forge_mod.ForgeKind.external_remote
+
+
+@pytest.mark.anyio
 async def test_an_unreadable_project_stops_the_accept() -> None:
     """Fails closed, because the wrong guess is the one that pushes to main.
 
@@ -176,16 +213,18 @@ def test_exactly_one_forge_serves_any_capabilities() -> None:
     that only shows up as a 500 on somebody's accept. Enumerate the bits that
     select a lane and check the registry is total and disjoint over them."""
     for hosts in (True, False):
-        for pushes in (True, False):
-            caps = forge_mod.ForgeCapabilities(
-                reports_checks=hosts,
-                hosts_proposals=hosts,
-                can_write_remote=pushes,
-                pushes_to_external_remote=pushes,
-                identity=forge_mod.ForgeIdentity.platform,
-            )
-            serving = [cls for cls in forge_mod.FORGES if cls.serves(caps)]
-            assert len(serving) == 1, (caps, serving)
+        for remote in (True, False):
+            for writable in (True, False):
+                caps = forge_mod.ForgeCapabilities(
+                    reports_checks=hosts,
+                    hosts_proposals=hosts,
+                    can_write_remote=writable,
+                    has_external_remote=remote,
+                    pushes_to_external_remote=remote and writable,
+                    identity=forge_mod.ForgeIdentity.platform,
+                )
+                serving = [cls for cls in forge_mod.FORGES if cls.serves(caps)]
+                assert len(serving) == 1, (caps, serving)
 
 
 @pytest.mark.anyio

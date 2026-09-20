@@ -1,8 +1,9 @@
-"""不进 PR 的两种采纳形状 + pr-checks 展示端点。
+"""不进 PR 的那几种采纳形状 + pr-checks 展示端点。
 
 绑定项目的点击合并本身在 tests/integration/test_accept_pr.py（#718 的主套件）。
 这里剩下的是：讨论型话题 / 未接 GitHub 的项目（#363：平台自己就是 forge，
-local merge 是唯一、正当的采纳），以及 /topics/{id}/pr-checks 这个只读端点。
+local merge 是唯一、正当的采纳）/ 有 git 远端但不是 GitHub 的项目（采纳合完还要
+把 main 推回那个远端），以及 /topics/{id}/pr-checks 这个只读端点。
 """
 
 import asyncio
@@ -469,7 +470,10 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
 ):
     """未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是唯一、
     正当的采纳语义——不是降级、不拦人。但这件事要写在卡上（ℹ️ 不是 ⚠️），
-    让它和「该走 PR 却没走」的卡一眼可分。"""
+    让它和「该走 PR 却没走」的卡一眼可分。
+
+    两种「未接」说的不是同一句话：什么都没填的项目是「未接外部仓库」，填了地址
+    而我们没有写它的凭据的项目**填过**，卡上不能当着他的面说他没填。"""
     from app.domain.agent import github_app
     from app.domain.workspace import service as ws
 
@@ -491,8 +495,16 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     filed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert filed["status"] == "pending"
     assert filed["forge"]["kind"] == "platform"
-    assert filed["forge"]["declaration"].startswith("ℹ️ 本项目未接外部仓库")
-    assert "⚠️" not in filed["forge"]["declaration"]
+    declaration = filed["forge"]["declaration"]
+    assert declaration.startswith("ℹ️")
+    assert "⚠️" not in declaration
+    if missing == "upstream":
+        # 他填了地址，只是我们推不动它。
+        assert filed["forge"]["has_external_remote"] is True
+        assert "未接外部仓库" not in declaration
+    else:
+        assert filed["forge"]["has_external_remote"] is False
+        assert declaration.startswith("ℹ️ 本项目未接外部仓库")
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
@@ -554,3 +566,131 @@ def test_unbound_project_with_github_upstream_pushes_nothing(
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert card["forge"]["kind"] == "platform"
     assert card["forge"]["pushes_to_external_remote"] is False
+
+
+# ---- 有 git 远端、但那个远端不是 GitHub（gitee、校内 GitLab、自建）-----------
+
+
+def _event_types(client, topic_id: str) -> list[str]:
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    return [
+        (b.get("meta") or {}).get("event_type")
+        for b in blocks
+        if b["kind"] == "event"
+    ]
+
+
+def _event_types_settled(client, topic_id: str, needle: str) -> list[str]:
+    """房间里那几行是 fire-and-forget 落下的，给事件循环几拍。"""
+    import time
+
+    types = _event_types(client, topic_id)
+    for _ in range(40):
+        if needle in types:
+            break
+        time.sleep(0.05)
+        types = _event_types(client, topic_id)
+    return types
+
+
+@pytest.fixture
+def campus_gitlab(pr_world, monkeypatch):
+    """一个填了自己仓库地址、而那个地址不是 GitHub 的项目。
+
+    老师点了同步、看见历史进来了，于是合理地认为这是双向的 —— 所以采纳必须真的
+    推回去，否则他的仓库一个 commit 都收不到，而且没有一句话告诉他。
+    """
+    from app.domain.agent import github_app
+    from app.domain.workspace import service as ws
+
+    async def _no_tokens(_pid, _session):
+        return None
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
+    monkeypatch.setattr(
+        ws, "get_upstream", lambda pid: "git@campus.example:teacher/course.git"
+    )
+    monkeypatch.setattr(ws, "base_branch_head", lambda pid: ("main", "deadbeef"))
+    return pr_world
+
+
+def test_accepting_pushes_the_trunk_back_to_the_projects_own_remote(
+    client, campus_gitlab, monkeypatch
+):
+    """采纳 = 合进平台仓库的 main **并把 main 推回项目自己的远端**。
+
+    卡上先说了这件事（I23），采纳再做到它。
+    """
+    from app.domain.workspace import service as ws
+
+    pushed: list[tuple] = []
+    monkeypatch.setattr(
+        ws,
+        "push_branch",
+        lambda pid, branch, token: pushed.append((branch, token)) or branch,
+    )
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    filed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
+    assert filed["forge"]["kind"] == "external_remote"
+    assert filed["forge"]["pushes_to_external_remote"] is True
+    assert "推回该远端" in filed["forge"]["declaration"]
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "accepted"
+    assert [branch for branch, _token in pushed] == ["main"]
+    # 那个远端不是 GitHub，一次 GitHub 调用都不该发生。
+    assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
+
+
+def test_a_push_back_that_fails_is_reported_as_a_push_failure(
+    client, campus_gitlab, monkeypatch
+):
+    """合并已经发生了，推送没成 —— 房间里要说，但不能说成「采纳停了」。
+
+    改动确实在平台仓库的 main 上，卡确实是 accepted；再落一条 `accept_stopped`
+    会让按类别码分流的告警把一张采纳成功的卡报成半路停下。
+    """
+    from app.domain.workspace import service as ws
+
+    def _refused(pid, branch, token):
+        raise RuntimeError("Permission denied (publickey)")
+
+    monkeypatch.setattr(ws, "push_branch", _refused)
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "accepted"
+
+    types = _event_types_settled(client, tid, "remote_push_failed")
+    assert "remote_push_failed" in types
+    assert "accept_done" in types
+    assert "accept_stopped" not in types
+
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    (line,) = [
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "remote_push_failed"
+    ]
+    # 说清楚改动在哪、不在哪 —— 只有人能决定接下来怎么办。
+    assert "没能推回" in line["content"]
+    assert "Permission denied" in line["meta"]["detail"]

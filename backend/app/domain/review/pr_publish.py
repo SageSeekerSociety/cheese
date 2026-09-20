@@ -433,13 +433,19 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
 async def _report_identity_downgrade(
     session: AsyncSession, room_id: uuid.UUID, sentence: str | None
 ) -> None:
-    """Say in the room that the PR went out under the App's name, not theirs.
+    """Tell the person whose name the PR should have carried that it did not.
 
     Both PR-opening paths substitute the App when the requester's credential is
     refused, and the substitution is otherwise undetectable from inside Cheese —
     the card and the room read exactly as they would have. I26: a fallback is as
     visible as the failure it covers, and a log line is not visible to anyone
     the PR is attributed away from.
+
+    It is addressed, not merely said: `announce` does not guess recipients, so
+    an unaddressed call only leaves a line in the timeline. The draft-PR sweep
+    (`_open_draft_for_task`) runs while nobody is looking at the room, and by
+    the time they come back all they see is GitHub crediting a bot. The person
+    is the one `_requester_token` already resolves.
     """
     if not sentence:
         return
@@ -451,6 +457,7 @@ async def _report_identity_downgrade(
         notice,
     )
 
+    handle = await _requester_of(session, room_id)
     await announce(
         session,
         place_id=room_id,
@@ -462,20 +469,20 @@ async def _report_identity_downgrade(
             detail=sentence,
             detail_label="发生了什么",
         ),
+        recipients=[handle] if handle else (),
     )
 
 
-async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
-    """The GitHub credential of the human this topic belongs to, so the PR is
-    opened in their name. None whenever they have not connected GitHub, their
-    token cannot be refreshed, or anything at all goes wrong — this is an
-    attribution nicety and must never be the reason a PR fails to open.
+async def _requester_of(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
+    """The human this topic's work belongs to — whose name the PR should carry,
+    and who is told when it could not.
 
-    Who that human is comes from `identity.requester_handle`, not from
-    `Topic.created_by`: on a 分身-split room the creator is the 分身's own
-    `cheese-<hex12>` handle, which matches no account, so this returned None and
-    every such PR opened as `cheesex-app[bot]`."""
-    from app.domain.oauth.services import get_github_user_token_for_handle
+    From `identity.requester_handle`, not from `Topic.created_by`: on a
+    分身-split room the creator is the 分身's own `cheese-<hex12>` handle, which
+    matches no account, so this returned None and every such PR opened as
+    `cheesex-app[bot]`.
+
+    Never raises: attribution must not be the reason a PR fails to open."""
     from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
@@ -483,9 +490,23 @@ async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | 
         place = await PlaceResolver(session).resolve(topic_id)
         if place is None:
             return None
-        handle = await identity.requester_handle(session, place.room)
-        if not handle:
-            return None
+        return await identity.requester_handle(session, place.room)
+    except Exception:  # noqa: BLE001
+        logger.info("no requester for topic %s", topic_id, exc_info=True)
+        return None
+
+
+async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
+    """The GitHub credential of that human, so the PR is opened in their name.
+    None whenever they have not connected GitHub, their token cannot be
+    refreshed, or anything at all goes wrong — this is an attribution nicety and
+    must never be the reason a PR fails to open."""
+    from app.domain.oauth.services import get_github_user_token_for_handle
+
+    handle = await _requester_of(session, topic_id)
+    if not handle:
+        return None
+    try:
         return await get_github_user_token_for_handle(session, handle)
     except Exception:  # noqa: BLE001
         logger.info("no requester token for topic %s", topic_id, exc_info=True)

@@ -36,6 +36,7 @@ from app.domain.agent.platform_notices import (
     EVENT_PR_CLOSED,
     EVENT_PR_CONFLICT,
     EVENT_PR_REVIEW,
+    EVENT_REMOTE_PUSH_FAILED,
     SEVERITY_ERROR,
     SEVERITY_INFO,
     SEVERITY_WARN,
@@ -350,6 +351,10 @@ class AcceptService:
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
+        #: 本次请求里已经读过的项目事实。`describe()` 在卡列表上逐张 await，而
+        #: `_forge_facts` 每次都要 `ensure_repo` + fork 一个 `git remote get-url`；
+        #: 同一个项目的 N 张卡就是 N 次。事实在一次请求里不会变，读一次够了。
+        self._facts_read: dict[uuid.UUID, forge_mod.ProjectForgeFacts] = {}
 
     async def _topic_or_404(self, topic_id: uuid.UUID) -> Topic:
         """The ROOM a place id names — a card is read in a room either way.
@@ -720,6 +725,7 @@ class AcceptService:
             "reports_checks": caps.reports_checks,
             "hosts_proposals": caps.hosts_proposals,
             "can_write_remote": caps.can_write_remote,
+            "has_external_remote": caps.has_external_remote,
             "pushes_to_external_remote": caps.pushes_to_external_remote,
             "identity": caps.identity.value,
             "declaration": forge.declaration,
@@ -1319,7 +1325,10 @@ class AcceptService:
                 topic,
                 "采纳已合并，但没能推回项目的远端",
                 meta=notice(
-                    EVENT_ACCEPT_STOPPED,
+                    # 采纳自己是成的：`_accept_platform` 已经把卡置为 accepted 并
+                    # 发了 `accept_done`。再发一条 `accept_stopped` 会让按类别码
+                    # 分流的告警把一张 accepted 的卡报成「采纳停了」。
+                    EVENT_REMOTE_PUSH_FAILED,
                     severity=SEVERITY_ERROR,
                     who=WHO_HUMAN,
                     detail=(
@@ -3230,11 +3239,13 @@ class AcceptService:
     async def _forge_facts(
         self, project_id: uuid.UUID
     ) -> "forge_mod.ProjectForgeFacts":
-        """The three facts the five capability bits are computed from.
+        """The three facts the capability bits are computed from.
 
-        Read from the project every time, never stored: a stored capability
-        record would be a second declaration of the same fact, with a window in
-        which the two disagree.
+        Never stored on the project: a stored capability record would be a
+        second declaration of the same fact, with a window in which the two
+        disagree. Read once per request and kept for the rest of it — reading
+        the upstream forks a `git remote get-url`, and rendering a card list
+        asks for the same project's facts once per card.
 
         Whether we can WRITE the remote is not one question but three remotes:
         GitHub answers with the App's installation token; an ssh / git@ remote
@@ -3242,6 +3253,10 @@ class AcceptService:
         GitHub leaves us holding nothing, which is why a project can have an
         upstream and still not push to it.
         """
+        cached = self._facts_read.get(project_id)
+        if cached is not None:
+            return cached
+
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import parse_github_repo
         from app.domain.workspace import service as ws
@@ -3250,11 +3265,13 @@ class AcceptService:
         tokens = await github_app_tokens_for_project(project_id, self._session)
         on_github = tokens is not None and parse_github_repo(upstream) is not None
         ssh_shaped = upstream is not None and upstream.startswith(("ssh://", "git@"))
-        return forge_mod.ProjectForgeFacts(
+        facts = forge_mod.ProjectForgeFacts(
             github_app_installed=on_github,
             has_external_remote=upstream is not None,
             remote_write_credential=on_github or ssh_shaped,
         )
+        self._facts_read[project_id] = facts
+        return facts
 
     async def _stop_accept_pr_unavailable(
         self, card: AcceptCard, topic: Topic, reason: str

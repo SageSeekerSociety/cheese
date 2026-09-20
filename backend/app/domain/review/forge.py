@@ -1,7 +1,7 @@
 """托管方（forge）：项目的改动落在哪里，以及那个地方能做什么。
 
 一个 forge 不是按「上游地址长得像不像 github.com」挑出来的，而是按**能力位**挑
-出来的（ARCH §4.5）。能力位有五个，全部从项目今天**已经有的事实**算出来
+出来的（ARCH §4.5）。能力位全部从项目今天**已经有的事实**算出来
 （`ProjectForgeFacts`）——不存成一条新的能力记录：存下来就是同一个事实的第二份
 声明，还会多出一个「记录与事实不一致」的窗口。`capabilities_of` 是纯函数。
 
@@ -17,8 +17,11 @@
 的仓库里，他的 GitLab 一个 commit 都收不到，**没有任何一句话告诉他**。
 
 反过来，一个填了地址却没给我们写权限的项目，会拿到一个永远推不上去的 forge——
-所以 ``pushes_to_external_remote`` 是「有远端」和「写得动」的**合取**，缺一半就是
-同一个坑的镜像版本。
+所以 ``pushes_to_external_remote`` 是「有远端」和「写得动」的**合取**，缺一半就落
+``PlatformForge``。但它**不能说「本项目未接外部仓库」**：那位老师明明填了地址，卡
+当着他的面说他没填，是同一种沉默换了一句假话。``has_external_remote`` 因此也是一个
+能力位——少了它，「没有远端」和「有远端但写不动」在能力位上一模一样，实现无从分辨
+该说哪句。
 
 **用户不为了用我们而改任何东西**（结论 50，不变量 I21c）：三档都得能开提案、读
 结论、合并，没有一条路以「请去 GitHub 开个 X」结束。检查结论只**读** forge 的；
@@ -34,6 +37,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
+from urllib.parse import urlsplit
 
 from app.core.errors import ValidationError
 
@@ -63,8 +67,9 @@ class ForgeIdentity(enum.StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ForgeCapabilities:
-    """ARCH §4.5 的五个能力位。产品判断只许读这五个，不许读「项目有没有绑外部
-    仓库」那个布尔（不变量 I21②）。"""
+    """ARCH §4.5 的能力位。产品判断只许读这些，不许读「项目有没有绑外部仓库」那个
+    布尔（不变量 I21②）——那个事实进得来，但要以 `has_external_remote` 这一位的身
+    份进来，由实现去读，不由产品判断分叉。"""
 
     #: 这个托管方跑不跑检查、平台能不能读到结论。
     reports_checks: bool
@@ -72,6 +77,10 @@ class ForgeCapabilities:
     hosts_proposals: bool
     #: 我们有没有写那个远端的凭据。
     can_write_remote: bool
+    #: 项目有没有一个外部 git 远端。和 `can_write_remote` 分开，因为「没填地址」
+    #: 和「填了地址我们推不动」是两句不同的话，而 `pushes_to_external_remote`
+    #: 在这两种情况下都是否，压成一位就说不出后一句。
+    has_external_remote: bool
     #: 有远端 ∧ 写得动。
     pushes_to_external_remote: bool
     #: 提案与合并署谁的名。
@@ -91,11 +100,12 @@ class ProjectForgeFacts:
 
 
 def capabilities_of(facts: ProjectForgeFacts) -> ForgeCapabilities:
-    """五个能力位，纯函数，无 IO。"""
+    """能力位，纯函数，无 IO。"""
     return ForgeCapabilities(
         reports_checks=facts.github_app_installed,
         hosts_proposals=facts.github_app_installed,
         can_write_remote=facts.remote_write_credential,
+        has_external_remote=facts.has_external_remote,
         pushes_to_external_remote=(
             facts.has_external_remote and facts.remote_write_credential
         ),
@@ -107,13 +117,19 @@ def capabilities_of(facts: ProjectForgeFacts) -> ForgeCapabilities:
 
 class Forge(ABC):
     kind: ForgeKind
-    #: 这个托管方在人点采纳**之前**就写在卡上的一句话（I23）。GitHub 那一档不需要
-    #: 说什么，卡上有提案页链接。
-    declaration: str = ""
 
     def __init__(self, capabilities: ForgeCapabilities) -> None:
         #: 解析这一次时算出来的能力位 —— 卡上的那一份就是它，没有第二份。
         self.capabilities = capabilities
+
+    @property
+    def declaration(self) -> str:
+        """这个托管方在人点采纳**之前**就写在卡上的一句话（I23）。
+
+        算自 `self.capabilities`：同一档里能力位不同，要说的话就不同。GitHub 那一
+        档不需要说什么，卡上有提案页链接。
+        """
+        return ""
 
     @classmethod
     @abstractmethod
@@ -217,7 +233,10 @@ class ExternalRemoteForge(Forge):
     """
 
     kind = ForgeKind.external_remote
-    declaration = "ℹ️ 本项目的远端不报检查：采纳即合并并推回该远端（无提案页、无外部 CI）"
+
+    @property
+    def declaration(self) -> str:
+        return "ℹ️ 本项目的远端不报检查：采纳即合并并推回该远端（无提案页、无外部 CI）"
 
     @classmethod
     def serves(cls, capabilities: ForgeCapabilities) -> bool:
@@ -248,10 +267,25 @@ class ExternalRemoteForge(Forge):
 
 
 class PlatformForge(Forge):
+    """采纳的终点就是平台自己的仓库——因为没有别的仓库，或者有而我们推不动。
+
+    两种情况的动作一模一样（squash 进平台仓库的 main，不推任何地方），所以是同一
+    个实现；不一样的只有卡上那句话，而那句话必须分得清：一个填了校内 GitLab 地址
+    的项目被告知「本项目未接外部仓库」，比什么都不说更糟。
+    """
+
     kind = ForgeKind.platform
-    declaration = (
-        "ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）"
-    )
+
+    @property
+    def declaration(self) -> str:
+        if self.capabilities.has_external_remote:
+            return (
+                "ℹ️ 本项目的远端这次不会收到改动：平台没有写它的凭据，采纳只合并进"
+                "平台仓库的 main（无提案页、无外部 CI）"
+            )
+        return (
+            "ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）"
+        )
 
     @classmethod
     def serves(cls, capabilities: ForgeCapabilities) -> bool:
@@ -286,12 +320,21 @@ class PlatformForge(Forge):
 #: （#363 自己的判据）。
 FORGES: tuple[type[Forge], ...] = (GitHubForge, ExternalRemoteForge, PlatformForge)
 
-#: 一个已经存在的提案页所证明的那组事实。见 `resolve` 里的短路。
-_PROPOSAL_EXISTS = ProjectForgeFacts(
+#: 一个打得开的 GitHub 提案页所证明的那组事实：有人在托管它（装了 App），它在一个
+#: 外部远端上，而且那个远端是我们自己推上去的（所以写得动）。三条都是这一页已经证明
+#: 了的，不是为了短路编出来的默认值——短路只在提案页确实在 GitHub 上时才走。
+_PROPOSAL_ON_GITHUB = ProjectForgeFacts(
     github_app_installed=True,
     has_external_remote=True,
     remote_write_credential=True,
 )
+
+
+def _is_github_proposal(proposal_url: str | None) -> bool:
+    """这条提案页链接是不是 GitHub 上的一个 PR。"""
+    if not proposal_url:
+        return False
+    return urlsplit(proposal_url).hostname == "github.com"
 
 
 def forge_for(capabilities: ForgeCapabilities) -> Forge:
@@ -309,10 +352,14 @@ async def resolve(
     proposal_url: str | None = None,
 ) -> Forge:
     """这次采纳走哪个托管方。读不出事实就停住，绝不摸黑挑一条。"""
-    # 卡上已经有提案页，就说明有一个托管方在托管它——凭据一时读不到也不能把一次
-    # PR 采纳变成一次本地合并（#362 的另一条进路）。
-    if proposal_url:
-        return forge_for(capabilities_of(_PROPOSAL_EXISTS))
+    # 卡上已经有一个 GitHub 提案页，就说明有一个托管方在托管它——凭据一时读不到也
+    # 不能把一次 PR 采纳变成一次本地合并（#362 的另一条进路）。
+    # host 判断留着：它不是「这个 URL 像不像 github.com」式的分派（分派在下面按能力
+    # 位走），而是「这一页证明了什么」的判据。今天写 `pr_url` 的只有 GitHub 那条路
+    # （`pr_publish.py`、`services.py`、`room_task/services.py`），别处来的提案页什么
+    # 都没证明，拿它去调 GitHub 的合并 API 是对一个没装 App 的项目动手。
+    if _is_github_proposal(proposal_url):
+        return forge_for(capabilities_of(_PROPOSAL_ON_GITHUB))
     try:
         observed = await facts(project_id)
     except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind

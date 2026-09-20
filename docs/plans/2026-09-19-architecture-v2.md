@@ -150,7 +150,7 @@
 | **I19** | 销毁前先取回（结论 24、39） | 任何回收在删之前必须拿到三张收据：transcript 已落库、记忆整理已跑、未提交工作已推。**休眠不是归还**：它不要收据，也不得触发这三张里的任何一张，reconnect window 内醒来是同一台机器、同一份工作区 |
 | **I19b** | 任何只在平台上存在的东西——源仓库、资料库、产物清单、transcript、文档——都有一条**不经平台界面也能取回**的导出通路（结论 27） | 对每一类各断言一条导出路径存在，且产出可校验（仓库能 clone 出来并对上 HEAD、资料库与产物按原名取回并对上校验和、transcript 与文档导出后能重新读回） |
 | **I20** | 一个对象一条命 | 归档一个房间之后，`agent_sessions` 行与地点租约各自按自己的规则存活或回收；守卫：任一删除路径只删自己那一个概念的行 |
-| **I21** | 每个项目恰好有一个源仓库；「无 git」是展示决定，不是存储决定；不是项目里的每样东西都进它 | 四条：①建任意一个项目，断言平台侧仓库存在且有 base commit；②守卫：产品判断不许读「项目有没有绑外部仓库」这个布尔，只许读 4.5 的五个能力位；③资料库的写入路径不经过任何 git 命令；④产物清单允许没有仓库路径的条目（引用型） |
+| **I21** | 每个项目恰好有一个源仓库；「无 git」是展示决定，不是存储决定；不是项目里的每样东西都进它 | 四条：①建任意一个项目，断言平台侧仓库存在且有 base commit；②守卫：产品判断不许读「项目有没有绑外部仓库」这个布尔，只许读 4.5 的能力位；③资料库的写入路径不经过任何 git 命令；④产物清单允许没有仓库路径的条目（引用型） |
 | **I21b** | **平台不因为自己的东西改被托管的仓库**（结论 49）：仓库的树、历史、检出目录里只有 agent 替用户做的活；平台的配置、钩子、技能、提示词、进度、记忆、实况文档、资料库、草稿、备份全部住在会话 home 或平台侧 | 三条：①一轮结束后，检出目录里 `git status --porcelain` 列出的每个路径都是这一轮 agent 工具调用改过的文件，没有平台写的；②守卫：全仓写文件的调用里，目标路径以检出目录为前缀的只允许出现在执行 agent 工具调用的那条路径上；③绑定 GitHub 的项目分支上，作者为平台的提交内容全是活，`git log` 里零个只含平台文件的提交 |
 | **I21c** | **用户不为了用我们而改任何东西**（结论 50）：仓库、GitHub 设置、机器三样都不改、不要求改；允许的只有安装 App 与接入机器这两个一次性授权 | 两条：①托管方接口的每个实现在「用户什么都没配」的仓库上完整可用（能开提案、能读结论、能合并），没有一条产品路径以「请去 GitHub 开 X」结束；②守卫：面向用户的文案目录里没有任何一句要求用户去改仓库或 GitHub 设置 |
 | **I22** | 平台在别人机器上写的一切在一个根下，卸载等于删这个根，且接口上没有任何方法的实现可以提权（上位是 brief 里他的原话「不应该依赖 sudo」，非 DECISIONS 条） | 契约测试：自托管实现的入册与检查路径里不出现提权调用；`cheese uninstall` 之后机器上没有平台留下的文件 |
@@ -1026,35 +1026,41 @@ so the native tool is denied outright rather than left as a trap」）。
 
 ### 4.5 托管方接口
 
-今天是 `Forge` ABC（`review/forge.py:33`），四个操作 + 一个能力位 `has_external_checks`（`:35`），
-两个实现：`GitHubForge`（`:87`）、`PlatformForge`（`:120`）。
-
-**要改的形状**：能力位从一个变成五个 [我提的]，上位依据是 #363 那张 provider 表；
-并且 `resolve()`（`:153`）不再问「这个 URL 像不像 github.com」。
+`Forge` ABC（`review/forge.py`）：四个操作 + 一组能力位，三个实现。能力位是
+`ForgeCapabilities`，由 `capabilities_of()` 从 `ProjectForgeFacts`（装没装 App、有没有
+远端、有没有写那个远端的凭据）纯函数算出来 [已定]，上位依据是 #363 那张 provider 表；
+`resolve()` 不问「这个 URL 像不像 github.com」，它按能力位查 `FORGES` 注册表。
 
 | 能力位 | 它说的事实 |
 |---|---|
 | `reports_checks` | 这个托管方跑不跑检查、平台能不能读到结论 |
 | `hosts_proposals` | 改动在外部有没有一个可以被人打开的提案页 |
-| `can_write_remote` | 我们有没有写那个远端的凭据（去问 `domain/agent_credential/`，165 行） |
-| `pushes_to_external_remote` | 有 upstream ∧ `can_write_remote` |
+| `can_write_remote` | 我们有没有写那个远端的凭据（App 的安装令牌，或 ssh/git@ 用后端自己的密钥；非 GitHub 的 https 我们手上什么都没有） |
+| `has_external_remote` | 项目填没填一个外部 git 远端 |
+| `pushes_to_external_remote` | `has_external_remote` ∧ `can_write_remote` |
 | `identity` | 提案与合并署谁的名（用户的，还是平台的 App） |
+
+`has_external_remote` 单独占一位，是因为「没填地址」和「填了地址我们推不动」在
+`pushes_to_external_remote` 上都是否，而卡上要说的不是同一句话：后者被告知「本项目
+未接外部仓库」，等于当着填过地址的人的面说他没填。
 
 | 实现 | reports_checks | hosts_proposals | pushes_to_external_remote | 对应哪种项目 |
 |---|---|---|---|---|
 | GitHub | 是 | 是 | 是 | 绑了 GitHub |
-| **外部远端（新）** | 否 | 否 | **是** | 有 git 远端但不是 GitHub（gitee、校内 GitLab、自建） |
-| 平台 | 否 | 否 | 不适用 | 什么都没绑 |
+| 外部远端 | 否 | 否 | **是** | 有 git 远端但不是 GitHub（gitee、校内 GitLab、自建） |
+| 平台 | 否 | 否 | 否 | 什么都没绑，或者填了地址而我们没有写它的凭据（两种情况 `declaration` 不同） |
 
-**中间这一档今天在代码里根本不存在**：
-`review/services.py:3181 _github_bound()` 的判据是「App installation **且** `parse_github_repo(upstream)` 解析成功」，
-它作为回调传进 `forge.resolve(is_github_bound=...)`（`services.py:3177` → `forge.py:153-167`），
-所以**判据在 `services.py`，接口在 `forge.py`**——gitee / 校内 GitLab / 自建一律 False，落 `PlatformForge`。
+**中间这一档是 `ExternalRemoteForge`**：采纳 squash 进平台仓库的 main，**并把 main 推回
+项目自己的远端**（`review/services.py` 的 `_accept_external_remote`）；少掉的只有外部检查
+和提案页，那是那个远端本来就没有的。判据在 `forge.py` 一处，不在 `services.py`——
+`services.py` 只负责读那三个事实，挑哪一档由 `serves()` 自己答。
 
-**能发生的后果**：一个用校内 GitLab 的老师填了自己的仓库地址、点了同步、看见历史进来了，于是合理地认为这是双向的。
-此后每一次采纳都只落在平台自己的仓库里，他的 GitLab 一个 commit 都收不到，**没有任何一句话告诉他**。
+**它不存在的时候会发生什么**（这一档就是为它建的）：一个用校内 GitLab 的老师填了自己的
+仓库地址、点了同步、看见历史进来了，于是合理地认为这是双向的。此后每一次采纳都只落在平台
+自己的仓库里，他的 GitLab 一个 commit 都收不到，**没有任何一句话告诉他**。
 反过来，一个填了地址但没给我们写权限的项目，会拿到一个永远推不上去的 forge——
-所以 `can_write_remote` 和「有没有 upstream」必须是**合取**，缺一半就是同一个坑的镜像版本。
+所以 `can_write_remote` 和 `has_external_remote` 必须是**合取**，缺一半就落平台那一档，
+而那一档必须说得出「远端在，我们没有写它的凭据」，否则只是把沉默换成一句假话。
 
 #### 评审发生在用户所在的地方
 
@@ -1647,7 +1653,7 @@ so check there and not in the menu, the contract or the doc**」。
 |---|---|---|---|
 | **参与者** | `identity/`、`user/`、`agent_instance/`、`agent_type/`。`ensure_identity` 已给 agent 建 user 行 | `actor.py:48` 的 `is_agent` 字段给了分岔的钩子；`AgentConfiguration` 与 `agent_type/schemas.py:19/21` 带 `model`/`harness` | ①`Actor` 上没有 `is_agent` 列，授权/收件人/署名三类决策里 `is_agent`/`looks_like_agent_handle`/`names_a_person` 零命中；②`AgentConfiguration` 与类型 schema 里没有 `model`/`harness`/`effort` 三个字段（`effort` 移到活的资源绑定上，1.1），而选模型的代码改读「这条活的绑定」 |
 | **席位** | `topic/models.py:252 TopicMembership` + `topic_membership/` + `membership/`（两个包只有 service/repo，model 在 `topic/` 里） | 第二条授权线：`Actor.via` + 路由级 cheese-gate（`api/auth.py`） | ①认证路径只答「这张凭证是真的吗」；「它能干什么」全仓只有一个答法，入参是一条席位行；②往另一个项目的房间插一个 agent 实例的 handle 被拒，人没有这条限制（I9b）；③`resolve_agent_handle`（定义在 `topic_membership/services.py`，10 个调用点，其中 `api/auth.py:234` **在认证路径里**）零命中；④一个坐两个 AI 队友的房间，不带 @ 的消息不启动任何一轮；⑤认证路径上的改动有一条独立的回归测试：一张过期或张冠李戴的沙箱 token 仍然被拒 |
-| **项目** | `project/`、`workspace/`。`workspace/service.py:236 ensure_repo` 无条件建平台侧 git 仓 | `workspace/` 现在同时是「项目的 git 源」和「项目的资料库」（`:860 write_library_file`，#1209 合进来的；#1247 又给资料库加了页面和 `:887 delete_library_file`），两样不同的东西挤一个包；建项目不播种 agent 实例，`agent_instance/services.py:53 IMPLICIT_DEFAULT` 是一个 `instance_id=None` 的隐式默认 | ①产品判断不再读「项目有没有绑外部仓库」这个布尔，只读 4.5 的五个能力位；②建任意一个项目，断言存在一行芝士实例与它在根房间的席位行，`IMPLICIT_DEFAULT` 这种无实例行的隐式默认不存在 |
+| **项目** | `project/`、`workspace/`。`workspace/service.py:236 ensure_repo` 无条件建平台侧 git 仓 | `workspace/` 现在同时是「项目的 git 源」和「项目的资料库」（`:860 write_library_file`，#1209 合进来的；#1247 又给资料库加了页面和 `:887 delete_library_file`），两样不同的东西挤一个包；建项目不播种 agent 实例，`agent_instance/services.py:53 IMPLICIT_DEFAULT` 是一个 `instance_id=None` 的隐式默认 | ①产品判断不再读「项目有没有绑外部仓库」这个布尔，只读 4.5 的能力位；②建任意一个项目，断言存在一行芝士实例与它在根房间的席位行，`IMPLICIT_DEFAULT` 这种无实例行的隐式默认不存在 |
 | **房间** | `topic/` | `topics` 是最混层的一张表：`session_placement`、`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at`、`private_owner`/`private_peer` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
 | **├ 项目总览** | `TopicKind.root`（`topic/models.py:58`），已存在 | `domain/scheduler/` 615 行在替它调度 | `scheduler/` 不存在；`scheduler/service.py:445` 那处 `summon` 连同整个包一起没有 |
 | **└ 私聊** | `private_owner`/`private_peer` 两列 + 52 处 `is_private` 分支（30 处在 `chat.py`） | 两席名册没住在 `topic_memberships`；`chat.py:2476` 自动发布 + `prompt.py:196-197` 配套提示词；`chat.py:4398-4405` 把算力钉成 `"device"` | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
@@ -1655,7 +1661,7 @@ so check there and not in the menu, the contract or the doc**」。
 | **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | transcript 只有上行没有回放（`event_drain.py` 上行；`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住）；placement 在 `topics` 上；pi 的会话记在执行机（`pi/channel.py:204-209`） | ①`transfer_history` 的源可以是平台存的 transcript，调用点不再只有首次 placement；②`pi/channel.py` 不再写 `room.session_placement`；③`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；④**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
 | **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `Topic.session_placement`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④`topics.session_placement` 不存在，它拆成两条并都挂到会话上（结论 56，按结论 60 修订）：`agent_sessions` 上每条会话自己的工作机器租约一列、自己的运行位置一列；⑤租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑥地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
-| **托管方** | `review/forge.py:33 Forge` + `github_pr.py` + `agent/github_app.py`；凭据在 `agent_credential/`（165 行） | 判据在 `services.py:3181 _github_bound`，作为回调传进 `forge.py:153 resolve()`；中间那档不存在；`github_pr.py:1448` 署名静默降级 | ①`_github_bound` 删除，`resolve()` 按能力分派；②`ExternalRemoteForge` 存在且 `push_topic_branch`/`push_branch` 不再只被 GitHub lane 调到；③`Forge.can_write_remote()` 去问 `agent_credential/`；④#363 自己的判据：加第三个 provider 时采纳流程一行都不用改 |
+| **托管方** | `review/forge.py Forge` + `github_pr.py` + `agent/github_app.py`。`resolve()` 按能力位查注册表，三档齐全，署名降级进房间 | 写远端的凭据只有两种来源（App 的安装令牌、后端自己的 ssh 密钥），非 GitHub 的 https 远端没有可问的凭据库，`can_write_remote` 只能按远端形状答 | 平台真的持有任意远端的写入凭据时，`can_write_remote` 改成去问它，而不是读 URL 形状 |
 | **事件** | `block/`（脊柱的载体）；`alert/` + `notification/` + `agent/platform_notices.py`（两张通知表） | `AuthorType` 的 `human`/`ai`/`system` 三档是种类分叉；事件没有「关于什么」这一栏，落点由各调用点自己挑 | ①`AuthorType` 只剩「参与者」和「平台」两档；②每条事件带一个「关于什么」，落点从一张封闭表取（I10） |
 | **记忆** | `memory/`（`MemoryScope` 四档，`agent_project` 的 scope_id 是 `<project>:<handle>`） | `MemoryScope.project` 7 处，`dream.py:253` 把它当 shared 池写；`user` 池只在私聊读（`chat.py:4323-4324`），而且它的 scope_id 是**人的 handle**（`memory/models.py:31` 注释逐字「个人记忆: 跨项目, 跟着人走」）——跨项目、不按实例分，与结论 8 正相反；池 key 与整理 key 不相交（#1200） | ①`MemoryScope.project` 全仓零命中，**那 7 处各自指名改写到哪一份文档**（1.12）：`dream.py:253` 的 shared 写入 → 项目总览的实况文档；`chat.py:3032`、`chat.py:5187` 两个读点 → 读项目总览与本房间的实况文档；`api/routes/memory.py:92/147` 的列与删 → 改成列/删本实例的 `agent_project` 与 `user` 池，项目那一份由文档接口提供；`api/routes/projects.py:764/808`（`cheese remember` / `cheese recall` 的端点）→ 写落 `agent_project`，「写给所有人看」的那一路改成写文档（去向同时写进 8.1 的暴露面）；②`user` 池的 scope_id 变成 `<project_id>:<agent_handle>:<person>`，跨项目那一份的去向是结论 10 的个人资料（1.12）；③读关于人的池不按在场过滤——任何房间都读得到（结论 54 修订结论 9），取记忆的代码里没有一处按名册过滤池，而跨项目仍然读不到；④一条记忆是一个文件，落在「一个实例一个目录、目录下分三个子目录」那棵树上，存在平台侧、有平台给的版本，项目源仓库里零命中；⑤profile 上有一页「记忆」，能翻历史、能删，而关于某个人的文件只有当事人列得出来（结论 42） |
 | **模型供给与计量** | `llm/`（1136 行）、`usage/`（705 行）、`core/config.py` 的 `agent_harness_models` | 没有一处是 `(骨架, 模型) → 供给` 那张注册表的所有者；卡上没有「这一轮用了什么」 | ①全仓只有一处回答「这一轮走哪条供给」；②卡上的模型显示从用量记录算出来，没有一个被 set 的模型状态字段；③供给不可用时的出口只有拒绝和可见等待（I27）；④**账按项目记，卡上的费用从 hook 用量按线程标识算出来**，模型请求上没有「这是哪张卡」这个字段（结论 53） |

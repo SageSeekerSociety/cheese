@@ -672,7 +672,7 @@ export interface AutoMergeInfo {
   armed_at: string | null
 }
 
-// 托管方的五个能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
+// 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
 // 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
 // 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
 export interface ForgeInfo {
@@ -680,6 +680,8 @@ export interface ForgeInfo {
   reports_checks: boolean
   hosts_proposals: boolean
   can_write_remote: boolean
+  /** 填了远端地址没有。和 can_write_remote 分开：填了而我们推不动是第三种情况。 */
+  has_external_remote: boolean
   pushes_to_external_remote: boolean
   identity: 'user' | 'platform'
   declaration: string
