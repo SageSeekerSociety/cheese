@@ -168,7 +168,9 @@ def channel(client, monkeypatch):
         ),
     )
     executor = DeviceChannel(hub=hub, session_factory=client.test_factory)
-    executor.precheck = AsyncMock(return_value=("executor", 1, "agent"))
+    executor.precheck = AsyncMock(
+        return_value=Placement("executor", 1, "agent", rented=True)
+    )
     executor._device_api_base = AsyncMock(return_value="http://execution-api")
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
