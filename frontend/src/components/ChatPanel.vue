@@ -82,7 +82,7 @@ import {
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
-import { isAgentBlock, isPersonBlock } from '../lib/authorship'
+import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
@@ -1266,8 +1266,10 @@ function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
   if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
   // This event contains the worker's actual result, rather than a status notice.
   if (block.meta?.event_type === 'subagent_stop') return null
-  if (isPersonBlock(block) || block.meta?.editor_type === 'human') return null
-  if (isAgentBlock(block) || block.meta?.editor_type === 'ai' || seatByHandle.value.get(block.author)?.agent) {
+  if (isPersonBlock(block)) return null
+  // 平台替某个参与者写下的一条（「XX 编辑了文档」就是这样）：档位说「平台」，
+  // 署名说是谁 —— 所以这里问的是署名，名册在手时以名册为准。
+  if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
     return agentDisplayName(block.author)
   }
   if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null

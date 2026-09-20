@@ -207,9 +207,9 @@ describe('agent status messages', () => {
         { member_handle: 'editor-test', name: '编辑者', agent: false },
       ],
     })
-    const ai = { ...event('', '测试助手 编辑了文档', { action: 'doc', editor_type: 'ai' }), author: 'agent-test' }
+    const ai = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
     const human = {
-      ...event('', '编辑者 编辑了文档', { action: 'doc', editor_type: 'human' }),
+      ...event('', '编辑者 编辑了文档', { action: 'doc' }),
       author: 'editor-test',
     }
     const { container, emitted } = mountRoom([ai, human])

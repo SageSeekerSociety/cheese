@@ -39,7 +39,6 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     ]
     change = next(block for block in edits if block["meta"]["doc_version"] == 2)
     assert change["author"] == changed_author
-    assert change["meta"]["editor_type"] == "ai"
     assert "-搭建原型。" in change["meta"]["detail"]
     assert "+先做三个路口的实地观察。" in change["meta"]["detail"]
 

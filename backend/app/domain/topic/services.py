@@ -1206,7 +1206,6 @@ class TopicService:
                 "platform": True,
                 "action": "doc",
                 "doc_version": doc.doc_version,
-                "editor_type": author_type.value,
                 AGENT_NOTICE_META_KEY: for_agent,
                 "detail_label": "查看本次修改",
                 "detail": "\n".join(
