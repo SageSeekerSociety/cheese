@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   provider-requests:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
     # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for
     # the tests alone is spent before they run, and a job killed by its own
