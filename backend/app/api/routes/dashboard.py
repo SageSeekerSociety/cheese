@@ -108,8 +108,16 @@ async def project_credits(
 
 
 @router.get("/projects/{project_id}/contributions")
-async def contributions(project_id: uuid.UUID, db: DbSession) -> dict:
-    """贡献统计 (spec §10.1): human vs AI + per author."""
+async def contributions(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """贡献统计 (spec §10.1): human vs AI + per author.
+
+    Names each author and how much of the project they wrote — the same
+    project content ``/usage`` next door has always guarded, and the same
+    judgment (项目成员) now guards it here."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     return ok(await DashboardService(db).contributions(project_id))
 
 

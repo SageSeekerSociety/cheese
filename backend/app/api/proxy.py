@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.websockets import WebSocket
 
+from app.auth.project_access import may_read_project
 from app.core.config import GATEWAY_MOUNT
 from app.core.tokens import verify_session_token
-from app.auth.project_access import may_read_project
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 
@@ -94,9 +94,7 @@ async def may_view_topic(
     project_id = topic.project_id
     if project_id is None:
         return False
-    return await may_read_project(
-        session, project_id=project_id, handle=handle
-    )
+    return await may_read_project(session, project_id=project_id, handle=handle)
 
 
 def attach_cookie(

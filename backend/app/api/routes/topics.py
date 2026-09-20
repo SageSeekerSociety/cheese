@@ -1659,12 +1659,25 @@ async def answer_options(
 
 
 @router.post("/{topic_id}/webhook-token")
-async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def mint_webhook_token(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """Mint (or rotate) this place's webhook credential — used by the `cheese`
     CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
     invalidates every previously-minted token for this place; the raw value is
-    returned once and never recoverable afterwards."""
+    returned once and never recoverable afterwards.
+
+    The token is a write credential for this room: whoever holds it can post
+    into the room's timeline as any source, and rotating it locks out every
+    token minted before. So minting takes the same door as writing to the room
+    — project membership — rather than being handed to whoever knows the id."""
     place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, project_id=place.project_id, topic_id=place.room_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
     # Scoped to the place, because the webhook wakes the place: a thread's
     # credential minted against the room would deliver into the room instead.
     token = await webhook_service.mint(

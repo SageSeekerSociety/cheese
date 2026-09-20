@@ -2982,6 +2982,27 @@ async def delete_task_submission_review(
     return {"code": 200, "message": "OK", "data": {"review": review_dto}}
 
 
+async def _ensure_task_visible_for_advice(
+    *, db, task_id: int, auth_user: AuthUserInfo
+) -> None:
+    """A task's AI advice is about that task, so reading it takes the same
+    visibility judgment as reading the task itself (``TaskVisibilityService``).
+
+    看不到的任务，它的 advice 也看不到: the advice records quote the task and the
+    conversations are the AI's reasoning about it, so a caller refused the task
+    must not be handed its advice by id. Not-found rather than forbidden, for
+    the same reason the task reads answer that way — a 403 would confirm the id
+    names something.
+    """
+    task = await TaskRepository(session=db).get_by_id(task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if not await TaskVisibilityService(session=db).can_view_task(
+        task=task, user_id=auth_user.user_id
+    ):
+        raise NotFoundError.for_resource("task", task_id)
+
+
 @router.post(
     "/{taskId}/ai-advice",
     summary="Request AI Advice Generation",
@@ -3019,7 +3040,12 @@ async def request_task_ai_advice(
 async def list_task_ai_advice(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
+    await _ensure_task_visible_for_advice(
+        db=db, task_id=task_id, auth_user=auth_user
+    )
     advices = await service.list_advices(task_id=task_id)
     return {
         "code": 200,
@@ -3035,7 +3061,12 @@ async def list_task_ai_advice(
 async def get_task_ai_advice_status(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
+    await _ensure_task_visible_for_advice(
+        db=db, task_id=task_id, auth_user=auth_user
+    )
     status_value = await service.get_status(task_id=task_id)
     return {
         "code": 200,
@@ -3051,7 +3082,12 @@ async def get_task_ai_advice_status(
 async def list_ai_advice_conversations_grouped(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
+    db=Depends(get_db),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
+    await _ensure_task_visible_for_advice(
+        db=db, task_id=task_id, auth_user=auth_user
+    )
     # Frontend `TasksApi.getGroupedConversations` types the response as
     # { conversations: ConversationGroupSummary[] }; "groups" was a Python-
     # side name that left data.conversations undefined and nothing rendered.
@@ -3072,14 +3108,19 @@ async def get_ai_advice_conversation(
     conversation_id: Annotated[str, Path(alias="conversationId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TaskAIAdviceService = Depends(get_task_ai_advice_service),
+    db=Depends(get_db),
 ) -> dict:
     # Frontend (TaskAIAdviceChatService.getConversationById) expects
     #   { conversations: TaskAIAdviceConversation[] }
     # where each entry is a Q&A pair. Our internal storage is per-message
     # (role/content rows) so we pair user→assistant rows back into Q&A
     # records. Empty conversation = empty array.
-    _ = task_id
-    _ = auth_user
+    # The conversation id alone used to be the whole credential: `task_id` and
+    # the authenticated caller were both discarded right here, so any signed-in
+    # caller could read any task's advice conversation by id.
+    await _ensure_task_visible_for_advice(
+        db=db, task_id=task_id, auth_user=auth_user
+    )
     try:
         payload = await service.get_conversation(conversation_id=conversation_id)
     except ValueError as exc:

@@ -559,6 +559,7 @@ async def list_decisions(
 async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
+    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """Every thread in the project, each with the card it currently rides on.
@@ -578,6 +579,8 @@ async def list_project_tasks(
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     tasks = await TaskRepository(db).list_for_project(project_id)
     task_ids = [t.id for t in tasks]
@@ -1134,18 +1137,27 @@ async def set_branch_protection(
 
 
 @router.get("/{project_id}/upstream")
-async def get_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
+async def get_project_upstream(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The project's linked upstream repo (关联已有 repo, spec §6.3), if any."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     return ok({"url": ws.get_upstream(project_id)})
 
 
 @router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession
+    project_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Link the project to an existing git repo (empty url → unlink). The repo's
     history then flows in via 同步上游, and stays syncable afterwards."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     url = ws.set_upstream(project_id, str(body.get("url") or ""))
     return ok({"url": url})
@@ -1164,6 +1176,8 @@ async def sync_project_upstream(
     and, when we know who asked, 芝士 is dispatched at the materialized conflict
     so that report is a starting point instead of a dead end (spec §6.3, same
     contract as 采纳冲突 in routes/accept.py)."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     # The App's token for a bound project, nothing for an unbound one: the
     # fetch runs on the platform's own identity or on none.

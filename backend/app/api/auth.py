@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
@@ -34,7 +35,6 @@ from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
 from app.domain.identity.services import IdentityService
-from app.auth.project_access import may_read_project
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository

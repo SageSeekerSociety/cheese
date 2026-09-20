@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.deps import get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
@@ -25,8 +26,13 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 @router.post("/projects/{project_id}/milestones")
 async def create_milestone(
-    project_id: uuid.UUID, body: MilestoneCreate, db: DbSession
+    project_id: uuid.UUID,
+    body: MilestoneCreate,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     # 重发幂等 (④). A milestone is project-scoped but `cheese milestone` is
     # always run from inside a topic's turn, and that topic is what the body
     # carries as `source_topic_id` — so it is also what names the continuation
@@ -62,14 +68,22 @@ async def create_milestone(
 
 
 @router.get("/projects/{project_id}/milestones")
-async def list_milestones(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_milestones(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     milestones, total = await MilestoneService(db).list_for_project(project_id)
     items = [MilestoneOut.model_validate(m).model_dump(mode="json") for m in milestones]
     return ok(page(items, total))
 
 
 @router.get("/projects/{project_id}/calendar")
-async def project_calendar(project_id: uuid.UUID, db: DbSession) -> dict:
+async def project_calendar(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     milestones = await MilestoneService(db).calendar(project_id)
     items = [MilestoneOut.model_validate(m).model_dump(mode="json") for m in milestones]
     return ok(page(items, len(items)))
@@ -77,8 +91,18 @@ async def project_calendar(project_id: uuid.UUID, db: DbSession) -> dict:
 
 @router.put("/milestones/{milestone_id}")
 async def update_milestone(
-    milestone_id: uuid.UUID, body: MilestoneUpdate, db: DbSession
+    milestone_id: uuid.UUID,
+    body: MilestoneUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
+    # A milestone carries the project it belongs to, so the write takes the same
+    # door as the reads above rather than being reachable by knowing its id.
+    current = await MilestoneService(db).get_or_404(milestone_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, project_id=current.project_id
+    )
+    await resolver.authorize_project(actor, project_id=current.project_id)
     milestone = await MilestoneService(db).update(
         milestone_id,
         title=body.title,
