@@ -232,10 +232,28 @@ describe('agent status messages', () => {
     expect(container.querySelector('.agent-status')).toBeNull()
   })
 
+  it("does not label a worker's actual result as a status update", async () => {
+    const { container } = mountRoom([
+      { ...event('', '这是分身交回的完整结果', { event_type: 'subagent_stop' }), author_type: 'ai' },
+    ])
+    await flush()
+    expect(container.querySelector('.agent-status')).toBeNull()
+    expect(visibleText(container)).toContain('这是分身交回的完整结果')
+  })
+
   it('keeps consecutive notices from different agents separate', async () => {
     const { container } = mountRoom([
       { ...ciFailed(), author: 'agent-one', author_type: 'ai' },
       { ...ciFailed(), author: 'agent-two', author_type: 'ai' },
+    ])
+    await flush()
+    expect(container.querySelectorAll('.agent-status')).toHaveLength(2)
+  })
+
+  it('keeps two workers starting under the same room author separate', async () => {
+    const { container } = mountRoom([
+      event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-one' }),
+      event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-two' }),
     ])
     await flush()
     expect(container.querySelectorAll('.agent-status')).toHaveLength(2)

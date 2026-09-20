@@ -97,6 +97,9 @@ export const AGENT_STATUS_EVENTS = new Set([
   'sandbox_rebuilt',
   'host_failure',
   'platform_error',
+  'environment_recovery',
+  'environment_recovery_request',
+  'subagent_start',
   'prompt_replayed',
   'ci_failed',
   'gate_failed',
@@ -380,7 +383,10 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
-      const sameAuthor = prevBlock.author === block.author && prevBlock.author_type === block.author_type
+      const sameAuthor =
+        prevBlock.author === block.author &&
+        prevBlock.author_type === block.author_type &&
+        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id)
       if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
         prev.run.push(block)
         continue
@@ -419,6 +425,7 @@ function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
       end + 1 < rows.length &&
       rows[end + 1].block.turn_id === turnId &&
       rows[end + 1].block.author === row.block.author &&
+      str(meta(rows[end + 1].block)?.agent_id) === str(meta(row.block)?.agent_id) &&
       summaryPart(rows[end + 1])
     ) {
       end += 1

@@ -1262,6 +1262,8 @@ function displayName(m: Block): string {
 
 function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
   if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
+  // This event contains the worker's actual result, rather than a status notice.
+  if (block.meta?.event_type === 'subagent_stop') return null
   if (block.author_type === 'human' || block.meta?.editor_type === 'human') return null
   if (block.author_type === 'ai' || block.meta?.editor_type === 'ai' || seatByHandle.value.get(block.author)?.agent) {
     return displayName({ ...block, author_type: 'ai' })
