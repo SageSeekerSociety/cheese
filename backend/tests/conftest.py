@@ -729,7 +729,9 @@ _TEMPLATE_READY = False
 # tests/unit/ is the only tree allowed to run without a Postgres; everything
 # else is DB-backed by construction. Trailing sep so a sibling like
 # "tests/unittools/" can't match by prefix.
-_UNIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unit") + os.sep
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_UNIT_DIR = os.path.join(_TESTS_DIR, "unit") + os.sep
+_CONTRACT_DIR = os.path.join(_TESTS_DIR, "contract") + os.sep
 
 
 def _needs_db(request: pytest.FixtureRequest) -> bool:
@@ -748,6 +750,64 @@ def _needs_db(request: pytest.FixtureRequest) -> bool:
         not str(request.path).startswith(_UNIT_DIR)
         or "_pg_schema" in request.fixturenames
     )
+
+
+# The three layers the suite runs as. CI runs one pytest per layer, in series,
+# each with its own ceiling, so a wedge or a slowdown names the layer it is in
+# instead of arriving as one number for 6800 tests.
+_LAYERS = frozenset({"pure", "contract", "integration"})
+
+
+def _layer_of(item: pytest.Item) -> str:
+    """Which layer ``item`` runs in.
+
+    ``pure`` is the layer that runs on a machine with no Postgres, so what
+    decides it is the fixture closure and not the directory: every DB-bound
+    fixture chains to ``_pg_schema`` (see ``_needs_db`` above), and
+    ``fixturenames`` is that closure, autouse and transitive included. A file
+    under ``tests/unit/`` that does name one — the turn log lives in Postgres,
+    so the runner's tests do — is a database test wherever it sits, and runs in
+    the integration step with a database under it.
+    """
+    path = os.fspath(item.path) if item.path is not None else ""
+    if path.startswith(_CONTRACT_DIR):
+        return "contract"
+    # getattr: only a Function has a fixture closure, and a collected node that
+    # has none has not asked for a database either.
+    closure = getattr(item, "fixturenames", ())
+    if path.startswith(_UNIT_DIR) and "_pg_schema" not in closure:
+        return "pure"
+    return "integration"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give every collected test exactly one layer marker.
+
+    The three CI steps are the whole suite only if every test carries one and
+    only one of the three markers: a test carrying none runs in no step and is
+    reported nowhere — green CI over code nothing checked — and one carrying two
+    is counted, and timed, twice. Neither can be seen in a passing run, which is
+    why this fails the collection rather than warning.
+
+    Derived here rather than written on each test: a marker on the test is a
+    second declaration of what its fixture list already says, and the two drift
+    the moment a test grows a database and nobody moves its marker.
+    """
+    misfiled = []
+    for item in items:
+        declared = {m.name for m in item.iter_markers()} & _LAYERS
+        if declared:
+            misfiled.append(
+                f"  {item.nodeid}\n"
+                f"    carries {sorted(declared)} already — the layer is derived"
+                f" from the fixture closure, so remove the marker"
+            )
+            continue
+        item.add_marker(_layer_of(item))
+    if misfiled:
+        raise pytest.UsageError(
+            "These tests declare their own layer:\n" + "\n".join(misfiled)
+        )
 
 
 async def _terminate_open_transactions(db_name: str) -> list[dict]:

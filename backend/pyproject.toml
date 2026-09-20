@@ -131,6 +131,18 @@ venv = ".venv"
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 testpaths = ["tests"]
+# The suite runs as three layers, one pytest per layer. Nothing writes these on
+# a test: tests/conftest.py's pytest_collection_modifyitems derives the layer
+# from where the test lives and what its fixture closure reaches for, and fails
+# the collection if a test carries none or declares its own. Registered here
+# because --strict-markers below refuses an unregistered one — which is the
+# point: `-m pure` against a typo'd marker collects nothing and passes.
+markers = [
+    "pure: no Postgres, no ASGI app — runs on a machine with nothing but Python",
+    "contract: one side of a seam real and the other a double",
+    "integration: real Postgres, real alembic, real ASGI app",
+]
+addopts = ["--strict-markers"]
 # A wedged test must name itself. Without this, one test that never returns
 # looks exactly like a slow suite: the run produces progress dots, then
 # nothing, and CI kills the job at its own ceiling — so the log ends with a

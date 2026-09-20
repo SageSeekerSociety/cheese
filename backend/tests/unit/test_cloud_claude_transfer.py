@@ -7,7 +7,6 @@ import pytest
 from app.domain.machine import enrollment
 
 
-@pytest.mark.asyncio
 async def test_cloud_bootstrap_receives_cached_pin_and_reuses_it(tmp_path, monkeypatch):
     tools = tmp_path / "bin"
     tools.mkdir()
@@ -61,7 +60,6 @@ cp "$src" "$TEST_GUEST_HOME/${dst#*:}"
     assert second == first
 
 
-@pytest.mark.asyncio
 async def test_failed_ssh_stops_before_running_bootstrap(tmp_path, monkeypatch):
     ssh = tmp_path / "ssh"
     ssh.write_text("#!/bin/sh\nexit 255\n")

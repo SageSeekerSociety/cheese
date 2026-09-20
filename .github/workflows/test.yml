@@ -230,6 +230,20 @@ jobs:
   # (which helps only ephemeral hosted runners — see migration-heads).
   test:
     runs-on: ubuntu-latest
+    # Shared by the three layer steps at the bottom of this job. DATABASE_URL
+    # and TEST_PG_BASE are not here: the slot step writes them to $GITHUB_ENV so
+    # two runs on one machine get their own databases.
+    env:
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      # LLM tests mock the completions; the client just needs to construct
+      # (the openai SDK errors without any credentials). Dummy key.
+      OPENAI_API_KEY: test-key
+      # The default AI pool is "available" only when its gateway credential is
+      # present (AgentProfile.available = bool(auth_token)); the market test
+      # asserts availability. Dummy token — no real calls are made.
+      ANTHROPIC_AUTH_TOKEN: test-token
     services:
       # The same images the cheese-ci pool's resident pair run
       # (deploy/ci-runner/resident-services.sh), on the same host ports, so the
@@ -379,37 +393,66 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/claude-tools" --no-audit --no-fund "@anthropic-ai/claude-code@$version"
           echo "CHEESE_TEST_CLAUDE=$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" --version
-      - name: Run tests
-        env:
-          # DATABASE_URL and TEST_PG_BASE come from the slot step above: the
-          # per-worker databases are provisioned over the network from that
-          # server root (the conftest no longer shells out to `docker exec`).
-          REDIS_URL: redis://localhost:6389/0
-          JWT_SECRET: test-secret
-          ENVIRONMENT: test
-          # LLM tests mock the completions; the client just needs to construct
-          # (the openai SDK errors without any credentials). Dummy key.
-          OPENAI_API_KEY: test-key
-          # The default AI pool is "available" only when its gateway credential is
-          # present (AgentProfile.available = bool(auth_token)); the market test
-          # asserts availability. Dummy token — no real calls are made.
-          ANTHROPIC_AUTH_TOKEN: test-token
-        # `worksteal` rather than the default `load` scheduler: `load` hands a
-        # worker its next batch and cannot take it back, so when the run winds
-        # down one worker ends up holding several slow tests and chews them
-        # serially while the rest idle. That tail is measurable — a single
-        # 72-test chunk has taken over five minutes on a run that passed — and
-        # it is what puts a ~14-minute suite within reach of the 20-minute
-        # ceiling below. `worksteal` lets an idle worker take work back off a
-        # busy one, which is exactly that failure and no other.
-        #
-        # `--durations` because nobody can currently say WHICH tests make this
-        # suite slow: the log is progress dots, and a dot costs the same
-        # whether it took 3ms or 40s. This prints the twenty worst on every
-        # run, so the question stops being re-asked from zero.
+      # One pytest per layer, in series, instead of one over the whole tree.
+      # `tests/` as a single step reported 6838 tests as one number: nothing in
+      # it said whether the pure tests — which need no Postgres and no app —
+      # were fast or had quietly grown a database, and a wedge anywhere cost the
+      # job's whole ceiling to find. Three steps put a name and a ceiling on
+      # each layer, and the split loses nothing: the markers are derived at
+      # collection (backend/tests/conftest.py), every test carries exactly one
+      # or the collection fails, so the three steps run the same set of tests
+      # the one step ran.
+      #
+      # `timeout-minutes` here are hang detectors per layer, not the budgets the
+      # layers are meant to hit (30s / 3m / 6m). Those need more runners than
+      # this pool has — eight xdist workers means eight pairs of databases and
+      # twice the Postgres connections, which is what the box cannot currently
+      # give — so setting them as ceilings today would turn a healthy run red.
+      #
+      # `worksteal` rather than the default `load` scheduler: `load` hands a
+      # worker its next batch and cannot take it back, so when the run winds
+      # down one worker ends up holding several slow tests and chews them
+      # serially while the rest idle. That tail is measurable — a single
+      # 72-test chunk has taken over five minutes on a run that passed — and
+      # it is what puts a ~14-minute suite within reach of the job ceiling.
+      # `worksteal` lets an idle worker take work back off a busy one, which is
+      # exactly that failure and no other.
+      #
+      # `--durations` because nobody can currently say WHICH tests make this
+      # suite slow: the log is progress dots, and a dot costs the same
+      # whether it took 3ms or 40s. This prints the twenty worst on every
+      # run, so the question stops being re-asked from zero.
+
+      # No database in this step's environment, on purpose. What makes a test
+      # pure is that it reaches for neither Postgres nor the app, and the
+      # collection hook derives that from the fixture closure — a static read,
+      # which cannot see a test that opens a connection by hand. Pointing the
+      # two URLs at a port nothing listens on is the part that does see it:
+      # such a test fails here, in the layer it broke, instead of passing
+      # because the integration step's Postgres happened to be up on the same
+      # machine. Set on the command rather than in `env:` because the slot step
+      # above writes both names to $GITHUB_ENV, and one assignment in front of
+      # the command wins over that without depending on which layer of the
+      # runner's env merge is documented to.
+      - name: Run the pure layer
+        timeout-minutes: 10
+        run: |
+          TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1 \
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here \
+          uv run pytest tests/ -m pure -n "$CHEESE_CI_TEST_WORKERS" \
+            --dist worksteal --tb=short -k "not kotlin" --durations=20
+
+      - name: Run the contract layer
+        timeout-minutes: 10
         run: >-
-          uv run pytest tests/ -n "$CHEESE_CI_TEST_WORKERS" --dist worksteal
-          --tb=short -k "not kotlin" --durations=20
+          uv run pytest tests/ -m contract -n "$CHEESE_CI_TEST_WORKERS"
+          --dist worksteal --tb=short -k "not kotlin" --durations=20
+
+      - name: Run the integration layer
+        timeout-minutes: 25
+        run: >-
+          uv run pytest tests/ -m integration -n "$CHEESE_CI_TEST_WORKERS"
+          --dist worksteal --tb=short -k "not kotlin" --durations=20
 
       # Volumes nothing references still accumulate here — 57 of them reached
       # 19GB once and filled the disk mid-run ("No space left on device" from
