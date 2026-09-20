@@ -116,7 +116,7 @@ def _record_screens(stub_hooks) -> list[str]:
     original = stub_hooks.ensure_ready
 
     async def _spy(**kw):
-        seen.append(str(kw.get("topic_id")))
+        seen.append(str(kw["session"].topic_id))
         return await original(**kw)
 
     stub_hooks.ensure_ready = _spy
