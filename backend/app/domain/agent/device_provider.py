@@ -1705,30 +1705,36 @@ class DeviceChannel(Channel):
             from app.core.db import async_session_factory
 
             factory = self._session_factory or async_session_factory
+            # Read which generation of the room this is, then let the connection
+            # go: nothing below writes, and every path into `ensure_ready` runs
+            # under ChatService's per-topic lock (`_prompt_lock`), so the row
+            # lock serialized nothing this process was not serializing already.
+            # Held across the device work it cost a pool connection, and the
+            # room's own row, for as long as starting an agent on a remote
+            # machine takes — which queued every writer of that row (a title, an
+            # archive, a read mark) behind it, each holding a connection of its
+            # own until the start finished.
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-                before = (
-                    await environment_status(
-                        self._hub, device_id, project_id, resource_id
-                    )
-                    if prepares_environment
-                    else {}
-                )
-                prior_screen = self._existing_screen(device_id, topic_id, resource_id)
-                screen = await self._ensure_screen(
-                    device_id=device_id,
-                    agent_user_id=agent_user_id,
-                    agent_handle=agent_handle,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    env=env,
-                    launch=launch,
-                    environment_before=before,
-                )
-                await room_session.commit()
+            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+            before = (
+                await environment_status(self._hub, device_id, project_id, resource_id)
+                if prepares_environment
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+            screen = await self._ensure_screen(
+                device_id=device_id,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                env=env,
+                launch=launch,
+                environment_before=before,
+            )
             self._subscription_devices[topic_id] = device_id
             if prepares_environment:
                 # A process started before this feature keeps its environment
