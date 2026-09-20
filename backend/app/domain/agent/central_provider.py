@@ -27,7 +27,6 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
@@ -89,26 +88,17 @@ class CentralChannel(DeviceChannel):
         return await self.executor.prepare_topic(**kwargs)
 
     async def precheck(self, session: SessionRef, *, needs_place: bool = True):
-        factory = self._session_factory or async_session_factory
-        async with factory() as db:
-            await TopicService(db).get_or_404(session.topic_id)
-            # THIS conversation's session machine, not the room's: two teammates
-            # in one room hold two sessions and may sit on two machines.
-            place = await AgentSessionService(db).place(
-                session.topic_id, session.agent_handle, harness=session.harness
-            )
-            center = place.machine if place else settings.agent_session_device_id
-            if not center or not self._hub.is_online(center):
-                raise ScreenSetupError("Claude Code 中心会话机器尚未配置或未连接")
-            if needs_place:
-                return await self.executor.precheck(session)
-            # 不碰文件、不跑命令的一轮不去租手 (结论 19，不变量 I2)。此处只解析这个
-            # 房间的 分身 身份——那正是租手那条路也只从执行机之外取到的那一样东西
-            # ——所以这一轮在所有执行机离线时照样跑得起来。没有执行机的那一位用
-            # ``None`` 说出来，下游据此走会话自己的草稿区而不是一台工作机。
-            agent = await IdentityService(db).ensure_topic_agent_user(session.topic_id)
-            await db.commit()
-            return None, agent.id, agent.username
+        # 两条路共同的前提是会话机在线——会话本身跑在它上面。解析它的那条连接在
+        # 这一句里就还掉了：执行机的 precheck 自己要开第二条，持着一条去池里要第
+        # 二条，并发到池子大小的轮次一起开场就互相等到超时 (#1312)。
+        _center, agent_user_id, agent_handle = await self._session_host_agent(session)
+        if needs_place:
+            return await self.executor.precheck(session)
+        # 不碰文件、不跑命令的一轮不去租手 (结论 19，不变量 I2)：上面解析到的 分身
+        # 身份正是租手那条路也只从执行机之外取到的那一样东西，所以这一轮在所有执行
+        # 机离线时照样跑得起来。没有执行机的那一位用 ``None`` 说出来，下游据此走会
+        # 话自己的草稿区而不是一台工作机。
+        return None, agent_user_id, agent_handle
 
     async def discover(self, device_id=None):
         factory = self._session_factory or async_session_factory
@@ -251,8 +241,6 @@ class CentralChannel(DeviceChannel):
                 )
             # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区
             # 里：一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
-            # 从前这里问的是「这间房是不是私聊」，于是私聊永远在草稿区、别的房间
-            # 永远租手——两个问题被当成一个。现在问的是这一轮要不要手。
             if executor_id is None:
                 target = private_chat.scratch_target(
                     project_id, resource, device_id=center

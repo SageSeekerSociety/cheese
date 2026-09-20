@@ -21,11 +21,7 @@ from tests.pinned_claude import claude_binary
 
 
 def test_the_scratch_area_sits_on_the_machine_it_is_handed(monkeypatch):
-    """草稿区不自己挑机器 (结论 19)：交进来哪台就是哪台。
-
-    从前它兜底到部署默认的那一台，于是一条搬过家的会话在自己的机器上聊天，草稿
-    区却留在部署默认那台上。
-    """
+    """草稿区不自己挑机器 (结论 19)：交进来哪台就是哪台，部署默认那台不参与。"""
     monkeypatch.setattr(settings, "agent_session_device_id", "deployment-default")
     project, resource = uuid.uuid4(), uuid.uuid4()
     config = private_chat.scratch_target(project, resource, device_id="this-session")

@@ -1,9 +1,8 @@
 """不碰文件、不跑命令的一轮不去租手（PLAN P21，结论 19，不变量 I1/I2）。
 
 会话先于地点：一轮的顺序是「解析被点名的参与者 → 取会话 → 问 needs_place →
-需要才去租一双手」。改动之前 ``CentralChannel.precheck`` 确认中心会话机在线之后
-**无条件**去问执行机，于是一间私聊——它桌上只有对话、记忆和平台工具——也会因为
-项目那台工作机离线而整轮开不起来。
+需要才去租一双手」。一间私聊桌上只有对话、记忆和平台工具，所以项目那台工作机
+在不在线与它无关。
 
 两条验收：
 
@@ -97,6 +96,31 @@ async def test_a_turn_that_needs_no_place_never_asks_for_hands(
     # 同一条会话、同一台离线的工作机，要手的一轮照旧被挡下来。
     with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
         await central.precheck(session, needs_place=True)
+
+
+async def test_a_channel_nobody_wraps_answers_the_question_too(
+    client, room, monkeypatch
+):
+    """pi 不被 ``CentralChannel`` 包着，所以这一问它自己也要答得出来。
+
+    项目一台在线工作机也没有：要手的一轮该被挡下来，不要手的那一轮该落在这条会话
+    自己的机器上，而不是回头去要一台项目机器（不变量 I2）。
+    """
+    project, topic = room
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    hub: Any = SimpleNamespace(is_online=lambda device: device == "center")
+    channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    session = SessionRef(project, topic, "cheese", "pi")
+
+    machine, agent_user_id, agent_handle = await channel.precheck(
+        session, needs_place=False
+    )
+
+    assert machine == "center"
+    assert agent_user_id and looks_like_agent_handle(agent_handle)
+
+    with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
+        await channel.precheck(session, needs_place=True)
 
 
 async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(

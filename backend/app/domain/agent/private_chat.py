@@ -23,9 +23,7 @@ def scratch_target(
     """这条会话自己的草稿区：一个有界的一次性容器 (结论 19)。
 
     它不是一个地点，所以它不去解析一台机器——机器是这条会话的机器，由调用者从
-    会话行上读出来交进来。从前它自己兜底到 ``settings.agent_session_device_id``，
-    那是私聊绕开会话去挑机器的那条独立路径；会话搬了家，草稿区还留在部署默认的
-    那一台上。
+    会话行上读出来交进来。
     """
     return {
         **target(resource_id, settings.private_chat_executor_image),

@@ -1630,6 +1630,34 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
+    async def _session_host_agent(self, session: SessionRef) -> tuple[str, int, str]:
+        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上这个
+        房间的 分身。
+
+        机器从会话行上读，不是项目钉住的那台工作机——这一轮不碰仓库文件，所以工作
+        机在不在线与它无关。问的是这条会话而不是这个房间：一间房里的两个队友各有
+        一条会话，可能坐在两台机器上。分身也不是从执行机上取的，所以所有工作机离
+        线时它照样答得出来。三条通道问的是同一个问题，答案就只有这一份。
+        """
+        from app.domain.agent_session.services import AgentSessionService
+
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        async with factory() as db:
+            await TopicService(db).get_or_404(session.topic_id)
+            place = await AgentSessionService(db).place(
+                session.topic_id, session.agent_handle, harness=session.harness
+            )
+            host = place.machine if place else settings.agent_session_device_id
+            if not host or not self._hub.is_online(host):
+                raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+            agent = await IdentityService(db).ensure_topic_agent_user(session.topic_id)
+            await db.commit()
+            return host, agent.id, agent.username
+
     async def precheck(
         self, session: SessionRef, *, needs_place: bool = True
     ) -> tuple[str, int, str]:
@@ -1638,11 +1666,13 @@ class DeviceChannel(Channel):
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
         Raises ``ScreenSetupError`` (offline pinned device, or none online).
 
-        ``needs_place`` is not read here: this machine is where the session
-        itself runs, so a turn that wants no hands still needs it. Declining a
-        machine is the wrapping central channel's answer, because only there are
-        the session's machine and the work's machine two different ones."""
-        del needs_place
+        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机。pi 直接用
+        这条通道 (它是唯一没有包在 ``CentralChannel`` 外面的 backend)，所以「要不
+        要一双手」这一问在这里也必须答得出来——答不出来，一间私聊就会因为项目没
+        有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。``ensure_ready`` 读
+        ``memory_scope`` 把这一轮放进会话自己的草稿区。"""
+        if not needs_place:
+            return await self._session_host_agent(session)
         resolved = await self._resolve_device_agent(
             session.project_id, session.topic_id
         )

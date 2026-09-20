@@ -140,9 +140,10 @@ class CloudChannel(DeviceChannel):
     async def precheck(
         self, session: SessionRef, *, needs_place: bool = True
     ) -> tuple[str, int, str]:
-        # Same as the device channel: this is the machine the session runs on,
-        # so the turn cannot decline it. See ``DeviceChannel.precheck``.
-        del needs_place
+        if not needs_place:
+            # 不租手的一轮不开云机器：它落在这条会话自己的机器上，和自托管那条
+            # 通道同一个答案。pi 也跑在这条通道上，所以这一问在这里同样要答。
+            return await self._session_host_agent(session)
         resolved = await self._resolve_device_agent(
             session.project_id, session.topic_id
         )

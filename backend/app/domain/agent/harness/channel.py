@@ -168,12 +168,11 @@ class Channel:
         ``precheck`` so a channel doesn't resolve twice (the device channel
         resolves its pinned device here).
 
-        ``needs_place`` is this TURN's answer to 「要不要一双手」 (结论 19). It
-        matters only to a channel that rents a machine ON TOP of the one the
-        session already runs on: for a channel whose session and files share a
-        machine, that machine is the session host and a turn cannot decline it.
-        So the default ignores it, and a turn that needs no place must not be
-        refused here for a work machine being offline (不变量 I2)."""
+        ``needs_place`` is this TURN's answer to 「要不要一双手」 (结论 19).
+        Every channel that resolves a work machine has to answer it, because a
+        turn that touches no file must not be refused for a work machine being
+        offline (不变量 I2) — it runs on the session's own machine instead. This
+        base resolves nothing, so it has nothing to decline."""
         del needs_place
         return None
 
