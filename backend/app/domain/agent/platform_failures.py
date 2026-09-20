@@ -139,9 +139,13 @@ HOST_UNREACHABLE = PlatformFailure(
     code=HOST_UNREACHABLE_CODE,
     title="设备连不上",
     content="本轮没能开始：本话题绑定的设备连不上。",
+    # 话题一旦绑定就不会再换设备——`device_provider.resolve_device` 只在第一轮
+    # 挑一次，之后任何一轮都回到同一台。所以这句只说该设备重新连上，不承诺平台
+    # 会替它找一台：那是没有的机制，等它等不来。
     detail=(
         "项目文件和已提交的改动都还在。"
-        "请检查该设备是否在线；若它持续联系不上，平台会把本话题换到别的设备上继续。"
+        "请把该设备重新连上再 @芝士 继续本轮——话题绑定的设备不会更换，"
+        "以免工作树和会话错乱。"
     ),
     retryable=True,
     host_scoped=True,

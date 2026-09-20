@@ -128,6 +128,27 @@ class RemoteControl:
         session opened before agents were recorded left in the room-wide slot.
         """
         sid = await self.redis.get(live_key(topic_id, agent_handle))
+        if not sid and agent_handle:
+            # Sessions outlive app releases. Move a pre-agent index only when
+            # its session already proves both identities; RENAME preserves TTL
+            # and removes the old index, without replacing a newer session.
+            sid = await self.redis.eval(
+                "local current=redis.call('GET',KEYS[1]); "
+                "if current then return current end; "
+                "local old=redis.call('GET',KEYS[2]); "
+                "if not old then return false end; "
+                "local raw=redis.call('GET','cheese:rc:'..old..':session'); "
+                "if not raw then return false end; "
+                "local s=cjson.decode(raw); "
+                "if s.topic_id~=ARGV[1] or s.agent_handle~=ARGV[2] "
+                "then return false end; "
+                "redis.call('RENAME',KEYS[2],KEYS[1]); return old",
+                2,
+                live_key(topic_id, agent_handle),
+                live_key(topic_id, None),
+                topic_id,
+                agent_handle,
+            )
         return await self.get(text(sid)) if sid else None
 
     async def update(

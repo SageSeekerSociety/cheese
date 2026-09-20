@@ -1,7 +1,6 @@
 """Session placement survives storage while execution stays on the room machine."""
 
 import asyncio
-import base64
 import hashlib
 import json
 import os
@@ -9,7 +8,6 @@ import sys
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -29,20 +27,19 @@ from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparati
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
-    bootstrap as executor_bootstrap,
-)
-from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
     runtime as executor_runtime,
 )
+from app.domain.agent.harness.claude_code.remote_execution.launch import file_sources
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
+from tests.support import wire
 
 
 @pytest.mark.anyio
@@ -82,14 +79,6 @@ async def test_execution_survives_an_unrelated_room_column_rename(
                 text("ALTER TABLE topics RENAME COLUMN retired_title TO title")
             )
             await db.commit()
-
-
-class _OwnerExecutorTransport:
-    def __init__(self) -> None:
-        self.sent: asyncio.Queue[dict] = asyncio.Queue()
-
-    async def send_json(self, msg: dict[str, Any]) -> None:
-        await self.sent.put(msg)
 
 
 @pytest.fixture
@@ -275,8 +264,9 @@ async def test_stopped_previous_executor_http_failure_takes_installation_path(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("digest", [None, "previous-release"])
+@pytest.mark.parametrize("upgrade_pending", [False, True])
 async def test_old_executor_process_takes_release_bootstrap(
-    client, room, monkeypatch, digest
+    client, room, monkeypatch, digest, upgrade_pending
 ):
     project, topic = room
     central = channel(client, monkeypatch)
@@ -290,6 +280,14 @@ async def test_old_executor_process_takes_release_bootstrap(
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
+    central._hub.exec.return_value["stdout"] = json.dumps(
+        {
+            **INSTALLED,
+            "release": "previous-release" if upgrade_pending else "new-release",
+            "desired_release": "new-release" if upgrade_pending else None,
+            "upgrade_pending": upgrade_pending,
+        }
+    )
     central._hub.call_executor.return_value = {
         "pid": 123,
         "capabilities": ["prepare"],
@@ -305,6 +303,14 @@ async def test_old_executor_process_takes_release_bootstrap(
             await admitted.rollback()
             await asyncio.wait_for(update, 10)
     central._hub.exec.assert_awaited_once()
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        target = stored.session_placement["execution"]
+        assert target["upgrade_pending"] is upgrade_pending
+        assert target["release"] == (
+            "previous-release" if upgrade_pending else "new-release"
+        )
+        assert target["desired_release"] == ("new-release" if upgrade_pending else None)
     assert [
         call.args[2] for call in central._hub.call_executor.await_args_list[-2:]
     ] == ["ping", "context_fs"]
@@ -334,10 +340,10 @@ async def test_running_executor_prepares_without_python_launch(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "protocol_version": executor_runtime.PROTOCOL_VERSION,
             "files": {
-                "remote-execution/bootstrap.py": hashlib.sha256(
-                    Path(executor_bootstrap.__file__).read_bytes()
-                ).hexdigest(),
+                name: hashlib.sha256(content.encode()).hexdigest()
+                for name, content in file_sources().items()
             },
         },
         {
@@ -354,7 +360,7 @@ async def test_running_executor_prepares_without_python_launch(
     payload = calls[1].args[3]
     assert payload["env"]["CHEESE_TOKEN"]
     assert payload["environment"] == {"revision": "one"}
-    assert "cheese-hook" in payload["files"]
+    assert payload["files"] == {}
     if environment_state == "ready":
         central._wait_executor.assert_not_awaited()
     else:
@@ -382,10 +388,10 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "protocol_version": executor_runtime.PROTOCOL_VERSION,
             "files": {
-                "remote-execution/bootstrap.py": hashlib.sha256(
-                    Path(executor_bootstrap.__file__).read_bytes()
-                ).hexdigest(),
+                name: hashlib.sha256(content.encode()).hexdigest()
+                for name, content in file_sources().items()
             },
         },
         RuntimeError("Executor configuration changed"),
@@ -620,7 +626,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     device_hub._devices.clear()
     device_connection_app._release_draining = False
     device_connection_app._active_rpc_calls = 0
-    connector = _OwnerExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("executor", connector)
     await connector.sent.get()
     await device_hub.on_device_message(
@@ -640,21 +646,14 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             waiter = asyncio.create_task(
                 owner.post(endpoint, headers={"X-Cheese-Token": token}, json=payload)
             )
-            outbound = await asyncio.wait_for(connector.sent.get(), 1)
-            assert outbound["t"] == "execution.call"
-            assert outbound["path"] == dialled
+            call = await connector.next_call()
+            assert call.path == dialled
             encoded = json.dumps({"result": {"content": "executor file"}}).encode()
             await device_hub.on_device_message(
-                "executor",
-                {
-                    "t": "execution.data",
-                    "id": outbound["id"],
-                    "data": base64.b64encode(encoded).decode(),
-                },
+                "executor", wire.execution_data(call.id, encoded)
             )
             await device_hub.on_device_message(
-                "executor",
-                {"t": "execution.result", "id": outbound["id"], "error": ""},
+                "executor", wire.execution_result(call.id)
             )
             response = await asyncio.wait_for(waiter, 2)
             assert response.status_code == 200, response.text

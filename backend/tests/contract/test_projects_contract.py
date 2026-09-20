@@ -5,64 +5,88 @@ legacy Kotlin service served; the fusion merge dropped the resource, migration
 41224effe32b brought it back, and #370 moved it off the generic name ``/projects``
 onto ``/team-projects`` so the cheesex workspace resource can have that word.
 
-Still skipped, but NOT for the reason this file used to give ("not present in the
-merged app" — it is, and ``tests/integration/test_team_projects.py`` exercises it
-end to end). The real blocker is this harness: every endpoint here needs
-``require_auth_user`` and ``python_client`` carries no credential, so each probe
-answers 401 and the shape is never reached. Porting these onto ``authed_client``
-is the fix; it is a test-harness job, not a contract question.
+Every endpoint here is behind ``require_auth_user``, so the probes run on
+``authed_client`` and the resource they read is seeded first: on ``python_client``
+they all answered 401 before the shape was ever reached, and on an empty database
+a shape assertion guarded by ``if resp.status_code != 200: return`` passes without
+looking at anything.
 """
 
-import pytest
+from datetime import UTC, datetime
 
-pytestmark = pytest.mark.skip(
-    reason="needs an authenticated client — python_client has no credential, so "
-    "every probe 401s before the shape is reached (see module docstring)"
-)
+import pytest
+from httpx import AsyncClient
+
+_PROJECT_KEYS = {
+    "id",
+    "name",
+    "description",
+    "colorCode",
+    "startDate",
+    "endDate",
+    "team",
+    "leader",
+    "parentId",
+    "externalTaskId",
+    "githubRepo",
+    "archived",
+    "members",
+    "createdAt",
+    "updatedAt",
+}
+
+
+@pytest.fixture
+async def seeded_project(authed_client: AsyncClient, seeded_team: int) -> dict:
+    """A team project owned by the authed user, created through the real route."""
+    start = int(datetime.now(UTC).timestamp() * 1000)
+    resp = await authed_client.post(
+        "/team-projects",
+        json={
+            "name": "Contract Project",
+            "description": "seeded by the contract suite",
+            "colorCode": "#123456",
+            "startDate": start,
+            "endDate": start + 86_400_000,
+            "teamId": seeded_team,
+            "leaderId": 1,
+        },
+    )
+    assert resp.status_code == 200, f"seeding failed: {resp.status_code} {resp.text}"
+    return resp.json()["data"]["project"]
 
 
 @pytest.mark.anyio
-async def test_python_get_project_not_found(python_client) -> None:
-    resp = await python_client.get("/team-projects/0")
+async def test_python_get_project_not_found(authed_client: AsyncClient) -> None:
+    resp = await authed_client.get("/team-projects/0")
     assert resp.status_code in (404, 400, 422)
 
 
 @pytest.mark.anyio
-async def test_python_get_project_shape(python_client) -> None:
-    resp = await python_client.get("/team-projects/1")
-    assert resp.status_code in (200, 404)
-    if resp.status_code != 200:
-        return
+async def test_python_get_project_shape(
+    authed_client: AsyncClient, seeded_project: dict
+) -> None:
+    resp = await authed_client.get(f"/team-projects/{seeded_project['id']}")
+    assert resp.status_code == 200, resp.text
 
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}
-    data = body["data"]
-    assert "project" in data
-
-    project = data["project"]
-    for key in (
-        "id",
-        "name",
-        "description",
-        "colorCode",
-        "startDate",
-        "endDate",
-        "team",
-        "leader",
-        "createdAt",
-        "updatedAt",
-    ):
-        assert key in project
+    project = body["data"]["project"]
+    assert _PROJECT_KEYS <= set(project)
+    assert set(project["team"]) >= {"id", "name", "intro", "avatarId"}
+    assert set(project["leader"]) >= {"id", "username", "nickname"}
+    assert set(project["members"]) == {"count", "examples"}
 
 
 @pytest.mark.anyio
-async def test_python_get_projects_shape(python_client) -> None:
-    resp = await python_client.get("/team-projects", params={"team_id": 1})
-    assert resp.status_code in (200, 400)
-    if resp.status_code != 200:
-        return
+async def test_python_get_projects_shape(
+    authed_client: AsyncClient, seeded_team: int, seeded_project: dict
+) -> None:
+    resp = await authed_client.get("/team-projects", params={"team_id": seeded_team})
+    assert resp.status_code == 200, resp.text
 
     body = resp.json()
     assert set(body.keys()) == {"code", "message", "data"}
-    data = body["data"]
-    assert "projects" in data
+    projects = body["data"]["projects"]
+    assert [p["id"] for p in projects] == [seeded_project["id"]]
+    assert _PROJECT_KEYS <= set(projects[0])

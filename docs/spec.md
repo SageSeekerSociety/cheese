@@ -416,7 +416,7 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 芝士 = 一个 coding agent + 知是专属的 skills/tools + 一层我们写的多会话调度。
 
-当前实现用 Python Agent SDK（`claude-agent-sdk`，Claude Code CLI 的 Python 封装）。底层模型不绑定——SDK 通过 `ANTHROPIC_BASE_URL` 环境变量支持 LiteLLM 等网关代理，可以把请求路由到 Claude、GPT、Gemini 或开源模型，代码不用改。按场景和成本选模型：旗舰任务用强模型，巡检和摘要用便宜模型。
+当前实现直接驱动 Claude Code CLI（骨架之一，`harness/claude_code/`）。底层模型不绑定——请求经平台的计量代理或网关出去，可以路由到 Claude、GLM、DeepSeek 等，代码不用改。按场景和成本选模型：旗舰任务用强模型，巡检和摘要用便宜模型。
 
 下面的映射以 Claude Code 为例，换成其他框架只需适配这张表，skills 和平台代码不用动：
 
@@ -617,7 +617,6 @@ merge to main。判据是这个词有没有在教用户平台的内部机制。
 7. agent 类型的预设怎么做？平台提供哪些、每个包含哪些 skills？需要和实际场景对齐
 
 **实现**
-8. Agent SDK 接入方式：CLI stream-json（进程级）还是 Python SDK（`claude-agent-sdk`）？两者的多 session 并发性能差异？
 9. OpenViking 的 L0/L1/L2 分层加载策略——每层装什么、加载阈值怎么定？
 10. 块表双树结构的工程量评估——比单独的聊天表+文档表重多少？迁移路径？
 11. LiteLLM 网关的稳定性和安全性（已知 PyPI 投毒事件），是否需要自建网关？

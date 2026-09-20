@@ -97,7 +97,12 @@ class _RecordingHub:
 
 
 @pytest.mark.anyio
-async def test_device_screen_opens_with_the_system_prompt():
+async def test_device_screen_opens_with_the_system_prompt(_pg_schema):
+    # `_ensure_screen` looks the device's API base up in Postgres. Naming the
+    # schema fixture is how a test in this tree says so — `_pg_schema_gate` reads
+    # the fixture list and provisions nothing for a test that asks for nothing,
+    # so without this the row lookup ran against whatever database a neighbour in
+    # the same worker happened to have migrated first.
     hub = _RecordingHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")  # type: ignore[arg-type]
 

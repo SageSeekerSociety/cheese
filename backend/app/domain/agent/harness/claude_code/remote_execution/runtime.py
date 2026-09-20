@@ -31,6 +31,7 @@ from functools import partial
 from pathlib import Path
 
 SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+PROTOCOL_VERSION = 1
 
 NATIVE_TOOLS = {
     "Read",
@@ -205,6 +206,19 @@ class Executor:
         # Bootstrap is reloaded each turn; successful checks belong to this process.
         self.verified_binaries = {}
         self.config = json.loads((self.state / "config.json").read_text())
+        self.programs = Path(self.config.get("release", self.state.parent))
+        self.admission_lock = threading.Lock()
+        self.active_calls = 0
+        self.upgrading = False
+        upgrade = self.state / "upgrade.json"
+        if upgrade.exists():
+            pending = json.loads(upgrade.read_text())
+            if pending["release"] == self.config.get("release") and pending.get(
+                "claude", self.config.get("claude")
+            ) == self.config.get("claude"):
+                upgrade.unlink()
+            else:
+                self.upgrading = pending["ready"]
         self.root = Path(self.config["workspace"]).resolve(strict=True)
         self.env = dict(os.environ, **self.config.get("env", {}))
         # Every command this executor has run through `mcp serve`, by marker:
@@ -245,8 +259,8 @@ class Executor:
         self.db.commit()
         self.cli_worker = None
         self.cli_worker_ready = False
-        worker = self.state.parent / "remote-execution/cli_worker.py"
-        cli = self.state.parent / "cheese"
+        worker = self.programs / "remote-execution/cli_worker.py"
+        cli = self.programs / "cheese"
         if worker.is_file() and cli.is_file():
             address = socket_path(self.state) + ".cli"
             Path(address).unlink(missing_ok=True)
@@ -295,7 +309,7 @@ class Executor:
                         CLAUDE_CONFIG_DIR=str(config_dir),
                         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
                         CLAUDE_CODE_TMPDIR=str(self.serve_temp),
-                        PATH=str(self.state.parent / "remote-execution/bin")
+                        PATH=str(self.programs / "remote-execution/bin")
                         + os.pathsep
                         + self.env.get("PATH", os.defpath),
                     )
@@ -1257,9 +1271,7 @@ class Executor:
         )
         if home / ".cheese/executor" != self.state:
             raise ValueError("Executor preparation belongs to another room")
-        bootstrap = runpy.run_path(
-            str(self.state.parent / "remote-execution/bootstrap.py")
-        )
+        bootstrap = runpy.run_path(str(self.programs / "remote-execution/bootstrap.py"))
         with bootstrap["prepared"](payload, owner, self.verified_binaries) as (
             _,
             config,
@@ -1278,15 +1290,50 @@ class Executor:
                 "context_tree": self.context_fs({"operation": "tree"}),
             }
             if payload.get("environment"):
-                runner = runpy.run_path(
-                    str(self.state.parent / "cheese-environment.py")
-                )
+                runner = runpy.run_path(str(self.programs / "cheese-environment.py"))
                 info["environment_status"] = runner["read_status"](
                     home / ".cheese-environment"
                 )["state"]
             return info
 
     def dispatch(self, method, params):
+        if method == "begin_upgrade":
+            with self.admission_lock:
+                busy = not self.upgrading and (
+                    self.active_calls > 0
+                    or any(
+                        self.task(marker)["status"]
+                        not in {"completed", "failed", "stopped"}
+                        for marker in list(self.tasks)
+                    )
+                )
+                result = {
+                    "release": params["release"],
+                    "claude": params.get("claude", self.config.get("claude")),
+                    "ready": not busy,
+                }
+                write_json(self.state / "upgrade.json", result)
+                if not busy:
+                    self.upgrading = True
+                return result
+        if method == "ping":
+            return self._dispatch(method, params)
+        inspect_task = (
+            method == "control"
+            and params.get("subtype")
+            in {"background_tasks", "task_output", "stop_task", "stop_request"}
+        ) or (method == "invoke" and params.get("tool") in {"TaskOutput", "TaskStop"})
+        with self.admission_lock:
+            if self.upgrading and not inspect_task:
+                raise RuntimeError("Executor is upgrading; request was not accepted")
+            self.active_calls += 1
+        try:
+            return self._dispatch(method, params)
+        finally:
+            with self.admission_lock:
+                self.active_calls -= 1
+
+    def _dispatch(self, method, params):
         if method == "prepare":
             return self.prepare(params)
         if method == "configure" or (
@@ -1301,11 +1348,11 @@ class Executor:
                 "state": str(self.state),
             }
         if method == "ping":
-            manifest = self.state.parent / "executor-files.json"
+            manifest = self.programs / "executor-files.json"
             files = {}
             if manifest.exists():
                 for name in json.loads(manifest.read_text()):
-                    path = self.state.parent / name
+                    path = self.programs / name
                     if path.is_file():
                         files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
             return {
@@ -1313,7 +1360,10 @@ class Executor:
                 "workspace": str(self.root),
                 "files": files,
                 "runtime_sha256": SOURCE_SHA256,
-                "capabilities": ["prepare"]
+                "protocol_version": PROTOCOL_VERSION,
+                "release": self.config.get("release"),
+                "upgrading": self.upgrading,
+                "capabilities": ["prepare", "idle_upgrade"]
                 + (
                     ["cli_worker"]
                     if self.cli_worker is not None and self.cli_worker.poll() is None
