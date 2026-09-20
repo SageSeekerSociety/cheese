@@ -300,9 +300,12 @@ and de-authorizing it is a single row delete rather than waiting out a token's T
   - **一个资料库**（git 之外，`write_library_file` 在 `workspace/service.py:860`，#1209 带进来的）：
     只增不改、原名寻址、同名不覆盖（#1085 结论一）；**删除是一个显式动作**
     （`delete_library_file`，`:887`，#1247 加的），删掉之后旧引用如实报「这份资料已经不在资料库里」（`:840`）。
-  - **一份产物清单**（`project/artifacts.py`，`project_artifacts` 表）：名字就是身份，
-    **清单由交付长出来**——递卡时点名本次更新的哪一项（`accept_cards.artifact_id`），
-    名字不在清单上就当场新建一项，并在房间里当场说出来（#1085 结论三）。
+  - **一份产物清单**（`project/artifacts.py`，`project_artifacts` 表）：名字就是身份
+    （仓库那一项除外，它认 `delivers_repository`），**清单由交付长出来**——交出去一次
+    合并的落在项目那个仓库那一项上，平台自己认，谁都不用声明；交出去一份文件或一个
+    地址的才在递卡时点名本次更新的哪一项（`accept_cards.artifact_id`），名字不在清单
+    上就当场新建一项，并在房间里当场说出来（#1085 结论三）。每一项另带一句话
+    （`about`）说清它是什么、给谁的，下一次交付靠它判断是不是同一项。
     **当前版本不存进表里**：一版是一次交付，所以它就是采纳了的、点名这一项的卡的条数，
     撤回采纳那一版随之不在。清单进每一轮的 system prompt，下一次交付照着它点名。
     **这一版交出去的是什么记在那张卡上**（`deliverable_kind`：一份文件 / 一个地址 /

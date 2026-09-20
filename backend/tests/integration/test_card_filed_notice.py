@@ -52,7 +52,6 @@ def _file_card(client, room: str, reviewer: str = "alice"):
         f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
-            "new_artifact": "报告",
             "change_subject": _SUBJECT,
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",

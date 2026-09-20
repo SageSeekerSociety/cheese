@@ -525,8 +525,9 @@ async def list_artifacts(
 ) -> dict:
     """产物清单：这个项目交出去的东西，一项一行 (#1085 结论二、三)。
 
-    清单只读，而且没有配套的新建入口：它由交付长出来 —— 递卡时点名的名字不在清单
-    上就当场多一项。所以这里没有 POST，不是还没做。"""
+    清单只读，而且没有配套的新建入口：它由交付长出来 —— 交出去一次合并的，落在项目
+    那个仓库那一项上（平台自己认）；交出去一份文件或一个地址的，递卡时点名的名字不
+    在清单上就当场多一项。所以这里没有 POST，不是还没做。"""
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
     rows = await artifacts.list_for_project(db, project_id)
@@ -534,6 +535,7 @@ async def list_artifacts(
         {
             "id": str(a.id),
             "name": a.name,
+            "about": a.about,
             "version": a.version,
             "delivered_at": a.delivered_at.isoformat() if a.delivered_at else None,
         }
@@ -563,6 +565,7 @@ async def read_artifact(
         {
             "id": str(row.id),
             "name": row.name,
+            "about": row.about,
             "version": listed.version if listed else 0,
             "delivered_at": (
                 listed.delivered_at.isoformat()

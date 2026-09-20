@@ -92,6 +92,7 @@ async def create_accept_card(
         change_body=body.change_body,
         artifact=body.artifact,
         new_artifact=body.new_artifact,
+        about=body.about,
         deliver=body.deliver,
         deliver_url=body.deliver_url,
         task_id=task_id,

@@ -1107,6 +1107,8 @@ export function deleteLibraryFile(projectId: string, path: string): Promise<{ de
 export interface ProjectArtifact {
   id: string
   name: string
+  /** 一句话：这是什么东西、给谁的。交付时写下，没人写过时是空串。 */
+  about: string
   /** 交付过几次。0 = 有一张卡正在交付它，但还没有哪一次落地。 */
   version: number
   /** 最近一次交付被采纳的时刻（ISO），一次都还没有时为 null。 */

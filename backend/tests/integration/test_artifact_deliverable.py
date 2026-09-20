@@ -83,7 +83,11 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
     body = {
         "change_subject": "docs(report): finalise the report",
         "reviewer_handle": "alice",
-        **delivery_artifact(client, room_id),
+        **delivery_artifact(
+            client,
+            room_id,
+            hands_over=bool(declared.get("deliver") or declared.get("deliver_url")),
+        ),
         **declared,
     }
     response = client.post(
@@ -258,7 +262,9 @@ def test_handing_over_the_merge_itself_is_a_kind_of_its_own(client):
     assert filed.status_code == 200, filed.text
     _accept(client, filed.json()["data"]["id"])
 
-    (version,) = _detail(client, project_id, _artifact_id(client, project_id))[
+    # 交出去的是这次合并，所以落在项目那个仓库那一项上 —— 它跟项目同名，因为没有
+    # 谁给它起过名字，平台自己认得出是哪一项。
+    (version,) = _detail(client, project_id, _artifact_id(client, project_id, "P"))[
         "versions"
     ]
     assert version["kind"] == "merge"
@@ -374,10 +380,13 @@ def test_a_card_that_belongs_to_another_artifact_is_not_this_version(client):
 
 
 @pytest.mark.parametrize("field", ["deliver", "deliver_url"])
-def test_declaring_nothing_handed_over_is_allowed_but_still_needs_an_artifact(
-    client, field
-):
-    """交付物可以不给（那就是交出去这次合并），但产物那一项仍然必须点名。"""
+def test_saying_a_field_is_null_hands_over_the_merge_like_leaving_it_out(client, field):
+    """显式写一个 null 和压根不写是同一件事：这次交出去的是合并本身。
+
+    于是它也不用声明产物 —— 交出去的是项目那个仓库（那一半在
+    `test_artifact_is_the_repository.py`）。这里问的只是 null 会不会被当成
+    「交了一份空的」而走岔到另一条路上。
+    """
     project_id = _project(client)
     room_id = _room(client, project_id)
     task = delivery_task(client, room_id)
@@ -391,5 +400,5 @@ def test_declaring_nothing_handed_over_is_allowed_but_still_needs_an_artifact(
             field: None,
         },
     )
-    assert filed.status_code >= 400
-    assert "没说这次交付动的是哪一项产物" in filed.text
+    assert filed.status_code == 200, filed.text
+    assert filed.json()["data"]["deliverable"]["kind"] == "merge"
