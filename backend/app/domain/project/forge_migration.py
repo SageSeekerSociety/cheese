@@ -91,9 +91,12 @@ def freeze(root: Path, project_id: uuid.UUID, output: Path) -> dict:
         if line.startswith("worktree "):
             worktree = Path(line.removeprefix("worktree ")).resolve()
             if not any(worktree.is_relative_to(source) for source in sources):
-                raise ValueError(
-                    f"Worktree outside the project backup scope: {worktree}"
-                )
+                if not worktree.is_relative_to(root):
+                    raise ValueError(f"Worktree outside the workspace root: {worktree}")
+                if output.is_relative_to(worktree):
+                    raise ValueError("Migration backup must be outside worktrees")
+                # Cleanup may retain registered worktrees under .preserved.
+                sources.append(worktree)
     archive = output / "working-files.tar.gz"
     with tarfile.open(archive, "w:gz", dereference=False) as bundle:
         for source in sources:
