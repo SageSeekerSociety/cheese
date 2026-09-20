@@ -142,11 +142,7 @@ def test_no_endpoint_puts_a_directory_next_to_a_sharing_word():
     paths = _route_paths(OWN_MODULE.read_text(encoding="utf-8"))
     assert paths, "没有找到任何路径——路由的形状变了"
 
-    bad = [
-        p
-        for p in paths
-        if any(word in p.lower() for word in _SHARING_WORDS)
-    ]
+    bad = [p for p in paths if any(word in p.lower() for word in _SHARING_WORDS)]
     assert bad == [], (
         "授权出现了在可分享的路径下——分享出去的应该是成果，不是钥匙：" + ", ".join(bad)
     )

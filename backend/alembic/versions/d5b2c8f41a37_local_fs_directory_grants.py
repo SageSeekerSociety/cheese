@@ -39,9 +39,7 @@ def upgrade() -> None:
         sa.Column("path", sa.Text(), nullable=False),
         sa.Column("key", sa.Text(), nullable=False),
         sa.Column("platform", sa.String(length=16), nullable=False),
-        sa.Column(
-            "mode", sa.String(length=16), nullable=False, server_default="read"
-        ),
+        sa.Column("mode", sa.String(length=16), nullable=False, server_default="read"),
         sa.Column(
             "scope", sa.String(length=16), nullable=False, server_default="project"
         ),
@@ -53,9 +51,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["device_id"], ["device.device_id"], ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(
-            ["owner_user_id"], ["user.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["owner_user_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(

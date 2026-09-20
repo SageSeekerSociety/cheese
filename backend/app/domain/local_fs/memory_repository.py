@@ -52,8 +52,7 @@ class InMemoryLocalFsRepository(LocalFsRepository):
         return [
             g
             for g in self._grants.values()
-            if g.owner_user_id == owner_user_id
-            and (include_revoked or not g.revoked)
+            if g.owner_user_id == owner_user_id and (include_revoked or not g.revoked)
         ]
 
     async def save_grant(self, grant: DirectoryGrant) -> None:

@@ -146,9 +146,7 @@ async def test_a_write_grant_also_covers_reading(service):
     await grant(service, mode=GrantMode.READ_WRITE)
 
     assert (await service.authorize(ask(DOCS + "/a.txt", GrantMode.READ))).allowed
-    assert (
-        await service.authorize(ask(DOCS + "/a.txt", GrantMode.READ_WRITE))
-    ).allowed
+    assert (await service.authorize(ask(DOCS + "/a.txt", GrantMode.READ_WRITE))).allowed
 
 
 async def test_a_narrow_write_grant_does_not_widen_the_read_grant(service):
@@ -159,9 +157,7 @@ async def test_a_narrow_write_grant_does_not_widen_the_read_grant(service):
     inside = await service.authorize(
         ask(DOCS + "/out/result.xlsx", GrantMode.READ_WRITE)
     )
-    outside = await service.authorize(
-        ask(DOCS + "/grades.csv", GrantMode.READ_WRITE)
-    )
+    outside = await service.authorize(ask(DOCS + "/grades.csv", GrantMode.READ_WRITE))
 
     assert inside.allowed
     assert not outside.allowed
@@ -186,9 +182,7 @@ async def test_a_project_grant_covers_only_that_project(service):
 
     assert (await service.authorize(ask(DOCS + "/a.txt", project_id=PROJECT))).allowed
 
-    other = await service.authorize(
-        ask(DOCS + "/a.txt", project_id=OTHER_PROJECT)
-    )
+    other = await service.authorize(ask(DOCS + "/a.txt", project_id=OTHER_PROJECT))
     assert not other.allowed
     assert other.reason == "no_grant"
 

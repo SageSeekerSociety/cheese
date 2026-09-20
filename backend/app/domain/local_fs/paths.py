@@ -191,9 +191,7 @@ def normalize(raw: str, platform: Platform) -> NormalizedPath:
     text = _join(root, segments)
     key = text.casefold() if platform.case_insensitive else text
     folded = (
-        tuple(s.casefold() for s in segments)
-        if platform.case_insensitive
-        else segments
+        tuple(s.casefold() for s in segments) if platform.case_insensitive else segments
     )
     return NormalizedPath(
         platform=platform,
@@ -240,9 +238,7 @@ def _windows(raw: str) -> tuple[str, tuple[str, ...]]:
         # on", which is not a fact this module knows) and the second is relative to
         # a working directory that is not a fact either. A relative path cannot be
         # authorized, because the directory it denotes is not fixed.
-        raise PathRefused(
-            "not_absolute", "Windows 路径必须以盘符或 UNC 共享开头", raw
-        )
+        raise PathRefused("not_absolute", "Windows 路径必须以盘符或 UNC 共享开头", raw)
     letter = text[0].upper()
     rest = text[2:]
     if not rest.startswith("/"):
@@ -312,9 +308,7 @@ def _collapse(
             continue
         if part == "..":
             if not out:
-                raise PathRefused(
-                    "escapes_root", "路径向上越过了根 " + root, raw
-                )
+                raise PathRefused("escapes_root", "路径向上越过了根 " + root, raw)
             out.pop()
             continue
         if fold_segment is not None:
@@ -385,9 +379,7 @@ def contains(outer: NormalizedPath, inner: NormalizedPath) -> bool:
         return False
     if len(inner.folded_segments) < len(outer.folded_segments):
         return False
-    return (
-        inner.folded_segments[: len(outer.folded_segments)] == outer.folded_segments
-    )
+    return inner.folded_segments[: len(outer.folded_segments)] == outer.folded_segments
 
 
 def _folded_root(path: NormalizedPath) -> str:

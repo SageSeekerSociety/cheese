@@ -23,8 +23,11 @@ BS = chr(92)
     [
         # One path, one spelling — whichever separator the caller used.
         ("C:/Users/alice/MyDocs", Platform.WINDOWS, "C:/Users/alice/MyDocs"),
-        ("C:" + BS + "Users" + BS + "alice" + BS + "MyDocs", Platform.WINDOWS,
-         "C:/Users/alice/MyDocs"),
+        (
+            "C:" + BS + "Users" + BS + "alice" + BS + "MyDocs",
+            Platform.WINDOWS,
+            "C:/Users/alice/MyDocs",
+        ),
         # The canonical text keeps the caller's case except for the drive
         # letter; it is the comparison KEY that folds (asserted below).
         ("c:/users/alice/mydocs", Platform.WINDOWS, "C:/users/alice/mydocs"),
@@ -35,11 +38,13 @@ BS = chr(92)
         ("/home/alice/docs/", Platform.LINUX, "/home/alice/docs"),
         # Win32 strips a trailing dot or blank from a segment before opening it,
         # so the normalized path has to strip it too or the two disagree.
-        ("C:/Users/alice/MyDocs./x.txt", Platform.WINDOWS,
-         "C:/Users/alice/MyDocs/x.txt"),
+        (
+            "C:/Users/alice/MyDocs./x.txt",
+            Platform.WINDOWS,
+            "C:/Users/alice/MyDocs/x.txt",
+        ),
         # A UNC share is a root, and the root is kept.
-        ("//server/share/dir/a.txt", Platform.WINDOWS,
-         "//server/share/dir/a.txt"),
+        ("//server/share/dir/a.txt", Platform.WINDOWS, "//server/share/dir/a.txt"),
     ],
 )
 def test_normalize_collapses_to_one_canonical_form(raw, platform, expected):
@@ -120,9 +125,7 @@ def test_unicode_dot_is_not_a_dot():
 )
 def test_containment_is_by_segment(grant, candidate, expected):
     assert (
-        contains(
-            normalize(grant, Platform.LINUX), normalize(candidate, Platform.LINUX)
-        )
+        contains(normalize(grant, Platform.LINUX), normalize(candidate, Platform.LINUX))
         is expected
     )
 
