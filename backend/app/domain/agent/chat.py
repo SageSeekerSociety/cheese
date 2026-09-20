@@ -1537,7 +1537,6 @@ class ChatService:
             # Background inspections have their own notification policy. Only
             # work answering a person owes a periodic chat update.
             if state.reply_to is not None
-            and not state.is_private
             and (
                 now
                 - max(

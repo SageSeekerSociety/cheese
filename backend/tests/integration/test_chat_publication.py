@@ -198,29 +198,33 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
                 break
     assert not any(frame["type"] == "assistant_block" for frame in frames)
 
-    def room_messages():
+    def timeline():
         history = client.get(f"/topics/{topic}/blocks", headers=headers)
         assert history.status_code == 200, history.text
+        return history.json()["data"]["data"]
+
+    def ai_messages(blocks):
         return [
             block["content"]
-            for block in history.json()["data"]["data"]
+            for block in blocks
             if block["kind"] == "message" and block["author_type"] == "ai"
         ]
 
     # Nothing published, nothing in the room — and the reply is not lost, it is
-    # in activity where a room's terminal output goes.
-    assert room_messages() == []
-    activity = client.get(f"/topics/{topic}/blocks", headers=headers).json()["data"]
+    # in activity where a room's terminal output goes. One read answers both:
+    # between two reads the room could have changed under the assertions.
+    after_turn = timeline()
+    assert ai_messages(after_turn) == []
     assert [
         block["content"]
-        for block in activity["data"]
+        for block in after_turn
         if block["kind"] == "event" and block["content"] == stub_hooks.reply
     ]
 
     # One chat_send, exactly one message.
     sent = publish(client, topic, headers, "记好了，偏好写进文档了。")
     assert sent.status_code == 200, sent.text
-    assert room_messages() == ["记好了，偏好写进文档了。"]
+    assert ai_messages(timeline()) == ["记好了，偏好写进文档了。"]
 
 
 def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memory(
@@ -295,12 +299,23 @@ def next_block(ws):
 
 
 @pytest.mark.parametrize("threshold", [600, 90])
+@pytest.mark.parametrize(
+    ("make_room", "speaker"),
+    [(room, "alice"), (private_room, "user-1")],
+    ids=["room", "private"],
+)
 def test_silence_reminder_only_queues_for_an_active_silent_response(
-    client, stub_hooks, monkeypatch, threshold
+    client, stub_hooks, monkeypatch, threshold, make_room, speaker
 ):
+    """一条发布路径 (结论 19) means one silence rule as well.
+
+    A private chat is exempted from nothing here: now that its reply reaches the
+    room only through chat_send, a silent private chat is exactly the room that
+    shows nothing while someone waits.
+    """
     from app.domain.agent import chat as chat_module
 
-    topic, headers = room(client)
+    topic, headers = make_room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
     clock = datetime.now(UTC)
 
@@ -332,7 +347,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         return True
 
     monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with client.websocket_connect(chat_ws_url(topic, speaker)) as ws:
         ws.send_json({"type": "message", "content": "检查一下", "summon": True})
         while True:
             frame = ws.receive_json()

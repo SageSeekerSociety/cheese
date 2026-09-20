@@ -65,7 +65,7 @@ publication. Set this backend environment variable to a positive number of
 seconds and restart the backend to change it. Each silent stretch produces one
 reminder; a new publication starts the clock again. Raw terminal output and
 retries of an existing publication do not reset it. A Stop ends eligibility.
-Private chat and background inspections retain their own notification policy.
+Background inspections retain their own notification policy.
 
 The reminder goes only to the agent; the agent chooses the update to publish.
 It does not create a system waiting message in chat, interrupt work, or
