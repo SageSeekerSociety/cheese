@@ -11,6 +11,7 @@ from app.domain.agent import (
     cli_worker,
     environment_runner,
     forge_cli,
+    machine_tunnel,
     preview_tunnel,
     toolchain,
 )
@@ -50,6 +51,7 @@ def file_sources():
         "remote-execution/bin/fj": Path(forge_cli.__file__).read_text(),
         "cheese-environment.py": Path(environment_runner.__file__).read_text(),
         "cheese-toolchain": toolchain_fetcher(),
+        "cheese-tunnel.py": Path(machine_tunnel.__file__).read_text(),
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
