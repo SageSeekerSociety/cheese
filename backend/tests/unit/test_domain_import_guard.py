@@ -98,7 +98,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.services", "app.domain.membership.repositories"),
         ("app.domain.review.services", "app.domain.project.repositories"),
         ("app.domain.review.services", "app.domain.topic.repositories"),
-        ("app.domain.scheduler.service", "app.domain.project.repositories"),
         # --- space ---
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),

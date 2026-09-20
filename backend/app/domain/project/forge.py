@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -53,8 +53,9 @@ async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
         raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
     owner, repo = binding.repo.split("/", 1)
     if binding.kind == "github_app":
-        assert isinstance(tokens, GitHubAppTokens)
-        return GitHubPRClient(owner, repo, tokens, api_base=binding.api_url)
+        return GitHubPRClient(
+            owner, repo, cast(GitHubAppTokens, tokens), api_base=binding.api_url
+        )
     return ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
 
 

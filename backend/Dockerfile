@@ -208,6 +208,7 @@ COPY --chown=cheese:python sandbox ./sandbox
 # rest of that directory is dev probes and demo seeders that have no business in
 # a production image.
 COPY --chown=cheese:python scripts/migrate_memory_to_openviking.py ./scripts/
+COPY --chown=cheese:python scripts/migrate_forge.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

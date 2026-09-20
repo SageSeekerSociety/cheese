@@ -132,12 +132,49 @@ ensure_forgejo() {
   while [ "$waited" -lt 90 ]; do
     if curl -fsS -m 3 "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/healthz" >/dev/null; then
       log "repository service is healthy; its data volume survives app releases"
+      container="$(dc ps -q forgejo)"
+      python3 "$HERE/bootstrap-forgejo.py" \
+        --container "$container" \
+        --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+        --api-url "http://127.0.0.1:${FORGEJO_PORT:-3300}/api/v1" \
+        || fail "repository administrator setup failed; app release aborted"
       return
     fi
     sleep 2
     waited=$((waited + 2))
   done
   fail "repository service is not healthy; app release aborted"
+}
+
+migrate_project_repositories() {
+  case " $COMPOSE_OVERLAYS " in
+    *docker-compose.forgejo.yml*) ;;
+    *) return 0 ;;
+  esac
+  local pending=0 legacy
+  # The backend's persistent HOME keeps immutable source backups and receipts.
+  # Check before stopping writers: later releases retain their normal rollout.
+  dc run --rm --no-deps backend python -m scripts.migrate_forge \
+    --backup-root /data/apphome/forge-migration --check || pending=$?
+  case "$pending" in
+    0) log "all project repositories have migration receipts"; return 0 ;;
+    2) ;;
+    *) fail "repository migration preflight failed; running backend was not touched" ;;
+  esac
+  log "pausing repository writers for the first forge migration"
+  dc stop backend || fail "could not stop repository writers"
+  # This service is absent from the new compose file but may still be running
+  # from the previous release; stop it before freezing its receive-pack store.
+  while IFS= read -r legacy; do
+    [ -z "$legacy" ] || docker stop "$legacy" \
+      || fail "could not stop the previous Git receiver"
+  done < <(docker ps -q \
+    --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter "label=com.docker.compose.service=git")
+  dc run --rm --no-deps backend python -m scripts.migrate_forge \
+    --backup-root /data/apphome/forge-migration --apply --writers-stopped \
+    || fail "repository migration failed; writers remain stopped; retry this release to resume from receipts"
+  log "project repositories migrated; backups and migration.log are in the persistent app home under forge-migration"
 }
 
 reload_api_front_routes() {
@@ -478,6 +515,7 @@ fi
 
 log_disk "after pull"
 
+ensure_forgejo
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
@@ -539,6 +577,8 @@ OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
   || fail "workspace ownership migration failed — aborting before swap"
 OWNERSHIP_MIGRATED="$(cat "$OWNERSHIP_REPORT" 2>/dev/null || echo no)"
 rm -f "$OWNERSHIP_REPORT"
+
+migrate_project_repositories
 
 # ---- Backend rollout without downtime (boxes with an api-front switch) ----
 # ACTIVE_BACKEND_DIR names the directory the box's host nginx (api-front,
@@ -713,7 +753,6 @@ rollout_frontend() {
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_device_connection_owner
-ensure_forgejo
 reload_api_front_routes
 check_session_base_survives_release
 

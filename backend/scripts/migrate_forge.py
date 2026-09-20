@@ -149,7 +149,13 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backup-root", required=True, type=Path)
     parser.add_argument("--project", type=uuid.UUID)
-    parser.add_argument("--apply", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true")
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit 2 when repository migration is pending",
+    )
     parser.add_argument("--writers-stopped", action="store_true")
     args = parser.parse_args()
     if args.apply and not args.writers_stopped:
@@ -179,6 +185,8 @@ async def main() -> None:
     print(json.dumps(counts))
     if counts["failed"]:
         raise SystemExit(1)
+    if args.check and counts["planned"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

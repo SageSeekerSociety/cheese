@@ -24,6 +24,16 @@ fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
 fi
+if [[ "$*" == *"scripts.migrate_forge"* ]]; then
+  if [[ "$*" == *" --check"* ]]; then
+    exit "${APP_TIER_FORGE_CHECK:-0}"
+  fi
+  exit "${APP_TIER_FORGE_APPLY:-0}"
+fi
+if [ "${1:-}" = ps ] && [[ "$*" == *"com.docker.compose.service=git"* ]]; then
+  printf 'legacy-git-container\n'
+  exit 0
+fi
 
 # Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
 # `docker pull` and `docker compose pull`. Lets a test drive the retry path — and
@@ -75,6 +85,9 @@ if [ "${1:-}" = "compose" ]; then
 
   case "${1:-}" in
     ps)
+      if [ "${2:-}" = -q ] && [ "${3:-}" = forgejo ]; then
+        printf 'forgejo-container\n'
+      fi
       if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
         [ "${3:-}" = device-connection ]; then
         printf 'device-connection-container\n'

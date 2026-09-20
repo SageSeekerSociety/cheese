@@ -243,6 +243,20 @@ async def test_legacy_repository_migration_preserves_all_refs(
     source, task_worktree = legacy_repository(root, project.id)
     before = references(source)
     backups = tmp_path / "backups"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "migrate_forge",
+            "--backup-root",
+            str(backups),
+            "--project",
+            str(project.id),
+            "--check",
+        ],
+    )
+    with pytest.raises(SystemExit) as pending:
+        await migrate_forge.main()
+    assert pending.value.code == 2
     real_push = migrate_forge.push
 
     def interrupted_after_push(*args):
@@ -257,6 +271,7 @@ async def test_legacy_repository_migration_preserves_all_refs(
     monkeypatch.setattr(migrate_forge, "push", real_push)
     assert await migrate_forge.migrate(project.id, backups, apply=True) == "migrated"
     assert await migrate_forge.migrate(project.id, backups, apply=True) == "skipped"
+    await migrate_forge.main()  # A later release can proceed without stopping writers.
     assert references(source) == before
     assert (task_worktree / "new.txt").read_bytes() == b"untracked\x00bytes"
     async with db_factory() as session:

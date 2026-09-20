@@ -993,7 +993,61 @@ test_healthy_current_pair_passes() {
   echo "PASS: one healthy current backend/frontend pair passes"
 }
 
+test_forge_migration_release() {
+  local run_dir mode expected check apply result
+  for mode in first completed check_failed apply_failed; do
+    run_dir="$(mktemp -d "$ROOT/.tmp/forge-release.XXXXXX")"
+    mkdir -p "$run_dir/bin"
+    # Isolate admin provisioning, whose real-server test lives separately.
+    # All other Python deployment guards still execute normally.
+    cat > "$run_dir/bin/python3" <<'PYTHON'
+#!/usr/bin/env bash
+if [[ "${1:-}" == */bootstrap-forgejo.py ]]; then
+  echo bootstrap >> "$APP_TIER_DOCKER_LOG"
+  exit 0
+fi
+exec /usr/bin/python3 "$@"
+PYTHON
+    chmod +x "$run_dir/bin/python3"
+    check=2 apply=0 expected=0
+    case "$mode" in
+      completed) check=0 ;;
+      check_failed) check=1; expected=1 ;;
+      apply_failed) apply=1; expected=1 ;;
+    esac
+    result=0
+    PATH="$run_dir/bin:$FAKE_BIN:$PATH" \
+      APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+      APP_TIER_FORGE_CHECK="$check" APP_TIER_FORGE_APPLY="$apply" \
+      COMPOSE_OVERLAYS=docker-compose.forgejo.yml \
+      FORGEJO_URL=https://forge.example/forge/ FORGEJO_WEBHOOK_HOSTS=relay.example \
+      DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+      "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/release.log" 2>&1 \
+      || result=1
+    [ "$result" = "$expected" ] || fail "forge $mode returned $result: $run_dir/release.log"
+    case "$mode" in
+      first|apply_failed)
+        grep -F 'stop backend' "$run_dir/docker.log" >/dev/null || fail "writers stayed running"
+        grep -F 'stop legacy-git-container' "$run_dir/docker.log" >/dev/null || fail "Git receiver stayed running"
+        grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null || fail "migration did not run"
+        ;;
+      completed|check_failed)
+        if grep -F 'stop backend' "$run_dir/docker.log" >/dev/null; then
+          fail "$mode stopped the running backend"
+        fi
+        ;;
+    esac
+    if [ "$expected" = 1 ] && grep -F 'up -d backend frontend' "$run_dir/docker.log" >/dev/null; then
+      fail "$mode started the app despite a failed migration"
+    fi
+    rm -rf "$run_dir"
+    echo "PASS: forge release $mode"
+  done
+}
+
 case "$CASE" in
+  forge-migration) test_forge_migration_release ;;
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   connection-owner) test_deploy_keeps_connection_owner_running ;;
@@ -1023,6 +1077,7 @@ case "$CASE" in
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
+    test_forge_migration_release
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
