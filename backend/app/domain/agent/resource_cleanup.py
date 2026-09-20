@@ -412,9 +412,7 @@ def main() -> None:
     if action == "prepare":
         # A timed-out command may arrive after reopening. Once this operation
         # confirmed quiescence, all its delayed retries become read-only.
-        directory = (
-            Path.home() / FOOTPRINT_ROOT / "cleanup" / str(uuid.UUID(cleanup))
-        )
+        directory = Path.home() / FOOTPRINT_ROOT / "cleanup" / str(uuid.UUID(cleanup))
         directory.mkdir(parents=True, exist_ok=True)
         receipt = directory / (str(uuid.UUID(resource)) + ".ready")
         with receipt.with_suffix(".lock").open("a") as lock:

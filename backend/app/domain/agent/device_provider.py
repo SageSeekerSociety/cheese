@@ -455,8 +455,7 @@ def launcher_path(topic_id: uuid.UUID) -> str:
 # the probe by itself — see test_environment_status_probe.py. The `$HOME` below
 # is the place's own: the command that reads these exports it first.
 ENVIRONMENT_RUNNER_PATHS = tuple(
-    f"$HOME/{directory}/cheese-environment.py"
-    for directory in session_platform_dirs()
+    f"$HOME/{directory}/cheese-environment.py" for directory in session_platform_dirs()
 )
 
 
@@ -911,9 +910,7 @@ class DeviceChannel(Channel):
         transfer, exec_env = self._screen_file_refresh(
             home_dir, release_state=release_state, execution_token=execution_token
         )
-        transfer = (
-            f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
-        )
+        transfer = f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
         try:
             result = await self._hub.exec(
