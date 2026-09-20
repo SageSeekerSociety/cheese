@@ -311,7 +311,7 @@ def junit(binary, version, results):
             ET.SubElement(case, "system-out").text = result["observed"]
         else:
             ET.SubElement(case, "failure", message=result["observed"])
-    return ET.tostring(ET.ElementTree(suite).getroot(), encoding="utf-8")
+    return ET.tostring(suite, encoding="utf-8")
 
 
 def main():

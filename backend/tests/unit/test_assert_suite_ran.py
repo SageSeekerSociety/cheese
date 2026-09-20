@@ -10,8 +10,7 @@ from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
 def report(tmp_path: Path, body: str) -> Path:
     path = tmp_path / "results.xml"
     path.write_text(
-        '<?xml version="1.0"?>'
-        f"<testsuites><testsuite>{body}</testsuite></testsuites>"
+        f'<?xml version="1.0"?><testsuites><testsuite>{body}</testsuite></testsuites>'
     )
     return path
 
