@@ -20,6 +20,9 @@ def test_the_names_a_delivery_has_to_choose_from_are_in_the_prompt():
     assert "《结题报告》" in prompt
     assert "《项目官网》" in prompt
     assert "第 3 版" in prompt
+    # 沿用和新建是两个动作，清单这一段要把它们分开说 —— 只说「点名一项」的话，
+    # 写错的名字会被当成新建，而那是错得最安静的一种。
+    assert "artifact" in prompt and "new_artifact" in prompt
 
 
 def test_an_artifact_nobody_has_delivered_yet_says_so_instead_of_version_zero():

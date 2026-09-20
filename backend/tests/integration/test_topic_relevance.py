@@ -69,7 +69,7 @@ def _card(client, tid: str, reviewer: str) -> str:
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
         },

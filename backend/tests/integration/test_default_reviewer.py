@@ -15,6 +15,7 @@ work was handed to is a fact about the moment it was handed over.
 import itertools
 import uuid
 
+from tests.delivery import delivery_artifact
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_project_tree import _insert_block
 from tests.machine_work import machine_commits
@@ -61,7 +62,7 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
     body: dict = {
         "change_subject": subject,
         "routing_reason": "最懂",
-        "artifact": "报告",
+        **delivery_artifact(client, room),
     }
     body.update(kw)
     return client.post(f"/topics/{room}/tasks/{task_id}/accept-card", json=body)

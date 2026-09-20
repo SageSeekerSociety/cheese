@@ -92,7 +92,7 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client):
                 reviewer_handle="alice",
                 routing_reason="ready",
                 change_subject="feat: add first result",
-                artifact="报告",
+                new_artifact="报告",
             )
             await service.accept(card_id=card.id, decided_by="alice")
             await session.commit()

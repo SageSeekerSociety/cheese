@@ -4,7 +4,7 @@ import itertools
 import subprocess
 import uuid
 
-from tests.delivery import delivery_headers
+from tests.delivery import delivery_artifact, delivery_headers
 from tests.integration.conftest import room_agent_seat, session_auth_headers
 from tests.machine_work import machine_commits
 
@@ -62,7 +62,7 @@ def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = Non
         f"/topics/{room_id}/tasks/{tasks[0]}/accept-card",
         headers=delivery_headers(client, room_id),
         json={
-            "artifact": "报告",
+            **delivery_artifact(client, room_id),
             "change_subject": subject,
             "change_body": "Who wrote this, on the record.",
             "reviewer_handle": "alice",

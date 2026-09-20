@@ -339,7 +339,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     first = client.post(
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -351,7 +351,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     second = client.post(
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",

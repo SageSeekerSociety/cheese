@@ -346,6 +346,32 @@ def approvals_required_of(project: Project | None) -> int:
     return branch_protection_of(project).approvals_required
 
 
+#: 递卡时说清这次交付动的是清单上哪一项 —— 沿用一项，或者声明一项新的
+#: (#1085 结论三)。两个参数而不是一个，是因为「沿用」和「新建」是两个不同的动作：
+#: 合成一个参数的话，写错的名字会被当成新建，而那是错得最安静的一种 ——
+#: `报告` 和 `结题报告` 都是合法名字，清单于是多出一项看着像重复的东西，并且从此
+#: 每一轮的开场都带着它。
+_ARTIFACT_ACTION_MISSING = (
+    "没说这次交付动的是哪一项产物。两种说法选一种：\n"
+    "  --artifact '<清单上的真名>'      这次交付是那一项的新一版\n"
+    "  --new-artifact '<新的真名>'      这次交付做出了一样清单上还没有的东西\n"
+    "清单在系统提示的「这个项目的产物清单」里，沿用时把名字照抄过去。"
+)
+
+_ARTIFACT_ACTION_BOTH = (
+    "--artifact 和 --new-artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
+    "要么做出了一样清单上还没有的东西。"
+)
+
+
+def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None:
+    reuse, claim = (artifact or "").strip(), (new_artifact or "").strip()
+    if reuse and claim:
+        raise ValidationError(_ARTIFACT_ACTION_BOTH)
+    if not reuse and not claim:
+        raise ValidationError(_ARTIFACT_ACTION_MISSING)
+
+
 class AcceptService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -459,6 +485,7 @@ class AcceptService:
         change_subject: str | None = None,
         change_body: str | None = None,
         artifact: str | None = None,
+        new_artifact: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         task = await TaskService(self._session).require_in_room(topic_id, task_id)
@@ -473,9 +500,9 @@ class AcceptService:
             subject = commit_message.check_subject(subject)
         except commit_message.InvalidSubject as exc:
             raise ValidationError(str(exc)) from exc
-        # 这次交付更新了哪一项产物 (#1085 结论三)。名字先验，行后建：一张递不上去
-        # 的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
-        artifact_name = artifacts.clean_name(artifact)
+        # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
+        # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
+        _one_artifact_action(artifact, new_artifact)
         existing = await self._repo.list_for_task(task.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
@@ -496,8 +523,15 @@ class AcceptService:
             reviewer_handle,
             from_work=[task],
         )
-        declared, is_new = await artifacts.declare(
-            self._session, project_id=topic.project_id, name=artifact_name
+        is_new = bool((new_artifact or "").strip())
+        declared = (
+            await artifacts.claim(
+                self._session, project_id=topic.project_id, name=new_artifact or ""
+            )
+            if is_new
+            else await artifacts.reuse(
+                self._session, project_id=topic.project_id, ref=artifact or ""
+            )
         )
         card = await self._repo.add(
             topic_id=topic_id,
@@ -762,7 +796,11 @@ class AcceptService:
         data["artifact"] = (
             None
             if declared is None
-            else {"name": declared.name, "version": declared.version}
+            else {
+                "id": str(declared.id),
+                "name": declared.name,
+                "version": declared.version,
+            }
         )
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topic_or_404(card.topic_id)

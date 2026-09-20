@@ -108,7 +108,12 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 
 ## 这个项目做出来的东西
 
-交出去的东西在**产物清单**上，一项一行：真名、当前版本、最近更新。清单不事先声明，由交付长出来——递验收卡时用 `--artifact` 点名本次更新的是哪一项。沿用清单上的名字就是同一项的新一版；清单上没有的名字会**新建一项**，而这是少见动作，所以房间里会当场把它说出来给人看。名字用用户自己的说法（《结题报告》《项目官网》），不是文件路径。
+交出去的东西在**产物清单**上，一项一行：真名、当前版本、最近更新。清单不事先声明，由交付长出来——递验收卡时说清这次交付动的是哪一项，两种说法选一种：
+
+- `--artifact "结题报告"`：这次交付是清单上那一项的**新一版**。名字照抄系统提示里的清单，对不上会被打回（打回的那句话会把清单列给你）。
+- `--new-artifact "项目官网"`：这次交付做出了一样**清单上还没有的东西**。这是少见动作，房间里会当场把它说出来给人看；名字已经在清单上时会被打回。
+
+分成两个动作是因为写错名字不会自己报错：`报告` 和 `结题报告` 都是合法名字，混起来清单上就多一项看着像重复的东西，而这份清单进每一轮的开场。名字用用户自己的说法（《结题报告》《项目官网》），不是文件路径。
 
 哪些算一项：会交给项目外的人、跨房间跨轮次仍是同一个东西、它有源。《结题报告》算，某一轮顺手生成的 `tmp/预览.pdf` 不算；网站算一项（交出去的是网址），报告里的那张插图不算（交出去的是报告）。多个文件凑成一项交付物时，它们是一项，一版就是一次交付。
 
@@ -146,7 +151,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 | `cheese_close_task(task_id, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
 | `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options` 让人一键拍板 |
-| `cheese_accept_request(subject, artifact, reviewer?, reason?, body?, task?)` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`artifact` 必填，点名本次更新的是产物清单上的哪一项（名字照抄系统提示里的清单；不在清单上的名字会新建一项）；`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
+| `cheese_accept_request(subject, artifact?, new_artifact?, reviewer?, reason?, body?, task?)` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项（名字照抄系统提示里的清单），后者声明一样清单上还没有的东西；`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
 | `cheese_ready(task?)` | 执行者把自己任务的 draft PR 标记为可评审；只改变 draft 状态。需要请人验收时用 `cheese_accept_request`，它也会把 draft 翻成 ready |
 | `cheese_describe(subject?, body?, task?)` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
 

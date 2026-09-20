@@ -19,7 +19,9 @@
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong
   cheese accept-request mentor-1 "验收证据" --subject "feat: add report" \
-      --artifact "结题报告"                    # 本次交付更新清单上的哪一项
+      --artifact "结题报告"                    # 交付清单上那一项的新一版
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add site" \
+      --new-artifact "项目官网"                # 做出了清单上还没有的一样东西
   cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
@@ -1306,8 +1308,11 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("--subject", required=True, help="英文 Conventional Commit 标题")
     pa.add_argument(
         "--artifact",
-        required=True,
-        help="本次更新的是哪一项产物，用它的真名；清单上没有的名字会新建一项",
+        help="这次交付是清单上哪一项产物的新一版，用它的真名（名字照抄清单）",
+    )
+    pa.add_argument(
+        "--new-artifact",
+        help="这次交付做出了一样清单上还没有的东西，给它起个真名",
     )
     pa.add_argument("--body", help="改动原因和验证说明")
     pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
@@ -1791,6 +1796,7 @@ def main() -> None:
             "change_subject": a.subject,
             "change_body": a.body,
             "artifact": a.artifact,
+            "new_artifact": a.new_artifact,
         }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
@@ -1800,7 +1806,7 @@ def main() -> None:
         task = _task_id(a.task)
         _sync_task(task)
         r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card", payload)["data"]
-        named = (r.get("artifact") or {}).get("name") or a.artifact
+        named = (r.get("artifact") or {}).get("name") or a.artifact or a.new_artifact
         print(
             f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}"
             f"，本次更新《{named}》。"

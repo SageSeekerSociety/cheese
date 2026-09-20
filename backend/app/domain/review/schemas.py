@@ -24,12 +24,14 @@ class AcceptCardCreate(BaseModel):
     # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
-    # 这次交付更新的是哪一项产物，按它的真名 (#1085 结论三). Required, and
-    # typed optional for the same reason `change_subject` is: the answer to
-    # "you did not name one" has to be the sentence that teaches what a name
-    # here means (`project/artifacts.clean_name`), not pydantic's
+    # 这次交付动的是清单上哪一项产物 (#1085 结论三): `artifact` 沿用一项（真名，
+    # 或界面点出来的那一行的 id），`new_artifact` 声明一项清单上还没有的。Exactly
+    # one of them, enforced in review/services.py rather than here for the same
+    # reason `change_subject` is: the answer to "you named neither" has to be
+    # the sentence that teaches the two actions apart, not pydantic's
     # `Field required`.
     artifact: str | None = None
+    new_artifact: str | None = None
 
 
 class AcceptCardDescribe(BaseModel):

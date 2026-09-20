@@ -34,7 +34,7 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
@@ -53,7 +53,7 @@ def test_create_card_404_for_missing_topic(client):
     r = client.post(
         f"/topics/{missing_room}/tasks/{missing_task}/accept-card",
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
         },
@@ -287,7 +287,7 @@ def test_only_one_pending_card_per_topic(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
             "routing_reason": "x",
@@ -311,7 +311,7 @@ def test_no_new_card_after_delivery(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
             "routing_reason": "x",
@@ -406,7 +406,7 @@ def test_accept_squashes_the_delivery_with_the_cards_words(client):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
-            "artifact": "报告",
+            "new_artifact": "报告",
             "change_subject": "feat: deliver a and b",
             "change_body": "Two files, one delivery.",
             "reviewer_handle": "alice",
