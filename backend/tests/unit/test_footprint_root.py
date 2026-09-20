@@ -61,9 +61,12 @@ class RecordingHub:
 
 def inside_the_footprint(text: str) -> None:
     """Every `$HOME`-relative path in `text` hangs off a footprint directory."""
-    allowed = tuple(f"$HOME/{root}/" for root in footprint_dirs())
+    roots = tuple(f"$HOME/{root}" for root in footprint_dirs())
     for reference in re.findall(r"\$HOME/[A-Za-z0-9._/-]+", text):
-        assert reference.startswith(allowed), (
+        inside = reference in roots or reference.startswith(
+            tuple(f"{root}/" for root in roots)
+        )
+        assert inside, (
             f"{reference} is outside the footprint root, so `cheese uninstall` "
             "walks past it"
         )
