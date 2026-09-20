@@ -82,6 +82,7 @@ import {
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
+import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
@@ -1000,9 +1001,9 @@ function parentOf(m: Block): Block | undefined {
   return m.reply_to ? messages.value.find((x) => x.id === m.reply_to) : undefined
 }
 function showReplyCue(m: Block): boolean {
-  // Only human replies are explicit threads. An AI message's reply_to is the
-  // implicit link to the user message that triggered it — not a thread cue.
-  return m.author_type === 'human' && !!parentOf(m)
+  // Only a person's replies are explicit threads. An AI message's reply_to is
+  // the implicit link to the message that triggered it — not a thread cue.
+  return isPersonBlock(m) && !!parentOf(m)
 }
 function replySnippet(m: Block): string {
   if (m.kind === 'attachment') return isImageBlock(m) ? '[图片]' : '[文件]'
@@ -1249,14 +1250,15 @@ const seatByHandle = computed(() => {
 // AI 的一条和人的一条是同一个规矩：署它的作者，不署「这个房间的那位」。一个房
 // 间可以先后交给两个队友，两个人的话都还在记录里，各自署各自的名。名册还没到
 // 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
+// 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是人和
+// 人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是管道，读
+// 的人只会当成乱码。身份分叉，显示不分叉。
+function agentDisplayName(handle: string): string {
+  if (!rosterLoaded.value) return '芝士'
+  return seatByHandle.value.get(handle)?.name || '芝士'
+}
 function displayName(m: Block): string {
-  if (m.author_type === 'ai') {
-    // 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是
-    // 人和人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是
-    // 管道，读的人只会当成乱码。身份分叉，显示不分叉。
-    if (!rosterLoaded.value) return '芝士'
-    return seatByHandle.value.get(m.author)?.name || '芝士'
-  }
+  if (isAgentBlock(m)) return agentDisplayName(m.author)
   return memberByHandle.value.get(m.author)?.name || m.author
 }
 
@@ -1264,9 +1266,11 @@ function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
   if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
   // This event contains the worker's actual result, rather than a status notice.
   if (block.meta?.event_type === 'subagent_stop') return null
-  if (block.author_type === 'human' || block.meta?.editor_type === 'human') return null
-  if (block.author_type === 'ai' || block.meta?.editor_type === 'ai' || seatByHandle.value.get(block.author)?.agent) {
-    return displayName({ ...block, author_type: 'ai' })
+  if (isPersonBlock(block)) return null
+  // 平台替某个参与者写下的一条（「XX 编辑了文档」就是这样）：档位说「平台」，
+  // 署名说是谁 —— 所以这里问的是署名，名册在手时以名册为准。
+  if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
+    return agentDisplayName(block.author)
   }
   if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
   if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return agentName.value
@@ -1312,10 +1316,10 @@ function fmtTime(iso: string): string {
 // 都保留它们：房间里是「多个人 + 一个芝士」，左边同时坐着好几个人，光靠「在左边」
 // 分不出谁是谁。芝士也在左边，它是队友里的一个，不是对话的另一极。
 //
-// 按 handle 判，不按 author_type：author_type 只说「是人还是 AI」，而这一列里
-// 有好几个人。
+// 按 handle 判，不按 author_type：author_type 只说「参与者还是平台」，而这一列
+// 里有好几个人。
 function isMine(m: Block): boolean {
-  return m.author_type === 'human' && m.author === AUTHOR
+  return isPersonBlock(m) && m.author === AUTHOR
 }
 
 // Group consecutive messages from the same author into runs: only the first of
@@ -1376,7 +1380,7 @@ const starterPrompts = [
 // 只看 message / attachment：芝士也可能留下 event 行（「芝士处理中」那类），
 // 那是它干活的过程，不是它对这个人开过口。
 const startersRetired = computed(() =>
-  visible.value.some((b) => b.author_type === 'ai' && (b.kind === 'message' || b.kind === 'attachment'))
+  visible.value.some((b) => isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment'))
 )
 const showStarters = computed(
   () =>
@@ -1675,14 +1679,14 @@ function showSummonHint(m: Block, i: number): boolean {
   // 分支），这时候提示「没人接」是假的。
   if (awaitingReply.value || outbox.value.length) return false
   if (i !== rows.value.length - 1) return false
-  if (m.author_type !== 'human') return false
+  if (!isPersonBlock(m)) return false
   if (m.kind !== 'message' && m.kind !== 'attachment') return false
   // 一次发送可能落成好几块（一句话 + 几张图），而叫没叫它写在那句话里。只看最后
   // 一块的话，配了图的那次发送永远会被判成「没叫」——图片块的正文是一个文件路径，
   // 它 @ 不到任何人。所以看的是同一个人连在一起的这一串。
   for (let k = rows.value.length - 1; k >= 0; k -= 1) {
     const b = rows.value[k].block
-    if (b.author_type !== 'human' || b.author !== m.author) break
+    if (!isPersonBlock(b) || b.author !== m.author) break
     if (mentionsAgent(b.content)) return false
   }
   return true
@@ -2182,7 +2186,7 @@ onBeforeUnmount(() => {
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
-                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" :name="displayName(m)" />
+                  <CheeseAvatar v-if="isAgentBlock(m)" :size="28" :name="displayName(m)" />
                   <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
                      底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
                      变的只有色块里的字。 -->
@@ -2224,7 +2228,7 @@ onBeforeUnmount(() => {
                 >
                   <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
                 </v-btn>
-                <div v-else-if="m.author_type === 'ai'" class="im-text md-content" v-html="renderMarkdown(m.content)" />
+                <div v-else-if="isAgentBlock(m)" class="im-text md-content" v-html="renderMarkdown(m.content)" />
                 <!-- 现场尊重原文: human text renders verbatim — newlines and
                    spacing preserved (pre-wrap), no markdown reflow. -->
                 <div v-else class="im-text im-text--verbatim" v-html="renderPlain(m.content)" />

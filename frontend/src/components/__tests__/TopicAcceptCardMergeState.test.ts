@@ -72,7 +72,16 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals: [],
     approvals_required: 1,
     pr_number: null,
-    has_external_checks: false,
+    forge: {
+      kind: 'platform',
+      reports_checks: false,
+      hosts_proposals: false,
+      can_write_remote: false,
+      has_external_remote: false,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',
+    },
     pr_url: null,
     // 平台 lane 的常态（#363 拍板）：没有检查可读，后端直接下发 clean。
     merge_state: mergeState({
@@ -86,7 +95,21 @@ function card(over: Partial<AcceptCard>): AcceptCard {
 
 /** 绑了 GitHub 的卡：有 PR，合并态来自轮询器的镜像。 */
 function githubCard(over: Partial<AcceptCard>): AcceptCard {
-  return card({ has_external_checks: true, pr_number: 12, pr_url: 'https://github.com/o/r/pull/12', ...over })
+  return card({
+    forge: {
+      kind: 'github_app',
+      reports_checks: true,
+      hosts_proposals: true,
+      can_write_remote: true,
+      has_external_remote: true,
+      pushes_to_external_remote: true,
+      identity: 'user',
+      declaration: '',
+    },
+    pr_number: 12,
+    pr_url: 'https://github.com/o/r/pull/12',
+    ...over,
+  })
 }
 
 async function flush() {
@@ -288,6 +311,34 @@ describe('平台 lane：采纳纯粹是人的判断', () => {
     expect(container.querySelector('.mdi-check-circle')).toBeTruthy()
     expect(acceptButton(container).disabled).toBe(false)
     expect(container.textContent).not.toContain('状态更新中')
+  })
+
+  it('托管方读不出来的卡：采纳灰，灰的理由就是卡上那句话', async () => {
+    // 这一档不是平台 lane，只是长得像：能力位一位都不敢说是，所以
+    // `reports_checks` 也是 false。后端这会儿真去采纳会拒（同一个读不出），
+    // 闸门和采纳必须是同一条线——按钮亮着就是请人去撞一个 422。
+    const { container } = await mountWith([
+      card({
+        forge: {
+          kind: 'unknown',
+          reports_checks: false,
+          hosts_proposals: false,
+          can_write_remote: false,
+          has_external_remote: false,
+          pushes_to_external_remote: false,
+          identity: 'platform',
+          declaration: 'ℹ️ 暂时读不出这个项目的托管方：采纳先等一下，稍后重试',
+        },
+        merge_state: mergeState({
+          state: 'unknown',
+          who: 'platform',
+          reasons: [{ kind: 'no_signal', checks: [], detail: '暂时读不出这个项目的托管方' }],
+        }),
+      }),
+    ])
+
+    expect(acceptButton(container).disabled).toBe(true)
+    expect(container.querySelector('span[title*="暂时读不出这个项目的托管方"]')).toBeTruthy()
   })
 
   it('上次合并撞了冲突的卡照样能点重试', async () => {

@@ -1,12 +1,14 @@
 """Agent session data access."""
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, exists, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
+from app.domain.topic.models import Topic
 
 
 class AgentSessionRepository:
@@ -62,11 +64,58 @@ class AgentSessionRepository:
         NULL in a unique index, so an index over the pair would not enforce
         anything at all.
         """
+        await self._upsert(
+            topic_id=topic_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            values={"resume_token": resume_token},
+        )
+
+    async def save_place(
+        self,
+        *,
+        topic_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        work_lease: dict | None,
+        runtime_location: dict,
+    ) -> None:
+        """Record where this session rented hands and where its process runs.
+
+        The same upsert as ``save`` and for the same reason: setup can reach
+        here while a sweep is writing the resume token, and each write must
+        leave the other's column alone rather than raise or clobber it.
+
+        ``placed_at`` is stamped from here and from nowhere else — it is the
+        moment this session took a machine, which is what orders the sessions
+        of one room (``placed_in_room``). Stamping it in ``_upsert`` would make
+        it「最后写过任何一列」, and every turn's resume token writes a column.
+        """
+        await self._upsert(
+            topic_id=topic_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            values={
+                "work_lease": work_lease,
+                "runtime_location": runtime_location,
+                "placed_at": datetime.now(UTC),
+            },
+        )
+
+    async def _upsert(
+        self, *, topic_id: uuid.UUID, agent_handle: str, harness: str, values: dict
+    ) -> None:
+        # `updated_at` is stamped here by hand: ON CONFLICT DO UPDATE writes
+        # exactly the columns named in `set_`, so the mapper's `onupdate` never
+        # fires and the row would go on saying it was last touched when it was
+        # created. It says exactly that and nothing more — which session opened
+        # the room's pane is `placed_at`, written only by `save_place`.
+        values = {**values, "updated_at": datetime.now(UTC)}
         stmt = insert(AgentSession).values(
             topic_id=topic_id,
             agent_handle=agent_handle,
             harness=harness,
-            resume_token=resume_token,
+            **values,
         )
         await self._session.execute(
             stmt.on_conflict_do_update(
@@ -76,10 +125,72 @@ class AgentSessionRepository:
                     AgentSession.harness,
                 ],
                 index_where=text("task_id IS NULL"),
-                set_={"resume_token": stmt.excluded.resume_token},
+                set_={key: getattr(stmt.excluded, key) for key in values},
             )
         )
         await self._session.flush()
+
+    async def get(
+        self, topic_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> AgentSession | None:
+        """This agent's session row in this place, if it has one."""
+        result = await self._session.execute(
+            select(AgentSession).where(
+                *self._at(topic_id),
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def placed_in_room(self, room_id: uuid.UUID) -> list[AgentSession]:
+        """Every session in this room that is sitting on a machine, newest first.
+
+        A room has as many as it seats agents. Callers that hold nothing but a
+        room id — the transcript upload, the cleanup inventory, the executor
+        admission check — ask this and then match on what they do know. The
+        ordering is for the one caller that has nothing to match on: a room has
+        a single pane, and it belongs to whichever session last opened one —
+        `placed_at`, which only taking a machine writes.
+        """
+        result = await self._session.execute(
+            select(AgentSession)
+            .where(*self._at(room_id), AgentSession.runtime_location.is_not(None))
+            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
+        )
+        return list(result.scalars())
+
+    async def placed_everywhere(self) -> list[tuple[AgentSession, uuid.UUID]]:
+        """Each room's last-placed session with its project, for a cold start.
+
+        A channel re-adopts what outlived the backend, and to do that it needs
+        the project each session belongs to; the room is the only thing that
+        knows, so the join happens once here rather than one query per row.
+
+        One row per room, and the same rule ``placed_in_room`` and
+        ``harness_in_room`` already answer by: a room has one screen and it
+        belongs to whichever session last opened one. A room that ran
+        claude-code and now runs pi keeps both session rows — nothing clears
+        the location of the one that stopped — so handing every channel every
+        row has each of them recognise its own harness and claim that single
+        screen, and the room ends up owned by whichever channel finished
+        restoring last.
+        """
+        result = await self._session.execute(
+            select(AgentSession, Topic.project_id)
+            .join(Topic, Topic.id == AgentSession.topic_id)
+            .where(
+                AgentSession.task_id.is_(None),
+                AgentSession.runtime_location.is_not(None),
+            )
+            .distinct(AgentSession.topic_id)
+            .order_by(
+                AgentSession.topic_id,
+                AgentSession.placed_at.desc(),
+                AgentSession.id,
+            )
+        )
+        return [(row[0], row[1]) for row in result.all()]
 
     async def has_any(self, topic_id: uuid.UUID) -> bool:
         """Whether ANY agent has ever run here — i.e. whether the place has run.
@@ -87,9 +198,17 @@ class AgentSessionRepository:
         What froze on ``topics.session_id IS NOT NULL`` (the compute pin, the
         workspace's ``has_run``) freezes on this: the first turn is still the
         first turn, whoever took it.
+
+        A resume token, not a bare row: taking a machine writes the row before
+        the first turn has said anything, and a room that is still setting up
+        has not run.
         """
         result = await self._session.execute(
-            select(exists().where(*self._at(topic_id)))
+            select(
+                exists().where(
+                    *self._at(topic_id), AgentSession.resume_token.is_not(None)
+                )
+            )
         )
         return bool(result.scalar())
 

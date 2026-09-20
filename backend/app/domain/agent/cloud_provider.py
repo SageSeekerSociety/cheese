@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -136,10 +137,10 @@ class CloudChannel(DeviceChannel):
             await session.commit()
             return lease.device_id, agent.id, agent.username
 
-    async def precheck(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str]:
-        resolved = await self._resolve_device_agent(project_id, topic_id)
+    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
+        resolved = await self._resolve_device_agent(
+            session.project_id, session.topic_id
+        )
         if resolved is None:
             raise ScreenSetupError("Cloud 机器尚未完成连接")
         return resolved

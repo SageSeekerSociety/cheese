@@ -1,0 +1,13 @@
+{
+  "verb": "interrupt",
+  "why": "Weaker than close, deliberately. Take the work away and the session stays, its conversation stays, and the next send continues it. Killing the screen would take the conversation with it — which is the middle that was missing while a turn judged wedged had its backend coroutine cancelled and the agent on the machine kept going.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "ensure", "opened": true },
+    { "call": "send", "message": "重构一下", "returns": true },
+    { "call": "interrupt", "returns": true },
+    { "call": "holds", "returns": true },
+    { "call": "send", "message": "算了，继续", "returns": true },
+    { "call": "backlog.unread", "returns": 2 }
+  ]
+}

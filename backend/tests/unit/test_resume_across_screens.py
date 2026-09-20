@@ -219,6 +219,7 @@ async def test_a_turn_hands_the_machine_the_conversation_to_continue(monkeypatch
 
     async def drain():
         async for _event in runtime.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=uuid.uuid4(),
             prompt="hi",

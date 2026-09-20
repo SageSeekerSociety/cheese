@@ -1,0 +1,11 @@
+{
+  "verb": "ensure",
+  "why": "「在不在；不在就起」. Asking twice must not start a second conversation — every caller on the turn path calls this before it sends, so an ensure that restarted would throw away the session it was protecting.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "holds", "returns": false },
+    { "call": "ensure", "opened": true },
+    { "call": "holds", "returns": true },
+    { "call": "ensure", "opened": false }
+  ]
+}

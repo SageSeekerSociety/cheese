@@ -494,8 +494,8 @@ async def test_placed_room_uses_session_identity_not_executor(
     from datetime import UTC, datetime
 
     from app.core.config import settings as app_settings
+    from app.domain.agent_session.services import AgentSessionService
     from app.domain.device.models import DeviceRow
-    from app.domain.topic.models import Topic
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
@@ -521,13 +521,16 @@ async def test_placed_room_uses_session_identity_not_executor(
                 ccproxy_upstream=central_upstream,
             )
         )
-        room = await session.get(Topic, uuid.UUID(room_id))
-        room.session_placement = {
-            "device_id": "central",
-            "resource_id": room_id,
-            "channel": "device",
-            "execution": {"kind": "device", "device_id": "executor"},
-        }
+        await AgentSessionService(session).remember_place(
+            topic_id=uuid.UUID(room_id),
+            agent_handle="agent",
+            work_lease={"kind": "device", "device_id": "executor"},
+            runtime_location={
+                "device_id": "central",
+                "resource_id": room_id,
+                "channel": "device",
+            },
+        )
         await session.commit()
 
     response = client.post(

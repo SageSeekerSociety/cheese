@@ -6,6 +6,7 @@ import type { Block, Topic } from '../../cx_types'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
+import { isAgentBlock } from '../../lib/authorship'
 import {
   countLines,
   formatSpan,
@@ -174,7 +175,7 @@ watch(
 
 function authorLabel(b: Block): string {
   // 同对话栏：名册上没有的 AI 作者显示成「芝士」，不把 handle 摆出来。
-  return props.memberNames[b.author] || (b.author_type === 'ai' ? '芝士' : b.author)
+  return props.memberNames[b.author] || (isAgentBlock(b) ? '芝士' : b.author)
 }
 
 function fmtTime(iso: string): string {
