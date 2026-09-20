@@ -1,0 +1,25 @@
+{
+  "type": "execution.call",
+  "origin": "server",
+  "why": "The backend asks one machine's resident executor to run one method.",
+  "frame": {
+    "t": "execution.call",
+    "id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "path": "/home/cheese/rooms/8b1f2a/.cheese/executor",
+    "stdin": "{\"method\": \"invoke\", \"params\": {\"id\": \"0c5e4b91-6d2a-4f83-9a17-2b6c8d0e5f41\", \"tool\": \"Bash\", \"args\": {\"command\": \"printf once >> output.txt\"}}}",
+    "timeout": 660
+  },
+  "meaning": {
+    "call_id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "state": "/home/cheese/rooms/8b1f2a/.cheese/executor",
+    "method": "invoke",
+    "params": {
+      "id": "0c5e4b91-6d2a-4f83-9a17-2b6c8d0e5f41",
+      "tool": "Bash",
+      "args": {
+        "command": "printf once >> output.txt"
+      }
+    },
+    "timeout_seconds": 660
+  }
+}
