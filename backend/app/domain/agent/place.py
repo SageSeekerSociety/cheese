@@ -116,14 +116,33 @@ async def write(
 ) -> str:
     """Put one file the platform owns on a machine it borrows, and say where.
 
-    **The only call in `app/` that writes a file onto a remote machine.** That
-    is not tidiness: 结论 49 says the platform's own things — its configuration,
-    hooks, skills, prompts, progress, memories, drafts, backups — never enter
-    the hosted checkout, in the tree or as an untracked file beside it, and a
-    rule about where writes land can only be checked where the writes are. One
-    entry point makes it one assertion (below) and one AST count
+    **The only call in `app/` that sends server-held bytes to a machine as a
+    file** — an upload, an attachment, anything whose content came from outside
+    and has to arrive whole — over either transport that carries file bytes:
+    `file.put` on the connector, `stage_file` on the executor. That is not
+    tidiness: 结论 49 says the platform's own things — its configuration, hooks,
+    skills, prompts, progress, memories, drafts, backups — never enter the
+    hosted checkout, in the tree or as an untracked file beside it, and a rule
+    about where writes land can only be checked where the writes are. One entry
+    point makes it one assertion (below) and one AST count
     (`tests/unit/test_platform_writes_nothing_into_checkout.py`) rather than an
     argument about every path some caller builds at runtime.
+
+    It is not the only way `app/` makes a file appear on a machine, and reading
+    it as that is how somebody ends up writing into the checkout believing it
+    impossible. The platform also lays down its own programs by shipping shell
+    to `hub.exec`: the launch script (`device_provider._ship_launcher`), the
+    hook forwarder and the per-turn forwarded token
+    (`device_provider._screen_file_refresh`), the toolchain, the hook and the
+    `cheese` CLI that the launch script writes (`machine_launcher`). Every one
+    of those destinations is a path THIS module names — under
+    `footprint_root()` — which is the platform's own directory and is what 结论
+    49 allows. None of them is countable from an AST: the destination sits
+    inside a shell string assembled at runtime, which is exactly the
+    cross-process path analysis the guard was written to stop pretending it can
+    do. What holds that half honest is the acceptance that runs a real turn and
+    then reads the checkout's own porcelain status
+    (`scripts/remote_execution/private_terminal.py --ordinary`).
 
     `home` is the session's home on that machine, `$HOME`-anchored. The staged
     file goes beside the checkout, never inside it: the checkout is that home's

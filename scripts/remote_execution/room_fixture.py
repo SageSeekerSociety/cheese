@@ -68,6 +68,26 @@ class RoomExecutor:
                 }
             )
         )
+        # A real room's checkout is a git checkout — `resource_cleanup` reads
+        # its working-tree status before retiring it, and the whole of 结论 49
+        # is a claim about what that status says. A plain directory here makes
+        # the claim unaskable, so the fixture commits the project's own files
+        # and leaves the tree clean: anything a turn adds after this is either
+        # the agent's work or something the platform had no business writing.
+        for arguments in (
+            ["init", "-q", "-b", "main"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-qm",
+                "Project files the room starts from",
+            ],
+        ):
+            subprocess.run(["git", "-C", str(original), *arguments], check=True)
         pin = self.owner / ".cheese/claude/versions/2.1.277"
         pin.parent.mkdir(parents=True)
         pin.symlink_to(Path(claude).resolve())

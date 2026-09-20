@@ -47,7 +47,7 @@
 
 - 验收卡被驳回、采纳时合并冲突（`api/routes/accept.py`）
 - PR 全绿但 GitHub 拒绝合并、PR 的信号（CI 挂了、有人 review 了、有冲突）（`domain/review/services.py`）
-- 同步上游时合并冲突（`domain/workspace/upstream_conflict.py`）
+- 同步上游时合并冲突（`domain/repository/upstream_conflict.py`）
 
 **其余的只进房间。** 平台认为它这一轮失败了，**它不知道**。
 

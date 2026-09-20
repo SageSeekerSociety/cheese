@@ -9,13 +9,23 @@
 录开头」。那是跨过程的路径前缀分析：路径在运行时拼出来，AST 看不见，而真正写下
 去的那一步在另一台机器上。换成两条能判的：
 
-① 往远端机器写文件的调用，`app/` 里只有一处，就是 `place.write`；
+① 把服务端手上的字节当成一个文件送上机器的调用，`app/` 里只有一处，就是
+   `place.write`；
 ② `place.write` 自己断言目标落在 `footprint_root()` 之下、且不在检出目录里。
 
-两条合起来说的是同一件事：写点只有一个，那一个自己守着前缀。
+两条合起来说的是同一件事：送字节的入口只有一个，那一个自己守着前缀。
+
+**这两条守不住的那一半，得说在明处**：平台还会把自己的程序用 `hub.exec` 送上
+机器——启动脚本、钩子转发器、每轮轮换的 forwarded token、工具链和 `cheese` CLI，
+都是一段 shell 里的 `cat >` / `printf %s >`。它们写的是 `footprint_root()` 之下
+平台自己的文件，结论 49 允许；但目标路径是运行时拼进 shell 字符串里的，AST 数不
+到，把 `hub.exec` 的十几个调用点全数进来再白名单，只会让每加一条无关的 exec 都变
+红。所以那一半交给「跑完真一轮再读检出目录的 porcelain 状态」那条 acceptance
+（`scripts/remote_execution/private_terminal.py --ordinary`），不交给这里。
 """
 
 import ast
+import base64
 import uuid
 from pathlib import Path
 
@@ -33,7 +43,7 @@ STAGE_FILE = "stage_file"
 
 
 def call_sites(tree: ast.AST) -> list[int]:
-    """**请求**一次远端写入的那些行。
+    """**请求**一次「把这串字节写成机器上的一个文件」的那些行。
 
     抓的是发起的那一侧，不是接收的那一侧。`runtime.py` 里 `kind == "stage_file"`
     是执行器在机器上读自己收到的请求——它是这条规则的被守方，不是它的违反者，而一
@@ -60,12 +70,15 @@ def call_sites(tree: ast.AST) -> list[int]:
     return lines
 
 
-def test_only_one_call_in_the_app_writes_a_file_onto_a_machine():
-    """写远端文件的调用点数 == 1，而那一处在 `place.py` 里。
+def test_only_one_call_in_the_app_ships_file_bytes_to_a_machine():
+    """送字节的调用点数 == 1，而那一处在 `place.py` 里。
 
     数调用点，而不是读路径：路径是运行时拼的，调用点不是。一个新的写点在这里是一
     条失败的断言，在生产上是一张没人能解释的未跟踪文件——它在别人的仓库里，而看见
     它的人不知道它是谁放的，也不知道删掉会不会弄坏什么。
+
+    数的是 `file.put` 与 `stage_file` 这两条**文件字节**的通路，不是「所有能让机器
+    上多出一个文件的办法」——后者包括 `hub.exec` 里那些 `cat >`，见模块 docstring。
     """
     found: dict[str, list[int]] = {}
     for source in APP.rglob("*.py"):
@@ -75,7 +88,7 @@ def test_only_one_call_in_the_app_writes_a_file_onto_a_machine():
         if lines:
             found[str(source.relative_to(APP))] = lines
     assert found == {}, (
-        f"这些地方直接往机器上写文件，绕过了 place.write 的前缀断言：{found}"
+        f"这些地方直接把文件字节送上机器，绕过了 place.write 的前缀断言：{found}"
     )
 
 
@@ -106,11 +119,36 @@ class Machine:
         return {"ok": True, "path": f"/home/owner/{path.removeprefix('$HOME/')}"}
 
 
-async def test_a_staged_file_lands_beside_the_checkout_and_not_in_it():
+class Executor:
+    """记下自己收到过哪些 control 请求的一个执行器。"""
+
+    def __init__(self) -> None:
+        self.asked: list[dict] = []
+
+    async def control(self, target, payload, *, hub=None, trace_id=None):
+        del target, hub, trace_id
+        self.asked.append(payload)
+        return {"ok": True, "path": f"/root/.cheese/{payload['path']}"}
+
+
+@pytest.fixture
+def executor(monkeypatch):
+    """把执行器那条通路接到一个记事本上，同时盯住它有没有被走。"""
+    from app.domain.agent import private_chat
+
+    spy = Executor()
+    monkeypatch.setattr(private_chat, "control", spy.control)
+    return spy
+
+
+async def test_a_staged_file_lands_beside_the_checkout_and_not_in_it(executor):
     """一份附件落在会话 home 里，检出目录一个字节都没多。
 
     检出目录是会话 home 的 `room/`，所以「在 home 里」和「不在检出里」是两句话，
     两句都要断言：只断言前一句的话，`room/uploads/x.png` 照样通过。
+
+    没有执行器的屏幕走连接器，拿到的是 `$HOME` 锚定的绝对路径——这是下面那条
+    执行器用例的负向对照：两条通路都走的话，这里的 `executor.asked` 会非空。
     """
     machine = Machine()
     project, room = uuid.uuid4(), uuid.uuid4()
@@ -123,6 +161,7 @@ async def test_a_staged_file_lands_beside_the_checkout_and_not_in_it():
         device_id="device",
         screen="screen",
     )
+    assert executor.asked == [], "没有执行器的屏幕不该去问执行器"
     ((asked, data),) = machine.wrote
     assert data == b"bytes"
     assert asked.startswith(f"$HOME/{place.footprint_root()}/")
@@ -131,6 +170,36 @@ async def test_a_staged_file_lands_beside_the_checkout_and_not_in_it():
     # 机器报回来的绝对路径原样交给 agent：后端展不开那台机器的 `$HOME`。
     owner_home = f"/home/owner/.cheese/home/{project}/{room}"
     assert landed == f"{owner_home}/attachments/uploads/abc/图.png"
+
+
+async def test_a_screen_with_an_executor_is_written_through_it(executor):
+    """有执行器的屏幕，字节只走执行器，而且走的是相对路径那一份。
+
+    两条通路解的不是同一个 `$HOME`：连接器是机器主人的，执行器是会话自己的。送错
+    那一份不会报错——它在一个真实目录里写下一个真实文件，只是没有人会去看。私聊的
+    执行器是个容器，写在它坐的那台宿主机上的文件，agent 根本打不开。
+
+    所以这里盯三件事：连接器一次都没被调（不是两条都走的双写）、执行器收到的是
+    `attachments/<name>` 这个相对路径、返回值是执行器报回来的那个绝对路径原样。
+    """
+    machine = Machine()
+    home = device_provider.device_home_dir(uuid.uuid4(), uuid.uuid4())
+    landed = await place.write(
+        b"bytes",
+        home=home,
+        name="uploads/abc/图.png",
+        hub=machine,
+        device_id="device",
+        screen="screen",
+        execution_target={"kind": "private", "home": home},
+    )
+    assert machine.wrote == [], "有执行器还走了连接器，就是它替掉的那份双写"
+    (payload,) = executor.asked
+    assert payload["subtype"] == STAGE_FILE
+    assert payload["path"] == f"{place.STAGED_DIR}/uploads/abc/图.png"
+    assert not payload["path"].startswith("$HOME"), "执行器要的是相对它自己 home 的"
+    assert base64.b64decode(payload["data"]) == b"bytes"
+    assert landed == "/root/.cheese/attachments/uploads/abc/图.png"
 
 
 @pytest.mark.parametrize(
@@ -144,11 +213,14 @@ async def test_a_staged_file_lands_beside_the_checkout_and_not_in_it():
     ],
     ids=["outside", "old-root", "absolute", "the-checkout"],
 )
-async def test_a_write_aimed_outside_the_footprint_is_refused(home):
+async def test_a_write_aimed_outside_the_footprint_is_refused(home, executor):
     """瞄错地方的写不是写进去再说，是当场拒绝。
 
     落到脚印之外的那一份，`cheese uninstall` 不会收走；落进检出目录的那一份，是别
     人仓库里一个他没加过的未跟踪文件。两种都不在写完之后才发现。
+
+    断言在通路之前：拒绝发生在选连接器还是选执行器之前，所以两边都得一个字节没
+    收到——只盯住连接器的话，把检出目录传给一个有执行器的屏幕照样能写进去。
     """
     machine = Machine()
     with pytest.raises(place.OutsideFootprint):
@@ -159,5 +231,7 @@ async def test_a_write_aimed_outside_the_footprint_is_refused(home):
             hub=machine,
             device_id="device",
             screen="screen",
+            execution_target={"kind": "private", "home": home},
         )
     assert machine.wrote == [], "拒绝之后还是写了"
+    assert executor.asked == [], "拒绝之后还是让执行器写了"
