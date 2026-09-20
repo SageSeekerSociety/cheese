@@ -3,8 +3,8 @@
  *
  * 房间是个对话，不是监控面板。平台自己的提示（CI 没过、闸门红了、轮次失败、
  * 合并冲突…）过去和真人发言一样平铺、一样字号、想多长就多长，一条能占五六行。
- * 这个模块是**唯一**决定「这条事件长什么样」的地方：给一个 event block，返回
- * 一份渲染指令，ChatPanel 只负责照着画。
+ * 这个模块决定事件的正文、详情和操作。ChatPanel 根据作者与事件归属，给 agent
+ * 相关通知加上统一的状态消息外观。
  *
  * 硬约束是「信息不能丢，只能收起来」—— 所以没有任何一档会把原文扔掉：长文进
  * `<details>` 的展开区，连续同类事件折成一行时，每一次的原文都还在展开区里。
@@ -25,9 +25,7 @@
  *
  * **文案在前端，后端只发码** —— 和 platform_failures.py 的 code + copy contract 同一条规矩。
  *
- * 向后兼容是硬要求：库里存量事件绝大多数 `meta` 是 null 或只有 `action`，它们
- * 必须继续按老样子渲染（居中灰字一行）。所以每一档新行为都以「新字段存在」为
- * 前提，没有新字段就落回 `plain`。
+ * 缺少结构化字段的事件仍保留原文；没有作者或类别依据时，不猜它属于哪个 agent。
  */
 import type { Block } from '../cx_types'
 import type { BackendErrorPresentation } from './backendErrorEvent'
@@ -84,6 +82,49 @@ const WHO_LABEL: Record<WhoTag, string> = {
   cheese: '芝士处理中',
   human: '待人工处理',
 }
+
+// These events describe the room agent's work or execution environment. `who`
+// instead names the next responder, so it cannot decide the message's identity.
+export const AGENT_STATUS_EVENTS = new Set([
+  'cloud_provisioning',
+  'machine_provisioning',
+  'turn_queued',
+  'turn_failed',
+  'turn_timeout',
+  'deploy_interrupted',
+  'delivery_fallback',
+  'tools_recovered',
+  'sandbox_rebuilt',
+  'host_failure',
+  'platform_error',
+  'prompt_replayed',
+  'ci_failed',
+  'gate_failed',
+  'gate_blocked',
+  'gate_abandoned',
+  'accept_conflict',
+  'upstream_conflict',
+  'pr_conflict',
+  'pr_review',
+  'merge_refused',
+  'card_filed',
+  'card_rejected',
+  'card_voided',
+  'card_redescribed',
+  'deploy_done',
+  'deploy_failed',
+  'room_merge',
+  'conclusion_settled',
+  'archive_deferred',
+  'accept_done',
+  'accept_stopped',
+  'accept_ready',
+  'accept_dismissed',
+  'merge_withheld',
+  'pr_closed',
+  'force_merged',
+  'migration_collision',
+])
 
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
 export interface NoticeOccurrence {
@@ -339,7 +380,8 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
-      if (sameType || (bothPlain && prevBlock.content === block.content)) {
+      const sameAuthor = prevBlock.author === block.author && prevBlock.author_type === block.author_type
+      if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
         prev.run.push(block)
         continue
       }
@@ -373,7 +415,12 @@ function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
       continue
     }
     let end = i
-    while (end + 1 < rows.length && rows[end + 1].block.turn_id === turnId && summaryPart(rows[end + 1])) {
+    while (
+      end + 1 < rows.length &&
+      rows[end + 1].block.turn_id === turnId &&
+      rows[end + 1].block.author === row.block.author &&
+      summaryPart(rows[end + 1])
+    ) {
       end += 1
     }
     const run = rows.slice(i, end + 1)
