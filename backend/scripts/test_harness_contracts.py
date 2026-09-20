@@ -38,9 +38,11 @@ def main() -> int:
     # by the platform itself (app/domain/machine/pi_dist.py), and its npm
     # install path was retired. So pi's share of the harness contract is held
     # where it needs no binary at all — the fixture set under
-    # tests/fixtures/harness-contract/, read here by
-    # tests/contract/test_harness_contract.py and on pi's own side by the
-    # `extension` job in test.yml.
+    # tests/fixtures/harness-contract/, which this job does NOT run: its
+    # Python reader (tests/contract/test_harness_contract.py) goes with the
+    # contract layer of test.yml's `test` job, and its TypeScript reader with
+    # the `extension` job there. Adding it to the list below would buy a
+    # second run of tests whose whole point is that they need neither binary.
     packages = [f"@anthropic-ai/claude-code@{claude_version}", "@openai/codex@0.154.0"]
     (run / "inputs.json").write_text(json.dumps({"packages": packages}, indent=2))
     print(f"Contract evidence: {run}", flush=True)

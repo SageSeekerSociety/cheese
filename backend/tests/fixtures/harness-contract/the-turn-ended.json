@@ -1,11 +1,24 @@
 {
   "verb": "backlog",
-  "why": "结论 29: the authoritative copy of a session's transcript is the platform's, handed up incrementally before each turn ends. What makes that a property of the turn rather than of a timer is this event — hook delivery landing is what sends the collector at once instead of on its five-second clock (app/domain/agent/event_drain.py, whose upload path tests/unit/test_transcript_collector.py drives end to end). So the contract's share here is that every harness says 「这一轮结束了」 in a way the platform recognises, and says what the agent said last.",
+  "why": "结论 29: the authoritative copy of a session's transcript is the platform's, handed up incrementally before each turn ends. What makes that a property of the turn rather than of a timer is this event — hook delivery landing is what sends the collector at once instead of on its five-second clock (app/domain/agent/event_drain.py, whose upload path tests/unit/test_transcript_collector.py drives end to end). So the contract's share here is that every harness says 「这一轮结束了」 in a way the platform recognises, and says what the agent said last. Claude Code's records are two flushes of ONE message, which is the shape its stream really has: a message is whole at a protocol boundary, not at every flush, so the two must come out as one event here exactly as the other two harnesses' single records do.",
   "readers": ["python"],
   "harnesses": {
     "claude-code": {
       "records": [
-        { "hook_event_name": "MessageDisplay", "delta": "跑完了" },
+        {
+          "hook_event_name": "MessageDisplay",
+          "message_id": "msg-1",
+          "index": 0,
+          "final": false,
+          "delta": "跑"
+        },
+        {
+          "hook_event_name": "MessageDisplay",
+          "message_id": "msg-1",
+          "index": 1,
+          "final": true,
+          "delta": "完了"
+        },
         {
           "hook_event_name": "Stop",
           "session_id": "session-1",
