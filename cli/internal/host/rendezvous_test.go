@@ -104,7 +104,15 @@ func TestFootprintFileIsAtomicAndConfinedToTheFootprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeFootprintFile: %v", err)
 	}
-	want := filepath.Join(home, place.Root, "home", "p", "r", "attachments", "img-a.png")
+	// Symlinks resolved, because that is the path handed back to the server and
+	// @-mentioned to the agent: on macOS a temp home under /var really lives at
+	// /private/var, and a mention of the unresolved spelling is a mention of a
+	// path the agent may not be able to open.
+	real, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(real, place.Root, "home", "p", "r", "attachments", "img-a.png")
 	if landed != want {
 		t.Fatalf("landed at %q, want %q", landed, want)
 	}
