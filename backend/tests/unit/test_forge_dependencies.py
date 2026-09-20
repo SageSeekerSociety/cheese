@@ -293,3 +293,81 @@ async def test_pending_notice_wakes_again_after_restart_until_receipted(
         await session.commit()
     await scheduler.deliver_dependency_notices()
     assert chat.notify_running_turn.await_count == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("rejected", [False, True])
+async def test_dependency_notice_waits_for_matching_prompt_receipt(
+    db_factory, rejected
+):
+    import uuid
+
+    from app.domain.agent.chat import ChatService, _pending_platform_notices
+    from app.domain.block.repositories import BlockRepository
+    from tests.conftest import stub_compute
+
+    parent, child = await seed(db_factory, delivered=False)
+    if rejected:
+        async with db_factory() as session:
+            saved = await session.get(Task, parent.id)
+            saved.status = TaskStatus.open
+            saved.closed_at = None
+            session.add(
+                AcceptCard(
+                    topic_id=parent.room_id,
+                    task_id=parent.id,
+                    status=AcceptStatus.rejected,
+                    reviewer_handle="reviewer",
+                    note="Keep the original API",
+                )
+            )
+            await session.commit()
+    await retarget_completed_dependencies(db_factory)
+    received = []
+
+    async def deliver(topic_id, text, images=None):
+        assert topic_id == child.room_id
+        received.append(text)
+        return len(received) > 1
+
+    def service():
+        compute = stub_compute()
+        compute.deliver = deliver
+        chat = ChatService(
+            session_factory=db_factory,
+            base_system_prompt="Synthetic agent",
+            workspace_root="/unused-dependency-receipt-test",
+            compute=compute,
+        )
+        chat._active_turn_ids[child.room_id] = uuid.uuid4()
+        return chat
+
+    async def waiting():
+        async with db_factory() as session:
+            history = await BlockRepository(session).turn_history(child.room_id)
+            return _pending_platform_notices(history)
+
+    chat = service()
+    await SchedulerService(chat_service=chat).deliver_dependency_notices()
+    assert len(received) == 1
+    assert len(await waiting()) == 1
+    chat = service()
+    scheduler = SchedulerService(chat_service=chat)
+    await scheduler.deliver_dependency_notices()
+    assert len(received) == 2
+    assert received[0] == received[1]
+    assert str(child.id) in received[1]
+    if rejected:
+        assert "Keep the original API" in received[1]
+    assert len(await waiting()) == 1
+    await chat.confirm_prompt_receipt(child.room_id, "unrelated input")
+    assert len(await waiting()) == 1
+    await chat.confirm_prompt_receipt(child.room_id, received[1])
+    assert await waiting() == []
+    async with db_factory() as session:
+        block = await session.scalar(
+            select(Block).where(Block.topic_id == child.room_id)
+        )
+        assert block.meta["consumed_turn"] == str(chat._active_turn_ids[child.room_id])
+    await scheduler.deliver_dependency_notices()
+    assert len(received) == 2

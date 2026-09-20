@@ -97,3 +97,10 @@ when the parent was squash-merged.
 If the parent closed without delivery, the child keeps its work and receives an
 instruction to reassess the dependency. Closing a parent does not establish
 that its changes were merged, and does not automatically close its children.
+
+While a task targets an unaccepted parent, acceptance and manual merge overrides
+wait. Rejecting the parent's latest card also clears the child's approvals and
+auto-merge authorization, even if the parent task remains open. The child agent
+receives the rejection reason and decides how to revise its work. If it retargets
+the pull request to the project's default branch, reconciliation clears the
+recorded dependency and requires a new review.
