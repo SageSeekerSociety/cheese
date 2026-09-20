@@ -84,13 +84,6 @@ services:
       # PERSISTENT home. Backed by a host path so its global config and the
       # repo-trust records survive redeploys.
       - HOME=/data/apphome
-      # Memory (#187). On MEMORY_BACKEND=openviking the whole memory tree —
-      # AGFS files AND the vector index — lives under this directory and
-      # nowhere else: no Postgres row, no image layer. Unmounted it is
-      # container-local, so every deploy would start the platform amnesiac.
-      # Set here rather than in backend/.env because the value is a CONTAINER
-      # path that only makes sense together with the bind mount below.
-      - OPENVIKING_DATA_DIR=/data/viking
       # Preserve earlier tar archives and their additive R2 mirror. New raw
       # transcript increments go directly to the private TRANSCRIPT_S3_BUCKET.
       - TRANSCRIPTS_DIR=/data/transcripts
@@ -107,11 +100,6 @@ services:
       # platform features (topics/芝士).
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
       - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
-      # Everything the openviking memory backend remembers. Mounted
-      # unconditionally: on MEMORY_BACKEND=db the directory just stays empty,
-      # and having it already in place is what makes flipping the backend a
-      # one-line env change instead of a deploy edit.
-      - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
       # The transcript archives (TRANSCRIPTS_DIR above). Mounted so they
       # outlive the container alongside their off-site backup.
       - ${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}:/data/transcripts

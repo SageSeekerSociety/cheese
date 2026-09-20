@@ -408,91 +408,6 @@ Related: never hand-install files INTO a running container (they evaporate on
 the next recreate); the gateway's own env keys follow the same
 recreate-not-restart rule (`deploy/gateway/README.md`).
 
-### Turning on the openviking memory backend (#187)
-
-Everything except the key is already in place: `deploy-docker.sh` creates
-`VIKING_HOST_PATH` (default `/home/nictheboy/cheese-viking`), hands it to uid
-1000 with the other mounts, and compose bind-mounts it at `/data/viking` with
-`OPENVIKING_DATA_DIR` pointed there. On the default `MEMORY_BACKEND=db` the
-directory simply stays empty.
-
-To switch a box over, add to its `backend/.env` and redeploy the running sha
-(step 2 above — `docker restart` will not do):
-
-```
-MEMORY_BACKEND=openviking
-OPENVIKING_LLM_API_KEY=<zhipu key>
-OPENVIKING_EMBEDDING_API_KEY=<zhipu key>
-```
-
-Then import the facts the db backend already holds. The rows are kept as the
-audit trail, so this is additive; imported ids are checkpointed on the volume,
-so a re-run resumes instead of duplicating:
-
-```bash
-docker exec -w /app cheese-backend-1 \
-  python scripts/migrate_memory_to_openviking.py --dry-run   # then without it
-```
-
-Two things to know before flipping it:
-
-- **That directory IS the database.** Not Postgres, not the image. The PG backup
-  job does not cover it; it has a backup line of its own
-  (`cheese-viking-backup.timer`, every 6h, off-site to R2 — see
-  `deploy/README-backup.md`). Installing that timer is part of the same manual
-  runbook as the DB backup, so confirm it is actually running on this box before
-  you flip the switch, not after.
-- **The key buys extraction, not just vectors.** Every remembered fact costs a
-  chat call (OpenViking's extractor) plus embedding calls. A key that only
-  works on the embedding endpoint gets you a backend that stores nothing.
-
-#### Checking that it actually came up
-
-A wrong key does not raise anything. Extraction runs in a background task
-inside OpenViking and the read path returns empty on error, so a rejected key
-looks *exactly* like the db backend: no memories, no complaint. So the backend
-calls both endpoints itself at boot and reports what happened. Two places to
-look, in this order:
-
-1. **The container log, right after the redeploy.** On success:
-
-   ```
-   memory: openviking model endpoints answered — embedding at …, chat at …
-   ```
-
-   On failure it is an `ERROR` line naming the endpoint, the HTTP status, the
-   vendor's own message, and — the part that usually is the answer — *which
-   setting the key came from*. `key from anthropic_auth_token` means the
-   openviking keys were never set and it fell back to the agent gateway's
-   token, which these endpoints will always reject.
-
-2. **`/health/detailed`, any time after.** `checks.memory` carries the same
-   verdict, per endpoint, with a `checked_at`; it is re-probed in the
-   background every 5 minutes, so a key that expires later shows up here too.
-
-   ```bash
-   docker exec cheese-backend-1 curl -s localhost:8081/health/detailed \
-     | jq .checks.memory
-   ```
-
-A failing memory check makes `/health/detailed` report `degraded`, and that is
-all it does: it does **not** 503 `/readyz` and does **not** touch `/healthz`,
-which is the container health check and therefore the deploy's rollback gate.
-Turning "the model vendor is having a bad afternoon" into a rolled-back release
-would cost more than the silence this check exists to break.
-
-One more thing the probe catches that a key test would not: it compares the
-width of the vector it gets back against `OPENVIKING_EMBEDDING_DIMENSION`.
-OpenViking does not ask the endpoint for a specific width, so a model whose
-native width differs from the configured one gives you a working key and a
-broken index.
-
-`backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
-whole path against a local stand-in endpoint, so the wiring is verifiable
-without a key — but it says nothing about extraction quality, which is exactly
-what the real key is for. The self-check has its own key-less coverage in
-`backend/tests/integration/test_memory_endpoint_probe.py`.
-
 ### Turning on 记忆整理 / dreaming (#187)
 
 Independent of the openviking switch above, and much cheaper to try: dreaming
@@ -530,10 +445,6 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
-- **Memory** (`VIKING_HOST_PATH`, the openviking tree): 6-hourly full tar →
-  verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
-  the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
-  tree is empty and the run is skipped, not failed.
 - **Transcripts**: live collection writes immutable original byte ranges and source
   identity records directly to the private `TRANSCRIPT_S3_BUCKET`, alongside a
   PostgreSQL index. Existing tar archives remain in `TRANSCRIPTS_HOST_PATH`
@@ -624,8 +535,8 @@ both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — `VIKING_HOST_PATH`, the openviking
-memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
+where git reads its global config from — and `TRANSCRIPTS_HOST_PATH`, the
+transcript archives) hold files
 written by the pre-2026-08 backend as uid 1001.
 `deploy/deploy-docker.sh` hands them over once via
 `deploy/fix-workspace-ownership.sh` before the swap —

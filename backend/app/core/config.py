@@ -619,13 +619,6 @@ class Settings(BaseSettings):
     # without adding a block.
     turn_stall_signal_s: float = 600.0
 
-    # --- Memory backend (spec §8.4 / §15 Q9) ---
-    # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
-    # "openviking": real layered memory on embedded OpenViking (viking:// FS,
-    # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
-    # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
-    memory_backend: str = "db"
-
     # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
     # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
     # topic and organize what it learned into the project's memory pools.
@@ -648,38 +641,6 @@ class Settings(BaseSettings):
     # Below this many blocks a topic is not worth a turn — a three-message
     # topic has nothing in it that reading the transcript later would not give.
     dream_min_blocks: int = 20
-
-    # Local storage root for the embedded OpenViking instance (AGFS + vectors).
-    openviking_data_dir: str = "./.viking"
-    # OpenAI-compatible endpoints OpenViking uses internally. These are separate
-    # from anthropic_base_url (the agent gateway speaks the Anthropic protocol;
-    # OpenViking needs the OpenAI protocol). For Zhipu the same API key works on
-    # both gateways. api keys default to anthropic_auth_token when unset.
-    openviking_llm_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
-    openviking_llm_model: str = "glm-4.5-air"
-    openviking_llm_api_key: str | None = None
-    openviking_embedding_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
-    openviking_embedding_model: str = "embedding-3"
-    openviking_embedding_api_key: str | None = None
-    openviking_embedding_dimension: int = 2048
-    # 知识沉淀是副产品 (spec §8.4): commit each finished turn to OpenViking so
-    # memories are extracted in the background. Only effective on "openviking".
-    openviking_auto_extract: bool = True
-    # Memory types OpenViking's extractor may write (built-in taxonomy names).
-    # Curated to the omem-style durable kinds — omem:user→profile/preferences,
-    # omem:feedback→preferences, omem:project→events, omem:reference→entities.
-    # identity/soul are the extractor's anchor files and MUST stay allowed
-    # (verified: without them the extraction loop writes nothing at all).
-    # trajectories/experiences are agent-SOP records that bloat recall: off.
-    openviking_memory_types: list[str] = [
-        "profile",
-        "preferences",
-        "entities",
-        "events",
-        "tools",
-        "identity",
-        "soul",
-    ]
 
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key

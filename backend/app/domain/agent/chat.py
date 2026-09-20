@@ -1196,9 +1196,9 @@ class ChatService:
         # this is a dict that only ever grows in a process that runs for weeks.
         # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
-        # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
-        # only keeps weak refs; without this a pending commit could be GC'd).
-        self._memory_tasks: set[asyncio.Task] = set()
+        # Strong refs to in-flight background tasks (asyncio only keeps weak
+        # refs; without this a pending commit could be GC'd).
+        self._background_tasks: set[asyncio.Task] = set()
         # Debounce + strong refs for background spool settles (attach 收账,
         # #316): topics with a settle already scheduled, and the tasks running
         # them so they can't be GC'd mid-drain.
@@ -2616,7 +2616,6 @@ class ChatService:
                 )
             if not result.is_error:
                 await blocks.mark_consumed(list(state.pending_ids), state.work_id)
-            published_text = await blocks.published_text_for_turn(state.work_id)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -2633,16 +2632,6 @@ class ChatService:
             )
             if payload is not None:
                 action_frames.append({"type": "event_block", "block": payload})
-        if not result.is_error:
-            self._schedule_memory_extraction(
-                topic_id=state.topic_id,
-                project_id=state.project_id,
-                is_private=state.is_private,
-                private_owner=state.private_owner,
-                agent_pool=state.agent_pool,
-                user_text=state.user_text,
-                assistant_text=published_text,
-            )
         return action_frames
 
     async def post_user_message(
@@ -4105,8 +4094,8 @@ class ChatService:
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None:
         """Late-landing spend rows: drain again in the background and land the
-        usage row + credit deduction when they show up. Strong-ref'd like the
-        memory tasks so the pending commit can't be GC'd."""
+        usage row + credit deduction when they show up. Strong-ref'd so the
+        pending commit can't be GC'd."""
 
         async def _later() -> None:
             await asyncio.sleep(20.0)
@@ -4139,7 +4128,7 @@ class ChatService:
 
         hold(
             asyncio.create_task(_later()),
-            self._memory_tasks,
+            self._background_tasks,
             name=f"deferred-usage-drain-{turn_id}",
         )
 
@@ -4992,60 +4981,6 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
         return
-
-    def _schedule_memory_extraction(
-        self,
-        *,
-        topic_id: uuid.UUID,
-        project_id: uuid.UUID,
-        is_private: bool,
-        private_owner: str | None,
-        agent_pool: tuple[MemoryScope, str] | None,
-        user_text: str,
-        assistant_text: str,
-    ) -> None:
-        """Fire the post-turn OpenViking session commit in the background.
-
-        Only active on the openviking backend — the flat DB backend has no
-        extraction pipeline (there, memory grows via explicit `cheese remember`).
-        """
-        if settings.memory_backend != "openviking":
-            return
-        if not settings.openviking_auto_extract:
-            return
-        if not (user_text.strip() or assistant_text.strip()):
-            return
-        if is_private and private_owner:
-            scope, scope_id = MemoryScope.user, private_owner
-        elif agent_pool is not None:
-            # Keep each teammate's learned project knowledge in its own pool.
-            scope, scope_id = agent_pool
-        else:
-            return
-
-        async def _run() -> None:
-            from app.domain.memory.openviking_store import OpenVikingMemoryStore
-
-            await OpenVikingMemoryStore().ingest_turn(
-                scope,
-                scope_id,
-                conversation_key=str(topic_id),
-                exchanges=[("user", user_text), ("assistant", assistant_text)],
-            )
-
-        task = asyncio.create_task(_run())
-        self._memory_tasks.add(task)
-
-        def _log_done(t: asyncio.Task) -> None:
-            self._memory_tasks.discard(t)
-            if not t.cancelled() and t.exception() is not None:
-                logger.warning(
-                    "memory extraction commit failed for topic %s: %s",
-                    topic_id,
-                    t.exception(),
-                )
-
-        task.add_done_callback(_log_done)
 
     async def ingest_activity(
         self,

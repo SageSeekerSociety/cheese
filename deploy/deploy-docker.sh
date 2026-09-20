@@ -14,8 +14,6 @@
 # Env (with safe defaults baked into the compose file):
 #   BACKEND_ENV_FILE   path to the box's backend/.env   (default in compose)
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
-#   VIKING_HOST_PATH   host dir holding the openviking memory tree (created by
-#                      this script if missing; default in compose)
 #   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
 #                      enrolling machines (same treatment; default in compose)
 #   TRANSCRIPTS_HOST_PATH  host dir holding the transcript archives uploaded
@@ -478,13 +476,6 @@ dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — a
 # deploy-dev *after* the trees had already moved and took dev down until the
 # next deploy (run 31466502982). So: last fallible step first, irreversible step
 # last, and nothing between it and `dc up` that can fail.
-VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
-# Create it here, not by letting the bind mount conjure it: a missing source
-# path makes docker create it as root:root, and the backend (uid 1000) then
-# cannot write the memory tree it was just told to keep there. Making it first
-# also puts it in reach of the handover below, which skips paths that do not
-# exist yet.
-mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
 # Same story for the claude binaries the backend serves to the machines it
 # enrols: a cache the container has to be able to write, and that has to
 # outlive the container (see the compose file).
@@ -504,7 +495,6 @@ OWNERSHIP_PATHS=(
   "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}"
   "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}"
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
-  "$VIKING_PATH"
   "$CLAUDE_CACHE_PATH"
   "$PI_CACHE_PATH"
   "$TRANSCRIPTS_PATH"

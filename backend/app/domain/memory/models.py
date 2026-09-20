@@ -1,9 +1,8 @@
 """Memory model.
 
 Per spec §8.4, the block tree (DB) is the source of truth; memory is a
-projection for fast AI recall, rebuildable from blocks. Phase 0 stores memory
-as plain entries scoped to a project or a user. The MemoryStore abstraction
-(store.py) lets us swap in OpenViking later without touching callers.
+projection for fast AI recall, rebuildable from blocks. Memory is stored as
+plain entries scoped to a project or a user.
 """
 
 import enum

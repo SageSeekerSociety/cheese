@@ -87,5 +87,3 @@ jobs:
       - name: CI runner provisioning
         run: bash deploy/tests/test-ci-runner-provision.sh
 
-      - name: Openviking memory backup
-        run: bash deploy/tests/test-viking-backup.sh
