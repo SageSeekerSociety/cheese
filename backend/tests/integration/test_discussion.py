@@ -46,8 +46,9 @@ class TestDiscussionIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        if task_resp.status_code != 200:
-            pytest.skip(f"Task creation failed: {task_resp.json()}")
+        assert task_resp.status_code == 200, (
+            f"Task creation failed: {task_resp.json()}"
+        )
         task_id = task_resp.json()["data"]["task"]["id"]
         return {
             "creator": creator,

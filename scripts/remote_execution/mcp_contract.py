@@ -18,6 +18,11 @@ The last check is inverted on purpose: it asserts that the build still
 offers no way back to a backgrounded task. The day that check fails, the
 workaround in `runtime.py` has become dead weight and goes.
 
+The receipt is a JUnit report because that is what
+`backend/scripts/assert_suite_ran.py` reads: a check this script never got to
+is the same failure as a test the runner skipped, and both are caught by the
+one gate rather than by a second thing that counts checks.
+
 Usage:
     python3 mcp_contract.py --claude <binary> [--output <receipts dir>]
 """
@@ -32,6 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(
@@ -286,6 +292,28 @@ def checks(serve):
     )
 
 
+def junit(binary, version, results):
+    """The checks as a JUnit report, so one gate reads every suite's evidence."""
+    suite = ET.Element(
+        "testsuite",
+        name="mcp-contract",
+        tests=str(len(results)),
+        failures=str(sum(not r["holds"] for r in results)),
+    )
+    properties = ET.SubElement(suite, "properties")
+    ET.SubElement(properties, "property", name="claude", value=binary)
+    ET.SubElement(properties, "property", name="version", value=version)
+    for result in results:
+        case = ET.SubElement(
+            suite, "testcase", classname="mcp-contract", name=result["check"]
+        )
+        if result["holds"]:
+            ET.SubElement(case, "system-out").text = result["observed"]
+        else:
+            ET.SubElement(case, "failure", message=result["observed"])
+    return ET.tostring(ET.ElementTree(suite).getroot(), encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--claude", required=True, help="the claude binary to check")
@@ -307,20 +335,15 @@ def main():
             print(f"{'PASS' if holds else 'FAIL'}  {name}\n      {observed}")
     finally:
         serve.close()
-    receipt = {
-        "claude": str(arguments.claude),
-        "version": version,
-        "checks": results,
-        "held": all(result["holds"] for result in results),
-    }
+    held = all(result["holds"] for result in results)
     if arguments.output:
         arguments.output.mkdir(parents=True, exist_ok=True)
-        (arguments.output / "mcp-contract.json").write_text(
-            json.dumps(receipt, indent=2)
+        (arguments.output / "results.xml").write_bytes(
+            junit(str(arguments.claude), version, results)
         )
     shutil.rmtree(root, ignore_errors=True)
     print(f"\n{version}: {sum(r['holds'] for r in results)}/{len(results)} held")
-    return 0 if receipt["held"] else 1
+    return 0 if held else 1
 
 
 if __name__ == "__main__":

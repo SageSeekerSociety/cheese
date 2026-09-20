@@ -40,8 +40,11 @@ jobs:
         run: |
           uv python install 3.13
           uv sync --frozen --group dev
+      # As a module, not a path: the script reads its own results.xml back
+      # through backend/scripts/assert_suite_ran.py, and only `-m` puts
+      # backend/ (this job's working directory) on the import path.
       - name: Verify actual provider requests with pinned binaries
-        run: uv run python scripts/test_harness_contracts.py
+        run: uv run python -m scripts.test_harness_contracts
       - name: Retain synthetic requests and test logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

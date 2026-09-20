@@ -5,9 +5,14 @@ import json
 import os
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
+
+from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
+
+# Every case in the list below is expected to run: this job installs the pinned
+# claude and codex binaries itself, so nothing here has an environment excuse.
+EXPECTED_CASES = 40
 
 
 def main() -> int:
@@ -87,9 +92,12 @@ def main() -> int:
             command, cwd=backend, env=env, stdout=log, stderr=subprocess.STDOUT
         )
     print((run / "pytest.log").read_text(), end="")
-    if result.returncode == 0 and ET.parse(run / "results.xml").findall(".//skipped"):
-        print("Required harness contracts were skipped; acceptance is incomplete.")
+    try:
+        ran = assert_suite_ran(run / "results.xml", at_least=EXPECTED_CASES)
+    except SuiteDidNotRun as exc:
+        print(f"Acceptance is incomplete: {exc}")
         return 1
+    print(f"{ran} harness contract case(s) ran.")
     return result.returncode
 
 

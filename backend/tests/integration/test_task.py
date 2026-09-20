@@ -2964,9 +2964,10 @@ class TestCategoryDeletion:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        custom_category_id = None
-        if custom_cat_resp.status_code in (200, 201):
-            custom_category_id = custom_cat_resp.json()["data"]["category"]["id"]
+        assert custom_cat_resp.status_code in (200, 201), (
+            f"Custom category was not created: {custom_cat_resp.text}"
+        )
+        custom_category_id = custom_cat_resp.json()["data"]["category"]["id"]
 
         empty_cat_resp = api_client.post(
             f"/spaces/{space_id}/categories",
@@ -2976,9 +2977,10 @@ class TestCategoryDeletion:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        empty_category_id = None
-        if empty_cat_resp.status_code in (200, 201):
-            empty_category_id = empty_cat_resp.json()["data"]["category"]["id"]
+        assert empty_cat_resp.status_code in (200, 201), (
+            f"Empty category was not created: {empty_cat_resp.text}"
+        )
+        empty_category_id = empty_cat_resp.json()["data"]["category"]["id"]
 
         api_client.post(
             "/tasks",
@@ -2987,7 +2989,7 @@ class TestCategoryDeletion:
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,
-                "categoryId": custom_category_id or default_category_id,
+                "categoryId": custom_category_id,
                 "submitterType": "USER",
                 "resubmittable": True,
                 "editable": True,
@@ -3028,9 +3030,6 @@ class TestCategoryDeletion:
         space_id = data["space_id"]
         custom_category_id = data["custom_category_id"]
 
-        if custom_category_id is None:
-            pytest.skip("Custom category was not created")
-
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{custom_category_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
@@ -3046,9 +3045,6 @@ class TestCategoryDeletion:
         creator = data["creator"]
         space_id = data["space_id"]
         empty_category_id = data["empty_category_id"]
-
-        if empty_category_id is None:
-            pytest.skip("Empty category was not created")
 
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{empty_category_id}",
@@ -3107,14 +3103,15 @@ class TestArchivedCategoryAndRejectReason:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        archived_category_id = None
-        if archived_cat_resp.status_code in (200, 201):
-            archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
-            api_client.patch(
-                f"/spaces/{space_id}/categories/{archived_category_id}",
-                json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
-                headers={"Authorization": f"Bearer {creator.token}"},
-            )
+        assert archived_cat_resp.status_code in (200, 201), (
+            f"Could not create archived category: {archived_cat_resp.text}"
+        )
+        archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
+        api_client.patch(
+            f"/spaces/{space_id}/categories/{archived_category_id}",
+            json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
         task_resp = api_client.post(
             "/tasks",
@@ -3149,9 +3146,6 @@ class TestArchivedCategoryAndRejectReason:
         data = archived_category_setup
         creator = data["creator"]
         archived_category_id = data["archived_category_id"]
-
-        if archived_category_id is None:
-            pytest.skip("Could not create archived category")
 
         resp = api_client.post(
             "/tasks",
@@ -3229,9 +3223,6 @@ class TestArchivedCategoryAndRejectReason:
         creator = data["creator"]
         task_id = data["task_id"]
         archived_category_id = data["archived_category_id"]
-
-        if archived_category_id is None:
-            pytest.skip("Could not create archived category")
 
         resp = api_client.patch(
             f"/tasks/{task_id}",

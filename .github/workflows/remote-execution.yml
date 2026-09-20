@@ -98,6 +98,16 @@ jobs:
           tests/unit/test_execution_bootstrap.py tests/unit/test_execution_transport.py
           tests/unit/test_session_transfer.py tests/unit/test_resource_cleanup.py
           tests/unit/test_compute_pool.py tests/unit/test_device_provider.py
+          --junitxml "$RUNNER_TEMP/private-chat.xml"
+      # This job installs tmux and the pinned claude itself, so a skip here is
+      # the install having gone wrong rather than a case that cannot run. The
+      # floor catches the other half: a selection that collapsed to a handful
+      # of cases and reported green anyway.
+      - name: Assert the private-chat selection actually ran
+        working-directory: backend
+        run: >-
+          .venv/bin/python scripts/assert_suite_ran.py
+          "$RUNNER_TEMP/private-chat.xml" --at-least 220
       - name: Verify two private turns through native RC
         if: ${{ !cancelled() && steps.scratch.outcome == 'success' }}
         run: >-

@@ -49,6 +49,12 @@ jobs:
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/mcp-contract/pinned
+      # Eight checks, and a build that answers nothing useful makes the
+      # generator return early with fewer. A short green run is the failure
+      # this reads for; stdlib only, like the script above it.
+      - run: >-
+          python3 backend/scripts/assert_suite_ran.py
+          tmp/mcp-contract/pinned/results.xml --at-least 8
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job
@@ -83,6 +89,12 @@ jobs:
           python3 scripts/remote_execution/mcp_contract.py
           --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
           --output tmp/mcp-contract/latest
+      # Eight checks, and a build that answers nothing useful makes the
+      # generator return early with fewer. A short green run is the failure
+      # this reads for; stdlib only, like the script above it.
+      - run: >-
+          python3 backend/scripts/assert_suite_ran.py
+          tmp/mcp-contract/latest/results.xml --at-least 8
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         continue-on-error: true
         # A quota-refused upload retries until the JOB timeout cancels the job
