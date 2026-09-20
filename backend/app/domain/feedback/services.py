@@ -130,23 +130,8 @@ class FeedbackService:
         return row
 
     async def require_admin(self, handle: str | None) -> str:
-        """The management surface's one answer to 「你能做什么」.
-
-        An agent is refused before the allow-list is consulted, so the refusal
-        does not depend on whether it happens to be listed: the allow-list is a
-        list of handles and nothing stops an agent's from being on it. Reachable,
-        not theoretical — a device screen's token (`X-Cheese-Screen`) resolves to
-        its agent-as-user on any path, including one with no topic in it.
-
-        Asked of the handle's agent-binding, here, rather than read off a flag a
-        route resolved at the trust boundary and carried in: the binding is the
-        authoritative answer, and a route that forgot to pass the flag would have
-        opened the surface without anything going red.
-        """
         if not handle:
             raise ForbiddenError("需要登录")
-        if await IdentityService(self._session).is_agent(handle):
-            raise ForbiddenError("agent 不能执行管理动作")
         if not self.is_admin(handle):
             # 403 here and not 404: /admin/feedback is documented as existing, so
             # its existence is not a secret — only its contents are.

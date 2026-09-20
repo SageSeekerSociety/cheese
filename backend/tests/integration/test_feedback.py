@@ -825,14 +825,15 @@ def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch)
     `/admin/*` is not in `_CHEESE_WRITE_PATHS`, and that table is a whitelist —
     nothing in the middleware looks at this prefix, so the refusal has to be
     written here or it does not exist. The handle below is **on the platform
-    admin list**, so the allow-list is not what refuses it; the question being
-    asked is 「是不是人」.
+    admin list**, so the allow-list is not what refuses it.
 
-    A device screen's token is the reachable way in: it resolves to its
-    agent-as-user on any path, unlike a per-turn `cheese` credential, which the
-    resolver refuses when there is no project to scope it to. The same handle
-    asked as a *person* is the control — it is allowed through, which is what says
-    the refusal is about being an agent.
+    What refuses it is the credential. The same handle arrives twice: once on
+    its own session token and once on a device screen's token, a per-screen
+    capability that resolves on any path (unlike a per-turn `cheese` credential,
+    which the resolver refuses when there is no project to scope it to). One
+    handle, two credentials, two answers — which is what says the rule is 「管理
+    动作由本人在自己的会话里做」 and not anything about what kind of participant
+    the handle names.
     """
     agent = "agent-on-the-list"
     monkeypatch.setattr(settings, "feedback_admin_handles", [agent])

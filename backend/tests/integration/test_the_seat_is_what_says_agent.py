@@ -15,7 +15,7 @@ token 过期。凭证本身没变、也没过期，但它名下的那位已经�
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import agent_instance_handle, topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -49,12 +49,17 @@ def test_publishing_needs_a_seat_in_this_room_not_an_agent_shaped_caller(client)
 
     assert _publish(client, topic["id"], headers).status_code == 200
 
-    seat = topic_agent_handle(uuid.UUID(topic["id"]))
-    removed = client.delete(
-        f"/topics/{topic['id']}/members/{seat}",
-        headers=session_auth_headers("alice"),
-    )
-    assert removed.status_code == 200, removed.text
+    roster = client.get(
+        f"/topics/{topic['id']}/members", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    seats = [row["handle"] for row in roster if row["agent"]]
+    assert seats, roster
+    for seat in seats:
+        removed = client.delete(
+            f"/topics/{topic['id']}/members/{seat}",
+            headers=session_auth_headers("alice"),
+        )
+        assert removed.status_code == 200, removed.text
 
     # Same token, same TTL, same caller. What changed is the roster.
     refused = _publish(client, topic["id"], headers)

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import ForbiddenError
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
 from app.domain.feedback.schemas import (
@@ -36,15 +37,29 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def _require_admin(
     service: feedback_services.FeedbackService, resolver: ActorResolver
 ) -> str:
-    """The gate every handler in this module passes, in one place.
+    """The two gates every handler in this module passes, in one place.
 
-    Both halves of it — 「是不是 agent」 and 「是不是平台管理员」 — live in
-    `FeedbackService.require_admin`, so this surface has ONE answer to 「你能做
-    什么」 and it is reached with a handle, not with a flag the route resolved
-    somewhere else. `/admin/*` is not in `_CHEESE_WRITE_PATHS`, so the middleware
-    whitelist stops nothing here and that answer is the only one there is.
+    `require_admin` answers 「是不是平台管理员」 from the allow-list. The check
+    above it answers a question about the CREDENTIAL, not about the participant:
+    a management action is taken by somebody in their own session, and a scoped
+    agent capability is not one. That distinction is the whole of it — the same
+    handle arriving on a session token is a person at a keyboard and is let
+    through, while a device screen's token (`X-Cheese-Screen`) is a per-screen
+    capability proving only that a call ran inside that screen, unattended.
+    Asking instead whether the handle names an agent would answer neither: the
+    allow-list is a list of handles and nothing stops an agent's from being on
+    it, which is exactly the case the tests pin.
+
+    §4.3 requires this refusal **in the route body**, because `/admin/*` is not
+    in `_CHEESE_WRITE_PATHS` — that table is a whitelist, so nothing in the
+    middleware looks at this prefix and a refusal written anywhere else does not
+    exist. Reachable, not theoretical: a screen token resolves on any path,
+    including one with no topic in it, unlike a per-turn `cheese` credential,
+    which `ActorResolver` refuses when there is no project to scope it to.
     """
     who = await resolver.resolve(fallback_handle=None)
+    if who.authenticated and who.via != "token":
+        raise ForbiddenError("agent 不能执行管理动作")
     return await service.require_admin(who.handle if who.authenticated else None)
 
 
