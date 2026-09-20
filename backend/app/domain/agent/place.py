@@ -66,6 +66,15 @@ STAGED_DIR = "attachments"
 #: The checkout, relative to a session's home. Named here because the whole
 #: point of `write` is to stay out of it, and a rule that names the directory it
 #: excludes is a rule a reader can check.
+#:
+#: `write` rejects it as a SEGMENT anywhere under the footprint, not just at the
+#: one place a session's own checkout sits, so that a `home` already pointing
+#: into a checkout is refused too. It errs toward refusing: a staged file whose
+#: own name carried a `room/` segment would be turned away. That name cannot
+#: occur — an attachment is addressed `uploads/<hex>/<filename>` or
+#: `library/<filename>` and a filename has no slash in it (`routes/topics.py`
+#: strips one) — and refusing an image is a lost image, while accepting one into
+#: a repository is a file its owner did not add and we do not remove.
 CHECKOUT_DIR = "room"
 
 

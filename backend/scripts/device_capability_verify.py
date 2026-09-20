@@ -28,10 +28,10 @@ async def main() -> int:
 
     from app.common.auth import create_access_token
     from app.core.db import async_session_factory
+    from app.domain.repository import service as ws
     from app.domain.room_task.services import TaskService
     from app.domain.topic.models import Topic
     from app.domain.user.models import User
-    from app.domain.repository import service as ws
 
     async with async_session_factory() as session:
         user = (
