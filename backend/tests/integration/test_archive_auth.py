@@ -35,12 +35,18 @@ def test_archive_requires_manager_and_records_actual_actor(client):
     )
     assert result.status_code == 200, result.text
     assert result.json()["data"]["cleanup_due_at"] is not None
-    blocks = client.get(
-        f"/topics/{topic}/blocks", headers=session_auth_headers("owner")
-    ).json()["data"]["data"]
-    archive = next(
-        block for block in blocks if "归档了话题" in (block.get("content") or "")
-    )
+
+    # 房间归档是项目的事，落项目总览（结论 14）：房间关掉之后没人再打开它的
+    # 时间线，而「少了一个房间」正是项目总览上要读到的一行。
+    def events_saying(room, phrase):
+        blocks = client.get(
+            f"/topics/{room}/blocks", headers=session_auth_headers("owner")
+        ).json()["data"]["data"]
+        return [b for b in blocks if phrase in (b.get("content") or "")]
+
+    assert events_saying(topic, "归档了房间") == []
+    (archive,) = events_saying(project["root_topic_id"], "归档了房间")
+    assert "「R」" in archive["content"]
     assert archive["author"] == "admin"
     assert "forged" not in archive["content"]
     assert (
@@ -63,6 +69,12 @@ def test_archive_requires_manager_and_records_actual_actor(client):
         ).status_code
         == 200
     )
+
+    # 取消归档落在同一条线上：房间回到项目里，和它离开项目是同一件事的两面，读的
+    # 人也在同一个地方读。
+    (restored,) = events_saying(project["root_topic_id"], "恢复活跃")
+    assert "「R」" in restored["content"]
+    assert events_saying(topic, "恢复活跃") == []
 
 
 def test_scoped_agent_cannot_trigger_global_cleanup(client):

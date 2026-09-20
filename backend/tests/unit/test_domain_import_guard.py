@@ -82,6 +82,11 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.milestone.services", "app.domain.project.repositories"),
         ("app.domain.oauth.services", "app.domain.user.repositories"),
         # --- project ---
+        # environment_recovery 走的一直是 block 领域的 service，而那个 service
+        # （`record_system_event`）的全部内容就是替调用点挑一个 `topic_id`——
+        # 正是结论 14 要收掉的那个自由。它退场之后这里就是直接写块，和上面
+        # announce / review 那几行同一个理由入账。
+        ("app.domain.project.environment_recovery", "app.domain.block.repositories"),
         ("app.domain.project.services", "app.domain.topic.repositories"),
         ("app.domain.project.services", "app.domain.usage.repositories"),
         ("app.domain.project.services", "app.domain.user.repositories"),

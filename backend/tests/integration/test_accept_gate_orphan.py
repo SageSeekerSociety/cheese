@@ -116,13 +116,29 @@ def _deadline_passed(monkeypatch) -> None:
     monkeypatch.setattr(gate_sweep, "GATE_STALE_GRACE_S", 0)
 
 
-def _blocks_text(client, topic_id: str) -> str:
-    """房间里说了什么 —— 一行 content 加上折叠起来的 meta.detail。
+#: 判死那条事件在卡上的那一行。房间里另有一行「检查结果丢了……」——那是叫醒芝士
+#: 去重递的召唤，不是这条事件，所以断言落点必须认准这一句。
+_CONDEMNED = "检查没跑完，这张验收卡已判死"
 
-    平台提示统一契约之后，「不是检查没通过、重新递一次卡」这段说明不再铺在房间的
-    正文里，它在 `meta.detail`（前端折叠展示，芝士照样从 API 读全量）。所以断言
-    「说没说这句话」必须把两半都算上 —— 见 `tests/integration/conftest.room_text`。
+
+def _card_line_text(client, topic_id: str) -> str:
+    """那张卡的线上说了什么 —— 一行 content 加上折叠起来的 meta.detail。
+
+    判死和作废都是**这张卡**的事，落点就是这张卡（结论 14），所以读的是卡的线，
+    不是房间主线。平台提示统一契约之后，「不是检查没通过、重新递一次卡」这段说明
+    不再铺在正文里，它在 `meta.detail`（前端折叠展示，芝士照样从 API 读全量），
+    所以断言「说没说这句话」必须把两半都算上 —— 见
+    `tests/integration/conftest.room_text`。
     """
+    blocks = client.get(
+        f"/topics/{topic_id}/history",
+        params={"task_id": str(delivery_task_id(client, topic_id)), "limit": 500},
+    ).json()["data"]["data"]
+    return room_text(blocks)
+
+
+def _room_line_text(client, topic_id: str) -> str:
+    """房间主线上说了什么 —— 卡的事落在这里就是落错了地方。"""
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return room_text(blocks)
 
@@ -175,12 +191,15 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     deadline = time.time() + 10
     while time.time() < deadline:
         wait_work_idle()
-        text = _blocks_text(client, tid)
-        if "检查没跑完" in text:
+        text = _card_line_text(client, tid)
+        if _CONDEMNED in text:
             break
         time.sleep(0.05)
-    assert "检查没跑完" in text
+    assert _CONDEMNED in text
     assert "重新递" in text
+    # 判死是这张卡的事，落的就是这张卡（结论 14）——房间主线上没有它。房间里那一
+    # 行是另一回事：叫醒芝士去重递的召唤，收件人是房间里的芝士。
+    assert _CONDEMNED not in _room_line_text(client, tid)
 
 
 def test_sweep_is_idempotent(client, monkeypatch):
@@ -232,7 +251,7 @@ def test_reviewer_can_void_a_stuck_card_and_the_topic_can_file_again(
 
     # 出口生效：能重递了。
     assert _file_card(client, tid, "bob").status_code == 200
-    assert "作废" in _blocks_text(client, tid)
+    assert "作废" in _card_line_text(client, tid)
 
 
 def test_void_puts_the_card_in_a_terminal_state_never_back_to_pending(client):
