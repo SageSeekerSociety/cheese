@@ -902,7 +902,9 @@ async def list_space_categories(
     includeArchived: bool = Query(default=False),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     cats = await service.list_categories(
         space_id=space_id, include_archived=includeArchived
@@ -928,8 +930,10 @@ async def get_space_task_analytics(
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> dict:
     """Return per-task analytics table rows for the space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_tasks(
         space_id=space_id,
@@ -956,7 +960,9 @@ async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
+    db=Depends(get_db),
 ) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers_participation(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
@@ -973,7 +979,9 @@ async def export_space_participants(
     format: str = Query(default="csv"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
+    db=Depends(get_db),
 ) -> Response:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     if format.lower() != "csv":
         raise BadRequestError("Only csv format is supported")
@@ -1006,8 +1014,10 @@ async def get_space_analytics_overview(
     groupBy: str = Query(default="day"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> dict:
     """Return KPI cards, trend data, and distribution summaries for the space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_overview(
         space_id=space_id,
@@ -1029,8 +1039,10 @@ async def get_space_analytics_alerts(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> dict:
     """Return governance alert cards for the space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_alerts(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
@@ -1050,8 +1062,10 @@ async def get_space_analytics_publishers(
     sortOrder: str = Query(default="desc"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> dict:
     """Return publisher comparison table data."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers(
         space_id=space_id,
@@ -1082,8 +1096,10 @@ async def get_space_analytics_participants(
     groupBy: str = Query(default="day"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> dict:
     """Return participant population and completion analytics."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_participants(
         space_id=space_id,
@@ -1118,6 +1134,7 @@ async def export_space_analytics_participants(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
     realname_service: UserRealNameService = Depends(get_space_user_realname_service),
+    db=Depends(get_db),
 ) -> Response:
     """Export participant analytics as CSV (22 columns, NT-aligned).
 
@@ -1125,6 +1142,7 @@ async def export_space_analytics_participants(
     target user to audit real-name data access, matching NT's
     `auditSpaceParticipantExport` behavior.
     """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     csv_text, memberships = await service.export_participants_csv(
         space_id=space_id,
         from_ts=from_ts,
@@ -1194,8 +1212,10 @@ async def export_space_analytics_tasks(
     hasPendingApproval: bool | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> Response:
     """Export task analytics as CSV (16 columns, NT-aligned)."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_tasks_csv(
         space_id=space_id,
@@ -1228,8 +1248,10 @@ async def export_space_analytics_publishers(
     taskApproved: str | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceAnalyticsViewService = Depends(get_space_analytics_view_service),
+    db=Depends(get_db),
 ) -> Response:
     """Export publisher analytics as CSV (11 columns, NT-aligned)."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_publishers_csv(
         space_id=space_id,
@@ -1262,8 +1284,10 @@ async def get_space_me_publishing(
     service: SpaceMemberPublishingService = Depends(
         get_space_member_publishing_service
     ),
+    db=Depends(get_db),
 ) -> dict:
     """Return the authenticated user's publishing summary in this space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     data = await service.get_my_publishing_overview(
         space_id=space_id,
         user_id=auth_user.user_id,
@@ -1289,8 +1313,10 @@ async def get_space_me_published_tasks(
     service: SpaceMemberPublishingService = Depends(
         get_space_member_publishing_service
     ),
+    db=Depends(get_db),
 ) -> dict:
     """Return the authenticated user's published tasks in this space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     items = await service.get_my_published_tasks(
         space_id=space_id,
         user_id=auth_user.user_id,
@@ -1316,8 +1342,10 @@ async def get_space_me_participating(
     service: SpaceMemberParticipatingService = Depends(
         get_space_member_participating_service
     ),
+    db=Depends(get_db),
 ) -> dict:
     """Return the authenticated user's participation summary in this space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     data = await service.get_overview(
         space_id=space_id,
         user_id=auth_user.user_id,
@@ -1340,8 +1368,10 @@ async def get_space_me_participations(
     service: SpaceMemberParticipatingService = Depends(
         get_space_member_participating_service
     ),
+    db=Depends(get_db),
 ) -> dict:
     """Return the authenticated user's participation list in this space."""
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     participations = await service.get_participations(
         space_id=space_id,
         user_id=auth_user.user_id,
@@ -1374,6 +1404,7 @@ async def get_space_topics(
     limit: int = Query(default=20, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceTagsService = Depends(get_space_topics_service),
+    db=Depends(get_db),
 ) -> dict:
     """List or search topics associated with the space.
 
@@ -1382,6 +1413,7 @@ async def get_space_topics(
     - If `keyword` is provided, perform a fuzzy search (sort is ignored).
     - Otherwise, return the hottest topics (most non-deleted tasks in the space).
     """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     safe_limit = min(limit, 50)
 
     if keyword and keyword.strip():
@@ -1458,7 +1490,9 @@ async def get_space_category(
     category_id: Annotated[int, Path(ge=1, alias="categoryId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     category = await service.get_category_detail(
         space_id=space_id, category_id=category_id
@@ -1541,7 +1575,9 @@ async def list_space_domain_groups(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
 ) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     groups = await service.list_domain_groups(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
