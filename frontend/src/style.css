@@ -433,6 +433,20 @@ button:not(.v-btn) {
   color: inherit;
 }
 
+/* Disabled solid buttons. Vuetify swaps a disabled elevated/flat button's fill
+   for the neutral surface (`.v-btn--disabled.v-btn--variant-elevated/--flat`),
+   but `color="primary"` also puts `.bg-primary` on the element, and that colour
+   utility is `!important` — it wins, so the button keeps its full amber fill
+   and white label and looks exactly like one you can press, while
+   `pointer-events: none` quietly swallows the click. The rule below restores
+   what Vuetify meant: only buttons that actually carry a `bg-*` utility are
+   affected (tonal/outlined/text buttons already dim through the plain
+   `.v-btn--disabled` opacity). */
+.v-btn--disabled[class*='bg-'] {
+  color: rgba(var(--v-theme-on-surface), 0.26) !important;
+  background-color: rgb(var(--v-theme-surface)) !important;
+}
+
 /* Page content width. Two values, both named — 项目内的页面（总览/日历/设置/
    成员/项目文档）以前每个自己写一个数字（1100/820/900/920/920），因为它们各
    自是一个整页、没有共同的框架可依。现在它们都住在项目框架里，宽度就该是框架
