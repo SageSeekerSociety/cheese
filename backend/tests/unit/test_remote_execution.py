@@ -271,6 +271,68 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         )
 
 
+def test_executor_rooms_share_installed_tools(tmp_path, monkeypatch, capsys):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("CHEESE_STORE", raising=False)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
+    project = uuid.uuid4()
+    tally = tmp_path / "installations"
+    environment = {
+        "revision": "shared-tools-test",
+        "variables": {},
+        "setup_script": (
+            f'printf x >> "{tally}"\n'
+            'mkdir -p "$HOME/.local/bin"\n'
+            'printf "#!/bin/sh\\necho shared-tool-ok\\n" '
+            '> "$HOME/.local/bin/shared-test-tool"\n'
+            'chmod +x "$HOME/.local/bin/shared-test-tool"\n'
+        ),
+        "startup_script": "",
+    }
+    states = []
+    try:
+        for room_project in (project, project, uuid.uuid4()):
+            resource = uuid.uuid4()
+            home = tmp_path / ".cheese/home" / str(room_project) / str(resource)
+            state = home / ".cheese/executor"
+            states.append(state)
+            payload = payload_for(
+                room_project,
+                resource,
+                {
+                    "CHEESE_API": "http://unused",
+                    "CHEESE_TOKEN": "test",
+                    "CHEESE_ENVIRONMENT": json.dumps(environment),
+                },
+            )
+            bootstrap.configure(payload)
+            capsys.readouterr()
+            bootstrap.configure(payload)
+            capsys.readouterr()
+            result = runtime.request(
+                state,
+                "invoke",
+                {
+                    "id": "shared-tool",
+                    "tool": "Bash",
+                    "args": {"command": 'shared-test-tool; printf "%s" "$HOME"'},
+                },
+            )
+            assert result["value"]["stdout"].strip() == f"shared-tool-ok\n{home}"
+            assert not (home / ".local/bin/shared-test-tool").exists()
+            assert tally.read_text() == ("x" if room_project == project else "xx")
+    finally:
+        for state in states:
+            subprocess.run(
+                [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+                capture_output=True,
+                timeout=15,
+            )
+
+
 def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     """A room as it exists today: its executor installed in `.claude`.
 

@@ -218,6 +218,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             HOME=str(home),
             CLAUDE_CONFIG_DIR=str(config_dir),
             CHEESE_WORK=str(work),
+            CHEESE_STORE=str(owner / ".cheese/store" / project),
             CHEESE_WORKTREE_ROOT=str(work),
             CHEESE_PREVIEW_UP=str(release / "cheese-preview-up"),
             PATH=os.pathsep.join(
@@ -237,6 +238,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                 "HOME",
                 "CLAUDE_CONFIG_DIR",
                 "CHEESE_WORK",
+                "CHEESE_STORE",
                 "CHEESE_WORKTREE_ROOT",
                 "CHEESE_PREVIEW_UP",
             }
