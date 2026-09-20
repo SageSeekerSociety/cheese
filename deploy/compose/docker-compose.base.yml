@@ -163,6 +163,54 @@ services:
         # stable and is what anyone searching already knows.
         tag: "{{.Name}}"
 
+  git:
+    # Serving a repo is not the platform's API. `git http-backend` computes and
+    # streams a pack — 169 MB and 3.7 s for one project on dev — and sharing a
+    # process with every other request means one of those competes with all of
+    # them, for memory, for worker threads and for the release that restarts
+    # them. Same image, same repos on disk, its own process: app/git_app.py.
+    #
+    # It needs no database, no Redis and no secrets beyond the one that signs
+    # the project-scoped tokens it verifies, so it takes the same env file as
+    # the backend rather than a second copy that would drift from it.
+    image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    command:
+      - uvicorn
+      - app.git_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8084"
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      - DEPLOYED_VIA_COMPOSE=1
+      # git needs a writable, persistent home for its global config and the
+      # repo-trust records, exactly as the backend does.
+      - HOME=/data/apphome
+    volumes:
+      # The same repos the backend and every topic worktree read and write.
+      - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
+      - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
+    # Reached through the front nginx, not from outside the box.
+    expose:
+      - "8084"
+    # tini as PID 1: git's own children outlive the git this process waited on
+    # and reparent to PID 1, and uvicorn never waits on a process it did not
+    # start — 77 zombie `git` in 17 hours on dev without it.
+    init: true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
     # No env_file. It used to load the BACKEND's, which handed this container the
@@ -194,6 +242,7 @@ services:
       # deploy-docker.sh moves between backends during a rollout.
       - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
       - DEVICE_CONNECTION_UPSTREAM=${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}
+      - GIT_UPSTREAM=${GIT_UPSTREAM:-git:8084}
     # Lets API_UPSTREAM name the host; unused otherwise.
     extra_hosts:
       - "host.docker.internal:host-gateway"
