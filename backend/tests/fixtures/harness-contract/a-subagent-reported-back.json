@@ -1,0 +1,28 @@
+{
+  "verb": "backlog",
+  "why": "The one tool return worth an event: a subagent's conclusion goes straight into the spawner's context and dies with that machine's transcript, so without this the room sees the question asked and never the answer.",
+  "readers": ["python"],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Task",
+          "tool_use_id": "toolu_1",
+          "tool_input": { "description": "查一下缓存目录" },
+          "tool_response": "查到了：在 ~/.cache/cheese"
+        }
+      ]
+    },
+    "pi": { "difference": "no-subagent-threads" },
+    "codex": { "difference": "no-subagent-tool-return" }
+  },
+  "events": [
+    {
+      "kind": "tool_result",
+      "name": "Task",
+      "text": "查到了：在 ~/.cache/cheese",
+      "description": "查一下缓存目录"
+    }
+  ]
+}

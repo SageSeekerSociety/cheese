@@ -1,0 +1,17 @@
+{
+  "verb": "backlog",
+  "why": "The harness's own name for this conversation, learned before the turn ends, is what 「再 @ 一次接着做」 resumes from. A harness that only reveals it with the result leaves a turn that died mid-stream with nothing to point at, so that gap is a named difference rather than a silent one.",
+  "readers": ["python"],
+  "harnesses": {
+    "claude-code": {
+      "records": [{ "hook_event_name": "SessionStart", "session_id": "session-1" }]
+    },
+    "codex": {
+      "records": [
+        { "method": "thread/started", "params": { "thread": { "id": "session-1" } } }
+      ]
+    },
+    "pi": { "difference": "no-session-id-of-its-own" }
+  },
+  "events": [{ "kind": "session_info", "session_id": "session-1" }]
+}

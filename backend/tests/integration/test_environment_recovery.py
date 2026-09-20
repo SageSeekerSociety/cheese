@@ -220,7 +220,7 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
     original = stub_hooks.ensure_ready
 
     async def fail_room(**kwargs):
-        if kwargs["topic_id"] == t:
+        if kwargs["session"].topic_id == t:
             raise EnvironmentPreparationError(
                 {"state": "failed", "attempt": "actual", "stage": "setup"}
             )

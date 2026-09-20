@@ -82,13 +82,14 @@ import {
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
+import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
-import { collapseNotices } from '../lib/platformNotice'
+import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
   renderMarkdown as renderMarkdownWith,
@@ -102,6 +103,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
+import AgentNoticeFrame from './AgentNoticeFrame.vue'
 import AttachmentImage from './AttachmentImage.vue'
 import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -999,9 +1001,9 @@ function parentOf(m: Block): Block | undefined {
   return m.reply_to ? messages.value.find((x) => x.id === m.reply_to) : undefined
 }
 function showReplyCue(m: Block): boolean {
-  // Only human replies are explicit threads. An AI message's reply_to is the
-  // implicit link to the user message that triggered it — not a thread cue.
-  return m.author_type === 'human' && !!parentOf(m)
+  // Only a person's replies are explicit threads. An AI message's reply_to is
+  // the implicit link to the message that triggered it — not a thread cue.
+  return isPersonBlock(m) && !!parentOf(m)
 }
 function replySnippet(m: Block): string {
   if (m.kind === 'attachment') return isImageBlock(m) ? '[图片]' : '[文件]'
@@ -1248,15 +1250,37 @@ const seatByHandle = computed(() => {
 // AI 的一条和人的一条是同一个规矩：署它的作者，不署「这个房间的那位」。一个房
 // 间可以先后交给两个队友，两个人的话都还在记录里，各自署各自的名。名册还没到
 // 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
+// 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是人和
+// 人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是管道，读
+// 的人只会当成乱码。身份分叉，显示不分叉。
+function agentDisplayName(handle: string): string {
+  if (!rosterLoaded.value) return '芝士'
+  return seatByHandle.value.get(handle)?.name || '芝士'
+}
 function displayName(m: Block): string {
-  if (m.author_type === 'ai') {
-    // 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是
-    // 人和人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是
-    // 管道，读的人只会当成乱码。身份分叉，显示不分叉。
-    if (!rosterLoaded.value) return '芝士'
-    return seatByHandle.value.get(m.author)?.name || '芝士'
-  }
+  if (isAgentBlock(m)) return agentDisplayName(m.author)
   return memberByHandle.value.get(m.author)?.name || m.author
+}
+
+function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
+  if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
+  // This event contains the worker's actual result, rather than a status notice.
+  if (block.meta?.event_type === 'subagent_stop') return null
+  if (isPersonBlock(block)) return null
+  // 平台替某个参与者写下的一条（「XX 编辑了文档」就是这样）：档位说「平台」，
+  // 署名说是谁 —— 所以这里问的是署名，名册在手时以名册为准。
+  if (isAgentHandle(block.author) || seatByHandle.value.get(block.author)?.agent) {
+    return agentDisplayName(block.author)
+  }
+  if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
+  if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return agentName.value
+  if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
+    return agentName.value
+  }
+  if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
+    return agentName.value
+  }
+  return null
 }
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
 const avatarBroken = ref<Set<string>>(new Set())
@@ -1292,10 +1316,10 @@ function fmtTime(iso: string): string {
 // 都保留它们：房间里是「多个人 + 一个芝士」，左边同时坐着好几个人，光靠「在左边」
 // 分不出谁是谁。芝士也在左边，它是队友里的一个，不是对话的另一极。
 //
-// 按 handle 判，不按 author_type：author_type 只说「是人还是 AI」，而这一列里
-// 有好几个人。
+// 按 handle 判，不按 author_type：author_type 只说「参与者还是平台」，而这一列
+// 里有好几个人。
 function isMine(m: Block): boolean {
-  return m.author_type === 'human' && m.author === AUTHOR
+  return isPersonBlock(m) && m.author === AUTHOR
 }
 
 // Group consecutive messages from the same author into runs: only the first of
@@ -1356,7 +1380,7 @@ const starterPrompts = [
 // 只看 message / attachment：芝士也可能留下 event 行（「芝士处理中」那类），
 // 那是它干活的过程，不是它对这个人开过口。
 const startersRetired = computed(() =>
-  visible.value.some((b) => b.author_type === 'ai' && (b.kind === 'message' || b.kind === 'attachment'))
+  visible.value.some((b) => isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment'))
 )
 const showStarters = computed(
   () =>
@@ -1655,14 +1679,14 @@ function showSummonHint(m: Block, i: number): boolean {
   // 分支），这时候提示「没人接」是假的。
   if (awaitingReply.value || outbox.value.length) return false
   if (i !== rows.value.length - 1) return false
-  if (m.author_type !== 'human') return false
+  if (!isPersonBlock(m)) return false
   if (m.kind !== 'message' && m.kind !== 'attachment') return false
   // 一次发送可能落成好几块（一句话 + 几张图），而叫没叫它写在那句话里。只看最后
   // 一块的话，配了图的那次发送永远会被判成「没叫」——图片块的正文是一个文件路径，
   // 它 @ 不到任何人。所以看的是同一个人连在一起的这一串。
   for (let k = rows.value.length - 1; k >= 0; k -= 1) {
     const b = rows.value[k].block
-    if (b.author_type !== 'human' || b.author !== m.author) break
+    if (!isPersonBlock(b) || b.author !== m.author) break
     if (mentionsAgent(b.content)) return false
   }
   return true
@@ -1995,150 +2019,163 @@ onBeforeUnmount(() => {
               :marker="marker"
               @open="emit('open-topic', $event)"
             />
-            <!-- 平台行：一种形态。lib/platformNotice.ts 决定分档，这里只按
-               「严重度改记号、不改形态」画。左边缘和消息正文同一条 54px 轴 ——
-               整列只有一条扫视线，右侧固定放动作/归属，「谁在等我」一眼扫得出。 -->
-            <div
-              v-if="notice?.mode === 'incident'"
-              class="sys-row sys-row--danger platform-incident"
-              role="alert"
-              :data-error-code="notice.incident.code"
-              data-testid="platform-error-card"
+            <AgentNoticeFrame
+              v-if="notice"
+              :name="noticeAgentName(m, notice)"
+              :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
             >
-              <div class="sys-line">
-                <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
-                <span class="sys-text">{{ notice.incident.title }}</span>
-                <span class="sys-who">{{ notice.incident.status }}</span>
+              <div
+                v-if="notice?.mode === 'incident'"
+                class="sys-row sys-row--danger platform-incident"
+                role="alert"
+                :data-error-code="notice.incident.code"
+                data-testid="platform-error-card"
+              >
+                <div class="sys-line">
+                  <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
+                  <span class="sys-text">{{ notice.incident.title }}</span>
+                  <span class="sys-who">{{ notice.incident.status }}</span>
+                </div>
+                <div class="sys-sub">{{ notice.lead }}</div>
+                <details v-if="notice.rest" class="sys-more">
+                  <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                  <pre class="sys-detail">{{ notice.rest }}</pre>
+                </details>
               </div>
-              <div class="sys-sub">{{ notice.lead }}</div>
-              <details v-if="notice.rest" class="sys-more">
-                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
-                <pre class="sys-detail">{{ notice.rest }}</pre>
-              </details>
-            </div>
-            <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
+              <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
                「查看改动」是这一行唯一的动作 —— 采纳是话题级的一次性动作，不是
                每轮都问一遍的东西（§14.6）。 -->
-            <div v-else-if="notice?.mode === 'turn-summary'" class="sys-row turn-summary">
-              <div class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text">
-                  <template v-if="notice.changes">
-                    本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
-                      notice.changes.removed
-                    }})
-                  </template>
-                  <template v-for="(act, ai) in notice.actions" :key="ai">
-                    <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
-                    <span v-html="renderPlain(act.text)" />
-                  </template>
-                </span>
-                <button
-                  v-if="notice.changes"
-                  type="button"
-                  class="sys-action"
-                  @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
-                >
-                  查看改动
-                </button>
-              </div>
-              <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
-                {{ notice.changes.files.join(' · ')
-                }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
-              </div>
-            </div>
-            <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
-            <div v-else-if="notice?.mode === 'action'" class="sys-row action-card">
-              <div class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
-                   through the shared token→chip path so the actor is clickable. -->
-                <span class="sys-text" v-html="renderPlain(notice.text)" />
-                <button
-                  v-if="ACTION_META[notice.resource]?.btn"
-                  type="button"
-                  class="sys-action"
-                  @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
-                >
-                  {{ ACTION_META[notice.resource].btn }}
-                </button>
-              </div>
-              <details v-if="notice.detail" class="sys-more">
-                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
-                <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
-                  <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
-                    <div
-                      v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
-                      class="doc-edit-line"
-                      :class="`doc-edit-line--${line.kind}`"
-                      :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
-                    >
-                      <span class="doc-edit-mark" aria-hidden="true">{{
-                        line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
-                      }}</span>
-                      <span>{{ docDiffText(line.text) }}</span>
-                    </div>
-                  </template>
+              <div v-else-if="notice?.mode === 'turn-summary'" class="sys-row turn-summary">
+                <div class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text">
+                    <template v-if="notice.changes">
+                      本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
+                        notice.changes.removed
+                      }})
+                    </template>
+                    <template v-for="(act, ai) in notice.actions" :key="ai">
+                      <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
+                      <span v-html="renderPlain(act.text)" />
+                    </template>
+                  </span>
+                  <button
+                    v-if="notice.changes"
+                    type="button"
+                    class="sys-action"
+                    @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
+                  >
+                    查看改动
+                  </button>
                 </div>
-                <pre v-else class="sys-detail">{{ notice.detail }}</pre>
-              </details>
-            </div>
-            <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
+                <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
+                  {{ notice.changes.files.join(' · ')
+                  }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
+                </div>
+              </div>
+              <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
+              <div v-else-if="notice?.mode === 'action'" class="sys-row action-card">
+                <div class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
+                   through the shared token→chip path so the actor is clickable. -->
+                  <span class="sys-text" v-html="renderPlain(notice.text)" />
+                  <button
+                    v-if="ACTION_META[notice.resource]?.btn"
+                    type="button"
+                    class="sys-action"
+                    @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
+                  >
+                    {{ ACTION_META[notice.resource].btn }}
+                  </button>
+                </div>
+                <details v-if="notice.detail" class="sys-more">
+                  <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                  <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
+                    <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
+                      <div
+                        v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
+                        class="doc-edit-line"
+                        :class="`doc-edit-line--${line.kind}`"
+                        :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
+                      >
+                        <span class="doc-edit-mark" aria-hidden="true">{{
+                          line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
+                        }}</span>
+                        <span>{{ docDiffText(line.text) }}</span>
+                      </div>
+                    </template>
+                  </div>
+                  <pre v-else class="sys-detail">{{ notice.detail }}</pre>
+                </details>
+              </div>
+              <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
                person needs to know it happened. So the line shows by default
                and the stack is one click away — a room is a conversation, not
                a monitoring dashboard. -->
-            <details
-              v-else-if="notice?.mode === 'backend-error'"
-              class="sys-row sys-row--warn backend-error"
-              data-testid="backend-error-event"
-            >
-              <summary class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text">{{ notice.error.line }}</span>
-                <span v-if="notice.error.count" class="sys-count">×{{ notice.error.count }}</span>
-              </summary>
-              <div class="sys-fold">
-                <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
-                  <span v-if="notice.error.where">{{ notice.error.where }}</span>
-                  <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
+              <details
+                v-else-if="notice?.mode === 'backend-error'"
+                class="sys-row sys-row--warn backend-error"
+                data-testid="backend-error-event"
+              >
+                <summary class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text">{{ notice.error.line }}</span>
+                  <span v-if="notice.error.count" class="sys-count">×{{ notice.error.count }}</span>
+                </summary>
+                <div class="sys-fold">
+                  <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
+                    <span v-if="notice.error.where">{{ notice.error.where }}</span>
+                    <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
+                  </div>
+                  <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
                 </div>
-                <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
-              </div>
-            </details>
-            <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
+              </details>
+              <details v-else-if="notice?.mode === 'agent-status'" class="cloud-status" data-testid="platform-notice">
+                <summary>{{ notice.line }}</summary>
+                <div class="agent-status-history">
+                  <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                    <div>{{ occ.line }}</div>
+                    <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
+                  </div>
+                </div>
+              </details>
+              <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
                什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
                条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
-            <details
-              v-else-if="notice?.mode === 'fold'"
-              class="sys-row"
-              :class="{ 'sys-row--warn': notice.who === 'human' }"
-              data-testid="platform-notice"
-            >
-              <summary class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text">{{ notice.line }}</span>
-                <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
-                <span v-if="notice.whoLabel" class="sys-who">{{ notice.whoLabel }}</span>
-              </summary>
-              <div class="sys-fold">
-                <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
-                  <div class="sys-meta">
-                    {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+              <details
+                v-else-if="notice?.mode === 'fold'"
+                class="sys-row"
+                :class="{ 'sys-row--warn': notice.who === 'human' }"
+                data-testid="platform-notice"
+              >
+                <summary class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text">{{ notice.line }}</span>
+                  <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
+                  <span v-if="notice.whoLabel" class="sys-who">{{
+                    notice.who === 'cheese' ? `${noticeAgentName(m, notice) || agentName}处理中` : notice.whoLabel
+                  }}</span>
+                </summary>
+                <div class="sys-fold">
+                  <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                    <div class="sys-meta">
+                      {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+                    </div>
+                    <pre v-if="occ.detail" class="sys-detail">{{ occ.detail }}</pre>
                   </div>
-                  <pre class="sys-detail">{{ occ.detail }}</pre>
                 </div>
-              </div>
-            </details>
-            <!-- system / event blocks. Content may carry a <@handle> actor token
+              </details>
+              <!-- system / event blocks. Content may carry a <@handle> actor token
                (归档/编辑…): render it through the SAME token→chip path as
                messages so the actor is a clickable mention, not raw text. -->
-            <div v-else-if="notice?.mode === 'plain'" class="sys-row im-event">
-              <div class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text" v-html="renderPlain(m.content)" />
+              <div v-else-if="notice?.mode === 'plain'" class="sys-row im-event">
+                <div class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text" v-html="renderPlain(m.content)" />
+                </div>
               </div>
-            </div>
-
+            </AgentNoticeFrame>
             <!-- message row -->
             <div
               v-else-if="!notice"
@@ -2149,7 +2186,7 @@ onBeforeUnmount(() => {
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
-                  <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" :name="displayName(m)" />
+                  <CheeseAvatar v-if="isAgentBlock(m)" :size="28" :name="displayName(m)" />
                   <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
                      底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
                      变的只有色块里的字。 -->
@@ -2191,7 +2228,7 @@ onBeforeUnmount(() => {
                 >
                   <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
                 </v-btn>
-                <div v-else-if="m.author_type === 'ai'" class="im-text md-content" v-html="renderMarkdown(m.content)" />
+                <div v-else-if="isAgentBlock(m)" class="im-text md-content" v-html="renderMarkdown(m.content)" />
                 <!-- 现场尊重原文: human text renders verbatim — newlines and
                    spacing preserved (pre-wrap), no markdown reflow. -->
                 <div v-else class="im-text im-text--verbatim" v-html="renderPlain(m.content)" />
@@ -3165,6 +3202,18 @@ details.sys-row > summary::-webkit-details-marker {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
+}
+.cloud-status summary {
+  cursor: pointer;
+}
+.agent-status-history {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.agent-status-detail {
+  margin-top: 3px;
+  color: var(--muted);
 }
 /* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
    一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：

@@ -1,0 +1,13 @@
+{
+  "type": "execution.result",
+  "origin": "device",
+  "why": "The executor finished and said nothing more. `error` is absent, not empty: the Go side's `omitempty` drops it, so a double that sends \"error\": \"\" is sending a frame no connector ever sends.",
+  "frame": {
+    "t": "execution.result",
+    "id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718"
+  },
+  "meaning": {
+    "call_id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "error": ""
+  }
+}

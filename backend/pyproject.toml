@@ -9,7 +9,6 @@ dependencies = [
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
     "bcrypt>=5.0.0",
-    "claude-agent-sdk>=0.2.101",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
     # Fetching the web for an agent (app.domain.fetch). markdownify converts a
@@ -132,6 +131,29 @@ venv = ".venv"
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 testpaths = ["tests"]
+# The suite runs as three layers, one pytest per layer. Nothing writes these on
+# a test: tests/conftest.py's pytest_collection_modifyitems derives the layer
+# from where the test lives and what its fixture closure reaches for. A test
+# that declares one of these itself aborts the collection; a test that declares
+# none has one added, and there is no third case, because that hook's
+# `_layer_of` always answers with one of the three.
+#
+# Registered because the hook adds them by name and --strict-markers refuses an
+# unregistered one even from there. What the flag is actually for is the other
+# direction: a marker written on a test and registered nowhere is an error
+# ("'bogus' not found in `markers` configuration option") instead of a
+# decoration that silently does nothing, which is what @pytest.mark.asyncio had
+# been here for as long as it existed — pytest-asyncio is not installed — and
+# why those two had to go in the same commit that turned this on. It also
+# catches a hand-written layer marker whose name is mistyped past the hook's
+# own check. It does not read `-m` expressions: `-m puree` deselects the whole
+# suite and exits 5, so a typo there is a red step, never a quiet green one.
+markers = [
+    "pure: no Postgres, no ASGI app — runs on a machine with nothing but Python",
+    "contract: one side of a seam real and the other a double",
+    "integration: real Postgres, real alembic, real ASGI app",
+]
+addopts = ["--strict-markers"]
 # A wedged test must name itself. Without this, one test that never returns
 # looks exactly like a slow suite: the run produces progress dots, then
 # nothing, and CI kills the job at its own ceiling — so the log ends with a

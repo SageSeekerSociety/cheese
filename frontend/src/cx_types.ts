@@ -79,7 +79,9 @@ export interface Topic {
   presentation?: Presentation
 }
 
-export type AuthorType = 'human' | 'ai' | 'system'
+// 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
+// ——见 `lib/authorship.ts`。`human`/`ai` 是旧值，只出现在这次改动之前写下的行上。
+export type AuthorType = 'participant' | 'system' | 'human' | 'ai'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
 // e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
@@ -672,6 +674,23 @@ export interface AutoMergeInfo {
   armed_at: string | null
 }
 
+// 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
+// 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
+// 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
+export interface ForgeInfo {
+  // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
+  // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
+  kind: 'github_app' | 'external_remote' | 'platform' | 'unknown'
+  reports_checks: boolean
+  hosts_proposals: boolean
+  can_write_remote: boolean
+  /** 填了远端地址没有。和 can_write_remote 分开：填了而我们推不动是第三种情况。 */
+  has_external_remote: boolean
+  pushes_to_external_remote: boolean
+  identity: 'user' | 'platform'
+  declaration: string
+}
+
 export interface AcceptCard {
   id: string
   task_id?: string | null
@@ -704,7 +723,9 @@ export interface AcceptCard {
   // 合并态 (#718): what stands between this card and the trunk, and whose move
   // it is. Always present — a platform-lane card carries who="human".
   merge_state: MergeStateInfo
-  has_external_checks: boolean
+  // 托管方是谁、它能做什么 —— 卡生成的那一刻就带着（后端 domain/review/forge.py）。
+  // 这是卡上唯一的一份：别从别的字段推「这个项目接没接 GitHub」。
+  forge: ForgeInfo
   auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
@@ -1118,4 +1139,182 @@ export interface ProjectAgent {
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
   created_at?: string | null
+}
+
+// ---- 反馈 (feedback) ----
+//
+// 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
+// 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
+// 变成每次读前端代码都要回去查一遍的事。
+//
+// 三处**故意**不叫原型里的名字：
+//   * `supports` 是计数、`comments` 也是计数（原型里 `comments` 是数组），
+//     详情页的评论在 `FeedbackDetail.thread`。
+//   * 作者是 `author_handle`、时间是 `created_at`：蛇形是这一层的约定。
+//   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
+//     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
+//     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
+export type FeedbackKind = 'bug' | 'suggestion' | 'other'
+/** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
+export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed'
+export type FeedbackVisibility = 'public' | 'private'
+export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
+
+/** 列表里的一行。计数由后端一并算好（见 `schemas.FeedbackCard`）。 */
+export interface FeedbackCard {
+  id: string
+  /** 「FB-1042」。人念的和粘贴的是这个，`id` 是 uuid，只用来发请求。 */
+  display_id: string
+  kind: FeedbackKind
+  title: string
+  summary: string
+  status: FeedbackStatus
+  priority: FeedbackPriority
+  visibility: FeedbackVisibility
+  /** 安全问题：管理员标的标记，比 private 更窄（见 services.may_see）。 */
+  security: boolean
+  author_handle: string
+  author_is_agent: boolean
+  /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
+  submitted_by_handle: string | null
+  assignee_handle: string | null
+  tags: string[]
+  supports: number
+  comments: number
+  supported: boolean
+  last_activity_at: string | null
+  created_at: string
+}
+
+export interface FeedbackTimelineEntry {
+  status: FeedbackStatus
+  /** 谁推的。人推是 handle，agent 发现的那条是 null。 */
+  by_handle: string | null
+  at: string
+}
+
+/** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以
+ *  层级恒为两层，前端不需要自己判断「这算第几层」。 */
+export interface FeedbackComment {
+  id: string
+  parent_id: string | null
+  author_handle: string
+  author_is_agent: boolean
+  body: string
+  created_at: string
+}
+
+/** 管理员之间的内部备注。**只增不改**，所以是行不是列。 */
+export interface FeedbackNote {
+  id: string
+  author_handle: string
+  body: string
+  created_at: string
+}
+
+export interface FeedbackDetail extends FeedbackCard {
+  problem: string
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  /** 这条反馈是从哪个话题来的。没有话题（harness 在沙箱里撞的墙）时为 null。 */
+  topic_id: string | null
+  project_id: string | null
+  timeline: FeedbackTimelineEntry[]
+  thread: FeedbackComment[]
+  /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
+  notes: FeedbackNote[]
+}
+
+export interface FeedbackCounts {
+  all: number
+  hot: number
+  active: number
+  resolved: number
+  /** 「我的反馈」里未读的条数。 */
+  unread: number
+  /** 管理端才有：还没指派给任何人的条数。 */
+  unassigned?: number
+}
+
+export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
+  counts: FeedbackCounts
+}
+
+/** `GET /feedback/meta` —— 词表。
+ *
+ *  **颜色不在这里**（那是前端的视觉决定，见 lib/feedbackMeta.ts），这里回答的是
+ *  「有哪些取值、按什么顺序流动」。加一个状态是后端改一处的事，前端靠这一份跟上，
+ *  不需要发版。`is_admin` 同理：它由服务端算，前端不猜。 */
+export interface FeedbackMeta {
+  kinds: FeedbackKind[]
+  statuses: FeedbackStatus[]
+  priorities: FeedbackPriority[]
+  visibilities: FeedbackVisibility[]
+  /** 状态梯子：时间线把还没到的步骤也画出来，靠的就是它。 */
+  status_ladder: FeedbackStatus[]
+  tabs: string[]
+  admin_tabs: string[]
+  /** 「热门」的门槛，前端不写死 5。 */
+  hot_supports: number
+  is_admin: boolean
+}
+
+export interface FeedbackSupportResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  supported: boolean
+}
+
+/** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
+export interface FeedbackCreateBody {
+  kind: FeedbackKind
+  title: string
+  summary?: string
+  problem?: string
+  visibility: FeedbackVisibility
+  priority?: FeedbackPriority
+  why?: string | null
+  expectation?: string | null
+  what_happened?: string | null
+  repro?: string | null
+  evidence?: string | null
+  logs?: string | null
+  session_id?: string | null
+  environment?: string | null
+  tags?: string[]
+}
+
+/** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */
+export interface FeedbackProposalPayload {
+  kind: FeedbackKind
+  title: string
+  summary: string
+  problem: string
+  visibility: FeedbackVisibility
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  tags: string[]
+  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
+  user_said: string
+  /** 服务端算的指纹，「不用」和去重都认它。 */
+  fingerprint: string
+}
+
+export interface FeedbackProposal {
+  block_id: string
+  author_handle: string
+  authored_at: string
+  payload: FeedbackProposalPayload
 }

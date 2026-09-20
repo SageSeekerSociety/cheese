@@ -105,8 +105,10 @@ scenario = Scenario(
 
 - **平台能确定性断言的，写 Check，别扔给 judge**（结构、链接、计数、状态机）；
   judge 只判语义质量（"回答用没用上记忆"、"开场白像不像接活的队友"）。
-- 感知 agent 只用结构化数据：block 的 `author_type`/`kind`、`/debug/turns` 的
-  turn 状态、WS frame 类型。**禁止对 AI 自然语言输出做模式匹配断言**（CLAUDE.md
+- 感知 agent 只用结构化数据：block 的 `author`/`kind`、`/debug/turns` 的
+  turn 状态、WS frame 类型。**「这条是不是芝士说的」问署名**（`by_an_agent`）：
+  `author_type` 只分「参与者」和「平台」两档，人和 agent 同属参与者，拿它分不出
+  谁说的。**禁止对 AI 自然语言输出做模式匹配断言**（CLAUDE.md
   硬性规定）——语义判断交给 judge。
 - `api.seed_memory()` 等 cheese-gated 写接口已带本次隔离后端的 sandbox token。
 

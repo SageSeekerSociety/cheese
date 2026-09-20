@@ -19,6 +19,7 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 import json
 import shlex
 from pathlib import Path
+from uuid import uuid4
 
 # Perception wiring (settings.json + the cheese-hook forwarder) is the SHARED
 # substrate — identical for the local (tmux) and remote (device) backends so it
@@ -27,9 +28,6 @@ from pathlib import Path
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.remote_execution import (
-    client as execution_client,
-)
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
@@ -61,6 +59,23 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
+#
+# 这是这个骨架**唯一**的 pin：行为声明（``behaviour.py``）引用它，
+# ``scripts/test_harness_contracts.py`` 装二进制时问的也是它。另外这几处写着同一
+# 个版本号，每一处都 import 不到这里，所以它们是复制品而不是第二个答案——升级要
+# 改的就是这张单子，守卫在测试里，改漏一处就红：
+#   * ``remote_execution/client.py`` 的 ``PINNED_VERSION``、
+#     ``remote_execution/bootstrap.py`` 的 ``VERSION``（机器上单独跑的两个脚本）
+#   * ``sandbox/Dockerfile.private`` 里装的那个 claude，以及镜像 tag 的三处写法：
+#     ``remote_execution/private.py`` 的 ``IMAGE``、``core/config.py`` 的
+#     ``private_chat_executor_image`` 默认值、
+#     ``.github/workflows/remote-execution.yml`` build 时打的 tag
+#     —— 以上都由 ``tests/unit/test_capability_matrix.py`` 钉住
+#   * ``.github/workflows/cli.yml`` 装的那个 claude 与 ``sandbox/Dockerfile`` 的
+#     ``ARG CLAUDE_CODE_VERSION``，由 ``tests/unit/test_device_rendezvous.py`` 钉住
+# ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
+# 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
+# 红得见。
 CLAUDE_PINNED_VERSION = "2.1.277"
 CLAUDE_MIN_VERSION = "2.1.277"
 
@@ -75,15 +90,16 @@ ENV_RV_SOCK = "CHEESE_RV_SOCK"
 ENV_RV_TOKEN_FILE = "CHEESE_RV_TOKEN_FILE"
 
 
-def rendezvous_paths(topic_id: str) -> tuple[str, str]:
-    """``(socket, token_file)`` for a topic, short enough to be bindable.
+def rendezvous_paths() -> tuple[str, str]:
+    """Allocate a socket and token file for one model launch.
 
     A unix socket path is capped near 104 bytes and an isolated home already
     spends ~105 (`~/.cheese/home/<project-uuid>/<topic-uuid>/.claude/`), so the
-    socket cannot live beside the session it belongs to. `/tmp` plus 12 hex of
-    the topic id keeps it at ~32 bytes and still unique per topic."""
-    short = topic_id.replace("-", "")[:12]
-    return f"/tmp/cheese-rv-{short}.sock", f"/tmp/cheese-rv-{short}.token"
+    socket cannot live beside the session it belongs to. Separate launches of
+    the same topic must not bind or authenticate through each other's files.
+    """
+    identity = uuid4().hex
+    return f"/tmp/cheese-rv-{identity}.sock", f"/tmp/cheese-rv-{identity}.token"
 
 
 # Reports what a turn cost. Claude Code writes a usage block per assistant
@@ -367,10 +383,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         else CLAUDE_BASE_ARGS
     )
     execution_setup = ""
-    pinned_version = (
-        execution_client.PINNED_VERSION if remote_execution else CLAUDE_PINNED_VERSION
-    )
-    minimum_version = pinned_version if remote_execution else CLAUDE_MIN_VERSION
+    pinned_version = CLAUDE_PINNED_VERSION
+    minimum_version = CLAUDE_PINNED_VERSION if remote_execution else CLAUDE_MIN_VERSION
     if remote_execution:
         helper_sources = release.sources()
         execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
@@ -414,9 +428,9 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
     if topic_id:
         # Where this screen's prompts arrive. The launcher turns these two into
         # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
-        # reads the same two to dial. Keyed on the topic so an adopted screen
-        # and a fresh one agree on the path.
-        sock, token_file = rendezvous_paths(topic_id)
+        # reads the same two to dial. An adopted screen retains its saved launch
+        # environment, including the paths its running model already uses.
+        sock, token_file = rendezvous_paths()
         env[ENV_RV_SOCK] = sock
         env[ENV_RV_TOKEN_FILE] = token_file
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
@@ -619,7 +633,7 @@ if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{minimum_version}" "$CLAUDE_V
 delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
-# One token per topic, on disk rather than in the env: an ADOPTED claude keeps
+# One token per launch, on disk rather than in the env: an ADOPTED claude keeps
 # the token it booted with, so a freshly generated value would never match. The
 # file is the single copy the connector and this launcher both read.
 if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then

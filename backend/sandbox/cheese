@@ -18,7 +18,10 @@
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong
-  cheese accept-request mentor-1 "验收证据" --subject "feat: add report"
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add report" \
+      --artifact <产物 id>                     # 交付清单上那一项的新一版
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add site" \
+      --new-artifact "项目官网"                # 做出了清单上还没有的一样东西
   cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
@@ -38,6 +41,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -122,6 +126,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         "cheese_bind",
         "cheese_close_task",
         "cheese_decision",
+        "cheese_feedback_propose",
         "cheese_members",
         "cheese_status",
         "cheese_tell",
@@ -243,6 +248,40 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_gh_token":
         return {"method": "GET", "path": "/sandbox/github-token"}
+    if tool == "cheese_feedback_propose":
+        # 话题级:配额、指纹去重、拒绝的记忆全挂在话题上,而「这个人能不能在这个
+        # 话题里提」的答案就是 authorize_topic 已经算过的那个。
+        body: dict = {
+            "title": args["title"],
+            "kind": args["kind"],
+            "visibility": args["visibility"],
+        }
+        for key, arg in (
+            ("why", "why"),
+            ("what_happened", "what_happened"),
+            ("expectation", "expectation"),
+            ("repro", "repro"),
+            ("evidence", "evidence"),
+            ("summary", "summary"),
+            ("problem", "problem"),
+            ("session_id", "session_id"),
+            ("environment", "environment"),
+        ):
+            if args.get(arg):
+                body[key] = args[arg]
+        if args.get("user_said"):
+            body["user_said"] = args["user_said"]
+        if args.get("tags"):
+            body["tags"] = [
+                value.strip() for value in args["tags"].split(",") if value.strip()
+            ]
+        if args.get("attach_logs"):
+            body["logs"] = collect_session_snapshot()
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/feedback-proposals",
+            "body": body,
+        }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
     if tool == "cheese_status":
@@ -393,18 +432,21 @@ def _task_worktree(task_id: str) -> Path:
             _git_task(cache, "init", "--bare", str(repo))
         if "origin" not in _git_task(repo, "remote").splitlines():
             _git_task(repo, "remote", "add", "origin", remote)
-        _git_task(
-            repo,
-            "fetch",
-            "origin",
-            f"refs/heads/{data['branch']}:refs/remotes/origin/{data['branch']}",
-        )
-        _git_task(
-            repo,
-            "fetch",
-            "origin",
-            f"refs/heads/{data['base']}:refs/remotes/origin/{data['base']}",
-        )
+        # The commits, not every version of every file. A project's repo is
+        # mostly old blobs — measured on cheese's own: 195 MB whole, 9.6 MB
+        # this way — and all of that crossed the platform's backend on the way
+        # here, where one 169 MB fetch froze every other request for 3.7 s
+        # (2026-09-20). The whole history is still here, so `git log` and a
+        # diff against the base still work; a file's older contents are fetched
+        # if something actually reads them.
+        for ref in (data["branch"], data["base"]):
+            _git_task(
+                repo,
+                "fetch",
+                "--filter=blob:none",
+                "origin",
+                f"refs/heads/{ref}:refs/remotes/origin/{ref}",
+            )
         if not (task_dir / ".git").exists():
             existing = _git_task(repo, "branch", "--list", data["branch"])
             create = [] if existing else ["-b", data["branch"]]
@@ -683,6 +725,27 @@ def _raw_request(
         print(f"已写入 {out}（{len(payload)} 字节）")
     else:
         print(payload.decode(errors="replace"))
+
+
+def collect_session_snapshot() -> str:
+    """The environment-and-logs snapshot `--attach-logs` sends.
+
+    Bounded on purpose: the whole point of the flag is that the reporter opts in,
+    and a snapshot that can be arbitrarily large is one nobody can read at the
+    other end. Records the facts that make a report reproducible — CLI
+    fingerprint, container, working directory — and the tail of nothing else.
+    """
+    facts = {
+        "cheese_fingerprint": source_fingerprint(),
+        "api": API,
+        "topic": TOPIC,
+        "project": PROJECT,
+        "turn": TURN,
+        "cwd": os.getcwd(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+    }
+    return "\n".join(f"{key}: {value}" for key, value in facts.items() if value)
 
 
 def _format_status(d: dict) -> str:
@@ -1181,6 +1244,105 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pdec.add_argument("text", help="决策内容,一句话说清定了什么、为什么")
 
+    pfb = sub.add_parser(
+        "feedback",
+        help="给平台提一条反馈(提案,由人确认后发送)",
+        description=(
+            "你在轮次里发现的问题,提到平台上给人看。\n"
+            "\n"
+            "**这是提案,不是发布。** 平台会在对话里出一张卡,人按「提交反馈」才算数,"
+            "所以你不会打断谁,也不用等回答。要人当场拍板请用 `cheese ask`。\n"
+            "\n"
+            "什么时候该提(四条,正着看):某个工具或命令反复失败;你做不到用户要求的"
+            "事;用户指出你的错,或者你自己发现犯了错;用户让你提。\n"
+            "什么时候不该提:一轮任务失败但不影响别人、用户已经知道的事、能从文档里"
+            "查到答案的事。**先确认这不是用户的使用方式问题**——这条卡问的就是"
+            "「平台坏了」和「用户不会用」之间的那句话。\n"
+            "\n"
+            "写之前先看 `--user-said`:它是必填的,要么引用用户原话,要么照抄那句"
+            "「用户没有就这个问题说过话」。不许猜用户怎么想。\n"
+            "\n"
+            "同一个话题每天最多两张卡,同一个问题只问一次(指纹去重,人点过「不用」"
+            "的不会再问)。超了平台会拒绝,不要重试。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pfbsub = pfb.add_subparsers(dest="feedbackcmd", required=True)
+    pfbprop = pfbsub.add_parser(
+        "propose",
+        help="把你发现的问题提成一张提案卡,交给人决定发不发",
+        description=(
+            "落一张提案卡。人在聊天里按「提交反馈」才算发布,所以不用等他,"
+            "也不用在正文里宣布你提了这件事——卡本身就是那句话。\n"
+            "\n"
+            "每一项都是短标签加一两行,不要写成叙事段落。只写事实:"
+            "观察到的 vs 期望的,错误原文短就照抄。根因没在会话里验证过就不要写。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pfbprop.add_argument("title", help="一句话说清问题(≤300 字)")
+    pfbprop.add_argument(
+        "--kind",
+        choices=["bug", "suggestion", "other"],
+        default="bug",
+        help="bug=平台坏了;suggestion=可以更好;other=其余",
+    )
+    pfbprop.add_argument(
+        "--why",
+        default=None,
+        help="判断依据:为什么这是平台的问题,不是用户的使用方式问题",
+    )
+    pfbprop.add_argument(
+        "--what-happened",
+        default=None,
+        help="实际发生了什么(观察到的),只写事实",
+    )
+    pfbprop.add_argument(
+        "--expectation",
+        default=None,
+        help="你以为会发生什么",
+    )
+    pfbprop.add_argument(
+        "--repro",
+        default=None,
+        help="能复现它的最小步骤或形态",
+    )
+    pfbprop.add_argument(
+        "--evidence",
+        default=None,
+        help="可追溯的标识符:request id、时间戳、文件路径、版本。没有就省略",
+    )
+    pfbprop.add_argument(
+        "--user-said",
+        required=True,
+        help=(
+            "用户说过什么。**必填。** 引用原话;用户没说过,"
+            "就照抄这句:用户没有就这个问题说过话,以上是芝士自己观察到的"
+        ),
+    )
+    pfbprop.add_argument("--summary", default="", help="列表里显示的一行(省略则取标题)")
+    pfbprop.add_argument("--problem", default="", help="完整描述")
+    pfbprop.add_argument(
+        "--visibility",
+        choices=["public", "private"],
+        default="public",
+        help="private 只有管理员和提交者本人看得见",
+    )
+    pfbprop.add_argument(
+        "--attach-logs",
+        action="store_true",
+        help="附上当前会话的环境与日志快照(默认不附)",
+    )
+    pfbprop.add_argument(
+        "--tags", default=None, help="逗号分隔的标签,最多 20 个"
+    )
+    pfbprop.add_argument(
+        "--session-id", default=None, help="当前会话 id(不填则由平台补)"
+    )
+    pfbprop.add_argument(
+        "--environment", default=None, help="运行环境描述(不填则由平台补)"
+    )
+
     ptitle = sub.add_parser(
         "title",
         help="给本话题(或它下面的一条活)起/改标题",
@@ -1300,6 +1462,14 @@ def build_parser() -> argparse.ArgumentParser:
         "reason", nargs="?", default="", help="验收证据和需要对方检查的内容"
     )
     pa.add_argument("--subject", required=True, help="英文 Conventional Commit 标题")
+    pa.add_argument(
+        "--artifact",
+        help="这次交付是清单上哪一项产物的新一版，给它的 id（照抄系统提示里的清单）",
+    )
+    pa.add_argument(
+        "--new-artifact",
+        help="这次交付做出了一样清单上还没有的东西，给它起个真名；返回新的 id",
+    )
     pa.add_argument("--body", help="改动原因和验证说明")
     pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
     pdesc = sub.add_parser(
@@ -1658,6 +1828,11 @@ def main() -> None:
     elif a.cmd == "decision":
         _planned_call("cheese_decision", a)
         print("已记入决策记录。")
+    elif a.cmd == "feedback":
+        r = _planned_call("cheese_feedback_propose", a).get("data") or {}
+        # 卡片由平台渲染,所以这里只说结果。不要再写一句「已提交反馈」——
+        # 那是 SKILL.md 明令避免的旁白,卡本身就是那句话。
+        print(f"已提案(卡 id {r.get('block_id')}),等人按「提交反馈」。")
     elif a.cmd == "title":
         r = _planned_call("cheese_title", a).get("data") or {}
         if a.task:
@@ -1781,6 +1956,8 @@ def main() -> None:
             "routing_reason": a.reason,
             "change_subject": a.subject,
             "change_body": a.body,
+            "artifact": a.artifact,
+            "new_artifact": a.new_artifact,
         }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
@@ -1790,7 +1967,16 @@ def main() -> None:
         task = _task_id(a.task)
         _sync_task(task)
         r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card", payload)["data"]
-        print(f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}。")
+        art = r.get("artifact") or {}
+        named = art.get("name") or a.new_artifact or a.artifact
+        print(
+            f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}"
+            f"，本次更新《{named}》。"
+        )
+        # 新建的那一次把 id 印出来:往后交付这一项就用它,而这条命令是它第一次
+        # 存在的地方 —— 不印出来,这一轮里没有别的地方读得到。
+        if a.new_artifact and art.get("id"):
+            print(f"这一项的 id 是 {art['id']}，以后交付它用 --artifact {art['id']}。")
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。

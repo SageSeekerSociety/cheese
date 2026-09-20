@@ -168,21 +168,30 @@ class EvalApi:
                     return frames
 
 
+def by_an_agent(block: dict) -> bool:
+    """这条是不是芝士写的 —— 问的是署名，不是事件行的档位。
+
+    档位只分「参与者」和「平台」两档：人和 agent 都是参与者，一个房间里坐着谁由
+    署名（``author``，一条 handle）说了算。拿档位问这一句的旧写法不会报错，只会
+    安静地一条都匹配不上 —— 而这里每个调用点都拿它当断言依据，数字算成 0 照样
+    "通过"。
+    """
+    author = block.get("author") or ""
+    return author == "cheese" or author.startswith("cheese-")
+
+
+def agent_blocks(blocks: list[dict]) -> list[dict]:
+    """芝士写下的块，不论哪一种 kind。"""
+    return [b for b in blocks if by_an_agent(b)]
+
+
 def ai_messages(blocks: list[dict]) -> list[dict]:
     """Chat messages authored by 芝士 (structural fields, no text sniffing)."""
-    return [
-        b
-        for b in blocks
-        if b["author_type"] == "ai" and b["kind"] == "message"
-    ]
+    return [b for b in blocks if by_an_agent(b) and b["kind"] == "message"]
 
 
 def human_messages(blocks: list[dict]) -> list[dict]:
-    return [
-        b
-        for b in blocks
-        if b["author_type"] == "human" and b["kind"] == "message"
-    ]
+    return [b for b in blocks if not by_an_agent(b) and b["kind"] == "message"]
 
 
 def new_id() -> str:

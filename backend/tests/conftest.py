@@ -20,7 +20,7 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -89,6 +89,7 @@ from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness import SessionRef  # noqa: E402
 from app.domain.agent.harness.channel import Channel  # noqa: E402
 from app.domain.agent.harness.claude_code import (  # noqa: E402
     ClaudeCodeRuntime,
@@ -230,13 +231,13 @@ class StubChannel(Channel):
     async def ensure_ready(  # type: ignore[override]
         self,
         *,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         launch: LaunchPlan,
         **_: object,
     ) -> uuid.UUID:
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
-        return topic_id
+        return session.topic_id
 
     async def send_prompt(  # type: ignore[override]
         self, screen: uuid.UUID, prompt: str
@@ -729,25 +730,99 @@ _TEMPLATE_READY = False
 # tests/unit/ is the only tree allowed to run without a Postgres; everything
 # else is DB-backed by construction. Trailing sep so a sibling like
 # "tests/unittools/" can't match by prefix.
-_UNIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unit") + os.sep
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_UNIT_DIR = os.path.join(_TESTS_DIR, "unit") + os.sep
+_CONTRACT_DIR = os.path.join(_TESTS_DIR, "contract") + os.sep
 
 
-def _needs_db(request: pytest.FixtureRequest) -> bool:
-    """Whether this test requires the Postgres schema to be provisioned.
+def _reaches_for_db(path: str, fixturenames: Iterable[str]) -> bool:
+    """Whether a test at ``path`` with this fixture closure needs Postgres.
 
     Two independent reasons, because fixture names alone aren't enough: the
     integration harness binds ``settings.database_url`` directly (module import
     time), so a test there can touch the DB without naming a DB fixture. Hence
     anything outside ``tests/unit/`` is assumed DB-backed. Inside ``tests/unit/``
-    we go by the fixture closure — ``request.fixturenames`` is transitive, and
-    every DB-bound fixture (``client``, ``python_client``, integration's
+    we go by the fixture closure — a closure is transitive, and every DB-bound
+    fixture (``client``, ``python_client``, integration's
     ``db_connection``/``db_session``…) chains to ``_pg_schema``, so requesting any
     of them shows up here.
+
+    One function because the answer has two readers who must agree: the gate
+    below, which provisions a database for the tests that need one, and
+    ``_layer_of``, which sends the tests that don't into a CI step that has none.
+    Written twice they would drift, and the drift lands as a test asking a
+    database that was never built for it.
     """
-    return (
-        not str(request.path).startswith(_UNIT_DIR)
-        or "_pg_schema" in request.fixturenames
-    )
+    return not path.startswith(_UNIT_DIR) or "_pg_schema" in fixturenames
+
+
+def _needs_db(request: pytest.FixtureRequest) -> bool:
+    """Whether this test requires the Postgres schema to be provisioned."""
+    return _reaches_for_db(str(request.path), request.fixturenames)
+
+
+# The three layers the suite runs as. CI runs one pytest per layer, in series,
+# each with its own ceiling, so a wedge or a slowdown names the layer it is in
+# instead of arriving as one number for 6800 tests.
+_LAYERS = frozenset({"pure", "contract", "integration"})
+
+
+def _layer_of(item: pytest.Item) -> str:
+    """Which layer ``item`` runs in.
+
+    ``pure`` is the layer that runs on a machine with no Postgres, so what
+    decides it is ``_reaches_for_db`` — the same question the gate asks before
+    building a database, asked of the same fixture closure. A file under
+    ``tests/unit/`` that does reach for one — the turn log lives in Postgres, so
+    the runner's tests do — is a database test wherever it sits, and runs in the
+    integration step with a database under it.
+    """
+    path = os.fspath(item.path) if item.path is not None else ""
+    if path.startswith(_CONTRACT_DIR):
+        return "contract"
+    # getattr: only a Function has a fixture closure, and a collected node that
+    # has none has not asked for a database either.
+    closure = getattr(item, "fixturenames", ())
+    # One call decides both halves of "pure": outside ``tests/unit/`` this is
+    # true whatever the closure holds, so the tree is checked by the same
+    # predicate that checks the fixtures.
+    if not _reaches_for_db(path, closure):
+        return "pure"
+    return "integration"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give every collected test exactly one layer marker.
+
+    The three CI steps are the whole suite only if every test carries one and
+    only one of the three markers: a test carrying none runs in no step and is
+    reported nowhere — green CI over code nothing checked — and one carrying two
+    is counted, and timed, twice. Neither can be seen in a passing run.
+
+    So a test that declares a layer of its own aborts the collection here
+    rather than being warned about, and a test that declares none has one
+    added. There is no third branch: ``_layer_of`` is total — contract, pure,
+    or integration as the fallback — so "nothing to add" cannot arise.
+
+    Derived here rather than written on each test: a marker on the test is a
+    second declaration of what its fixture list already says, and the two drift
+    the moment a test grows a database and nobody moves its marker.
+    """
+    misfiled = []
+    for item in items:
+        declared = {m.name for m in item.iter_markers()} & _LAYERS
+        if declared:
+            misfiled.append(
+                f"  {item.nodeid}\n"
+                f"    carries {sorted(declared)} already — the layer is derived"
+                f" from the fixture closure, so remove the marker"
+            )
+            continue
+        item.add_marker(_layer_of(item))
+    if misfiled:
+        raise pytest.UsageError(
+            "These tests declare their own layer:\n" + "\n".join(misfiled)
+        )
 
 
 async def _terminate_open_transactions(db_name: str) -> list[dict]:
@@ -800,6 +875,16 @@ def pytest_runtest_teardown(item: pytest.Item):
     """
     yield
     names = getattr(item, "fixturenames", ())
+    # A pure test has no database behind it, so it cannot have leaked a
+    # transaction on one — and the name check below cannot tell that on its own:
+    # three files define their own local ``client``, a fake HTTP client or a
+    # four-route FastAPI app, which shadows the fixture this hook is named after
+    # and matches here all the same. That cost every one of them a connection to
+    # the maintenance database per test, and in the pure CI step, which runs with
+    # no database reachable at all, it was an error at teardown on a test that
+    # had passed.
+    if item.get_closest_marker("pure") is not None:
+        return
     if not ({"client", "python_client", "db_factory"} & set(names)):
         return
     leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))

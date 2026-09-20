@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -192,6 +194,20 @@ class CodexRuntime:
                         "Codex journal waiting for the runner topic=%s: %s", topic, exc
                     )
                 await asyncio.sleep(2)
+            except httpx.TransportError as exc:
+                # The connection owner is being replaced, or the socket to it
+                # went while this read was in flight. Retrying is what this loop
+                # is for, and the owner is back within seconds — but at ERROR
+                # every release of it wrote 「Codex journal read failed」 into the alert
+                # channel, as it did at 01:47 UTC on 2026-09-20.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "Codex journal waiting for the connection owner topic=%s: %s",
+                        topic,
+                        exc,
+                    )
+                await asyncio.sleep(2)
             except Exception:
                 # The runner survives a backend or connector outage. Retrying
                 # reads is safe because the durable landing cursor only moves
@@ -349,6 +365,7 @@ class CodexRuntime:
         turn_id=None,
         images=None,
         agent_handle=None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
@@ -360,7 +377,7 @@ class CodexRuntime:
         self.queues[work] = queue
         try:
             await self.send(
-                SessionRef(project_id, topic_id),
+                SessionRef(project_id, topic_id, session_agent, self.harness),
                 prompt,
                 Opening(
                     system_prompt,

@@ -59,7 +59,7 @@ def test_summon_does_not_repost_the_message(client, stub_hooks):
     said = [
         b["content"]
         for b in blocks
-        if b["author_type"] == "human" and b["kind"] == "message"
+        if b["author"] == "user-1" and b["kind"] == "message"
     ]
     # 补一条一模一样的消息，读的人就得自己分辨哪条是真的。
     assert said == ["这个分页方案你看下"]
@@ -70,7 +70,7 @@ def _wait_until_read(client, topic_id: str) -> None:
     for _ in range(500):
         blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
         if any(
-            b["author_type"] == "human"
+            b["author"] == "user-1"
             and b["kind"] == "message"
             and (b.get("meta") or {}).get("consumed_turn")
             for b in blocks

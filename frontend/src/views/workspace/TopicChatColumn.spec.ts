@@ -17,6 +17,14 @@ import TopicChatColumn from './TopicChatColumn.vue'
 
 const Column = TopicChatColumn as unknown as Component
 
+// 时间线末尾那几位是**挂载在会话里的整块界面**，不是接线，所以这里一律替掉：
+//   * TopicAcceptCard / TopicComputePicker —— 各自带一套异步状态，会让断言飘。
+//   * AgentFeedbackCard —— 它内部挂着反馈抽屉，而 `v-navigation-drawer` 要
+//     `v-app` provide 的 layout。真实应用里 MyApp.vue 提供得起，这个 spec 只挂
+//     一根栏、外面没有 v-app，不替掉就会在 setup 阶段抛
+//     「Could not find injected layout」，把三条接线断言一起带走。
+const stubbedChildren = { TopicAcceptCard: true, TopicComputePicker: true, AgentFeedbackCard: true }
+
 const topic = {
   id: 'tc-1',
   project_id: 'p1',
@@ -74,7 +82,7 @@ describe('对话栏的接线', () => {
     history = []
     const { emitted } = render(Column, {
       props: { topic, members: [], topicList: [] },
-      global: { plugins: [vuetify, createPinia()] },
+      global: { plugins: [vuetify, createPinia()], stubs: stubbedChildren },
     })
     await settle()
     sockets.at(-1)?.onopen?.()
@@ -100,7 +108,7 @@ describe('对话栏的接线', () => {
       props: { topic, members: [], topicList: [], unreadOnOpen: 1 },
       global: {
         plugins: [vuetify, createPinia()],
-        stubs: { TopicComputePicker: true, TopicAcceptCard: true },
+        stubs: stubbedChildren,
       },
     })
     await settle()
@@ -118,7 +126,7 @@ describe('对话栏的接线', () => {
       },
       global: {
         plugins: [vuetify, createPinia()],
-        stubs: { TopicComputePicker: true, TopicAcceptCard: true },
+        stubs: stubbedChildren,
       },
     })
     await settle()

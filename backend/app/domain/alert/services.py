@@ -130,7 +130,7 @@ class AlertService:
                 project_id=n.project_id,
                 topic_id=n.topic_id,
                 author=decided_by,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content=f"【决策】关于「{n.title}」：选择「{chosen}」。",
                 kind=BlockKind.message,
             )

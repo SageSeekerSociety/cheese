@@ -22,6 +22,7 @@ so the union itself is unchanged.
 """
 
 import base64
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -214,6 +215,26 @@ def local_fs_op(*, op_id: str, op: dict[str, Any]) -> dict[str, Any]:
     obey. See cli/internal/localfs/wire.go.
     """
     return {"t": "localfs.op", "id": op_id, "value": op}
+
+
+def execution_call(
+    *, call_id: str, state: str, method: str, params: dict[str, Any], timeout: int
+) -> dict[str, Any]:
+    """Ask the resident executor under ``state`` to run one method.
+
+    ``stdin`` is the request the connector writes verbatim into the executor
+    socket (``cli/internal/host/executor.go``), so its bytes are part of the
+    contract, not an encoding detail of this process: the frame is pinned by
+    ``backend/tests/fixtures/wire/execution-call.json``, which the Go side reads
+    too.
+    """
+    return {
+        "t": "execution.call",
+        "id": call_id,
+        "path": state,
+        "stdin": json.dumps({"method": method, "params": params}),
+        "timeout": int(timeout),
+    }
 
 
 def update() -> dict[str, Any]:

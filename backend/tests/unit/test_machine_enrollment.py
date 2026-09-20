@@ -581,6 +581,52 @@ def test_bootstrap_is_valid_shell():
     assert checked.returncode == 0, checked.stderr
 
 
+@pytest.mark.parametrize("already_running", [False, True])
+def test_enrollment_runs_with_the_identity_it_just_wrote(tmp_path, already_running):
+    import json
+    import shlex
+    import subprocess
+
+    config = tmp_path / ".config/cheese/config.json"
+    config.parent.mkdir(parents=True)
+    active_config = tmp_path / "active-config.json"
+    if already_running:
+        active_config.write_text(json.dumps({"device_id": "old", "token": "old"}))
+    connector = tmp_path / ".local/bin/cheesehost"
+    connector.parent.mkdir(parents=True)
+    config_path = shlex.quote(str(config))
+    active_path = shlex.quote(str(active_config))
+    # Starting an active systemd service leaves its process and credentials intact.
+    connector.write_text(
+        f"#!/bin/sh\n[ -f {active_path} ] || cp {config_path} {active_path}\n"
+    )
+    connector.chmod(0o755)
+    script = enrollment.bootstrap_script(
+        origin="https://cheese.test", token="new-token", device_id="new-device"
+    )
+    start = script.index('cat > "$HOME/.config/cheese/config.json"')
+    end = script.index('echo "cheese.service active"')
+    harness = f"""
+set -eu
+sleep() {{ :; }}
+loginctl() {{ echo Linger=yes; }}
+systemctl() {{
+    case "$2" in
+        restart) cp {config_path} {active_path} ;;
+        is-active) test -f {active_path} ;;
+        *) return 1 ;;
+    esac
+}}
+{script[start:end].replace("$HOME", str(tmp_path))}
+"""
+    result = subprocess.run(
+        ["bash"], input=harness, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(active_config.read_text())["device_id"] == "new-device"
+    assert json.loads(active_config.read_text())["token"] == "new-token"
+
+
 @pytest.mark.parametrize("direct", [False, True])
 def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
     monkeypatch, direct

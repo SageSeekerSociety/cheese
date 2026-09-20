@@ -11,9 +11,6 @@ on:
 permissions:
   actions: read
   contents: read
-  # Reading the self-hosted runner list is an administration read, which is not
-  # covered by `actions: read`.
-  administration: read
 
 jobs:
   check:
