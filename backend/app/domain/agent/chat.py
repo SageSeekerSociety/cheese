@@ -5226,7 +5226,7 @@ class ChatService:
             landed = landing(
                 EventAbout.project,
                 project_id=project_id,
-                overview_room_id=root_topic_id,
+                room_id=root_topic_id,
             )
             await BlockRepository(session).add(
                 project_id=landed.project_id,

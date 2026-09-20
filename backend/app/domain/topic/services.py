@@ -663,6 +663,17 @@ class TopicService:
             await self._archive_one(child, by=by, cascaded_from=topic.title)
             await self._archive_children(child, by=by)
 
+    async def _overview_room(self, project_id: uuid.UUID) -> uuid.UUID:
+        """项目总览那个房间（`TopicKind.root`）——项目的事落在这里。
+
+        总览是哪个房间只有项目行知道，`landing()` 读不到它，所以这一句由调用点
+        负责：从 `Project.root_topic_id` 取，不自己挑一个房间。
+        """
+        project = await self._projects.get(project_id)
+        assert project is not None  # 房间的 project_id 是外键，项目行必在。
+        assert project.root_topic_id is not None  # create() 一定播种了总览。
+        return project.root_topic_id
+
     async def _archive_one(
         self, topic: Topic, *, by: str, cascaded_from: str | None = None
     ) -> None:
@@ -694,11 +705,17 @@ class TopicService:
             by=by,
         )
         note = (
-            f"随父话题「{cascaded_from}」一同归档"
+            f"房间「{topic.title}」随父话题「{cascaded_from}」一同归档"
             if cascaded_from
-            else f"<@{by}> 归档了话题"
+            else f"<@{by}> 归档了房间「{topic.title}」"
         )
-        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
+        # 房间归档是项目的事，不是这个房间的事（结论 14）：房间关掉之后没人再打开
+        # 它的时间线，而「少了一个房间」恰恰是项目总览要记的一行。
+        landed = landing(
+            EventAbout.project,
+            project_id=topic.project_id,
+            room_id=await self._overview_room(topic.project_id),
+        )
         await self._blocks.add(
             project_id=landed.project_id,
             topic_id=landed.topic_id,
@@ -740,14 +757,20 @@ class TopicService:
         topic.archived_at = None
         topic.cleanup_due_at = None
         topic.cleanup_id = None
-        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
+        # 归档落总览，取消归档就落在同一条线上：一个房间回到项目里，和它离开项目
+        # 是同一件事的两面，读的人也在同一个地方读。
+        landed = landing(
+            EventAbout.project,
+            project_id=topic.project_id,
+            room_id=await self._overview_room(topic.project_id),
+        )
         await self._blocks.add(
             project_id=landed.project_id,
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author=by,
             author_type=AuthorType.system,
-            content=f"<@{by}> 取消归档，话题恢复活跃",
+            content=f"<@{by}> 取消归档，房间「{topic.title}」恢复活跃",
             kind=BlockKind.event,
             meta={"platform": True},
         )

@@ -35,12 +35,18 @@ def test_archive_requires_manager_and_records_actual_actor(client):
     )
     assert result.status_code == 200, result.text
     assert result.json()["data"]["cleanup_due_at"] is not None
-    blocks = client.get(
-        f"/topics/{topic}/blocks", headers=session_auth_headers("owner")
-    ).json()["data"]["data"]
-    archive = next(
-        block for block in blocks if "归档了话题" in (block.get("content") or "")
-    )
+
+    # 房间归档是项目的事，落项目总览（结论 14）：房间关掉之后没人再打开它的
+    # 时间线，而「少了一个房间」正是项目总览上要读到的一行。
+    def archive_note(room):
+        blocks = client.get(
+            f"/topics/{room}/blocks", headers=session_auth_headers("owner")
+        ).json()["data"]["data"]
+        return [b for b in blocks if "归档了房间" in (b.get("content") or "")]
+
+    assert archive_note(topic) == []
+    (archive,) = archive_note(project["root_topic_id"])
+    assert "R" in archive["content"]
     assert archive["author"] == "admin"
     assert "forged" not in archive["content"]
     assert (

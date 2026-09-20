@@ -18,9 +18,10 @@
 就是同一个事实的第二份声明：两份一旦对不上，没有哪一份是对的。所以这里只有一张表
 和一个函数，`blocks` 一列不加，一条迁移不写。
 
-`overview_room_id` 和 `room_id` 分开收，不是啰嗦：项目总览是从项目行上读出来的
-（`Project.root_topic_id`），不是调用点随手给的一个房间。合成一个参数的话，
-「项目的事」这一档就等于「随便哪个房间」，这张表也就不封闭了。
+**总览是哪个房间，这里不校验。**项目那一档要的房间由调用点从
+`Project.root_topic_id` 取；`landing()` 是个纯函数，读不到项目行，也就无从分辨递
+进来的是不是 `TopicKind.root` 那个房间。这张表答的是「这条事件关于什么」，答不了
+「你给的房间对不对」——那一句由调用点负责，就在它取 `root_topic_id` 的那一行上。
 """
 
 from __future__ import annotations
@@ -53,7 +54,6 @@ def landing(
     project_id: uuid.UUID,
     room_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
-    overview_room_id: uuid.UUID | None = None,
 ) -> Landing:
     """按「关于什么」给出落点。
 
@@ -72,14 +72,10 @@ def landing(
                 raise ValueError("房间的事不落在卡上：带了 task_id 就该说 task")
             return Landing(project_id=project_id, topic_id=room_id, task_id=None)
         case EventAbout.project:
-            if overview_room_id is None:
-                raise ValueError("项目的事落项目总览：overview_room_id 不能空")
-            if room_id is not None:
+            if room_id is None:
                 raise ValueError(
-                    "项目的事只落项目总览，不认调用点给的房间：room_id 不能给"
+                    "项目的事落项目总览：room_id 要给 `Project.root_topic_id` 那个房间"
                 )
             if task_id is not None:
                 raise ValueError("项目的事不落在卡上：带了 task_id 就该说 task")
-            return Landing(
-                project_id=project_id, topic_id=overview_room_id, task_id=None
-            )
+            return Landing(project_id=project_id, topic_id=room_id, task_id=None)
