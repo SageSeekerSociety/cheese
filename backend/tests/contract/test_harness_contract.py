@@ -70,7 +70,7 @@ READERS = {"python", "extension"}
 
 
 def _drive_scenarios() -> list[dict]:
-    return [f for f in FIXTURES if "drive" in f and "xfail" not in f]
+    return [f for f in FIXTURES if "drive" in f]
 
 
 def _record_scenarios() -> list[dict]:
@@ -159,10 +159,15 @@ def test_a_scenario_is_written_in_the_word_list(scenario: dict) -> None:
     assert set(scenario) <= SCENARIO_KEYS, set(scenario) - SCENARIO_KEYS
     assert scenario["why"].strip()
     assert set(scenario["readers"]) <= READERS and scenario["readers"]
-    assert ("drive" in scenario) != ("harnesses" in scenario), scenario["name"]
+    if "xfail" in scenario:
+        # 名洞的那条：动词还不存在，所以既没有步骤可以驱动，也没有哪个骨架要回答
+        # 它。它唯一的读者是下面那条守卫，动词一落地就红。
+        assert "drive" not in scenario and "harnesses" not in scenario, scenario["name"]
+    else:
+        assert ("drive" in scenario) != ("harnesses" in scenario), scenario["name"]
     if "drive" in scenario:
         assert "events" not in scenario
-    else:
+    elif "harnesses" in scenario:
         for name, cell in scenario["harnesses"].items():
             assert set(cell) in ({"records"}, {"difference"}), name
             if "difference" in cell:
@@ -291,15 +296,7 @@ def test_recovery_still_reads_the_machine_and_not_the_platforms_copy() -> None:
     """结论 29 says recovery comes from the platform's copy. ``recover`` finds
     sessions that outlived this process on the MACHINE; there is no verb for
     rebuilding one from what the platform holds. When P18 adds it, this turns
-    red and the xfail on the scenario comes off with it."""
+    red, and the scenario naming the hole goes with it."""
     scenario = next(f for f in FIXTURES if "xfail" in f)
     assert scenario["xfail"].strip()
     assert not hasattr(AgentRuntime, scenario["verb"])
-
-
-@pytest.mark.xfail(
-    strict=True, reason="P18: see recovery-reads-the-platforms-copy.json"
-)
-async def test_a_session_can_be_rebuilt_from_the_platforms_copy() -> None:
-    scenario = next(f for f in FIXTURES if "xfail" in f)
-    await _play(ContractHarness(), scenario["drive"])

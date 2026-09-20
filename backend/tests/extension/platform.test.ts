@@ -65,14 +65,17 @@ describe("平台工具", () => {
     socket.close();
   });
 
-  it("命令失败时带回它自己说的话，并且算作错误", async () => {
+  it("命令失败时带回它自己说的话", async () => {
+    // Only the half this file owns: what the CLI wrote on stderr is what the
+    // model gets to read. That a non-zero status is `isError` is the fixture
+    // set's (a-tool-that-failed.json, driven by harness-contract.test.ts), and
+    // asserting it here too would be a second declaration of one rule.
     const socket = await runner(() => ({
       result: { status: 2, stdout: "", stderr: "没有这个话题" },
     }));
     const { pi } = await load({ socket: socket.address });
 
     const answer = await pi.call("cheese_doc_get", {});
-    assert.equal(answer.isError, true);
     assert.match(answer.content[0].text, /没有这个话题/);
     socket.close();
   });

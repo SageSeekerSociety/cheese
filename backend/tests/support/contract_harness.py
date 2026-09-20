@@ -59,7 +59,6 @@ class _Held:
     ref: SessionRef
     said: list[str] = field(default_factory=list)
     landed: int = 0
-    working: bool = False
 
 
 class ContractBacklog:
@@ -136,7 +135,6 @@ class ContractHarness:
         held = await self.ensure(session, opening)
         assert isinstance(held, _Held)
         held.said.append(message)
-        held.working = True
         return True
 
     def backlog(self, session: SessionRef) -> ContractBacklog:
@@ -149,12 +147,12 @@ class ContractHarness:
         return topic_id in self._held
 
     async def interrupt(self, session: SessionRef) -> bool:
-        held = self._held.get(session.topic_id)
-        if held is None:
-            return False
-        # The work stops; the conversation does not. The next send continues it.
-        held.working = False
-        return True
+        # The work stops; the conversation does not — the session stays held
+        # and the next send continues it, which is the whole of 「interrupt is
+        # weaker than close」. There is no work to stop in a runtime with no
+        # model behind it, so what this verb has to keep is what it does NOT
+        # touch.
+        return session.topic_id in self._held
 
     async def close(self, session: SessionRef) -> None:
         self._held.pop(session.topic_id, None)
@@ -171,17 +169,21 @@ class ContractHarness:
         raise NotImplementedError("the contract harness runs no model")
         yield  # pragma: no cover - makes this an async generator
 
+    # The protocol asks a runtime to accept these four; it does not ask it to
+    # keep them. Nothing here ever produces an event, an activity ping, a
+    # receipt or an unread count, so a field holding the consumer would be
+    # state with no reader — the kind of thing this set exists to delete.
     def bind_events(self, consumer: Any) -> None:
-        self._events = consumer
+        return None
 
     def bind_activity(self, consumer: Any) -> None:
-        self._activity = consumer
+        return None
 
     def bind_receipts(self, consumer: Any) -> None:
-        self._receipts = consumer
+        return None
 
     def bind_unread_probe(self, probe: Any) -> None:
-        self._unread = probe
+        return None
 
     def holds(self, topic_id: uuid.UUID) -> bool:
         return topic_id in self._held

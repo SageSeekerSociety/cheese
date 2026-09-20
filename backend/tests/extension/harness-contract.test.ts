@@ -62,10 +62,16 @@ describe("夹具本身", () => {
       assert.ok(scenario.readers?.length, "a scenario nobody reads checks nothing");
       const drives = "drive" in scenario;
       const translates = "harnesses" in scenario;
+      if (scenario.xfail) {
+        // 名洞的那条：动词还不存在，所以既没有步骤可以驱动，也没有哪个骨架要
+        // 回答它。Python 那边有一条守卫读它，动词一落地就红。
+        assert.ok(!drives && !translates, "a hole has no steps and no cells");
+        return;
+      }
       assert.ok(drives !== translates, "a scenario is one shape or the other");
       if (drives) {
         assert.ok(
-          VOCABULARY.verbs.includes(scenario.verb) || scenario.xfail,
+          VOCABULARY.verbs.includes(scenario.verb),
           `${scenario.verb} is not one of the six verbs`,
         );
         return;
