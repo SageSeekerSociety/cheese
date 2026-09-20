@@ -1448,13 +1448,16 @@ async def publish_chat_message(
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
-    if not actor.authenticated or not await TopicMemberService(db).holds_an_agent_seat(
-        place.room, actor.handle
-    ):
+    if not actor.authenticated:
         raise ForbiddenError("An authenticated agent must publish this message")
+    # 先授权，再问席位。两道都是 403，顺序不改任何调用者看到的结果；改的是代价：
+    # 席位那一问要读花名册、把 handle 换成用户行、再查 agent 绑定，而这条路由是
+    # 每条消息都走的。没权限进这个房间的调用者不必先替我们付这几次查询。
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+        raise ForbiddenError("An authenticated agent must publish this message")
     content = body.content.strip()
     if not content:
         raise ValidationError("content must not be blank")

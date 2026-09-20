@@ -1,7 +1,6 @@
 """The actor seam (pure, adapter-injected): token > cheese > handle fallback."""
 
 import uuid
-from dataclasses import fields
 
 import pytest
 
@@ -78,13 +77,16 @@ async def test_handle_fallback_when_no_credentials():
     assert actor.authenticated is False  # fallback is NOT authenticated
 
 
-async def test_the_seam_answers_who_and_never_what_kind():
-    """The 分身 handle resolves like any other: a handle, an id and how it got
-    here. Nothing on the way out says "this one is an agent" — the room it acts
-    in holds that answer, in the seat it does or does not have."""
+async def test_the_fallback_resolves_an_agent_handle_like_any_other():
+    """The 分身 handle takes the same path as a person's: it is a handle, and
+    the seam says only how it got here. Nothing looks it up to decide it is a
+    different kind of participant — the room it acts in holds that answer, in
+    the seat it does or does not have."""
     actor = await _resolve(fallback_handle="cheese")
     assert actor is not None
-    assert {f.name for f in fields(actor)} == {"handle", "user_id", "via"}
+    assert actor.handle == "cheese"
+    assert actor.via == "handle"
+    assert actor.authenticated is False
 
 
 async def test_no_signal_resolves_none():

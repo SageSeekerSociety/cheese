@@ -7,10 +7,11 @@
 凭证就可以。原来这里问的是调用者**是不是** agent（一个在信任边界解析、八条路由之外才
 被读到的布尔），而那个答案在整个项目里都一样，于是没坐下的那位照样发得出来。
 
-席位是项目里的席位，不是某一扇门后面的席位：项目的根房间就是项目本身（总览照着
-整份花名册），坐在那里的那位芝士替这个项目的每个房间答话——一张项目凭证认证的正是
-它。所以「这个房间认不认它」要连根房间一起问，否则线下那张凭证在除根房间外的任何
-房间里都会被答成「不是 agent」。
+这条判据不放宽成「这个项目认不认它」，哪怕只放宽一点：总览的花名册照着整个项目，
+所以「根房间认不认它」等于「项目认不认它」，撤掉的席位就白撤了。不照房间花名册答
+的只有一个 handle——项目凭证认证的那位芝士（`topic_agent_handle(根房间)`），它按
+定义不借任何房间的席位，只问目的地房间的话，线下那张凭证在除根房间外的任何房间里
+都会被答成「不是 agent」。
 
 **缝二（I9b）：一个 agent 实例只能在建它的那个项目里持有席位。** 人没有这条限制
 ——被邀请到哪就去哪。这是「谁拥有这个参与者」的直接后果：实例由建它的项目拥有，
@@ -122,6 +123,61 @@ def test_a_teammate_seats_only_in_the_project_that_built_it(client):
             headers=session_auth_headers("alice"),
         )
         assert joined.status_code == 200, joined.text
+
+
+def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
+    """根房间的席位只管根房间，不是全项目通行证。
+
+    总览的花名册照着整个项目（`seed_root` 把每一位成员都播进去），所以拿「根房间
+    的花名册认不认它」当兜底，等于把判据从「这个房间认不认它」放回「这个项目认不
+    认它」——一个被从房间 X 撤掉席位的队友照样发得出来，而撤席位就是撤授权正是这
+    整件事存在的理由。
+
+    兜底要管的只有一个 handle：项目凭证认证的那位芝士（`topic_agent_handle(根房间)`），
+    它按定义不借任何房间的席位。别的队友一律照房间的花名册答。
+    """
+    project = _project(client, "Root seat is not a project pass")
+    root = client.get(f"/projects/{project['id']}").json()["data"]["root_topic_id"]
+    room = _room(client, project, title="它没坐进来的那个房间")
+
+    made = client.post(
+        f"/projects/{project['id']}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    )
+    assert made.status_code == 200, made.text
+    seat = agent_instance_handle(made.json()["data"]["id"])
+
+    joined = client.post(
+        f"/projects/{project['id']}/members",
+        json={"user_handle": seat, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert joined.status_code == 200, joined.text
+    seated = client.post(
+        f"/topics/{root}/members",
+        json={"handle": seat, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert seated.status_code == 200, seated.text
+
+    def publish(topic_id):
+        return _publish(
+            client,
+            topic_id,
+            {
+                "X-Cheese-Token": mint_scoped_token(
+                    project_id=project["id"], topic_id=topic_id, agent_handle=seat
+                )
+            },
+        )
+
+    # 它真的坐在根房间：同一条凭证在那里发得出来。
+    at_root = publish(root)
+    assert at_root.status_code == 200, at_root.text
+
+    # 而房间 X 没给它席位，所以在那里它不是这个房间的 agent。
+    refused = publish(room["id"])
+    assert refused.status_code == 403, refused.text
 
 
 def _project_credential(client, project) -> tuple[str, str]:

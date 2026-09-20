@@ -28,6 +28,7 @@ from app.domain.feedback.schemas import (
     FeedbackStatusIn,
     NoteCreate,
 )
+from app.domain.identity.services import IdentityService
 
 router = APIRouter(prefix="/admin/feedback", tags=["feedback"])
 
@@ -35,26 +36,30 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _require_admin(
-    service: feedback_services.FeedbackService, resolver: ActorResolver
+    db: AsyncSession,
+    service: feedback_services.FeedbackService,
+    resolver: ActorResolver,
 ) -> str:
-    """The two gates every handler in this module passes, in one place.
+    """The gates every handler in this module passes, in one place.
 
-    `require_admin` answers 「是不是平台管理员」 from the allow-list. The check
-    above it answers a question about the CREDENTIAL, not about the participant:
-    a management action is taken by somebody in their own session, and a scoped
-    agent capability is not one. That distinction is the whole of it — the same
-    handle arriving on a session token is a person at a keyboard and is let
-    through, while a device screen's token (`X-Cheese-Screen`) is a per-screen
-    capability proving only that a call ran inside that screen, unattended.
-    Asking instead whether the handle names an agent would answer neither: the
-    allow-list is a list of handles and nothing stops an agent's from being on
-    it, which is exactly the case the tests pin. So the condition names the
-    credential it refuses — `via == "cheese"` is every scoped one — rather than
-    spelling it as "authenticated but not a session", which is the same set read
-    one step slower.
+    `require_admin` answers 「是不是平台管理员」 from the allow-list. Above it,
+    §4.3's 「管理动作 agent 不能做」, asked of two different things because it is
+    two different ways in:
 
-    §4.3 requires this refusal **in the route body**, because `/admin/*` is not
-    in `_CHEESE_WRITE_PATHS` — that table is a whitelist, so nothing in the
+    - the CREDENTIAL — a management action is taken by somebody in their own
+      session, and a device screen's token (`X-Cheese-Screen`) is a per-screen
+      capability proving only that a call ran inside that screen, unattended;
+    - the PARTICIPANT — whether the handle carries an agent-binding, read here
+      from `IdentityService` rather than carried in on the actor. The allow-list
+      is a list of handles and nothing stops an agent's from being on it, so
+      without this the binding would be the one thing nobody asked.
+
+    Neither subsumes the other, which is why both are here: a handle with no
+    binding can still arrive on a scoped credential, and an agent's handle can
+    still arrive on a session token.
+
+    The refusal is **in the route body**, because `/admin/*` is not in
+    `_CHEESE_WRITE_PATHS` — that table is a whitelist, so nothing in the
     middleware looks at this prefix and a refusal written anywhere else does not
     exist. Reachable, not theoretical: a screen token resolves on any path,
     including one with no topic in it, unlike a per-turn `cheese` credential,
@@ -63,6 +68,8 @@ async def _require_admin(
     who = await resolver.resolve(fallback_handle=None)
     if who.via == "cheese":
         raise ForbiddenError("作用域凭证不能执行管理动作，请用本人会话")
+    if await IdentityService(db).is_agent(who.handle):
+        raise ForbiddenError("agent 不能执行管理动作")
     return await service.require_admin(who.handle if who.authenticated else None)
 
 
@@ -107,6 +114,7 @@ async def _detail(
 
 @router.get("")
 async def list_admin_feedback(
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
     tab: str = Query(default="public"),
@@ -120,7 +128,7 @@ async def list_admin_feedback(
     `tab` 不认识时报 400 而不是悄悄退回 `public` —— 管理端猜错栏位会让人以为
     「这条反馈不见了」，而它其实在隔壁那一栏。
     """
-    handle = await _require_admin(service, resolver)
+    handle = await _require_admin(db, service, resolver)
     rows, total = await service.list_admin(
         tab=tab, assignee=assignee, q=q, limit=page_size, offset=page_start
     )
@@ -137,10 +145,11 @@ async def list_admin_feedback(
 @router.get("/{feedback_id}")
 async def get_admin_feedback(
     feedback_id: uuid.UUID,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await _require_admin(service, resolver)
+    handle = await _require_admin(db, service, resolver)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=True)
     return ok(await _detail(service, row, handle=handle))
 
@@ -149,6 +158,7 @@ async def get_admin_feedback(
 async def patch_admin_feedback(
     feedback_id: uuid.UUID,
     body: FeedbackPatch,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -157,7 +167,7 @@ async def patch_admin_feedback(
     status 只走 `POST /{id}/status`，因为状态和它那条时间线必须在同一个事务里一起
     写 —— 从 PATCH 的字段里溜进去的话，就多了一条不写历史的路径。
     """
-    handle = await _require_admin(service, resolver)
+    handle = await _require_admin(db, service, resolver)
     row = await service.patch_admin(feedback_id, body, by_handle=handle)
     return ok(await _detail(service, row, handle=handle))
 
@@ -166,6 +176,7 @@ async def patch_admin_feedback(
 async def set_admin_feedback_status(
     feedback_id: uuid.UUID,
     body: FeedbackStatusIn,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -174,7 +185,7 @@ async def set_admin_feedback_status(
     同状态重复提交是空操作而不是第二条历史 —— 相隔一秒的两条一模一样的记录读起来
     像历史出了 bug。
     """
-    handle = await _require_admin(service, resolver)
+    handle = await _require_admin(db, service, resolver)
     row = await service.set_status(feedback_id, body.status, by_handle=handle)
     return ok(await _detail(service, row, handle=handle))
 
@@ -183,6 +194,7 @@ async def set_admin_feedback_status(
 async def create_admin_feedback_note(
     feedback_id: uuid.UUID,
     body: NoteCreate,
+    db: DbSession,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
 ) -> dict:
@@ -191,7 +203,7 @@ async def create_admin_feedback_note(
     一个字符串列在两个管理员之间会互相覆盖，而「上一版写了什么」正是分诊时最需要
     知道的 —— 所以是行不是列（见 `FeedbackNote`）。
     """
-    handle = await _require_admin(service, resolver)
+    handle = await _require_admin(db, service, resolver)
     await service.note(feedback_id, body.body, author_handle=handle)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=True)
     return ok(await _detail(service, row, handle=handle))
