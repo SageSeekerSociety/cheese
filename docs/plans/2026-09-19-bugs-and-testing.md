@@ -385,8 +385,11 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
   `contract/test_projects_contract.py` 看着同类但不能删：被测的 `/team-projects` 接口存在，
   `tests/integration/test_team_projects.py` 还在端到端跑它，skip 的理由是夹具缺凭据，
   不是契约问题。已换 `authed_client` 重开，项目走真路由种下，缺件即 fail。
-- **环境缺件就 skip。还没做**：CI 上剩的 11 条都是它，Meilisearch、codex 二进制、
-  OpenViking 的 key、node、tmux、`ln` 各占几条。改成「缺件即 fail」，
+- **环境缺件就 skip。还没做**：在一台 Linux 测试机上量到剩 11 条，全是它：
+  Meilisearch 4 条、codex 二进制 4 条、node 1 条、`CHEESE_TEST_CLAUDE` 1 条、
+  OpenViking 的 key 1 条。同一类还有几处 skipif 在那台机器上没触发，
+  因为它装了 tmux、`ln` 和 claude 二进制；换一台缺件的 runner 就会触发，
+  所以它们一样要退役。改成「缺件即 fail」，
   并在 job 开头一个显式的 precondition step 里装。判据这一半已经有了：
   `backend/scripts/assert_suite_ran.py` 的 `assert_suite_ran(junit_xml, *, at_least)`，
   junit 里有 skipped 就红，实际跑的条数低于本 job 声明的下限也红
