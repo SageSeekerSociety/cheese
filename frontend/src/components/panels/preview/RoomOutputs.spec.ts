@@ -2,7 +2,7 @@
  * 这个房间里的东西。
  *
  * 摆出来的东西属于这个房间，所以这一块只回答两件事：这个房间里都有什么，以及把其
- * 中一份存进项目那个动作。跑着的应用不在里面 —— 它是一个进程，没有文件可存。
+ * 中一份留进资料库那个动作。跑着的应用不在里面 —— 它是一个进程，没有文件可留。
  */
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -14,10 +14,10 @@ import RoomOutputs from './RoomOutputs.vue'
 
 vi.mock('@/api', () => ({
   listRoomOutputs: vi.fn(),
-  saveRoomOutputToProject: vi.fn(),
+  saveRoomOutputToLibrary: vi.fn(),
 }))
 
-const { listRoomOutputs, saveRoomOutputToProject } = await import('@/api')
+const { listRoomOutputs, saveRoomOutputToLibrary } = await import('@/api')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -39,11 +39,7 @@ const APP = {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(listRoomOutputs).mockResolvedValue({ data: [REPORT, APP], total: 2 })
-  vi.mocked(saveRoomOutputToProject).mockResolvedValue({
-    artifact: { id: 'a1', name: '评审简报.docx' },
-    version: 1,
-    path: '评审简报.docx',
-  })
+  vi.mocked(saveRoomOutputToLibrary).mockResolvedValue({ name: '评审简报.docx' })
 })
 
 function mount() {
@@ -67,24 +63,25 @@ describe('这个房间里的东西', () => {
     expect(container.querySelector('[data-testid="room-outputs"]')).toBeNull()
   })
 
-  it('保存到项目之后说清它成了哪一项的第几版', async () => {
+  it('存进资料库之后说清它在那边叫什么', async () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('评审简报.docx'))
 
-    const save = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存到项目')
+    const save = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存到资料库')
     await fireEvent.click(save!)
 
-    await waitFor(() => expect(saveRoomOutputToProject).toHaveBeenCalledWith('t1', 'out/评审简报.docx'))
-    await waitFor(() => expect(container.textContent).toContain('已保存为《评审简报.docx》第 1 版'))
+    await waitFor(() => expect(saveRoomOutputToLibrary).toHaveBeenCalledWith('t1', 'out/评审简报.docx'))
+    // 撞名时资料库那边会加 `(2)`，所以说的是它在那里的真名。
+    await waitFor(() => expect(container.textContent).toContain('已存进资料库：评审简报.docx'))
   })
 
   it('存不进去时说出来，而不是装作按过了', async () => {
-    vi.mocked(saveRoomOutputToProject).mockRejectedValue(new Error('你不是这个项目的成员'))
+    vi.mocked(saveRoomOutputToLibrary).mockRejectedValue(new Error('你不是这个项目的成员'))
 
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('评审简报.docx'))
 
-    const save = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存到项目')
+    const save = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '保存到资料库')
     await fireEvent.click(save!)
 
     await waitFor(() => expect(container.textContent).toContain('你不是这个项目的成员'))

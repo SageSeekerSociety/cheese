@@ -4,17 +4,19 @@
 // 一个房间常有好几样值得看的东西 —— 一份改好的 .docx、一张图、一个跑起来的应用
 // —— 而上面那块预览只显示最后摆出来的那一样。这几行是全部，新的在前。
 //
-// 它们属于这个房间：用户看完拿走，事情就结束了。要成为项目的产物得有人按一下
-// 「保存到项目」——按了才算，平台不猜、不自动升。按下去之后那份文件进项目那棵树
-// （它就是源），清单上多一项或多一版。
+// 它们属于这个房间：用户看完拿走，事情就结束了。想把一份留下来以后还用，按一下
+// 「保存到资料库」——按了才算，平台不猜、不自动留。留下来的那一份按原名进资料库，
+// 别的房间也引用得到，和用户自己上传的那些并排。
 //
-// 只有一样东西时这一块照样出现：上面那块预览只是在看它，而「保存到项目」这个动作
-// 只在这里有 —— 一个房间最常见的样子正是「就做了一份东西」，那一份也得存得进去。
+// 它不因此上产物清单：清单上的一项是**要交出去的**东西，而留着以后用的是资料。真
+// 交付的那一下由 芝士 在递卡时声明，那条路和这个按钮无关。
+//
+// 只有一样东西时这一块照样出现：上面那块预览只是在看它，而这个动作只在这里有。
 import type { RoomOutput } from '@/api'
 
 import { computed, ref, watch } from 'vue'
 
-import { listRoomOutputs, saveRoomOutputToProject } from '@/api'
+import { listRoomOutputs, saveRoomOutputToLibrary } from '@/api'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{ topicId: string | null }>()
@@ -46,10 +48,11 @@ async function save(output: RoomOutput) {
   saving.value = output.path
   error.value = ''
   try {
-    const done = await saveRoomOutputToProject(topicId, output.path)
-    saved.value = { ...saved.value, [output.path]: `已保存为《${done.artifact.name}》第 ${done.version} 版` }
+    const done = await saveRoomOutputToLibrary(topicId, output.path)
+    // 说出它在资料库里叫什么：撞名时那边会加 `(2)`，而人下次找的是那个名字。
+    saved.value = { ...saved.value, [output.path]: `已存进资料库：${done.name}` }
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '未能保存到项目'
+    error.value = e instanceof Error ? e.message : '未能存进资料库'
   } finally {
     saving.value = ''
   }
@@ -90,7 +93,7 @@ defineExpose({ reload: load })
           :loading="saving === output.path"
           @click="save(output)"
         >
-          保存到项目
+          保存到资料库
         </v-btn>
       </li>
     </ul>

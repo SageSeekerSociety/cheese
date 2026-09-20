@@ -1618,9 +1618,9 @@ def build_parser() -> argparse.ArgumentParser:
             "表格这类 PDF 和 Office 文件。摆出来的用户在右侧看得到,也能下载;"
             "没摆出来的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
             "你显式指定。最后摆的那一样同时是这个房间的当前预览。\n\n"
-            "摆出来的东西留在这个房间里,不因此成为项目的产物:要不要进产物清单"
-            "由人按「保存到项目」决定。这一轮真交付了什么,走 accept-request 的"
-            "--artifact / --deliver。"
+            "摆出来的东西留在这个房间里。用户想把一份留下来以后再用,自己按"
+            "「保存到资料库」;它不因此上产物清单——这一轮真交付了什么,走 "
+            "accept-request 的 --artifact / --deliver。"
         ),
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")

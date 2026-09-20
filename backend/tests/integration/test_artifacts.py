@@ -159,9 +159,7 @@ def test_artifact_is_not_in_conversation_timeline(client):
 
 def test_artifact_rejects_unsupported_type(client):
     _pid, tid = _topic(client)
-    r = client.post(
-        f"/topics/{tid}/shown", json={"path": "deck.pptx", "as": "slides"}
-    )
+    r = client.post(f"/topics/{tid}/shown", json={"path": "deck.pptx", "as": "slides"})
     assert r.status_code == 422
 
 
@@ -206,8 +204,7 @@ def test_a_declared_type_is_not_needed_when_the_name_says_it(client):
         ("页面.html", "text/html"),
     ):
         assert (
-            client.post(f"/topics/{tid}/shown", json={"path": name}).status_code
-            == 200
+            client.post(f"/topics/{tid}/shown", json={"path": name}).status_code == 200
         )
         assert expected in client.get(f"/topics/{tid}/preview").json()["data"]["mime"]
 

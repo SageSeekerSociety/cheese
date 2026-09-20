@@ -1,11 +1,11 @@
-"""房间里摆出来的东西，以及把其中一份存进项目 (#1085 结论四)。
+"""房间里摆出来的东西，以及把其中一份留进资料库 (#1085 结论四)。
 
-房间里的文件不是项目产物：改完在那个房间里拿走，事情就结束了。升级是一个动作 ——
-按了才算 —— 所以这里问的是：摆出来的东西列不列得全、谁能按那一下、按下去之后项目
-里多了什么。
+房间里的文件不是项目产物：改完在那个房间里拿走，事情就结束了。想留下来以后还用是
+**一个动作** —— 按了才算 —— 所以这里问的是：摆出来的东西列不列得全、谁能按那一
+下、按下去之后项目里多了什么。
 
-「按下去之后」有三件事必须同时成立，少一件这份东西就是半个：文件进了项目那棵树、
-清单上多了一项、它是第 1 版（版本是数出来的，所以必须真的留下一张采纳了的卡）。
+同样要紧的是**没多什么**：资料库里多一份，而产物清单一个字没变、主干一个提交都没
+多。留着要用的东西是资料；清单上的一项是要交出去的东西，那由交付长出来。
 """
 
 import uuid
@@ -51,12 +51,15 @@ def _shown(client, room_id: str) -> list[dict]:
     return r.json()["data"]["data"]
 
 
-def _save(client, room_id: str, path: str, **body):
-    """按下「保存到项目」的是人 —— 这里就是建这个项目的那个人。"""
-    return client.post(
-        f"/topics/{room_id}/shown/save",
-        json={"path": path, **body},
-    )
+def _save(client, room_id: str, path: str):
+    """按下「保存到资料库」的是人 —— 这里就是建这个项目的那个人。"""
+    return client.post(f"/topics/{room_id}/shown/save", json={"path": path})
+
+
+def _library(client, project_id: str) -> list[str]:
+    r = client.get(f"/projects/{project_id}/library")
+    assert r.status_code == 200, r.text
+    return [entry["path"] for entry in r.json()["data"]["data"]]
 
 
 def test_a_room_lists_everything_it_has_shown_newest_first(client):
@@ -83,87 +86,65 @@ def test_showing_the_same_thing_again_is_one_thing_not_two(client):
     assert [row["path"] for row in _shown(client, room_id)] == ["report.html"]
 
 
-def test_saving_puts_the_file_in_the_project_tree_and_on_the_manifest(client):
+def test_saving_puts_it_in_the_library_under_its_own_name(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
-    _show(client, project_id, room_id, "评审简报.html", "<h1>定稿</h1>")
+    _show(client, project_id, room_id, "out/评审简报.html", "<h1>定稿</h1>")
 
-    saved = _save(client, room_id, "评审简报.html")
+    saved = _save(client, room_id, "out/评审简报.html")
+
     assert saved.status_code == 200, saved.text
-    assert saved.json()["data"]["version"] == 1
-
-    # 清单上多了一项，而且它已经是第 1 版 —— 保存本身就是一次交付。
-    rows = client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"]
-    assert [(row["name"], row["version"]) for row in rows] == [("评审简报.html", 1)]
-
-    # 文件进了项目那棵树：它就是源，主干上真的有这一次提交。
-    branch, head = ws.base_branch_head(uuid.UUID(project_id))
-    assert any(
-        entry["path"] == "评审简报.html"
-        for entry in ws.committed_files(uuid.UUID(project_id), head)
-    )
+    # 目录是那一轮的工作痕迹，名字才是它的身份 —— 资料库按名字寻址。
+    assert saved.json()["data"]["name"] == "评审简报.html"
+    assert _library(client, project_id) == ["评审简报.html"]
 
 
-def test_the_saved_version_can_be_taken_again_from_the_artifact_page(client):
+def test_every_room_can_read_what_one_room_saved(client):
+    """留下来就是为了以后还用得上 —— 资料库是项目级的。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
+    other = _room(client, project_id, "另一个房间")
     _show(client, project_id, room_id, "评审简报.html", "<h1>定稿</h1>")
     _save(client, room_id, "评审简报.html")
 
-    artifact_id = client.get(f"/projects/{project_id}/artifacts").json()["data"][
-        "data"
-    ][0]["id"]
-    detail = client.get(f"/projects/{project_id}/artifacts/{artifact_id}").json()[
-        "data"
-    ]
-    (version,) = detail["versions"]
-    assert version["kind"] == "file"
-    # 这一版是谁交的 —— 按下保存的那个人；房间里那句话说的必须是同一个人。
-    said = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
-    told = " ".join(
-        f"{block.get('content') or ''} {block.get('meta') or ''}" for block in said
-    )
-    assert version["decided_by"]
-    assert version["decided_by"] in told
-
     got = client.get(
-        f"/projects/{project_id}/artifacts/{artifact_id}"
-        f"/versions/{version['card_id']}/file"
+        f"/projects/{project_id}/library/raw",
+        params={"path": "评审简报.html", "topic": other},
     )
-    assert got.status_code == 200
+
+    assert got.status_code == 200, got.text
     assert got.content == "<h1>定稿</h1>".encode()
 
 
-def test_saving_the_next_one_onto_the_same_item_is_its_next_version(client):
+def test_saving_twice_keeps_both_instead_of_overwriting(client):
+    """同名不覆盖，跟资料库自己的规矩走：谁也说不准第二份是不是第一份的新版。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
     _show(client, project_id, room_id, "简报.html", "<h1>一稿</h1>")
-    first = _save(client, room_id, "简报.html")
-    artifact_id = first.json()["data"]["artifact"]["id"]
-
+    _save(client, room_id, "简报.html")
     _show(client, project_id, room_id, "简报.html", "<h1>二稿</h1>")
-    again = _save(client, room_id, "简报.html", artifact=artifact_id)
 
-    assert again.status_code == 200, again.text
-    assert again.json()["data"]["version"] == 2
-    rows = client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"]
-    assert [(row["name"], row["version"]) for row in rows] == [("简报.html", 2)]
+    again = _save(client, room_id, "简报.html")
+
+    assert again.json()["data"]["name"] == "简报(2).html"
+    assert sorted(_library(client, project_id)) == ["简报(2).html", "简报.html"]
 
 
-def test_a_saved_name_can_be_given_by_the_person(client):
-    """文件名不一定是这样东西的名字 —— 起名是人的判断。"""
+def test_saving_adds_nothing_to_the_manifest_and_nothing_to_the_trunk(client):
+    """留着以后用 ≠ 交出去。清单由交付长出来，而这一下不是交付。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
-    _show(client, project_id, room_id, "out.html", "<h1>x</h1>")
+    _show(client, project_id, room_id, "评审简报.html", "<h1>定稿</h1>")
+    head = ws.base_branch_head(uuid.UUID(project_id))[1]
 
-    _save(client, room_id, "out.html", name="项目官网")
+    _save(client, room_id, "评审简报.html")
 
-    rows = client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"]
-    assert [row["name"] for row in rows] == ["项目官网"]
+    assert client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"] == []
+    assert ws.base_branch_head(uuid.UUID(project_id))[1] == head
 
 
 def test_cheese_can_show_but_cannot_save(client):
-    """摆出来是 芝士 的事，进不进项目是人的判断。"""
+    """摆出来是 芝士 的事；这份东西以后还用不用得上，是人的判断。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
     _show(client, project_id, room_id, "report.html")
@@ -173,8 +154,9 @@ def test_cheese_can_show_but_cannot_save(client):
         headers=_agent_headers(project_id, room_id),
         json={"path": "report.html"},
     )
+
     assert denied.status_code in (401, 403), denied.text
-    assert client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"] == []
+    assert _library(client, project_id) == []
 
 
 def test_saving_something_the_room_does_not_have_is_refused(client):
@@ -184,21 +166,16 @@ def test_saving_something_the_room_does_not_have_is_refused(client):
     missing = _save(client, room_id, "没有这一份.html")
 
     assert missing.status_code >= 400
-    assert client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"] == []
+    assert _library(client, project_id) == []
 
 
-def test_saving_the_identical_bytes_again_lands_no_empty_commit(client):
-    """内容没变的那一次保存不该在历史里留下一次「什么都没改」。"""
+def test_the_room_is_told_what_was_saved(client):
+    """留进资料库是这个房间里发生的一件事，读这个房间的人应该看得到。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
-    _show(client, project_id, room_id, "简报.html", "<h1>同一份</h1>")
-    first = _save(client, room_id, "简报.html")
-    artifact_id = first.json()["data"]["artifact"]["id"]
-    head = ws.base_branch_head(uuid.UUID(project_id))[1]
+    _show(client, project_id, room_id, "评审简报.html", "<h1>定稿</h1>")
 
-    again = _save(client, room_id, "简报.html", artifact=artifact_id)
+    _save(client, room_id, "评审简报.html")
 
-    assert again.status_code == 200, again.text
-    assert ws.base_branch_head(uuid.UUID(project_id))[1] == head
-    # 但它仍然是一次交付：人按了一下，就是又交了一版。
-    assert again.json()["data"]["version"] == 2
+    said = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
+    assert any("评审简报.html 已存进资料库" in (b.get("content") or "") for b in said)

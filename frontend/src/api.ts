@@ -1171,8 +1171,8 @@ export function deleteProjectArtifact(projectId: string, artifactId: string): Pr
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
-// 摆出来的东西属于这个房间：用户看完拿走就完了。它要不要成为项目的产物，由人按
-// 「保存到项目」决定 —— 不猜，不自动升。
+// 摆出来的东西属于这个房间：用户看完拿走就完了。要把它留下来以后还用，由人按
+// 「保存到资料库」——留着要用的东西是资料；交出去的东西走交付，那才上产物清单。
 export interface RoomOutput {
   path: string
   mime: string
@@ -1184,15 +1184,11 @@ export function listRoomOutputs(topicId: string): Promise<ListPayload<RoomOutput
   return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown`)
 }
 
-/** 把房间里的这一份存成项目的产物：文件进项目那棵树，清单上多一项或多一版。 */
-export function saveRoomOutputToProject(
-  topicId: string,
-  path: string,
-  options: { artifact?: string; name?: string } = {}
-): Promise<{ artifact: { id: string; name: string }; version: number; path: string }> {
+/** 把房间里的这一份留进资料库：按原名，撞名加 `(2)`，所有房间都引用得到。 */
+export function saveRoomOutputToLibrary(topicId: string, path: string): Promise<{ name: string }> {
   return request(`/topics/${encodeURIComponent(topicId)}/shown/save`, {
     method: 'POST',
-    body: JSON.stringify({ path, ...options }),
+    body: JSON.stringify({ path }),
   })
 }
 

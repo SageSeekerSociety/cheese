@@ -2319,36 +2319,28 @@ async def list_shown(
 
 
 @router.post("/{topic_id}/shown/save")
-async def save_shown_to_project(
+async def save_shown_to_library(
     topic_id: uuid.UUID,
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """把房间里的这一份存成项目的产物 —— 只有人能按 (#1085 结论四)。
+    """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
 
-    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却升不了
-    它：房间里的文件到底是不是这个项目要交出去的东西，是人的判断。"""
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
+    它：这份东西以后还用不用得上，是人的判断。"""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.require_verified_caller(project_id=place.project_id)
     await resolver.authorize_project(actor, project_id=place.project_id)
-    saved = await room_files.save_to_project(
+    name = await room_files.save_to_library(
         db,
         project_id=place.project_id,
         room_id=place.room_id,
         path=_clean_artifact_path(str(body.get("path") or "")),
         by=actor.handle,
-        artifact_id=str(body.get("artifact") or "") or None,
-        name=str(body.get("name") or "") or None,
     )
     await db.commit()
-    return ok(
-        {
-            "artifact": {"id": str(saved.artifact.id), "name": saved.artifact.name},
-            "version": saved.version,
-            "path": saved.path,
-        }
-    )
+    return ok({"name": name})
 
 
 @router.post("/{topic_id}/documents/recalc")
