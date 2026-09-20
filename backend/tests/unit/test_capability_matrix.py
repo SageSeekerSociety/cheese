@@ -18,14 +18,13 @@ from pathlib import Path
 
 import pytest
 
+from app.core.config import Settings
 from app.domain.agent.capability import BuiltIn, Declaration, Difference
 from app.domain.agent.capability import matrix as matrix_module
 from app.domain.agent.capability.matrix import MatrixIncomplete, declarations, matrix
-from app.core.config import Settings
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, Harness
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+from app.domain.agent.harness.claude_code.remote_execution import bootstrap, private
 from app.domain.agent.harness.claude_code.remote_execution import client as execution
-from app.domain.agent.harness.claude_code.remote_execution import private
 
 BACKEND = Path(__file__).resolve().parents[2]
 REPO = BACKEND.parent
