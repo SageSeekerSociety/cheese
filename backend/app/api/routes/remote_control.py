@@ -174,13 +174,14 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     # The hands belong to a session, so the room is asked for its sessions and
     # the current generation picks among them. Which one is not asked: a room's
     # sessions all lease the same executor today (see `api/routes/execution.py`).
-    current = [
+    leased = [
         held
         for held in await AgentSessionService(db).places_in_room(place.room_id)
-        if held.resource_id == resource and held.lease
+        if held.lease
     ]
-    if current and claims.get("r") != resource:
+    if leased and claims.get("r") != resource:
         raise ConflictError("RC credential belongs to another execution generation")
+    current = [held for held in leased if held.resource_id == resource]
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
     data["execution"] = (

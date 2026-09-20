@@ -149,6 +149,7 @@ def _provider(
 
 
 async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
+    kw.setdefault("session_agent", "agent")
     events: list = []
 
     async def consume():
