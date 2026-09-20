@@ -22,6 +22,7 @@ or the hook env a transport still wires by hand) is Claude Code knowledge that
 has not made it across the seam yet.
 """
 
+from app.domain.agent.harness.claude_code.behaviour import declaration
 from app.domain.agent.harness.claude_code.device_launch import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
@@ -90,6 +91,7 @@ __all__ = [
     "acknowledge_log",
     "build_session_launch",
     "build_startup_cache_prepare",
+    "declaration",
     "build_warm_session_prepare",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",

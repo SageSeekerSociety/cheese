@@ -11,9 +11,13 @@ import pytest
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
@@ -125,7 +129,7 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
         rows = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.human
+            if not looks_like_agent_handle(block.author)
         ]
     assert len(rows) == expected_blocks
     anchor = next(block for block in rows if block.id == first)
@@ -185,7 +189,7 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         rows = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.human
+            if not looks_like_agent_handle(block.author)
         ]
     assert [block.id for block in rows] == original_ids
 
@@ -436,7 +440,7 @@ async def test_execution_notes_are_retained_outside_public_replies(client, tmp_p
     replies = [
         b.content
         for b in rows
-        if b.kind == BlockKind.message and b.author_type == AuthorType.ai
+        if b.kind == BlockKind.message and looks_like_agent_handle(b.author)
     ]
     assert replies == []
     notes = [b for b in rows if (b.meta or {}).get("progress")]
@@ -536,7 +540,7 @@ async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
     await settle_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in rows if b.author_type == AuthorType.ai] == ["done"]
+    assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
 
 
 class FailingScreen(StubChannel):
@@ -597,7 +601,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     # 机器的报错不是芝士说的话。
-    assert not [b for b in rows if b.author_type == AuthorType.ai]
+    assert not [b for b in rows if looks_like_agent_handle(b.author)]
     block = next(b for b in rows if b.kind == BlockKind.event)
     assert block.author == "system"
     # 一行，是服务的原话开头，而且整段原话不在正文里。

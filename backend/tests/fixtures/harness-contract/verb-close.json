@@ -1,0 +1,14 @@
+{
+  "verb": "close",
+  "why": "This conversation is not wanted any more: stop listening, forget the channel. After it the runtime holds nothing here, so a deliver finds nothing and an ensure is a cold start rather than a resume.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "ensure", "opened": true },
+    { "call": "send", "message": "收工", "returns": true },
+    { "call": "close" },
+    { "call": "holds", "returns": false },
+    { "call": "deliver", "text": "还在吗", "returns": false },
+    { "call": "ensure", "opened": true },
+    { "call": "backlog.unread", "returns": 0 }
+  ]
+}

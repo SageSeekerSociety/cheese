@@ -436,6 +436,7 @@ class PiRuntime:
         turn_id=None,
         images=None,
         agent_handle=None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
@@ -447,7 +448,7 @@ class PiRuntime:
         self.queues[work] = queue
         try:
             await self.send(
-                SessionRef(project_id, topic_id),
+                SessionRef(project_id, topic_id, session_agent, self.harness),
                 prompt,
                 Opening(
                     system_prompt,

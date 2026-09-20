@@ -85,7 +85,8 @@
 
 ```
 芝士自己把检查跑绿（这是干活的一部分，平台不替你跑）
-  → cheese accept-request <人> --subject '...'   递验收卡，卡直接是 pending，平台随手开 PR
+  → cheese accept-request <人> --subject '...' --artifact '<产物真名>'
+     递验收卡，卡直接是 pending，平台随手开 PR；`--artifact` 点名本次更新的是产物清单上的哪一项
      → GitHub Actions 按 .github/workflows 跑真 CI
         → 轮询器每 60 秒把合并态镜像到卡上（CLEAN/UNSTABLE/BLOCKED/BEHIND/DIRTY），
           按「谁的活」表发事件（红了叫芝士、落后平台自己换基、绿了通知验收人）

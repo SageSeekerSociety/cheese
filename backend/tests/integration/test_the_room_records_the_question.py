@@ -4,6 +4,9 @@ The panel above the composer is the live surface: a question appears there, you
 answer it, and it goes away. What the room had no record of was that the
 question was ever asked — so scroll-back could not say what 芝士 had been
 stopped for, or who unstopped it.
+
+记下来的那句话是**芝士自己问出口的**，所以它不是一条待读输入：它在等人回答，不
+是在等自己读一遍。
 """
 
 import time
@@ -102,6 +105,53 @@ def test_the_question_lands_in_the_room_once_and_the_answer_after_it(client, pla
         assert any("alice 同意了" in (b.get("content") or "") for b in blocks), [
             b.get("content") for b in blocks
         ]
+    finally:
+
+        async def cleanup():
+            await store().redis.delete(
+                key(sid), key(topic, "current"), key(sid, "voiced")
+            )
+
+        client.portal.call(cleanup)
+
+
+def test_the_question_it_asked_is_not_an_input_it_has_to_read(client, place):
+    """芝士问出口的那句话落进房间，却不是一条交给它去读的输入。
+
+    署名是房间里芝士那条 handle，轮次号这边填不出来 —— 问话的那一轮跑在机器
+    上。按「署名是 agent 且落在某一轮里」去算，这条就成了待读输入：「忘了 @」的
+    补救按钮于是不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝
+    士刚问出口的那句话，它对着自己的问题再答一遍。
+    """
+    from app.api.routes.remote_control import store
+
+    project, topic = place
+
+    async def start():
+        session = await store().create(
+            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
+        )
+        return session["id"], await store().bridge(session)
+
+    sid, worker = client.portal.call(start)
+    try:
+        landed = client.post(
+            f"/v1/code/sessions/{sid}/worker/events",
+            headers={"Authorization": f"Bearer {worker['worker_jwt']}"},
+            json=_events(worker, "event-1"),
+        )
+        assert landed.status_code == 200, landed.text
+        blocks = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
+        assert [b for b in blocks if "Bash" in (b.get("content") or "")], (
+            "问出口的那句话得在房间里留下记录"
+        )
+
+        summoned = client.post(f"/topics/{topic}/summon", json={"author": "alice"})
+        assert summoned.status_code == 200, summoned.text
+        assert summoned.json()["data"] == {
+            "started": False,
+            "reason": "nothing_pending",
+        }, "它自己问出口的那句话不该把它自己叫起来"
     finally:
 
         async def cleanup():

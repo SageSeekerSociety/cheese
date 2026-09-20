@@ -12,6 +12,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 
 import { getRoomTask, sayOnRoomTask } from '../../api'
+import { isAgentBlock } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { markdown } from '../../lib/markdown'
 import { relTime } from '../../lib/relTime'
@@ -169,11 +170,7 @@ async function send() {
         <div v-if="!said.length" class="px-1 py-2 t-meta c-muted">这条活还没有人说过话。</div>
         <div v-for="b in said" :key="b.id" class="card-msg">
           <span class="card-msg__who t-meta">{{ b.author }}</span>
-          <div
-            v-if="b.author_type === 'ai'"
-            class="card-msg__text card-markdown t-body"
-            v-html="renderMarkdown(b.content)"
-          />
+          <div v-if="isAgentBlock(b)" class="card-msg__text card-markdown t-body" v-html="renderMarkdown(b.content)" />
           <span v-else class="card-msg__text t-body">{{ b.content }}</span>
         </div>
       </div>

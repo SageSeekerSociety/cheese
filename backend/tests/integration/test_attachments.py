@@ -270,7 +270,7 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     att_block = user_frames[1]
     assert att_block["content"] == att["path"]
     assert att_block["mime_type"] == "image/png"
-    assert att_block["author_type"] == "human"
+    assert not att_block["author"].startswith("cheese")
 
     # The prompt tells 芝士 the image is attached INLINE (images= carries the
     # content to the model) and where the file lives in its workspace.
