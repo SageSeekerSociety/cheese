@@ -7,6 +7,7 @@ Project.settings → 赛题 override → 项目集 → `default`, and undeclared
 `default`, which is today's interface screen for screen.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -195,3 +196,38 @@ def test_adding_a_shell_touches_no_component() -> None:
             if name in text:
                 offenders.append(f"{path.relative_to(REPO_ROOT)} mentions {name!r}")
     assert not offenders, offenders
+
+
+def test_the_frontends_fallback_is_the_backend_default() -> None:
+    """前端那份兜底拷贝必须和 `CATALOG["default"]` 逐字段相等。
+
+    前端只有一份壳的拷贝 (`frontend/src/lib/default-shell.json`)，它存在的原因是
+    「一个项目都读不到的时候导航仍然要画出来」——首页、空间页、还没进项目的桌面
+    rail。那些地方没有项目行，也就没有服务端解析好的壳，而答复只能是 default。
+
+    它是拷贝，所以会分叉；分叉了不会报错，只会让两类屏幕悄悄长得不一样。这条用例
+    就是那声该响的响：改 catalog 里 default 的任何一格，这里立刻红。
+    """
+    raw = json.loads(
+        (REPO_ROOT / "frontend" / "src" / "lib" / "default-shell.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    default = CATALOG[DEFAULT_SHELL_NAME]
+    # 形状先对齐：多一个键少一个键都是分叉，哪怕值是对的。
+    assert set(raw) == {"name", "home", "nav", "hidden", "terms"}
+    assert set(raw["nav"]) == {"rail", "tabs", "project"}
+    assert raw == {
+        "name": default.name,
+        "home": default.home,
+        "nav": {
+            "rail": list(default.nav.rail),
+            "tabs": list(default.nav.tabs),
+            "project": list(default.nav.project),
+        },
+        "hidden": list(default.hidden),
+        "terms": dict(default.terms),
+    }
+    # default 的含义就是「今天这样」：一个字都不许藏起来，否则老项目会凭空少一格。
+    assert raw["hidden"] == []
+    assert raw["terms"] == {}
