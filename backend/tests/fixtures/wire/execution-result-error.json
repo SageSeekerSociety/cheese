@@ -1,0 +1,14 @@
+{
+  "type": "execution.result",
+  "origin": "device",
+  "why": "The machine's own failure. The words are the connector's and reach the room verbatim, so the field carrying them is contract.",
+  "frame": {
+    "t": "execution.result",
+    "id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "error": "dial unix /tmp/cheese-execution-1000-0c5e4b916d2a.sock: connect: no such file or directory"
+  },
+  "meaning": {
+    "call_id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "error": "dial unix /tmp/cheese-execution-1000-0c5e4b916d2a.sock: connect: no such file or directory"
+  }
+}

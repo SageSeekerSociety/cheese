@@ -1,0 +1,14 @@
+{
+  "type": "execution.data",
+  "origin": "device",
+  "why": "One chunk of the executor's answer, exactly as the connector read it off the socket. Non-ASCII is in here on purpose: `data` is base64 of the raw bytes, never of a re-encoded string.",
+  "frame": {
+    "t": "execution.data",
+    "id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "data": "eyJyZXN1bHQiOiB7InRleHQiOiAi5Lit5paHIn19"
+  },
+  "meaning": {
+    "call_id": "execution-9f2c1a7b4d6e48f0a1b2c3d4e5f60718",
+    "payload": "{\"result\": {\"text\": \"中文\"}}"
+  }
+}

@@ -18,6 +18,7 @@ and the exec set
 """
 
 import base64
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -179,6 +180,26 @@ def exec_cmd(
 
 def exec_cancel(exec_id: str) -> dict[str, Any]:
     return {"t": "exec.cancel", "id": exec_id}
+
+
+def execution_call(
+    *, call_id: str, state: str, method: str, params: dict[str, Any], timeout: int
+) -> dict[str, Any]:
+    """Ask the resident executor under ``state`` to run one method.
+
+    ``stdin`` is the request the connector writes verbatim into the executor
+    socket (``cli/internal/host/executor.go``), so its bytes are part of the
+    contract, not an encoding detail of this process: the frame is pinned by
+    ``backend/tests/fixtures/wire/execution-call.json``, which the Go side reads
+    too.
+    """
+    return {
+        "t": "execution.call",
+        "id": call_id,
+        "path": state,
+        "stdin": json.dumps({"method": method, "params": params}),
+        "timeout": int(timeout),
+    }
 
 
 def update() -> dict[str, Any]:

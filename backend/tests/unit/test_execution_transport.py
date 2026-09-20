@@ -1,7 +1,6 @@
 """Exercise connector output limits and executor mutation receipts together."""
 
 import asyncio
-import base64
 import io
 import json
 import os
@@ -26,6 +25,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
+from tests.support import wire
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -173,6 +173,10 @@ def executor(tmp_path):
 
 
 class SocketDevice:
+    """The connector's half of an executor call, in Python and over the real
+    socket: it does what ``cli/internal/host/executor.go`` does, so the frames
+    it speaks come from ``tests.support.wire`` rather than being typed here."""
+
     def __init__(self):
         self.sizes = []
         self.devices = []
@@ -187,30 +191,21 @@ class SocketDevice:
     async def send_json(self, message):
         if message["t"] == "welcome":
             return
-        assert message["t"] == "execution.call"
+        call = wire.ExecutionCall.parse(message)
         reader, writer = await asyncio.open_unix_connection(
-            runtime.socket_path(message["path"])
+            runtime.socket_path(call.path)
         )
-        writer.write(message["stdin"].encode() + b"\n")
+        writer.write(call.stdin.encode() + b"\n")
         await writer.drain()
         while chunk := await reader.read(64 * 1024):
             self.sizes.append(len(chunk))
             await self.hub.on_device_message(
-                self.devices[-1],
-                {
-                    "t": "execution.data",
-                    "id": message["id"],
-                    "data": base64.b64encode(chunk).decode(),
-                },
+                self.devices[-1], wire.execution_data(call.id, chunk)
             )
         writer.close()
         await writer.wait_closed()
         await self.hub.on_device_message(
-            self.devices[-1],
-            {
-                "t": "execution.result",
-                "id": message["id"],
-            },
+            self.devices[-1], wire.execution_result(call.id)
         )
 
 

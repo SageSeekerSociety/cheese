@@ -16,16 +16,22 @@ name: CLI Test (Go)
 # separate capacity from the dev box's single deploy slot, so this never queues
 # behind a deploy; Go comes from setup-go below, and `go test -race` finds the
 # gcc it needs in the pool's build-essential (installed there for srp_rs).
+# backend/tests/fixtures/wire is in the path filters because the Go side reads
+# it: cli/internal/link/frames_test.go is held to the same committed frames the
+# backend is, and a fixture edited to suit one language has to face the other in
+# the same run or it is not a shared fixture.
 on:
   push:
     branches: [main]
     paths:
       - 'cli/**'
+      - 'backend/tests/fixtures/wire/**'
       - '.github/workflows/cli.yml'
   pull_request:
     branches: [main]
     paths:
       - 'cli/**'
+      - 'backend/tests/fixtures/wire/**'
       - '.github/workflows/cli.yml'
 
 permissions:

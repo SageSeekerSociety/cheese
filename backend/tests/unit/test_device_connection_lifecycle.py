@@ -1,7 +1,6 @@
 """A backend client can disappear without owning the executor call it started."""
 
 import asyncio
-import base64
 import gc
 import json
 import uuid
@@ -14,21 +13,12 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+from tests.support import wire
 
 
 @pytest.fixture(autouse=True)
 def connection_owner_role(monkeypatch) -> None:
     monkeypatch.setattr(settings, "device_connection_owner", True)
-
-
-class ExecutorTransport:
-    sent: asyncio.Queue[dict]
-
-    def __init__(self) -> None:
-        self.sent = asyncio.Queue()
-
-    async def send_json(self, message: dict) -> None:
-        await self.sent.put(message)
 
 
 @pytest.mark.anyio
@@ -41,7 +31,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     device_connection_app._release_draining = False
     device_connection_app._active_rpc_calls = 0
 
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()  # welcome
     await device_hub.on_device_message(
@@ -62,8 +52,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
             trace_id="same-request-after-restart",
         )
     )
-    outbound = await asyncio.wait_for(connector.sent.get(), 1)
-    assert outbound["t"] == "execution.call"
+    call = await connector.next_call()
 
     # This is the business backend being killed during a release. The owner and
     # its device call stay alive, and the replacement process starts with a new
@@ -71,7 +60,7 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
     first_waiter.cancel()
     await asyncio.gather(first_waiter, return_exceptions=True)
     await old_backend.close()
-    assert not device_connection_app._executor_calls[outbound["id"]].done()
+    assert not device_connection_app._executor_calls[call.id].done()
 
     new_backend = RemoteDeviceHub(
         "http://owner", "test-owner-secret", transport=transport
@@ -87,18 +76,8 @@ async def test_executor_call_survives_backend_client_restart(monkeypatch) -> Non
         )
     )
     encoded = json.dumps({"result": {"answer": "finished"}}).encode()
-    await device_hub.on_device_message(
-        "machine",
-        {
-            "t": "execution.data",
-            "id": outbound["id"],
-            "data": base64.b64encode(encoded).decode(),
-        },
-    )
-    await device_hub.on_device_message(
-        "machine",
-        {"t": "execution.result", "id": outbound["id"], "error": ""},
-    )
+    await device_hub.on_device_message("machine", wire.execution_data(call.id, encoded))
+    await device_hub.on_device_message("machine", wire.execution_result(call.id))
 
     assert await asyncio.wait_for(recovered, 1) == {"answer": "finished"}
     assert connector.sent.empty()  # retry reused the original device call
@@ -178,7 +157,7 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
         return 1
 
     backend.set_online_callback(recover)
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()
     await backend.refresh()
@@ -188,7 +167,7 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
     # A reconnect wholly between two polls is still visible through the owner's
     # monotonically increasing generation and schedules business recovery again.
     await device_hub.detach_device("machine", connector)
-    replacement = ExecutorTransport()
+    replacement = wire.RecordingDevice()
     await device_hub.attach_device("machine", replacement)
     await replacement.sent.get()
     await backend.refresh()
@@ -228,7 +207,7 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
     backend = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
     backend.set_online_callback(recover_business_state)
     await backend.start()
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("new-cloud-machine", connector)
     await connector.sent.get()
     await backend.refresh()
@@ -265,7 +244,7 @@ async def test_backend_drops_subscriptions_from_owner_snapshot_changes(
     monkeypatch.setattr(
         "app.domain.agent.harness.claude_code.drop_screen_subscriptions", drop_screen
     )
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()
     screen = device_hub.adopt_screen(
@@ -306,7 +285,7 @@ async def test_fast_reconnect_drops_the_real_old_subscription_before_recovery(
     device_hub._devices.clear()
     device_hub._screens.clear()
     device_hub._by_screen_token.clear()
-    first = ExecutorTransport()
+    first = wire.RecordingDevice()
     await device_hub.attach_device("machine", first)
     await first.sent.get()
     transport = httpx.ASGITransport(app=device_connection_app.app)
@@ -339,7 +318,7 @@ async def test_fast_reconnect_drops_the_real_old_subscription_before_recovery(
 
     backend.set_online_callback(recover)
     await device_hub.detach_device("machine", first)
-    second = ExecutorTransport()
+    second = wire.RecordingDevice()
     await device_hub.attach_device("machine", second)
     await second.sent.get()
     await backend.refresh()
@@ -357,7 +336,7 @@ async def test_release_drain_blocks_new_trace_but_keeps_completed_trace_readable
     device_connection_app._executor_calls.clear()
     device_connection_app._release_draining = False
     device_connection_app._active_rpc_calls = 0
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()
     await device_hub.on_device_message(
@@ -379,19 +358,12 @@ async def test_release_drain_blocks_new_trace_but_keeps_completed_trace_readable
         old_waiter = asyncio.create_task(
             client.post("/internal/device-connection/call/call_executor", json=payload)
         )
-        outbound = await asyncio.wait_for(connector.sent.get(), 1)
+        call = await connector.next_call()
         encoded = json.dumps({"result": {"pid": 1}}).encode()
         await device_hub.on_device_message(
-            "machine",
-            {
-                "t": "execution.data",
-                "id": outbound["id"],
-                "data": base64.b64encode(encoded).decode(),
-            },
+            "machine", wire.execution_data(call.id, encoded)
         )
-        await device_hub.on_device_message(
-            "machine", {"t": "execution.result", "id": outbound["id"], "error": ""}
-        )
+        await device_hub.on_device_message("machine", wire.execution_result(call.id))
         assert (await old_waiter).json() == {"result": {"pid": 1}}
         assert (
             await client.post("/internal/device-connection/release-drain")
@@ -424,7 +396,7 @@ async def test_release_drain_waits_for_exec_and_blocks_new_screen_call(
     device_connection_app._executor_calls.clear()
     device_connection_app._release_draining = False
     device_connection_app._active_rpc_calls = 0
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()
     transport = httpx.ASGITransport(app=device_connection_app.app)
@@ -575,7 +547,7 @@ async def test_a_call_nobody_came_back_for_does_not_report_a_lost_exception(
         lambda _loop, context: lost.append(context)
     )
 
-    connector = ExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("machine", connector)
     await connector.sent.get()  # welcome
     await device_hub.on_device_message(
@@ -594,7 +566,7 @@ async def test_a_call_nobody_came_back_for_does_not_report_a_lost_exception(
             trace_id="nobody-comes-back",
         )
     )
-    outbound = await asyncio.wait_for(connector.sent.get(), 1)
+    call = await connector.next_call()
 
     # The backend that asked is gone before the device answers.
     waiter.cancel()
@@ -603,23 +575,19 @@ async def test_a_call_nobody_came_back_for_does_not_report_a_lost_exception(
 
     await device_hub.on_device_message(
         "machine",
-        {
-            "t": "execution.result",
-            "id": outbound["id"],
-            "error": "lstat /room/.cheese: no such file or directory",
-        },
+        wire.execution_result(call.id, "lstat /room/.cheese: no such file or directory"),
     )
-    call = device_connection_app._executor_calls[outbound["id"]]
+    pending = device_connection_app._executor_calls[call.id]
     for _ in range(100):
-        if call.done():
+        if pending.done():
             break
         await asyncio.sleep(0)
-    assert call.done()
+    assert pending.done()
 
     # Nothing holds it now — which is when asyncio reports an exception that was
     # never read.
     device_connection_app._executor_calls.clear()
-    del call
+    del pending
     gc.collect()
     await asyncio.sleep(0)
 

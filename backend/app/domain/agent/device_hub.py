@@ -628,13 +628,13 @@ class DeviceHub:
                 time.monotonic_ns(),
             )
             await device.send(
-                {
-                    "t": "execution.call",
-                    "id": identifier,
-                    "path": state,
-                    "stdin": json.dumps({"method": method, "params": params}),
-                    "timeout": int(timeout),
-                }
+                device_link.execution_call(
+                    call_id=identifier,
+                    state=state,
+                    method=method,
+                    params=params,
+                    timeout=int(timeout),
+                )
             )
             logger.debug(
                 "execution_timing stage=device_sent trace=%s mono_ns=%d",
