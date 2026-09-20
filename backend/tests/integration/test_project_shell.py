@@ -85,7 +85,9 @@ def test_the_projects_own_setting_outranks_the_whole_protocol(client):
             repo = ProjectRepository(session)
             row = await repo.get(pid)
             assert row is not None
-            await repo.set_settings(row, {**(row.settings or {}), "shell": "course-teacher"})
+            await repo.set_settings(
+                row, {**(row.settings or {}), "shell": "course-teacher"}
+            )
             await session.commit()
 
     asyncio.run(_set())
@@ -106,9 +108,9 @@ def test_the_list_route_carries_each_projects_own_shell(client):
 
     # `/projects` without `team_id` means 「the CALLER's own projects」, and a
     # caller with no credential gets none — so this list is read as the owner.
-    listing = client.get(
-        "/projects", headers=session_auth_headers(OWNER)
-    ).json()["data"]["data"]
+    listing = client.get("/projects", headers=session_auth_headers(OWNER)).json()[
+        "data"
+    ]["data"]
     by_id = {p["id"]: p["shell"] for p in listing}
 
     assert by_id[declared["id"]]["name"] == "workbench"

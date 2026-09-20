@@ -88,14 +88,14 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.shell.catalog import Shell
-from app.domain.shell.schemas import ShellOut
-from app.domain.shell.service import effective_shell, effective_shells
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
+from app.domain.shell.catalog import Shell
+from app.domain.shell.schemas import ShellOut
+from app.domain.shell.service import effective_shell, effective_shells
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -146,7 +146,6 @@ async def _shelled_many(db: DbSession, projects: list[Project]) -> list[dict]:
     """The same, for a list, without a query per project."""
     shells = await effective_shells(db, projects)
     return [_shelled(p, shells[p.id]) for p in projects]
-
 
 
 @router.get("/resource-limits")
