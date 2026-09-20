@@ -1,9 +1,14 @@
 """Explicit model selection never silently delegates to the CLI default."""
 
+import asyncio
+
+import httpx
 import pytest
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.agent import gateway as gw
+from app.domain.agent import gateway_catalog
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent_instance.configuration import (
     AgentConfiguration,
@@ -57,7 +62,7 @@ def test_choices_and_validation_follow_project_supply(
 
 
 def test_subscription_models_are_unavailable_without_subscription_transport(
-    monkeypatch,
+    monkeypatch, deployed_pool
 ):
     monkeypatch.setattr(settings, "subscription_enabled", False)
     project = {"supply": "subscription"}
@@ -71,7 +76,7 @@ def test_subscription_models_are_unavailable_without_subscription_transport(
 
 @pytest.mark.parametrize("supply", ["subscription", "gateway"])
 def test_agents_can_select_each_gateway_model_without_changing_project_supply(
-    monkeypatch, supply
+    monkeypatch, supply, deployed_pool
 ):
     monkeypatch.setattr(settings, "subscription_enabled", True)
     project = {"supply": supply}
@@ -168,3 +173,135 @@ def test_a_new_agent_starts_on_a_model_its_harness_can_drive(monkeypatch):
             AgentConfiguration(model=initial_model(project, harness), harness=harness),
             project,
         )
+
+
+# --- What the platform pool offers ------------------------------------------
+# The gateway decides: it needs a route and a price to serve a model at all, so
+# these tests say what a project is offered given what a gateway reports, and
+# never read a list out of this codebase to compare against.
+
+
+def _gateway_answering(rows):
+    return gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": rows})
+        ),
+    )
+
+
+def _routes(name, *, offered=True, priced=True, label=None):
+    info = {}
+    if offered:
+        info["cheese_selectable"] = True
+    if label:
+        info["cheese_label"] = label
+    if priced:
+        info["input_cost_per_token"] = 0.000004
+        info["output_cost_per_token"] = 0.000004
+    return {
+        "model_name": name,
+        "litellm_params": {"model": f"anthropic/{name}"},
+        "model_info": info,
+    }
+
+
+def _gateway_reports(*rows):
+    asyncio.run(gateway_catalog.refresh(_gateway_answering(list(rows))))
+
+
+@pytest.fixture(autouse=True)
+def _forget_the_catalogue():
+    gateway_catalog.reset()
+    yield
+    gateway_catalog.reset()
+
+
+@pytest.fixture
+def deployed_pool(monkeypatch):
+    """What the deployed gateway routes today, as it would answer."""
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
+    _gateway_reports(
+        _routes("glm-5.2", label="GLM-5.2"),
+        _routes("deepseek-flash", label="DeepSeek V4.1 Flash"),
+        # Where the subagent alias points. Routed, never a menu item.
+        _routes("glm-4.5", offered=False),
+    )
+
+
+def test_a_model_the_gateway_starts_routing_is_offered_without_a_release(
+    monkeypatch, deployed_pool
+):
+    """The whole point: the pool's menu follows the gateway, so putting a model
+    into service does not also mean editing and shipping this codebase."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    assert "brand-new-model" not in {item["id"] for item in model_choices({})}
+
+    _gateway_reports(
+        _routes("glm-5.2", label="GLM-5.2"),
+        _routes("brand-new-model", label="Something Just Released"),
+    )
+    offered = {item["id"]: item for item in model_choices({})}
+    assert "brand-new-model" in offered
+    assert offered["brand-new-model"]["label"] == "Something Just Released"
+    validate_configuration(AgentConfiguration(model="brand-new-model"), {})
+
+    # And one the gateway stops routing stops being offered, rather than sitting
+    # in the picker until someone notices a turn failing on it.
+    _gateway_reports(_routes("glm-5.2", label="GLM-5.2"))
+    assert "brand-new-model" not in {item["id"] for item in model_choices({})}
+
+
+def test_a_model_the_gateway_routes_for_us_is_not_a_menu_item(
+    monkeypatch, deployed_pool
+):
+    """glm-4.5 is where the subagent alias points. Offering it would invite a
+    person to pick a model the platform routes to on their behalf."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    assert "glm-4.5" not in {item["id"] for item in model_choices({})}
+    with pytest.raises(ValidationError, match="请选择可用模型"):
+        validate_configuration(AgentConfiguration(model="glm-4.5"), {})
+
+
+def test_a_model_the_gateway_cannot_bill_is_not_offered(monkeypatch):
+    """Its tokens meter at zero, so the project's budget never trips and the
+    first sign of trouble is the invoice. A model missing from the picker gets
+    noticed; a brake that stopped working does not."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
+    _gateway_reports(
+        _routes("glm-5.2"),
+        _routes("free-of-charge-by-accident", priced=False),
+    )
+    assert "free-of-charge-by-accident" not in {
+        item["id"] for item in model_choices({})
+    }
+
+
+def test_an_unreachable_gateway_keeps_offering_what_it_last_reported(monkeypatch):
+    """A blip must not empty the picker: model_choices also runs when a turn
+    starts, so an empty answer stops every agent on the deployment."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
+    _gateway_reports(_routes("glm-5.2"), _routes("deepseek-flash"))
+
+    dead = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=httpx.MockTransport(lambda request: httpx.Response(502)),
+    )
+    assert asyncio.run(gateway_catalog.refresh(dead)) is False
+    assert {"glm-5.2", "deepseek-flash"} <= {item["id"] for item in model_choices({})}
+    validate_configuration(AgentConfiguration(model="deepseek-flash"), {})
+
+
+def test_a_deployment_with_no_gateway_admin_api_still_runs_its_own_model(monkeypatch):
+    """The admin API is optional. Such a deployment cannot be asked what it
+    routes, but it is still configured to run one model, and naming that is
+    better than offering nothing or inventing a list."""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "agent_model", "the-configured-one")
+    assert asyncio.run(gateway_catalog.refresh(None)) is False
+    assert {item["id"] for item in model_choices({})} == {"the-configured-one"}
+    assert initial_model({}) == "the-configured-one"

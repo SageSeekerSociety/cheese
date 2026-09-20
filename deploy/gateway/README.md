@@ -49,8 +49,28 @@ fixed when a container is created, not when its process starts.
 
 The `deepseek-flash` entry declares its thinking and effort capabilities. Without
 them, the pinned gateway removes the thinking settings sent by Claude Code.
-Agent settings offer DeepSeek V4.1 Flash and GLM-5.2 alongside enabled Claude
-models. Saving a different model refreshes the native session at the next task
+
+## Putting a model in front of people
+
+Add it to `config.yaml` with its route and its price, and mark it
+`cheese_selectable: true` under `model_info`. That is the whole change: cheese
+reads this file back through `/model/info` and keeps no list of its own, so
+nothing in the backend has to be edited or shipped for the model to appear in
+agent settings. The marker is opt-in because the gateway also routes models that
+are not menu items — `glm-4.5` is where the subagent alias points.
+
+Adding a model through the gateway's admin API instead (`STORE_MODEL_IN_DB` is
+on) routes it, but does not offer it to anyone: that path skips config.yaml and
+with it the review of the price. Opening it is a deliberate decision, and one
+clause in `LlmGateway.models` — not something to discover by accident.
+
+A selectable model with no price is not offered at all. Its tokens would meter
+at zero, the project's `max_budget` would never trip, and the first sign of
+trouble would be the invoice; a model missing from the picker gets noticed, a
+brake that quietly stopped working does not. `check_config.py` asserts this for
+every selectable entry, so run it after editing the list.
+
+Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
 Auxiliary and subagent model aliases follow the selected API model. API-backed
 Remote Control sessions receive Cheese project identity and control policy from
