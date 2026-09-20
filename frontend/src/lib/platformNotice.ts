@@ -257,9 +257,10 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
 
   if (str(m?.event_type) === 'cloud_provisioning') {
     const latest = run[run.length - 1] ?? block
+    const state = str(meta(latest)?.state)
     return {
       mode: 'fold',
-      line: latest.content,
+      line: state === 'ready' ? '运行环境已就绪' : state === 'waiting' ? '正在准备运行环境' : latest.content,
       who: whoTag(latest),
       whoLabel: '',
       count: 1,

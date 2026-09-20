@@ -244,7 +244,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
 
     const rows = container.querySelectorAll('[data-testid="platform-notice"]')
     expect(rows).toHaveLength(1)
-    expect(visibleText(rows[0])).toContain('Cloud 机器已接入')
+    expect(visibleText(rows[0])).toContain('运行环境已就绪')
     expect(visibleText(rows[0])).not.toContain('正在创建')
     expect(visibleText(rows[0])).not.toContain('平台已处理')
     expect(visibleText(rows[0])).not.toContain('×2')
@@ -265,7 +265,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
     ])
     await flush()
     const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
-    expect(shown).toContain('正在创建')
+    expect(shown).toContain('正在准备运行环境')
     expect(shown).not.toContain('已处理')
   })
 
