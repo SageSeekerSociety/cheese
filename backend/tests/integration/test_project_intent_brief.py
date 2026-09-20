@@ -76,3 +76,27 @@ def test_whitespace_only_intent_is_not_an_intent(
         assert await BlockRepository(db_session).doc_root(project.root_topic_id) is None
 
     _portal.call(_run)
+
+
+def test_the_answer_survives_the_http_round_trip(client):
+    """那句话要从请求体走到项目行上，再从响应里回来。
+
+    上面三条测的是 ``ProjectService.create`` 本身，证明不了这个字段接在路由上：
+    中间任何一层漏传它，服务层的用例照样绿，而人写的那句话在半路上就没了。
+    """
+
+    said = "帮我把这学期的课程材料整理成一份大纲"
+    created = client.post("/projects", json={"name": "这学期的课", "intent": said})
+
+    assert created.status_code == 200
+    assert created.json()["data"]["intent"] == said
+
+
+def test_a_request_that_never_says_still_creates_the_project(client):
+    """不答这一问是允许的——请求里根本没有这个键，项目照建，房间照旧。"""
+
+    created = client.post("/projects", json={"name": "没答这一问的项目"})
+
+    assert created.status_code == 200
+    assert created.json()["data"]["intent"] == ""
+    assert created.json()["data"]["root_topic_id"] is not None
