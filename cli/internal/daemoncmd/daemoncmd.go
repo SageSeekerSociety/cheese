@@ -450,7 +450,6 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 	return uninstall
 }
 
-
 // removeFootprint deletes everything `cheese` leaves on a machine: this
 // installation's own config, and the root every room was written under.
 //
