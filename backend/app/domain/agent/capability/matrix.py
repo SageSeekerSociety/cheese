@@ -76,6 +76,17 @@ def matrix() -> dict[str, dict[BuiltIn, str | Difference]]:
                     raise MatrixIncomplete(
                         f"{name} 说它自带「{concept}」，这一格却填了「不自带」。"
                     )
+                # 「自带、而且关不掉」的那一格，说的正是「自带」：``built_ins``
+                # 里没有它，表上就同时立着两个都为真的答案——这一格说自带，那个
+                # 字段说不自带。
+                if (
+                    cell is Difference.NO_OFF_SWITCH
+                    and concept not in declared.built_ins
+                ):
+                    raise MatrixIncomplete(
+                        f"{name} 的「{concept}」填了「关不掉」，"
+                        "那就是自带，却没有写进 built_ins。"
+                    )
                 row[concept] = cell
                 continue
             if not isinstance(cell, str) or not cell.strip():

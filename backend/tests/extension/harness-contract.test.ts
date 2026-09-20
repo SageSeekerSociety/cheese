@@ -38,6 +38,16 @@ function read(name: string): any {
 }
 
 const VOCABULARY = read("vocabulary.json");
+// One closed list of codes, two axes. A scenario here says what a harness
+// cannot REPORT; the capability matrix over in Python says what the platform
+// cannot TURN OFF. Reading the whole list would accept a cell from the other
+// axis — nonsense that reads exactly like a real code, and green on this side
+// while the Python half of the same fixture set goes red. The axis is written
+// in the fixture rather than in either reader, which is what keeps the two
+// halves reading one rule.
+const EVENT_DIFFERENCES = Object.entries<any>(VOCABULARY.differences)
+  .filter(([, word]) => word.axis === "event")
+  .map(([code]) => code);
 const NAMES = fs
   .readdirSync(FIXTURE_DIR)
   .filter((name) => name.endsWith(".json") && name !== "vocabulary.json")
@@ -49,6 +59,17 @@ const SCENARIOS = NAMES.map((name) => ({ name, ...read(name) }));
 const QUIET = 10;
 
 describe("夹具本身", () => {
+  it("差异码都记了自己属于哪条轴", () => {
+    // A code with no axis would be refused by both readers below without
+    // either of them saying why; and one with an axis this reader does not
+    // know is a third axis nobody has implemented.
+    for (const [code, word] of Object.entries<any>(VOCABULARY.differences)) {
+      assert.ok(["event", "built-in"].includes(word.axis), `${code}: ${word.axis}`);
+      assert.ok(word.why?.trim(), `${code} says nothing`);
+    }
+    assert.ok(EVENT_DIFFERENCES.length, "no code a scenario could answer with");
+  });
+
   it("目录里有东西可读", () => {
     // An empty directory passes every loop below it. This is the one assertion
     // that says the two languages are reading the same batch rather than one of
@@ -81,8 +102,8 @@ describe("夹具本身", () => {
         assert.deepEqual(keys.length, 1, `${harness} answers twice`);
         if (keys[0] === "difference") {
           assert.ok(
-            cell.difference in VOCABULARY.differences,
-            `${cell.difference} is not a difference code`,
+            EVENT_DIFFERENCES.includes(cell.difference),
+            `${cell.difference} is not a difference code a scenario may answer with`,
           );
         } else {
           assert.equal(keys[0], "records", `${harness}: ${keys[0]}`);

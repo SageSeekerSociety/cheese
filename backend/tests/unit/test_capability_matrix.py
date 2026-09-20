@@ -27,11 +27,14 @@ from app.domain.agent.capability import (
 )
 from app.domain.agent.capability import matrix as matrix_module
 from app.domain.agent.capability.matrix import MatrixIncomplete, declarations, matrix
+from app.core.config import Settings
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, Harness
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution import client as execution
+from app.domain.agent.harness.claude_code.remote_execution import private
 
 BACKEND = Path(__file__).resolve().parents[2]
+REPO = BACKEND.parent
 APP = BACKEND / "app"
 HARNESS_PACKAGE = APP / "domain/agent/harness"
 
@@ -62,16 +65,29 @@ def test_every_harness_this_deployment_runs_has_a_declaration() -> None:
 
 
 def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
-    """有三份复制品，每一份都有 import 不到适配层的理由，也都写在自己那一行上。
+    """每一份复制品，每一份都有 import 不到适配层的理由，也都写在自己那一行上。
 
     复制品不是第二个答案——这条守卫才是把它们钉在同一个值上的东西。任意一处先
     动，这里红。
+
+    漏掉一份的代价不是一张表不好看：私聊执行器那几处对不上的时候，CI 全绿而机器
+    上起不来——镜像里装的还是上一个 build，``remote_execution/client.py`` 的版本
+    闸门当场拒掉那一轮；tag 那几处各自不同步，则是 ``docker run`` 找不到镜像。
     """
     pins = {name: d.pinned_version for name, d in declarations().items()}
+    claude = pins[CLAUDE_CODE]
     # 机器上单独跑的两个脚本：一个由平台 exec 出一段字符串，一个作为松散文件送上
     # 机器，两个都不在包里，import 不到 device_launch。
-    assert execution.PINNED_VERSION == pins[CLAUDE_CODE]
-    assert bootstrap.VERSION == pins[CLAUDE_CODE]
+    assert execution.PINNED_VERSION == claude
+    assert bootstrap.VERSION == claude
+    # 私聊执行器那一串：镜像里装的 claude 要过上面那道版本闸门，镜像的 tag 就是
+    # 那个版本，而打 tag 的 CI、选镜像的配置默认值各写了一遍那个 tag。
+    dockerfile = (BACKEND / "sandbox/Dockerfile.private").read_text()
+    assert f"@anthropic-ai/claude-code@{claude}" in dockerfile
+    assert private.IMAGE == f"cheese-private-executor:{claude}"
+    assert Settings.model_fields["private_chat_executor_image"].default == private.IMAGE
+    workflow = (REPO / ".github/workflows/remote-execution.yml").read_text()
+    assert f"-t {private.IMAGE} " in workflow
     # 装机脚本：引用适配层的常量会把整个 codex 包连着 ORM 一起拖进来。
     installer = ast.parse(
         (BACKEND / "scripts/install_codex_session_host.py").read_text()
@@ -85,17 +101,44 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     assert declared == pins[CODEX]
 
 
+def _string_literals(path: Path) -> list[str]:
+    """这个文件里的字符串字面量，不含文档字符串与注释。
+
+    散文里的一个版本号讲的是一件史实（「2.1.277 起 TaskOutput 不再服务」），
+    升级 pin 也不该跟着改它；复制品则总是一个字面量——哪怕嵌在一句话中间，像
+    ``"cheese-private-executor:2.1.277"`` 那样。
+    """
+    tree = ast.parse(path.read_text())
+    prose = {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in prose
+    ]
+
+
 def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
     """版本号在哪几个文件里出现过，是一张白名单，而白名单是棘轮。
 
     多一个文件写下同一个字符串就红：pin 被抄第二遍的那一刻，「升级要改几处」
     这件事就已经没有人知道了。还清一处（改成引用常量）要回来删掉那一行。
+
+    找的是裸版本号，不是 ``"2.1.277"`` 这样带引号的一整个字面量：嵌在字符串中间
+    的那一份（``private.py`` 的 ``IMAGE``）在带引号的匹配下天然隐身，而它恰恰是
+    一份升级时要跟着改的复制品。
     """
     pins = {d.pinned_version for d in declarations().values()}
     allowed = {
         HARNESS_PACKAGE / "claude_code/device_launch.py",
         HARNESS_PACKAGE / "claude_code/remote_execution/client.py",
         HARNESS_PACKAGE / "claude_code/remote_execution/bootstrap.py",
+        HARNESS_PACKAGE / "claude_code/remote_execution/private.py",
         HARNESS_PACKAGE / "codex/host.py",
         HARNESS_PACKAGE / "pi/device_launch.py",
         HARNESS_PACKAGE / "claude_code/behaviour.py",
@@ -107,7 +150,7 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
         for path in sorted(HARNESS_PACKAGE.rglob("*.py"))
         if path not in allowed
         for pin in pins
-        if f'"{pin}"' in path.read_text()
+        if any(pin in literal for literal in _string_literals(path))
     ]
     assert not stray, "版本号在适配层里被抄了第二遍：\n  " + "\n  ".join(stray)
 
@@ -173,6 +216,26 @@ def test_a_cell_that_denies_what_the_declaration_claims_is_refused(monkeypatch) 
         verified_against="9.9.9",
     )
     monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: contradictory)
+    with pytest.raises(MatrixIncomplete):
+        matrix()
+
+
+def test_a_cell_that_claims_more_than_the_declaration_does_is_refused(
+    monkeypatch,
+) -> None:
+    """「关不掉」说的就是「自带」，所以 ``built_ins`` 里必须有它。
+
+    少了这一条，一份 ``built_ins=frozenset()`` 配一格「关不掉」照样画得出来：表
+    上读作「自带待办、关不掉」，而那个字段说它什么都不自带——两个都为真的答案并
+    排放着，正是这张表要消灭的东西。
+    """
+    overclaiming = Declaration(
+        pinned_version="9.9.9",
+        built_ins=frozenset(),
+        how_disabled=dict.fromkeys(BuiltIn, Difference.NO_OFF_SWITCH),
+        verified_against="9.9.9",
+    )
+    monkeypatch.setitem(matrix_module._DECLARED, CLAUDE_CODE, lambda: overclaiming)
     with pytest.raises(MatrixIncomplete):
         matrix()
 

@@ -9,7 +9,9 @@
 ``backend/tests/fixtures/harness-contract/vocabulary.json`` 的 ``differences``
 是同一份的散文版（那边还要给 TypeScript 那个 reader 读），两份由
 ``tests/contract/test_harness_contract.py`` 的守卫钉死在一起：往任何一边加一条
-码，另一边不加就红。
+码，另一边不加就红。每条码属于哪条轴（下面那两份名单）也记在那份夹具里，同一条
+守卫比对——轴只写在 Python 里的那一天，读同一份夹具的 TypeScript 那侧就会放跨轴
+的格子过去。
 """
 
 from collections.abc import Mapping
@@ -78,7 +80,8 @@ EVENT_DIFFERENCES = frozenset(
 )
 # 两份都是逐条写出来的，不是一份减另一份：写成补集，往 ``Difference`` 里加一条
 # 码就会悄悄落到另一条轴上，而那条轴的校验从此放它过去。两份必须正好切开整个
-# 枚举，守卫在 ``tests/unit/test_capability_matrix.py``。
+# 枚举（守卫在 ``tests/unit/test_capability_matrix.py``），并且跟夹具里记的轴
+# 一致（守卫在 ``tests/contract/test_harness_contract.py``）。
 #
 # 一条码只属于一条轴：跨轴填的那一格（「待办」这一格填「报不出会话 id」）是一句
 # 胡话，而胡话跟一条真的差异码在表上长得一模一样，所以两侧各自只认自己那一份。
