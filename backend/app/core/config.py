@@ -584,9 +584,6 @@ class Settings(BaseSettings):
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
-    # Idle rooms consolidate memory but keep their running environment.
-    sandbox_reap_interval_seconds: int = 3600
-    sandbox_idle_hours: float = 8
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
@@ -618,29 +615,6 @@ class Settings(BaseSettings):
     # blocking tool call — the longest a healthy turn can legitimately go
     # without adding a block.
     turn_stall_signal_s: float = 600.0
-
-    # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
-    # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
-    # topic and organize what it learned into the project's memory pools.
-    #
-    # OFF by default, and the default is the honest one. This spends model
-    # budget on a background trigger, which is the exact shape of the thing this
-    # repo parked once already (SchedulerService.tick): a clock cannot tell
-    # "there is something worth saying" from "say something". What makes this
-    # different is that the trigger is a real event — the screen is about to be
-    # closed, so this is the last moment anything CAN be checked against the
-    # workspace — not that the cost went away. Turning it on costs roughly one
-    # agent turn per organized topic, and no more than
-    # `dream_max_per_sweep` of them per sweep.
-    dream_enabled: bool = False
-    # How many topics one sweep may organize. A sweep that finds thirty idle
-    # screens must not start thirty turns at once; the rest are picked up an
-    # hour later, and nothing is lost because those screens were not closed
-    # either.
-    dream_max_per_sweep: int = 1
-    # Below this many blocks a topic is not worth a turn — a three-message
-    # topic has nothing in it that reading the transcript later would not give.
-    dream_min_blocks: int = 20
 
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key

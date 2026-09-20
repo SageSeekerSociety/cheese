@@ -79,17 +79,11 @@ def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> st
 
 
 class MemoryDream(UuidPk, Timestamps, Base):
-    """One pass of 记忆整理 — 芝士 rereading a topic's pools before its sandbox
-    is destroyed, merging duplicates and retiring what the work disproved.
+    """A 记忆整理 pass that ran while the clock-driven organizer existed.
 
-    The row is created when the pass is STARTED, not when it lands, and it stays
-    behind whether or not the pass produced anything (`applied`). Both halves
-    matter: without a row for the attempt, a pass that crashed or ran out of
-    budget looks exactly like a topic that has never been organized, and the
-    reaper starts another one every hour forever. Without `turn_id`, the blocks
-    the pass itself writes are indistinguishable from someone returning to the
-    topic — and since blocks are what idleness is judged on, the box would keep
-    renewing its own lease off its own housekeeping.
+    Nothing writes these rows any more. They are kept because `MemoryEntry`
+    points at them: each retired entry names the pass that retired it, and
+    reading the pool's history means being able to follow that pointer.
     """
 
     __tablename__ = "memory_dreams"
@@ -100,11 +94,9 @@ class MemoryDream(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # The kickoff turn that ran (or is running) the pass. Null when a pass was
-    # applied without the reaper having opened a row for it first.
+    # The kickoff turn that ran the pass.
     turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    # What the proposal was computed against: any entry touched since then has
-    # moved under 芝士's feet and is left alone. Null until the pass lands.
+    # What the proposal was computed against.
     snapshot_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -136,16 +128,14 @@ class MemoryEntry(UuidPk, Timestamps, Base):
         server_default=MemoryLayer.fact.value,
     )
 
-    # 记忆整理 never deletes. A retired entry is invisible to recall/count/search
-    # but still on disk, so a pass that merged two facts wrongly is one UPDATE
-    # away from being undone — which is the whole reason 芝士 is allowed to
-    # reorganize memory unattended at all.
+    # 记忆整理 retired instead of deleting, so the rows it decided against are
+    # still here and still have to stay out of every read (`live_entries`).
+    # Reinstating them would hand back facts 芝士 checked against the code and
+    # found no longer true.
     retired_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
-    # Which pass retired it / created it. The pair is what makes an undo
-    # possible: put back everything that pass retired, retire everything it
-    # added. One column could not express the second half.
+    # Which pass retired it / created it.
     retired_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("memory_dreams.id", ondelete="SET NULL"), nullable=True, index=True
     )

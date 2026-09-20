@@ -128,7 +128,6 @@ def _jobs():
 
     scheduler = SimpleNamespace(
         tick=_noop,
-        consolidate_idle_device_screens=_noop,
         poll_open_prs=_noop,
         open_draft_prs=_noop,
         sync_upstreams=_noop,

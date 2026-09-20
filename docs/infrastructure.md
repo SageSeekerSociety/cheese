@@ -408,35 +408,6 @@ Related: never hand-install files INTO a running container (they evaporate on
 the next recreate); the gateway's own env keys follow the same
 recreate-not-restart rule (`deploy/gateway/README.md`).
 
-### Turning on 记忆整理 / dreaming (#187)
-
-Independent of the openviking switch above, and much cheaper to try: dreaming
-reads the **db** backend's existing rows (`memory_entries`, `memory_dreams`), so
-it needs no vendor key and does not care what `MEMORY_BACKEND` is set to. One
-line, then the same redeploy as any other env change:
-
-```
-DREAM_ENABLED=true
-```
-
-Memory consolidation runs independently of resource cleanup:
-
-- `SANDBOX_REAP_INTERVAL_SECONDS` remains the compatibility name for its interval
-  (one hour by default); it no longer releases idle rooms.
-- `SANDBOX_IDLE_HOURS` sets the required inactivity (eight hours by default).
-  Existing idle time counts immediately; enabling dreams does not start a new wait.
-- Each pass consolidates memory for at most `DREAM_MAX_PER_SWEEP` rooms (one by
-  default). `DREAM_MIN_BLOCKS` defaults to twenty. Rooms keep their sessions.
-
-To inspect the running job:
-
-```bash
-docker logs cheese-backend-1 --since 1h 2>&1 | grep 'shipped to device'
-```
-
-It **spends model budget** on a background trigger — about one agent turn per
-organized topic. That is the whole reason it is off by default.
-
 ## Backups
 
 Every box runs the same scripts (only the R2 prefix and host differ); details and
