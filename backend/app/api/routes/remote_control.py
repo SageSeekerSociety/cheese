@@ -28,6 +28,7 @@ from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, key, store
 from app.domain.agent.runtime import get_broker
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
@@ -176,13 +177,23 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     place = await TopicService(db).place_or_404(uuid.UUID(claims["t"]))
     if str(place.project_id) != claims["p"]:
         raise ForbiddenError("Place does not belong to this credential")
-    if place.room.session_placement and claims.get("r") != str(
-        place.room.resource_id or place.room.id
-    ):
+    resource = str(place.room.resource_id or place.room.id)
+    # The hands belong to a session, so the room is asked for its sessions and
+    # the current generation picks among them. Which one is not asked: a room's
+    # sessions all lease the same executor today (see `api/routes/execution.py`).
+    leased = [
+        held
+        for held in await AgentSessionService(db).places_in_room(place.room_id)
+        if held.lease
+    ]
+    if leased and claims.get("r") != resource:
         raise ConflictError("RC credential belongs to another execution generation")
+    current = [held for held in leased if held.resource_id == resource]
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
-    data["execution"] = place.room.session_placement
+    data["execution"] = (
+        {"resource_id": resource, "execution": current[0].lease} if current else None
+    )
     # A credential naming the room's stand-in seat acts as the agent seated
     # there; the session records who that is, so its questions and answers are
     # attributed to the same identity every other write of that turn carries.

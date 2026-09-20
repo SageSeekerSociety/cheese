@@ -20,6 +20,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import execution
+from app.domain.device import owner_reads
 from app.domain.topic.models import Topic
 
 router = APIRouter(tags=["execution"])
@@ -54,22 +55,34 @@ async def execute(
     # makes an unrelated column removal break every tool call on the old owner.
     room = (
         await db.execute(
-            select(
-                Topic.id, Topic.project_id, Topic.resource_id, Topic.session_placement
-            ).where(Topic.id == topic_id)
+            select(Topic.id, Topic.project_id, Topic.resource_id).where(
+                Topic.id == topic_id
+            )
         )
     ).one_or_none()
     if room is None:
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
-    placement = room.session_placement
+    # The hands are the session's, so the lease is read per session — one room
+    # can hold several. The credential names a room and a generation and not a
+    # session, which is enough because the executor is still pinned per room
+    # (`resolve_pinned_device`): every session here leases the same hands. The
+    # day that stops being true, the credential has to say which session it
+    # belongs to.
+    lease = next(
+        (
+            hands
+            for where, hands in await owner_reads.session_places(db, topic_id)
+            if where.get("resource_id") == str(resource_id)
+            and (hands or {}).get("kind") == "device"
+        ),
+        None,
+    )
     if (
-        not placement
+        lease is None
         or claims.get("r") != str(resource_id)
-        or placement["resource_id"] != str(resource_id)
         or (room.resource_id or room.id) != resource_id
-        or placement["execution"].get("kind") != "device"
     ):
         raise ConflictError("Execution generation is no longer current")
     if payload.method not in {
@@ -82,7 +95,7 @@ async def execute(
         "cli",
     }:
         raise ForbiddenError("This executor operation is not available to the session")
-    target = placement["execution"]
+    target = lease
     await db.commit()
     logger.debug(
         "execution_timing stage=admitted trace=%s mono_ns=%d",

@@ -641,6 +641,7 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
