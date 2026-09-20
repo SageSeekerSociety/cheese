@@ -123,6 +123,12 @@ async def propose_feedback(
         content=body.title,
         kind=BlockKind.message,
         meta={"feedback_proposal": proposal_rules.proposal_meta(body, fingerprint)},
+        # `cheese feedback propose` 落下的卡是芝士自己提的，等的是**人**点那两个
+        # 按钮。和 `/ask` 同一条路：这里也填不出轮次号（CLI 只在 CHEESE_TURN 非空
+        # 时才带 X-Cheese-Turn，没有一处产品代码写它），所以由写入端直接说明这是
+        # 自己的产出——否则它盖上待读标记，下一轮把自己的提案当成一条没读过的话
+        # 再读一遍。人提的那种照旧是一条待读输入。
+        own_output=actor.is_agent,
     )
     await db.commit()
     result = FeedbackProposalResult(block_id=block.id, fingerprint=fingerprint)

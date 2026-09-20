@@ -68,7 +68,9 @@ class AuthorType(enum.StrEnum):
     participant = "participant"
     # 平台自己产的事件：部署提醒、闸门结论、自动重发。这一档改叫 platform 要连着
     # 一次存量行改写（SQLAlchemy 的 Enum 存的是成员名），所以和旧值的删除一起在
-    # P8b 做，这里先留着它今天的名字。
+    # P8b 做，这里先留着它今天的名字。**改名的那一次，存量行改写除了 human/ai
+    # 还得把 system 一并改成 platform**：库里存的是 "system" 这个成员名，枚举里
+    # 没有它之后，旧行一读就是 LookupError。
     system = "system"
 
     # —— P8 之前写下的存量行的两个旧值，都是参与者 ——

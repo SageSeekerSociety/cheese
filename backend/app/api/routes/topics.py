@@ -1511,22 +1511,31 @@ async def ask_options(
         raise ValidationError("question is required")
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
+    # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
+    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese ask` 只在 CHEESE_TURN
+    # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
+    # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
+    # 直接说明（`own_output`）：不说明的话这道题会盖上待读标记，「忘了 @」的补救按钮
+    # 不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝士刚问出口的这道
+    # 题，它对着自己的问题再答一遍。人在房间里问出的那种照旧是一条待读输入。
+    if actor.authenticated:
+        author, asked_by_agent = actor.handle, actor.is_agent
+    else:
+        author = await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        )
+        asked_by_agent = True
     blk = await BlockRepository(db).add(
         project_id=place.project_id,
         # The place id: `add` splits it, so a thread's question is asked in the
         # thread rather than shouted into the room around it.
         topic_id=topic_id,
-        author=(
-            actor.handle
-            if actor.authenticated
-            else await TopicMemberService(db).resolve_agent_handle(
-                topic_id, room_id=place.room_id
-            )
-        ),
+        author=author,
         author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
+        own_output=asked_by_agent,
     )
     # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
     # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
