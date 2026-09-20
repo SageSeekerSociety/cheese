@@ -10,10 +10,14 @@ and before this module existed they answered it three separate ways -
 which had already drifted apart once (see below). An answer that lives in three
 places is three answers.
 
-What the answer is: **the owner, the roster, or a member of the team the
-project belongs to.** Those are exactly the three claims
-``ProjectRepository.list_visible_to`` lists a project under, and that is not a
-coincidence kept for its own sake - a listing and a door have to agree. Until
+What the answer is: **the owner, the roster, a member of the team the project
+belongs to, or the 出题者 of the 赛题 the project was opened for.** The first
+three are exactly the claims ``ProjectRepository.list_visible_to`` lists a
+project under, and that is not a coincidence kept for its own sake - a listing
+and a door have to agree. The fourth is not in that listing (a teacher's
+sidebar does not want forty projects they do not work in); it is here because
+the student dashboard needs to open one that a class produced, and
+``_is_asker_of_the_task`` explains why it stops at the task's creator. Until
 2026-09-04 two of the three copies accepted only the first two, so a teammate
 saw the project in their sidebar and on the team page, clicked in, and got 403
 from every room behind it. Measured on dev: a member who had accepted a team
@@ -39,7 +43,9 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
+from app.domain.task.repositories import TaskRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.user.repositories import UserRepository
@@ -62,16 +68,47 @@ async def may_read_project(
         return False
     if project.owner_handle == handle:
         return True
+    user = await UserRepository(session).get_by_username(handle)
+    if user is None:
+        return False
+    if await _is_asker_of_the_task(session, project=project, user_id=user.id):
+        return True
     # The project's OWN team, not ``team_for_project`` - that helper also folds
     # in the owner's personal team, which would let a personal team's members
     # into a project their owner never put there. Widening the claim set is a
     # different decision than consolidating three copies of it.
     if project.team_id is None:
         return False
-    user = await UserRepository(session).get_by_username(handle)
-    if user is None:
-        return False
     return await TeamRepository(session).is_team_member(project.team_id, user.id)
+
+
+async def _is_asker_of_the_task(
+    session: AsyncSession, *, project: Project, user_id: int
+) -> bool:
+    """出题者: the person who set the 赛题 this project was opened for.
+
+    A 赛题 registration project is owned by whoever applies
+    (``ProjectService.for_participation`` passes the applicant as
+    ``owner_handle``), so the teacher who set the problem is a stranger to every
+    project it produces - they cannot read a single one of its rooms, and the
+    dashboard that is supposed to show them how their class did has nothing to
+    stand on. The link that identifies them is ``Project.external_task_id`` →
+    ``Task.creator_id``, and it is on the task, not on the project.
+
+    Deliberately the TASK CREATOR only. ``TaskVisibilityService.can_view_task``
+    answers a wider question that is right for a task page (space admins,
+    participants, an allowed email domain) and wrong here: a class-wide domain
+    allowlist would hand every student of a class the conversations of every
+    team's project, which is the over-permission this module exists to close,
+    just with a school's blessing. The 出题者 is not 全站教师, either - this is
+    one person and the projects of one task.
+    """
+    if project.external_task_id is None:
+        return False
+    task = await TaskRepository(session).get_by_id(project.external_task_id)
+    if task is None or task.creator_id is None:
+        return False
+    return task.creator_id == user_id
 
 
 async def may_read_topic(

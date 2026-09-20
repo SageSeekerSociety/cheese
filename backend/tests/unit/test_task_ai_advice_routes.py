@@ -7,6 +7,39 @@ from app.common.auth import get_optional_user_id
 from app.main import app
 
 
+async def _seed_task(python_client, task_id: int, *, creator_id: int) -> None:
+    """这道题得真的存在。
+
+    读 / 写摘要现在要过 ``TaskVisibilityService``（同一道题的建议是这道题的一
+    部分），而那道判断的第一个输入就是 ``Task`` 这一行 —— 看不到的题按「没有这
+    道题」回答。以前这些路只问「登录了吗」，所以 stub 掉服务就能测；现在测试得
+    先把题放进去，这正是这次改动想让它们多测的那一步。
+    """
+    from datetime import UTC, datetime
+
+    from app.domain.task.models import Task
+
+    now = datetime.now(UTC)
+    async with python_client.test_factory() as session:
+        session.add(
+            Task(
+                id=task_id,
+                name="题目",
+                intro="",
+                description="",
+                creator_id=creator_id,
+                space_id=1,
+                category_id=1,
+                submitter_type=0,
+                approved=1,
+                default_deadline=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+
 class _QuotaInfo:
     def __init__(self, *, remaining: float, total: float, reset_time: datetime) -> None:
         self.remaining = remaining
@@ -64,6 +97,7 @@ async def test_create_ai_advice_conversation_forwards_context(python_client):
 
     app.dependency_overrides[get_task_ai_advice_service] = _service_override
     app.dependency_overrides[get_optional_user_id] = _user_override
+    await _seed_task(python_client, 42, creator_id=99)
 
     try:
         payload = {
@@ -111,6 +145,7 @@ async def test_create_ai_advice_conversation_missing_question_returns_400(
 
     app.dependency_overrides[get_task_ai_advice_service] = _service_override
     app.dependency_overrides[get_optional_user_id] = _user_override
+    await _seed_task(python_client, 1, creator_id=1)
 
     try:
         resp = await python_client.post(

@@ -35,6 +35,8 @@ from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
 from app.domain.identity.services import IdentityService
+from app.domain.task.repositories import TaskRepository
+from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
@@ -465,6 +467,45 @@ class ActorResolver:
             return
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError("你不是这个项目的成员，无权查看")
+
+    async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
+        """Require a verified caller who may see this 赛题.
+
+        ``GET /projects/by-task/{task_id}`` is the 赛题 page asking what already
+        exists for a task, and every row it answers with carries a project id, a
+        name and an owner handle. The task id is a small integer, so "what
+        exists for task 42" is not public information - it is the directory the
+        rest of the project routes take their ids from. The judgment is
+        ``TaskVisibilityService``, the same one the task page itself uses,
+        rather than a second copy of it here.
+
+        A task that does not exist is let through: the route answers an empty
+        page for it either way, and a 403 there would turn this into a probe
+        for which task ids are real.
+        """
+        if not settings.authz_enforce_topic_access:
+            return
+        self.reject_failed_credential(actor)
+        if not actor.authenticated:
+            if is_global_sandbox_token(self._cheese_token):
+                return  # Trusted development credential; anonymous access stays denied.
+            raise AuthenticationRequiredError("Login required to access a task")
+        task = await TaskRepository(self._session).get_by_id(task_id)
+        if task is None:
+            return
+        user_id = actor.user_id
+        if user_id is None:
+            # A handle-only session token carries no int user id, and task
+            # visibility is keyed by one - see ``_is_team_member`` above for the
+            # same resolution.
+            user = await UserRepository(self._session).get_by_username(actor.handle)
+            user_id = user.id if user is not None else None
+        if user_id is not None and await TaskVisibilityService(
+            self._session
+        ).can_view_task(task=task, user_id=user_id):
+            return
+        _log.info("task_access_denied", handle=actor.handle, task=task_id)
+        raise ForbiddenError("你不是这道赛题的相关人员，无权查看")
 
     async def authorize_team(self, actor: Actor, *, team_id: int) -> None:
         """Require a verified member of this team.
