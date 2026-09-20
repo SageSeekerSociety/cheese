@@ -85,6 +85,7 @@ case " $COMPOSE_OVERLAYS " in
 esac
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
 FORGE_CUTOVER_PENDING="${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}/forge-migration/cutover-pending"
+FORGE_EXECUTOR_RESTART="$(dirname "$FORGE_CUTOVER_PENDING")/restart-host-executor"
 
 # Only environments wired for sibling agent containers need the large runtime
 # images. Dev's subscription overlay is that signal; production app-only boxes
@@ -184,6 +185,14 @@ migrate_project_repositories() {
   mkdir -p "$(dirname "$FORGE_CUTOVER_PENDING")"
   touch "$FORGE_CUTOVER_PENDING"
   dc stop backend || fail "could not stop repository writers"
+  # Native sessions can share the legacy worktrees without a Docker mount.
+  # Retain the restart receipt across failures, just like the cutover guard.
+  if command -v systemctl >/dev/null && systemctl is-active --quiet cheese.service; then
+    [ "$(systemctl show cheese.service -p KillMode --value)" = control-group ] \
+      || fail "host executor preserves child processes on stop; quiesce its sessions before retrying migration"
+    touch "$FORGE_EXECUTOR_RESTART"
+    sudo -n systemctl stop cheese.service || fail "could not stop the host executor"
+  fi
   # This service is absent from the new compose file but may still be running
   # from the previous release; stop it before freezing its receive-pack store.
   while IFS= read -r legacy; do
@@ -192,6 +201,9 @@ migrate_project_repositories() {
   done < <(docker ps -q \
     --filter "label=com.docker.compose.project=$PROJECT" \
     --filter "label=com.docker.compose.service=git")
+  sudo -n python3 "$HERE/check-forge-workspace-writers.py" \
+    "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}" \
+    || fail "legacy workspace users remain; migration has not started"
   dc run --rm --no-deps backend python -m scripts.migrate_forge \
     --backup-root /data/apphome/forge-migration --apply --writers-stopped \
     || fail "repository migration failed; writers remain stopped; retry this release to resume from receipts"
@@ -896,6 +908,11 @@ if [ "$code" != ok ]; then
 fi
 
 # Keep the cutover guard across failed releases until the new app is healthy.
+if [ -f "$FORGE_EXECUTOR_RESTART" ]; then
+  sudo -n systemctl start cheese.service || fail "could not restore the host executor"
+  systemctl is-active --quiet cheese.service || fail "host executor did not become active"
+  rm -f "$FORGE_EXECUTOR_RESTART"
+fi
 rm -f "$FORGE_CUTOVER_PENDING"
 
 # Host clock survives API rollouts. Non-systemd installations must arrange an

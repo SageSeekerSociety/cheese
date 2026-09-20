@@ -1012,25 +1012,28 @@ test_missing_forge_fails_health_check() {
 }
 
 test_forge_migration_release() {
-  local run_dir mode expected check apply result scenario
+  local run_dir mode expected check apply result scenario native_stop writer_check migration
   mkdir -p "$ROOT/.tmp"
-  for mode in first completed check_failed apply_failed health_failed retry_health_failed retry_completed; do
+  for mode in first completed check_failed writers_remain preserved_children apply_failed health_failed retry_health_failed retry_completed; do
     run_dir="$(mktemp -d "$ROOT/.tmp/forge-release.XXXXXX")"
     check=2 apply=0 expected=0 scenario=healthy
     case "$mode" in
       completed) check=0 ;;
       check_failed) check=1; expected=1 ;;
+      writers_remain|preserved_children) expected=1 ;;
       apply_failed) apply=1; expected=1 ;;
       health_failed) scenario=rollback; expected=1 ;;
       retry_health_failed)
         scenario=rollback; check=0; expected=1
         mkdir -p "$run_dir/apphome/forge-migration"
         touch "$run_dir/apphome/forge-migration/cutover-pending"
+        touch "$run_dir/apphome/forge-migration/restart-host-executor"
         ;;
       retry_completed)
         check=0
         mkdir -p "$run_dir/apphome/forge-migration"
         touch "$run_dir/apphome/forge-migration/cutover-pending"
+        touch "$run_dir/apphome/forge-migration/restart-host-executor"
         ;;
     esac
     result=0
@@ -1039,6 +1042,9 @@ test_forge_migration_release() {
       APP_TIER_SCENARIO="$scenario" \
       APPHOME_HOST_PATH="$run_dir/apphome" \
       APP_TIER_FORGE_CHECK="$check" APP_TIER_FORGE_APPLY="$apply" \
+      APP_TIER_HOST_EXECUTOR=active \
+      APP_TIER_HOST_KILL_MODE="$([ "$mode" = preserved_children ] && echo process || echo control-group)" \
+      APP_TIER_WORKSPACE_WRITERS="$([ "$mode" = writers_remain ] && echo 1 || echo 0)" \
       COMPOSE_OVERLAYS=docker-compose.subscription.yml \
       FORGEJO_URL=https://forge.example/forge/ FORGEJO_WEBHOOK_HOSTS=relay.example \
       DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
@@ -1050,10 +1056,26 @@ test_forge_migration_release() {
     grep -F 'up -d --no-deps forge-events' "$run_dir/docker.log" >/dev/null || fail "event relay was not started"
     grep -Fx bootstrap "$run_dir/docker.log" >/dev/null || fail "admin provisioning did not run"
     case "$mode" in
+      preserved_children)
+        if grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null; then
+          fail "migration ran while stopping the connector would preserve its children"
+        fi
+        ;;
+      writers_remain)
+        grep -F 'systemctl stop cheese.service' "$run_dir/docker.log" >/dev/null || fail "native executor stayed running"
+        if grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null; then
+          fail "migration ran with remaining workspace users"
+        fi
+        ;;
       first|apply_failed|health_failed)
         grep -F 'stop backend' "$run_dir/docker.log" >/dev/null || fail "writers stayed running"
         grep -F 'stop legacy-git-container' "$run_dir/docker.log" >/dev/null || fail "Git receiver stayed running"
         grep -F -- '--apply --writers-stopped' "$run_dir/docker.log" >/dev/null || fail "migration did not run"
+        native_stop="$(log_line "$run_dir/docker.log" 'systemctl stop cheese.service')"
+        writer_check="$(log_line "$run_dir/docker.log" workspace-writers-checked)"
+        migration="$(log_line "$run_dir/docker.log" '--apply --writers-stopped')"
+        [ "$native_stop" -lt "$writer_check" ] && [ "$writer_check" -lt "$migration" ] \
+          || fail "migration started before native writers were quiesced"
         ;;
       completed|check_failed|retry_health_failed|retry_completed)
         if grep -F 'stop backend' "$run_dir/docker.log" >/dev/null; then
@@ -1071,6 +1093,12 @@ test_forge_migration_release() {
     fi
     if [ "$expected" = 0 ] && [ -f "$run_dir/apphome/forge-migration/cutover-pending" ]; then
       fail "successful release retained its cutover guard"
+    fi
+    if [ "$mode" = first ] || [ "$mode" = retry_completed ]; then
+      grep -F 'systemctl start cheese.service' "$run_dir/docker.log" >/dev/null || fail "native executor was not restored"
+      [ ! -f "$run_dir/apphome/forge-migration/restart-host-executor" ] || fail "restart receipt was not consumed"
+    elif grep -F 'systemctl start cheese.service' "$run_dir/docker.log" >/dev/null; then
+      fail "$mode resumed native writers prematurely"
     fi
     rm -rf "$run_dir"
     echo "PASS: forge release $mode"

@@ -70,7 +70,9 @@ jobs:
         run: python3 deploy/tests/test_cloud_control.py
 
       - name: Forge deployment configuration
-        run: python3 deploy/tests/test_forge_config.py
+        run: |
+          python3 deploy/tests/test_forge_config.py
+          python3 deploy/tests/test_forge_workspace_writers.py
 
       - name: Workspace ownership handover
         run: bash deploy/tests/test-workspace-ownership.sh
