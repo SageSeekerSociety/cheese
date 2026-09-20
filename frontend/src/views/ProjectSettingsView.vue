@@ -27,6 +27,8 @@ import {
 } from '../api'
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
+import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
+import CreditsPanel from '../components/settings/CreditsPanel.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
 import {
   explainAccountLinkFailure,
@@ -371,9 +373,7 @@ watch(
       <div class="mb-6">
         <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
         <h1 class="t-page-title">项目设置</h1>
-        <p class="t-body c-muted mt-1" style="max-width: 640px">
-          管理运行环境、仓库连接和分支保护。角色设定和模型请到“AI 队友”中修改对应的队友。
-        </p>
+        <p class="t-body c-muted mt-1" style="max-width: 640px">这个项目的队友、运行环境、交付规则和仓库连接</p>
       </div>
 
       <div v-if="loading" class="d-flex justify-center py-10">
@@ -384,59 +384,20 @@ watch(
       </v-alert>
 
       <template v-else>
+        <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
+             规则 / 接仓库。原来是六块竖着铺满一页，读的人得自己认哪块是哪块；而
+             没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
+        <h2 class="t-title settings-group">队友</h2>
+        <AgentTeamSettings :project-id="projectId" />
+
+        <h2 class="t-title settings-group">运行环境</h2>
         <section class="page-section">
           <ProjectComputeSettings :project-id="projectId" />
         </section>
         <ProjectEnvironmentSettings :project-id="projectId" />
+        <CreditsPanel :project-id="projectId" />
 
-        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
-            <span class="page-section-title">上游仓库</span>
-          </div>
-          <div class="page-section-body">
-            <div class="d-flex align-center" style="gap: 8px">
-              <v-text-field
-                v-model="upstreamUrl"
-                autocomplete="off"
-                density="compact"
-                variant="outlined"
-                hide-details
-                placeholder="https://… 或本机绝对路径（留空 = 取消关联）"
-                style="flex: 1"
-                @keydown.enter="saveUpstream"
-              />
-              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
-              <v-btn
-                size="small"
-                color="primary"
-                variant="flat"
-                :disabled="!upstreamSaved"
-                :loading="syncing"
-                @click="doSyncUpstream"
-              >
-                同步上游
-              </v-btn>
-            </div>
-            <p
-              v-if="syncResult"
-              class="t-body mt-2"
-              style="font-size: 0.8rem"
-              :class="syncResult.synced ? 'c-muted' : 'text-error'"
-            >
-              <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
-                已合入上游 {{ syncResult.commits }} 个提交
-              </template>
-              <template v-else-if="syncResult.synced">已是最新，没有新提交</template>
-              <template v-else>同步失败：{{ syncResult.reason }}</template>
-            </p>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              关联一个已有的 git
-              仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。
-            </p>
-          </div>
-        </section>
+        <h2 class="t-title settings-group">交付</h2>
 
         <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。
              GitHub 自己开了保护时同名规则灰掉（拍板②），说明见 ghEnforced 的注释。 -->
@@ -662,6 +623,57 @@ watch(
           </div>
         </section>
 
+        <h2 class="t-title settings-group">仓库</h2>
+
+        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
+            <span class="page-section-title">上游仓库</span>
+          </div>
+          <div class="page-section-body">
+            <div class="d-flex align-center" style="gap: 8px">
+              <v-text-field
+                v-model="upstreamUrl"
+                autocomplete="off"
+                density="compact"
+                variant="outlined"
+                hide-details
+                placeholder="https://… 或本机绝对路径（留空 = 取消关联）"
+                style="flex: 1"
+                @keydown.enter="saveUpstream"
+              />
+              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
+              <v-btn
+                size="small"
+                color="primary"
+                variant="flat"
+                :disabled="!upstreamSaved"
+                :loading="syncing"
+                @click="doSyncUpstream"
+              >
+                同步上游
+              </v-btn>
+            </div>
+            <p
+              v-if="syncResult"
+              class="t-body mt-2"
+              style="font-size: 0.8rem"
+              :class="syncResult.synced ? 'c-muted' : 'text-error'"
+            >
+              <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
+                已合入上游 {{ syncResult.commits }} 个提交
+              </template>
+              <template v-else-if="syncResult.synced">已是最新，没有新提交</template>
+              <template v-else>同步失败：{{ syncResult.reason }}</template>
+            </p>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              关联一个已有的 git
+              仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。
+            </p>
+          </div>
+        </section>
+
         <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
              git 操作走这个 installation 的短时 token -->
         <section class="page-section">
@@ -823,6 +835,15 @@ watch(
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
+}
+/* 组标题：比区块标题重一档，前后留白把这一页切成四段读得出来的东西。第一组不
+   留上边距——它紧接着页头。 */
+.settings-group {
+  margin: 32px 0 12px;
+  color: var(--ink);
+}
+.settings-group:first-of-type {
+  margin-top: 0;
 }
 .page-section-title {
   font-size: 12px;

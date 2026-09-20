@@ -1,14 +1,17 @@
 <script setup lang="ts">
-// 「AI 队友」—— 这个项目里所有 AI 队友的管理页。
+// 「AI 队友」—— 这个项目里所有 AI 队友，项目设置里的一节。
 //
-// 为什么值得有一整页：一个队友身上真正重要的东西是它**攒下了什么**，而这在别处
-// 完全看不见。所以每一行除了名字和类型，都带两个数字 —— 记忆条数和现在有几个
-// 话题在用它 —— 有没有在干活，一眼就分得出来。
+// 它曾经是一整页，而项目设置里只有仓库、分支保护和运行环境 —— 于是设置页对一个
+// 没绑仓库的项目是空的，还写着「角色设定和模型请到 AI 队友 中修改」，把人往外
+// 指。队友的角色设定和模型本来就是这个项目的设置，所以它回到这里。
+//
+// 每一行除了名字和类型带两个数字 —— 记忆条数和现在有几个话题在用它 —— 有没有在
+// 干活，一眼就分得出来。
 //
 // 页面读四处，只有第一处是必须的：队友名册。类型目录、记忆、话题各自失败都不该
 // 让整页塌掉，它们只会让对应的那个数字消失，而不是让人看不到队友。
-import type { MemoryEntryOut } from '../api'
-import type { AgentType, ProjectAgent } from '../cx_types'
+import type { MemoryEntryOut } from '@/api'
+import type { AgentType, ProjectAgent } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
@@ -22,13 +25,13 @@ import {
   listMemory,
   listProjectAgents,
   setProjectDefaultAgent,
-} from '../api'
-import AgentEditorDialog from '../components/agents/AgentEditorDialog.vue'
-import UserAvatar from '../components/common/UserAvatar.vue'
-import { agentKey, memoryCountsByHandle } from '../lib/projectAgents'
-import { relTime } from '../lib/relTime'
+} from '@/api'
+import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
+import { agentKey, memoryCountsByHandle } from '@/lib/projectAgents'
+import { relTime } from '@/lib/relTime'
 
-defineOptions({ name: 'ProjectAgentsView' })
+defineOptions({ name: 'AgentTeamSettings' })
 
 const props = defineProps<{ projectId: string }>()
 
@@ -182,34 +185,33 @@ async function confirmDeactivate() {
 </script>
 
 <template>
-  <div class="agents-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 900px">
-      <div class="mb-6 d-flex align-center">
-        <div>
-          <div class="t-eyebrow mb-1">项目</div>
-          <h1 class="t-page-title">AI 队友</h1>
-        </div>
-        <v-spacer />
-        <v-btn
-          variant="text"
-          icon="mdi-refresh"
-          class="mr-1"
-          aria-label="刷新"
-          :loading="loading || refreshing"
-          @click="refresh"
-        />
-        <v-btn
-          v-if="!backendMissing"
-          color="primary"
-          variant="flat"
-          prepend-icon="mdi-plus"
-          :disabled="loading"
-          @click="openCreate"
-        >
-          新建队友
-        </v-btn>
-      </div>
-
+  <section class="page-section">
+    <div class="page-section-head">
+      <v-icon size="14" class="c-faint">mdi-robot-outline</v-icon>
+      <span class="page-section-title">AI 队友</span>
+      <v-spacer />
+      <v-btn
+        variant="text"
+        icon="mdi-refresh"
+        size="small"
+        class="mr-1"
+        aria-label="刷新"
+        :loading="loading || refreshing"
+        @click="refresh"
+      />
+      <v-btn
+        v-if="!backendMissing"
+        color="primary"
+        variant="flat"
+        size="small"
+        prepend-icon="mdi-plus"
+        :disabled="loading"
+        @click="openCreate"
+      >
+        新建队友
+      </v-btn>
+    </div>
+    <div class="page-section-body">
       <p class="t-body c-muted mb-6" style="max-width: 640px">
         每个队友有自己的角色设定和自己的记忆。新开话题默认交给标了「默认」的那一个，也可以在话题里单独换
       </p>
@@ -293,7 +295,7 @@ async function confirmDeactivate() {
           </div>
         </v-expand-transition>
       </v-card>
-    </v-container>
+    </div>
 
     <AgentEditorDialog v-model="editorOpen" :project-id="projectId" :agent="editing" :types="types" @saved="refresh" />
 
@@ -314,7 +316,7 @@ async function confirmDeactivate() {
         </div>
       </v-card>
     </v-dialog>
-  </div>
+  </section>
 </template>
 
 <style scoped>

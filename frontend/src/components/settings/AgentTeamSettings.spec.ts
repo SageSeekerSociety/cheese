@@ -1,9 +1,9 @@
-// 「AI 队友」管理页。四件事值得被盯着，都是渲染不会失败但人会被误导的：
+// 「AI 队友」—— 项目设置里的一节。四件事值得被盯着，都是渲染不会失败但人会被误导的：
 //   1. 一行里那个数字要真的对上这个队友（记忆条数）
-//   2. 后端那一半还没上线时，这一页得说「还没上线」，不能是白屏也不能是报错
+//   2. 后端那一半还没上线时，这一节得说「还没上线」，不能是白屏也不能是报错
 //   3. 空名册要说清楚队友是什么、能拿它干嘛，不能只画个空盒子
 //   4. 停用必须先问一遍，并且说明「已经在用的话题照常工作、记忆保留」
-import type { ProjectAgent } from '../cx_types'
+import type { ProjectAgent } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -18,11 +18,11 @@ const setProjectDefaultAgent = vi.fn()
 const deactivateProjectAgent = vi.fn()
 const getProjectAgentOptions = vi.fn()
 
-vi.mock('../api', async (importOriginal) => {
+vi.mock('@/api', async (importOriginal) => {
   // ApiError / isEndpointMissing stay REAL: "the backend is not deployed here"
   // is decided by an HTTP status, and a stubbed decision would pass while the
   // real one is broken.
-  const actual = await importOriginal<typeof import('../api')>()
+  const actual = await importOriginal<typeof import('@/api')>()
   return {
     ...actual,
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
@@ -34,10 +34,9 @@ vi.mock('../api', async (importOriginal) => {
   }
 })
 
-import { ApiError } from '../api'
+import AgentTeamSettings from './AgentTeamSettings.vue'
 
-import ProjectAgentsView from './ProjectAgentsView.vue'
-
+import { ApiError } from '@/api'
 import { clearPageCache } from '@/lib/pageCache'
 
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
@@ -58,7 +57,7 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
 }
 
 function mountPage() {
-  return render(ProjectAgentsView, {
+  return render(AgentTeamSettings, {
     props: { projectId: PROJECT },
     global: { plugins: [createVuetify({ components, directives })] },
   })
