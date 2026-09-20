@@ -141,17 +141,23 @@ async def main() -> None:
         print("[B] chips:", chips, "| 芝士 message rows:", ai_rows)
 
         blocks = _req("GET", f"/api/topics/{topic['id']}/blocks")["data"]
-        ai_msgs = [
-            b for b in blocks
-            if b["author_type"] == "ai" and b["kind"] == "message"
-        ]
-        user_msg = next(b for b in blocks if b["author_type"] == "human")
         # The receipt is signed by THIS topic's 分身 (`cheese-<topic hex>`), not
         # by the one platform `cheese` account — that seat is what makes the
         # room's agent attributable. Read it off the roster instead of spelling
         # it out: hardcoding "cheese" is what made this assertion go stale.
+        # 「哪几条是芝士说的」问的也是这个署名：事件行的档位只分参与者和平台，人
+        # 和 agent 都是参与者，拿它分不出这两拨人，只会一条都挑不出来。
         roster = _req("GET", f"/api/topics/{topic['id']}/members")["data"]
         agent_handle = next(m["member_handle"] for m in roster if m["agent"])
+        ai_msgs = [
+            b for b in blocks
+            if b["author"] == agent_handle and b["kind"] == "message"
+        ]
+        user_msg = next(
+            b
+            for b in blocks
+            if b["author"] != agent_handle and b["kind"] == "message"
+        )
         print("[C] persisted ai messages:", len(ai_msgs))
         print("[C] user msg reactions:", user_msg["reactions"])
         print("[C] topic agent seat:", agent_handle)

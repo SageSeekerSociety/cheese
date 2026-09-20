@@ -24,7 +24,18 @@ def _connect_workspace(client, project, room):
 
         async with client.test_factory() as session:
             topic = await session.get(Topic, uuid.UUID(room))
-            topic.session_placement = {"execution": {"kind": "device"}}
+            from app.domain.agent_session.services import AgentSessionService
+
+            await AgentSessionService(session).remember_place(
+                topic_id=topic.id,
+                agent_handle="cheese",
+                work_lease={"kind": "device"},
+                runtime_location={
+                    "device_id": "test-device",
+                    "channel": "central",
+                    "resource_id": str(topic.resource_id or topic.id),
+                },
+            )
             task = await session.get(Task, task_id)
             task.pr_number = int(task.id.hex[:6], 16)
             await session.commit()

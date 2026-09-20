@@ -79,7 +79,9 @@ export interface Topic {
   presentation?: Presentation
 }
 
-export type AuthorType = 'human' | 'ai' | 'system'
+// 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
+// ——见 `lib/authorship.ts`。`human`/`ai` 是旧值，只出现在这次改动之前写下的行上。
+export type AuthorType = 'participant' | 'system' | 'human' | 'ai'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
 // e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.

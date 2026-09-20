@@ -41,6 +41,7 @@ from app.domain.agent.device_hub import (
     HubScreen,
     device_hub,
 )
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
@@ -748,13 +749,16 @@ class DeviceChannel(Channel):
             place = await TopicService(session).place_or_404(topic_id)
             if place.room.is_private:
                 from app.domain.agent.private_chat import execution_target
+                from app.domain.agent_session.services import AgentSessionService
                 from app.domain.device.supply import Visibility
 
-                placement = place.room.session_placement
+                # A private chat seats one agent, so its room has at most one
+                # placed session; whichever it is, its machine is this chat's.
+                placed = await AgentSessionService(session).places_in_room(topic_id)
                 device_id = execution_target(
                     project_id,
                     topic_id,
-                    device_id=placement["device_id"] if placement else None,
+                    device_id=placed[0].machine if placed else None,
                 )["device_id"]
                 if not self._hub.is_online(device_id):
                     raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
@@ -1647,14 +1651,14 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
-    async def precheck(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str]:
+    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
         Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
-        resolved = await self._resolve_device_agent(project_id, topic_id)
+        resolved = await self._resolve_device_agent(
+            session.project_id, session.topic_id
+        )
         if resolved is None:
             raise ScreenSetupError(
                 "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
@@ -1664,8 +1668,7 @@ class DeviceChannel(Channel):
     async def ensure_ready(
         self,
         *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         token: str,
         env: dict[str, str] | None,
         memory_scope: str | None,
@@ -1683,6 +1686,7 @@ class DeviceChannel(Channel):
         This channel says where — the home, the workdir, the state directory the
         connector will resolve — and merges the two environments."""
         assert isinstance(precheck, tuple)  # from our precheck
+        project_id, topic_id = session.project_id, session.topic_id
         device_id, agent_user_id, agent_handle = precheck
         if memory_scope == "personal":
             env = dict(

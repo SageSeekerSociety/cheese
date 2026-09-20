@@ -15,6 +15,7 @@ from app.core.errors import (
 )
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
     binding_for_project,
     branch_head,
@@ -64,7 +65,19 @@ class ProjectFiles:
         if task is None:
             raise ValidationError("请选择任务")
         room = await self.session.get(Topic, task.room_id)
-        target = (room.session_placement or {}).get("execution") if room else None
+        # Executors are pinned per room; sessions record their leases separately.
+        target = next(
+            (
+                place.lease
+                for place in await AgentSessionService(self.session).places_in_room(
+                    task.room_id
+                )
+                if room is not None
+                and place.resource_id == str(room.resource_id or room.id)
+                and (place.lease or {}).get("kind") == "device"
+            ),
+            None,
+        )
         if not target or target.get("kind") != "device":
             raise GatewayUnavailableError("任务机器尚未连接；可以查看已提交版本")
         try:

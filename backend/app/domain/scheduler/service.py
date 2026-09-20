@@ -15,7 +15,9 @@ from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.authorship import participant_blocks
+from app.domain.block.models import Block
+from app.domain.identity.handles import agent_handle_column
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
 
 logger = logging.getLogger("cheesex.scheduler")
@@ -226,13 +228,17 @@ class SchedulerService:
         human block cannot be produced by a pass under any circumstance, so this
         answer cannot depend on the turn-id bookkeeping being perfect — which is
         what makes "organize a topic at most once" a guarantee rather than a
-        hope."""
+        hope.
+
+        「是不是人」按署名判：事件行上只剩参与者和平台两档，而一次整理产出的块也
+        是参与者写的 —— 档位再也答不了这一句。"""
         found = (
             await session.execute(
                 select(Block.id)
                 .where(
                     Block.topic_id == topic_id,
-                    Block.author_type == AuthorType.human,
+                    participant_blocks(),
+                    ~agent_handle_column(Block.author),
                     Block.created_at > dream.created_at,
                 )
                 .limit(1)

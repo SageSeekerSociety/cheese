@@ -62,7 +62,7 @@ async def main() -> None:
                 project_id=pid,
                 topic_id=tid,
                 kind=BlockKind.message,
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 author="cheese",
                 content=(
                     "算法骨架写好了：核心相似度在 <&backend/app/domain/recommend/cf_model.py>，"  # noqa: E501

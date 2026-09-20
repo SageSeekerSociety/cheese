@@ -54,7 +54,18 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
     async def place():
         async with client.test_factory() as session:
             room = await session.get(Topic, room_id)
-            room.session_placement = {"execution": {"kind": "device"}}
+            from app.domain.agent_session.services import AgentSessionService
+
+            await AgentSessionService(session).remember_place(
+                topic_id=room_id,
+                agent_handle="cheese",
+                work_lease={"kind": "device"},
+                runtime_location={
+                    "device_id": "test-device",
+                    "channel": "central",
+                    "resource_id": str(room.resource_id or room.id),
+                },
+            )
             await session.commit()
 
     asyncio.run(place())

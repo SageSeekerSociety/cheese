@@ -1,7 +1,7 @@
 """Bind projects to their authoritative forge and persist credential leases.
 
 Revision ID: a1286f09c001
-Revises: b4e7a1c95d33
+Revises: c8a1d5e73f20
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a1286f09c001"
-down_revision = "b4e7a1c95d33"
+down_revision = "c8a1d5e73f20"
 branch_labels = None
 depends_on = None
 
