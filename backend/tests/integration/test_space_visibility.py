@@ -456,3 +456,132 @@ class TestPublicSpaceRegression:
         assert resp.status_code == 201, resp.text
         assert resp.json()["data"]["space"]["visibility"] == "PUBLIC"
         assert resp.json()["data"]["inviteCode"] is None
+
+
+class TestSideDoors:
+    """Hiding the list is not enough — a direct link must not read either.
+
+    Every space-scoped read route, not just the three the tier was written
+    on: a 私人 space that answers /spaces/{id}/topics to a stranger is
+    「只藏列表」with extra steps.
+    """
+
+    #: Space-scoped reads that check nothing of their own beyond a login.
+    SIDE_DOORS = (
+        "/categories",
+        "/topics",
+        "/domain-groups",
+        "/analytics/overview",
+        "/analytics/alerts",
+        "/analytics/publishers",
+        "/analytics/participants",
+        "/analytics/tasks",
+        "/me/publishing",
+        "/me/participating",
+    )
+
+    def _assert_every_door_is_shut(
+        self, api_client: TestClient, space_id: int, token: str
+    ) -> None:
+        for suffix in self.SIDE_DOORS:
+            resp = api_client.get(
+                f"/spaces/{space_id}{suffix}", headers=_auth(token)
+            )
+            assert resp.status_code == 404, f"{suffix} -> {resp.status_code}: {resp.text}"
+            assert _error_name(resp) == "NotFoundError", resp.text
+
+    def test_a_private_space_leaks_through_no_sub_resource(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        outsider = user_client.create_user()
+        outsider_token = _login(user_client, api_client, outsider)
+
+        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        space_id = created["space"]["id"]
+
+        self._assert_every_door_is_shut(api_client, space_id, outsider_token)
+
+        # And the owner is not shut out of their own space by the same gate.
+        for suffix in ("/categories", "/topics"):
+            resp = api_client.get(
+                f"/spaces/{space_id}{suffix}", headers=_auth(creator_token)
+            )
+            assert resp.status_code == 200, f"{suffix} -> {resp.status_code}: {resp.text}"
+
+    def test_a_code_space_leaks_through_no_sub_resource_before_redemption(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        outsider = user_client.create_user()
+        outsider_token = _login(user_client, api_client, outsider)
+
+        created = _create_space(api_client, creator_token, visibility="CODE")
+        space_id = created["space"]["id"]
+        code = created["inviteCode"]["code"]
+
+        self._assert_every_door_is_shut(api_client, space_id, outsider_token)
+
+        joined = api_client.post(
+            "/spaces/join", json={"code": code}, headers=_auth(outsider_token)
+        )
+        assert joined.status_code == 200, joined.text
+
+        # Redeeming the code is the door: the same routes now answer.
+        for suffix in ("/categories", "/topics"):
+            resp = api_client.get(
+                f"/spaces/{space_id}{suffix}", headers=_auth(outsider_token)
+            )
+            assert resp.status_code == 200, f"{suffix} -> {resp.status_code}: {resp.text}"
+
+    def test_a_removed_member_stops_seeing_the_space(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        """剔除 only decides who the space is visible to — and that it decides."""
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        member = user_client.create_user()
+        member_token = _login(user_client, api_client, member)
+
+        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        space_id = created["space"]["id"]
+
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": member.user_id},
+            headers=_auth(creator_token),
+        )
+        assert added.status_code == 201, added.text
+        assert (
+            api_client.get(
+                f"/spaces/{space_id}", headers=_auth(member_token)
+            ).status_code
+            == 200
+        )
+        assert space_id in _listed_space_ids(api_client, member_token)
+
+        removed = api_client.delete(
+            f"/spaces/{space_id}/members/{member.user_id}",
+            headers=_auth(creator_token),
+        )
+        assert removed.status_code == 204, removed.text
+
+        # Gone from the list, gone through the link, gone from the side doors.
+        assert space_id not in _listed_space_ids(api_client, member_token)
+        assert (
+            api_client.get(
+                f"/spaces/{space_id}", headers=_auth(member_token)
+            ).status_code
+            == 404
+        )
+        self._assert_every_door_is_shut(api_client, space_id, member_token)
+
+        # The creator still runs it.
+        assert (
+            api_client.get(
+                f"/spaces/{space_id}", headers=_auth(creator_token)
+            ).status_code
+            == 200
+        )
