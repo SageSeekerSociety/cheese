@@ -197,7 +197,7 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 ## 七、已定但还没做完的
 
-**芝士自己提交、推送、开 PR。** 平台不再替它写工作树。详见 `docs/plans/2026-08-27-retire-jj-design.md`。
+**芝士自己提交、推送、开 PR。** 平台不再替它写工作树。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
 
 ## 八、归档退掉什么
 
