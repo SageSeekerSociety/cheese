@@ -1641,7 +1641,10 @@ def build_parser() -> argparse.ArgumentParser:
     pa = sub.add_parser(
         "accept-request",
         help="提交当前任务的 PR 给验收人",
-        description="为一条任务请求人工验收，沿用任务的 PR。",
+        description=(
+            "为一条任务请求人工验收，沿用任务的 PR。"
+            "是否采纳由项目的验收人决定；执行者用此工具递交，不自行合并 PR。"
+        ),
     )
     pa.add_argument(
         "reviewer", nargs="?", help="验收人的 handle；省略时沿用任务上的人选"
