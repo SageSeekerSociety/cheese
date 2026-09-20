@@ -4,6 +4,7 @@ import type { FeedbackProposal } from '@/cx_types'
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import SubmitFeedbackDrawer from './SubmitFeedbackDrawer.vue'
 
 import { KIND_LABEL } from '@/lib/feedbackMeta'
@@ -144,9 +145,14 @@ function onSubmitted(id: string) {
           <v-icon size="19">mdi-robot-outline</v-icon>
           <span class="t-title">我确认这里更像是平台问题，而不是你的使用方式</span>
         </div>
-        <div class="t-meta mb-2">
-          {{ KIND_LABEL[proposal.payload.kind] }} · {{ proposal.author_handle }} ·
-          {{ relTime(proposal.authored_at) }}
+        <!-- 这张卡只有一个作者，而且一定是 agent（提案接口就是 agent 那条通道），
+             所以 `is-agent` 直接写死，不按 handle 去猜。 -->
+        <div class="t-meta mb-2 d-flex align-center ga-2">
+          <FeedbackAuthorAvatar :handle="proposal.author_handle" is-agent :size="20" />
+          <span>
+            {{ KIND_LABEL[proposal.payload.kind] }} · {{ proposal.author_handle }} ·
+            {{ relTime(proposal.authored_at) }}
+          </span>
         </div>
 
         <div class="t-title mb-2">{{ proposal.payload.title }}</div>

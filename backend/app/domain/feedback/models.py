@@ -64,19 +64,41 @@ class FeedbackKind(enum.StrEnum):
 
 
 class FeedbackStatus(enum.StrEnum):
-    """`received → triaging → planned → in_progress → resolved`.
+    """`received → in_progress → resolved → deployed`.
 
-    The values are the prototype's `STATUS_LADDER` unchanged, including
-    `received` rather than `new`: the frontend already carries a colour table
-    (`STATUS_META`) and an order table keyed on these strings, so renaming one
-    would mean touching two frontend tables and the i18n catalogue for nothing.
+    Four rungs, one per thing that actually changes for the person who filed it:
+    收录（有人看到了）、处理（有人在动）、修复（改完了）、上线（能用了 —— 服务端
+    界面上的词是 `已修复` / `已上线`）。
+    `triaging` / `planned` were the fifth and sixth rungs for a while and were
+    dropped — they described the team's internal queue, and to a reader they read
+    as three shades of 「还没好」.
+
+    `deployed` is not a synonym for `resolved`, and the two are deliberately on
+    the ladder together rather than folded into one 「办完了」: resolved is the
+    commit, deployed is the release, and the gap between them is exactly what the
+    person who filed it comes back to ask about. Folding them would tell a
+    reporter that 「已解决」 means the fix is in their hands, which it is not.
+
+    「处理中」 is one rung and stays one rung: how many internal steps there are
+    and who is on which of them is the team's business, not the reporter's. Admin
+    granularity goes in `assignee_handle` and `priority`, not into the status.
+
+    `received` rather than `new`: the frontend carries a colour table
+    (`STATUS_META`) keyed on these strings, and `new` would collide with nothing
+    but would have to be renamed in two frontend tables for nothing.
+
+    **Retiring a value is not free.** The column is a plain VARCHAR
+    (`_enum` below), so dropping `triaging` / `planned` needs no migration — but
+    any row still holding one cannot be read back, and the load fails rather than
+    returning something odd. Nothing shipped with those values (this feature was
+    merged with the four), so this is a dev-database concern; a live one would
+    want a data migration ahead of the code.
     """
 
     received = "received"
-    triaging = "triaging"
-    planned = "planned"
     in_progress = "in_progress"
     resolved = "resolved"
+    deployed = "deployed"
 
 
 class FeedbackPriority(enum.StrEnum):

@@ -6,10 +6,10 @@ import { computed } from 'vue'
 import { statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
-// 反馈详情右侧那根竖着的时间线：已收录 → 评估中 → 计划中 → 处理中 → 已解决。
+// 反馈详情右侧那根竖着的时间线：已收录 → 处理中 → 已修复 → 已上线。
 //
 // 它画的是**梯子**，不是 `timeline` 数组本身 —— 数组里只有已经发生过的几步，梯子是
-// 全部五步。少了这个区分，一条刚收录的反馈右侧只会有一个孤零零的点，读的人看不出
+// 全部四级。少了这个区分，一条刚收录的反馈右侧只会有一个孤零零的点，读的人看不出
 // 「后面还有几关」，而这正是这块要回答的问题。
 //
 // 梯子从**服务端**来（`GET /feedback/meta` 的 `status_ladder`，页面透过
@@ -18,7 +18,7 @@ import { relTime } from '@/lib/relTime'
 // 悄悄画错的线。
 //
 // 走过的步骤用实心点 + 状态色，当前这一步额外用实心底；还没到的用空心。**形状和
-// 颜色一起变**：只靠颜色的话，灰度截图和色觉障碍的读者看到的是五个一样的点。
+// 颜色一起变**：只靠颜色的话，灰度截图和色觉障碍的读者看到的是四个一样的点。
 const props = defineProps<{
   timeline: FeedbackTimelineEntry[]
   status: FeedbackStatus

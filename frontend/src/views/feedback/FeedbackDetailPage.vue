@@ -4,10 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
-import { KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMeta'
+import { isClosed, KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -36,7 +37,7 @@ const item = computed(() => (store.detail?.id === id.value ? store.detail : null
 const isPrivate = computed(() => item.value?.visibility === 'private')
 /** 不能公开的条目（私密 / 安全问题）：没有支持按钮、没有分享。 */
 const restricted = computed(() => !!item.value && (isPrivate.value || item.value.security))
-const supportable = computed(() => !!item.value && item.value.status !== 'resolved')
+const supportable = computed(() => !!item.value && !isClosed(item.value.status))
 
 const commentDraft = ref('')
 const showCopied = ref(false)
@@ -119,9 +120,12 @@ async function share() {
             <span v-for="tag in item.tags" :key="tag" class="chip-neutral">{{ tag }}</span>
           </div>
           <!-- 编号和作者分两行：`FB-1042` 是给人念、给人粘的，作者名之后那一串
-               才是「什么时候提的」。挤在一行会让编号看着像作者名的一部分。 -->
-          <div class="t-meta mb-1">
-            {{ item.display_id }} · {{ item.author_handle }} · {{ relTime(item.created_at) }}
+               才是「什么时候提的」。挤在一行会让编号看着像作者名的一部分。
+               头像是这一页最大的一处（28px）：详情页是唯一一处读者真的会停下来看
+               「这是谁提的」的地方，列表里那个 18px 的在这里就太小了。 -->
+          <div class="t-meta mb-1 d-flex align-center ga-2">
+            <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="28" />
+            <span>{{ item.display_id }} · {{ item.author_handle }} · {{ relTime(item.created_at) }}</span>
           </div>
           <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，
                因为「这是谁提的」在这条路径上有两个都对但不同的答案。 -->
@@ -140,7 +144,7 @@ async function share() {
               color="secondary"
               :prepend-icon="item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline'"
               :disabled="!supportable"
-              :title="supportable ? '' : '已解决，无需再支持'"
+              :title="supportable ? '' : '已办完，无需再支持'"
               @click="store.toggleSupport(item.id)"
             >
               {{ item.supported ? '已支持' : '支持这个反馈' }}
@@ -245,7 +249,7 @@ async function share() {
         </aside>
       </div>
 
-      <!-- 服务端的原话（412 的「已解决不再接受支持」也走这里）。 -->
+      <!-- 服务端的原话（412 的「已经办完了，不再接受支持」也走这里）。 -->
       <v-alert v-if="store.error" type="error" density="compact" variant="tonal" class="mt-4">
         {{ store.error }}
       </v-alert>

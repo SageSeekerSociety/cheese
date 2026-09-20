@@ -3,9 +3,10 @@ import type { FeedbackCard } from '@/cx_types'
 
 import { computed } from 'vue'
 
+import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import FeedbackStatusChip from './FeedbackStatusChip.vue'
 
-import { SOURCE_LABEL } from '@/lib/feedbackMeta'
+import { isClosed, SOURCE_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -34,8 +35,9 @@ const emit = defineEmits<{ (e: 'open', id: string): void }>()
 
 const store = useFeedbackStore()
 
-/** 「已解决」的反馈在列表里不再喊人支持：它已经做完了。 */
-const supportable = computed(() => props.item.status !== 'resolved')
+/** 办完了的反馈在列表里不再喊人支持：它已经做完了。收尾是两级（修复、上线），
+ *  判断走 lib/feedbackMeta 的 `isClosed`，别在这里再写一次「不是 resolved」。 */
+const supportable = computed(() => !isClosed(props.item.status))
 const isPrivate = computed(() => props.item.visibility === 'private')
 /** 支持按钮能不能出现。私密和安全问题都不行 —— 理由见上面那段注释。 */
 const supportShown = computed(() => !isPrivate.value && !props.item.security)
@@ -58,7 +60,7 @@ const PRIVATE_HINT = '私密反馈：只有你和管理员能看到，其他人�
           color="secondary"
           :disabled="!supportable"
           :aria-label="item.supported ? '取消支持' : '支持这个反馈'"
-          :title="supportable ? (item.supported ? '取消支持' : '支持') : '已解决，无需再支持'"
+          :title="supportable ? (item.supported ? '取消支持' : '支持') : '已办完，无需再支持'"
           @click.stop="store.toggleSupport(item.id)"
         >
           <v-icon size="18">{{ item.supported ? 'mdi-thumb-up' : 'mdi-thumb-up-outline' }}</v-icon>
@@ -74,7 +76,10 @@ const PRIVATE_HINT = '私密反馈：只有你和管理员能看到，其他人�
       </div>
       <p class="fb-card__summary">{{ item.summary }}</p>
       <div class="d-flex align-center flex-wrap ga-3">
-        <span class="t-meta">{{ item.author_handle }} · {{ relTime(item.created_at) }}</span>
+        <span class="t-meta d-inline-flex align-center ga-1">
+          <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="18" />
+          {{ item.author_handle }} · {{ relTime(item.created_at) }}
+        </span>
         <!-- 中性色，不是警告色：私密是一个事实（这条只有我和管理员能看见），不是一件
              需要被纠正的事。写在作者名之后，因为它回答的正是「这条谁看得见」，
              和旁边的「谁提的」是同一类信息。 -->

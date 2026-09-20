@@ -1,7 +1,7 @@
 /**
  * 列表里有东西的时候，失败也要说话。
  *
- * 「支持」失败的两种情形都真实存在：已解决的条目回 412、别人删掉的条目回 404。
+ * 「支持」失败的两种情形都真实存在：办完了的条目回 412、别人删掉的条目回 404。
  * 错误以前只画在「一条也没有」那块空态里，于是**列表非空时它没有地方可去**：
  * 按钮按得下去、有按下效果、数字一动不动、控制台一句话也没有 —— 和「这个按钮
  * 坏了」长得一模一样。
@@ -32,7 +32,16 @@ import FeedbackCenterPage from './FeedbackCenterPage.vue'
 
 import { useFeedbackStore } from '@/stores/feedback'
 
-const CARD = { id: 'fb-1', title: '导出报表偶发 502', supports: 3, comments: 0 } as unknown as FeedbackCard
+// 只写这条用例真正要用的字段，其余靠 `as unknown as` 补 —— 但 `author_handle` 得给：
+// 卡片会把它交给头像组件，缺了 Vue 会在控制台喊一句 prop 类型不对的警告，而这条用例
+// 盯的正是「错误画不出来」，最不该被这种噪声淹掉。
+const CARD = {
+  id: 'fb-1',
+  title: '导出报表偶发 502',
+  supports: 3,
+  comments: 0,
+  author_handle: 'alice',
+} as unknown as FeedbackCard
 
 const ERR = '这条反馈已经解决了，不能再支持'
 

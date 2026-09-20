@@ -20,6 +20,8 @@
 - **前端**：四个页面读真接口。`stores/feedback.ts` 调 API，上一版那个内存 mock（`lib/feedbackMock.ts`）已经删掉——界面不再是「照着自己编的数据画」。
 - **CLI**：`cheese feedback propose` 进了 argparse 树，三个 harness 同时就有了这个工具（见下）。
 - **合并了 main 的 35 个提交**。合并带出一处**语义**冲突，已修：main 的 `f3a8c5d2e917` 把 agent 身份从「由话题派生」改成「属于 agent 自己」（`agent_instance_handle`），而我的测试原本按话题算 handle 再断言卡片的作者。现在改成从卡片上读作者，断言「是 agent、且不是提单的人」——身份不由反馈代码算。
+- **状态收敛成四级**：`received → in_progress → resolved → deployed`（已收录 / 处理中 / 已修复 / 已上线）。写稿时是五级（`triaging` / `planned` 也在内），验收时看界面发现「评估中」和「处理中」在人眼里是同一件事、「计划中」说不清是谁在动；同时把「修复」和「上线」拆成两档——改完和上线是两件事，同名会让提交者以为自己这边马上就能用了。口径与代价见 <&docs/topics/反馈功能后端设计-方案稿.md> §2.5。
+- **两条端到端实跑**（<&e2e/tests/feedback-flows.spec.ts>）：用户提交 → 列表看见 → 支持 → 评论 → 详情页看到状态；管理员把同一条四级走完，连带指派、优先级、内部备注。真浏览器点的，不是接口层调用。
 
 **看界面**：预览是开着的，形态是**真页面 + 假数据**。预览通道上没有后端，所以我在预览入口的 `fetch` 那一层接上了假数据（<&frontend/src/proto-feedback-fixtures.ts>），页面本身一行都没改、走的是真接口。页面可交互：能点进详情、能切管理端四栏、能筛选搜索、能在「表与关系」和「数据流」两张图之间切。打包脚本是 <&pack-feedback-prototype.py>，改完页面重跑即可。
 
@@ -73,11 +75,33 @@
 - **直接打开 `/admin/feedback` 是一张空表**。`onMounted` 没 `await loadMeta()`，于是 `store.isAdmin` 读到的永远是「还不是管理员」，列表压根不拉。从反馈中心点进去反而正常，因为那边已经把 meta 拉过了。
 - **深链进详情页点「支持」没反应**。`_find` 只找列表和 `adminItems`，而那条路上两份都是空的；补上对 `detail` 的兜底才闭环。
 
+## 端到端实跑又查出两个（已修）
+
+上一节那两个是**冷启动**才露出来的；这两个更隐蔽——**三套门禁全绿、页面看起来也对**：
+
+- **管理端详情抽屉里的头像从来没画出来**。`AdminFeedbackDetailDrawer.vue` 用了两次
+  `FeedbackAuthorAvatar`，却一行 import 都没写。typecheck 不看模板、eslint 不看模板、
+  单测没渲染过那个抽屉，只有 Vue 在控制台小声说一句「Failed to resolve component」，
+  页面上那个位置就是空的。补 import 之外，e2e 里加了**控制台守卫**：用例跑完控制台
+  里但凡有 error 或有没注册的组件就红——这类事以后第一次跑就拦下。
+- **已上线的反馈，支持按钮还是亮的**。判断写成了 `status !== 'resolved'`，漏掉新加的
+  `deployed`：按钮说能做、点下去服务端回 412。两处（列表卡片、详情页）各写了一遍同样的
+  错，谁也发现不了谁。现在抽成 <&frontend/src/lib/feedbackMeta.ts> 的 `isClosed()`，
+  它是服务端 `CLOSED_STATUSES` 在**前端**的同一份镜像，两处共用。
+
 ## 验证
 
-- 后端：`tests/integration/test_feedback.py` 21 条 + `tests/unit/test_cli_worker.py` 19 条通过。集成测试钉的是**产品判断**（私密对第三方回 404 而不是 403、已解决 bug 沉底、agent 不能自己发布、提案三道限流），不是接口形状。
-- 前端：tsc ratchet 0、eslint 0 error、stylelint 63 基线、vitest 184 文件 1457 用例通过。
+- 后端：`tests/integration/test_feedback.py` + `tests/unit/test_cli_worker.py` 通过。集成测试钉的是**产品判断**（私密对第三方回 404 而不是 403、已解决 bug 沉底、agent 不能自己发布、提案三道限流、退役状态写不进去），不是接口形状。
+- 前端：tsc ratchet 0、eslint 0 error、stylelint 63 基线、反馈相关 vitest 33 条通过。
+- 端到端：`e2e/tests/feedback-flows.spec.ts` 两条全流程通过（真浏览器，含控制台守卫）。
 - 合并 main 之后以上全部重跑过。
+
+**跑 e2e 要自己搭一套环境**（这套是本机实测出来的）：后端 `127.0.0.1:8123`（指向另建的
+`cheese_fbe2e` 库，共享开发库停在 `f3a8c5d2e917`、没有 feedback 的表）、redis 在 6399
+（6379 上没有）、vite 在 3111 且 `BACKEND_URL` 指到 8123；后端要带
+`FEEDBACK_ADMIN_HANDLES='["alice"]'`，否则管理端一进去就是 403（playwright 配置里给
+webServer 加了这一条）。`/tmp` 的 inode 在本机是满的，playwright 得用
+`TMPDIR=/var/tmp/…` 绕开。
 
 **本机跑测试的坑**：并发跑的测试进程会共用同名测试库，而它们是用 `DROP DATABASE ... WITH (FORCE)` 建的——两个 run 撞上会把对方的库拆掉，症状是随机 403 和 KeyError。带一个 `CHEESE_CI_SLOT=<任意串>` 就有自己的库名了（见 `backend/tests/isolation.py`）。
 
@@ -86,3 +110,21 @@
 1. 等 PR #1222 的 CI 与 @符露夀 的验收。推新提交会清掉上一轮的批准，所以验收人看到的就是这一版。
 2. 验收人若要改上面那两条默认值（管理员白名单、security 读时收窄），都是小改。
 3. 方案稿 §8 里还剩十几条细节问题，都是实现里已经取了默认值的，可以顺验收一起过。
+
+### 已知缺口，这一版没堵
+
+按「先做完再好看」的次序，下面几条是**知道在哪、也知道怎么补**、但没塞进这个 PR 的：
+
+- **「我的反馈」没有界面**。接口 `GET /feedback/mine` 和 <&frontend/src/network/api/feedback/index.ts>
+  里的 `listMyFeedback()` 都在，但没有任何页面调用它（store 里都没 import）——整条路上
+  唯一答过它的是原型阶段的假数据。用户想回看自己提过的反馈，今天只能从反馈中心的
+  列表里翻。补法是加一个筛选入口（复用「作者是我」这个条件），不是新接口。
+- **头像文件与头像表不同步**。库里 2/3/4 号（猫咪/柴犬/熊猫，`predefined`）有行、磁盘上
+  没有对应文件，于是 `GET /avatars/{id}` 回 404。这不是反馈这一屏的事：**任何新部署的
+  项目磁贴都会缺图**，因为种子只给默认头像写了文件。浏览器控制台里那几条 404 就是它，
+  e2e 里按形状放行并留了注释（放行的是 `/api/avatars/{id}` 这一个形状，反馈自己的请求挂掉
+  照样红）。补种子会影响别的测试，所以没在这里顺手改。
+- **`live_cards` 的读取成本**。`proposals.py` 里它把该话题**所有**带 meta 的消息块读出来、
+  在 Python 里过滤，而它挂在「加载聊天列」这条路上。话题消息一多就是一次全表扫描式的读。
+  今天话题的消息量撑得住，所以没有提前优化；真要做，是把过滤下推成 SQL（`meta` 上已有
+  可用的索引形状）而不是加缓存。

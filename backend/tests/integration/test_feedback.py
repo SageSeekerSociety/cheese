@@ -4,7 +4,7 @@
 
 * 私密条目对第三方回 **404 而不是 403** —— 403 等于承认这条存在，而那正是提交者
   要求不要发生的事。同一条规则适用于每一个收 id 的反馈端点。
-* 已解决的 **bug** 从工作栏位沉下去，已解决的 suggestion 不沉。文档里写过两遍的
+* 办完了的 **bug** 从工作栏位沉下去，办完了的 suggestion 不沉。文档里写过两遍的
   那条「窄读法」，代码必须和它一致。
 * **agent 不能自己发布反馈**。它只能落一张提案卡，由人按发送；发送之后作者是卡上的
   agent，提交者是按按钮的人 —— 两个字段，所以「芝士提的反馈里有多少真的被人发出去
@@ -188,25 +188,37 @@ def test_security_is_a_subclass_of_private(client, as_admin):
 
 
 def test_a_resolved_bug_sinks_but_a_resolved_suggestion_stays(client, as_admin):
-    """§8.23 as implemented: only resolved **bugs** leave the working tabs."""
-    bug = _report(client, REPORTER, title="已解决的 bug", kind="bug")
-    idea = _report(client, REPORTER, title="已实现的建议", kind="suggestion")
+    """§8.23 as implemented: only finished **bugs** leave the working tabs.
 
-    for row in (bug, idea):
+    Both finished rungs, in one test on purpose: `resolved` and `deployed` have to
+    behave alike here or 「部署」 becomes a status a bug can sit in visibly forever
+    — the exact thing the sink rule exists to prevent. Same for the `resolved`
+    tab below: to the person who filed it, 解决 and 部署 are two halves of one
+    answer, so a deployed row that vanished from that tab reads as missing.
+    """
+    rows = {
+        "已修复的 bug": ("bug", "resolved"),
+        "已上线的 bug": ("bug", "deployed"),
+        "已修复的建议": ("suggestion", "resolved"),
+        "已上线的建议": ("suggestion", "deployed"),
+    }
+    for title, (kind, status) in rows.items():
+        row = _report(client, REPORTER, title=title, kind=kind)
         r = client.post(
             f"/admin/feedback/{row['id']}/status",
-            json={"status": "resolved"},
+            json={"status": status},
             headers=session_auth_headers(as_admin),
         )
         assert r.status_code == 200, r.text
 
     titles = {c["title"] for c in _cards(client, tab="all")}
-    assert "已实现的建议" in titles
-    assert "已解决的 bug" not in titles
+    assert {"已修复的建议", "已上线的建议"} <= titles
+    assert not {"已修复的 bug", "已上线的 bug"} & titles
 
-    # Both are in `resolved` — the tabs are filters, not a partition.
+    # All four are in `resolved` — the tabs are filters, not a partition, and
+    # `resolved` is the closed set rather than the status of the same name.
     resolved = {c["title"] for c in _cards(client, tab="resolved")}
-    assert {"已解决的 bug", "已实现的建议"} <= resolved
+    assert set(rows) <= resolved
 
 
 def test_an_unknown_tab_is_refused_rather_than_silently_shown_as_all(client):
@@ -233,19 +245,45 @@ def test_a_status_change_writes_its_timeline_entry_in_the_same_call(client, as_a
 
     r = client.post(
         f"/admin/feedback/{row['id']}/status",
-        json={"status": "planned"},
+        json={"status": "resolved"},
         headers=session_auth_headers(as_admin),
     )
     assert r.status_code == 200, r.text
 
     detail = r.json()["data"]
-    assert detail["status"] == "planned"
-    # `received` came with the report, `planned` with this call: a status that
+    assert detail["status"] == "resolved"
+    # `received` came with the report, `resolved` with this call: a status that
     # moved without leaving a row would be a history that disagrees with itself.
     assert [t["status"] for t in detail["timeline"]][-2:] == [
         "received",
-        "planned",
+        "resolved",
     ]
+
+
+def test_a_retired_status_is_rejected_rather_than_stored(client, as_admin):
+    """`triaging` / `planned` were rungs until the ladder became four.
+
+    The column is a `VARCHAR(16)` with no database-side enum (`_enum`), so a
+    retired value would be *stored* happily and only blow up later, on the read
+    that tries to parse it back — a row that 500s whichever page renders it, and
+    by then the writer is long gone. The schema is the only place that can say
+    no, so this is the test that says it does.
+    """
+    row = _report(client, REPORTER)
+
+    for retired in ("triaging", "planned"):
+        # 400, not 422: the app maps every `RequestValidationError` to the
+        # platform's `{code, message, data}` envelope (`core/errors.py`), so the
+        # status code here is the app's convention rather than FastAPI's default.
+        r = client.post(
+            f"/admin/feedback/{row['id']}/status",
+            json={"status": retired},
+            headers=session_auth_headers(as_admin),
+        )
+        assert r.status_code == 400, r.text
+
+    detail = client.get(f"/feedback/{row['id']}").json()["data"]
+    assert detail["status"] == "received"
 
 
 def test_setting_the_same_status_twice_is_a_no_op_not_a_second_timeline_row(
@@ -255,11 +293,11 @@ def test_setting_the_same_status_twice_is_a_no_op_not_a_second_timeline_row(
     for _ in range(2):
         r = client.post(
             f"/admin/feedback/{row['id']}/status",
-            json={"status": "triaging"},
+            json={"status": "in_progress"},
             headers=session_auth_headers(as_admin),
         )
         assert r.status_code == 200, r.text
-    assert len(r.json()["data"]["timeline"]) == 2  # received + one triaging
+    assert len(r.json()["data"]["timeline"]) == 2  # received + one in_progress
 
 
 # --- 支持 -------------------------------------------------------------------
@@ -284,18 +322,22 @@ def test_support_is_idempotent_and_returns_the_count_after_the_write(client):
     }
 
 
-def test_a_resolved_bug_cannot_be_supported(client, as_admin):
-    row = _report(client, REPORTER)
-    client.post(
-        f"/admin/feedback/{row['id']}/status",
-        json={"status": "resolved"},
-        headers=session_auth_headers(as_admin),
-    )
-    r = client.post(
-        f"/feedback/{row['id']}/supports", headers=session_auth_headers(STRANGER)
-    )
-    # 412, not 404: the report is visible, the action is what cannot happen.
-    assert r.status_code == 412
+def test_a_finished_report_cannot_be_supported(client, as_admin):
+    """Both closed rungs, not just `resolved`: supporting a shipped thing is a
+    vote for work that is already done, and leaving `deployed` out would make
+    「部署」 a status you can pile support onto."""
+    for status in ("resolved", "deployed"):
+        row = _report(client, REPORTER)
+        client.post(
+            f"/admin/feedback/{row['id']}/status",
+            json={"status": status},
+            headers=session_auth_headers(as_admin),
+        )
+        r = client.post(
+            f"/feedback/{row['id']}/supports", headers=session_auth_headers(STRANGER)
+        )
+        # 412, not 404: the report is visible, the action is what cannot happen.
+        assert r.status_code == 412, r.text
 
 
 # --- 评论 -------------------------------------------------------------------
@@ -517,7 +559,18 @@ def test_the_unread_cursor_counts_activity_and_clears_when_read(client):
 def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
     anon = client.get("/feedback/meta").json()["data"]
     assert anon["is_admin"] is False
-    assert "resolved" in anon["status_ladder"]
+    # The whole ladder, not just a membership check: the front end falls back to
+    # its own copy only when this is missing, so a rung added in `models.py` and
+    # not served here renders as a status chip with no label — and the two
+    # retired rungs (`triaging`, `planned`) must not come back through here,
+    # because `set_status` would then accept them into a `VARCHAR(16)` that has
+    # no database-side enum to stop it.
+    assert anon["status_ladder"] == [
+        "received",
+        "in_progress",
+        "resolved",
+        "deployed",
+    ]
     assert anon["hot_supports"] == 5
 
     mine = client.get("/feedback/meta", headers=session_auth_headers(as_admin)).json()[
@@ -776,7 +829,7 @@ def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch)
         # and this is what says the helper is actually on them.
         wrote = client.post(
             f"/admin/feedback/{_report(client, REPORTER)['id']}/status",
-            json={"status": "triaging"},
+            json={"status": "in_progress"},
             headers={"X-Cheese-Screen": screen.token},
         )
         assert wrote.status_code == 403, wrote.text

@@ -3,6 +3,7 @@ import type { FeedbackPriority, FeedbackStatus } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 
+import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import FeedbackStatusChip from './FeedbackStatusChip.vue'
 
 import { KIND_LABEL, PRIORITY_META, SOURCE_LABEL, statusMeta } from '@/lib/feedbackMeta'
@@ -154,9 +155,12 @@ async function assign() {
           </span>
         </div>
 
-        <div class="t-meta mb-4">
-          {{ item.author_handle }} · {{ relTime(item.created_at) }} · 支持 {{ item.supports }} · 评论
-          {{ item.comments }}
+        <div class="t-meta mb-4 d-flex align-center ga-2">
+          <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="24" />
+          <span>
+            {{ item.author_handle }} · {{ relTime(item.created_at) }} · 支持 {{ item.supports }} · 评论
+            {{ item.comments }}
+          </span>
         </div>
 
         <section class="fb-section">
@@ -227,7 +231,13 @@ async function assign() {
           <div class="t-meta mb-2">只有管理员看得到，提交者看不到。加进去就留下，不能改也不能删。</div>
 
           <div v-for="note in item.notes" :key="note.id" class="fb-note">
-            <div class="t-meta">{{ note.author_handle }} · {{ relTime(note.created_at) }}</div>
+            <!-- 备注恒为真人写的，所以这里不传 `is-agent`：管理端的五条写路由都先过
+                 `_require_admin`，而它第一步就是拒绝 agent 身份（agent 不能执行管理
+                 动作）。这不是「一般是人」，是链路上没有 agent 能写进来的口子。 -->
+            <div class="t-meta d-flex align-center ga-2">
+              <FeedbackAuthorAvatar :handle="note.author_handle" :size="20" />
+              <span>{{ note.author_handle }} · {{ relTime(note.created_at) }}</span>
+            </div>
             <p class="t-body fb-text">{{ note.body }}</p>
           </div>
           <div v-if="!item.notes.length" class="t-meta mb-2">还没有备注</div>

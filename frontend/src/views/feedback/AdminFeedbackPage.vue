@@ -4,6 +4,7 @@ import type { AdminTab } from '@/stores/feedback'
 import { computed, onMounted, ref } from 'vue'
 
 import AdminFeedbackDetailDrawer from '@/components/feedback/AdminFeedbackDetailDrawer.vue'
+import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import { KIND_LABEL, SOURCE_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -31,8 +32,8 @@ const TABS: { value: AdminTab; label: string }[] = [
   { value: 'agent', label: 'Agent 发现' },
   { value: 'security', label: '安全问题' },
 ]
-// 管理端四栏**不显示计数**：服务端的 counts 是给用户侧那四栏（全部/热门/进行中/
-// 已解决）算的，口径不同 —— 拿它填这几栏是编数字。
+// 管理端四栏**不显示计数**：服务端的 counts 是给用户侧那四栏（全部/热门/处理中/
+// 已完成）算的，口径不同 —— 拿它填这几栏是编数字。
 const tabs = computed(() => TABS)
 
 const selectedId = ref<string | null>(null)
@@ -139,12 +140,15 @@ onMounted(async () => {
               </div>
             </td>
             <td class="fb-td">
-              {{ item.author_handle }}
-              <!-- 私密反馈在管理端必须看得出来：它和公开的挤在同一栏里长得一样，
-                   管理员就得靠读正文才发现「这条别人看不到」。 -->
-              <span v-if="item.visibility === 'private'" class="chip-neutral fb-td__flag">
-                <v-icon size="12">mdi-lock-outline</v-icon>私密
-              </span>
+              <div class="d-flex align-center ga-2">
+                <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="22" />
+                <span>{{ item.author_handle }}</span>
+                <!-- 私密反馈在管理端必须看得出来：它和公开的挤在同一栏里长得一样，
+                     管理员就得靠读正文才发现「这条别人看不到」。 -->
+                <span v-if="item.visibility === 'private'" class="chip-neutral fb-td__flag">
+                  <v-icon size="12">mdi-lock-outline</v-icon>私密
+                </span>
+              </div>
             </td>
             <td class="fb-td">
               <!-- 来源这一格和反馈卡、详情页用的是同一个形态（中性 chip + 机器人图标）：

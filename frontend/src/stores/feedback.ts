@@ -302,7 +302,7 @@ export const useFeedbackStore = defineStore('feedback', {
         // 5）。计数只能问服务端，前端再算一遍就是第二份实现。
         void this.refreshCounts()
       } catch (error) {
-        // 已解决的反馈会被拒（412）。那不是故障，是「别再点了」—— 如实显示服务端
+        // 办完了的反馈会被拒（412）。那不是故障，是「别再点了」—— 如实显示服务端
         // 那句话，比一个静默失败好。
         this.error = message(error, '操作失败')
       }

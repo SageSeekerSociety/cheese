@@ -15,7 +15,8 @@
  * 因此：**界面是真的，数据是假的**。要看真实数据请在本机起 backend + frontend。
  * 假数据照着 `backend/app/domain/feedback/models.py` 的字段造，覆盖几种要看的东西：
  * 私密条目（没有支持按钮、只挂中性标签）、agent 发现人代提交的那条（两个 handle 不同）、
- * 已解决的 bug（默认沉底）、支持数过门槛的（进「热门」）、带安全标记的（管理端第四栏）。
+ * 已修复的 bug（默认沉底）、走完四级停在「已上线」的（沉底规则必须和「已修复」一致）、
+ * 支持数过门槛的（进「热门」）、带安全标记的（管理端第四栏）。
  */
 import type {
   FeedbackCard,
@@ -47,10 +48,10 @@ function ago(minutes: number): string {
 
 const META: FeedbackMeta = {
   kinds: ['bug', 'suggestion', 'other'],
-  statuses: ['received', 'triaging', 'planned', 'in_progress', 'resolved'],
+  statuses: ['received', 'in_progress', 'resolved', 'deployed'],
   priorities: ['low', 'normal', 'high', 'urgent'],
   visibilities: ['public', 'private'],
-  status_ladder: ['received', 'triaging', 'planned', 'in_progress', 'resolved'],
+  status_ladder: ['received', 'in_progress', 'resolved', 'deployed'],
   tabs: ['all', 'hot', 'active', 'resolved'],
   admin_tabs: ['public', 'private', 'agent', 'security'],
   hot_supports: HOT_SUPPORTS,
@@ -127,7 +128,7 @@ function row(spec: {
 
 /** 时间线：从提交到当前状态每一步都留一条，和真实实现一样是 append-only。 */
 function ladderUpTo(status: FeedbackStatus, created: string): FeedbackDetail['timeline'] {
-  const ladder: FeedbackStatus[] = ['received', 'triaging', 'planned', 'in_progress', 'resolved']
+  const ladder: FeedbackStatus[] = ['received', 'in_progress', 'resolved', 'deployed']
   const end = ladder.indexOf(status)
   return ladder.slice(0, end + 1).map((step, index) => ({
     status: step,
@@ -185,7 +186,7 @@ const ROWS: FeedbackDetail[] = [
     kind: 'bug',
     title: '反馈中心在手机上没有分页入口',
     summary: '列表一页 50 条，超过以后没有「加载更多」，也没有页码。',
-    status: 'triaging',
+    status: 'in_progress',
     visibility: 'private',
     author: 'chiruotong',
     submittedBy: 'chiruotong',
@@ -228,7 +229,9 @@ const ROWS: FeedbackDetail[] = [
     kind: 'suggestion',
     title: '反馈列表想按支持数排序',
     summary: '现在按时间，人多的一条会沉下去。',
-    status: 'resolved',
+    // 一条走完四级、停在最后一格的样例：预览里要同时看得到「已修复」和「已上线」
+    // 这两种收尾，否则只验证了一半的收尾样式。
+    status: 'deployed',
     author: 'pengwenbo',
     submittedBy: 'pengwenbo',
     supports: 5,
@@ -240,7 +243,7 @@ const ROWS: FeedbackDetail[] = [
     id: 'fb-1038',
     display: 'FB-1038',
     kind: 'bug',
-    title: '已解决的 bug 仍然占着列表第一屏',
+    title: '办完了的 bug 仍然占着列表第一屏',
     summary: '修完的 bug 还在最上面，找新问题得往下翻。',
     status: 'resolved',
     author: 'caisongyang',
@@ -248,7 +251,7 @@ const ROWS: FeedbackDetail[] = [
     assignee: 'andylizf',
     supports: 1,
     minutesAgo: 8600,
-    problem: '已解决的条目不该继续占着「全部」的第一屏。',
+    problem: '办完了的条目不该继续占着「全部」的第一屏。',
     expectation: '默认沉底。',
   }),
 ]
@@ -260,18 +263,22 @@ function visibleToMe(item: FeedbackCard): boolean {
   return IS_ADMIN || item.author_handle === ME || item.submitted_by_handle === ME
 }
 
+/** 「办完了」= 已修复 **和** 已上线，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
+const CLOSED: FeedbackStatus[] = ['resolved', 'deployed']
+
+/** 栏位谓词。这是 `repositories._tab_where` 的镜像，**形状也照抄**：
+ *  `sunk` 一处定义、三个栏位共用，免得这里写着写着就和后端分了叉 —— 预览存在的
+ *  意义就是让人看后端的口径长什么样，它自己先不一致就白看了。
+ *
+ *  §8.23：只有**办完了的 bug** 沉底。办完了的建议是「团队决定做、并且做了」，
+ *  仍然值得读；两者都在 `resolved` 栏里，所以四个数字不是一份划分。 */
 function matchesTab(item: FeedbackCard, tab: string): boolean {
-  switch (tab) {
-    case 'hot':
-      return item.supports >= HOT_SUPPORTS
-    case 'active':
-      return item.status !== 'resolved'
-    case 'resolved':
-      return item.status === 'resolved'
-    default:
-      // §8.23：默认口径只沉底**已解决的 bug**，建议和其他的已解决项照常显示。
-      return !(item.kind === 'bug' && item.status === 'resolved')
-  }
+  const closed = CLOSED.includes(item.status)
+  if (tab === 'resolved') return closed
+  const sunk = !closed || item.kind !== 'bug'
+  if (tab === 'active') return sunk && item.status === 'in_progress'
+  if (tab === 'hot') return sunk && item.supports >= HOT_SUPPORTS
+  return sunk
 }
 
 function matchesQuery(item: FeedbackCard, q: string): boolean {
@@ -338,9 +345,14 @@ function adminPage(url: URL, tab: string): { data: FeedbackCard[]; total: number
 
 let nextId = 1043
 
+/** 假数据的一条答复。`data` 是正常路径；`missing` / `refused` 是两种「这件事不能
+ *  发生」，在 `installPreviewFetch` 里分别翻成 404 和 412 —— 预览要能看到真接口的
+ *  错误面，否则「按钮点下去没反应」这类问题只有在真机上才现形。 */
+type MockReply = { data: unknown } | { missing: true } | { refused: string } | undefined
+
 /** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
  *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。 */
-function routes(url: URL, method: string, body: unknown): { data: unknown } | { missing: true } | undefined {
+function routes(url: URL, method: string, body: unknown): MockReply {
   const path = url.pathname.replace(/^\/api/, '')
   const payload = (body ?? {}) as Record<string, never> & Record<string, unknown>
 
@@ -366,6 +378,12 @@ function routes(url: URL, method: string, body: unknown): { data: unknown } | { 
   if (supports && (method === 'POST' || method === 'DELETE')) {
     const item = find(supports[1])
     if (!item) return { missing: true }
+    if (method === 'POST' && CLOSED.includes(item.status)) {
+      // 412，不是 404：反馈看得见，不能发生的是这个动作（`services.support`）。
+      // 预览里也照此拒绝 —— 一个前端挡住但预览放行的按钮，正好是「看起来能点、
+      // 真机上点了报错」的那类 bug，预览存在的意义就是别让它到那一步。
+      return { refused: '这条反馈已经办完了，不再接受支持' }
+    }
     item.supports += method === 'POST' ? 1 : -1
     item.supported = method === 'POST'
     return { data: { count: item.supports, supported: item.supported } }
@@ -476,6 +494,7 @@ export function installPreviewFetch(): void {
       return envelope(null)
     }
     if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
+    if ('refused' in hit) return envelope(null, 412, hit.refused)
     return envelope(hit.data)
   }
 }

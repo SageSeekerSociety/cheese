@@ -3,6 +3,7 @@ import type { FeedbackComment } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
+import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { relTime } from '@/lib/relTime'
 
 // 评论**只有一种摆法**：两层折叠。
@@ -62,6 +63,7 @@ function send(parentId: string) {
     <div v-for="top in tops" :key="top.id" class="fb-thread__top">
       <div class="fb-thread__item">
         <div class="fb-thread__head">
+          <FeedbackAuthorAvatar :handle="top.author_handle" :is-agent="top.author_is_agent" :size="22" />
           <span class="fb-thread__author">{{ top.author_handle }}</span>
           <span v-if="top.author_is_agent" class="chip-neutral">AI 队友</span>
           <span class="t-meta">{{ relTime(top.created_at) }}</span>
@@ -105,6 +107,7 @@ function send(parentId: string) {
         <template v-if="!folded[top.id]">
           <div v-for="reply in repliesOf(top.id)" :key="reply.id" class="fb-thread__item">
             <div class="fb-thread__head">
+              <FeedbackAuthorAvatar :handle="reply.author_handle" :is-agent="reply.author_is_agent" :size="20" />
               <span class="fb-thread__author">{{ reply.author_handle }}</span>
               <span v-if="reply.author_is_agent" class="chip-neutral">AI 队友</span>
               <span class="t-meta">{{ relTime(reply.created_at) }}</span>

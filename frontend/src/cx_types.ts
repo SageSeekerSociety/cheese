@@ -1134,7 +1134,8 @@ export interface ProjectAgent {
 //     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
 //     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
 export type FeedbackKind = 'bug' | 'suggestion' | 'other'
-export type FeedbackStatus = 'received' | 'triaging' | 'planned' | 'in_progress' | 'resolved'
+/** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
+export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed'
 export type FeedbackVisibility = 'public' | 'private'
 export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
 

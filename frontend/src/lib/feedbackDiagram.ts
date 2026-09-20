@@ -60,7 +60,7 @@ export const feedbackEr: DiagramEr = {
         { name: 'title', type: 'String(300)' },
         { name: 'summary', type: 'String(300)', note: '列表那一句' },
         { name: 'kind', type: 'Enum(16)', note: 'bug/suggestion/other' },
-        { name: 'status', type: 'Enum(16)', note: '五档，与 timeline 同事务写' },
+        { name: 'status', type: 'Enum(16)', note: '四级，与 timeline 同事务写' },
         { name: 'visibility', type: 'Enum(16)', note: 'public/private' },
         { name: 'security', type: 'Boolean', note: 'private 之下的一层收窄' },
         { name: 'priority', type: 'Enum(16)' },

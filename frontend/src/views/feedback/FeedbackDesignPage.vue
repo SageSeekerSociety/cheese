@@ -9,7 +9,7 @@ import { STATUS_LADDER, STATUS_META } from '@/lib/feedbackMeta'
 // /design/feedback —— 数据关系与架构关系。
 //
 // 这一页不是给人「用」的，是给人**核对**的：表开得对不对、agent 那条路绕不绕、
-// 状态机是不是五档。所以它只画关系，不带任何操作 —— 要操作请回反馈中心。
+// 状态机是不是四级。所以它只画关系，不带任何操作 —— 要操作请回反馈中心。
 //
 // 图数据在 lib/feedbackDiagram.ts；表和状态机的那部分**已经实现**了，落在
 // backend/app/domain/feedback/（models / repositories / services / proposals），
@@ -25,7 +25,7 @@ const TABS = [
 ] as const
 
 /**
- * 五档状态。**不在这里另抄一份标签** —— `STATUS_META` 和 `STATUS_LADDER` 是前端
+ * 四级状态。**不在这里另抄一份标签** —— `STATUS_META` 和 `STATUS_LADDER` 是前端
  * 唯一一份（`lib/feedbackMeta.ts`），页面和组件都从那里取。这里再写一遍，加状态时
  * 就会多出一个没人会想起来的副本。
  *
@@ -55,7 +55,7 @@ const DECIDED = [
   {
     no: '§8.23',
     what: '默认筛选的口径',
-    why: '默认列表只沉底**已解决的 bug**；建议和其他的已解决项仍然留在列表里。',
+    why: '默认列表只沉底**办完了的 bug**（已修复 / 已上线）；建议和其他的办完了的项仍然留在列表里。',
   },
 ] as const
 </script>
@@ -88,7 +88,7 @@ const DECIDED = [
         />
 
         <section class="fd-ladder">
-          <h3 class="fd-ladder__title">状态只有五档，是一条梯子</h3>
+          <h3 class="fd-ladder__title">状态只有四级，是一条梯子</h3>
           <p class="fd-ladder__sub">
             改状态和写时间线必须在同一个事务里发生 —— 只改其一，详情页右侧的时间线就会和卡片上的状态词对不上。
           </p>

@@ -59,16 +59,17 @@ ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
 #: The public tabs, in the order the tab bar draws them.
 PUBLIC_TABS: tuple[str, ...] = ("all", "hot", "active", "resolved")
 
-#: Movement order shown by the status ladder. `resolved` is reachable from any
-#: state, and a reopen (resolved → triaging) is allowed: reports do get
-#: re-opened, and a status set that forbids it gets worked around by filing a
-#: duplicate instead — which loses the history that makes the report useful.
+#: Movement order shown by the status ladder. One rung per thing the person who
+#: filed it can see happen: 收录 → 处理 → 解决 → 部署. `resolved` and `deployed`
+#: are reachable from any state, and a reopen (resolved → in_progress) is
+#: allowed: reports do get re-opened, and a status set that forbids it gets
+#: worked around by filing a duplicate instead — which loses the history that
+#: makes the report useful.
 STATUS_LADDER: tuple[FeedbackStatus, ...] = (
     FeedbackStatus.received,
-    FeedbackStatus.triaging,
-    FeedbackStatus.planned,
     FeedbackStatus.in_progress,
     FeedbackStatus.resolved,
+    FeedbackStatus.deployed,
 )
 
 
@@ -426,12 +427,17 @@ class FeedbackService:
         self, feedback_id: uuid.UUID, *, handle: str, is_admin: bool
     ) -> tuple[int, bool]:
         row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
-        if row.status == FeedbackStatus.resolved:
+        if row.status in repo.CLOSED_STATUSES:
             # Supporting something already closed changes nothing anyone will
             # look at, and it inflates the `hot` tab with items nobody can act
             # on. 412 rather than 403: the client's fix is to re-read the item,
-            # not to stop asking.
-            raise PreconditionFailedError("已解决的反馈不再接受支持")
+            # not to stop asking. `deployed` counts as closed for the same
+            # reason `resolved` does — 上线 is further along, not less finished.
+            #
+            # The message names the action, not a status: the reader may be
+            # looking at either closed rung, and 「已解决的不再接受支持」 would be
+            # wrong on a 已上线 row (it never said 已解决).
+            raise PreconditionFailedError("这条反馈已经办完了，不再接受支持")
         await self._repo.add_support(row.id, handle)
         return await self._repo.supports_count(row.id), True
 

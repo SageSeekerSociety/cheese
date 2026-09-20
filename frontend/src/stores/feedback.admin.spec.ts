@@ -27,7 +27,7 @@ vi.mock('@/api', async () => {
 
 import { useFeedbackStore } from '@/stores/feedback'
 
-function detail(id: string, status = 'planned'): FeedbackDetail {
+function detail(id: string, status = 'in_progress'): FeedbackDetail {
   return { id, status, title: `反馈 ${id}`, supports: 0, comments: 0 } as unknown as FeedbackDetail
 }
 
@@ -57,7 +57,7 @@ describe('管理端的写操作', () => {
     // 写完之后的列表已经不含这一条了（它挪进了别的一栏）。
     listAdminFeedback.mockResolvedValue(page(['fb-2']))
 
-    await store.setStatus('fb-1', 'planned')
+    await store.setStatus('fb-1', 'resolved')
 
     expect(listAdminFeedback).toHaveBeenCalledTimes(2)
     expect(store.adminItems.map((i) => i.id)).toEqual(['fb-2'])
@@ -76,7 +76,7 @@ describe('管理端的写操作', () => {
           finish = resolve
         })
     )
-    const writing = store.setStatus('fb-1', 'planned')
+    const writing = store.setStatus('fb-1', 'resolved')
 
     // ……这段时间里人点开了另一条（它的详情也在飞，所以 detail 是空的）。
     getAdminFeedback.mockImplementation(() => new Promise<FeedbackDetail>(() => {}))

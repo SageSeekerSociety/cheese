@@ -52,6 +52,16 @@ PUBLIC_ONLY: tuple[Any, ...] = (
     Feedback.security.is_(False),
 )
 
+#: The two rungs that mean 「办完了」. Three places ask "is this still open?" and
+#: all three mean the same thing by it — the working tabs (a finished item stops
+#: competing for attention), the agent's daily quota, and the 分诊台's 「还没人管」
+#: count. Written once so a fifth rung lands in all three at the same time; the
+#: shape of the bug when it does not is a tab whose number disagrees with its list.
+CLOSED_STATUSES: tuple[FeedbackStatus, ...] = (
+    FeedbackStatus.resolved,
+    FeedbackStatus.deployed,
+)
+
 
 def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     """`FeedbackService.may_see`, spelled as a WHERE clause.
@@ -189,35 +199,36 @@ class FeedbackRepository:
     def _tab_where(self, tab: str) -> list[Any]:
         """The four public tabs, defined once so list and counts cannot drift.
 
-        A resolved item stops competing for attention, so it sinks out of the
-        working tabs — but only a resolved **bug** does. A resolved suggestion
+        A finished item stops competing for attention, so it sinks out of the
+        working tabs — but only a finished **bug** does. A finished suggestion
         is a feature the team decided to do and then did; it is still worth
         reading, and hiding it was the wider reading that the product decision
         (§8.23) did not take. The narrow one is also the easier to notice going
         wrong: the wide version quietly removes content nobody is looking for.
 
+        「办完了」 is `CLOSED_STATUSES` — both `resolved` and `deployed`. The
+        `resolved` tab is therefore 修复 **和** 上线: to the person who filed it
+        those are two halves of one answer (「我的问题没人管了」 is false the moment
+        either happens), and listing only the first makes the deployed ones look
+        like they went missing. The tab is labelled 「已完成」 rather than after
+        either status, because it is named for the pair. `active` is the single
+        working rung (`in_progress`); 「已收录」 is not in it, because nobody has
+        picked those up yet and 「活跃」 would then mean "everything that is not
+        done".
+
         Consequence worth stating: the tabs are filters, not a partition. A
-        resolved suggestion is in both `all` and `resolved`, so the tab numbers
+        finished suggestion is in both `all` and `resolved`, so the tab numbers
         do not sum to a total. That is the decision, not an accounting bug — if
         it ever needs to be a partition, this is the one line to change.
         """
         if tab == "resolved":
-            return [Feedback.status == FeedbackStatus.resolved]
+            return [Feedback.status.in_(list(CLOSED_STATUSES))]
         sunk = or_(
-            Feedback.status != FeedbackStatus.resolved,
+            Feedback.status.not_in(list(CLOSED_STATUSES)),
             Feedback.kind != FeedbackKind.bug,
         )
         if tab == "active":
-            return [
-                sunk,
-                Feedback.status.in_(
-                    [
-                        FeedbackStatus.triaging,
-                        FeedbackStatus.planned,
-                        FeedbackStatus.in_progress,
-                    ]
-                ),
-            ]
+            return [sunk, Feedback.status == FeedbackStatus.in_progress]
         return [sunk]
 
     async def list_public(
@@ -269,11 +280,16 @@ class FeedbackRepository:
             .having(func.count(FeedbackSupport.id) >= HOT_SUPPORTS)
         )
         # `_tab_where("hot")`, not a second copy of the condition: this is the
-        # number on the tab and the rows behind it, and the two were a
-        # `!= resolved` apart — a resolved suggestion is in the hot list (it does
-        # not sink) but was not in the number, so the tab counted fewer than it
-        # opened. The docstring above promises one definition for list and counts;
-        # this is what that costs when it is not kept.
+        # number on the tab and the rows behind it, and the two were one status
+        # apart — a finished suggestion is in the hot list (it does not sink; see
+        # the sink rule above) but was not in the number, so the tab counted fewer
+        # than it opened. Note the second thing that went wrong there: whoever
+        # wrote the count spelled 「办完了」 as a literal `!= resolved`, and when
+        # `deployed` was added the copy was silently a status behind.
+        # `CLOSED_STATUSES` is why that cannot happen to this one.
+        #
+        # The docstring above promises one definition for list and counts; this is
+        # what that costs when it is not kept.
         hot_count = await self._count(
             [
                 *where,
@@ -392,7 +408,7 @@ class FeedbackRepository:
         stmt = select(func.count(Feedback.id)).where(
             Feedback.deleted_at.is_(None),
             Feedback.author_handle.in_(list(handles)),
-            Feedback.status != FeedbackStatus.resolved,
+            Feedback.status.not_in(list(CLOSED_STATUSES)),
         )
         return int((await self._session.execute(stmt)).scalar_one() or 0)
 
@@ -693,7 +709,7 @@ class FeedbackRepository:
         stmt = select(func.count(Feedback.id)).where(
             Feedback.deleted_at.is_(None),
             Feedback.assignee_handle.is_(None),
-            Feedback.status != FeedbackStatus.resolved,
+            Feedback.status.not_in(list(CLOSED_STATUSES)),
         )
         return int((await self._session.execute(stmt)).scalar_one() or 0)
 
