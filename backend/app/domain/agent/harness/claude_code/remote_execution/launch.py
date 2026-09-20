@@ -24,15 +24,18 @@ from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP
 def can_prepare(info):
     return (
         "prepare" in info.get("capabilities", [])
-        and info.get("runtime_sha256") == runtime.SOURCE_SHA256
-        # The bootstrap pins the native binary independently of runtime.py.
-        and info.get("files", {}).get("remote-execution/bootstrap.py")
-        == hashlib.sha256(Path(bootstrap.__file__).read_bytes()).hexdigest()
+        and not info.get("upgrading")
+        and info.get("protocol_version") == runtime.PROTOCOL_VERSION
+        and all(
+            info.get("files", {}).get(name)
+            == hashlib.sha256(content.encode()).hexdigest()
+            for name, content in file_sources().items()
+        )
     )
 
 
-def payload_for(project_id, resource_id, env, known_files=None):
-    files = {
+def file_sources():
+    return {
         "remote-execution/bootstrap.py": Path(bootstrap.__file__).read_text(),
         "remote-execution/runtime.py": Path(runtime.__file__).read_text(),
         "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
@@ -44,6 +47,10 @@ def payload_for(project_id, resource_id, env, known_files=None):
         "cheese-hook": CHEESE_HOOK_SCRIPT,
         "cheese": (Path(__file__).resolve().parents[6] / "sandbox/cheese").read_text(),
     }
+
+
+def payload_for(project_id, resource_id, env, known_files=None):
+    files = file_sources()
     values = {
         name: value
         for name, value in env.items()
@@ -55,6 +62,7 @@ def payload_for(project_id, resource_id, env, known_files=None):
         else None
     )
     return {
+        "protocol_version": runtime.PROTOCOL_VERSION,
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,

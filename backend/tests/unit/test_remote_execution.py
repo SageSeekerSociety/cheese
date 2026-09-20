@@ -223,13 +223,15 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
             },
         )
         assert "--request-id" in publication_help["value"]["stdout"]
-        (home / ".cheese/cheese").write_text(
-            "import sys\n"
-            "if __name__ == 'preload':\n"
-            "    sys.cheese_cli_preloaded = True\n"
-            "if __name__ == '__main__':\n"
-            "    print(getattr(sys, 'cheese_cli_preloaded', False))\n"
-        )
+        payload["files"]["cheese"] = base64.b64encode(
+            b"import sys\n"
+            b"if __name__ == 'preload':\n"
+            b"    sys.cheese_cli_preloaded = True\n"
+            b"if __name__ == '__main__':\n"
+            b"    print(getattr(sys, 'cheese_cli_preloaded', False))\n"
+        ).decode()
+        bootstrap.configure(payload)
+        capsys.readouterr()
         preloaded = runtime.request(
             state,
             "invoke",
@@ -245,6 +247,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
         environment = home / ".cheese-environment"
         environment.mkdir()
         payload["environment"] = {"revision": "existing"}
+        (state / "environment.json").write_text(json.dumps(payload["environment"]))
         for status in ("ready", "failed", "pending"):
             environment_runner.write_json(
                 environment / "status.json",
@@ -397,7 +400,67 @@ def test_a_previous_root_with_nothing_behind_it_does_not_hold_the_room_back(
         )
 
 
-@pytest.mark.parametrize("update_kind", ["runtime", "binary"])
+@pytest.mark.parametrize("rollback", [False, True])
+def test_executor_upgrade_retries_after_installer_failure(
+    tmp_path, monkeypatch, capsys, rollback
+):
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    payload = payload_for(
+        project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
+    )
+    home = tmp_path / ".cheese/home" / str(project) / str(resource)
+    state = home / ".cheese/executor"
+    run = subprocess.run
+    try:
+        bootstrap.configure(payload)
+        original = json.loads(capsys.readouterr().out)
+        old_hook = payload["files"]["cheese-hook"]
+        payload["files"]["cheese-hook"] = base64.b64encode(b"# next release\n").decode()
+
+        def fail_stop(command, **kwargs):
+            if "stop" in command:
+                raise RuntimeError("installer interrupted")
+            return run(command, **kwargs)
+
+        with monkeypatch.context() as failure:
+            failure.setattr(bootstrap.subprocess, "run", fail_stop)
+            with pytest.raises(RuntimeError, match="installer interrupted"):
+                bootstrap.configure(payload)
+        assert runtime.request(state, "ping")["upgrading"]
+        with pytest.raises(RuntimeError, match="request was not accepted"):
+            runtime.request(
+                state,
+                "invoke",
+                {"id": "late", "tool": "Bash", "args": {"command": "touch late"}},
+            )
+        if rollback:
+            payload["files"]["cheese-hook"] = old_hook
+        bootstrap.configure(payload)
+        updated = json.loads(capsys.readouterr().out)
+        assert updated["pid"] != original["pid"]
+        assert not updated["upgrading"]
+        assert not (state / "upgrade.json").exists()
+        assert not (home / "room/late").exists()
+        result = runtime.request(
+            state,
+            "invoke",
+            {"id": "after", "tool": "Bash", "args": {"command": "printf resumed"}},
+        )
+        assert result["value"]["stdout"] == "resumed"
+    finally:
+        run(
+            [sys.executable, str(RUNTIME), "stop", "--state", str(state)],
+            capture_output=True,
+            timeout=15,
+        )
+
+
+@pytest.mark.parametrize("update_kind", ["runtime", "binary", "helper"])
 def test_executor_release_waits_for_commands_and_preserves_results(
     tmp_path, monkeypatch, capsys, update_kind
 ):
@@ -444,16 +507,20 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         changed = base64.b64decode(payload["files"]["remote-execution/runtime.py"])
         if update_kind == "runtime":
             changed += b"\n# release fixture\n"
-        else:
+        elif update_kind == "binary":
             next_binary = tmp_path / "next-claude"
             next_binary.symlink_to(claude_binary())
             monkeypatch.setattr(bootstrap, "binary", lambda *_: str(next_binary))
+        else:
+            payload["files"]["cheese-hook"] = base64.b64encode(b"# new hook\n").decode()
         payload["files"]["remote-execution/runtime.py"] = base64.b64encode(
             changed
         ).decode()
         before = source.read_bytes()
-        with unittest.TestCase().assertRaisesRegex(RuntimeError, "running commands"):
-            bootstrap.configure(payload)
+        bootstrap.configure(payload)
+        deferred = json.loads(capsys.readouterr().out)
+        assert deferred["upgrade_pending"] is True
+        assert deferred["pid"] == original["pid"]
         assert source.read_bytes() == before
         assert ready()["pid"] == original["pid"]
         (home / "room/release").touch()
@@ -548,6 +615,23 @@ def test_a_platform_tool_answers_while_a_shell_command_still_holds_the_room(
         assert waited < 2, f"the listing waited {waited:.1f}s for the shell"
         assert "cheese_status" in {tool["name"] for tool in listing["tools"]}
         assert not release.exists(), "the command had already finished"
+        deferred = runtime.request(state, "begin_upgrade", {"release": "next"})
+        assert deferred["ready"] is False
+        assert runtime.request(state, "ping")["upgrading"] is False
+        release.touch()
+        held.join(timeout=10)
+        assert not held.is_alive()
+        assert runtime.request(state, "begin_upgrade", {"release": "next"})["ready"]
+        with pytest.raises(RuntimeError, match="not accepted"):
+            runtime.request(
+                state,
+                "invoke",
+                {"id": "late", "tool": "Bash", "args": {"command": "touch late"}},
+            )
+        assert not (home / "room/late").exists()
+        assert runtime.request(state, "control", {"subtype": "background_tasks"})[
+            "tasks"
+        ]
     finally:
         release.touch()
         subprocess.run(
@@ -602,7 +686,7 @@ def test_running_executor_prepares_updated_room_without_restart(
     cli = (
         "from pathlib import Path\n"
         "if __name__ == 'preload':\n"
-        "    with Path(__file__).with_name('preload-calls').open('a') as output:\n"
+        "    with (Path.home() / '.cheese/preload-calls').open('a') as output:\n"
         "        output.write('loaded\\n')\n"
         "if __name__ == '__main__':\n"
         "    print('first CLI')\n"
@@ -624,17 +708,11 @@ def test_running_executor_prepares_updated_room_without_restart(
         delta = payload_for(project, resource, payload["env"], original["files"])
         # The fixture replaces the CLI; all other installed helpers are unchanged.
         assert set(delta["files"]) == {"cheese"}
-        (home / ".cheese/cheese-hook").write_text("locally edited helper")
-        changed = runtime.request(state, "ping")
-        repair = payload_for(project, resource, payload["env"], changed["files"])
-        assert set(repair["files"]) == {"cheese", "cheese-hook"}
         payload["env"]["CHEESE_TOKEN"] = "refreshed"
-        payload["files"]["cheese-hook"] = base64.b64encode(b"updated hook").decode()
         ready = runtime.request(state, "prepare", payload)
         assert ready["pid"] == original["pid"]
         assert ready["workspace"] == str(home / "room")
         assert (home / ".cheese/cheese-preview.token").read_text() == "refreshed"
-        assert (home / ".cheese/cheese-hook").read_text() == "updated hook"
         assert (
             json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
             == "refreshed"
@@ -655,7 +733,13 @@ def test_running_executor_prepares_updated_room_without_restart(
         payload["files"]["cheese"] = base64.b64encode(
             cli.replace("first CLI", "updated CLI").encode()
         ).decode()
-        runtime.request(state, "prepare", payload)
+        with pytest.raises(RuntimeError, match="idle upgrade"):
+            runtime.request(state, "prepare", payload)
+        pinned_cli = Path(original["release"]) / "cheese"
+        bootstrap.configure(payload)
+        capsys.readouterr()
+        original = runtime.request(state, "ping")
+        assert pinned_cli.read_text() == cli
         updated = runtime.request(
             state,
             "invoke",
@@ -667,6 +751,7 @@ def test_running_executor_prepares_updated_room_without_restart(
         )
         assert updated["value"]["stdout"].strip() == "updated CLI"
         assert (home / ".cheese/preload-calls").read_text() == "loaded\nloaded\n"
+        runtime.request(state, "prepare", payload)
         checked = version_calls.read_text()
         runtime.request(state, "prepare", payload)
         assert version_calls.read_text() == checked
@@ -687,6 +772,7 @@ def test_running_executor_prepares_updated_room_without_restart(
         environment = home / ".cheese-environment"
         environment.mkdir()
         payload["environment"] = {"revision": "existing"}
+        (state / "environment.json").write_text(json.dumps(payload["environment"]))
         for status in ("ready", "failed", "pending"):
             environment_runner.write_json(
                 environment / "status.json",
@@ -702,8 +788,6 @@ def test_running_executor_prepares_updated_room_without_restart(
             assert prepared["pid"] == original["pid"]
             assert prepared["environment_status"] == status
         payload["resource"] = str(uuid.uuid4())
-        import pytest
-
         with pytest.raises(RuntimeError, match="another room"):
             runtime.request(state, "prepare", payload)
         assert not (home.parent / payload["resource"]).exists()
@@ -729,7 +813,10 @@ def test_modified_verified_binary_with_wrong_version_is_not_reused(tmp_path):
     verified = {}
     assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
     binary.write_text("#!/bin/sh\necho '0.0.0'\n")
-    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(fallback)
+    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
+    assert binary.read_bytes() == fallback.read_bytes()
+    fallback.write_text("#!/bin/sh\necho 0.0.0\n")
+    assert bootstrap.binary(tmp_path, "http://unused", verified) == str(binary)
 
 
 class RemoteExecutionTests(unittest.TestCase):

@@ -9,7 +9,6 @@ import sys
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -29,14 +28,12 @@ from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparati
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
-    bootstrap as executor_bootstrap,
-)
-from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
     runtime as executor_runtime,
 )
+from app.domain.agent.harness.claude_code.remote_execution.launch import file_sources
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
 from app.domain.agent.harness.pi.device_launch import PiLaunch
@@ -275,8 +272,9 @@ async def test_stopped_previous_executor_http_failure_takes_installation_path(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("digest", [None, "previous-release"])
+@pytest.mark.parametrize("upgrade_pending", [False, True])
 async def test_old_executor_process_takes_release_bootstrap(
-    client, room, monkeypatch, digest
+    client, room, monkeypatch, digest, upgrade_pending
 ):
     project, topic = room
     central = channel(client, monkeypatch)
@@ -290,6 +288,14 @@ async def test_old_executor_process_takes_release_bootstrap(
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
+    central._hub.exec.return_value["stdout"] = json.dumps(
+        {
+            **INSTALLED,
+            "release": "previous-release" if upgrade_pending else "new-release",
+            "desired_release": "new-release" if upgrade_pending else None,
+            "upgrade_pending": upgrade_pending,
+        }
+    )
     central._hub.call_executor.return_value = {
         "pid": 123,
         "capabilities": ["prepare"],
@@ -305,6 +311,14 @@ async def test_old_executor_process_takes_release_bootstrap(
             await admitted.rollback()
             await asyncio.wait_for(update, 10)
     central._hub.exec.assert_awaited_once()
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        target = stored.session_placement["execution"]
+        assert target["upgrade_pending"] is upgrade_pending
+        assert target["release"] == (
+            "previous-release" if upgrade_pending else "new-release"
+        )
+        assert target["desired_release"] == ("new-release" if upgrade_pending else None)
     assert [
         call.args[2] for call in central._hub.call_executor.await_args_list[-2:]
     ] == ["ping", "context_fs"]
@@ -334,10 +348,10 @@ async def test_running_executor_prepares_without_python_launch(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "protocol_version": executor_runtime.PROTOCOL_VERSION,
             "files": {
-                "remote-execution/bootstrap.py": hashlib.sha256(
-                    Path(executor_bootstrap.__file__).read_bytes()
-                ).hexdigest(),
+                name: hashlib.sha256(content.encode()).hexdigest()
+                for name, content in file_sources().items()
             },
         },
         {
@@ -354,7 +368,7 @@ async def test_running_executor_prepares_without_python_launch(
     payload = calls[1].args[3]
     assert payload["env"]["CHEESE_TOKEN"]
     assert payload["environment"] == {"revision": "one"}
-    assert "cheese-hook" in payload["files"]
+    assert payload["files"] == {}
     if environment_state == "ready":
         central._wait_executor.assert_not_awaited()
     else:
@@ -382,10 +396,10 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "protocol_version": executor_runtime.PROTOCOL_VERSION,
             "files": {
-                "remote-execution/bootstrap.py": hashlib.sha256(
-                    Path(executor_bootstrap.__file__).read_bytes()
-                ).hexdigest(),
+                name: hashlib.sha256(content.encode()).hexdigest()
+                for name, content in file_sources().items()
             },
         },
         RuntimeError("Executor configuration changed"),

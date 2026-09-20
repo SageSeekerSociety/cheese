@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -201,7 +202,7 @@ class CentralChannel(DeviceChannel):
         owner=None,
         turn_id=None,
         runtime_factory=None,
-    ):
+    ) -> AsyncIterator[PreparedSession]:
         assert isinstance(precheck, tuple)
         started_at = time.monotonic()
 
@@ -307,6 +308,13 @@ class CentralChannel(DeviceChannel):
                         )
                     info = json.loads(result["stdout"])
                 mark("executor_launch")
+                if info.get("upgrade_pending"):
+                    logger.info(
+                        "executor_upgrade_deferred topic=%s release=%s desired=%s",
+                        topic_id,
+                        info.get("release"),
+                        info.get("desired_release"),
+                    )
                 target = {
                     "kind": "device",
                     "resource_id": str(resource),
@@ -318,6 +326,9 @@ class CentralChannel(DeviceChannel):
                     # which an app deploy leaves alone — see
                     # `agent.execution.executor_state`.
                     "state": info["state"],
+                    "release": info.get("release"),
+                    "upgrade_pending": info.get("upgrade_pending", False),
+                    "desired_release": info.get("desired_release"),
                     "workspace": info["workspace"],
                     "mcp_servers": info["mcp_servers"],
                     "url": (
