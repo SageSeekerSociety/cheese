@@ -37,6 +37,7 @@ class ProjectService:
         agent_type: str | None = None,
         team_id: int | None = None,
         external_task_id: int | None = None,
+        forge_kind: str = "forgejo",
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -56,6 +57,7 @@ class ProjectService:
             team_id=team_id,
             external_task_id=external_task_id,
         )
+        project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         # Apply task terms when eligible; a pending application gets a workspace
         # now and receives its competition resources when approved.
         if external_task_id is not None:
@@ -79,6 +81,10 @@ class ProjectService:
         await self._members.seed_root(
             root.id, owner_handle=owner_handle, member_handles=member_handles
         )
+        from app.domain.project.forge import provision_repository
+
+        if forge_kind == "forgejo":
+            await provision_repository(project.id, self._session)
         return project
 
     async def _seed_roster(self, project: Project) -> None:

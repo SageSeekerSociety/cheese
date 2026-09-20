@@ -1,19 +1,40 @@
-"""不进 PR 的那几种采纳形状 + pr-checks 展示端点。
+"""The PR checks panel reads the project's authoritative forge.
 
-绑定项目的点击合并本身在 tests/integration/test_accept_pr.py（#718 的主套件）。
-这里剩下的是：讨论型话题 / 未接 GitHub 的项目（#363：平台自己就是 forge，
-local merge 是唯一、正当的采纳）/ 有 git 远端但不是 GitHub 的项目（采纳合完还要
-把 main 推回那个远端），以及 /topics/{id}/pr-checks 这个只读端点。
+Missing-binding and legacy-card delivery refusals are covered by test_accept_pr.
 """
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
-from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+
+
+def test_unreadable_binding_keeps_cards_visible_and_refuses_accept(client, monkeypatch):
+    from app.domain.project import forge
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    monkeypatch.setattr(
+        forge, "binding_for_project", AsyncMock(side_effect=OSError("unavailable"))
+    )
+    listed = client.get(f"/topics/{tid}/accept-card")
+    assert listed.status_code == 200
+    card = listed.json()["data"]["data"][0]
+    assert card["forge"]["kind"] == "unknown"
+    assert card["merge_state"]["state"] == "unknown"
+    refused = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert refused.status_code == 422
+    assert "无法读取" in refused.json()["message"]
 
 
 def _make_project(client) -> str:
@@ -59,161 +80,38 @@ def _give_card_a_pr(client, card_id: str, number: int = 7) -> None:
     asyncio.run(_do())
 
 
-class _FakeTokens:
-    async def write_token(self) -> tuple[str, str]:
-        return "ghs_write", "2099-01-01T00:00:00+00:00"
+@pytest.mark.parametrize("kind", ["github_app", "forgejo"])
+def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch, kind):
+    from app.domain.project import forge
 
-    async def installation_token(self) -> tuple[str, str]:
-        return "ghs_read", "2099-01-01T00:00:00+00:00"
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid)
 
+    async def select_provider():
+        async with client.test_factory() as session:
+            binding = await forge.binding_for_project(uuid.UUID(pid), session)
+            binding.kind = kind
+            await session.commit()
 
-class _FakeClient:
-    """Stands in for GitHubPRClient; scripted per test via class attributes."""
+    asyncio.run(select_provider())
+    checks = [
+        {
+            "name": "test",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://forge.test/check/1",
+        }
+    ]
+    selected = []
 
-    calls: list[tuple] = []
-    view: dict | Exception = {}
-    merge_error: Exception | None = None
-    open_pr_number: int = 21
-    checks: list[dict] | Exception = []
+    class Provider:
+        def __init__(self, owner, repo, tokens, **kwargs):
+            selected.append(kind)
 
-    def __init__(self, owner: str, repo: str, tokens, **_):
-        type(self).calls.append(("init", owner, repo))
-
-    async def pr_view(self, number: int) -> dict:
-        type(self).calls.append(("view", number))
-        if isinstance(type(self).view, Exception):
-            raise type(self).view
-        return type(self).view
-
-    async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
-        type(self).calls.append(("merge", number, title, message))
-        if type(self).merge_error is not None:
-            raise type(self).merge_error
-        return {"merged": True, "sha": "deadbeef"}
-
-    async def open_pr(
-        self,
-        *,
-        head: str,
-        base: str,
-        title: str,
-        body: str,
-        as_user_token: str | None = None,
-    ) -> OpenedPR:
-        type(self).calls.append(("open_pr", head, base, title))
-        number = type(self).open_pr_number
-        return OpenedPR(
-            {
-                "number": number,
-                "html_url": f"https://github.com/acme/widgets/pull/{number}",
-            },
-            None,
-        )
-
-    async def check_runs(self, ref: str) -> list[dict]:
-        type(self).calls.append(("check_runs", ref))
-        if isinstance(type(self).checks, Exception):
-            raise type(self).checks
-        return type(self).checks
-
-
-def _check(
-    name: str = "test", status: str = "completed", conclusion: str | None = "success"
-) -> dict:
-    """One simplified check-run, the shape GitHubPRClient.check_runs returns."""
-    return {
-        "name": name,
-        "status": status,
-        "conclusion": conclusion,
-        "url": f"https://github.com/acme/widgets/runs/{name}",
-    }
-
-
-@pytest.fixture
-def pr_world(monkeypatch):
-    """A world where the card's project has a GitHub upstream and the App is
-    configured — with every workspace side effect recorded, not executed."""
-    from app.domain.agent import github_app
-    from app.domain.review import github_pr as github_pr_module
-    from app.domain.review import services as review_services
-    from app.domain.workspace import service as ws
-
-    _FakeClient.calls = []
-    _FakeClient.view = {
-        "merged": False,
-        "state": "open",
-        "base": {"ref": "main"},
-        "head": {"sha": "abc123"},
-    }
-    _FakeClient.merge_error = None
-    _FakeClient.checks = [_check()]  # green CI unless a test scripts otherwise
-
-    recorded: dict[str, list] = {"pushes": [], "syncs": [], "local_merges": []}
-
-    # #192: the accept path resolves the installation per-project, not globally.
-    async def _fake_tokens_for_project(_project_id, _session):
-        return _FakeTokens()
-
-    monkeypatch.setattr(
-        github_app, "github_app_tokens_for_project", _fake_tokens_for_project
-    )
-    monkeypatch.setattr(github_pr_module, "GitHubPRClient", _FakeClient)
-    monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
-    )
-    # 这个远端是 GitHub：写权限由 App 的安装 token 回答，没装 App 的时候我们对它
-    # 一无所有。写在这里，免得哪个用例真的 fork 一次 git 去问 github.com。
-    monkeypatch.setattr(ws, "can_push_upstream", lambda pid: False)
-    monkeypatch.setattr(
-        ws,
-        "push_topic_branch",
-        lambda pid, tid, token: (
-            recorded["pushes"].append((tid, token)) or f"topic/{tid.hex[:8]}"
-        ),
-    )
-    monkeypatch.setattr(
-        ws,
-        "sync_upstream",
-        lambda pid, token=None: (
-            recorded["syncs"].append(pid) or {"synced": True, "commits": 1}
-        ),
-    )
-
-    def _local_merge(pid, tid, **_kwargs):
-        recorded["local_merges"].append(tid)
-        return {"merged": False, "noop": True, "reason": "no topic branch"}
-
-    monkeypatch.setattr(ws, "merge_topic", _local_merge)
-    monkeypatch.setattr(ws, "prepare_conflict_resolution", lambda pid, tid: ["a.py"])
-    # 递卡在绑定项目上会探测树分支（有活才有卡）；这个 world 里项目是绑定的
-    # （App tokens + GitHub upstream），默认让分支存在，个别测试自己覆盖成 False。
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    _ = review_services  # imported for proximity; accept() resolves ws at call time
-    return recorded
-
-
-def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
-    """采纳即合并 (#296) deliverable 2: the card's green comes from the FORGE,
-    not a platform gate. `/pr-checks` reads the PR's live state + check-run
-    conclusions for the card's PR via the App's checks:read token, at the PR's
-    real head sha."""
-    from app.api.routes import accept as accept_routes
-    from app.domain.workspace import service as ws
-
-    class _Tokens:
-        async def installation_token(self) -> tuple[str, str]:
-            return "ghs_read", "2099-01-01T00:00:00+00:00"
-
-        async def write_token(self) -> tuple[str, str]:
-            return "ghs_write", "2099-01-01T00:00:00+00:00"
-
-    class _Client:
-        checked_ref: str | None = None
-
-        def __init__(self, owner: str, repo: str, tokens, **_):
-            pass
-
-        async def pr_view(self, number: int) -> dict:
+        async def pr_view(self, number):
+            assert number == 7
             return {
                 "merged": False,
                 "state": "open",
@@ -221,611 +119,68 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
                 "head": {"sha": "abc123"},
             }
 
-        async def check_runs(self, ref: str) -> list[dict]:
-            type(self).checked_ref = ref
-            return [
-                {
-                    "name": "test",
-                    "status": "completed",
-                    "conclusion": "success",
-                    "url": "https://github.com/acme/widgets/runs/1",
-                }
-            ]
+        async def check_runs(self, ref):
+            assert ref == "abc123"
+            return checks
 
-    async def _tokens_for_project(_project_id, _session):
-        return _Tokens()
+    def wrong_provider(*args, **kwargs):
+        raise AssertionError("Used a different forge than the project binding")
 
+    monkeypatch.setattr(forge, "tokens_for_project", AsyncMock(return_value=object()))
     monkeypatch.setattr(
-        accept_routes, "github_app_tokens_for_project", _tokens_for_project
+        forge, "GitHubPRClient", Provider if kind == "github_app" else wrong_provider
     )
-    monkeypatch.setattr(accept_routes, "GitHubPRClient", _Client)
     monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
+        forge, "ForgejoPRClient", Provider if kind == "forgejo" else wrong_provider
     )
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _give_card_a_pr(client, cid, number=7)
-
-    r = client.get(f"/topics/{tid}/pr-checks")
-    assert r.status_code == 200
-    data = r.json()["data"]
+    response = client.get(f"/topics/{tid}/pr-checks")
+    assert response.status_code == 200
+    data = response.json()["data"]
     assert data["available"] is True
-    assert data["pr_number"] == 7
-    assert data["state"] == "open"
-    assert data["mergeable"] is True
-    assert data["checks"] == [
-        {
-            "name": "test",
-            "status": "completed",
-            "conclusion": "success",
-            "url": "https://github.com/acme/widgets/runs/1",
-        }
-    ]
-    # The checks were read at the PR's real head, not the branch name.
-    assert _Client.checked_ref == "abc123"
+    assert data["pr_number"] == 7 and data["state"] == "open"
+    assert data["mergeable"] is True and data["checks"] == checks
+    assert selected == [kind]
 
 
-def test_pr_checks_answers_available_false_when_github_is_unreachable(
-    client, monkeypatch
-):
-    """/pr-checks is polled on a timer, so an exception escaping it is not one
-    500 — it is a 500 every few seconds, each posting a traceback into the room
-    (2026-08-17: `httpx.ConnectError` out of `pr_view`, TLS handshake). The
-    endpoint's contract is "never error"; the reason travels in the payload."""
-    import httpx
-
-    from app.api.routes import accept as accept_routes
-    from app.domain.workspace import service as ws
-
-    class _Tokens:
-        async def installation_token(self) -> tuple[str, str]:
-            return "ghs_read", "2099-01-01T00:00:00+00:00"
-
-        async def write_token(self) -> tuple[str, str]:
-            return "ghs_write", "2099-01-01T00:00:00+00:00"
-
-    class _UnreachableClient:
-        def __init__(self, owner: str, repo: str, tokens, **_):
-            pass
-
-        async def pr_view(self, number: int) -> dict:
-            raise httpx.ConnectError("TLS handshake failed")
-
-        async def check_runs(self, ref: str) -> list[dict]:
-            raise AssertionError("never reached")
-
-    async def _tokens_for_project(_project_id, _session):
-        return _Tokens()
-
-    monkeypatch.setattr(
-        accept_routes, "github_app_tokens_for_project", _tokens_for_project
-    )
-    monkeypatch.setattr(accept_routes, "GitHubPRClient", _UnreachableClient)
-    monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
-    )
+@pytest.mark.parametrize("stage", ["credentials", "unconfigured", "view", "checks"])
+def test_pr_checks_report_unavailable_without_raising(client, monkeypatch, stage):
+    from app.api.routes import accept
+    from app.core.errors import GatewayUnavailableError
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
-    _give_card_a_pr(client, cid, number=7)
-
-    r = client.get(f"/topics/{tid}/pr-checks")
-
-    assert r.status_code == 200
-    data = r.json()["data"]
-    assert data["available"] is False
-    assert "ConnectError" in data["reason"]
-
-
-def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypatch):
-    """The old guard only wrapped the two GitHub calls; everything before them
-    (token mint, upstream read) could still 500. Same contract applies."""
-    from app.api.routes import accept as accept_routes
-    from app.domain.workspace import service as ws
-
-    class _Tokens:
-        async def installation_token(self) -> tuple[str, str]:
-            return "ghs_read", "2099-01-01T00:00:00+00:00"
-
-        async def write_token(self) -> tuple[str, str]:
-            return "ghs_write", "2099-01-01T00:00:00+00:00"
-
-    async def _tokens_for_project(_project_id, _session):
-        return _Tokens()
-
-    def _boom(_pid):
-        raise OSError("workspace unavailable")
-
-    monkeypatch.setattr(
-        accept_routes, "github_app_tokens_for_project", _tokens_for_project
-    )
-    monkeypatch.setattr(ws, "get_upstream", _boom)
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _give_card_a_pr(client, cid, number=7)
-
-    r = client.get(f"/topics/{tid}/pr-checks")
-
-    assert r.status_code == 200
-    assert r.json()["data"]["available"] is False
-
-
-def test_an_unreadable_workspace_does_not_take_the_card_list_down(
-    client, pr_world, monkeypatch
-):
-    """读一张卡不是挑一条车道。
-
-    `_forge_facts` 要 fork 一次 git 才知道项目接了什么，而那次 fork 会失败（uid
-    split、磁盘、超时）。采纳那一侧必须 fail-closed —— 读不出事实就拒，#362 说的
-    就是不许摸黑合 —— 但这条读路径上同一个失败过去会把整个卡列表端点打成 422：
-    一个项目的 git 坏了，所有项目的卡都打不开。现在卡照常下发，只是它如实说自己
-    这会儿读不出托管方，按钮也因此灰着。
-    """
-    from app.domain.workspace import service as ws
-
-    def _boom(_pid):
-        raise OSError("workspace unavailable")
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    monkeypatch.setattr(ws, "get_upstream", _boom)
-
-    listed = client.get(f"/topics/{tid}/accept-card")
-    assert listed.status_code == 200, listed.text
-    filed = listed.json()["data"]["data"][0]
-    assert filed["forge"]["kind"] == "unknown"
-    assert filed["forge"]["pushes_to_external_remote"] is False
-    assert "读不出" in filed["forge"]["declaration"]
-    # 按钮灰着，理由在卡上，和后端真去采纳时的答案是同一个。
-    assert filed["merge_state"]["state"] == "unknown"
-
-    refused = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert refused.status_code == 422
-    assert "读不出" in refused.text
-
-
-def test_prless_card_never_touches_github(client, pr_world, monkeypatch):
-    """App 机制关着（项目没有任何 App 安装 → 未绑定）：无 PR 卡走本地合并，
-    不碰 GitHub。pr_world 默认给了假 App tokens（绑定态），这里显式还原成
-    「没有安装」——绑定态下一张开不出 PR 的交付卡如今会停下（见
-    test_accept_pr.py 的 branchless 回归用例），而这个测试要说的是另一件事：
-    真正没接 App 的项目，本地合并就是它的采纳，GitHub 一次都不该被碰。"""
-    from app.domain.agent import github_app
-
-    async def _no_tokens(_pid, _session):
-        return None
-
-    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)  # no PR seeded
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["status"] == "accepted"
-    assert _FakeClient.calls == []  # GitHub never consulted
-    assert pr_world["local_merges"] != []  # old path, unchanged
-
-
-# ---- App forge 的边角：没有分支可进 PR，以及根本没接 GitHub -----------------
-#
-# App forge 上「采纳」本身已经不在这个文件里了：它不再合并，而是授权，然后由
-# 轮询器等 CI 全绿才合（App 采纳等 CI 再合）。那条路的完整行为在
-# tests/integration/test_accept_app_waits_for_ci.py 里。留在这里的是两种
-# **不进 PR** 的形状，它们的采纳语义没有变：讨论型话题（没有分支，本地合并
-# no-op），和未接 GitHub 的项目（#363：平台自己就是 forge）。
-
-
-def _enable_app_pr(monkeypatch) -> None:
-    """The world AFTER the accept_via_pr deploy: flag on, App configured, and
-    pr_publish's own GitHub seams faked. Cards in these tests are created
-    BEFORE this runs — exactly the production incident's shape (pending cards
-    from before the deploy have no App PR, and no publish was dispatched for
-    them at filing time)."""
-    from pathlib import Path
-
-    from app.core.config import settings
-    from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(settings, "github_app_id", 12345)
-    monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
-
-    async def _fake_tokens_for_project(_project_id, _session):
-        return _FakeTokens()
-
-    # pr_publish binds these names at module import — patch them there (the
-    # pr_world fixture patches the github_app/github_pr modules, which covers
-    # only the accept side's lazy imports).
-    monkeypatch.setattr(
-        pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project
-    )
-    monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
-
-
-def test_legacy_discussion_card_on_bound_project_accepts_without_forge_label(
-    client, pr_world, monkeypatch
-):
-    """绑定了 GitHub 的项目里的存量纯讨论卡（change_subject 为 NULL，递于
-    subject 必填之前）：没有分支、没有交付主张——本地合并 no-op 完成采纳，
-    什么都没绕过，也不该戴「未接 GitHub」的标。（带交付主张的卡在同样的
-    分支缺失下必须停下——见 test_accept_pr.py 的回归用例。）"""
-    from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.workspace import service as ws
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-
-    async def _strip_subject() -> None:
-        async with client.test_factory() as session:
-            card = await AcceptCardRepository(session).get(uuid.UUID(cid))
-            assert card is not None
-            card.change_subject = None
-            await session.commit()
-
-    asyncio.run(_strip_subject())
-    _enable_app_pr(monkeypatch)
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert "未接 GitHub" not in (card["note"] or "")
-    assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
-    assert pr_world["local_merges"] != []  # noop merge — nothing bypassed
-    assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_by"]
-        == "alice"
-    )
-
-
-@pytest.mark.parametrize("missing", ["upstream", "installation"])
-def test_unbound_project_local_merge_is_legitimate_and_labelled(
-    client, pr_world, monkeypatch, missing
-):
-    """未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是唯一、
-    正当的采纳语义——不是降级、不拦人。但这件事要写在卡上（ℹ️ 不是 ⚠️），
-    让它和「该走 PR 却没走」的卡一眼可分。
-
-    这两种「未接」都填过上游地址（少的是 App 安装，或者那个地址不是 GitHub），
-    而那个地址我们推不动 —— 远端自己这么回答的。所以卡上不能说「本项目未接外部
-    仓库」：当着填过地址的人的面说他没填，是把沉默换成一句假话。"""
-    from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _enable_app_pr(monkeypatch)
-    # 填了地址，而远端不让我们写 —— 这一位问出来是 False，于是平台自己就是终点。
-    monkeypatch.setattr(ws, "can_push_upstream", lambda pid_: False)
-    if missing == "upstream":
-        monkeypatch.setattr(
-            ws, "get_upstream", lambda pid_: "https://gitlab.campus.edu/t/course.git"
-        )
+    _give_card_a_pr(client, cid)
+    provider = AsyncMock()
+    provider.pr_view.return_value = {"head": {"sha": "abc123"}}
+    provider.check_runs.return_value = []
+    factory = AsyncMock(return_value=provider)
+    failure = httpx.ConnectError("Forge unavailable")
+    if stage == "unconfigured":
+        factory.side_effect = GatewayUnavailableError("项目的代码托管凭据尚未配置")
+    elif stage == "credentials":
+        factory.side_effect = failure
+    elif stage == "view":
+        provider.pr_view.side_effect = failure
     else:
-
-        async def _no_tokens(_pid, _session):
-            return None
-
-        monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
-
-    # 写在卡上，而且是在人点之前（I23）：ℹ️ 不是 ⚠️，和「该走 PR 却没走」的卡
-    # 一眼可分。
-    filed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
-    assert filed["status"] == "pending"
-    assert filed["forge"]["kind"] == "platform"
-    declaration = filed["forge"]["declaration"]
-    assert declaration.startswith("ℹ️")
-    assert "⚠️" not in declaration
-    # 地址填过，只是我们推不动它。
-    assert filed["forge"]["has_external_remote"] is True
-    assert filed["forge"]["pushes_to_external_remote"] is False
-    assert "未接外部仓库" not in declaration
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
-    assert pr_world["local_merges"] != []  # the only accept such a project has
-    assert (
-        client.get(f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}").json()[
-            "data"
-        ]["accepted_by"]
-        == "alice"
-    )
+        provider.check_runs.side_effect = failure
+    monkeypatch.setattr(accept, "proposal_client", factory)
+    response = client.get(f"/topics/{tid}/pr-checks")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["available"] is False
+    assert ("尚未配置" if stage == "unconfigured" else "ConnectError") in data["reason"]
 
 
-def test_unbound_project_with_github_upstream_pushes_nothing(
-    client, pr_world, monkeypatch
-):
-    """A GitHub https upstream and no App installation (#718): the platform is
-    the forge, so the merge lands in the platform's repo and not one git push
-    or fetch runs against GitHub — there is no credential it could run with.
-    The card says so, in the forge's words, once."""
-    from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
+def test_prless_card_does_not_request_forge_checks(client, monkeypatch):
+    from app.api.routes import accept
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _enable_app_pr(monkeypatch)
-
-    async def _no_tokens(_pid, _session):
-        return None
-
-    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
-    # A real merge this time (the default pr_world merge is a no-op), so the
-    # push-back step actually runs and can be watched.
-    monkeypatch.setattr(
-        ws, "merge_topic", lambda pid_, tid_, **_kw: {"merged": True, "commit": "abc"}
-    )
-    monkeypatch.setattr(ws, "_base_branch", lambda repo: "main")
-    git_calls: list[tuple] = []
-    monkeypatch.setattr(
-        ws, "_git", lambda repo, *args, **kw: git_calls.append(args) or ""
-    )
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert [a for a in git_calls if a[0] in ("push", "fetch")] == []
-    assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
-    assert card["forge"]["kind"] == "platform"
-    assert card["forge"]["pushes_to_external_remote"] is False
-
-
-# ---- 有 git 远端、但那个远端不是 GitHub（gitee、校内 GitLab、自建）-----------
-
-
-def _event_types(client, topic_id: str) -> list[str]:
-    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    return [
-        (b.get("meta") or {}).get("event_type") for b in blocks if b["kind"] == "event"
-    ]
-
-
-def _event_types_settled(client, topic_id: str, needle: str) -> list[str]:
-    """房间里那几行是 fire-and-forget 落下的，给事件循环几拍。"""
-    import time
-
-    from tests.conftest import wait_work_idle
-
-    wait_work_idle()
-    types = _event_types(client, topic_id)
-    for _ in range(40):
-        if needle in types:
-            break
-        time.sleep(0.05)
-        types = _event_types(client, topic_id)
-    return types
-
-
-@pytest.fixture
-def campus_gitlab(pr_world, monkeypatch):
-    """一个填了自己仓库地址、而那个地址不是 GitHub 的项目。
-
-    老师点了同步、看见历史进来了，于是合理地认为这是双向的 —— 所以采纳必须真的
-    推回去，否则他的仓库一个 commit 都收不到，而且没有一句话告诉他。
-
-    地址是 `https://`，因为项目设置里那一栏的提示写的就是「https://… 或本机绝对
-    路径」—— 老师填进来的是这个。写得动与否由远端回答（`can_push_upstream`），
-    不由地址的 scheme 回答：这个项目的凭据是有的。
-    """
-    from app.domain.agent import github_app
-    from app.domain.workspace import service as ws
-
-    async def _no_tokens(_pid, _session):
-        return None
-
-    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
-    monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://gitlab.campus.edu/teacher/course.git"
-    )
-    monkeypatch.setattr(ws, "can_push_upstream", lambda pid: True)
-    monkeypatch.setattr(ws, "base_branch_head", lambda pid: ("main", "deadbeef"))
-    # 上游默认分支叫什么，由上游说了算；这个老师的仓库跟平台同名。叫 `master` 的
-    # 那一档是下面的负向对照。
-    monkeypatch.setattr(ws, "synced_upstream_branch", lambda pid: "main")
-    return pr_world
-
-
-def test_accepting_pushes_the_trunk_back_to_the_projects_own_remote(
-    client, campus_gitlab, monkeypatch
-):
-    """采纳 = 合进平台仓库的 main **并把 main 推回项目自己的远端**。
-
-    卡上先说了这件事（I23），采纳再做到它。
-    """
-    from app.domain.workspace import service as ws
-
-    pushed: list[tuple] = []
-    monkeypatch.setattr(
-        ws,
-        "push_branch",
-        lambda pid, branch, token, *, remote_branch=None: (
-            pushed.append((branch, remote_branch)) or branch
-        ),
-    )
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-
-    filed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
-    assert filed["forge"]["kind"] == "external_remote"
-    assert filed["forge"]["pushes_to_external_remote"] is True
-    assert "推回该远端" in filed["forge"]["declaration"]
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["status"] == "accepted"
-    assert pushed == [("main", "main")]
-    # 那个远端不是 GitHub，一次 GitHub 调用都不该发生。
-    assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
-
-
-def test_an_upstream_whose_trunk_is_master_gets_its_master_not_a_new_main(
-    client, campus_gitlab, monkeypatch
-):
-    """负向对照：老师的仓库默认分支叫 `master`。
-
-    平台侧的基线恒为 `main`，同步做的是把 `upstream/master` 拉进本地的 `main`。
-    两侧按同名推回去，`git push` 返回 0、卡上写着「已推回该远端」，而老师的仓库
-    里凭空多出一条没人看的 `main`，他的 `master` 一个 commit 都收不到 —— 本来要
-    消灭的那次沉默，换了个分支名活下来。同步从哪条拉，就推回哪条。
-    """
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(ws, "synced_upstream_branch", lambda pid: "master")
-    pushed: list[tuple] = []
-    monkeypatch.setattr(
-        ws,
-        "push_branch",
-        lambda pid, branch, token, *, remote_branch=None: (
-            pushed.append((branch, remote_branch)) or branch
-        ),
-    )
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["status"] == "accepted"
-    assert pushed == [("main", "master")]
-
-
-def test_a_push_back_that_fails_is_reported_as_a_push_failure(
-    client, campus_gitlab, monkeypatch
-):
-    """合并已经发生了，推送没成 —— 房间里要说，但不能说成「采纳停了」。
-
-    改动确实在平台仓库的 main 上，卡确实是 accepted；再落一条 `accept_stopped`
-    会让按类别码分流的告警把一张采纳成功的卡报成半路停下。
-    """
-    from app.domain.review import services as review_services
-    from app.domain.workspace import service as ws
-
-    def _refused(pid, branch, token, *, remote_branch=None):
-        raise RuntimeError("Permission denied (publickey)")
-
-    monkeypatch.setattr(ws, "push_branch", _refused)
-    # 采纳结果那几行开自己的会话，好在调用方回滚之后照样落地；模块级的那个工厂
-    # 在测试里绑着另一个库，所以指回本次测试的。
-    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["status"] == "accepted"
-
-    types = _event_types_settled(client, tid, "remote_push_failed")
-    assert "remote_push_failed" in types
-    assert "accept_done" in types
-    assert "accept_stopped" not in types
-
-    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
-    (line,) = [
-        b
-        for b in blocks
-        if (b.get("meta") or {}).get("event_type") == "remote_push_failed"
-    ]
-    # 说清楚改动在哪、不在哪 —— 只有人能决定接下来怎么办。
-    assert "没能推回" in line["content"]
-    assert "Permission denied" in line["meta"]["detail"]
-
-
-def test_a_branch_name_that_cannot_be_read_is_reported_the_same_way(
-    client, campus_gitlab, monkeypatch
-):
-    """合并之后的每一步失败都走同一条上报，读分支名也不例外。
-
-    `_accept_platform` 回来的时候，squash 已经落在磁盘上了，卡已经是 accepted，
-    房间里的「已合并」是另一条会话发的、已经 commit。这时候再往上抛异常，本次请求
-    的事务回滚 —— 卡退回 pending、采纳人收到报错 —— 而合并和那句「已合并」都还在，
-    三者互相打架。所以读分支名失败也是上报，不是抛。
-    """
-    from app.domain.review import services as review_services
-    from app.domain.workspace import service as ws
-
-    def _cannot_read(pid):
-        raise ws.WorkspacePermissionError("git rev-parse: Permission denied")
-
-    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    # 递卡也读这个分支；要坏的是采纳那一次，所以卡先立住再坏。
-    monkeypatch.setattr(ws, "base_branch_head", _cannot_read)
-
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["status"] == "accepted"
-    # 卡留在 accepted，没有因为回滚退回 pending。
-    listed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
-    assert [c["status"] for c in listed if c["id"] == cid] == ["accepted"]
-
-    types = _event_types_settled(client, tid, "remote_push_failed")
-    assert "remote_push_failed" in types
-    assert "accept_stopped" not in types
+    _make_card(client, tid)
+    factory = AsyncMock(side_effect=AssertionError("No PR to read"))
+    monkeypatch.setattr(accept, "proposal_client", factory)
+    response = client.get(f"/topics/{tid}/pr-checks")
+    assert response.status_code == 200
+    assert response.json()["data"] == {"available": False}
+    factory.assert_not_awaited()

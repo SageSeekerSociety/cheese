@@ -4,6 +4,8 @@
 // 图片）直接读原始字节。两个面板都要做这件事——预览看的是芝士交付的那一份，改动看
 // 的是某个任务分支上的那一份——所以取字节这件事在这里一次写完，而不是各写一遍：
 // 各写一遍的表现是同一份文档在两处显示得不一样。
+import type { FileSource } from '../cx_types'
+
 import { ref, watch } from 'vue'
 
 import { previewDocumentPdf, previewFileBytes, PreviewRendererUnavailable } from '../api'
@@ -19,6 +21,7 @@ export interface DocumentSource {
   version: () => string | null
   /** 哪个来源：某个任务的工作树，还是房间自己的文件（null）。 */
   task?: () => string | null
+  source?: () => FileSource
   /** 打一下就重取，版本没变也重取——修订处理完了就是这种情况。 */
   nonce?: () => number
   /** 这个文件要不要取字节。Markdown 不要：它的正文已经在文件内容里了，取一份
@@ -39,8 +42,9 @@ export function useDocumentBytes(source: DocumentSource) {
     const tid = source.topicId()
     const path = source.path()
     const task = source.task?.() ?? null
+    const fileSource = source.source?.() ?? 'live'
     if (!tid || !path || (source.enabled && !source.enabled())) return
-    const key = `${tid}:${task ?? ''}:${path}:${source.version() ?? ''}:${source.nonce?.() ?? 0}`
+    const key = `${tid}:${task ?? ''}:${fileSource}:${path}:${source.version() ?? ''}:${source.nonce?.() ?? 0}`
     if (key === loadedKey && bytes.value) return
     const mine = ++generation
     loading.value = true
@@ -48,8 +52,8 @@ export function useDocumentBytes(source: DocumentSource) {
     rendererMissing.value = false
     try {
       const got = NEEDS_CONVERSION.has(suffixOf(path))
-        ? await previewDocumentPdf(tid, path, task)
-        : await previewFileBytes(tid, path, task)
+        ? await previewDocumentPdf(tid, path, task, fileSource)
+        : await previewFileBytes(tid, path, task, fileSource)
       if (mine !== generation) return
       bytes.value = got
       loadedKey = key
@@ -72,11 +76,16 @@ export function useDocumentBytes(source: DocumentSource) {
     error.value = ''
   }
 
+  watch([source.topicId, source.path, source.task ?? (() => null), source.source ?? (() => 'live')], forget, {
+    flush: 'sync',
+  })
+
   watch(
     [
       source.path,
       source.version,
       source.task ?? (() => null),
+      source.source ?? (() => 'live'),
       source.nonce ?? (() => 0),
       source.enabled ?? (() => true),
     ],

@@ -1,6 +1,5 @@
 """Project routes."""
 
-import asyncio
 import logging
 import uuid
 from dataclasses import asdict
@@ -16,15 +15,14 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
-    get_work_runner,
     project_device_online,
 )
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
-    GatewayUnavailableError,
     NotFoundError,
     ValidationError,
 )
@@ -35,7 +33,6 @@ from app.domain.agent.compute_configs import (
     validate_choice,
 )
 from app.domain.agent.github_app import (
-    GitHubAppError,
     github_app_read_token_for_project,
 )
 from app.domain.agent.market import (
@@ -44,7 +41,6 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -85,6 +81,7 @@ from app.domain.project.repositories import (
     ProjectRepository,
 )
 from app.domain.project.schemas import (
+    ForgeAttributionUpdate,
     ProjectCreate,
     ProjectOut,
 )
@@ -97,7 +94,6 @@ from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
-from app.domain.workspace import upstream_conflict
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -176,6 +172,7 @@ async def create_project(
         agent_type=body.agent_type,
         team_id=body.team_id,
         external_task_id=body.external_task_id,
+        forge_kind=body.forge_kind,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
@@ -1030,6 +1027,69 @@ async def get_private_chat(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+@router.get("/{project_id}/forge")
+async def get_project_forge(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.project.forge import binding_for_project
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    binding = await binding_for_project(project_id, db)
+    return ok(
+        {
+            "kind": binding.kind
+            if binding
+            else (project.settings or {}).get("forge_kind", "forgejo"),
+            "connected": binding is not None,
+            "repo": binding.repo if binding else None,
+            "url": binding.url.removesuffix(".git") if binding else None,
+        }
+    )
+
+
+@router.get("/{project_id}/forge-attribution")
+async def get_forge_attribution(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.workspace.identity import requester_credit_enabled
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok(
+        {
+            "requester_coauthor": (project.settings or {}).get(
+                "forge_requester_coauthor"
+            ),
+            "effective": requester_credit_enabled(project.settings or {}),
+            "deployment_default": settings.forge_attribution_default,
+        }
+    )
+
+
+@router.put("/{project_id}/forge-attribution")
+async def save_forge_attribution(
+    project_id: uuid.UUID,
+    body: ForgeAttributionUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if body.requester_coauthor is None:
+        values.pop("forge_requester_coauthor", None)
+    else:
+        values["forge_requester_coauthor"] = body.requester_coauthor
+    project.settings = values
+    await db.flush()
+    return await get_forge_attribution(project_id, db, resolver)
+
+
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
 
 
@@ -1323,58 +1383,37 @@ async def set_branch_protection(
 
 
 @router.get("/{project_id}/upstream")
-async def get_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's linked upstream repo (关联已有 repo, spec §6.3), if any."""
-    await ProjectService(db).get_or_404(project_id)
-    return ok({"url": ws.get_upstream(project_id)})
+async def get_project_upstream(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The GitHub repository selected for the installation flow."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
 @router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Link the project to an existing git repo (empty url → unlink). The repo's
-    history then flows in via 同步上游, and stays syncable afterwards."""
-    await ProjectService(db).get_or_404(project_id)
-    url = ws.set_upstream(project_id, str(body.get("url") or ""))
+    """Select a GitHub repository before binding its installation."""
+    from app.domain.project.forge import binding_for_project
+    from app.domain.review.github_pr import parse_github_repo
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    if await binding_for_project(project_id, db) is not None:
+        raise ConflictError("项目已连接代码仓库，暂不支持更换")
+    if (project.settings or {}).get("forge_kind") != "github_app":
+        raise ConflictError("这个项目由芝士托管，暂不支持切换到 GitHub")
+    raw = str(body.get("url") or "").strip()
+    parsed = parse_github_repo(raw) if raw else None
+    if raw and parsed is None:
+        raise ValidationError("请输入 GitHub 仓库地址")
+    url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
+    project.settings = {**(project.settings or {}), "github_repository_url": url}
+    await db.flush()
     return ok({"url": url})
-
-
-@router.post("/{project_id}/upstream/sync")
-async def sync_project_upstream(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """同步上游: fetch + merge the upstream default branch into the project base.
-    Conflicts abort cleanly and come back as {"synced": false, "reason": ...} —
-    and, when we know who asked, 芝士 is dispatched at the materialized conflict
-    so that report is a starting point instead of a dead end (spec §6.3, same
-    contract as 采纳冲突 in routes/accept.py)."""
-    await ProjectService(db).get_or_404(project_id)
-    # The App's token for a bound project, nothing for an unbound one: the
-    # fetch runs on the platform's own identity or on none.
-    try:
-        token = await github_app_read_token_for_project(project_id, db)
-    except GitHubAppError as exc:
-        raise GatewayUnavailableError(str(exc)) from exc
-    result = await asyncio.to_thread(ws.sync_upstream, project_id, token=token)
-    if result.get("synced") or not result.get("conflicts"):
-        return ok(result)
-    # Anonymous callers get the old behaviour: with no handle there is no 1:1
-    # room to put the work in, and inventing one would strand it.
-    actor = await resolver.resolve(fallback_handle=None)
-    if not actor.authenticated or not actor.handle:
-        return ok(result)
-    dispatched = await upstream_conflict.dispatch(
-        db,
-        project_id,
-        requested_by=actor.handle,
-        chat=chat,
-        runner=runner,
-    )
-    if dispatched is not None:
-        result = {**result, "dispatched": dispatched}
-    return ok(result)

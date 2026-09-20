@@ -1,0 +1,23 @@
+# Public ingress shared by deployments that connect outward over WebSocket.
+# The env file contains FORGE_EVENT_RELAY_KEYS as a JSON deployment/secret map.
+# A shared GitHub App posts to /forge/events/github-app, signed with
+# FORGE_EVENT_GITHUB_SECRET. FORGE_EVENT_GITHUB_INSTALLATIONS maps installation
+# IDs to authorized deployments, for example {"123":["dev","production"]}.
+services:
+  forge-events:
+    image: ${FORGE_EVENTS_IMAGE:?pin the backend image containing the relay}
+    command: ["uvicorn", "app.forge_events_app:app", "--host", "0.0.0.0", "--port", "8093"]
+    env_file:
+      - ${FORGE_EVENTS_ENV_FILE:?path to the relay-specific secrets file}
+    ports:
+      - "127.0.0.1:${FORGE_EVENTS_PORT:-8093}:8093"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8093/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: ${FORGE_EVENTS_LOG_DRIVER:-journald}
+      options:
+        tag: "{{.Name}}"

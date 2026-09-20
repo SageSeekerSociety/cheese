@@ -15,11 +15,9 @@ import uuid as _uuid
 
 import pytest
 
-from app.core.errors import ValidationError
 from app.domain.review import forge as forge_mod
 from app.domain.review import merge_state
 from tests.integration.test_accept_pr import (
-    JUST_LOOKED,
     _accept,
     _cards,
     _make_card,
@@ -232,44 +230,15 @@ def test_a_forge_that_hosts_none_keeps_the_review_on_the_card(client, ledger):
 # ---- I21c：用户什么都没配的仓库上，三个动作完整可用 --------------------------
 
 
-def test_nothing_configured_still_merges_reads_and_proposes(client):
-    """没装 App、没有远端、没开任何设置的项目上，三个动作都走得通。
+def test_nothing_configured_gets_a_forgejo_repository(client):
+    """New projects receive a hosted repository without repository changes.
 
-    替身在这一条里让开：解析出来的是真的那个 forge，因为要钉的正是「用户什么都
-    没配」这个事实解析出什么。没有一条产品路径以「请去 GitHub 开个 X」结束。
+    Native proposal creation, review, and merging are exercised against the
+    actual Forgejo server in tests/forgejo/test_live.py.
     """
     tid, cid = _bare_card(client)
-
     card = _cards(client, tid)[0]
-    assert card["forge"]["kind"] == forge_mod.ForgeKind.platform.value
-    assert card["forge"]["reports_checks"] is False
-    # 读结论：没有可读的结论，平台照旧给出一个可判的合并态，而不是一个错误。
-    assert card["merge_state"]["state"] in ("clean", "unknown")
-
-    # 提案：没有提案页可刷新，而且说得出为什么 —— 不是要求去开一个。
-    bare = forge_mod.forge_for(
-        forge_mod.capabilities_of(
-            forge_mod.ProjectForgeFacts(
-                github_app_installed=False,
-                has_external_remote=False,
-                remote_write_credential=False,
-            )
-        )
-    )
-    with pytest.raises(ValidationError) as refused:
-        await_refresh(bare)
-    for sentence in (card["forge"]["declaration"], str(refused.value)):
-        assert "请去" not in sentence
-        assert "请先" not in sentence
-
-    # 合并：就地完成。
-    accepted = _accept(client, cid, head_sha=JUST_LOOKED)
-    assert accepted.status_code == 200, accepted.text
-    assert accepted.json()["data"]["status"] == "accepted"
-
-
-def await_refresh(forge) -> None:
-    """Run the proposal-refresh action to its refusal, without a room around it."""
-    import asyncio
-
-    asyncio.run(forge.refresh_unseen_head(None, None, None, "采纳"))
+    assert card["forge"]["kind"] == forge_mod.ForgeKind.forgejo.value
+    assert card["forge"]["reports_checks"] is True
+    assert card["forge"]["hosts_proposals"] is True
+    assert card["merge_state"]["state"] == "unknown"

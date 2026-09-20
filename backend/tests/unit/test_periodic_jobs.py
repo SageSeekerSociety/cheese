@@ -130,7 +130,6 @@ def _jobs():
         tick=_noop,
         poll_open_prs=_noop,
         open_draft_prs=_noop,
-        sync_upstreams=_noop,
         sweep_orphan_turns=_noop,
         remind_silent_turns=_noop,
         sweep_abandoned_gates=_noop,
@@ -175,3 +174,16 @@ def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
 def test_every_job_is_named_once():
     names = [job.name for job in _jobs()]
     assert len(names) == len(set(names)), f"duplicate job names: {names}"
+
+
+async def test_existing_repository_subscriptions_are_reconciled(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    reconcile = AsyncMock(return_value={"configured": 0, "failed": 0})
+    monkeypatch.setattr(
+        "app.domain.project.forge.reconcile_repository_webhooks", reconcile
+    )
+    job = next(job for job in _jobs() if job.name == "forge event subscriptions")
+    assert job.interval_seconds > 0
+    await job._job()
+    reconcile.assert_awaited_once()

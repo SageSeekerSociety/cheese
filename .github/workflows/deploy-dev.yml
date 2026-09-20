@@ -77,7 +77,8 @@ jobs:
     # no approval step.
     environment: dev
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 30
+    # The first Forge cutover archives existing workspaces and task recovery bundles.
+    timeout-minutes: 120
     steps:
       - name: Check out the built commit (for the deploy scripts + compose)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -113,6 +114,29 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
+
+      - name: Configure feedback administrators
+        if: steps.scope.outputs.skip != 'true'
+        env:
+          FEEDBACK_ADMIN_HANDLES: ${{ vars.FEEDBACK_ADMIN_HANDLES }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import runpy
+
+          value = os.environ["FEEDBACK_ADMIN_HANDLES"]
+          if value:
+              handles = json.loads(value)
+              if not isinstance(handles, list) or not handles or any(
+                  not isinstance(handle, str) or not handle.strip() for handle in handles
+              ):
+                  raise ValueError("FEEDBACK_ADMIN_HANDLES must name at least one account")
+              save = runpy.run_path("deploy/bootstrap-forgejo.py")["save_environment"]
+              save(Path(os.environ.get("BACKEND_ENV_FILE", "/home/nictheboy/cheese-backend-py/backend/.env")),
+                   {"FEEDBACK_ADMIN_HANDLES": json.dumps(handles)})
+          PY
 
       - name: Docker deploy this commit
         if: steps.scope.outputs.skip != 'true'

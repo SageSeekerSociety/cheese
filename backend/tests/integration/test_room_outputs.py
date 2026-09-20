@@ -11,7 +11,7 @@
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.workspace import service as ws
+from tests.support import git_store
 
 
 def _project(client) -> str:
@@ -135,12 +135,13 @@ def test_saving_adds_nothing_to_the_manifest_and_nothing_to_the_trunk(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
     _show(client, project_id, room_id, "评审简报.html", "<h1>定稿</h1>")
-    head = ws.base_branch_head(uuid.UUID(project_id))[1]
+    repository = git_store.path(uuid.UUID(project_id))
+    head = git_store.git(repository, "rev-parse", "main")
 
     _save(client, room_id, "评审简报.html")
 
     assert client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"] == []
-    assert ws.base_branch_head(uuid.UUID(project_id))[1] == head
+    assert git_store.git(repository, "rev-parse", "main") == head
 
 
 def test_cheese_can_show_but_cannot_save(client):

@@ -119,11 +119,10 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '产物', hideTabs: true, backTo: 'workspace-project' },
     },
     {
-      name: 'project-agents',
+      // AI 队友回到了项目设置里：队友的角色设定和模型本来就是这个项目的设置，而
+      // 设置页原本只有仓库那几块，对没绑仓库的项目是空的。发出去的旧链接照旧能用。
       path: 'agents',
-      component: () => import('@/views/ProjectAgentsView.vue'),
-      props: true,
-      meta: { title: 'AI 队友', backTo: 'workspace-project' },
+      redirect: (to) => ({ name: 'project-settings', params: { projectId: to.params.projectId } }),
     },
     {
       name: 'project-settings',

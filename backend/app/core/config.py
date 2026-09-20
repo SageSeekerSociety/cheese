@@ -619,8 +619,7 @@ class Settings(BaseSettings):
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key
     # and mints short-lived installation tokens from it. Unset = the
-    # /sandbox/github-token endpoint answers "not configured"; nothing else
-    # changes.
+    # /sandbox/forge-token endpoint cannot issue GitHub credentials.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
     # Which installation to mint a token for is resolved per-project via the
@@ -628,6 +627,21 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+
+    forgejo_url: str = ""
+    forgejo_api_url: str = ""
+    forgejo_admin_token: str = ""
+    forge_attribution_default: bool = True
+    forge_event_relay_url: str = ""
+    forge_event_secret: str = ""
+    # Only the public relay loads the deployment -> shared secret mapping.
+    forge_event_relay_keys: dict[str, str] = {}
+    forge_event_github_secret: str = ""
+    forge_event_github_app_id: int | None = None
+    forge_event_github_public_key: str = ""
+    # GitHub App installation ID -> deployments authorized for that installation.
+    forge_event_github_installations: dict[str, list[str]] = {}
+    forge_webhook_url: str = ""
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -640,16 +654,11 @@ class Settings(BaseSettings):
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
-    accept_pr_poll_interval_s: int = 60
+    accept_pr_poll_interval_s: int = 300
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
-    # 自动同步上游: how often to pull the upstream's default branch into each
-    # linked project's base. Falling behind is what makes accepts unable to push
-    # (see SchedulerService.sync_upstreams), so this only has to run often
-    # enough that the gap stays small — not on every commit. 0 disables it.
-    upstream_sync_interval_s: int = 1800
     # --- notifications and deadlines ---
     # Three jobs nothing in a request path can do. An aggregation window that
     # never closes is a notification written and never delivered; an undrained

@@ -77,6 +77,7 @@ class PullRequestStatus:
     #: Empty only for a fake/older payload; callers fall back to the derived
     #: name, which is what the personal-token lane always used.
     head_ref: str = ""
+    base_ref: str = ""
     #: GitHub's `mergeable`. **Three-valued on purpose**: True = git can merge
     #: it, False = it conflicts with the base, and None = GitHub has not
     #: finished computing it yet (it does that asynchronously on the first
@@ -213,6 +214,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
     return PullRequestStatus(
         head_sha=data["head"]["sha"],
         head_ref=str(data["head"].get("ref") or ""),
+        base_ref=str((data.get("base") or {}).get("ref") or ""),
         state=str(data.get("state") or ""),
         merged=merged,
         # Anything that isn't a real bool stays None — "GitHub hasn't said
@@ -1361,16 +1363,9 @@ class GitHubPRMergeBlocked(GitHubPRError):
 
 @dataclass(frozen=True, slots=True)
 class OpenedPR:
-    """The PR ``open_pr`` opened or adopted, and whose name it went out under.
-
-    ``identity_downgrade`` is the one sentence to put in front of a person when
-    the requester's own credential could not open the PR and the App's was used
-    instead. None on the ordinary paths. It is a return value rather than a log
-    line because a fallback has to be as visible as the failure it covers.
-    """
+    """The PR opened or adopted for a task."""
 
     pr: dict
-    identity_downgrade: str | None
 
 
 def _as_pr_error[**P, R](
@@ -1419,6 +1414,10 @@ class GitHubPRClient:
         self._api_base = api_base.rstrip("/")
         self._transport = transport
 
+    @property
+    def tokens(self) -> GitHubAppTokens:
+        return self._tokens
+
     def _url(self, path: str) -> str:
         return f"{self._api_base}/repos/{self._owner}/{self._repo}{path}"
 
@@ -1437,7 +1436,6 @@ class GitHubPRClient:
         base: str,
         title: str,
         body: str,
-        as_user_token: str | None = None,
         draft: bool = False,
     ) -> OpenedPR:
         """Open (or find the already-open) PR for a branch.
@@ -1452,21 +1450,7 @@ class GitHubPRClient:
         argument describes the PR being CREATED, and re-deriving the state of
         one that already exists is `mark_ready_for_review`'s job.
 
-        `as_user_token` is the requester's own user-to-server token, and it
-        decides WHOSE PR this is: GitHub attributes a PR to whoever's
-        credential created it, and an App token makes every PR on the platform
-        belong to the bot — no avatar, no "opened by you", no filter-by-author
-        for the person whose work it is. An App can never impersonate a user,
-        so the only way to open it as them is to use their token.
-
-        When their token cannot open it (they left the org, revoked the
-        authorization, uninstalled the App for themselves) the App opens it
-        instead — a PR that exists under the wrong name beats no PR at all —
-        and the returned :class:`OpenedPR` says so in ``identity_downgrade``.
-        The substitution used to be invisible to everything downstream, which
-        is a fallback quieter than the failure it covers (I26): the person is
-        left believing GitHub simply attributes their work to a bot. The
-        callers put that sentence in the room.
+        The App opens the PR; requester credit lives in contribution trailers.
         """
         app_token, _ = await self._tokens.write_token()
         payload: dict[str, object] = {
@@ -1478,28 +1462,11 @@ class GitHubPRClient:
         if draft:
             payload["draft"] = True
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
-
-            async def _create(token: str) -> httpx.Response:
-                return await client.post(
-                    self._url("/pulls"), json=payload, headers=self._headers(token)
-                )
-
-            resp = None
-            downgrade: str | None = None
-            if as_user_token:
-                resp = await _create(as_user_token)
-                if resp.status_code == 201:
-                    return OpenedPR(resp.json(), None)
-                if resp.status_code != 422 or "already exist" not in resp.text:
-                    downgrade = (
-                        f"你的 GitHub 授权开不了这个 PR（HTTP {resp.status_code}），"
-                        "已改用芝士的 App 身份开——PR 会记在机器人名下，不在你名下。"
-                    )
-                    resp = None
-            if resp is None:
-                resp = await _create(app_token)
-                if resp.status_code == 201:
-                    return OpenedPR(resp.json(), downgrade)
+            resp = await client.post(
+                self._url("/pulls"), json=payload, headers=self._headers(app_token)
+            )
+            if resp.status_code == 201:
+                return OpenedPR(resp.json())
             if resp.status_code == 422 and "already exist" in resp.text:
                 listing = await client.get(
                     self._url("/pulls"),
@@ -1509,7 +1476,7 @@ class GitHubPRClient:
                 if listing.status_code == 200 and listing.json():
                     # An adopted PR was opened earlier under whatever identity
                     # opened it then; this call substituted nothing.
-                    return OpenedPR(listing.json()[0], None)
+                    return OpenedPR(listing.json()[0])
             raise GitHubPRError(
                 f"PR creation failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )

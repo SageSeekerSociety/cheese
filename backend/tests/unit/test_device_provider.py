@@ -1245,26 +1245,20 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
         launch=ClaudeLaunch(system_prompt=""),
     )
 
-    for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
+    for key in ("CHEESE_API", "CHEESE_HOOK_URL"):
         url = hub.env[key]
         assert url.startswith(base), f"{key}={url} does not extend {base}"
         remainder = url[len(base) :]
         if not remainder:  # CHEESE_API is the base itself
             continue
-        # The git remote is a PREFIX — git appends the dumb/smart-HTTP paths
-        # itself — so ask about the one it fetches first.
-        if key == "CHEESE_GIT_REMOTE":
-            remainder += "/info/refs"
         assert served(remainder), (
             f"{key}={url} leaves {remainder!r}, which this app does not serve"
         )
 
 
 @pytest.mark.anyio
-async def test_every_device_is_told_where_to_clone_from():
-    """The launcher's clone/push block is inert without these two env vars, so the
-    wiring is the thing that has to be tested — the block itself can be perfect
-    and the machine still starts in an empty dir."""
+async def test_every_device_gets_the_context_for_task_repository_lookup():
+    """The CLI resolves the forge remote from authenticated task metadata."""
 
     class RecordingHub(FakeHub):
         def __init__(self) -> None:
@@ -1289,7 +1283,10 @@ async def test_every_device_is_told_where_to_clone_from():
         launch=ClaudeLaunch(system_prompt=""),
     )
 
-    assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
+    assert hub.env["CHEESE_API"] == "http://cheese.test"
+    assert hub.env["CHEESE_PROJECT"] == str(project)
+    assert hub.env["CHEESE_TOKEN"] == "tok"
+    assert "CHEESE_GIT_REMOTE" not in hub.env
     assert "CHEESE_GIT_BRANCH" not in hub.env
     assert hub.env["CHEESE_TOPIC"] == str(topic)
 

@@ -14,6 +14,9 @@ from tests.delivery import (
     delivery_task_id,
 )
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _project(client) -> str:
@@ -37,7 +40,7 @@ def _card(
     reviewer: str = "alice",
     subject: str = "chore(test): file an accept card",
 ):
-    return client.post(
+    response = client.post(
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
@@ -47,6 +50,17 @@ def _card(
             "routing_reason": "最懂",
         },
     )
+    if response.status_code == 200:
+        world = client.test_forge_world
+        head = _give_card_a_pr(
+            client,
+            world,
+            topic_id,
+            response.json()["data"]["id"],
+            len(world["fake"].prs) + 1,
+        )
+        world["fake"].check_state_by_sha[head] = ("success", "全部通过")
+    return response
 
 
 def _commit_next_task(client, project_id: str, topic_id: str, text: str) -> None:
@@ -68,7 +82,7 @@ def _task_state(client, topic_id: str) -> dict:
 def _accept(client, card_id: str, by: str = "alice"):
     return client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": by},
+        json={"decided_by": by, "head_sha": _rendered_head(client, card_id)},
         headers=session_auth_headers(by),
     )
 

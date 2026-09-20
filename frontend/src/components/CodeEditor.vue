@@ -204,6 +204,11 @@ watch(
 )
 // External content change that didn't come from typing (e.g. reload).
 watch(
+  () => props.readonly,
+  (readOnly) => editor?.updateOptions({ readOnly })
+)
+
+watch(
   () => props.modelValue,
   (v) => {
     if (editor && v !== editor.getValue()) {
