@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import shlex
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from urllib.parse import urlsplit
@@ -161,12 +162,36 @@ def main() -> None:
     parser.add_argument("--backend-env", type=Path, required=True)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--configure-events", action="store_true")
+    parser.add_argument("--configure-github-events", action="store_true")
     parser.add_argument("--relay-env", type=Path)
     parser.add_argument("--api-url", default="http://127.0.0.1:3300/api/v1")
     parser.add_argument("--docker-context")
     args = parser.parse_args()
     # Refuse a wrong path before creating an administrator or issuing a token.
     original = args.backend_env.read_text()
+    if args.configure_github_events:
+        public = json.load(sys.stdin)
+        if not public:
+            return
+        if type(public.get("app_id")) is not int or not isinstance(
+            public.get("public_key"), str
+        ):
+            raise ValueError("Invalid GitHub App public configuration")
+        relay_env = args.relay_env or args.backend_env.parent / ".forge-events.env"
+        values = environment_values(relay_env.read_text())
+        save_environment(
+            relay_env,
+            {
+                "FORGE_EVENT_GITHUB_APP_ID": str(public["app_id"]),
+                "FORGE_EVENT_GITHUB_PUBLIC_KEY": json.dumps(public["public_key"]),
+                "FORGE_EVENT_GITHUB_SECRET": values.get("FORGE_EVENT_GITHUB_SECRET")
+                or secrets.token_hex(32),
+            },
+        )
+        save_environment(
+            args.backend_env, {"FORGE_EVENT_GITHUB_APP_ID": str(public["app_id"])}
+        )
+        return
     if args.configure_events:
         configure_events(
             args.backend_env,

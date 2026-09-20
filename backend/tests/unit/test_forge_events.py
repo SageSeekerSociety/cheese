@@ -4,14 +4,290 @@ import asyncio
 import hashlib
 import hmac
 import json
+import time
 import uuid
 from unittest.mock import AsyncMock
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
 from app import forge_events_app as relay
+from app.core.forge_events import subscription_assertion
+
+
+@pytest.fixture
+def app_signing_key(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    public = (
+        key.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode()
+    )
+    monkeypatch.setattr(relay.settings, "forge_event_github_app_id", 123)
+    monkeypatch.setattr(relay.settings, "forge_event_github_public_key", public)
+    monkeypatch.setattr(relay.settings, "forge_event_github_secret", "app-secret")
+    monkeypatch.setattr(relay.settings, "forge_event_github_installations", {})
+    return private
+
+
+def test_relay_configuration_exports_only_public_key(
+    monkeypatch, app_signing_key, tmp_path
+):
+    from scripts.forge_event_public_key import public_configuration, settings
+
+    key_path = tmp_path / "app.pem"
+    key_path.write_text(app_signing_key)
+    monkeypatch.setattr(settings, "github_app_id", 123)
+    monkeypatch.setattr(settings, "github_app_private_key_path", str(key_path))
+    public = public_configuration()
+    assert public == {
+        "app_id": 123,
+        "public_key": relay.settings.forge_event_github_public_key,
+    }
+    assert "PRIVATE" not in json.dumps(public)
+
+
+def test_signed_subscriptions_route_new_bindings_and_remove_old_ones(
+    client, app_signing_key
+):
+    with (
+        client.websocket_connect(
+            "/forge/events/first/connect",
+            headers={"Authorization": "Bearer first-secret"},
+        ) as first,
+        client.websocket_connect(
+            "/forge/events/second/connect",
+            headers={"Authorization": "Bearer second-secret"},
+        ) as second,
+    ):
+
+        def subscribe(socket, deployment, rows):
+            socket.send_json(
+                {
+                    "kind": "github_subscriptions",
+                    "assertion": subscription_assertion(
+                        app_id=123,
+                        private_key=app_signing_key,
+                        deployment=deployment,
+                        repositories=rows,
+                    ),
+                }
+            )
+            assert socket.receive_json() == {"kind": "subscription_ack"}
+
+        subscribe(first, "first", [(11, "Owner/Project")])
+        subscribe(second, "second", [(11, "other/project")])
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=11),
+            ).status_code
+            == 202
+        )
+        assert first.receive_json()["repo"] == "owner/project"
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=11, repo="other/project"),
+            ).status_code
+            == 202
+        )
+        assert second.receive_json()["repo"] == "other/project"
+        subscribe(first, "first", [])
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=11),
+            ).status_code
+            == 202
+        )
+        assert (
+            client.post(
+                "/forge/events/first", **signed(repo="owner/marker")
+            ).status_code
+            == 202
+        )
+        assert first.receive_json()["repo"] == "owner/marker"
+
+
+@pytest.mark.parametrize(
+    "invalid", ["other_deployment", "expired", "wrong_app", "too_long", "forged"]
+)
+def test_untrusted_subscription_is_refused(client, app_signing_key, invalid):
+    now = int(time.time())
+    claims = {
+        "iss": "123",
+        "aud": "forge-events:first",
+        "iat": now,
+        "exp": now + 300,
+        "repositories": [[11, "owner/project"]],
+    }
+    if invalid == "other_deployment":
+        claims["aud"] = "forge-events:second"
+    elif invalid == "expired":
+        claims.update(iat=now - 400, exp=now - 100)
+    elif invalid == "wrong_app":
+        claims["iss"] = "999"
+    elif invalid == "too_long":
+        claims["exp"] = now + 600
+    token = jwt.encode(
+        claims,
+        "forged" * 8 if invalid == "forged" else app_signing_key,
+        algorithm="HS256" if invalid == "forged" else "RS256",
+    )
+    with client.websocket_connect(
+        "/forge/events/first/connect", headers={"Authorization": "Bearer first-secret"}
+    ) as socket:
+        socket.send_json({"kind": "github_subscriptions", "assertion": token})
+        with pytest.raises(WebSocketDisconnect) as closed:
+            socket.receive_json()
+        assert closed.value.code == 1008
+
+
+def test_live_subscription_stops_receiving_when_its_authorization_expires(
+    client, app_signing_key, monkeypatch
+):
+    with client.websocket_connect(
+        "/forge/events/first/connect",
+        headers={"Authorization": "Bearer first-secret"},
+    ) as socket:
+        socket.send_json(
+            {
+                "kind": "github_subscriptions",
+                "assertion": subscription_assertion(
+                    app_id=123,
+                    private_key=app_signing_key,
+                    deployment="first",
+                    repositories=[(11, "owner/project")],
+                ),
+            }
+        )
+        assert socket.receive_json() == {"kind": "subscription_ack"}
+        expired = time.time() + 301
+        monkeypatch.setattr(relay.time, "time", lambda: expired)
+        assert (
+            client.post(
+                "/forge/events/github-app",
+                **signed(secret="app-secret", installation=11),
+            ).status_code
+            == 202
+        )
+        assert (
+            client.post(
+                "/forge/events/first", **signed(repo="owner/marker")
+            ).status_code
+            == 202
+        )
+        assert socket.receive_json()["repo"] == "owner/marker"
+
+
+@pytest.mark.anyio
+async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
+    from app.domain.review import events
+
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def register(*args):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    class Socket:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await started.wait()
+            raise StopAsyncIteration
+
+    class Connect:
+        async def __aenter__(self):
+            return Socket()
+
+        async def __aexit__(self, *args):
+            pass
+
+    async def retry(seconds):
+        assert stopped.is_set()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(events, "connect", lambda *args, **kwargs: Connect())
+    monkeypatch.setattr(events, "register_subscriptions", register)
+    monkeypatch.setattr(events.asyncio, "sleep", retry)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(events.listen(AsyncMock(), None), 2)
+
+
+@pytest.mark.anyio
+async def test_registration_refreshes_database_bindings(
+    db_factory, monkeypatch, app_signing_key, tmp_path
+):
+    from app.core.forge_events import verify_subscriptions
+    from app.domain.project.models import Project, ProjectGitInstallation
+    from app.domain.review import events
+
+    key_path = tmp_path / "app.pem"
+    key_path.write_text(app_signing_key)
+    monkeypatch.setattr(events.settings, "github_app_id", 123)
+    monkeypatch.setattr(events.settings, "github_app_private_key_path", str(key_path))
+    monkeypatch.setattr(
+        events.settings,
+        "forge_event_relay_url",
+        "wss://relay.example/forge/events/first/connect",
+    )
+    async with db_factory() as session:
+        project = Project(name="Event subscription")
+        session.add(project)
+        await session.flush()
+        session.add(
+            ProjectGitInstallation(
+                project_id=project.id,
+                installation_id=11,
+                repo="owner/project",
+                account="owner",
+            )
+        )
+        await session.commit()
+    socket = AsyncMock()
+
+    async def next_cycle(seconds):
+        assert seconds == 60
+        if socket.send.await_count == 2:
+            raise asyncio.CancelledError
+        async with db_factory() as session:
+            row = await session.scalar(select(ProjectGitInstallation))
+            await session.delete(row)
+            await session.commit()
+
+    monkeypatch.setattr(events.asyncio, "sleep", next_cycle)
+    with pytest.raises(asyncio.CancelledError):
+        await events.register_subscriptions(socket, db_factory)
+    rows = [
+        verify_subscriptions(
+            json.loads(call.args[0])["assertion"],
+            app_id=123,
+            public_key=relay.settings.forge_event_github_public_key,
+            deployment="first",
+        )[0]
+        for call in socket.send.await_args_list
+    ]
+    assert rows == [[(11, "owner/project")], []]
 
 
 @pytest.mark.anyio
@@ -188,7 +464,7 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     )
     monkeypatch.setattr(events.settings, "forge_event_secret", "deployment-secret")
     with pytest.raises(asyncio.CancelledError):
-        await events.listen(scheduler)
+        await events.listen(scheduler, None)
     assert len(attempts) == 2
     assert attempts[1][1]["additional_headers"] == {
         "Authorization": "Bearer deployment-secret"

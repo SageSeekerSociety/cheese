@@ -231,7 +231,9 @@ async def lifespan(_: FastAPI):
     if settings.forge_event_relay_url:
         from app.domain.review.events import listen
 
-        forge_events = asyncio.create_task(listen(scheduler), name="forge events")
+        forge_events = asyncio.create_task(
+            listen(scheduler, async_session_factory), name="forge events"
+        )
 
     # The openviking backend's whole failure mode is silence: a rejected key
     # leaves extraction writing nothing, recall answering empty, and no other

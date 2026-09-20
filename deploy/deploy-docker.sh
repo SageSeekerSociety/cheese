@@ -149,7 +149,14 @@ ensure_forgejo() {
 
 ensure_forge_events() {
   [ "$FORGE_EVENTS_LOCAL" = true ] || return 0
-  local waited=0
+  local waited=0 public_config
+  public_config="$(dc run --rm --no-deps backend python -m scripts.forge_event_public_key)" \
+    || fail "could not export the GitHub App public key"
+  printf '%s' "$public_config" | python3 "$HERE/bootstrap-forgejo.py" \
+    --configure-github-events \
+    --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
+    --relay-env "$FORGE_EVENTS_ENV_FILE" \
+    || fail "could not configure GitHub event subscriptions"
   dc up -d --no-deps forge-events || fail "forge event relay did not start"
   while [ "$waited" -lt 60 ]; do
     if curl -fsS -m 3 "http://127.0.0.1:${FORGE_EVENTS_PORT:-8093}/healthz" >/dev/null; then

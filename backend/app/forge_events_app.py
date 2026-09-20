@@ -9,13 +9,15 @@ import asyncio
 import hashlib
 import hmac
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
 
+import jwt
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app.core.config import settings
-from app.core.forge_events import project_secret
+from app.core.forge_events import project_secret, verify_subscriptions
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 MAX_BODY = 5 * 1024 * 1024
@@ -25,6 +27,7 @@ MAX_BODY = 5 * 1024 * 1024
 class Connection:
     socket: WebSocket
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    subscriptions: dict[tuple[int, str], float] = field(default_factory=dict)
 
 
 connections: dict[str, Connection] = {}
@@ -51,7 +54,33 @@ async def connect(socket: WebSocket, deployment: str):
     connections[deployment] = connection
     try:
         while True:
-            await socket.receive_text()
+            raw = await socket.receive_text()
+            if len(raw) > 65536:
+                await socket.close(code=1009)
+                return
+            try:
+                message = json.loads(raw)
+                if (
+                    not isinstance(message, dict)
+                    or message.get("kind") != "github_subscriptions"
+                ):
+                    raise ValueError("Unknown subscription message")
+                app_id = settings.forge_event_github_app_id
+                public_key = settings.forge_event_github_public_key
+                if not app_id or not public_key:
+                    raise ValueError("Subscription verification is not configured")
+                rows, expires = verify_subscriptions(
+                    message["assertion"],
+                    app_id=app_id,
+                    public_key=public_key,
+                    deployment=deployment,
+                )
+            except (ValueError, KeyError, TypeError, jwt.PyJWTError):
+                await socket.close(code=1008)
+                return
+            connection.subscriptions = dict.fromkeys(rows, expires)
+            async with connection.lock:
+                await socket.send_json({"kind": "subscription_ack"})
     except WebSocketDisconnect:
         pass
     finally:
@@ -120,9 +149,15 @@ async def receive_github_app(request: Request):
     installation = payload.get("installation")
     if not isinstance(installation, dict) or type(installation.get("id")) is not int:
         raise HTTPException(400)
-    # The relay operator grants routes; a deployment cannot claim an installation.
-    deployments = settings.forge_event_github_installations.get(
-        str(installation["id"]), []
+    # Static routes are operator grants; dynamic routes require an App signature.
+    deployments = set(
+        settings.forge_event_github_installations.get(str(installation["id"]), [])
+    )
+    deployments.update(
+        name
+        for name, connection in connections.items()
+        if connection.subscriptions.get((installation["id"], repo.lower()), 0)
+        > time.time()
     )
     results = await asyncio.gather(
         *(

@@ -2,6 +2,10 @@
 set -euo pipefail
 
 scenario="${APP_TIER_SCENARIO:-healthy}"
+if [[ "$*" == *"scripts.forge_event_public_key"* ]]; then
+  printf '{}\n'
+  exit 0
+fi
 tag="${APP_TIER_MAIN_SHA:-testsha}"
 
 if [ "${1:-}" = exec ] && [ -n "${APP_TIER_CLOUD_DEVICES:-}" ]; then

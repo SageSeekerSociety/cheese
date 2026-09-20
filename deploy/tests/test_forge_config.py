@@ -164,6 +164,43 @@ class EventConfigTest(unittest.TestCase):
         self.assertEqual(self.backend.read_text(), original)
         self.assertFalse(self.relay.exists())
 
+    def test_app_setup_keeps_private_key_out_of_relay_and_reuses_webhook_secret(self):
+        self.backend.write_text("FRONTEND_URL=https://cheese.example\n")
+        self.assertEqual(self.configure().returncode, 0)
+        public = {
+            "app_id": 123,
+            "public_key": "-----BEGIN PUBLIC KEY-----\nsynthetic\n-----END PUBLIC KEY-----\n",
+        }
+
+        def configure_app():
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--configure-github-events",
+                    "--backend-env",
+                    str(self.backend),
+                    "--relay-env",
+                    str(self.relay),
+                ],
+                input=json.dumps(public),
+                text=True,
+                capture_output=True,
+            )
+
+        result = configure_app()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        relay = self.values(self.relay)
+        secret = relay["FORGE_EVENT_GITHUB_SECRET"]
+        self.assertEqual(
+            json.loads(relay["FORGE_EVENT_GITHUB_PUBLIC_KEY"]), public["public_key"]
+        )
+        self.assertEqual(self.values(self.backend)["FORGE_EVENT_GITHUB_APP_ID"], "123")
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        original = self.relay.read_text()
+        self.assertEqual(configure_app().returncode, 0)
+        self.assertEqual(self.relay.read_text(), original)
+
     def test_missing_local_credentials_cannot_silently_disable_the_relay(self):
         self.backend.write_text("FRONTEND_URL=https://cheese.example\n")
         self.assertEqual(self.configure().returncode, 0)
