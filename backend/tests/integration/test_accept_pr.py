@@ -469,7 +469,6 @@ def app_world(client, monkeypatch):
             base: str,
             title: str,
             body: str,
-            as_user_token: str | None = None,
             draft: bool = False,
         ) -> OpenedPR:
             if head in recorded["prs_by_head"]:
@@ -484,7 +483,7 @@ def app_world(client, monkeypatch):
                         "adopted": True,
                     }
                 )
-                return OpenedPR(adopted, None)
+                return OpenedPR(adopted)
             number = 21 + len(recorded["prs_by_head"])
             recorded["opened"].append(
                 {
@@ -507,7 +506,7 @@ def app_world(client, monkeypatch):
                 "node_id": f"PR_node_{head}",
             }
             recorded["prs_by_head"][head] = pr
-            return OpenedPR(pr, None)
+            return OpenedPR(pr)
 
         async def update_pr(self, number: int, *, title: str, body: str) -> dict:
             recorded["patched"].append({"number": number, "title": title, "body": body})

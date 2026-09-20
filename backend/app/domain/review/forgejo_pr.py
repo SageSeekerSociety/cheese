@@ -330,9 +330,7 @@ class ForgejoPRClient:
             "draft": data["title"].upper().startswith(("WIP:", "[WIP]")),
         }
 
-    async def open_pr(
-        self, *, head, base, title, body, draft=False, as_user_token=None
-    ) -> OpenedPR:
+    async def open_pr(self, *, head, base, title, body, draft=False) -> OpenedPR:
         token, _ = await self.tokens.write_token()
         # Matching both refs prevents adopting another task's proposal.
         existing = await self.client.pages(
@@ -340,7 +338,7 @@ class ForgejoPRClient:
         )
         for pr in existing:
             if pr["head"]["ref"] == head and pr["base"]["ref"] == base:
-                return OpenedPR(self._proposal(pr), None)
+                return OpenedPR(self._proposal(pr))
         pr = self._proposal(
             await self._request(
                 "POST",
@@ -357,7 +355,7 @@ class ForgejoPRClient:
                 },
             )
         )
-        return OpenedPR(pr, None)
+        return OpenedPR(pr)
 
     async def pr_view(self, number):
         return self._proposal(await self._request("GET", f"/pulls/{number}"))

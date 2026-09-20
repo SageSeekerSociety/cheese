@@ -45,11 +45,10 @@ class _FakeClient:
         base: str,
         title: str,
         body: str,
-        as_user_token: str | None = None,
     ) -> OpenedPR:
-        type(self).opened.append({"body": body, "as_user_token": as_user_token})
+        type(self).opened.append({"body": body})
         return OpenedPR(
-            {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}, None
+            {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}
         )
 
 

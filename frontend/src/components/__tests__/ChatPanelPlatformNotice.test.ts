@@ -180,7 +180,6 @@ describe('agent status messages', () => {
     'sandbox_rebuilt',
     'ci_failed',
     'pr_conflict',
-    'pr_identity_downgraded',
     'card_filed',
     'accept_done',
     'deploy_failed',

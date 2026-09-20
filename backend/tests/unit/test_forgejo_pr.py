@@ -64,7 +64,6 @@ async def test_draft_is_adopted_then_filed_and_merged_at_reviewed_commit():
     adopted = await publisher.open_pr(
         head="task/report", base="main", title="Report", body="Ready"
     )
-    assert adopted.identity_downgrade is None
     adopted = adopted.pr
     assert adopted["number"] == 7
     assert adopted["draft"] is True

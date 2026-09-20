@@ -77,7 +77,6 @@ class _FakeClient:
         base: str,
         title: str,
         body: str,
-        as_user_token: str | None = None,
         draft: bool = False,
     ) -> OpenedPR:
         record = {
@@ -85,13 +84,12 @@ class _FakeClient:
             "base": base,
             "title": title,
             "body": body,
-            "as_user_token": as_user_token,
             "draft": draft,
         }
         type(self).opened.append(record)
         if head in type(self).existing:
             # GitHub's "a pull request already exists" → the caller adopts it.
-            return OpenedPR(type(self).existing[head], None)
+            return OpenedPR(type(self).existing[head])
         pr = {
             "number": 42,
             "html_url": "https://github.com/acme/widgets/pull/42",
@@ -101,7 +99,7 @@ class _FakeClient:
             "node_id": f"PR_node_{head}",
         }
         type(self).existing[head] = pr
-        return OpenedPR(pr, None)
+        return OpenedPR(pr)
 
     async def update_pr(self, number: int, *, title: str, body: str) -> dict:
         type(self).patched.append({"number": number, "title": title, "body": body})

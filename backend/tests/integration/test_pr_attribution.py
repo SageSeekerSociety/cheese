@@ -1,13 +1,4 @@
-"""分身开的 PR 认到人: a sub-topic split by a 分身 must still belong to a human.
-
-The 分身 creates its sub-topics under its OWN handle (`cheese-<hex12>`), so
-`Topic.created_by` there names a robot with no GitHub account. Everything that
-asked `created_by` "who is this topic's human?" degraded at once: the PR opened
-as `cheesex-app[bot]` (PR #504's `user.login`, measured), its body said
-`Requested-by: cheese-a7a0268b96ff`, and the commits carried no
-`Co-authored-by` at all. The roster knew — `split_to_subtopic` seeds a real
-human as the child's owner — and that is what these read now.
-"""
+"""Agent-authored proposals retain independently resolved human credits."""
 
 import asyncio
 import uuid
@@ -145,8 +136,6 @@ def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(cl
 
 class _FakeClient:
     opened: list[dict] = []
-    #: GitHub 拒了交活的人自己的凭据时，`open_pr` 回来的那句话。
-    downgrade: str | None = None
 
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
@@ -161,12 +150,10 @@ class _FakeClient:
         base: str,
         title: str,
         body: str,
-        as_user_token: str | None = None,
     ) -> OpenedPR:
-        type(self).opened.append({"body": body, "as_user_token": as_user_token})
+        type(self).opened.append({"body": body})
         return OpenedPR(
             {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"},
-            type(self).downgrade,
         )
 
 
@@ -177,7 +164,6 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     from app.domain.workspace import forge_files
 
     _FakeClient.opened = []
-    _FakeClient.downgrade = None
 
     async def _fake_proposal_client(_project_id, _session):
         return _FakeClient("acme", "widgets", _FakeTokens())
@@ -248,18 +234,8 @@ def _publish(client, pid: str, tid: str, cid: str) -> None:
     )
 
 
-def test_work_an_agent_split_out_delivers_as_the_human_who_owns_the_room(
-    client, monkeypatch
-):
-    """验收 1+2: alice owns the room and has connected GitHub, so the PR is
-    opened with HER token (not the App's, which is what makes the author
-    `cheesex-app[bot]`) and its body names her.
-
-    递卡是房间的事，所以卡从 root 递：分身拆出去的活和它兄弟们的活在同一条分支上，
-    一个 PR 一起交付。**哪一条支线是谁推进的，PR 上看不出来**——单一的
-    `Requested-by:` 装不下一整棵树的人，这是 #615「一个 PR 横跨多条支线」之后就
-    已经存在的事，「只有房间能递卡」只是让它显形。
-    """
+def test_requester_oauth_does_not_change_the_pr_author(client, monkeypatch):
+    """Requester OAuth never replaces the agent identity used to open a PR."""
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     pid, root = _project(client, owner="alice")
@@ -268,7 +244,6 @@ def test_work_an_agent_split_out_delivers_as_the_human_who_owns_the_room(
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
-    assert opened["as_user_token"] == "gho_alice"
     assert "Requested-by: alice" in opened["body"]
     assert agent not in opened["body"]
 
@@ -286,7 +261,6 @@ def test_the_agent_handle_never_reaches_the_pr_even_when_nobody_connected_github
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
-    assert opened["as_user_token"] is None
     assert "Requested-by: alice" in opened["body"]
     assert agent not in opened["body"]
 
@@ -304,7 +278,6 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
-    assert opened["as_user_token"] is None
     assert agent not in opened["body"]
 
 
@@ -346,48 +319,4 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     _publish(client, pid, tid, _card(client, tid))
 
     [opened] = _FakeClient.opened
-    assert opened["as_user_token"] == "gho_alice"
     assert "Requested-by: alice" in opened["body"]
-
-
-def test_a_pr_opened_under_the_apps_name_tells_the_person_it_was_taken_from(
-    client, monkeypatch
-):
-    """降级不是只进 logger，也不是只在房间里留一行 —— 它点名那个人（I26）。
-
-    这条路跑的时候当事人往往不在（草稿 PR 扫底在后台跑），等他回来看见的就只是
-    GitHub 把他的活算给了机器人。所以这句话要投到他手上，而不是等他回房间翻。
-    """
-    from tests.conftest import seed_user, wait_work_idle
-
-    alice = seed_user(client, "alice")
-    _github_world(monkeypatch, connected={"alice": "gho_alice"})
-    _FakeClient.downgrade = "你的 GitHub 授权被拒了（token 过期），改用芝士的身份开"
-
-    pid, root = _project(client, owner="alice")
-    _publish(client, pid, root, _card(client, root))
-    wait_work_idle()
-
-    blocks = client.get(f"/topics/{root}/blocks").json()["data"]["data"]
-    (line,) = [
-        b
-        for b in blocks
-        if (b.get("meta") or {}).get("event_type") == "pr_identity_downgraded"
-    ]
-    assert line["meta"]["who"] == "human"
-    assert "token 过期" in line["meta"]["detail"]
-
-    r = client.get(
-        "/notifications",
-        params={"type": "ROOM_NOTICE"},
-        headers={"Authorization": f"Bearer {alice}"},
-    )
-    assert r.status_code == 200, r.text
-    rows = [
-        n
-        for n in r.json()["data"]["notifications"]
-        if (n.get("contextMetadata") or {}).get("eventType") == "pr_identity_downgraded"
-    ]
-    (row,) = rows
-    # 通知里读到的和回房间看到的是同一句。
-    assert row["contextMetadata"]["content"] == line["content"]
