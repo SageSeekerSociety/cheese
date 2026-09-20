@@ -45,7 +45,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # not fully control: it is `node:22` + `USER node` (= 1000), the tmux provider
 # starts it with `--user node`, and a project may point `sandbox_image` at any
 # other node-based image. See backend/sandbox/Dockerfile and
-# app.domain.workspace.service.AGENT_UID (which tests pin against this line).
+# app.domain.repository.service.AGENT_UID (which tests pin against this line).
 RUN addgroup --system --gid 1000 python \
     && adduser --system --uid 1000 --gid 1000 cheese \
     && test "$(id -u cheese)" = 1000 \

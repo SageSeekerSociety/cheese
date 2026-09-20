@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.work_context import current_work_id
+from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
@@ -20,6 +21,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,7 @@ class BlockRepository:
         mime_type: str | None = None,
         meta: dict | None = None,
         created_at: datetime | None = None,
+        own_output: bool = False,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -67,9 +70,34 @@ class BlockRepository:
         # legacy compatibility has to infer consumption from the last AI block;
         # a newer, receipted mid-turn message could then move that positional
         # watermark past an older pending attachment and lose it forever.
-        if author_type == AuthorType.human and kind in (
-            BlockKind.message,
-            BlockKind.attachment,
+        #
+        # 待读输入 = **某个参与者说的一句话，而且不是哪一轮自己产出的**。
+        #
+        # 判据的前半截从「作者是人」放宽到「作者是参与者」，不是把条件放松：结论
+        # 1 之下另一个参与者说的话同样是这一轮要读的输入，一个 AI 队友在房间里说
+        # 的话，对坐在同一个房间里的另一个 agent 是消息，不是背景噪音。
+        #
+        # 后半截是这次必须新加的：两档一合，芝士**自己这一轮写下的**那条回复也成
+        # 了「参与者说的话」，会带上 pending 标记，下一轮再把它当输入喂回去——它对
+        # 着自己的上一句话又答一遍，而那句话本来就在它的 transcript 里。
+        #
+        # 「自己产出的」要两件事一起看，单看 `turn_id` 是错的：一条**到达**的消息
+        # 也会带轮次号。一次发送里的附件块跟着正文块的 id 走（`chat.py` 的
+        # `attribution_id`），额度耗尽那条落地路径拿着运行中的轮次号调 `converse`
+        # ——两处都是人说的话，却都带着非空的 `turn_id`，光看它就一个标记都不盖，
+        # 于是「一句话 + 一张图」里那张图落回上面那段注释说的位置水位兜底，而那正
+        # 是会把它永久丢掉的那条路。所以判据是**署名是 agent** 且**落在某一轮里**
+        # 才算那一轮自己的产出；人说的话不论有没有轮次号都是输入。
+        #
+        # `own_output` 是调用方直接给出的答案，给那种「署名是 agent、平台这边却
+        # 填不出轮次号」的写入端用：远程控制里芝士问出口的那句话由平台代写进房间
+        # （`api/routes/remote_control.py` 的 `voice_pending`），而问话的那一轮跑
+        # 在机器上，平台没有它的轮次号。它在等**人**回答，不是在等自己读一遍。
+        if (
+            not own_output
+            and is_participant(author_type)
+            and kind in (BlockKind.message, BlockKind.attachment)
+            and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         block = Block(
@@ -109,13 +137,16 @@ class BlockRepository:
     async def client_delivery(
         self, topic_id: uuid.UUID, *, author: str, client_id: str
     ) -> list[Block]:
-        """Return the human block bundle for one browser delivery."""
+        """Return the block bundle one browser delivery wrote.
+
+        ``author`` + ``client_id`` already name one send by one sender; the
+        author's 档位 never selected anything on top of that.
+        """
         anchor = await self._session.scalar(
             select(Block)
             .where(
                 Block.topic_id == topic_id,
                 Block.author == author,
-                Block.author_type == AuthorType.human,
                 Block.meta["client_id"].as_string() == client_id,
             )
             .order_by(Block.created_at, Block.id)
@@ -128,7 +159,6 @@ class BlockRepository:
             .where(
                 Block.topic_id == topic_id,
                 Block.author == author,
-                Block.author_type == AuthorType.human,
                 Block.turn_id == anchor.turn_id,
             )
             .order_by(Block.created_at, Block.id)
@@ -141,7 +171,7 @@ class BlockRepository:
             select(Block.content)
             .where(
                 Block.turn_id == turn_id,
-                Block.author_type == AuthorType.ai,
+                agent_handle_column(Block.author),
                 Block.kind == BlockKind.message,
             )
             .order_by(Block.created_at, Block.id)
@@ -341,7 +371,7 @@ class BlockRepository:
     _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
 
     async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
-        """Which of these turns produced at least one AI-authored block.
+        """Which of these turns produced at least one block signed by 芝士.
 
         One query rather than loading a topic's whole timeline to filter it in
         Python: the caller (the orphan sweep) asks about a handful of turn ids
@@ -353,7 +383,7 @@ class BlockRepository:
             select(Block.turn_id)
             .where(
                 Block.turn_id.in_(turn_ids),
-                Block.author_type == AuthorType.ai,
+                agent_handle_column(Block.author),
             )
             .distinct()
         )
@@ -445,7 +475,7 @@ class BlockRepository:
             select(Block.id)
             .where(
                 *place,
-                Block.author_type == AuthorType.ai,
+                agent_handle_column(Block.author),
                 Block.kind == BlockKind.message,
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -473,9 +503,18 @@ class BlockRepository:
                     Block.id == latest_ai,
                     Block.id == latest_cloud,
                     and_(
-                        Block.author_type == AuthorType.human,
+                        participant_blocks(),
                         Block.kind.in_((BlockKind.message, BlockKind.attachment)),
                         Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+                        # 没有戳的块有两种：还没被读过的（带 null 标记），和记账
+                        # 存在之前写下的（什么也不带）。第二种只有靠上面那条水位
+                        # 线才判得了，而水位线本身就是最后一条芝士的消息 —— 一条
+                        # 芝士签名的老消息永远在它之前，取回来也只是被丢掉。房间
+                        # 的历史只增不减，所以在这里挡掉，不是在 Python 里。
+                        or_(
+                            cast(Block.meta, JSONB).has_key(CONSUMED_TURN_META_KEY),
+                            ~agent_handle_column(Block.author),
+                        ),
                     ),
                     and_(
                         Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),

@@ -11,6 +11,7 @@
 起屏幕就是起一整个容器——正是「一条活 = 房间会话里的一个分身」拆掉的东西。
 """
 
+from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
@@ -41,7 +42,7 @@ def _record_screens(stub_hooks) -> list[str]:
     original = stub_hooks.ensure_ready
 
     async def _spy(**kw):
-        seen.append(str(kw.get("topic_id")))
+        seen.append(str(kw["session"].topic_id))
         return await original(**kw)
 
     stub_hooks.ensure_ready = _spy
@@ -131,5 +132,5 @@ def test_a_room_still_answers_on_its_own_line(client, stub_hooks):
     _wait_work_idle()
 
     assert screens == [room["id"]]
-    kinds = [b["author_type"] for b in _blocks(client, room["id"])]
-    assert "ai" in kinds, "房间没答话"
+    authors = [b["author"] for b in _blocks(client, room["id"])]
+    assert any(looks_like_agent_handle(a) for a in authors), "房间没答话"

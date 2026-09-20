@@ -19,6 +19,7 @@ from app.domain.agent import event_drain, resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir, list_device_storage
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -110,9 +111,15 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     )
     entries = {}
     room = await session.get(Topic, operation.topic_id)
-    placement = room.session_placement if room else None
-    if placement and placement["resource_id"] == str(operation.resource_id):
-        center = placement["device_id"]
+    places = (
+        await AgentSessionService(session).places_in_room(operation.topic_id)
+        if room
+        else []
+    )
+    for place in places:
+        if place.resource_id != str(operation.resource_id):
+            continue
+        center = place.machine
         if not device_hub.is_online(center) or center not in inventory:
             raise RuntimeError(
                 "room's session device is offline or its inventory failed"

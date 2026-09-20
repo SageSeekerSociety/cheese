@@ -137,7 +137,11 @@ describe('一张卡按卡渲染', () => {
     getRoomTask.mockResolvedValue({
       ...card({ brief: '**Goal**', conclusion: '[Read the report](https://example.com/report)' }),
       blocks: [
-        block({ id: 'ai', author_type: 'ai', content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>' }),
+        block({
+          id: 'ai',
+          author: 'cheese-room1',
+          content: '**Result**\n\n- Ready\n\n<script>alert(1)</script>',
+        }),
         block({ id: 'human', content: '**keep this literal**' }),
       ],
     })

@@ -89,6 +89,7 @@ from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness import SessionRef  # noqa: E402
 from app.domain.agent.harness.channel import Channel  # noqa: E402
 from app.domain.agent.harness.claude_code import (  # noqa: E402
     ClaudeCodeRuntime,
@@ -230,13 +231,13 @@ class StubChannel(Channel):
     async def ensure_ready(  # type: ignore[override]
         self,
         *,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         launch: LaunchPlan,
         **_: object,
     ) -> uuid.UUID:
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
-        return topic_id
+        return session.topic_id
 
     async def send_prompt(  # type: ignore[override]
         self, screen: uuid.UUID, prompt: str
