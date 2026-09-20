@@ -185,28 +185,3 @@ def test_unwritable_file_is_a_clean_422_not_a_500(project):
         target.chmod(0o644)
     assert excinfo.value.code == 422
     assert "locked.md" in str(excinfo.value)
-
-
-# --- the boot-time audit ---------------------------------------------------
-
-
-def test_ownership_audit_is_quiet_on_a_healthy_workspace(project):
-    topic = uuid.uuid4()
-    declare_task(project, topic)
-    ws.topic_worktree(project, topic)
-    assert ws.audit_workspace_ownership() == []
-
-
-@not_root
-def test_ownership_audit_names_a_store_this_process_cannot_use(project):
-    topic = uuid.uuid4()
-    declare_task(project, topic)
-    ws.topic_worktree(project, topic)
-    store = ws._repo(project) / ".git"  # noqa: SLF001
-    store.chmod(0o000)
-    try:
-        problems = ws.audit_workspace_ownership()
-    finally:
-        store.chmod(0o755)
-    assert len(problems) == 1
-    assert str(store) in problems[0]

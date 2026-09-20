@@ -181,7 +181,6 @@ describe('agent status messages', () => {
     'ci_failed',
     'pr_conflict',
     'pr_identity_downgraded',
-    'remote_push_failed',
     'card_filed',
     'accept_done',
     'deploy_failed',

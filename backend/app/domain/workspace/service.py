@@ -543,45 +543,6 @@ def gate_workdir_for(worktree: Path) -> str:
     return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
 
 
-def audit_workspace_ownership() -> list[str]:
-    """Boot-time check that this process can actually use the workspace it was
-    handed — one problem string per finding, empty when healthy.
-
-    A uid split does not announce itself: the backend keeps booting and only the
-    file panel dies, project-wide, with a 422 that reads like "file not found".
-    So state it at startup instead. Deliberately cheap — the workspace root and
-    each project's `.git`, not a walk of the store: that directory is what the
-    backend and every sandbox both commit into, so being locked out of it fails
-    everything downstream of it.
-
-    Non-fatal by design — one stray file must not keep the platform from
-    booting, and an operator who sees this in the log has the fix in hand
-    (deploy/fix-workspace-ownership.sh).
-    """
-    problems: list[str] = []
-    root = Path(settings.workspace_root)
-    if not root.exists():
-        return problems
-    me = os.getuid()
-    if not os.access(root, os.R_OK | os.W_OK | os.X_OK):
-        problems.append(
-            f"{root} 当前进程（uid={me}）不可读写（属主 uid={root.stat().st_uid}）"
-        )
-    for entry in sorted(root.iterdir()):
-        store = entry / ".git"
-        try:
-            if not store.is_dir() or os.access(store, os.R_OK | os.W_OK | os.X_OK):
-                continue
-            owner = store.stat().st_uid
-        except OSError:
-            continue
-        problems.append(
-            f"{store} 属主 uid={owner}，当前进程 uid={me} 写不了"
-            f"——该项目的所有 git 操作都会失败"
-        )
-    return problems
-
-
 def _make_world_writable(root: Path) -> None:
     """The sandbox's non-root user must be able to edit a worktree the backend
     (possibly root) materialized — found live when 芝士 hit Permission denied on
