@@ -1,4 +1,4 @@
-import type { DomainGroup, Space, SpaceCategory, Topic } from '@/types'
+import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -13,6 +13,9 @@ import type {
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
+  PostSpaceInviteCodeRequestData,
+  PostSpaceJoinRequestData,
+  PostSpaceMemberRequestData,
   PostSpaceRequestData,
   SpaceAnalyticsAlerts,
   SpaceAnalyticsOverview,
@@ -28,9 +31,58 @@ import type {
 import { NewApiInstance } from '../index'
 
 export namespace SpacesApi {
+  /**
+   * Creating a 凭码 space hands back the code it was born holding, so the
+   * creator does not have to ask for one separately.
+   */
   export const create = (data: PostSpaceRequestData) =>
-    NewApiInstance.request<{ space: Space }>({
+    NewApiInstance.request<{ space: Space; inviteCode: SpaceInviteCode | null }>({
       url: '/spaces',
+      method: 'POST',
+      data,
+    })
+
+  export const join = (data: PostSpaceJoinRequestData) =>
+    NewApiInstance.request<{ space: Space }>({
+      url: '/spaces/join',
+      method: 'POST',
+      data,
+    })
+
+  export const listMembers = (spaceId: number) =>
+    NewApiInstance.request<{ members: SpaceMember[] }>({
+      url: `/spaces/${spaceId}/members`,
+      method: 'GET',
+    })
+
+  export const addMember = (spaceId: number, data: PostSpaceMemberRequestData) =>
+    NewApiInstance.request<{ member: SpaceMember }>({
+      url: `/spaces/${spaceId}/members`,
+      method: 'POST',
+      data,
+    })
+
+  export const removeMember = (spaceId: number, userId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/members/${userId}`,
+      method: 'DELETE',
+    })
+
+  export const leave = (spaceId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/leave`,
+      method: 'POST',
+    })
+
+  export const listInviteCodes = (spaceId: number) =>
+    NewApiInstance.request<{ inviteCodes: SpaceInviteCode[] }>({
+      url: `/spaces/${spaceId}/invite-codes`,
+      method: 'GET',
+    })
+
+  export const createInviteCode = (spaceId: number, data: PostSpaceInviteCodeRequestData = {}) =>
+    NewApiInstance.request<{ inviteCode: SpaceInviteCode }>({
+      url: `/spaces/${spaceId}/invite-codes`,
       method: 'POST',
       data,
     })

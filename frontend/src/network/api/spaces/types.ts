@@ -1,4 +1,4 @@
-import type { Page, Space, TaskSubmitterType } from '@/types'
+import type { Page, Space, SpaceVisibilityType, TaskSubmitterType } from '@/types'
 
 export type PostSpaceRequestData = {
   name: string
@@ -7,6 +7,22 @@ export type PostSpaceRequestData = {
   announcements?: string
   taskTemplates?: string
   visibleTaskLimit?: number | null
+  /** Chosen once, at creation: 公开 / 凭码 / 私人. Defaults to 公开. */
+  visibility?: SpaceVisibilityType
+}
+
+export type PostSpaceJoinRequestData = {
+  code: string
+}
+
+export type PostSpaceMemberRequestData = {
+  userId: number
+}
+
+export type PostSpaceInviteCodeRequestData = {
+  maxUses?: number
+  /** Epoch milliseconds; omit for a code that never expires. */
+  expiresAt?: number | null
 }
 
 export type PatchSpaceRequestData = {
