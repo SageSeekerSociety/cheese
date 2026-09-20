@@ -351,15 +351,7 @@ async def test_old_executor_process_takes_release_bootstrap(
         "capabilities": ["prepare"],
         "runtime_sha256": digest,
     }
-    async with client.test_factory() as admitted:
-        await execution.lock_release(admitted, topic, shared=True)
-        update = asyncio.create_task(central.ensure_ready(**kwargs))
-        try:
-            await asyncio.sleep(0.2)
-            central._hub.exec.assert_not_awaited()
-        finally:
-            await admitted.rollback()
-            await asyncio.wait_for(update, 10)
+    await central.ensure_ready(**kwargs)
     central._hub.exec.assert_awaited_once()
     place = await session_place(client.test_factory, topic)
     assert place is not None
@@ -372,6 +364,74 @@ async def test_old_executor_process_takes_release_bootstrap(
     assert [
         call.args[2] for call in central._hub.call_executor.await_args_list[-2:]
     ] == ["ping", "context_fs"]
+
+
+@pytest.mark.anyio
+async def test_a_room_stays_writable_while_its_agent_is_starting(
+    client, room, monkeypatch
+):
+    """Starting an agent holds nothing on the room's row.
+
+    Installing the executor and opening the screen are remote work measured in
+    minutes. While they run, people are renaming the room, archiving it, marking
+    it read — and every one of those writers used to queue behind the setup's
+    row lock, each holding a database connection of its own for as long as it
+    waited. That is how one slow room start became every request in the process
+    waiting for a connection that never came back.
+
+    `FOR UPDATE NOWAIT` from a second connection is the whole question: it
+    raises if anything holds the row, and returns if nothing does.
+    """
+    project, topic = room
+    central = channel(client, monkeypatch)
+
+    async def free_while(gate: asyncio.Event) -> None:
+        await asyncio.wait_for(gate.wait(), 5)
+        async with client.test_factory() as writer:
+            held = await writer.execute(
+                text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+                {"id": topic},
+            )
+            assert held.scalar_one() == topic
+            await writer.rollback()
+
+    installing = asyncio.Event()
+    installed = asyncio.Event()
+    opening = asyncio.Event()
+    opened = asyncio.Event()
+
+    async def slow_install(*args, **kwargs):
+        installing.set()
+        await installed.wait()
+        return {"exit": 0, "stdout": json.dumps(INSTALLED)}
+
+    async def slow_screen(*args, **kwargs):
+        opening.set()
+        await opened.wait()
+        return SimpleNamespace(device_id="center")
+
+    central._hub.exec = AsyncMock(side_effect=slow_install)
+    central._ensure_screen = AsyncMock(side_effect=slow_screen)
+
+    setup = asyncio.create_task(
+        central.ensure_ready(
+            session=ref(project, topic),
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=await central.precheck(ref(project, topic)),
+        )
+    )
+    try:
+        await free_while(installing)
+        installed.set()
+        await free_while(opening)
+        opened.set()
+        await asyncio.wait_for(setup, 10)
+    finally:
+        installed.set()
+        opened.set()
+        setup.cancel()
 
 
 @pytest.mark.anyio
@@ -616,11 +676,7 @@ async def test_scoped_execution_does_not_hold_admission_connection_during_remote
         await finish.wait()
         return {"value": "kept"}
 
-    async def unexpected_lock(*args, **kwargs):
-        raise AssertionError("a remote tool call must not hold a DB advisory lock")
-
     monkeypatch.setattr(execution, "call", invoke)
-    monkeypatch.setattr(execution, "lock_release", unexpected_lock)
     token = mint_scoped_token(
         project_id=str(project), topic_id=str(topic), resource_id=str(resource)
     )

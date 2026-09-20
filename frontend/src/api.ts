@@ -1183,6 +1183,29 @@ export function deleteProjectArtifact(projectId: string, artifactId: string): Pr
   )
 }
 
+// ---- 这个房间里摆出来的东西 (#1085 结论四) ----
+
+// 摆出来的东西属于这个房间：用户看完拿走就完了。要把它留下来以后还用，由人按
+// 「保存到资料库」——留着要用的东西是资料；交出去的东西走交付，那才上产物清单。
+export interface RoomOutput {
+  path: string
+  mime: string
+  kind: 'file' | 'app'
+  shown_at: string
+}
+
+export function listRoomOutputs(topicId: string): Promise<ListPayload<RoomOutput>> {
+  return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown`)
+}
+
+/** 把房间里的这一份留进资料库：按原名，撞名加 `(2)`，所有房间都引用得到。 */
+export function saveRoomOutputToLibrary(topicId: string, path: string): Promise<{ name: string }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/shown/save`, {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  })
+}
+
 // ---- Chat attachments ----
 
 /** 把资料库里已有的一份文件附在这条消息上。返回的形状和一次上传相同。 */

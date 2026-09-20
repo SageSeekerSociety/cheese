@@ -64,6 +64,8 @@ EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 EVENT_CARD_FILED: Final = "card_filed"
 #: 这次交付在产物清单上新建了一项 —— 名字此前没出现过，看一眼是不是要的那个。
 EVENT_ARTIFACT_DECLARED: Final = "artifact_declared"
+#: 房间里的一份东西被留进了资料库 —— 从这一刻起别的房间也引用得到它。
+EVENT_LIBRARY_SAVED: Final = "library_saved"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
@@ -140,6 +142,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_FILED,
         EVENT_ARTIFACT_DECLARED,
+        EVENT_LIBRARY_SAVED,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,

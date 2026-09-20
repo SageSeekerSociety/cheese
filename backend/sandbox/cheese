@@ -30,8 +30,8 @@
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese status                             # 平台状态快照
-  cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
-  cheese artifact 评审简报.docx              # 文档类交付物同理,用户可以打开和下载
+  cheese show report.html                   # 把这一份摆到房间里给人看(进预览窗口)
+  cheese show 评审简报.docx                  # 文档同理,用户可以打开和下载
   cheese recalc 预算表.xlsx                 # 重算表格里的公式,并报出算不出来的格
   cheese convert 旧稿.doc --to docx         # 老格式升级;--to pdf 用来自己看版面
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
@@ -1789,13 +1789,16 @@ def build_parser() -> argparse.ArgumentParser:
     plibget.add_argument("--out", default=None, help="写到别处(默认 library/<名字>)")
 
     part = sub.add_parser(
-        "artifact",
-        help="把工作区文件设为交付物(当前预览)",
+        "show",
+        help="把工作区里的一份东西摆到房间里给人看",
         description=(
-            "做出了要交给用户的东西就点名它——网页、可视化、SVG,以及报告、简报、"
-            "表格这类 PDF 和 Office 文件。点名之后用户在右侧看得到,也能下载;"
-            "没点名的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
-            "你显式指定。每次调用都会把预览指向最新那个。"
+            "做出了值得给人看的东西就摆出来——网页、可视化、SVG,以及报告、简报、"
+            "表格这类 PDF 和 Office 文件。摆出来的用户在右侧看得到,也能下载;"
+            "没摆出来的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
+            "你显式指定。最后摆的那一样同时是这个房间的当前预览。\n\n"
+            "摆出来的东西留在这个房间里。用户想把一份留下来以后再用,自己按"
+            "「保存到资料库」;它不因此上产物清单——这一轮真交付了什么,走 "
+            "accept-request 的 --artifact / --deliver。"
         ),
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")
@@ -2206,7 +2209,7 @@ def main() -> None:
             # render as a white frame.
             print(
                 "[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
-                "[cheese] 要给人看结果,用 cheese_artifact 点名一个文件——网页、图片,"
+                "[cheese] 要给人看结果,用 cheese_show 点名一个文件——网页、图片,"
                 "或报告、表格这类文档。",
                 file=sys.stderr,
             )
@@ -2221,13 +2224,13 @@ def main() -> None:
             sys.exit(1)
         # The backend knocks on the port through the tunnel before accepting; a
         # dead server is refused there, with the reason.
-        _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
+        _call("POST", f"/topics/{topic}/shown", {"path": a.note, "as": "app"})
         print(f"已把 :{a.port} 上的应用设为当前预览（{a.note}）。")
-    elif a.cmd == "artifact":
+    elif a.cmd == "show":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        # The platform resolves artifact paths against the worktree ROOT (/work),
+        # The platform resolves these paths against the worktree ROOT (/work),
         # but the agent's cwd may be a subdir (e.g. after `cd backend`). Normalize
-        # the given path to worktree-root-relative so `cheese artifact x.html` from
+        # the given path to worktree-root-relative so `cheese show x.html` from
         # /work/backend points at backend/x.html, not a missing /work/x.html.
         root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
         rel = os.path.relpath(os.path.abspath(a.path), root)
@@ -2251,8 +2254,8 @@ def main() -> None:
             except UnicodeError as exc:
                 print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
                 sys.exit(1)
-        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": kind, **payload})
-        print(f"已把 {rel} 设为当前预览（{kind}）。")
+        _call("POST", f"/topics/{topic}/shown", {"path": rel, "as": kind, **payload})
+        print(f"已把 {rel} 摆出来给房间里的人看（{kind}）。")
     elif a.cmd == "convert":
         topic = _need("CHEESE_TOPIC", TOPIC)
         try:
@@ -2300,7 +2303,7 @@ def main() -> None:
             print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
             sys.exit(1)
         # The platform resolves paths against the worktree ROOT, and the agent's
-        # cwd may be a subdir — same normalization as `artifact`, for the same
+        # cwd may be a subdir — same normalization as `show`, for the same
         # reason: an absolute path is refused outright there.
         root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
         rel = os.path.relpath(os.path.abspath(a.path), root)

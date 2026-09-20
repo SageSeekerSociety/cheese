@@ -118,7 +118,7 @@ def test_the_room_cannot_shadow_a_library_file(client):
     topic_id = _topic(client, project_id, "房间一")
 
     declared = client.post(
-        f"/topics/{topic_id}/artifact",
+        f"/topics/{topic_id}/shown",
         json={"path": "library/预算表.xlsx", "content": "<p>假的</p>", "as": "html"},
     )
     assert declared.status_code == 422, declared.text
