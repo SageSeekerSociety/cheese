@@ -7,6 +7,7 @@
 
 import uuid
 
+from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
@@ -37,10 +38,14 @@ def _file_card(client, room_id: str, **artifact):
     )
 
 
-def _manifest(client, project_id: str) -> list[tuple[str, int]]:
+def _manifest_rows(client, project_id: str) -> list[dict]:
     r = client.get(f"/projects/{project_id}/artifacts")
     assert r.status_code == 200, r.text
-    return [(a["name"], a["version"]) for a in r.json()["data"]["data"]]
+    return r.json()["data"]["data"]
+
+
+def _manifest(client, project_id: str) -> list[tuple[str, int]]:
+    return [(a["name"], a["version"]) for a in _manifest_rows(client, project_id)]
 
 
 def _decide(client, card_id: str, action: str):
@@ -260,3 +265,109 @@ def test_two_projects_each_keep_their_own_report(client):
 
     assert _manifest(client, one) == [("结题报告", 0)]
     assert _manifest(client, two) == [("结题报告", 0)]
+
+
+# --- 人的动作：改名、合并、删除 ---------------------------------------------
+
+
+def test_renaming_keeps_the_versions_already_counted(client):
+    """名字起错了的正解是改名 —— 卡指着的是行的 id，所以版本一个不丢。"""
+    pid = _project(client)
+    rid = _room(client, pid)
+    cid = _file_card(client, rid, new_artifact="报告").json()["data"]["id"]
+    _decide(client, cid, "accept")
+    aid = _manifest_rows(client, pid)[0]["id"]
+
+    r = client.patch(f"/projects/{pid}/artifacts/{aid}", json={"name": "结题报告"})
+
+    assert r.status_code == 200, r.text
+    assert _manifest(client, pid) == [("结题报告", 1)]
+
+
+def test_renaming_onto_another_item_is_refused_and_points_at_merging(client):
+    pid = _project(client)
+    first = _room(client, pid, "第一轮")
+    second = _room(client, pid, "第二轮")
+    _file_card(client, first, new_artifact="结题报告")
+    _file_card(client, second, new_artifact="项目官网")
+    site = next(a for a in _manifest_rows(client, pid) if a["name"] == "项目官网")
+
+    r = client.patch(
+        f"/projects/{pid}/artifacts/{site['id']}", json={"name": "结题报告"}
+    )
+
+    assert r.status_code == 422
+    assert "合并" in r.json()["message"]
+
+
+def test_merging_adds_the_versions_of_both(client):
+    """两项其实是同一个东西：交付记在卡上，所以合并之后版本是两边加起来。"""
+    pid = _project(client)
+    first = _room(client, pid, "第一轮")
+    second = _room(client, pid, "第二轮")
+    one = _file_card(client, first, new_artifact="报告").json()["data"]["id"]
+    _decide(client, one, "accept")
+    two = _file_card(client, second, new_artifact="结题报告").json()["data"]["id"]
+    _decide(client, two, "accept")
+    rows = {a["name"]: a["id"] for a in _manifest_rows(client, pid)}
+
+    r = client.post(
+        f"/projects/{pid}/artifacts/{rows['报告']}/merge",
+        json={"into": rows["结题报告"]},
+    )
+
+    assert r.status_code == 200, r.text
+    assert _manifest(client, pid) == [("结题报告", 2)]
+
+
+def test_deleting_takes_the_item_off_the_list_and_leaves_the_card(client):
+    pid = _project(client)
+    rid = _room(client, pid)
+    cid = _file_card(client, rid, new_artifact="结题报告").json()["data"]["id"]
+    _decide(client, cid, "accept")
+    aid = _manifest_rows(client, pid)[0]["id"]
+
+    r = client.delete(f"/projects/{pid}/artifacts/{aid}")
+
+    assert r.status_code == 200, r.text
+    assert _manifest(client, pid) == []
+    # 那次交付确实发生过，卡还在，只是不再指向任何一项。
+    card = client.get(f"/topics/{rid}/accept-card").json()["data"]["data"][0]
+    assert card["status"] == "accepted"
+    assert card["artifact"] is None
+
+
+def test_an_item_from_another_project_is_not_on_this_list(client):
+    mine, theirs = _project(client), _project(client)
+    _file_card(client, _room(client, theirs), new_artifact="结题报告")
+    theirs_id = _manifest_rows(client, theirs)[0]["id"]
+
+    r = client.delete(f"/projects/{mine}/artifacts/{theirs_id}")
+
+    assert r.status_code == 404
+    assert _manifest(client, theirs) == [("结题报告", 0)]
+
+
+def test_the_agent_cannot_change_the_list(client):
+    """芝士 只能在交付时声明；改名、合并、删除是人的判断。"""
+    pid = _project(client)
+    rid = _room(client, pid)
+    _file_card(client, rid, new_artifact="结题报告")
+    aid = _manifest_rows(client, pid)[0]["id"]
+
+    client.headers.pop("Authorization", None)
+    client.cookies.clear()
+    agent = {
+        "X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=rid, ttl_s=3600)
+    }
+
+    assert (
+        client.patch(
+            f"/projects/{pid}/artifacts/{aid}", json={"name": "报告"}, headers=agent
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(f"/projects/{pid}/artifacts/{aid}", headers=agent).status_code
+        == 403
+    )

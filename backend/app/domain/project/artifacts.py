@@ -32,11 +32,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.project.models import ProjectArtifact
 from app.domain.review.models import AcceptCard, AcceptStatus
 
@@ -161,6 +161,74 @@ async def claim(
             raise
         return raced
     return row
+
+
+async def get_or_404(
+    session: AsyncSession, *, project_id: uuid.UUID, artifact_id: uuid.UUID
+) -> ProjectArtifact:
+    """这个项目清单上的那一行。别的项目的一行在这里就是不存在。"""
+    row = await session.get(ProjectArtifact, artifact_id)
+    if row is None or row.project_id != project_id:
+        raise NotFoundError("产物清单上没有这一项")
+    return row
+
+
+async def rename(
+    session: AsyncSession, artifact: ProjectArtifact, *, name: str
+) -> ProjectArtifact:
+    """给这一项换个名字。
+
+    改的是这一行，而卡指着的是行的 id —— 所以改完之前的每一次交付照样算这一项的
+    版本。这也是「芝士 把名字起错了」的正解：改名，而不是删掉重来。
+
+    重名不自动合并：两项叫同一个名字，「它们是不是同一个东西」是人的判断，而这里
+    只知道用户在改字。要合并就用合并 —— 那个动作会把另一项的交付都算过来。
+    """
+    clean = clean_name(name)
+    if clean == artifact.name:
+        return artifact
+    taken = await _by_name(session, project_id=artifact.project_id, name=clean)
+    if taken is not None:
+        raise ValidationError(
+            f"《{clean}》已经是清单上另一项了。它们确实是同一个东西，就把这一项"
+            "合并到它；不是的话，换一个说得出区别的名字。"
+        )
+    artifact.name = clean
+    await session.flush()
+    return artifact
+
+
+async def merge(
+    session: AsyncSession, *, source: ProjectArtifact, target: ProjectArtifact
+) -> ProjectArtifact:
+    """两项其实是同一个东西：把 `source` 的交付都算到 `target` 上，然后扔掉它。
+
+    交付记录在卡上，所以合并就是把那些卡改指向留下来的这一项 —— 版本数随之变成两
+    边加起来，不需要另外搬什么。方向由人定：留哪个名字是他的判断。
+    """
+    if source.id == target.id:
+        raise ValidationError("不能把一项合并到它自己")
+    if source.project_id != target.project_id:
+        raise ValidationError("只能在同一个项目的清单里合并")
+    await session.execute(
+        update(AcceptCard)
+        .where(AcceptCard.artifact_id == source.id)
+        .values(artifact_id=target.id)
+    )
+    await session.delete(source)
+    await session.flush()
+    return target
+
+
+async def delete(session: AsyncSession, artifact: ProjectArtifact) -> None:
+    """把这一项从清单上去掉。
+
+    声明过它的那些卡留在原处，只是不再指向任何一项（外键 SET NULL）：那些交付确实
+    发生过，改写它们等于往已经落地的历史上安一个别的声明。清单上不留这一项，是用
+    户说的「它本来就不该是一项」。
+    """
+    await session.delete(artifact)
+    await session.flush()
 
 
 async def list_for_project(

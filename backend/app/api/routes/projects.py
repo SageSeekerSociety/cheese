@@ -545,6 +545,86 @@ async def list_artifacts(
     return ok(page(items, len(items)))
 
 
+async def _artifact_keeper(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> None:
+    """改清单的只有人。
+
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 改不了、合不了、删不
+    了清单上的东西 —— 它只能在交付时声明，而「这两项是不是同一个东西」「这个名字
+    对不对」正是要人判断的那部分。"""
+    await ProjectService(db).get_or_404(project_id)
+    actor = await resolver.require_verified_caller(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+
+
+@router.patch("/{project_id}/artifacts/{artifact_id}")
+async def rename_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """给清单上这一项换个名字。
+
+    卡指着的是这一行的 id，所以改名之后，之前的每一次交付照样算这一项的版本 ——
+    名字起错了的正解是改名，不是删掉重来。"""
+    await _artifact_keeper(project_id, db, resolver)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    renamed = await artifacts.rename(db, row, name=str(body.get("name") or ""))
+    await db.commit()
+    return ok({"id": str(renamed.id), "name": renamed.name})
+
+
+@router.post("/{project_id}/artifacts/{artifact_id}/merge")
+async def merge_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """这两项其实是同一个东西：把这一项的交付都算到 `into` 那一项上。
+
+    留哪个名字是人的判断，所以方向由调用方给，平台不挑。"""
+    await _artifact_keeper(project_id, db, resolver)
+    source = await artifacts.get_or_404(
+        db, project_id=project_id, artifact_id=artifact_id
+    )
+    target = await artifacts.get_or_404(
+        db, project_id=project_id, artifact_id=_artifact_ref(body.get("into"))
+    )
+    kept = await artifacts.merge(db, source=source, target=target)
+    await db.commit()
+    return ok({"id": str(kept.id), "name": kept.name})
+
+
+@router.delete("/{project_id}/artifacts/{artifact_id}")
+async def delete_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把这一项从清单上去掉 —— 用户说它本来就不该是一项。
+
+    声明过它的那些卡留在原处，只是不再指向任何一项：那些交付确实发生过。"""
+    await _artifact_keeper(project_id, db, resolver)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    await artifacts.delete(db, row)
+    await db.commit()
+    return ok({"deleted": True})
+
+
+def _artifact_ref(raw: object) -> uuid.UUID:
+    """合并的目标 —— 清单上另一项的 id。"""
+    try:
+        return uuid.UUID(str(raw or ""))
+    except ValueError as exc:
+        raise ValidationError("into 必须是清单上另一项的 id") from exc
+
+
 @router.delete("/{project_id}/library")
 async def delete_library_file(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
