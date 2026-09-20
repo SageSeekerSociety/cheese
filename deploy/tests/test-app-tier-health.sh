@@ -995,6 +995,7 @@ test_healthy_current_pair_passes() {
 
 test_forge_migration_release() {
   local run_dir mode expected check apply result
+  mkdir -p "$ROOT/.tmp"
   for mode in first completed check_failed apply_failed; do
     run_dir="$(mktemp -d "$ROOT/.tmp/forge-release.XXXXXX")"
     mkdir -p "$run_dir/bin"
