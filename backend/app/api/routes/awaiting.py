@@ -109,6 +109,7 @@ async def list_awaiting_me(
                 task_cards.get(task.id),
                 beats.get(task.id),
                 room_screen_live=chat.has_live_screen(task.room_id),
+                worker_live=chat.worker_live(task.room_id, task.subagent_id),
                 awaiting_answer=task.id in asked_tasks,
             ),
             now=now,

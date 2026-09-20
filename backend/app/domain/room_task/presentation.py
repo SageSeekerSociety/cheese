@@ -56,6 +56,11 @@ if TYPE_CHECKING:
 #: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**认领分身**那一刻盖一次，之后
 #: 不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条刚被认领、
 #: 还没来得及说第一句话的活，靠的是它。
+#:
+#: 这个数只在**没人知道那个分身还在不在**的时候说话。知道的时候听知道的
+#: （`TaskFacts.worker_live`）：一个闷头干了四十分钟、一个 block 都没吐的分身，和
+#: 一个同样安静的死分身，在时间戳上长得一模一样 —— 只拿时间戳当裁判，前者就会被
+#: 误报成失联。安静不是证据，缺席才是。
 LOST_SIGNAL_AFTER = timedelta(minutes=10)
 
 
@@ -182,6 +187,11 @@ class TaskFacts:
     #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
     #: 所以它得从外面喂进来（这一层不碰 I/O）。
     room_screen_live: bool = True
+    #: 那个分身此刻还在不在做（`ChatService.worker_live`）。True = 跑轮次的进程报过
+    #: 它还在做，False = 那个进程报过它收工了，None = 关于它一个字都没有过。
+    #: 和 `room_screen_live` 一样是进程当下的事实，不是库里的一列，所以也从外面喂
+    #: 进来。它比 `last_signal_at` 强：一个埋头干了四十分钟的分身本来就不该有 block。
+    worker_live: bool | None = None
     #: 分身已经交回过一句结论（`Task.conclusion`）。它是干完了在等房间收卡，
     #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
     #: 只用来解释安静，从不用来说这条活结束了。
@@ -224,6 +234,7 @@ def facts_for_task(
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,
+    worker_live: bool | None = None,
     awaiting_answer: bool = False,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
@@ -240,6 +251,7 @@ def facts_for_task(
         card=facts_for_card(card),
         has_worker=bool(task.subagent_id),
         room_screen_live=room_screen_live,
+        worker_live=worker_live,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
     )
@@ -358,7 +370,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         return _show(NeedsYou.awaiting_answer)
 
     # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
-    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
+    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。屏幕还在，
+    # 再问跑轮次的进程：这些子 agent 的生死它看得见（`_worker_alive`）。
     #
     # 已经交回过结论的不算在内：那是干完了在等房间收卡，不是还在做。
     worker_on_it = (
@@ -366,7 +379,7 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         and facts.status == TaskStatus.open
         and not facts.has_conclusion
     )
-    alive = facts.room_screen_live and not _lost_signal(facts.last_signal_at, now=now)
+    alive = facts.room_screen_live and _worker_alive(facts, now=now)
     # 规矩 2：在跑压过纸面。
     if worker_on_it and alive:
         return _show(Building.running)
@@ -387,6 +400,26 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.status == TaskStatus.closed:
         return _show(Done.closed)
     return _show(Building.idle)
+
+
+def _worker_alive(facts: TaskFacts, *, now: datetime) -> bool:
+    """那个分身现在还在不在做？
+
+    先问知道这件事的人。跑轮次的进程看着这些子 agent 出生和收工，它说还在做，
+    那就是在跑 —— 不用等这个分身再吐一个 block 来证明自己没死。现场本来就是
+    稀疏的：一个分身埋头跑四十分钟长命令、一条 block 都不落，是完全正常的干法
+    （实测：真实会话里就是这么干的），而这四十分钟里它的时间戳和死掉一模一样。
+    拿时间戳当唯一裁判，沉默就被当成了死。
+
+    它说收工了，那就是收工了 —— 这是**缺席**的证据，不是沉默的推论，所以这里
+    立刻算失联，不用等宽限期。
+
+    关于它一个字都没有过（None），才退回时间戳那条老规矩：没有证据不能读成
+    一切正常。
+    """
+    if facts.worker_live is not None:
+        return facts.worker_live
+    return not _lost_signal(facts.last_signal_at, now=now)
 
 
 def _lost_signal(last_signal_at: datetime | None, *, now: datetime) -> bool:

@@ -575,6 +575,8 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
+                        # 同一个房间一次问一个分身，逐条问：每条活的分身是它自己的。
+                        worker_live=chat.worker_live(task.room_id, task.subagent_id),
                         awaiting_answer=task.id in asked,
                     ),
                     now=now,
@@ -634,6 +636,8 @@ async def get_room_task(
             # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
             # 一声。这一位是内存里的当下事实，不是库里的一列。
             room_screen_live=chat.has_live_screen(place.room_id),
+            # 屏幕还在，再问那个正在跑轮次的进程：这条活的分身它看得见。
+            worker_live=chat.worker_live(task.room_id, task.subagent_id),
             awaiting_answer=bool(
                 await BlockRepository(db).tasks_awaiting_an_answer([task.id])
             ),

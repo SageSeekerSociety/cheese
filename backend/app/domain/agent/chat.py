@@ -1187,6 +1187,18 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # What the running sessions have said about their child agents, per room:
+        # agent id -> still running / finished. Only the harness's own lifecycle
+        # events can answer this. They fire in the session's process and carry
+        # the child's id, while every tool call goes through the MCP transport,
+        # whose request has no caller identity on it at all — which is why a
+        # worker that only runs tools leaves no trace of its own. The board's
+        # "is that worker still alive" reads it (`worker_live`).
+        self._live_workers: dict[uuid.UUID, dict[str, bool]] = {}
+        # The session each room is currently on. A claim about a child belongs to
+        # the session that made it: a new session has never heard of the old
+        # one's children, so a claim that outlived its session is void.
+        self._room_sessions: dict[uuid.UUID, str] = {}
         # Where each live session's model traffic goes, remembered from the last
         # turn the platform assembled for it. A turn the session starts by itself
         # rides the same screen and therefore the same supply, and has no prompt
@@ -1971,6 +1983,34 @@ class ChatService:
         question, and the one that used to be unanswerable."""
         return self._compute.holds(topic_id)
 
+    def worker_live(self, topic_id: uuid.UUID, agent_id: str | None) -> bool | None:
+        """Is the worker bound to this task still doing it?
+
+        True when the room's session reported that agent starting and has not
+        taken it back, None when no one is claiming anything about it — never
+        mentioned, or already handed something back. The board takes this as the
+        strongest evidence it can get (`TaskFacts.worker_live`): a worker can go
+        quiet for forty minutes without being dead — that is what running a long
+        command looks like — and only the thing running it can tell the two
+        apart. The timestamps stay for the None case, where nobody has spoken.
+
+        The session that made a claim must still be the room's session for the
+        claim to hold: this process outlives screens.
+        """
+        if not agent_id:
+            return None
+        workers = self._live_workers.get(topic_id)
+        if not workers:
+            return None
+        if not self._compute.holds(topic_id):
+            # Their screen is gone, so they are gone with it — and this is the
+            # one place that notices, since nothing tells this service a screen
+            # died. Dropping the room's claims here is what keeps a claim from
+            # outliving the screen it came from and resurrecting on the next one.
+            self._live_workers.pop(topic_id, None)
+            return None
+        return workers.get(agent_id)
+
     async def turns_that_produced_something(
         self, turn_ids: list[uuid.UUID]
     ) -> set[uuid.UUID]:
@@ -2159,6 +2199,43 @@ class ChatService:
             frame = {"type": "turn_finished", "turn_id": str(work_id)}
         await get_broker().publish(str(topic_id), frame)
 
+    def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
+        """The room is on a (possibly) different session now.
+
+        Whatever the previous session said about its children died with it: the
+        children of the old session are not running in the new one, and the new
+        one will tell us about its own. Without this, a claim from a screen that
+        has since been replaced would outlive it and say "still running" about a
+        worker nobody is running.
+        """
+        previous = self._room_sessions.get(topic_id)
+        if previous is not None and previous != session_id:
+            self._live_workers.pop(topic_id, None)
+        self._room_sessions[topic_id] = session_id
+
+    def _note_worker_agent(self, topic_id: uuid.UUID, event: object) -> None:
+        """Record what this session just said about one child agent.
+
+        `SubagentStart`/`SubagentStop` are the only events that both name the
+        child they are about and arrive straight from the session's process, so
+        they are the only first-hand answer to "is that worker still doing it".
+        Nothing is inferred from silence: started means running.
+
+        A stop only takes the claim away, it does not declare the worker dead —
+        a subagent that hands something back and stands by, or that is resumed
+        later, produces a stop and then more work (see `AgentSubagentStop`). The
+        board then falls back to the timestamps, which is what it did before this
+        existed, rather than calling a worker dead that is about to speak again.
+        """
+        agent_id = getattr(event, "agent_id", None)
+        if not agent_id:
+            return
+        workers = self._live_workers.setdefault(topic_id, {})
+        if isinstance(event, AgentSubagentStart):
+            workers[agent_id] = True
+        else:
+            workers.pop(agent_id, None)
+
     async def _work_of_worker(
         self, topic_id: uuid.UUID, agent_id: str | None
     ) -> uuid.UUID | None:
@@ -2308,6 +2385,7 @@ class ChatService:
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
         if isinstance(event, AgentSessionInfo):
+            self._note_room_session(topic_id, event.session_id)
             await self._save_session_pointer(
                 topic_id,
                 event.session_id,
@@ -2315,6 +2393,7 @@ class ChatService:
                 harness=event.harness,
             )
         elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
+            self._note_worker_agent(topic_id, event)
             payload = await self._persist_worker_event(
                 project_id=project_id,
                 topic_id=topic_id,

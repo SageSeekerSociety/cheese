@@ -78,6 +78,41 @@ TASK_CASES = [
         Column.building,
         "失联",
     ),
+    # 安静和死掉在时间戳上长得一模一样，所以知道答案的时候要听知道的：跑轮次的
+    # 进程说这个分身还在做，那它就是在做。一个埋头跑四十分钟长命令、一条 block
+    # 都不落的分身，本来就是这个样子（这不是假设，是实测出来的）。
+    (
+        "分身还在做，只是很久没说话",
+        task(has_worker=True, last_signal_at=LONG_AGO, worker_live=True),
+        Column.building,
+        "运行中",
+    ),
+    (
+        "分身还在做，连第一句话都还没说",
+        task(has_worker=True, last_signal_at=None, worker_live=True),
+        Column.building,
+        "运行中",
+    ),
+    # 交回了一次不是死：分身可以被再叫起来，所以「收工」只收回它的声明，
+    # 看板退回时间戳那条老规矩 —— 刚说过话就还是运行中。
+    (
+        "分身交回了一次，刚说过话",
+        task(has_worker=True, last_signal_at=JUST_NOW, worker_live=None),
+        Column.building,
+        "运行中",
+    ),
+    # 屏幕是更外面的一层：它没了，那个分身一定也没了，进程说什么都不作数。
+    (
+        "分身还在做，但房间的屏幕没了",
+        task(
+            has_worker=True,
+            last_signal_at=JUST_NOW,
+            room_screen_live=False,
+            worker_live=True,
+        ),
+        Column.building,
+        "失联",
+    ),
     # 干完了在等房间收卡，不是断了 —— 这一条安静得理直气壮。
     (
         "分身交了结论，等房间收卡",
