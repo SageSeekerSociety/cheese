@@ -176,9 +176,11 @@ def test_migration_chain_single_head():
     import importlib.util
     from pathlib import Path
 
-    migrations_dir = Path("migrations/versions")
-    if not migrations_dir.exists():
-        pytest.skip("migrations directory not found")
+    # Anchored on this file, not on the working directory: a relative path made
+    # this check disappear into a skip whenever pytest was invoked from anywhere
+    # but one directory, and a chain with two heads would have gone green.
+    migrations_dir = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+    assert migrations_dir.is_dir(), f"{migrations_dir} is missing"
 
     revisions: dict[str, str | tuple[str, ...] | None] = {}
     merge_revisions: set[str] = set()
@@ -199,6 +201,11 @@ def test_migration_chain_single_head():
                     merge_revisions.add(rev)
                 else:
                     revisions[rev] = down_raw
+
+    assert revisions, (
+        f"no revision was read out of {migrations_dir} — the check would pass "
+        "on an empty chain, which tells us nothing"
+    )
 
     # Build parent → children mapping
     children_of: dict[str | None, list[str]] = {}

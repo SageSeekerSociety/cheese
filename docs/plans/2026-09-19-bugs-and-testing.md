@@ -367,7 +367,7 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 **(3) 靠 sleep 撑的（237 处）。** 见 3.2 第 4 条：换假时钟。
 换不掉的只有一种——「它不是返回错答案，是不返回」（#1188 的指数回溯），那一类用一个硬上限当断言，不是用 sleep 当等待。
 
-**(4) skip 的（CI 上从 33 条降到 12 条，剩的全是第三类）。** 三类分开处置，前两类已做：
+**(4) skip 的（CI 上从 33 条降到 11 条，剩的全是第三类）。** 三类分开处置，前两类已做：
 
 - **最坏的一类，断言不成立就 skip，于是永远绿。已做**：`test_discussion.py` 与
   `test_task.py` 那五处的前置，改成了建立它的那个 fixture 里的断言，
@@ -378,13 +378,15 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
   `test_notification.py` 测的接口今天还在服务——`/notifications`、`/notifications/unread-count`、
   `/notifications/status` 都在 `app/api/routes/notifications_flat.py`；它删得掉是因为
   `contract/test_notifications_flat_functional.py` 与 `contract/test_notifications_contract.py`
-  已经覆盖列表、筛选、未读数、批量 PATCH、单条读删，唯一没人接手的那条负向用例
-  （`PUT /notifications/status {"read": false}` 必须 400）已补进前者，所以整删不丢覆盖。
+  已经覆盖列表、筛选、未读数、批量 PATCH、单条读删。没人接手的有两条：
+  `PUT /notifications/status {"read": false}` 必须答 400，
+  `PATCH /notifications/{id} {"read": false}` 把单条改回未读必须成立。
+  集体那条拒 false，单条这条收 false，是两个行为。两条都已补进前者，所以整删不丢覆盖。
   `contract/test_projects_contract.py` 看着同类但不能删：被测的 `/team-projects` 接口存在，
   `tests/integration/test_team_projects.py` 还在端到端跑它，skip 的理由是夹具缺凭据，
   不是契约问题。已换 `authed_client` 重开，项目走真路由种下，缺件即 fail。
-- **环境缺件就 skip。还没做**：CI 上剩的 12 条都是它，Meilisearch、codex 二进制、
-  OpenViking 的 key、node、migrations 目录各占几条。改成「缺件即 fail」，
+- **环境缺件就 skip。还没做**：CI 上剩的 11 条都是它，Meilisearch、codex 二进制、
+  OpenViking 的 key、node、tmux、`ln` 各占几条。改成「缺件即 fail」，
   并在 job 开头一个显式的 precondition step 里装。判据这一半已经有了：
   `backend/scripts/assert_suite_ran.py` 的 `assert_suite_ran(junit_xml, *, at_least)`，
   junit 里有 skipped 就红，实际跑的条数低于本 job 声明的下限也红
@@ -392,7 +394,13 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
   今天由 `test_harness_contracts.py` 与 `remote-execution.yml` 的 private-chat 选集两处调用。
   `mcp-contract.yml` 不接：那八条检查里任何一条不成立，`mcp_contract.py` 自己先退 1，
   跑它的那一步就已经红了，闸门这一步根本轮不到执行——在那里加一道闸门是一道永远不会红的防御。
-  `test.yml` 要等这 12 条退役之后才接得上，现在接上去只会让 main 常红。
+  `test.yml` 要等这 11 条退役之后才接得上，现在接上去只会让 main 常红；
+  那一半连同 `test.yml` 的接线记在 #1300，本节的验收要等它才算到。
+
+  第三类里混进来过一条不是环境问题的：`unit/test_regression_round12.py` 的
+  「迁移链只有一个头」按相对路径找 `migrations/versions`，而真目录是
+  `backend/alembic/versions`，于是它在任何 cwd 下都 skip，从没跑过。
+  已改成按 `__file__` 定位并断言目录存在、读出的 revision 不为空。
 
 ### 3.4 flaky 政策
 

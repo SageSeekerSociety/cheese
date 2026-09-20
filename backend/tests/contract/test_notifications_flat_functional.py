@@ -71,6 +71,16 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
     resp = await authed_client.get("/notifications/unread-count")
     assert resp.json()["data"]["count"] == 1
 
+    # And back to unread: the single-notification route takes false, unlike the
+    # collective one, so a reader who marked something read by mistake can undo it.
+    resp = await authed_client.patch(f"/notifications/{id1}", json={"read": False})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["notification"]["read"] is False
+    resp = await authed_client.get("/notifications/unread-count")
+    assert resp.json()["data"]["count"] == 2
+    resp = await authed_client.patch(f"/notifications/{id1}", json={"read": True})
+    assert resp.status_code == 200
+
     # Collective mark-all-read clears the remaining one.
     resp = await authed_client.put("/notifications/status", json={"read": True})
     assert resp.json()["data"]["count"] == 1
