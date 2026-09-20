@@ -6,8 +6,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import Block
-from app.domain.block.services import record_system_event
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.repositories import BlockRepository
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 
@@ -45,10 +46,14 @@ async def report_failure(
         root = project.root_topic_id
         available = root is not None and root != topic_id
         dispatch_turn = uuid.uuid4()
-        event = await record_system_event(
-            db,
-            project_id=project_id,
-            topic_id=topic_id,
+        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
+        event = await BlockRepository(db).add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
+            author="system",
+            author_type=AuthorType.system,
+            kind=BlockKind.event,
             content=(
                 "环境准备失败，已交给总览芝士检查。"
                 if available

@@ -119,6 +119,14 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 
 清单还空着的项目，这次交付只能新建，而起的那个名字会留在清单上、后面每一版都算在它名下——所以它是**这样东西本身**的名字，不是这一次改动的标题。交出去的是一次合并的项目（一个代码仓库、一套文档工程）因此清单上通常只有一项：名字是这个项目交出去的那样东西（一个服务、一个库、一个网站），之后每一次合并都是它的新一版，用它的 id 沿用。按改动标题起名会让清单长成一份改动列表，而那份列表进每一轮的开场。
 
+**这一版交出去的是什么，也在递卡时说清。** 三种交法，选一种：
+
+- `--deliver <路径>`：交出去的是一份文件（论文的 PDF、幻灯片、被改过的那份 .docx）。平台在递卡这一刻从工作目录里把它读下来留一份快照，所以这一版以后永远拿得到**当时交出去的那一份**，不是半年后重建一次的结果。单份最大 80MB。
+- `--deliver-url <网址>`：交出去的是一个地址（网站、看板）。只记这个指针。
+- 两个都不给：交出去的是**这次合并**本身。代码仓库这类项目交的就是主干往前走一步，没有可下载的东西。
+
+留快照的时机只有这一下：构建产物只活在这一轮的工作目录里，过后就没了。所以先把它构建出来，再递卡。
+
 三条跟着它的规矩：
 
 - **成品是从源构建出来的。源进库，成品不进**——任何时候都能重建它。五十版 20MB 的幻灯片只会出现在把构建产物也提交进去的时候。
@@ -154,7 +162,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_close_task(task_id, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
 | `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options` 让人一键拍板 |
-| `cheese_accept_request(subject, artifact?, new_artifact?, reviewer?, reason?, body?, task?)` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单）；后者给一个名字，声明一样清单上还没有的东西，返回里带回它的 id；`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
+| `cheese_accept_request(subject, artifact?, new_artifact?, deliver?, deliver_url?, reviewer?, reason?, body?, task?)` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单）；后者给一个名字，声明一样清单上还没有的东西，返回里带回它的 id；`deliver` / `deliver_url` 说清这一版交出去的是什么——工作目录里那一份文件的路径，或者一个地址，两个都不给就是交出去这次合并本身；`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
 | `cheese_ready(task?)` | 执行者把自己任务的 draft PR 标记为可评审；只改变 draft 状态。需要请人验收时用 `cheese_accept_request`，它也会把 draft 翻成 ready |
 | `cheese_describe(subject?, body?, task?)` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
 

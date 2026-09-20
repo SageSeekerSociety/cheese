@@ -1117,6 +1117,41 @@ export function listProjectArtifacts(projectId: string): Promise<ListPayload<Pro
   return request<ListPayload<ProjectArtifact>>(`/projects/${encodeURIComponent(projectId)}/artifacts`)
 }
 
+/** 交出去的是什么形态：一份文件、一个地址、一次合并。null = 这一版是交付物落地
+ *  之前递的卡，当时没有记，而那份构建产物已经不在了。 */
+export type DeliverableKind = 'file' | 'link' | 'merge'
+
+/** 这一项的第 N 版 —— 就是第 N 张采纳了的卡。 */
+export interface ArtifactVersion {
+  number: number
+  card_id: string
+  /** 这次交付改了什么（卡上那句 Conventional Commit 标题）。 */
+  subject: string | null
+  delivered_at: string | null
+  decided_by: string | null
+  kind: DeliverableKind | null
+  filename: string | null
+  url: string | null
+}
+
+export interface ProjectArtifactDetail extends ProjectArtifact {
+  versions: ArtifactVersion[]
+}
+
+export function getProjectArtifact(projectId: string, artifactId: string): Promise<ProjectArtifactDetail> {
+  return request<ProjectArtifactDetail>(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`
+  )
+}
+
+/** 这一版当时交出去的那一份字节。取的是快照，不是现在重建一次的结果。 */
+export function artifactVersionFileUrl(projectId: string, artifactId: string, cardId: string): string {
+  return (
+    `${BASE}/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}` +
+    `/versions/${encodeURIComponent(cardId)}/file`
+  )
+}
+
 /** 换个名字。卡指着的是这一项的 id，所以之前的交付照样算它的版本。 */
 export function renameProjectArtifact(
   projectId: string,

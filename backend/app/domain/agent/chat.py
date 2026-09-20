@@ -110,6 +110,7 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
@@ -2589,10 +2590,16 @@ class ChatService:
                     state.project_id,
                     usage_to_credits(usage, spend_priced=state.route == "gateway"),
                 )
+            landed = landing(
+                EventAbout.room,
+                project_id=state.project_id,
+                room_id=state.topic_id,
+            )
             for resource in state.actions:
                 block = await blocks.add(
-                    project_id=state.project_id,
-                    topic_id=state.topic_id,
+                    project_id=landed.project_id,
+                    topic_id=landed.topic_id,
+                    task_id=landed.task_id,
                     author=state.acting_agent,
                     author_type=AuthorType.system,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
@@ -3207,10 +3214,19 @@ class ChatService:
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
-            block = await blocks.add(
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
+            landed = landing(
+                EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
-                topic_id=topic_id,
+                room_id=topic_id,
                 task_id=task_id,
+            )
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=author,
                 author_type=AuthorType.participant,
                 content=text,
@@ -3233,12 +3249,12 @@ class ChatService:
                     block.refs = refs
                 for bad in unresolved:
                     warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
+                    # Beside the message it is about, not in the room the
+                    # message did not go to — same landing as the message.
                     await blocks.add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        # Beside the message it is about, not in the room the
-                        # message did not go to.
-                        task_id=task_id,
+                        project_id=landed.project_id,
+                        topic_id=landed.topic_id,
+                        task_id=landed.task_id,
                         author=author,
                         author_type=AuthorType.participant,
                         content=warn,
@@ -3382,10 +3398,19 @@ class ChatService:
             blocks = BlockRepository(session)
             if eid and await blocks.has_eid(topic_id, eid):
                 return None
-            block = await blocks.add(
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
+            landed = landing(
+                EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
-                topic_id=topic_id,
+                room_id=topic_id,
                 task_id=task_id,
+            )
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=await self._agent_handle(session, topic_id),
                 author_type=author_type,
                 content=content,
@@ -4221,9 +4246,11 @@ class ChatService:
         """A system event for a turn that ends before it starts, committed with
         the rest of the assembling transaction. A room that shows nothing has no
         way to tell 「没开始」 from 「还在想」."""
+        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
         block = await BlockRepository(session).add(
-            project_id=project_id,
-            topic_id=topic_id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="system",
             author_type=AuthorType.system,
             content=text,
@@ -4495,9 +4522,15 @@ class ChatService:
                         not cloud_events
                         or (cloud_events[-1].meta or {}).get("state") != "waiting"
                     ):
-                        waiting_block = await blocks.add(
+                        landed = landing(
+                            EventAbout.room,
                             project_id=project_id,
-                            topic_id=topic_id,
+                            room_id=topic_id,
+                        )
+                        waiting_block = await blocks.add(
+                            project_id=landed.project_id,
+                            topic_id=landed.topic_id,
+                            task_id=landed.task_id,
                             author="system",
                             author_type=AuthorType.system,
                             content=waiting_text,
@@ -5045,9 +5078,11 @@ class ChatService:
                 kind=TopicKind.topic,
                 created_by=author,
             )
+            landed = landing(EventAbout.room, project_id=project_id, room_id=topic.id)
             await blocks.add(
-                project_id=project_id,
-                topic_id=topic.id,
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=author,
                 author_type=AuthorType.participant,
                 content=text,
@@ -5205,9 +5240,15 @@ class ChatService:
 
         # Decision log → a block in the root topic (审计/施工现场).
         async with self._sessions() as session:
-            await BlockRepository(session).add(
+            landed = landing(
+                EventAbout.project,
                 project_id=project_id,
-                topic_id=root_topic_id,
+                room_id=root_topic_id,
+            )
+            await BlockRepository(session).add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=await self._agent_handle(session, root_topic_id),
                 author_type=AuthorType.participant,
                 content=f"【巡检决策日志】\n{final_text}",

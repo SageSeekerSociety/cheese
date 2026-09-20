@@ -6,7 +6,12 @@ from datetime import datetime
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
+from app.domain.review.models import (
+    AcceptApproval,
+    AcceptCard,
+    AcceptStatus,
+    DeliverableKind,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -27,6 +32,9 @@ class AcceptCardRepository:
         task_id: uuid.UUID | None = None,
         delivered_task_ids: list[uuid.UUID] | None = None,
         artifact_id: uuid.UUID | None = None,
+        deliverable_kind: DeliverableKind | None = None,
+        deliverable_name: str | None = None,
+        deliverable_url: str | None = None,
     ) -> AcceptCard:
         # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
         # belongs to the room, not to any one card in it.
@@ -40,6 +48,9 @@ class AcceptCardRepository:
             change_body=change_body,
             delivered_task_ids=[str(t) for t in (delivered_task_ids or [])],
             artifact_id=artifact_id,
+            deliverable_kind=deliverable_kind,
+            deliverable_name=deliverable_name,
+            deliverable_url=deliverable_url,
         )
         self._session.add(card)
         await self._session.flush()
