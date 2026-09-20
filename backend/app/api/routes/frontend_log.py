@@ -10,6 +10,7 @@ from app.core import alerting
 from app.core.db import get_db
 from app.core.errors import NotFoundError
 from app.domain import frontend_log  # module import: tests swap the intake singleton
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.frontend_log import FrontendErrorBatchIn
@@ -47,9 +48,11 @@ async def report_frontend_errors(body: FrontendErrorBatchIn, db: DbSession) -> d
             str(body.project_id), frontend_log.fingerprint(err)
         ):
             continue
+        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
         await blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="frontend",
             author_type=AuthorType.system,
             content=frontend_log.event_content(err),

@@ -30,10 +30,11 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -214,7 +215,7 @@ async def test_a_recovered_message_lands_once_and_whole(client, tmp_path):
         (block.content or "").strip()
         for block in blocks
         if block.kind == BlockKind.event
-        and block.author_type == AuthorType.ai
+        and looks_like_agent_handle(block.author)
         and (block.meta or {}).get("progress")
     ]
 

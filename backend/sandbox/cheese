@@ -18,7 +18,10 @@
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong
-  cheese accept-request mentor-1 "验收证据" --subject "feat: add report"
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add report" \
+      --artifact <产物 id>                     # 交付清单上那一项的新一版
+  cheese accept-request mentor-1 "验收证据" --subject "feat: add site" \
+      --new-artifact "项目官网"                # 做出了清单上还没有的一样东西
   cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
@@ -1459,6 +1462,14 @@ def build_parser() -> argparse.ArgumentParser:
         "reason", nargs="?", default="", help="验收证据和需要对方检查的内容"
     )
     pa.add_argument("--subject", required=True, help="英文 Conventional Commit 标题")
+    pa.add_argument(
+        "--artifact",
+        help="这次交付是清单上哪一项产物的新一版，给它的 id（照抄系统提示里的清单）",
+    )
+    pa.add_argument(
+        "--new-artifact",
+        help="这次交付做出了一样清单上还没有的东西，给它起个真名；返回新的 id",
+    )
     pa.add_argument("--body", help="改动原因和验证说明")
     pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
     pdesc = sub.add_parser(
@@ -1945,6 +1956,8 @@ def main() -> None:
             "routing_reason": a.reason,
             "change_subject": a.subject,
             "change_body": a.body,
+            "artifact": a.artifact,
+            "new_artifact": a.new_artifact,
         }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
@@ -1954,7 +1967,16 @@ def main() -> None:
         task = _task_id(a.task)
         _sync_task(task)
         r = _call("POST", f"/topics/{topic}/tasks/{task}/accept-card", payload)["data"]
-        print(f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}。")
+        art = r.get("artifact") or {}
+        named = art.get("name") or a.new_artifact or a.artifact
+        print(
+            f"已把验收卡递给 {r.get('reviewer_handle') or a.reviewer}"
+            f"，本次更新《{named}》。"
+        )
+        # 新建的那一次把 id 印出来:往后交付这一项就用它,而这条命令是它第一次
+        # 存在的地方 —— 不印出来,这一轮里没有别的地方读得到。
+        if a.new_artifact and art.get("id"):
+            print(f"这一项的 id 是 {art['id']}，以后交付它用 --artifact {art['id']}。")
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。

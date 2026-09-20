@@ -15,6 +15,7 @@ work was handed to is a fact about the moment it was handed over.
 import itertools
 import uuid
 
+from tests.delivery import delivery_artifact
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_project_tree import _insert_block
 from tests.machine_work import machine_commits
@@ -58,7 +59,11 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
     """真的写点东西再递卡 —— 一次没有代码的交付不是交付。"""
     nth = next(_written)
     machine_commits(uuid.UUID(pid), uuid.UUID(task_id), {f"work-{nth}.txt": subject})
-    body: dict = {"change_subject": subject, "routing_reason": "最懂"}
+    body: dict = {
+        "change_subject": subject,
+        "routing_reason": "最懂",
+        **delivery_artifact(client, room),
+    }
     body.update(kw)
     return client.post(f"/topics/{room}/tasks/{task_id}/accept-card", json=body)
 

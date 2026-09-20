@@ -1,0 +1,16 @@
+{
+  "verb": "backlog",
+  "why": "Reading never consumes: the cursor moves on `landed` and on nothing else. That is what makes recovery a reconnect rather than a salvage — a reader that dies mid-pass costs a re-read, never an event.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "ensure", "opened": true },
+    { "call": "send", "message": "一", "returns": true },
+    { "call": "send", "message": "二", "returns": true },
+    { "call": "backlog.unread", "returns": 2 },
+    { "call": "backlog.unread", "returns": 2 },
+    { "call": "backlog.landed", "through": 0 },
+    { "call": "backlog.unread", "returns": 1 },
+    { "call": "backlog.landed", "through": 0 },
+    { "call": "backlog.unread", "returns": 0 }
+  ]
+}

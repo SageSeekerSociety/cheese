@@ -462,6 +462,28 @@ def test_a_proposal_lands_as_a_card_that_a_person_then_sends(client):
     assert row["topic_id"] == topic
 
 
+def test_the_card_it_proposed_is_not_an_input_it_has_to_read(client):
+    """提案卡是芝士自己落下的，等的是**人**按那两个按钮，不是它自己读一遍。
+
+    和 `/ask` 同一条路：卡是一条 kind=message、署名是 agent 的块，而这个端点也填
+    不出轮次号（CLI 只在 CHEESE_TURN 非空时才带 X-Cheese-Turn）。按「署名是 agent
+    且落在某一轮里」去算它就成了待读输入，「忘了 @」的补救按钮于是白开一轮，把芝
+    士自己提的那张卡当成一条没读过的话喂回去。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+
+    assert _propose(client, topic, token).status_code == 200
+
+    summoned = client.post(f"/topics/{topic}/summon", json={"author": REPORTER})
+    assert summoned.status_code == 200, summoned.text
+    assert summoned.json()["data"] == {
+        "started": False,
+        "reason": "nothing_pending",
+    }, "它自己提的那张卡不该把它自己叫起来"
+
+
 def test_an_agent_cannot_accept_its_own_proposal(client):
     """Accepting is publishing, one step removed. Both halves are one door."""
     project = _project(client, REPORTER)

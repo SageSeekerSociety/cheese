@@ -79,7 +79,9 @@ export interface Topic {
   presentation?: Presentation
 }
 
-export type AuthorType = 'human' | 'ai' | 'system'
+// 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
+// ——见 `lib/authorship.ts`。`human`/`ai` 是旧值，只出现在这次改动之前写下的行上。
+export type AuthorType = 'participant' | 'system' | 'human' | 'ai'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
 // e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
@@ -672,6 +674,23 @@ export interface AutoMergeInfo {
   armed_at: string | null
 }
 
+// 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
+// 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
+// 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
+export interface ForgeInfo {
+  // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
+  // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
+  kind: 'github_app' | 'external_remote' | 'platform' | 'unknown'
+  reports_checks: boolean
+  hosts_proposals: boolean
+  can_write_remote: boolean
+  /** 填了远端地址没有。和 can_write_remote 分开：填了而我们推不动是第三种情况。 */
+  has_external_remote: boolean
+  pushes_to_external_remote: boolean
+  identity: 'user' | 'platform'
+  declaration: string
+}
+
 export interface AcceptCard {
   id: string
   task_id?: string | null
@@ -704,7 +723,9 @@ export interface AcceptCard {
   // 合并态 (#718): what stands between this card and the trunk, and whose move
   // it is. Always present — a platform-lane card carries who="human".
   merge_state: MergeStateInfo
-  has_external_checks: boolean
+  // 托管方是谁、它能做什么 —— 卡生成的那一刻就带着（后端 domain/review/forge.py）。
+  // 这是卡上唯一的一份：别从别的字段推「这个项目接没接 GitHub」。
+  forge: ForgeInfo
   auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.

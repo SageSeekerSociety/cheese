@@ -36,7 +36,9 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     tree = client.get(f"/topics?project_id={pid}").json()["data"]["data"]
     assert all(t["id"] != private["id"] for t in tree)
 
-    # It still works as a chat (stub agent replies when summoned).
+    # It still works as a chat (stub agent answers when summoned). What reaches
+    # the room is chat_send's alone, here as in any other room — that contract
+    # is pinned in test_chat_publication.py.
     with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
         ws.send_json({"type": "message", "content": "设个偏好", "summon": True})
         frames = []
@@ -45,7 +47,7 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
             frames.append(f["type"])
             if f["type"] in ("done", "error"):
                 break
-    assert "assistant_block" in frames
+    assert "event_block" in frames and "error" not in frames
 
 
 def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(

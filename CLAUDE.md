@@ -14,7 +14,7 @@ A fact about the present is a trap on a delay: the moment someone fixes what you
 
 ## This repo does not adapt to the platform
 
-Cheese hosts other people's repositories, and **a repository must never have to change in order to be hosted** — no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. Every line a repo is asked to add is a reason not to adopt us, and for the repos we do not control, asking is not on the table.
+Cheese hosts other people's repositories, and **a repository must never have to change in order to be hosted** — no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. The rule governs a repository's contents, never a machine's: one enrolled to run agents was enrolled for exactly that. Every line a repo is asked to add is a reason not to adopt us, and for the repos we do not control, asking is not on the table.
 
 So this file describes **this project** and nothing else. Anything equally true of a hosted repo goes in `backend/sandbox/skills/cheese/SKILL.md`, which reaches all of them at once; the same words here would fix it for us alone, and demonstrate the very adaptation we promise nobody has to make.
 

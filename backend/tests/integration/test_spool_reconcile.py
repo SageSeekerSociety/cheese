@@ -14,8 +14,9 @@ import pytest
 from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import _SPOOL_PARTIAL_GRACE_S, ChatService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -394,7 +395,7 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
         for b in rows
         if b.kind == BlockKind.event
         and (b.meta or {}).get("progress")
-        and b.author_type == AuthorType.ai
+        and looks_like_agent_handle(b.author)
         and "交给你了" in (b.content or "")
     ]
     assert len(matches) == 1  # one copy, whichever path landed it
@@ -461,7 +462,7 @@ def _ai_messages(rows, *, exclude: tuple[str, ...] = ("ok",)) -> list:
         b
         for b in rows
         if b.kind == BlockKind.message
-        and b.author_type == AuthorType.ai
+        and looks_like_agent_handle(b.author)
         and b.content not in exclude
     ]
 

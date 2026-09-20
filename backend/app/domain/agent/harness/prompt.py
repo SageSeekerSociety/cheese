@@ -23,6 +23,7 @@ def build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    artifacts: list[dict] | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
@@ -68,6 +69,38 @@ def build_system_prompt(
             "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
             + lines
         )
+    if artifacts is not None:
+        # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
+        # 名字：清单由交付长出来，所以一个写错的名字不会撞出错误，只会在清单上多
+        # 出一项看着像重复的东西。照着这几行沿用，就不会多出来。
+        #
+        # **清单空着的时候这一段照样出现。** 那是必须说话的那一次：项目的第一次交
+        # 付只能新建，而它起的那个名字会留在清单上，进后面每一轮的开场。这一段不在
+        # 的话，提示里没有一个字提到产物，只剩递卡被打回这一条路能让人知道要声明
+        # ——而递卡是一整轮工作的最后一步。
+        head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
+        if artifacts:
+            lines = "\n".join(
+                f"- 《{a['name']}》"
+                + (f"　第 {a['version']} 版" if a["version"] else "　还没交付过")
+                + f"　id={a['id']}"
+                for a in artifacts
+            )
+            parts.append(
+                head + "递验收卡时说清这次交付动的是哪一项：交付下面某一项的新一版，"
+                "用 `artifact=<id>` 点名它（**照抄下面那一行的 id，不要写名字**——名字"
+                "写错不会报错，只会在清单上多一项看着像重复的东西）；确实做出了一样下"
+                "面没有的东西，用 `new_artifact=<真名>` 给它起个名字，返回里带着新的 "
+                "id。两个都不给、或者两个都给，递卡会被打回。\n" + lines
+            )
+        else:
+            parts.append(
+                head + "清单还空着，这个项目一样东西都还没交出去过。所以这次交付只有"
+                "一种说法：用 `new_artifact=<真名>` 给它起个名字，返回里带着它的 id，"
+                "以后交付它的新一版用 `artifact=<id>` 点名。不声明，递卡会被打回。\n"
+                "起的是**这样东西本身**的名字，不是这一次改动的标题：这个名字会留在"
+                "清单上，后面每一版都算在它名下。"
+            )
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
@@ -186,17 +219,8 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str, *, is_private: bool = False) -> str:
+def publication_prompt(content: str) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
-    if is_private:
-        return (
-            content
-            + "\n\n"
-            + platform_prompt(
-                "这是私聊，最终答复会自动发布给用户。直接回答，"
-                "不要再用 chat_send 重复发送同一答复。"
-            )
-        )
     return (
         content
         + "\n\n"

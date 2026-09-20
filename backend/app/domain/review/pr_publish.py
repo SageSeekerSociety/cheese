@@ -154,7 +154,7 @@ async def open_pr_for_card(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     client = GitHubPRClient(owner, repo_name, tokens)
-    pr = await client.open_pr(
+    opened = await client.open_pr(
         head=branch,
         base=base,
         title=title,
@@ -165,6 +165,8 @@ async def open_pr_for_card(
         # thing here that is guaranteed to work.
         as_user_token=await _requester_token(session, topic_id),
     )
+    pr = opened.pr
+    await _report_identity_downgrade(session, topic_id, opened.identity_downgrade)
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -406,7 +408,7 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     base = task.base_branch
     who = await identity.attribution(session, room)
     client = GitHubPRClient(*parsed, tokens)
-    pr = await client.open_pr(
+    opened = await client.open_pr(
         head=branch,
         base=base,
         # No `Reviewed-by` and no card: nobody has accepted, and the subject
@@ -417,6 +419,8 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         as_user_token=await _requester_token(session, room.id),
         draft=True,
     )
+    pr = opened.pr
+    await _report_identity_downgrade(session, room.id, opened.identity_downgrade)
     logger.info(
         "draft PR #%s opened for task %s (%s)",
         pr.get("number"),
@@ -426,17 +430,70 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     return pr
 
 
-async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
-    """The GitHub credential of the human this topic belongs to, so the PR is
-    opened in their name. None whenever they have not connected GitHub, their
-    token cannot be refreshed, or anything at all goes wrong — this is an
-    attribution nicety and must never be the reason a PR fails to open.
+async def _report_identity_downgrade(
+    session: AsyncSession, room_id: uuid.UUID, sentence: str | None
+) -> None:
+    """Tell the person whose name the PR should have carried that it did not.
 
-    Who that human is comes from `identity.requester_handle`, not from
-    `Topic.created_by`: on a 分身-split room the creator is the 分身's own
-    `cheese-<hex12>` handle, which matches no account, so this returned None and
-    every such PR opened as `cheesex-app[bot]`."""
-    from app.domain.oauth.services import get_github_user_token_for_handle
+    Both PR-opening paths substitute the App when the requester's credential is
+    refused, and the substitution is otherwise undetectable from inside Cheese —
+    the card and the room read exactly as they would have. I26: a fallback is as
+    visible as the failure it covers, and a log line is not visible to anyone
+    the PR is attributed away from.
+
+    It is addressed, not merely said: `announce` does not guess recipients, so
+    an unaddressed call only leaves a line in the timeline. The draft-PR sweep
+    (`_open_draft_for_task`) runs while nobody is looking at the room, and by
+    the time they come back all they see is GitHub crediting a bot. The person
+    is the one `_requester_token` already resolves.
+
+    It writes through a session of its own and commits it. `open_pr_for_card`
+    only ever READS through the session it is handed — the card row is written
+    by `record_pr` on another session, and this one is dropped — so a block
+    written into it would be discarded without a word. What is being reported
+    already happened on GitHub, so it must survive the caller either way.
+    """
+    if not sentence:
+        return
+    from app.domain.agent.announce import announce
+    from app.domain.agent.platform_notices import (
+        EVENT_PR_IDENTITY_DOWNGRADED,
+        SEVERITY_WARN,
+        WHO_HUMAN,
+        notice,
+    )
+
+    # 从调用方会话的 engine 上开，不用模块级的 `async_session_factory`：测试环境
+    # 把后者绑在另一个库上（同 `services._note_outside_accept_txn`）。
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    async with factory() as own:
+        handle = await _requester_of(own, room_id)
+        await announce(
+            own,
+            place_id=room_id,
+            content="PR 开在了芝士名下，不是你名下",
+            meta=notice(
+                EVENT_PR_IDENTITY_DOWNGRADED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=sentence,
+                detail_label="发生了什么",
+            ),
+            recipients=[handle] if handle else (),
+        )
+        await own.commit()
+
+
+async def _requester_of(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
+    """The human this topic's work belongs to — whose name the PR should carry,
+    and who is told when it could not.
+
+    From `identity.requester_handle`, not from `Topic.created_by`: on a
+    分身-split room the creator is the 分身's own `cheese-<hex12>` handle, which
+    matches no account, so this returned None and every such PR opened as
+    `cheesex-app[bot]`.
+
+    Never raises: attribution must not be the reason a PR fails to open."""
     from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
@@ -444,9 +501,23 @@ async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | 
         place = await PlaceResolver(session).resolve(topic_id)
         if place is None:
             return None
-        handle = await identity.requester_handle(session, place.room)
-        if not handle:
-            return None
+        return await identity.requester_handle(session, place.room)
+    except Exception:  # noqa: BLE001
+        logger.info("no requester for topic %s", topic_id, exc_info=True)
+        return None
+
+
+async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
+    """The GitHub credential of that human, so the PR is opened in their name.
+    None whenever they have not connected GitHub, their token cannot be
+    refreshed, or anything at all goes wrong — this is an attribution nicety and
+    must never be the reason a PR fails to open."""
+    from app.domain.oauth.services import get_github_user_token_for_handle
+
+    handle = await _requester_of(session, topic_id)
+    if not handle:
+        return None
+    try:
         return await get_github_user_token_for_handle(session, handle)
     except Exception:  # noqa: BLE001
         logger.info("no requester token for topic %s", topic_id, exc_info=True)

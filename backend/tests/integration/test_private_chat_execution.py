@@ -6,8 +6,9 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
@@ -63,25 +64,27 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         pass
     await settle_turn(svc, topic_id)
     assert len(screen.prompts) == 1
-    assert ("最终答复会自动发布给用户" in screen.prompts[0]) is private
-    assert (
-        "final responses are not published to chat" in screen.prompts[0]
-    ) is not private
+    # 一条发布路径 (结论 19): the private chat is told what a room is told, and
+    # its terminal reply lands in activity exactly as a room's does.
+    assert "final responses are not published to chat" in screen.prompts[0]
+    # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
+    # prompt like any room, and still told what is particular to a private chat.
+    assert "chat_send" in screen.last_system_prompt
+    assert ("cheese_remember" in screen.last_system_prompt) is private
     assert not (project_machine if private else central).prompts
     assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
     assert any(
-        b.author_type == AuthorType.ai
-        and b.kind == (BlockKind.message if private else BlockKind.event)
+        looks_like_agent_handle(b.author)
+        and b.kind == BlockKind.event
         and b.content == "Draft saved."
         for b in blocks
     )
-    if not private:
-        assert not any(
-            b.author_type == AuthorType.ai and b.kind == BlockKind.message
-            for b in blocks
-        )
+    assert not any(
+        looks_like_agent_handle(b.author) and b.kind == BlockKind.message
+        for b in blocks
+    )
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the
         # real document API and database rather than the shell HTTP fixture.
