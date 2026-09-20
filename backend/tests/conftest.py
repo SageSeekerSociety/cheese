@@ -1043,6 +1043,7 @@ def seed_task_with_protocol(
     conditions: list[dict] | None = None,
     resource_pack: dict | None = None,
     default_role: str | None = None,
+    shell: str | None = None,
     override: dict | None = None,
     space_id: int | None = None,
 ) -> int:
@@ -1051,7 +1052,8 @@ def seed_task_with_protocol(
     Seeded through the DB because the 知是 publish flow needs an authenticated
     space admin and a filled form, and none of that is what the protocol tests
     are about. `override` populates the 赛题's own `protocol_override` (#370
-    option (c)).
+    option (c)). `shell` and `override` carry the 壳 layer the same way, so a
+    项目集-level 壳 and a 赛题-level one are set up in one call.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -1086,6 +1088,7 @@ def seed_task_with_protocol(
                 resource_pack=resource_pack or {},
                 conditions=conditions or [],
                 default_role=default_role,
+                shell=shell,
                 created_at=now,
                 updated_at=now,
             )

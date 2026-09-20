@@ -88,6 +88,9 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.shell.catalog import Shell
+from app.domain.shell.schemas import ShellOut
+from app.domain.shell.service import effective_shell, effective_shells
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
@@ -119,9 +122,31 @@ def _is_a_real_person(handle: str | None) -> bool:
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
+
+
+def _shelled(project: Project, shell: Shell) -> dict:
+    """One project's wire payload, with the 壳 it runs under.
+
+    `shell` is not a column on `Project`, so it cannot come from
+    `model_validate` — it is resolved from the project's own settings, its 赛题
+    and that 赛题's 项目集, and filled in here. Every route that returns a project
+    goes through this pair, or the frontend would fall back to the default 壳 on
+    some screens and not others.
+    """
+    return (
+        ProjectOut.model_validate(project)
+        .model_copy(update={"shell": ShellOut.of(shell)})
+        .model_dump(mode="json")
+    )
+
+
+async def _shelled_many(db: DbSession, projects: list[Project]) -> list[dict]:
+    """The same, for a list, without a query per project."""
+    shells = await effective_shells(db, projects)
+    return [_shelled(p, shells[p.id]) for p in projects]
+
 
 
 @router.get("/resource-limits")
@@ -179,7 +204,8 @@ async def create_project(
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
-    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+    shell = await effective_shell(db, project)
+    return ok(_shelled(project, shell))
 
 
 @router.get("")
@@ -239,7 +265,7 @@ async def list_projects(
             # route happened to 401 and trip the refresh. Say it here instead.
             resolver.reject_failed_credential(who)
             projects, total = [], 0
-    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    items = await _shelled_many(db, projects)
     return ok(page(items, total))
 
 
@@ -252,7 +278,7 @@ async def projects_for_task(task_id: int, db: DbSession) -> dict:
     three projects, not as a button that quietly makes a fourth.
     """
     projects = await ProjectRepository(db).list_for_external_task(task_id)
-    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    items = await _shelled_many(db, projects)
     return ok(page(items, len(items)))
 
 
@@ -263,7 +289,7 @@ async def project_for_team(team_id: int, db: DbSession) -> dict:
     entry."""
     project = await ProjectRepository(db).get_by_team(team_id)
     data = (
-        ProjectOut.model_validate(project).model_dump(mode="json")
+        _shelled(project, await effective_shell(db, project))
         if project is not None
         else None
     )
@@ -277,7 +303,8 @@ async def get_project(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+    shell = await effective_shell(db, project)
+    return ok(_shelled(project, shell))
 
 
 def _holds_the_default(project: Project, row: AgentInstance) -> bool:
@@ -1017,7 +1044,8 @@ async def set_project_owner(
         handle,
         steward,
     )
-    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+    shell = await effective_shell(db, project)
+    return ok(_shelled(project, shell))
 
 
 # --- Branch protection (issue #718): 平台侧的分支保护规则 ---------------------

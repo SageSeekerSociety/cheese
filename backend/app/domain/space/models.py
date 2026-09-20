@@ -92,6 +92,12 @@ class SpaceCategory(Base):
         JSON, nullable=False, default=list, server_default="[]"
     )
     default_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 壳: which of the platform's 壳 the projects under this 项目集 run. A NAME
+    # into `app.domain.shell.catalog`, never a declaration — a 项目集 picks a 壳,
+    # it does not ship one. Same placement and same whole-key override as the
+    # three protocol fields above (a 创研课 has twenty 赛题 and one 壳). NULL =
+    # nobody said, so `default` is in force.
+    shell: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

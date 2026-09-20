@@ -22,7 +22,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 #: Keys a 赛题 may override. Anything else on the category is inherited as-is.
-_OVERRIDABLE = ("resource_pack", "conditions", "default_role")
+#: `shell` rides the same chain on purpose: whether a 项目集 is a 创研课 or an
+#: 办公 workspace is the same kind of statement as what it provides, and it
+#: needs the same "configure it once, override this one 赛题" behaviour. See
+#: `app.domain.shell` for what the value means; here it is only a name.
+_OVERRIDABLE = ("resource_pack", "conditions", "default_role", "shell")
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,12 @@ class Protocol:
     conditions: list[dict[str, Any]] = field(default_factory=list)
     #: Expert role a project inherits when it has none of its own (spec §8.2).
     default_role: str | None = None
+    #: Which 壳 the projects under this protocol run: a NAME, resolved against
+    #: `app.domain.shell.catalog.CATALOG`. The declaration is platform-owned and
+    #: the institution only picks one, so a 项目集 cannot grow a private 壳 that
+    #: no other 项目集 can use — and cannot ship code, which is the same rule
+    #: (`app.domain.shell`). None = nobody said, so `default` is in force.
+    shell: str | None = None
 
     @property
     def compute_credits(self) -> float:
@@ -72,6 +82,7 @@ def resolve(*, category: Any | None, task: Any | None) -> Protocol:
         "resource_pack": dict(getattr(category, "resource_pack", None) or {}),
         "conditions": list(getattr(category, "conditions", None) or []),
         "default_role": getattr(category, "default_role", None),
+        "shell": getattr(category, "shell", None),
     }
     override = getattr(task, "protocol_override", None) or {}
     for key in _OVERRIDABLE:
@@ -81,4 +92,5 @@ def resolve(*, category: Any | None, task: Any | None) -> Protocol:
         resource_pack=dict(values["resource_pack"] or {}),
         conditions=list(values["conditions"] or []),
         default_role=values["default_role"] or None,
+        shell=values["shell"] or None,
     )
