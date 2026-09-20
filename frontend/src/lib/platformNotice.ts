@@ -138,6 +138,7 @@ export type PlatformNotice =
       count: number
       occurrences: NoticeOccurrence[]
     }
+  | { mode: 'agent-status'; line: string; updatedAt: string; occurrences: NoticeOccurrence[] }
   /** 老样子：居中、灰、12px、一行。 */
   | { mode: 'plain' }
 
@@ -259,11 +260,9 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     const latest = run[run.length - 1] ?? block
     const state = str(meta(latest)?.state)
     return {
-      mode: 'fold',
+      mode: 'agent-status',
       line: state === 'ready' ? '运行环境已就绪' : state === 'waiting' ? '正在准备运行环境' : latest.content,
-      who: whoTag(latest),
-      whoLabel: '',
-      count: 1,
+      updatedAt: latest.created_at,
       occurrences: run.map((item) => ({
         line: item.content,
         label: item.content,

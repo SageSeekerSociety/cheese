@@ -2105,6 +2105,25 @@ onBeforeUnmount(() => {
                 <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
               </div>
             </details>
+            <div v-else-if="notice?.mode === 'agent-status'" class="im-row agent-status">
+              <div class="im-gutter"><CheeseAvatar :size="28" :name="agentName" /></div>
+              <div class="im-main">
+                <div class="im-meta">
+                  <span class="im-name">{{ agentName }}</span>
+                  <span class="agent-status-label">运行状态</span>
+                  <span class="im-time">{{ fmtTime(notice.updatedAt) }}</span>
+                </div>
+                <details class="agent-status-body" data-testid="platform-notice">
+                  <summary>{{ notice.line }}</summary>
+                  <div class="agent-status-history">
+                    <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                      <div>{{ occ.line }}</div>
+                      <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
             <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
                什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
                条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
@@ -3165,6 +3184,32 @@ details.sys-row > summary::-webkit-details-marker {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
+}
+.agent-status-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-status-body {
+  display: inline-block;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.agent-status-body summary {
+  cursor: pointer;
+}
+.agent-status-history {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.agent-status-detail {
+  margin-top: 3px;
+  color: var(--muted);
 }
 /* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
    一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：

@@ -245,6 +245,8 @@ describe('平台提示：连着来的同类事件折成一条', () => {
     const rows = container.querySelectorAll('[data-testid="platform-notice"]')
     expect(rows).toHaveLength(1)
     expect(visibleText(rows[0])).toContain('运行环境已就绪')
+    expect(rows[0].closest('.agent-status')?.querySelector('.im-name')?.textContent).toBe('芝士')
+    expect(rows[0].closest('.agent-status')?.textContent).toContain('运行状态')
     expect(visibleText(rows[0])).not.toContain('正在创建')
     expect(visibleText(rows[0])).not.toContain('平台已处理')
     expect(visibleText(rows[0])).not.toContain('×2')
