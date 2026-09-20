@@ -17,7 +17,7 @@ from app.api.routes.remote_control import bootstrap_session, launch_claims
 from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, ConflictError, ForbiddenError
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.remote_control import RemoteControl, key
+from app.domain.agent.remote_control import RemoteControl, key, live_key
 
 
 @pytest.fixture
@@ -131,6 +131,52 @@ async def test_worker_credential_cannot_cross_sessions_or_epochs(rc):
     await service.update(first["id"], {"status": "archived"})
     with pytest.raises(AuthenticationRequiredError):
         await service.authenticate_worker(first["id"], renewed["worker_jwt"])
+
+
+async def test_legacy_agent_index_moves_once_and_preserves_expiry(rc):
+    service, create = rc
+    session = await create()
+    await service.update(session["id"], {"agent_handle": "agent-a"})
+    old = live_key(session["topic_id"], None)
+    new = live_key(session["topic_id"], "agent-a")
+    await service.redis.expire(old, 90)
+    try:
+        found = await service.current(session["topic_id"], "agent-a")
+        assert found["id"] == session["id"]
+        assert not await service.redis.exists(old)
+        assert 0 < await service.redis.ttl(new) <= 90
+        assert (
+            await RemoteControl(service.redis).current(session["topic_id"], "agent-a")
+            == found
+        )
+    finally:
+        await service.redis.delete(new)
+
+
+@pytest.mark.parametrize("wrong_field", ["agent_handle", "topic_id"])
+async def test_legacy_index_never_borrows_another_identity(rc, wrong_field):
+    service, create = rc
+    session = await create()
+    changes = {"agent_handle": "agent-a", wrong_field: "another-identity"}
+    await service.update(session["id"], changes)
+    assert await service.current(session["topic_id"], "agent-a") is None
+    assert await service.redis.get(live_key(session["topic_id"], None))
+    assert not await service.redis.exists(live_key(session["topic_id"], "agent-a"))
+
+
+async def test_existing_agent_index_wins_over_legacy_index(rc):
+    service, create = rc
+    legacy, current = await create(), await create()
+    await service.update(legacy["id"], {"agent_handle": "agent-a"})
+    new = live_key(legacy["topic_id"], "agent-a")
+    await service.redis.set(new, current["id"], ex=90)
+    try:
+        assert (await service.current(legacy["topic_id"], "agent-a"))["id"] == current[
+            "id"
+        ]
+        assert await service.redis.get(live_key(legacy["topic_id"], None))
+    finally:
+        await service.redis.delete(new)
 
 
 async def test_concurrent_duplicate_control_enqueues_once(rc):
