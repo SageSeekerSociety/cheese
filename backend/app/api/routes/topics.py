@@ -84,6 +84,7 @@ from app.domain.preview.office import (
     is_renderable,
     render_to_pdf,
 )
+from app.domain.project import room_files
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -2217,7 +2218,7 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese_artifact 点名一个文件——网页、图片，"
+            "要给人看结果也可以用 cheese_show 点名一个文件——网页、图片，"
             "或报告、表格这类文档。"
         )
     if not await preview_hub.probe(topic_id):
@@ -2227,15 +2228,17 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
-@router.post("/{topic_id}/artifact")
-async def set_artifact(
+@router.post("/{topic_id}/shown")
+async def show_in_room(
     topic_id: uuid.UUID,
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
-    `cheese artifact`. With no anchor it becomes this place's current preview."""
+    """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
+
+    摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
+    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     declared = (body.get("as") or "").strip().lower()
@@ -2288,6 +2291,64 @@ async def set_artifact(
         refs=[path],
     )
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/shown")
+async def list_shown(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """这个房间里摆出来过的东西 (#1085 结论四)。
+
+    一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    shown = await BlockRepository(db).shown_in_room(place.room_id)
+    items = [
+        {
+            "path": block.content,
+            "mime": block.mime_type,
+            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
+            "shown_at": block.created_at.isoformat(),
+        }
+        for block in shown
+    ]
+    return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/shown/save")
+async def save_shown_to_project(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把房间里的这一份存成项目的产物 —— 只有人能按 (#1085 结论四)。
+
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却升不了
+    它：房间里的文件到底是不是这个项目要交出去的东西，是人的判断。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.require_verified_caller(project_id=place.project_id)
+    await resolver.authorize_project(actor, project_id=place.project_id)
+    saved = await room_files.save_to_project(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=_clean_artifact_path(str(body.get("path") or "")),
+        by=actor.handle,
+        artifact_id=str(body.get("artifact") or "") or None,
+        name=str(body.get("name") or "") or None,
+    )
+    await db.commit()
+    return ok(
+        {
+            "artifact": {"id": str(saved.artifact.id), "name": saved.artifact.name},
+            "version": saved.version,
+            "path": saved.path,
+        }
+    )
 
 
 @router.post("/{topic_id}/documents/recalc")

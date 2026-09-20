@@ -51,7 +51,7 @@ class BlockKind(enum.StrEnum):
     # A renderable product 芝士 explicitly points at (spec §9.1): content = the
     # worktree-relative file path, mime_type = how to render it (text/html,
     # image/svg+xml). The latest artifact of a topic is its "current preview";
-    # created via `cheese artifact`. Never inferred from prose — the AI names it.
+    # created via `cheese show`. Never inferred from prose — the AI names it.
     artifact = "artifact"
 
 

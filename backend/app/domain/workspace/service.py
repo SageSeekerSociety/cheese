@@ -1652,6 +1652,72 @@ def _merge_ref_into_base(
     }
 
 
+def commit_file_on_base(
+    project_id: uuid.UUID,
+    *,
+    path: str,
+    data: bytes,
+    message: str,
+    author: identity_mod.GitIdentity | None = None,
+) -> dict:
+    """把一份文件放进项目那棵树，一次一个文件 (#1085 结论四).
+
+    这是**二进制进 git 的那一个口**：用户传来一份 .docx 让 芝士 改，改完的那一份
+    文件本身就是源，没有别的东西能重建它。除此之外成品都不进库（结论五）。
+
+    只有一个调用方，而且它是人按下去的 —— 房间里那份文件上的「保存到项目」。所以
+    这里没有分支、没有卡、没有 PR：按下去的那一下就是决定，与采纳是同一类动作。
+
+    写在一个一次性的 worktree 里，再用 compare-and-swap 推主干，和合并走同一条路
+    （`_merge_ref_into_base`）：共享的那个目录只承受一次必然无冲突的 ref 移动。
+    内容和主干上已有的那一份一模一样时不落空提交 —— 那一下什么都没保存。
+    """
+    repo = ensure_repo(project_id)
+    _ensure_base_commit(repo)
+    base = _base_branch(repo)
+    _reap_orphaned_merge_worktrees(repo, project_id)
+    for _attempt in range(_MERGE_RETRY_LIMIT):
+        old_sha = _git(repo, "rev-parse", base).strip()
+        with _isolated_worktree(project_id, repo, old_sha) as wt:
+            target = _safe_path(wt, path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            _git(wt, "add", "--", path)
+            if _staged_is_empty(wt):
+                return {"committed": False, "sha": old_sha, "path": path}
+            _git(
+                wt,
+                "-c",
+                f"user.name={identity_mod.CHEESE_NAME}",
+                "-c",
+                f"user.email={identity_mod.CHEESE_EMAIL}",
+                "commit",
+                "-q",
+                "--author",
+                str(author or identity_mod.CHEESE_IDENTITY),
+                "-m",
+                message,
+            )
+            new_sha = _git(wt, "rev-parse", "HEAD").strip()
+        try:
+            _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
+        except ValidationError:
+            continue  # 主干并发动了，拿新的 tip 再来一次
+        try:
+            _sync_shared_checkout(repo, base, new_sha)
+        except ValidationError:
+            # 提交已经durable（上面那次 CAS 就是落地），共享目录没跟上只是读者读到
+            # 旧文件，不是这次保存失败 —— 和合并那条路的判断一致。
+            logger.exception(
+                "saved %s onto %s (%s) but the shared checkout could not be synced",
+                path,
+                base,
+                new_sha,
+            )
+        return {"committed": True, "sha": new_sha, "path": path}
+    raise ValidationError(f"保存失败：{base} 分支并发更新冲突过多，请重试")
+
+
 def merge_topic(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,

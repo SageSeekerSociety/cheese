@@ -1169,6 +1169,33 @@ export function deleteProjectArtifact(projectId: string, artifactId: string): Pr
   )
 }
 
+// ---- 这个房间里摆出来的东西 (#1085 结论四) ----
+
+// 摆出来的东西属于这个房间：用户看完拿走就完了。它要不要成为项目的产物，由人按
+// 「保存到项目」决定 —— 不猜，不自动升。
+export interface RoomOutput {
+  path: string
+  mime: string
+  kind: 'file' | 'app'
+  shown_at: string
+}
+
+export function listRoomOutputs(topicId: string): Promise<ListPayload<RoomOutput>> {
+  return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown`)
+}
+
+/** 把房间里的这一份存成项目的产物：文件进项目那棵树，清单上多一项或多一版。 */
+export function saveRoomOutputToProject(
+  topicId: string,
+  path: string,
+  options: { artifact?: string; name?: string } = {}
+): Promise<{ artifact: { id: string; name: string }; version: number; path: string }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/shown/save`, {
+    method: 'POST',
+    body: JSON.stringify({ path, ...options }),
+  })
+}
+
 // ---- Chat attachments ----
 
 /** 把资料库里已有的一份文件附在这条消息上。返回的形状和一次上传相同。 */

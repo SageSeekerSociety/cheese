@@ -77,7 +77,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_serve: '设置预览',
   cheese_library_ls: '查看项目资料',
   cheese_library_get: '取用项目资料',
-  cheese_artifact: '设置交付物',
+  cheese_show: '摆出一份东西',
   cheese_convert: '转换文档格式',
   cheese_recalc: '重算表格公式',
   cheese_feedback_propose: '提交反馈提案',
