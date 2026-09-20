@@ -64,6 +64,9 @@ jobs:
           ROUTE_LIMIT: ${{ inputs.operation == 'migrate-one' && '1' || '0' }}
           LEGACY_DEVICE_MANIFEST: ${{ inputs.legacy_manifest }}
         run: |
+          # System-service runners do not inherit the operator's user bus.
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
           args=(--limit "$ROUTE_LIMIT")
           if [ -n "$LEGACY_DEVICE_MANIFEST" ]; then args+=(--legacy); fi
           python3 deploy/migrate-device-routes.py "${args[@]}"
