@@ -1,5 +1,7 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { Shell } from '@/lib/shell'
+
 export interface Project {
   id: string
   name: string
@@ -18,6 +20,12 @@ export interface Project {
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
+  /**
+   * 这个项目生效的壳，服务端已经解析好（项目级设置 → 赛题 整键覆盖 → 项目集 →
+   * default）。**是解析后的声明，不是那个名字**——前端按它画，不自己维护一份
+   * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
+   */
+  shell?: Shell
 }
 
 export interface ProjectSite {

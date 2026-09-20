@@ -55,6 +55,7 @@ export function lastOpenedProjectId(): string | null {
 export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectId = ref<string | null>(null)
   const projects = ref<Project[]>([])
+  const projectsSettled = ref(false)
   const topics = ref<Topic[]>([])
   const members = ref<ProjectMemberRow[]>([])
   const loadingTopics = ref(false)
@@ -157,11 +158,18 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
   const projectName = computed<string>(() => projects.value.find((p) => p.id === projectId.value)?.name ?? '')
 
+  // 「清单问过了」——成功、失败、还是空清单，都算问过。它和 `projects.length > 0`
+  // 是两件事：后者只知道「手上有货」，前者的意思是「不会再变了，可以据此做决定了」。
+  //
+  // 壳跟着项目行走，而 WorkspaceEntry 要拿壳决定第一屏。分不开发，就会一直等一个
+  // 不会来的答案；或者更坏，拿一个还没到货的清单当「这个项目没有壳」。
   async function refreshProjects() {
     try {
       projects.value = (await listProjects()).data
     } catch (e) {
       reportError(e, '加载项目失败')
+    } finally {
+      projectsSettled.value = true
     }
   }
 
@@ -371,6 +379,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   return {
     projectId,
     projects,
+    projectsSettled,
     accessDenied,
     topics,
     members,

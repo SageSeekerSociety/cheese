@@ -1,7 +1,9 @@
 import type { Project } from '@/cx_types'
+import type { Shell } from '@/lib/shell'
 import type { NavGenericItem, NavItem } from './types'
 
 import { t } from '@/i18n'
+import { orderedNav, termParams } from '@/lib/shell'
 
 // 一级导航在两端是**两份清单**，不是一份清单加两个否定式过滤器。
 //
@@ -15,8 +17,12 @@ import { t } from '@/i18n'
 // 实例；底栏只有三格，装不下会随数据增长的东西。要守的不变量只有一条——每个
 // 目的地两端都到得着。形态设计见
 // docs/plans/2026-08-18-mobile-shell-design.md。
+//
+// **壳管的是「露出哪几格、什么顺序」**（这一段上面不变量之外的那点自由）：先是
+// 壳给的顺序，然后只画这一版前端认得出来的格子。壳比前端新的时候，多出来的 key
+// 画不出来，而不是画一格点了就去 404。
 
-const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', shortcut: 1 }
+const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese' }
 
 // 这一格装的是首页那一层，落点是空间；小队是它并排的另一半（手机上就是那一行
 // 页内分段），所以在 /teams 底下这一格照样亮着——不然人在这一格里翻小队，底栏
@@ -74,30 +80,51 @@ function workspace(src: NavSources): NavItem {
     : { ...tab, action: src.createProject }
 }
 
+/**
+ * 桌面 rail 的三格长什么样，按 key 摆好等壳来排。
+ *
+ * 壳只给 key 和顺序，格子本身（图标、落点、动作）永远在这份代码里——这是
+ * 「壳里不放代码」那一条的落点：换壳换不掉「＋新建项目」是干什么的。
+ */
+function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem[]> {
+  const terms = termParams(shell)
+  return {
+    home: [{ ...HOME, title: t('navigation.home', terms) }],
+    projects: [
+      ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
+      // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
+      ...src.projects.map((p) => ({
+        key: `cx-${p.id}`,
+        type: 'item' as const,
+        title: p.name,
+        projectId: p.id,
+        to: `/projects/${p.id}`,
+        img: src.projectAvatar(p.name),
+      })),
+    ],
+    add: [
+      {
+        key: 'cx-add',
+        type: 'item' as const,
+        title: t('navigation.newProject', terms),
+        icon: 'mdi-plus',
+        add: true,
+        action: src.createProject,
+      },
+    ],
+  }
+}
+
 /** 桌面左侧 rail：首页（容器，空间/小队在它的侧栏里）+ 项目实例 + ＋新建项目。 */
-export function railItems(src: NavSources): NavGenericItem[] {
-  return [
-    { ...HOME, title: t('navigation.home') },
-    ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
-    // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
-    ...src.projects.map((p, i) => ({
-      key: `cx-${p.id}`,
-      type: 'item' as const,
-      title: p.name,
-      projectId: p.id,
-      to: `/projects/${p.id}`,
-      img: src.projectAvatar(p.name),
-      shortcut: i + 2, // ⌘1 = 首页，然后是项目
-    })),
-    {
-      key: 'cx-add',
-      type: 'item' as const,
-      title: t('navigation.newProject'),
-      icon: 'mdi-plus',
-      add: true,
-      action: src.createProject,
-    },
-  ]
+export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
+  const parts = railParts(src, shell)
+  const items = orderedNav(shell, 'rail', Object.keys(parts)).flatMap((key) => parts[key])
+  // ⌘N 是**画出来的位置**，不是某一格固有的属性：壳把项目排到第一格时，⌘1 就该是
+  // 那个项目。所以编号发生在排完之后，而不是在建格子的地方写死。
+  let n = 1
+  return items.map((item) =>
+    item.type === 'item' && item.to ? { ...item, shortcut: n++ } : item
+  )
 }
 
 /**
@@ -106,8 +133,8 @@ export function railItems(src: NavSources): NavGenericItem[] {
  * rail 的悬停浮层一直在显示这个键（`shortcut`），而在此之前没有任何地方绑它——
  * 一个指着不存在功能的提示。
  *
- * 只认有地址的格子：「＋新建项目」是个动作而不是目的地，给它一个数字键等于把一
- * 个会建出东西来的操作放在一个手滑就按到的键上。
+ * 只认有地址的格子：「＋新建项目」是个动作而不是目的地，给它一个数字键等于把
+ * 一个会建出东西来的操作放在一个手滑就按到的键上。
  */
 export function shortcutTarget(items: NavGenericItem[], digit: number): string | null {
   for (const item of items) {
@@ -116,7 +143,18 @@ export function shortcutTarget(items: NavGenericItem[], digit: number): string |
   return null
 }
 
-/** 手机底栏：格数固定，不随项目数量增长。 */
-export function tabItems(src: NavSources): NavItem[] {
-  return [{ ...SPACES, title: t('navigation.spaces') }, workspace(src), { ...INBOX, title: t('navigation.inbox') }]
+/** 手机底栏的三格长什么样，按 key 摆好等壳来排。格数固定，不随项目数量增长。 */
+function tabParts(src: NavSources, shell: Shell): Record<string, NavItem> {
+  const terms = termParams(shell)
+  return {
+    spaces: { ...SPACES, title: t('navigation.spaces', terms) },
+    workspace: workspace(src),
+    inbox: { ...INBOX, title: t('navigation.inbox', terms) },
+  }
+}
+
+/** 手机底栏：格数固定，不随项目数量增长。顺序与露出由壳决定。 */
+export function tabItems(src: NavSources, shell: Shell): NavItem[] {
+  const parts = tabParts(src, shell)
+  return orderedNav(shell, 'tabs', Object.keys(parts)).map((key) => parts[key])
 }

@@ -1,0 +1,19 @@
+{
+  "name": "default",
+  "home": "workspace-running",
+  "nav": {
+    "rail": ["home", "projects", "add"],
+    "tabs": ["spaces", "workspace", "inbox"],
+    "project": [
+      "overview",
+      "workspace-running",
+      "calendar",
+      "project-library",
+      "project-delivery",
+      "project-agents",
+      "project-members"
+    ]
+  },
+  "hidden": [],
+  "terms": {}
+}

@@ -148,6 +148,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
+import { DEFAULT_SHELL, shellFor } from './lib/shell'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { usePageTitleStore } from './stores/title'
 
@@ -302,7 +303,16 @@ const navSources = computed<NavSources>(() => ({
   createProject: createNewProject,
 }))
 
-const rail = computed(() => railItems(navSources.value))
+// 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、
+// 设置、某个 赛题 页）时是 default——那里没有项目行可读，而 default 就是今天的
+// 样子，所以项目外的一点都没变。按地址取而不是按「上次开过的项目」取：壳是**你
+// 现在待的地方**的长相，走出项目还挂着上一个项目的样子会让人以为走岔了。
+const openProjectId = computed<string | null>(() =>
+  typeof currentRoute.params.projectId === 'string' ? currentRoute.params.projectId : null
+)
+const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
+
+const rail = computed(() => railItems(navSources.value, navShell.value))
 
 // rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
 //
@@ -321,7 +331,7 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   void router.push(to)
 })
-const tabs = computed(() => tabItems(navSources.value))
+const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's

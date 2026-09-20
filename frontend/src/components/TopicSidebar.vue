@@ -5,8 +5,12 @@ import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { t } from '@/i18n'
+
 import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
+import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
+import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -19,6 +23,7 @@ import {
   visibleRows,
 } from '../lib/topicTree'
 import { avatarColor, avatarInitial } from '../utils/avatar'
+import { myHandle } from '../me'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
@@ -80,25 +85,69 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 项目级页面（总览/日历）住在话题列表最上面的置顶行里，和话题行同一种视觉
+// 项目级页面（总览/看板/日历/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 const router = useRouter()
 const route = useRoute()
 
-const projectPages = [
-  { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
-  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
-  { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
+// 这张表是**这一版前端认得**的项目页：key → 它长什么样。露出哪几格、什么顺序、谁
+// 开局收着，全部由这个项目的壳说（catalog.py）——default 壳说：七格全露，就是今天
+// 这个顺序，所以这一条改动在 default 下不换任何一屏。
+//
+// 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
+// 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
+const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
+  overview: { label: 'navigation.project.overview', icon: 'mdi-view-agenda-outline' },
+  'workspace-running': { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+  calendar: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
-  { key: 'project-library', label: '资料库', icon: 'mdi-folder-outline' },
-  { key: 'project-delivery', label: '导出与发布', icon: 'mdi-export-variant' },
-  { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
+  'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+  'project-delivery': { label: 'navigation.project.delivery', icon: 'mdi-export-variant' },
+  'project-agents': { label: 'navigation.project.agents', icon: 'mdi-robot-outline' },
   // 成员紧挨着 AI 队友：这两行答的是同一个问题的两半——这个项目里都有谁。
-  { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
-] as const
+  'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+}
+const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
+
+// 这个项目生效的壳。壳跟着项目行走（服务端解析好随 ProjectOut 下来），侧栏手上
+// 就有那份清单，所以不额外问一次。
+const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
+const terms = computed(() => termParams(shell.value))
+
+// 「个人级压过壳」：他手动打开过一次的收起页，之后就在他自己的侧栏里。按 handle
+// 存——这是**这个人**对某一个壳的选择，和 projectOrder 同一个理由。
+const revealed = ref<ReadonlySet<string>>(new Set<string>())
+watch(
+  () => myHandle(),
+  (handle) => {
+    revealed.value = loadRevealedPages(handle)
+  },
+  { immediate: true }
+)
+
+const plan = computed(() => projectPagePlan(shell.value, KNOWN_PROJECT_PAGES, revealed.value))
+
+// 「更多」开没开。除了人自己按的那一下，还有一条：**正开着的页在「更多」里的时候它
+// 必须是摊开的**，否则从别处点进来（旧链接、⌘K、通知）会看见一个一行都不亮的侧栏。
+const moreOpen = ref(false)
+const moreShown = computed(() => {
+  const name = typeof route.name === 'string' ? route.name : ''
+  return moreOpen.value || plan.value.more.includes(name)
+})
+
+// 表里没有的 key 落空：壳比前端新时「更多」里会多出一格这一版还不认识的页，那也
+// 不该让侧栏白屏。
+function pageOf(key: string): { label: string; icon: string } {
+  return PROJECT_PAGES[key] ?? { label: key, icon: 'mdi-dots-horizontal' }
+}
+
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
+  // 打开一个默认收起的页 = 这一页对他有用。记住它，下次它在外面。
+  if (plan.value.more.includes(name)) {
+    revealed.value = withRevealedPage(revealed.value, name, myHandle())
+  }
   router.push({ name, params: { projectId: props.selectedProjectId } })
 }
 // 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
@@ -545,31 +594,66 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             </v-list-item>
 
             <v-list-item
-              v-for="p in projectPages"
-              :key="p.key"
-              :active="route.name === p.key"
+              v-for="key in plan.visible"
+              :key="key"
+              :active="route.name === key"
               rounded="lg"
               class="nav-row pinned-row"
-              :class="{ 'is-active': route.name === p.key }"
+              :class="{ 'is-active': route.name === key }"
               :style="ROW_INDENT"
-              @click="openProjectPage(p.key)"
-              @mouseenter="hoverProjectPage(p.key)"
+              @click="openProjectPage(key)"
+              @mouseenter="hoverProjectPage(key)"
               @mouseleave="cancelPrefetch()"
             >
               <template #prepend>
                 <span class="row-slot">
-                  <v-icon size="16" class="row-glyph" :icon="p.icon" />
+                  <v-icon size="16" class="row-glyph" :icon="pageOf(key).icon" />
                 </span>
               </template>
-              <v-list-item-title>{{ p.label }}</v-list-item-title>
+              <v-list-item-title>{{ t(pageOf(key).label, terms) }}</v-list-item-title>
               <!-- 私聊的未读挂在「成员」这一行上。私聊那一栏撤掉之后，这是
                    「有人找你」在主导航上唯一会亮的地方，所以它必须在这里；进了
                    成员页才精确到是谁（每个人的私聊按钮上各带各的）。 -->
-              <template v-if="p.key === 'project-members' && privateUnreadTotal > 0" #append>
+              <template v-if="key === 'project-members' && privateUnreadTotal > 0" #append>
                 <span class="unread-badge">{{ countLabel(privateUnreadTotal) }}</span>
               </template>
             </v-list-item>
           </v-list>
+
+          <!-- 壳默认收起来的页住在这里。**收起的语义是「收起」，不是「禁止」**：
+               它们一直找得到，打开过一次就记住（个人级压过壳）。收的也不只是壳的
+               hidden —— 「没有露出来的全部」都在这里，所以壳写错了 key、或者前端
+               比壳多出一页，那一页是收着的而不是凭空消失。default 壳什么都不收，
+               所以这一块今天一行都不画。 -->
+          <template v-if="plan.more.length">
+            <button type="button" class="group-toggle" @click="moreOpen = !moreOpen">
+              <v-icon size="15" class="c-faint">
+                {{ moreShown ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+              </v-icon>
+              <span class="t-eyebrow">{{ t('navigation.more') }}</span>
+            </button>
+            <v-list v-if="moreShown" density="compact" nav class="py-0">
+              <v-list-item
+                v-for="key in plan.more"
+                :key="key"
+                :active="route.name === key"
+                rounded="lg"
+                class="nav-row pinned-row"
+                :class="{ 'is-active': route.name === key }"
+                :style="ROW_INDENT"
+                @click="openProjectPage(key)"
+                @mouseenter="hoverProjectPage(key)"
+                @mouseleave="cancelPrefetch()"
+              >
+                <template #prepend>
+                  <span class="row-slot">
+                    <v-icon size="16" class="row-glyph" :icon="pageOf(key).icon" />
+                  </span>
+                </template>
+                <v-list-item-title>{{ t(pageOf(key).label, terms) }}</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </template>
 
           <v-divider class="mx-3 my-1" />
 

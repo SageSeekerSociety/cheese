@@ -1,8 +1,25 @@
 {
   "home": "首页",
   "inbox": "待办",
-  "newProject": "新建项目",
+  "more": "更多",
+  "newProject": "新建{project}",
   "spaces": "空间",
   "teams": "小队",
-  "workspace": "工作区"
+  "term": {
+    "project": "项目",
+    "topic": "话题"
+  },
+  "workspace": "工作区",
+  "project": {
+    "agents": "AI 队友",
+    "board": "看板",
+    "calendar": "日历",
+    "delivery": "导出与发布",
+    "docs": "{project}文档",
+    "library": "资料库",
+    "members": "成员",
+    "overview": "总览",
+    "settings": "{project}设置",
+    "switch": "切换{project}"
+  }
 }
