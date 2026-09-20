@@ -21,7 +21,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
-from app.domain.identity.handles import agent_handle_column
+from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
 @dataclass(frozen=True)
@@ -78,14 +78,19 @@ class BlockRepository:
         #
         # 后半截是这次必须新加的：两档一合，芝士**自己这一轮写下的**那条回复也成
         # 了「参与者说的话」，会带上 pending 标记，下一轮再把它当输入喂回去——它对
-        # 着自己的上一句话又答一遍，而那句话本来就在它的 transcript 里。`turn_id`
-        # 恰好回答这件事：它说的是「这块是哪一轮产出的」，落库时带着它的就是某一
-        # 轮的产出。房间里**到达**的一条消息不属于任何一轮——它开启一轮，而那一轮
-        # 的 id 是它自己的 id，由调用方在写完之后才盖上去。
+        # 着自己的上一句话又答一遍，而那句话本来就在它的 transcript 里。
+        #
+        # 「自己产出的」要两件事一起看，单看 `turn_id` 是错的：一条**到达**的消息
+        # 也会带轮次号。一次发送里的附件块跟着正文块的 id 走（`chat.py` 的
+        # `attribution_id`），额度耗尽那条落地路径拿着运行中的轮次号调 `converse`
+        # ——两处都是人说的话，却都带着非空的 `turn_id`，光看它就一个标记都不盖，
+        # 于是「一句话 + 一张图」里那张图落回上面那段注释说的位置水位兜底，而那正
+        # 是会把它永久丢掉的那条路。所以判据是**署名是 agent** 且**落在某一轮里**
+        # 才算那一轮自己的产出；人说的话不论有没有轮次号都是输入。
         if (
             is_participant(author_type)
-            and turn_id is None
             and kind in (BlockKind.message, BlockKind.attachment)
+            and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         block = Block(

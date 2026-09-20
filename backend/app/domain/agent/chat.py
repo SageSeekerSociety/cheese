@@ -110,6 +110,7 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
+from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     AuthorType,
@@ -123,7 +124,6 @@ from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
-from app.domain.block.authorship import is_participant
 from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
@@ -1086,7 +1086,8 @@ def _is_pending_input(b: Block) -> bool:
 
     「参与者」而不是「人」：一个 AI 队友在房间里说的一句话，对坐在同一个房间里
     的另一个参与者同样是这一轮要读的输入（结论 1）。挡住「芝士自己这一轮的产
-    出」的不是这里，而是写入端 —— 带着轮次 id 落库的块根本不盖 pending 标记。
+    出」的不是这里，而是写入端 —— agent 署名**且**落在某一轮里的块根本不盖
+    pending 标记（`BlockRepository.add`）。
     """
     return is_participant(b.author_type) and b.kind in (
         BlockKind.message,

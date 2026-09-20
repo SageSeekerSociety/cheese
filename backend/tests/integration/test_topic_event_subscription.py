@@ -222,7 +222,8 @@ async def test_human_summon_uses_message_id_as_work_attribution(
         answers = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if looks_like_agent_handle(block.author) and (block.meta or {}).get("progress")
+            if looks_like_agent_handle(block.author)
+            and (block.meta or {}).get("progress")
         ]
     assert [str(block.turn_id) for block in answers] == [user["id"]]
     async with factory() as session:
@@ -333,7 +334,9 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     await settle_turn(service, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    answer = next(block.content for block in rows if looks_like_agent_handle(block.author))
+    answer = next(
+        block.content for block in rows if looks_like_agent_handle(block.author)
+    )
     # One answer, covering both messages: the second reached the session that
     # was already working, rather than queueing behind the turn.
     assert "Handle A" in answer

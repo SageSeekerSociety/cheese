@@ -1,15 +1,17 @@
-"""一条事件的作者是参与者，还是平台 —— 三条判据。
+"""一条事件的作者是参与者，还是平台 —— 四条判据。
 
 人和 agent 是同一种参与者（结论 1），所以事件行上再没有一个字段回答「这句是人说
-的还是 AI 说的」：差别写在署名上。三条判据合起来是「档位合并之后，轮次输入的账
+的还是 AI 说的」：差别写在署名上。四条判据合起来是「档位合并之后，轮次输入的账
 目仍然是对的」：
 
 1. 同一条消息由人发和由芝士发，档位一样，署名不一样；
 2. 芝士对着房间说的一句话是一条待读输入，被下一轮读进去，而且只读一次；
 3. 芝士**这一轮自己产出的**那条回复不是待读输入 —— 否则下一轮会把它当成新进来的
    一句话，它对着自己的上一句再答一遍，而那句话本来就在它的 transcript 里。
+4. 一次发送里的「文字 + 图片」两块都是待读输入 —— 附件块的轮次 id 跟着正文块走，
+   所以「有没有轮次号」这一件事分不出产出和到达，它得连着署名一起看。
 
-②③ 都只看交到芝士手上的 prompt：把哪一条算成输入，读得出来的就是「下一轮看见了
+②③④ 都只看交到芝士手上的 prompt：把哪一条算成输入，读得出来的就是「下一轮看见了
 什么」。
 """
 
@@ -17,7 +19,13 @@ import time
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, session_auth_headers
+
+# A valid 1x1 transparent PNG — small but real image bytes.
+PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"
+)
 
 
 def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
@@ -111,3 +119,46 @@ def test_an_agents_own_turn_output_is_not_an_input(client, stub_hooks):
         "上一轮自己说出口的话不是下一轮的输入 —— 它已经在 transcript 里"
     )
     assert "开工" not in second, "答过的那句也不重投"
+
+
+def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(
+    client, stub_hooks
+):
+    """④一次发送「文字 + 图片」：下一轮两块都在，而且各只有一份。
+
+    图片块不是「没有轮次号」的那一类 —— 一次发送是一件事，附件块落库时带的就是正
+    文块的 id。只看轮次号的话这张图一个待读标记都不带，于是只剩位置水位兜底，而
+    那条兜底会被之后任何一条拿到回执的消息推过去，图就再也读不到了。
+    """
+    _project, topic_id, _headers = _room(client)
+    client.headers.update(session_auth_headers("user-1"))
+    upload = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("screenshot.png", PNG_1PX, "image/png")},
+    )
+    assert upload.status_code == 200, upload.text
+    att = upload.json()["data"]
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "看看这张截图",
+                "summon": False,
+                "attachments": [att],
+            }
+        )
+        while ws.receive_json()["type"] != "done":
+            pass
+
+    kinds = [b["kind"] for b in _blocks(client, topic_id)]
+    assert kinds == ["message", "attachment"], "一次发送写下两块"
+
+    r = client.post(f"/topics/{topic_id}/summon", json={"author": "user-1"})
+    assert r.json()["data"]["started"] is True
+    prompt = _wait_for_prompt(stub_hooks, "看看这张截图")
+    assert prompt.count("看看这张截图") == 1
+    assert prompt.count("[user-1] 发来一张图片") == 1, (
+        "图片和它旁边的那句话是同一次发送，两块一起进这一轮"
+    )
+    assert att["path"] in prompt

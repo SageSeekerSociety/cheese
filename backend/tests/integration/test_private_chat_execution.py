@@ -82,7 +82,8 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         for b in blocks
     )
     assert not any(
-        looks_like_agent_handle(b.author) and b.kind == BlockKind.message for b in blocks
+        looks_like_agent_handle(b.author) and b.kind == BlockKind.message
+        for b in blocks
     )
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the

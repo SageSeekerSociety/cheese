@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import machine_launcher
+from app.domain.agent import device_provider
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -2092,7 +2092,7 @@ async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
         )
 
     first = await ensure()
-    monkeypatch.setattr(machine_launcher, "PLATFORM_DIR", ".somewhere-else")
+    monkeypatch.setattr(device_provider, "footprint_root", lambda: ".somewhere-else")
 
     assert (await ensure()).sid != first.sid
     assert hub.closed == [first.sid]

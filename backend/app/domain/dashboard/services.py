@@ -50,17 +50,20 @@ class DashboardService:
         last_activity = await self._s.scalar(
             select(func.max(Block.created_at)).where(Block.project_id == project_id)
         )
+        # 和 `contributions()` 同一个读法：「人写了多少、AI 写了多少」读署名。事件
+        # 行的档位只分得出参与者和平台，而这张活跃度问的正是参与者里的哪一种 ——
+        # 按档位分组的话，平台事件被滤掉之后剩下的全是同一个 participant 档，两个
+        # 数字都归零。
         mix = {"human": 0, "ai": 0}
         mix_rows = (
             await self._s.execute(
-                select(Block.author_type, func.count())
-                .where(Block.project_id == project_id)
-                .group_by(Block.author_type)
+                select(Block.author, func.count())
+                .where(Block.project_id == project_id, participant_blocks())
+                .group_by(Block.author)
             )
         ).all()
-        for author_type, count in mix_rows:
-            if author_type.value in mix:
-                mix[author_type.value] += count
+        for author, count in mix_rows:
+            mix["ai" if looks_like_agent_handle(author) else "human"] += count
         return {
             "project_id": str(project.id),
             "name": project.name,
