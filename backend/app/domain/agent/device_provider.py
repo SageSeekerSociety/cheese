@@ -35,6 +35,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import machine_launcher, provider_env
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceHub,
     DeviceOffline,
     HubScreen,
@@ -590,10 +591,15 @@ class DeviceChannel(Channel):
         self, scopes: list[tuple[uuid.UUID, uuid.UUID, str]]
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Rebuild screen identities for the rooms this channel owns in the DB."""
-        inventories = {
-            device_id: await self._hub.list_screens(device_id)
-            for device_id in {scope[2] for scope in scopes}
-        }
+        inventories = {}
+        for device_id in {scope[2] for scope in scopes}:
+            try:
+                inventories[device_id] = await self._hub.list_screens(device_id)
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "Screen recovery failed for device %s: %s", device_id, exc
+                )
+                inventories[device_id] = []
         if not any(inventories.values()):
             return [(project, topic, None, None) for project, topic, _ in scopes]
         factory = self._session_factory
@@ -602,48 +608,81 @@ class DeviceChannel(Channel):
 
             factory = async_session_factory
         restored = []
+        # What the database knows, gathered first and committed, so that the
+        # adoptions below — a call to the connection owner each when it runs as
+        # its own service — run with no transaction open. One transaction across
+        # every room of a reconnecting device kept a pool connection for as long
+        # as the whole device took (dev, 2026-09-19).
+        rooms: list[
+            tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None, list, tuple]
+        ] = []
         async with factory() as session:
             for project_id, topic_id, device_id in scopes:
-                screen = None
                 room = await TopicService(session).get(topic_id)
                 current_resource = (room.resource_id or topic_id) if room else None
-                for entry in inventories[device_id]:
-                    env = entry.get("env", {})
-                    if (env.get("CHEESE_PROJECT"), env.get("CHEESE_TOPIC")) != (
-                        str(project_id),
-                        str(topic_id),
-                    ):
-                        continue
+                entries = [
+                    entry
+                    for entry in inventories[device_id]
+                    if (
+                        entry.get("env", {}).get("CHEESE_PROJECT"),
+                        entry.get("env", {}).get("CHEESE_TOPIC"),
+                    )
+                    == (str(project_id), str(topic_id))
+                ]
+                identity: tuple = ()
+                if entries:
                     agent = await IdentityService(session).ensure_topic_agent_user(
                         topic_id
                     )
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered = self._hub.adopt_screen(
+                    identity = (agent.id, agent.username)
+                rooms.append(
+                    (
+                        project_id,
+                        topic_id,
                         device_id,
-                        entry["sid"],
-                        token=entry["screen"],
-                        agent_user_id=agent.id,
-                        agent_handle=agent.username,
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        resource_id=uuid.UUID(
-                            env.get("CHEESE_RESOURCE_ID") or str(topic_id)
-                        ),
-                        command=entry["command"],
-                        hook_key=str(topic_id),
-                        credential_expires=int(expiry) if expiry else None,
-                        execution_target=json.loads(target) if target else None,
-                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                        current_resource,
+                        entries,
+                        identity,
                     )
-                    if inspect.isawaitable(recovered):
-                        recovered = await recovered
-                    # Retired generations remain registered for durable cleanup;
-                    # only the room's current generation can resume its turn.
-                    if recovered.resource_id == current_resource:
-                        screen = recovered
-                restored.append((project_id, topic_id, screen, None))
+                )
             await session.commit()
+        for (
+            project_id,
+            topic_id,
+            device_id,
+            current_resource,
+            entries,
+            identity,
+        ) in rooms:
+            screen = None
+            for entry in entries:
+                env = entry.get("env", {})
+                expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                target = env.get("CHEESE_EXECUTION_TARGET")
+                recovered = self._hub.adopt_screen(
+                    device_id,
+                    entry["sid"],
+                    token=entry["screen"],
+                    agent_user_id=identity[0],
+                    agent_handle=identity[1],
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    resource_id=uuid.UUID(
+                        env.get("CHEESE_RESOURCE_ID") or str(topic_id)
+                    ),
+                    command=entry["command"],
+                    hook_key=str(topic_id),
+                    credential_expires=int(expiry) if expiry else None,
+                    execution_target=json.loads(target) if target else None,
+                    agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                )
+                if inspect.isawaitable(recovered):
+                    recovered = await recovered
+                # Retired generations remain registered for durable cleanup;
+                # only the room's current generation can resume its turn.
+                if recovered.resource_id == current_resource:
+                    screen = recovered
+            restored.append((project_id, topic_id, screen, None))
         return restored
 
     def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
@@ -978,7 +1017,7 @@ class DeviceChannel(Channel):
         from app.domain.agent.remote_control import store
 
         control = store()
-        session = await control.current(str(screen.topic_id))
+        session = await control.current(str(screen.topic_id), screen.agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
@@ -1071,7 +1110,9 @@ class DeviceChannel(Channel):
                 raise ScreenSetupError("Released native MCP did not connect")
             await asyncio.sleep(0.1)
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         """Put this room's platform tools back, and say whether they were gone.
 
         A turn that publishes nothing is the symptom: 芝士 answered in its
@@ -1087,7 +1128,22 @@ class DeviceChannel(Channel):
         """
         from app.domain.agent.remote_control import store
 
-        session = await store().current(str(topic_id))
+        if agent_handle is None:
+            # Whose tools: the agent that answers for this room — the same one
+            # a room-scoped credential acts as. Asked here rather than of the
+            # caller, which reaches this after a turn has already ended.
+            factory = self._session_factory
+            if factory is None:
+                from app.core.db import async_session_factory
+
+                factory = async_session_factory
+            async with factory() as db:
+                from app.domain.topic_membership.services import TopicMemberService
+
+                agent_handle = await TopicMemberService(db).resolve_agent_handle(
+                    topic_id
+                )
+        session = await store().current(str(topic_id), agent_handle)
         if not session or session["status"] != "active":
             return False
         request = self._native_control(session)
@@ -1741,7 +1797,7 @@ class DeviceChannel(Channel):
         for image in images:
             path = str(image.get("path") or "")
             try:
-                data = ws.read_room_file(screen.project_id, screen.topic_id, path)
+                data = ws.read_attachment(screen.project_id, screen.topic_id, path)
                 await self._hub.put_file(
                     screen.device_id,
                     screen.sid,

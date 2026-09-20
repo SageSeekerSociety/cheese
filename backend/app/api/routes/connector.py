@@ -51,21 +51,20 @@ from app.core.errors import (
 )
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceOffline,
     HubScreen,
     ViewerTransport,
     device_hub,
 )
+from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.services import TaskService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic import transcripts
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -84,7 +83,26 @@ def get_device_service(db: DbSession) -> DeviceService:
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
 
 
+# How many machines are recovered at once. Recovery is per device and every
+# device does it on connect, so a backend restart starts one per machine at the
+# same instant — 71 on dev. Each walks that machine's sessions, and each session
+# takes a database connection and then talks to the machine; unbounded, the
+# burst wants far more connections than the pool has (20 + 15), and what it
+# starves is every OTHER request, which is how a restart came out as minutes of
+# 「QueuePool limit … connection timed out」 on page loads and background jobs
+# (2026-09-19, and the same shape in the 09-18 flood). Nothing is dropped by
+# waiting: a machine queued here is recovered a moment later, and its device
+# link is already up.
+_RECOVERY_AT_ONCE = 4
+_recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
+
+
 async def recover_business_state(device_id: str) -> None:
+    async with _recovering:
+        await _recover_business_state(device_id)
+
+
+async def _recover_business_state(device_id: str) -> None:
     try:
         from app.api.deps import get_chat_service
 
@@ -94,6 +112,15 @@ async def recover_business_state(device_id: str) -> None:
         # connection runs this, so there is nothing here to fix.
         logger.warning(
             "hook subscriptions not recovered: device %s went offline", device_id
+        )
+    except DeviceCallError as exc:
+        # The machine answered with a failure of its own — a runner whose socket
+        # is not up yet, a home that is gone. Its next connection runs this
+        # again, so this is a state to wait out, not a fault to report: at ERROR
+        # it was one alert per reconnect of a machine in that state (「dial unix
+        # /tmp/cheese-execution-…sock: no such file」, 2026-09-19).
+        logger.warning(
+            "hook subscriptions not recovered: device %s said %s", device_id, exc
         )
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
@@ -356,17 +383,15 @@ async def store_transcripts(
     )
     if device is None:
         raise UnauthorizedError("unknown or missing device token")
-    if await ProjectRepository(db).get(project_id) is None:
+    if not await owner_reads.project_exists(db, project_id):
         raise NotFoundError("no such project")
     # The place may be a room or a thread, or already deleted; what it must not
     # be is a place of some other project wearing this project's path.
-    place = await TopicRepository(db).get(place_id) or await TaskService(db).get(
-        place_id
-    )
+    place = await owner_reads.place(db, place_id)
     if place is not None and place.project_id != project_id:
         raise NotFoundError("no such place in this project")
     allowed = await _device_ran_place(service, device, project_id, place_id)
-    placement = getattr(place, "session_placement", None)
+    placement = place.session_placement if place is not None else None
     if placement and placement["device_id"] == device.device_id:
         allowed = True
     # Every read is done. Release the transaction before the body streams in:
@@ -430,8 +455,7 @@ async def _may_view_screen(
             project_id=screen.project_id, user_handle=handle
         ):
             return True
-        project = await ProjectRepository(session).get(screen.project_id)
-        if project is not None and project.owner_handle == handle:
+        if await owner_reads.project_owner(session, screen.project_id) == handle:
             return True
     if screen.topic_id is not None:
         if await TopicMembershipRepository(session).get(

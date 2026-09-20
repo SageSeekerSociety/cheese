@@ -3,12 +3,14 @@
 import asyncio
 import json
 import logging
+import os
+import socket
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy import or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
@@ -64,6 +66,9 @@ async def _flush_transcripts(
     device = await session.get(DeviceRow, entry["device_id"])
     if device and device.supply == Supply.cloud and device.cloud_control_private:
         base = "http://127.0.0.1:18080"
+    # The collection below can take minutes; nothing here is pending, so end
+    # the transaction rather than hold a pool connection across it.
+    await session.commit()
     setup = (
         f'if [ ! -d "{home}" ]; then printf "[]"; exit 0; fi; '
         f'export CHEESE_COLLECT_HOME="{home}"; exec python3 -'
@@ -218,10 +223,58 @@ def _park_worktree(entry: dict, project_id: uuid.UUID) -> None:
         raise RuntimeError("could not detach the retired backend checkout")
 
 
+# A cleanup is worked on by one sweep at a time. The lease on the row is what
+# says so across processes (the outgoing and incoming backend of a rollout); a
+# sweep that dies leaves a lease that expires. It replaced a session advisory
+# lock, which pinned one pool connection per cleanup for as long as the device
+# work took — with every device reconnect starting a sweep of its own, a restart
+# put N sweeps × 74 cleanups on a 35-connection pool (dev, 2026-09-18).
+CLEANUP_LEASE = timedelta(minutes=30)
+_LEASE_HOLDER = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+
+# One sweep per process. A request to sweep while one is running is not lost:
+# the running sweep goes round again when it finishes.
+_sweeping = False
+_sweep_again = False
+_swept: asyncio.Event | None = None
+_last_counts = {"completed": 0, "pending": 0}
+
+
 async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
+    """Sweep what is due, and answer for the sweep that covered this call.
+
+    A caller who arrives while one is running does not start a second: the
+    running sweep goes round again for it, and this waits for that round
+    rather than answering with zeros it did not measure.
+    """
+    global _sweeping, _sweep_again, _swept, _last_counts
+    if _swept is None:
+        _swept = asyncio.Event()
+    if _sweeping:
+        _sweep_again = True
+        finished = _swept
+        await finished.wait()
+        return dict(_last_counts)
+    _sweeping = True
+    _swept = asyncio.Event()
+    finished = _swept
+    counts = {"completed": 0, "pending": 0}
+    try:
+        while True:
+            _sweep_again = False
+            for key, value in (await _sweep_once(sessions)).items():
+                counts[key] += value
+            if not _sweep_again:
+                return counts
+    finally:
+        _sweeping = False
+        _last_counts = dict(counts)
+        finished.set()
+
+
+async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
     counts = {"completed": 0, "pending": 0}
     async with sessions() as session:
-        engine = session.bind
         ids = list(
             await session.scalars(
                 select(RoomCleanup.id).where(
@@ -245,21 +298,11 @@ async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
             logger.warning(
                 "cleanup device inventory failed device=%s", device_id, exc_info=True
             )
-    assert isinstance(engine, AsyncEngine)
     for cleanup_id in ids:
-        # Keep one physical connection across commits: a session advisory lock
-        # must not be returned to the pool while a device command is in flight.
-        async with engine.connect() as connection:
-            async with AsyncSession(bind=connection, expire_on_commit=False) as session:
-                key = {"key": f"room-cleanup:{cleanup_id}"}
-                locked = (
-                    await session.execute(
-                        text("SELECT pg_try_advisory_lock(hashtextextended(:key, 0))"),
-                        key,
-                    )
-                ).scalar()
-                if not locked:
-                    continue
+        if not await _lease(sessions, cleanup_id):
+            continue
+        try:
+            async with sessions() as session:
                 try:
                     await _advance(session, cleanup_id, inventory)
                     operation = await session.get(RoomCleanup, cleanup_id)
@@ -276,11 +319,38 @@ async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
                         await session.commit()
                     logger.exception("cleanup failed operation=%s", cleanup_id)
                     counts["pending"] += 1
-                finally:
-                    # Closing the physical connection also releases the lock on
-                    # cancellation, without leaking a locked connection into a pool.
-                    await connection.invalidate()
+        finally:
+            await _release(sessions, cleanup_id)
     return counts
+
+
+async def _lease(sessions: SessionFactory, cleanup_id: uuid.UUID) -> bool:
+    """Take the cleanup for CLEANUP_LEASE, unless another sweep holds it."""
+    now = datetime.now(UTC)
+    async with sessions() as session:
+        result = await session.execute(
+            update(RoomCleanup)
+            .where(
+                RoomCleanup.id == cleanup_id,
+                or_(RoomCleanup.lease_until.is_(None), RoomCleanup.lease_until < now),
+            )
+            .values(lease_until=now + CLEANUP_LEASE, lease_holder=_LEASE_HOLDER)
+        )
+        await session.commit()
+        return result.rowcount > 0  # type: ignore[attr-defined]
+
+
+async def _release(sessions: SessionFactory, cleanup_id: uuid.UUID) -> None:
+    async with sessions() as session:
+        await session.execute(
+            update(RoomCleanup)
+            .where(
+                RoomCleanup.id == cleanup_id,
+                RoomCleanup.lease_holder == _LEASE_HOLDER,
+            )
+            .values(lease_until=None, lease_holder=None)
+        )
+        await session.commit()
 
 
 async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
@@ -377,6 +447,9 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                 raise RuntimeError(
                     "room work is still finishing or persisting its result"
                 )
+            # The checks and moves below run outside the database; end the
+            # transaction so they do not hold a pool connection.
+            await session.commit()
             for entry in resources:
                 if entry["kind"] == "worktree":
                     target = Path(entry["retired"])

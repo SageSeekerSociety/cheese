@@ -3,6 +3,7 @@
 import asyncio
 import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -157,6 +158,25 @@ async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
     return events, asyncio.create_task(consume())
 
 
+async def _reached(check, *, timeout: float = 5.0) -> bool:
+    """Wait until the turn's background task got where this test needs it.
+
+    These waits used to be a flat `sleep(0.05)` covering the whole
+    resolve-device → open-screen → stage-files → send-prompt sequence. On a
+    loaded runner that is not enough — building the launcher alone measured
+    65 ms in CI — so the assertion (or the hook event pushed right after) landed
+    before the turn had got there and the test failed on machine speed instead
+    of on behaviour. Waiting on the condition costs nothing when it is already
+    true.
+    """
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.005)
+    return True
+
+
 async def test_turn_streams_hook_events_until_stop():
     hub = FakeHub()
     router = HookRouter()
@@ -173,7 +193,7 @@ async def test_turn_streams_hook_events_until_stop():
         resume_session_id=None,
     )
     # Let it resolve the device, open the screen, send the prompt, reach the drain.
-    await asyncio.sleep(0.05)
+    assert await _reached(lambda: bool(hub.prompts))
     assert hub.prompts == [["1+1?"]]  # prompt delivered over the socket
     assert hub.opened[0].topic_id == topic_id
     assert hub.opened[0].agent_user_id == agent_id
@@ -217,7 +237,9 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
         resume_session_id=None,
         images=[{"path": path, "media_type": mime}],
     )
-    await asyncio.sleep(0.05)
+    # 文件先上去、提示词后发（hooks_substrate 里 `_stage` 在 `send_prompt` 之前），
+    # 所以等到提示词就意味着两件都做完了。
+    assert await _reached(lambda: bool(hub.prompts))
 
     assert hub.files == [("s1", path, b"exact-image-bytes")]
     assert hub.prompts == [[f"[u] sent an image\n\n@{path}"]]
@@ -280,6 +302,30 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
 
     await provider.drop_device_subscriptions("dev1")
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+
+
+async def test_screen_inventory_failure_does_not_skip_the_next_device():
+    from app.domain.agent.device_hub import DeviceCallError
+
+    visited = set()
+
+    class Hub(FakeHub):
+        async def list_screens(self, device_id):
+            visited.add(device_id)
+            if device_id == "broken":
+                raise DeviceCallError("dial unix: no such file")
+            return []
+
+    project, first, second = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    channel = DeviceChannel(hub=Hub())
+    restored = await channel.restore_screens(
+        [
+            (project, first, "broken"),
+            (project, second, "healthy"),
+        ]
+    )
+    assert visited == {"broken", "healthy"}
+    assert restored == [(project, first, None, None), (project, second, None, None)]
 
 
 async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
@@ -476,7 +522,7 @@ async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda sent=turn: len(hub.prompts) > sent)
         router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
         await asyncio.wait_for(task, timeout=5)
 
@@ -689,7 +735,7 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda sent=turn: len(hub.prompts) > sent)
         router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
         await asyncio.wait_for(task, timeout=5)
 
@@ -727,7 +773,7 @@ class DeadTunnelHub(DeadClaudeHub):
         return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
 
-async def _two_turns(provider, router, project_id, topic_id):
+async def _two_turns(provider, router, project_id, topic_id, hub):
     router_key = str(topic_id)
     for turn in range(2):
         _events, task = await _run(
@@ -738,7 +784,7 @@ async def _two_turns(provider, router, project_id, topic_id):
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda sent=turn: len(hub.prompts) > sent)
         router.push(
             router_key, {"hook_event_name": "Stop", "last_assistant_message": "ok"}
         )
@@ -757,7 +803,7 @@ async def test_a_retired_screen_says_which_gate_decided(caplog):
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
     with caplog.at_level("INFO"):
-        await _two_turns(provider, router, project_id, topic_id)
+        await _two_turns(provider, router, project_id, topic_id, hub)
 
     retired = [
         record.getMessage()
@@ -790,7 +836,7 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatc
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
-    await _two_turns(provider, router, project_id, topic_id)
+    await _two_turns(provider, router, project_id, topic_id, hub)
 
     assert hub.reasserted == []  # never reasserted onto the dead helper …
     assert hub.closed == ["s1"]  # … the screen was retired …
@@ -819,7 +865,7 @@ async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
-    await _two_turns(provider, router, project_id, topic_id)
+    await _two_turns(provider, router, project_id, topic_id, hub)
 
     assert hub.closed == []  # the screen survived …
     assert hub.reasserted == ["s1"]  # … and the second turn reused it
@@ -835,7 +881,7 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
-    await _two_turns(provider, router, project_id, topic_id)
+    await _two_turns(provider, router, project_id, topic_id, hub)
 
     assert hub.probed_ports == []  # never asked
     assert hub.closed == []  # and nothing retired on a verdict it never got
@@ -899,7 +945,7 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
         system_prompt="x" * 100_000,  # a system prompt far past tmux's limit
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)
+    await _reached(lambda: bool(hub.prompts))
     router.push(
         str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
     )
@@ -1081,6 +1127,7 @@ async def test_concurrent_topics_never_share_a_device_home():
     topic_a, topic_b = uuid.uuid4(), uuid.uuid4()
 
     for topic_id in (topic_a, topic_b):
+        sent = len(hub.prompts)
         _events, task = await _run(
             provider,
             project_id=project_id,
@@ -1089,7 +1136,7 @@ async def test_concurrent_topics_never_share_a_device_home():
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda seen=sent: len(hub.prompts) > seen)
         router.push(
             str(topic_id),
             {"hook_event_name": "Stop", "last_assistant_message": "ok"},
@@ -1760,7 +1807,7 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
         system_prompt="",
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)
+    await _reached(lambda: bool(hub.prompts))
     router.push(str(tid), {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
     await asyncio.wait_for(task, timeout=3)  # ends via the probe, NOT the 100s ceiling
 
@@ -1799,7 +1846,7 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
         system_prompt="",
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)
+    await _reached(lambda: bool(hub.prompts))
     router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
     await asyncio.wait_for(task, timeout=5)
 
@@ -2193,7 +2240,7 @@ class _Control:
         self._session = {"id": "sess", "status": session_status}
         self.asked: list[str] = []
 
-    async def current(self, _topic_id):
+    async def current(self, _topic_id, _agent_handle=None):
         return self._session
 
     async def enqueue(self, _session_id, payload, _source):
@@ -2214,7 +2261,10 @@ async def test_tools_that_are_still_connected_are_left_alone(monkeypatch):
     control = _Control(["connected"])
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is False
+    )
     assert control.asked == ["mcp_status"]
 
 
@@ -2222,7 +2272,10 @@ async def test_disconnected_tools_are_reconnected_and_reported(monkeypatch):
     control = _Control(["failed", "pending", "connected"])
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is True
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is True
+    )
     assert control.asked == ["mcp_status", "mcp_reconnect", "mcp_status", "mcp_status"]
 
 
@@ -2232,5 +2285,8 @@ async def test_a_room_with_no_live_control_session_is_not_resent(monkeypatch):
     control = _Control([], session_status="closed")
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is False
+    )
     assert control.asked == []

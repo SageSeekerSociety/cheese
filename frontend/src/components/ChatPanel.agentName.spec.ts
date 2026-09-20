@@ -32,14 +32,14 @@ function topicOf(id: string): Topic {
   } as Topic
 }
 
-function aiMsg(id: string, content = id): Block {
+function aiMsg(id: string, content = id, author: string = SEAT): Block {
   return {
     id,
     project_id: 'p1',
     topic_id: 't1',
     kind: 'message',
     author_type: 'ai',
-    author: SEAT,
+    author,
     content,
     reply_to: null,
     refs: [],
@@ -131,6 +131,21 @@ describe('AI 说的话署谁的名', () => {
     const names = Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())
     expect(names).toContain('评审')
     expect(names).not.toContain('芝士')
+  })
+
+  it('名册上没有的 AI 作者，署「芝士」，不摆出 handle', async () => {
+    // 它已经不在这个房间了（被移出），或者这是人和人的私聊里平台自己写的一条。
+    // `cheese-<hex>` 是管道，读的人只会当成乱码。
+    history = [aiMsg('a', '当时是我说的', 'cheese-0badc0ffee11')]
+    const { container } = render(Panel, {
+      props: { topic: topicOf('t1'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    const names = Array.from(container.querySelectorAll('.im-name')).map((n) => n.textContent?.trim())
+    expect(names).toContain('芝士')
+    expect(names.some((n) => n?.startsWith('cheese-'))).toBe(false)
   })
 
   it('loads the new room roster when navigating between topics', async () => {

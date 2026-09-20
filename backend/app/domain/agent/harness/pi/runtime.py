@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -218,6 +220,20 @@ class PiRuntime:
                         "pi entries waiting for the runner topic=%s: %s", topic, exc
                     )
                 await asyncio.sleep(2)
+            except httpx.TransportError as exc:
+                # The connection owner is being replaced, or the socket to it
+                # went while this read was in flight. Retrying is what this loop
+                # is for, and the owner is back within seconds — but at ERROR
+                # every release of it wrote 「pi entries read failed」 into the alert
+                # channel, as it did at 01:47 UTC on 2026-09-20.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "pi entries waiting for the connection owner topic=%s: %s",
+                        topic,
+                        exc,
+                    )
+                await asyncio.sleep(2)
             except Exception:
                 # The runner outlives a backend or connector outage. Re-reading
                 # is safe because the landing cursor only moves after the
@@ -381,12 +397,24 @@ class PiRuntime:
 
     async def recover(self, device_id=None) -> list[SessionRef]:
         handles = await self.channel.discover(device_id)
+        recovered = []
         for handle in handles:
+            try:
+                async with asyncio.timeout(15):
+                    status = await self.channel.call(handle, "ping", {})
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "pi recovery failed topic=%s device=%s: %s",
+                    handle.session.topic_id,
+                    handle.device_id,
+                    exc,
+                )
+                continue
             await self._attach(handle)
-            status = await self.channel.call(handle, "ping", {})
             if status.get("working") and status.get("work_id"):
                 self.work[handle.session.topic_id] = uuid.UUID(status["work_id"])
-        return [handle.session for handle in handles]
+            recovered.append(handle.session)
+        return recovered
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         if subscription := self.subscriptions.get(session.topic_id):

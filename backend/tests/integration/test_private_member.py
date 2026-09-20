@@ -1,6 +1,5 @@
 """私聊 (spec §1) + 成员页 (spec §7.2)."""
 
-from app.domain.identity.handles import topic_agent_handle
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
@@ -20,14 +19,18 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     r2 = client.get(f"/projects/{pid}/private-chat?user_handle=user-1")
     assert r2.json()["data"]["id"] == private["id"]
 
+    # Two members, like any 1:1: the person, and the project's default
+    # teammate under its own seat.
+    default = next(
+        a
+        for a in client.get(f"/projects/{pid}/agents").json()["data"]["data"]
+        if a["is_default"]
+    )
     members = client.get(
         f"/topics/{private['id']}/members",
         headers=session_auth_headers("user-1"),
     ).json()["data"]["data"]
-    assert {m["member_handle"] for m in members} == {
-        "user-1",
-        topic_agent_handle(private["id"]),
-    }
+    assert {m["member_handle"] for m in members} == {"user-1", default["seat_handle"]}
 
     # Private chat is NOT part of the topic tree.
     tree = client.get(f"/topics?project_id={pid}").json()["data"]["data"]

@@ -27,7 +27,12 @@ concurrency:
 jobs:
   private-chat:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 20
+    # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
+    # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
+    # ~2m of tests ran, twice in a row, and a job killed by its own budget
+    # reports as cancelled with nothing to read. The tests are not slow; the
+    # setup scales with contention, so the budget has to leave room for it.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
@@ -51,6 +56,10 @@ jobs:
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
           version: '0.12.1'
+      - name: Load the runner Rust toolchain
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/cargo" --version
       - run: uv sync --project backend --locked
       - name: Install native terminal test dependencies
         run: |
@@ -101,16 +110,25 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         if: always()
         with:
           name: private-chat-${{ github.sha }}
           path: |
             tmp/remote-execution/private-ci-*/
             tmp/remote-execution/ordinary-ci-*/
-          retention-days: 5
+          retention-days: 3
   acceptance:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 20
+    # Measured 2026-09-19 on the shared pool with 11 runs queued: job setup 4m,
+    # `uv sync` 10-14m, the image build 4-5m — the budget was gone before the
+    # ~2m of tests ran, twice in a row, and a job killed by its own budget
+    # reports as cancelled with nothing to read. The tests are not slow; the
+    # setup scales with contention, so the budget has to leave room for it.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -121,6 +139,9 @@ jobs:
           version: '0.12.1'
       - name: Install terminal test dependencies
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          cargo --version
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
           mkdir -p tmp/remote-execution/deps
           (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
@@ -167,6 +188,10 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         with:
           name: remote-execution-${{ github.sha }}
           path: |
@@ -183,4 +208,4 @@ jobs:
             tmp/remote-execution/ci-*/*/rc*.json*
             tmp/remote-execution/ci-*/*/release.jsonl
             tmp/remote-execution/ci-*/*/execution/state/events.jsonl
-          retention-days: 5
+          retention-days: 3

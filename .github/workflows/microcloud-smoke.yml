@@ -75,7 +75,12 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
         with:
           name: microcloud-smoke-log
           path: backend/logs/microcloud-smoke.log
           if-no-files-found: warn
+          retention-days: 3

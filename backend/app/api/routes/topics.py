@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2190,14 +2190,17 @@ def _source_bytes(
     """One of this room's files, from whichever store holds it.
 
     A room keeps what it delivered outside git; a card keeps what it is still
-    writing, on its own branch. Both are 「这个房间的文件」 to a reader, so the
-    viewers take the source as a parameter instead of each being wired to one
-    store — that wiring is why a document on a branch had no view but a raw
-    binary diff.
+    writing, on its own branch; the project's 资料库 keeps what someone gave it,
+    and `library/<名字>` says so in the path itself. All three are 「这个房间的
+    文件」 to a reader, so the viewers take the source as a parameter instead of
+    each being wired to one store — that wiring is why a document on a branch
+    had no view but a raw binary diff.
     """
     if task is not None:
+        if ws.library_name(path) is not None:
+            raise ValidationError("资料库里的文件不属于某个任务分支")
         return ws.read_file_bytes(project_id, path, topic_id=task)
-    return ws.read_room_file(project_id, room_id, path)
+    return ws.read_attachment(project_id, room_id, path)
 
 
 async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
@@ -2424,6 +2427,11 @@ async def decide_document_revisions(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     clean = _clean_artifact_path(body.get("path") or "")
+    if ws.library_name(clean) is not None:
+        # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
+        # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
+        # 栏照常列），能做的只是不动它。
+        raise ValidationError("资料库里的原件不改——让芝士基于它做一份新的")
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
@@ -2560,13 +2568,14 @@ async def preview_file(
     A `<&path>` chip in a message names a file without saying which store holds
     it, and a room's own files are here rather than on a branch. Reading one by
     path is how a reader gets from that chip to the file, instead of to a
-    listing that does not contain it.
+    listing that does not contain it — including a `library/…` chip, which is
+    what 芝士 writes once it has read something the project was given.
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     if path:
         return ok(
-            ws.read_room_text_file(
+            ws.read_attachment_text(
                 place.project_id, topic_id, _clean_artifact_path(path)
             )
         )
@@ -2577,9 +2586,13 @@ async def preview_file(
 
 
 # ---- Chat attachments -----------------------------------------------------
-# An attachment is a REAL file in the topic's worktree (所有产出都是 git): the
-# upload writes bytes under uploads/, the message references it as an
-# attachment block, and 芝士 sees it by Read-ing the file in its sandbox.
+# 用户挑出来或拖进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，
+# 所有房间都能引用。消息里带的就是它自己那个地址 `library/<名字>`——**不拷贝**：
+# 一份资料在这个项目里只有一份字节，芝士 在工作目录的 library/ 下 Read 它。
+#
+# 剪贴板里贴进来的那张图**不进资料库**：资料库的前提是「名字就是身份」，而剪贴板里
+# 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
+# 区一个独占的目录下。
 
 # Only these image types may render inline; other files require download.
 _IMAGE_MIME_EXT = {
@@ -2600,10 +2613,22 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 @router.post("/{topic_id}/attachments")
 async def upload_attachment(
-    topic_id: uuid.UUID, file: UploadFile, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    file: UploadFile | None = File(None),
+    library_path: str | None = Form(None),
+    origin: str | None = Form(None),
 ) -> dict:
-    """Upload a file into the topic's worktree (uploads/…). Returns the
-    {path, mime} the client then references when sending the message."""
+    """Attach a file to a message being written in this room.
+
+    Either a new upload (`file`) or one the 资料库 already holds
+    (`library_path`). Both end the same way: a copy in this room's files, and
+    the {path, mime} the client references when it sends the message.
+
+    `origin="clipboard"` says the bytes came off the clipboard — they stay in
+    this room, because a pasted screenshot has no name of its own to be filed
+    under."""
     topic = await TopicService(db).get_or_404(topic_id)
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
@@ -2614,26 +2639,43 @@ async def upload_attachment(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    mime = (
-        (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
-    )
-    ext = _IMAGE_MIME_EXT.get(mime)
-    if mime.startswith("image/") and ext is None:
-        mime = "application/octet-stream"
-    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
-    if not data:
-        raise ValidationError("空文件")
-    if len(data) > MAX_ATTACHMENT_BYTES:
-        raise ValidationError("文件太大（上限 10MB）")
-    # Preserve the basename; a unique directory prevents overwrites.
-    name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
-    name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
-    name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
-    if ext and not name.lower().endswith(ext):
-        name += ext
-    path = f"uploads/{uuid.uuid4().hex}/{name}"
-    ws.write_room_file(topic.project_id, topic_id, path, data)
-    return ok({"path": path, "mime": mime, "bytes": len(data)})
+    if (file is None) == (library_path is None):
+        raise ValidationError("要么上传一个文件，要么选资料库里的一份")
+    if library_path is not None:
+        name = _clean_artifact_path(library_path)
+        # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
+        data = ws.read_library_file(topic.project_id, name)
+        suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
+        return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
+    else:
+        assert file is not None
+        mime = (
+            (file.content_type or "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
+        ext = _IMAGE_MIME_EXT.get(mime)
+        if mime.startswith("image/") and ext is None:
+            mime = "application/octet-stream"
+        data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+        if not data:
+            raise ValidationError("空文件")
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise ValidationError("文件太大（上限 10MB）")
+        name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
+        name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
+        name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        if ext and not name.lower().endswith(ext):
+            name += ext
+        if origin == "clipboard":
+            path = f"uploads/{uuid.uuid4().hex}/{name}"
+            ws.write_room_file(topic.project_id, topic_id, path, data)
+            return ok({"path": path, "mime": mime, "bytes": len(data)})
+        # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
+        name = ws.write_library_file(topic.project_id, name, data)
+    return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
 
 
 @router.get("/{topic_id}/attachments/raw")

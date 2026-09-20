@@ -18,6 +18,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+if __package__:
+    from tests.pinned_claude import claude_binary
+else:
+    # The acceptance suite runs this file as a script, from outside the package.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from pinned_claude import claude_binary
+
 RUNTIME = (
     Path(__file__).resolve().parents[2]
     / "app/domain/agent/harness/claude_code/remote_execution/runtime.py"
@@ -27,23 +36,97 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
-def test_background_command_keeps_task_id_when_it_finishes_before_response(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("exit_contents", ["", "0", "7"])
+def test_exit_written_during_process_scan_is_not_reported_as_unknown(
+    tmp_path, monkeypatch, exit_contents
 ):
     state = tmp_path / "state"
     state.mkdir()
     (state / "config.json").write_text(
-        json.dumps({"workspace": str(tmp_path), "env": {}})
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
     )
     executor = runtime.Executor(state)
-    original_start = threading.Thread.start
+    marker = "settlement-race"
+    record = state / "tasks" / marker
+    record.mkdir(parents=True)
+    executor.tasks[marker] = {
+        "marker": marker,
+        "status": "running",
+        "started_ts": time.time() - 3,
+        "exit_code": None,
+    }
 
-    def finish_before_return(thread):
-        original_start(thread)
-        thread.join(timeout=5)
-        assert not thread.is_alive()
+    def just_exited(_marker):
+        (record / "exit").write_text(exit_contents)
+        return []
 
-    monkeypatch.setattr(threading.Thread, "start", finish_before_return)
+    monkeypatch.setattr(executor, "_pids", just_exited)
+    try:
+        assert (
+            executor.task(marker)["status"]
+            == {"": "running", "0": "completed", "7": "failed"}[exit_contents]
+        )
+    finally:
+        executor.close()
+
+
+def test_task_output_waits_for_the_complete_reply(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
+    )
+    executor = runtime.Executor(state)
+    writing, release = threading.Event(), threading.Event()
+    original_write = Path.write_text
+
+    def slow_output_write(path, data, *args, **kwargs):
+        if path.parent.parent == state / "tasks" and path.name.startswith("output"):
+            # Reproduce a reader arriving between file creation and its write.
+            with path.open("w"):
+                writing.set()
+                assert release.wait(10)
+        return original_write(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", slow_output_write)
+    try:
+        result = executor.invoke(
+            {
+                "id": "slow-reply",
+                "tool": "Bash",
+                "args": {"command": "sleep 0.5; printf done", "timeout": 1},
+            }
+        )
+        task_id = result["value"]["backgroundTaskId"]
+        assert writing.wait(10)
+        unfinished = executor.task_output({"task_id": task_id, "timeout": 0})
+        assert unfinished["retrieval_status"] == "timeout"
+        with ThreadPoolExecutor() as pool:
+            pending = pool.submit(
+                executor.task_output, {"task_id": task_id, "timeout": 5000}
+            )
+            try:
+                time.sleep(0.1)
+                assert not pending.done(), "A partial reply was reported as complete"
+            finally:
+                release.set()
+            report = pending.result(timeout=5)
+        assert report["task"]["output"] == "done"
+        assert report["task"]["exitCode"] == 0
+    finally:
+        release.set()
+        executor.close()
+
+
+def test_a_background_command_that_finishes_at_once_still_has_an_id_and_an_exit(
+    tmp_path,
+):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
+    )
+    executor = runtime.Executor(state)
     try:
         for code in (0, 7):
             result = executor.invoke(
@@ -57,10 +140,36 @@ def test_background_command_keeps_task_id_when_it_finishes_before_response(
                 }
             )
             task_id = result["value"]["backgroundTaskId"]
-            output = executor.output(task_id)
-            assert output["stdout"] == "completed"
-            assert output["exit_code"] == code
-            assert output["status"] == ("completed" if code == 0 else "failed")
+            report = executor.task_output({"task_id": task_id, "timeout": 10000})
+            assert report["task"]["output"] == "completed"
+            assert report["task"]["exitCode"] == code
+            assert report["task"]["status"] == ("completed" if code == 0 else "failed")
+    finally:
+        executor.close()
+
+
+def test_a_native_background_command_can_finish_without_output(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "config.json").write_text(
+        json.dumps({"workspace": str(tmp_path), "claude": claude_binary(), "env": {}})
+    )
+    monkeypatch.setattr(runtime, "OUTPUT_AFTER_EXIT_S", 0.01)
+    executor = runtime.Executor(state)
+    try:
+        result = executor.invoke(
+            {
+                "id": "silent",
+                "tool": "Bash",
+                "args": {"command": "sleep 0.2", "run_in_background": True},
+            }
+        )
+        report = executor.task_output(
+            {"task_id": result["value"]["backgroundTaskId"], "timeout": 5000}
+        )
+        assert report["retrieval_status"] == "success"
+        assert report["task"]["status"] == "completed"
+        assert report["task"]["output"] == ""
     finally:
         executor.close()
 
@@ -73,7 +182,7 @@ def test_executor_bootstrap_starts_in_room_without_a_git_checkout(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-executor")
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     state = home / ".cheese/executor"
@@ -169,7 +278,7 @@ def _room_prepared_under_the_previous_root(tmp_path, monkeypatch):
     from app.domain.agent.harness.claude_code.remote_execution.launch import script
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = tmp_path / ".cheese/home" / str(project) / str(resource)
     previous = home / ".claude"
@@ -288,14 +397,15 @@ def test_a_previous_root_with_nothing_behind_it_does_not_hold_the_room_back(
         )
 
 
+@pytest.mark.parametrize("update_kind", ["runtime", "binary"])
 def test_executor_release_waits_for_commands_and_preserves_results(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, update_kind
 ):
     from app.domain.agent.harness.claude_code.remote_execution import bootstrap
     from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(
         project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
@@ -331,10 +441,13 @@ def test_executor_release_waits_for_commands_and_preserves_results(
                 },
             },
         )["value"]["backgroundTaskId"]
-        changed = (
-            base64.b64decode(payload["files"]["remote-execution/runtime.py"])
-            + b"\n# release fixture\n"
-        )
+        changed = base64.b64decode(payload["files"]["remote-execution/runtime.py"])
+        if update_kind == "runtime":
+            changed += b"\n# release fixture\n"
+        else:
+            next_binary = tmp_path / "next-claude"
+            next_binary.symlink_to(claude_binary())
+            monkeypatch.setattr(bootstrap, "binary", lambda *_: str(next_binary))
         payload["files"]["remote-execution/runtime.py"] = base64.b64encode(
             changed
         ).decode()
@@ -391,7 +504,7 @@ def test_a_platform_tool_answers_while_a_shell_command_still_holds_the_room(
     from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: claude_binary())
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(
         project, resource, {"CHEESE_API": "http://unused", "CHEESE_TOKEN": "test"}
@@ -454,8 +567,16 @@ def test_running_executor_prepares_updated_room_without_restart(
     binary = tmp_path / ".cheese/claude/versions" / bootstrap.VERSION
     binary.parent.mkdir(parents=True)
     version_calls = tmp_path / "version-calls"
+    # The stub counts version checks; the executor's commands need the real
+    # build behind it, because every command runs through its `mcp serve`.
     binary.write_text(
-        f"#!/bin/sh\necho checked >> '{version_calls}'\necho '{bootstrap.VERSION}'\n"
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f"  echo checked >> '{version_calls}'\n"
+        f"  echo '{bootstrap.VERSION}'\n"
+        "  exit 0\n"
+        "fi\n"
+        f"exec '{claude_binary()}' \"$@\"\n"
     )
     binary.chmod(0o700)
     project, resource = uuid.uuid4(), uuid.uuid4()
@@ -704,11 +825,30 @@ class RemoteExecutionTests(unittest.TestCase):
                 "printf failure >&2; exit 7"
             },
         )
-        self.assertEqual(
-            result["stdout"], str(self.workspace / "sub dir") + "\nremote-environment\n"
+        # A failure comes back the way the build gives it to its own agent:
+        # the exit code first, then everything the command printed, together.
+        self.assertTrue(result["stdout"].startswith("Exit code 7"), result)
+        self.assertIn(
+            str(self.workspace / "sub dir") + "\nremote-environment", result["stdout"]
         )
-        self.assertEqual(result["stderr"], "failure")
-        self.assertEqual(result["returnCodeInterpretation"], "Exit code 7")
+        self.assertIn("failure", result["stdout"])
+        self.assertEqual(result["stderr"], "")
+
+    def test_a_refreshed_environment_reaches_the_next_command(self):
+        # A token arrives refreshed through `configure` while the serve process
+        # keeps the environment it started with; the command must see the new
+        # value, or every `cheese` call from the shell dies with the old token.
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "$EXECUTOR_MARKER"'})["stdout"],
+            "remote-environment",
+        )
+        runtime.request(
+            self.state, "configure", {"env": {"EXECUTOR_MARKER": "refreshed"}}
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "$EXECUTOR_MARKER"'})["stdout"],
+            "refreshed",
+        )
 
     def test_request_replay_does_not_repeat_write(self):
         args = {"command": "printf x >> count.txt"}
@@ -720,6 +860,45 @@ class RemoteExecutionTests(unittest.TestCase):
                 "Bash", {"command": "printf y >> count.txt"}, key="same-request"
             )
 
+    def finished_task(self, task_id, timeout=30000):
+        """A task's output once it has finished, or a failure that says why.
+
+        `'' != 'done'` has been failing this file on CI since at least
+        2026-09-19 and says nothing about the cause. `TaskOutput` reports
+        `retrieval_status: "timeout"` when its wait runs out, and `status:
+        "unknown"` for a task this executor no longer holds — both of which
+        come back with the output so far. Checking them here turns the next
+        failure into its own diagnosis instead of a bare string mismatch.
+        """
+        result = self.invoke(
+            "TaskOutput", {"task_id": task_id, "block": True, "timeout": timeout}
+        )
+        self.assertEqual(
+            result["retrieval_status"],
+            "success",
+            f"task did not finish within {timeout} ms: {result}",
+        )
+        self.assertEqual(
+            result["task"]["status"],
+            "completed",
+            f"task did not complete: {result}{self.task_on_disk(task_id)}",
+        )
+        return result
+
+    def task_on_disk(self, task_id):
+        """What the executor's own state directory holds for this task.
+
+        The API's answer and the files it is built from can disagree — and
+        which of the two is empty is the whole question when a completed task
+        reports no output.
+        """
+        directory = self.state / "tasks" / task_id
+        return "".join(
+            f"\n  {name}={(directory / name).read_text(errors='replace')!r}"
+            for name in ("task.json", "output", "exit")
+            if (directory / name).exists()
+        )
+
     def test_reconnect_retains_background_task(self):
         task = self.invoke(
             "Bash",
@@ -728,11 +907,12 @@ class RemoteExecutionTests(unittest.TestCase):
         previous_pid = self.pid
         self.start()
         self.assertEqual(self.pid, previous_pid)
-        result = self.invoke(
-            "TaskOutput",
-            {"task_id": task["backgroundTaskId"], "block": True, "timeout": 5000},
+        result = self.finished_task(task["backgroundTaskId"])
+        self.assertEqual(
+            result["task"]["output"],
+            "background-done",
+            f"{result}{self.task_on_disk(task['backgroundTaskId'])}",
         )
-        self.assertEqual(result["task"]["output"], "background-done")
         self.assertEqual(result["task"]["status"], "completed")
 
     def test_stop_kills_descendant_ignoring_term(self):
@@ -957,11 +1137,37 @@ class RemoteExecutionTests(unittest.TestCase):
                 {"subtype": "background_tasks", "tool_use_id": "foreground"},
             )
             result = pending.result(timeout=1)
-            task = self.invoke(
-                "TaskOutput",
-                {"task_id": result["backgroundTaskId"], "block": True, "timeout": 5000},
+            task = self.finished_task(result["backgroundTaskId"])
+            self.assertEqual(
+                task["task"]["output"],
+                "done",
+                f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
             )
-            self.assertEqual(task["task"]["output"], "done")
+
+    def test_a_foreground_command_past_its_timeout_becomes_a_task_the_room_can_see(
+        self,
+    ):
+        # The agent's timeout is enforced here, not by the serve process: at
+        # the deadline the command is left running and handed back as a task.
+        result = self.invoke(
+            "Bash",
+            {"command": "touch started; sleep 2; printf done", "timeout": 500},
+            "foreground",
+        )
+        self.assertIn("backgroundTaskId", result)
+        listed = runtime.request(
+            self.state, "control", {"subtype": "background_tasks"}
+        )["tasks"]
+        self.assertIn(
+            result["backgroundTaskId"],
+            [task["task_id"] for task in listed if task["status"] == "running"],
+        )
+        task = self.finished_task(result["backgroundTaskId"])
+        self.assertEqual(
+            task["task"]["output"],
+            "done",
+            f"{task}{self.task_on_disk(result['backgroundTaskId'])}",
+        )
 
     def test_remote_command_hook_can_prevent_a_write(self):
         config = self.workspace / ".claude"

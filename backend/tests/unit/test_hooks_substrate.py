@@ -26,6 +26,30 @@ from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 pytestmark = pytest.mark.anyio
 
 
+async def test_recovery_keeps_other_rooms_when_one_subscription_fails(monkeypatch):
+    from app.domain.agent.device_hub import DeviceCallError
+
+    project, broken, healthy = _uuid.uuid4(), _uuid.uuid4(), _uuid.uuid4()
+    surviving_screen = object()
+
+    class RecoveringChannel(Channel):
+        async def discover(self, device_id=None):
+            return [
+                (project, broken, surviving_screen, None),
+                (project, healthy, None, None),
+            ]
+
+    runtime = ClaudeCodeRuntime(RecoveringChannel(), router=HookRouter())
+
+    async def subscribe(project_id, topic_id, **kwargs):
+        if topic_id == broken:
+            raise DeviceCallError("dial unix: no such file")
+
+    monkeypatch.setattr(runtime, "ensure_subscription", subscribe)
+    assert await runtime.recover() == [SessionRef(project, healthy)]
+    assert runtime.holds(broken)
+
+
 def test_forwarder_spools_then_posts_hook_json_with_scoped_token():
     assert "X-Cheese-Token: $CHEESE_TOKEN" in CHEESE_HOOK_SCRIPT
     assert "X-Cheese-Event-Id: $eid" in CHEESE_HOOK_SCRIPT

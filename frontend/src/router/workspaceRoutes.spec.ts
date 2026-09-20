@@ -39,6 +39,7 @@ describe('the project frame', () => {
     ['/overview', 'overview'],
     ['/calendar', 'calendar'],
     ['/agents', 'project-agents'],
+    ['/library', 'project-library'],
     ['/settings', 'project-settings'],
     ['/delivery', 'project-delivery'],
     ['/members/lisi', 'member'],

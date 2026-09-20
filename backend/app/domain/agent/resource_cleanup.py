@@ -24,6 +24,28 @@ from pathlib import Path
 # publication is checked on a branch meant for rooms without an executor.
 PLATFORM_DIRS = (".cheese", ".claude")
 
+# How long an archived room's processes get to leave on their own before the
+# cleanup ends them. The graceful path below — `/exit` typed into the agent's
+# terminal, the executor asked to stop — is what the first attempts do, and a
+# room whose agent is between tool calls is gone within a minute of it. What
+# it cannot reach is everything else the room spawned: a dev server the agent
+# started, a viewer still attached to the terminal, an agent wedged inside a
+# tool call. Measured on dev 2026-09-18: 173 such processes across 45 archived
+# rooms, some days old, every one of them holding its room's cleanup at
+# "resource still has processes holding files" forever. The room is archived;
+# past this grace, a process still inside it is a leak, not a session.
+FORCE_AFTER_S = float(os.environ.get("CHEESE_CLEANUP_FORCE_AFTER_S", "600"))
+
+
+class StillRunning(RuntimeError):
+    """The room is not quiescent yet — the one refusal that time may overrule.
+
+    Every other RuntimeError the checks raise is a safety refusal (another
+    user's socket, a session that does not identify this resource, unpublished
+    work), and no amount of waiting makes those go away, so nothing escalates
+    on them.
+    """
+
 
 def platform_dir(home: Path) -> Path:
     """Where this room's platform files actually are.
@@ -102,13 +124,49 @@ def check_no_writers(paths: list[Path]) -> None:
         return
     result = run_command(["lsof", "-t", "+D", *present])
     if result.stdout.strip():
-        raise RuntimeError(
+        raise StillRunning(
             "resource still has processes holding files or working directories"
         )
     if result.returncode not in {0, 1} or result.stderr.strip():
         raise RuntimeError(
             "could not establish whether the resource has active writers"
         )
+
+
+def holders(paths: list[Path]) -> list[int]:
+    """The processes `check_no_writers` would refuse over, as pids."""
+    present = [str(path) for path in paths if path.exists()]
+    if not present:
+        return []
+    result = run_command(["lsof", "-t", "+D", *present])
+    own = {os.getpid(), os.getppid()}
+    return [
+        int(line)
+        for line in result.stdout.split()
+        if line.isdigit() and int(line) not in own
+    ]
+
+
+def end_holders(paths: list[Path]) -> None:
+    """Terminate whatever still holds the room, gently first, then not.
+
+    lsof names the processes; each gets SIGTERM, ten seconds to act on it,
+    then SIGKILL. A tmux pane whose process dies reads as dead to the next
+    `request_exit`, which closes the session the ordinary way.
+    """
+    pids = holders(paths)
+    for signal_number, wait in ((15, 10.0), (9, 2.0)):
+        for pid in pids:
+            try:
+                os.kill(pid, signal_number)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + wait
+        while pids and time.monotonic() < deadline:
+            time.sleep(0.1)
+            pids = [pid for pid in pids if pid in set(holders(paths))]
+        if not pids:
+            return
 
 
 def check_resource_publication(home: Path, work: Path) -> None:
@@ -225,7 +283,7 @@ def request_exit(home: Path, work: Path, lock_fd: int) -> None:
             )
             if sent.returncode:
                 raise RuntimeError("could not request a graceful session exit")
-    raise RuntimeError("waiting for the agent to exit and finish transcript writes")
+    raise StillRunning("waiting for the agent to exit and finish transcript writes")
 
 
 def resource_paths(
@@ -252,8 +310,16 @@ def check_transcripts(home: Path, receipts: list[dict]) -> None:
     expected = {receipt["source"]: receipt for receipt in receipts}
     found = {}
     for path in (home / ".claude/projects").rglob("*.jsonl"):
+        # The same two cases the uploader skips (event_drain.collect_transcripts),
+        # skipped for the same reason: what was uploaded is the set this is
+        # checked against. Claude Code links a resumed session's subagent
+        # transcripts to the original session's files — a link inside the same
+        # home, whose target is uploaded under its own path — and refusing it
+        # here left a room's cleanup failing every minute for five days
+        # (operation a12198c1, 2026-09-13 to 09-19) over a file that was never
+        # in the receipts to begin with.
         if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
-            raise RuntimeError("transcript path escapes its resource")
+            continue
         digest = hashlib.sha256()
         size = 0
         with path.open("rb") as original:
@@ -336,9 +402,23 @@ def main() -> None:
         with receipt.with_suffix(".lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if not receipt.exists() or receipt.read_text() != "ready\n":
-                request_exit(home, work, lock.fileno())
-                stop_executor(home, resource)
-                check_no_writers([home, work])
+                # The first attempt stamps when the room was asked to leave;
+                # every later attempt measures the grace from that stamp, not
+                # from itself, so a room is never ended on its first refusal.
+                requested = receipt.with_suffix(".requested")
+                if not requested.exists():
+                    requested.write_text(str(time.time()))
+                try:
+                    request_exit(home, work, lock.fileno())
+                    stop_executor(home, resource)
+                    check_no_writers([home, work])
+                except StillRunning:
+                    if time.time() - float(requested.read_text()) < FORCE_AFTER_S:
+                        raise
+                    end_holders([home, work])
+                    request_exit(home, work, lock.fileno())
+                    stop_executor(home, resource)
+                    check_no_writers([home, work])
                 temporary = receipt.with_suffix(".tmp")
                 with temporary.open("w") as output:
                     output.write("ready\n")

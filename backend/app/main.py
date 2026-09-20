@@ -221,9 +221,11 @@ async def lifespan(_: FastAPI):
     for job in jobs:
         job.start()
     from app.core.background import spawn
+    from app.core.loop_lag import watch_loop_lag
     from app.domain.topic.retire import sweep_retired_storage
 
     spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
+    spawn(watch_loop_lag(), name="event loop lag")
 
     # The openviking backend's whole failure mode is silence: a rejected key
     # leaves extraction writing nothing, recall answering empty, and no other

@@ -226,6 +226,51 @@ describe('平台提示：一行 + 可展开', () => {
 })
 
 describe('平台提示：连着来的同类事件折成一条', () => {
+  it('shows the latest cloud state and keeps preparation history behind one expansion', async () => {
+    const { container } = mountRoom([
+      event('', 'Cloud 机器正在创建并接入', {
+        event_type: 'cloud_provisioning',
+        state: 'waiting',
+        who: 'platform',
+        detail: '本话题会保留这条消息，机器就绪后自动继续。',
+      }),
+      event('', 'Cloud 机器已接入，正在继续刚才的消息', {
+        event_type: 'cloud_provisioning',
+        state: 'ready',
+        who: 'platform',
+      }),
+    ])
+    await flush()
+
+    const rows = container.querySelectorAll('[data-testid="platform-notice"]')
+    expect(rows).toHaveLength(1)
+    expect(visibleText(rows[0])).toContain('运行环境已就绪')
+    expect(rows[0].closest('.agent-status')?.querySelector('.im-name')?.textContent).toBe('芝士')
+    expect(rows[0].closest('.agent-status')?.textContent).toContain('运行状态')
+    expect(visibleText(rows[0])).not.toContain('正在创建')
+    expect(visibleText(rows[0])).not.toContain('平台已处理')
+    expect(visibleText(rows[0])).not.toContain('×2')
+    expect(container.querySelector('.im-event')).toBeNull()
+    expand(rows[0])
+    expect(visibleText(rows[0])).toContain('Cloud 机器正在创建并接入')
+    expect(visibleText(rows[0])).toContain('本话题会保留这条消息')
+  })
+
+  it('does not claim that waiting for a cloud machine is already handled', async () => {
+    const { container } = mountRoom([
+      event('', 'Cloud 机器正在创建并接入', {
+        event_type: 'cloud_provisioning',
+        state: 'waiting',
+        who: 'platform',
+        detail: '机器就绪后自动继续。',
+      }),
+    ])
+    await flush()
+    const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
+    expect(shown).toContain('正在准备运行环境')
+    expect(shown).not.toContain('已处理')
+  })
+
   it('三条 ci_failed 折成一行，带 ×3', async () => {
     const { container } = mountRoom([
       ciFailed(),

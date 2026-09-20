@@ -45,6 +45,7 @@ interface Outgoing {
 </script>
 
 <script setup lang="ts">
+import type { LibraryFile } from '../api'
 import type {
   AgentControlState,
   Block,
@@ -74,6 +75,7 @@ import {
   getProgress,
   isRetryableGetFailure,
   listBlocks,
+  listProjectLibrary,
   listRoomTasks,
   listTopicMembers,
   summonAgent,
@@ -85,6 +87,7 @@ import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, sho
 import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
+import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -1247,8 +1250,11 @@ const seatByHandle = computed(() => {
 // 时写「芝士」——那一刻界面上任何一处说出的名字都可能是上一个房间那位。
 function displayName(m: Block): string {
   if (m.author_type === 'ai') {
+    // 名册上找不到它，说明说这句话的队友已经不在这个房间了（被移出，或者这条是
+    // 人和人的私聊里平台自己写的）。那也不能把 `cheese-<hex>` 摆到屏幕上：那是
+    // 管道，读的人只会当成乱码。身份分叉，显示不分叉。
     if (!rosterLoaded.value) return '芝士'
-    return seatByHandle.value.get(m.author)?.name || m.author
+    return seatByHandle.value.get(m.author)?.name || '芝士'
   }
   return memberByHandle.value.get(m.author)?.name || m.author
 }
@@ -1388,12 +1394,14 @@ const mentionQuery = computed(() => {
 })
 interface MentionItem {
   label: string
-  kind: 'member' | 'topic' | 'broadcast'
+  kind: 'member' | 'topic' | 'broadcast' | 'file' | 'category'
   // Text written after the "@" when picked (a handle/name/token).
   insert: string
   // Secondary line: @handle for people, status for topics, hint for broadcast.
   sub: string
   agent: boolean
+  // 二级菜单里这一项属于哪一组（同一组的标题只画一次）。
+  group?: string
 }
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
 // at the top. expandMentions turns them into <@all>/<@here>.
@@ -1401,10 +1409,64 @@ const BROADCAST_ITEMS: MentionItem[] = [
   { label: '所有人', kind: 'broadcast', insert: 'all', sub: '@all · 通知话题全体成员', agent: false },
   { label: '在线成员', kind: 'broadcast', insert: 'here', sub: '@here · 通知在线成员', agent: false },
 ]
+// 资料库：项目给进来的文件，@ 一下就能带上这条消息。按需拉一次——打开一个房间的
+// 人不一定要引用文件，而打了 @ 的人正要挑东西。
+const libraryFiles = ref<LibraryFile[]>([])
+const libraryFor = ref<string | null>(null)
+// 菜单在第几级。没打字的时候资料库只是一行入口（`category`）：一个项目的文件会比
+// 房间里的人多得多，平铺进来等于把「@ 一个人」这件事挤掉。打了字就不分级了——那时
+// 人要的是搜索，人、话题、文件一起找。
+const mentionLevel = ref<'root' | 'library'>('root')
+// 这一格里「算不算图片」比预览域宽：gif / webp 浏览器也画得出来，而这里只是分组。
+const PICKER_IMAGE_SUFFIXES = new Set([...IMAGE_SUFFIXES, 'gif', 'webp'])
+function libraryItems(ql: string): MentionItem[] {
+  const rows = libraryFiles.value.filter((f) => f.path.toLowerCase().includes(ql))
+  const item = (f: LibraryFile, group: string): MentionItem => ({
+    label: f.path,
+    kind: 'file',
+    insert: f.path,
+    sub: group,
+    agent: false,
+    group,
+  })
+  return [
+    ...rows.filter((f) => !PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '文件')),
+    ...rows.filter((f) => PICKER_IMAGE_SUFFIXES.has(suffixOf(f.path))).map((f) => item(f, '图片')),
+  ]
+}
+async function loadLibrary() {
+  const projectId = props.topic?.project_id
+  if (!projectId || libraryFor.value === projectId) return
+  libraryFor.value = projectId
+  try {
+    libraryFiles.value = (await listProjectLibrary(projectId)).data
+  } catch {
+    // 挑文件是输入栏里的一个便利，不是这条消息发不出去的理由。
+    libraryFiles.value = []
+    libraryFor.value = null
+  }
+}
+watch(
+  () => props.topic?.project_id,
+  () => {
+    libraryFiles.value = []
+    libraryFor.value = null
+  }
+)
+watch(
+  () => mentionQuery.value !== null,
+  (open) => {
+    if (open) void loadLibrary()
+    // 菜单关了就回到一级：下一次打 @ 的人不该落在上一次翻到的地方。
+    else mentionLevel.value = 'root'
+  }
+)
+
 const mentionMatches = computed<MentionItem[]>(() => {
   const q = mentionQuery.value
   if (q === null) return []
   const ql = q.toLowerCase()
+  if (mentionLevel.value === 'library') return libraryItems(ql).slice(0, 12)
   const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
   const named: MentionItem[] = [
     ...mentionPool.value.map((m) => ({
@@ -1430,9 +1492,36 @@ const mentionMatches = computed<MentionItem[]>(() => {
   // 它还是那两个 token。
   const agents = named.filter((i) => i.agent)
   const rest = named.filter((i) => !i.agent)
-  return [...agents, ...broadcast, ...rest].slice(0, 7)
+  // 没打字：资料库是一行入口。打了字：文件和人、话题一起被搜出来。
+  const files = ql ? libraryItems(ql) : []
+  const library: MentionItem[] =
+    !ql && libraryFiles.value.length
+      ? [
+          {
+            label: '资料库',
+            kind: 'category',
+            insert: 'library',
+            sub: `${libraryFiles.value.length} 份文件`,
+            agent: false,
+          },
+        ]
+      : []
+  return [...agents, ...library, ...broadcast, ...rest, ...files].slice(0, 7)
 })
 function pickMention(item: MentionItem) {
+  if (item.kind === 'category') {
+    mentionLevel.value = 'library'
+    void nextTick(() => composerInput.value?.focus?.())
+    return
+  }
+  if (item.kind === 'file') {
+    // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
+    // 名字都从正文里拿掉，文件去待发条里待着。
+    draft.value = draft.value.replace(/@([^\s@]*)$/, '')
+    void addLibraryFile(item.insert)
+    void nextTick(() => composerInput.value?.focus?.())
+    return
+  }
   draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
   // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
   // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
@@ -1460,6 +1549,7 @@ const {
   pending: pendingAtts,
   uploading: attsUploading,
   addFiles,
+  addLibraryFile,
   onPaste: onComposerPaste,
   onDrop: onComposerDrop,
   removeAt: removePendingAtt,
@@ -1715,6 +1805,12 @@ const enterSends = ref(!coarse?.matches)
 coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.value = !e.matches))
 
 function onComposerKey(e: KeyboardEvent) {
+  // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
+  if (e.key === 'Escape' && mentionLevel.value === 'library') {
+    e.preventDefault()
+    mentionLevel.value = 'root'
+    return
+  }
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
   if (isImeKey(e)) return
@@ -2009,6 +2105,25 @@ onBeforeUnmount(() => {
                 <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
               </div>
             </details>
+            <div v-else-if="notice?.mode === 'agent-status'" class="im-row agent-status">
+              <div class="im-gutter"><CheeseAvatar :size="28" :name="agentName" /></div>
+              <div class="im-main">
+                <div class="im-meta">
+                  <span class="im-name">{{ agentName }}</span>
+                  <span class="agent-status-label">运行状态</span>
+                  <span class="im-time">{{ fmtTime(notice.updatedAt) }}</span>
+                </div>
+                <details class="agent-status-body" data-testid="platform-notice">
+                  <summary>{{ notice.line }}</summary>
+                  <div class="agent-status-history">
+                    <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                      <div>{{ occ.line }}</div>
+                      <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </div>
             <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
                什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
                条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
@@ -2029,7 +2144,7 @@ onBeforeUnmount(() => {
                   <div class="sys-meta">
                     {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
                   </div>
-                  <pre class="sys-detail">{{ occ.detail }}</pre>
+                  <pre v-if="occ.detail" class="sys-detail">{{ occ.detail }}</pre>
                 </div>
               </div>
             </details>
@@ -2292,32 +2407,46 @@ onBeforeUnmount(() => {
           @dragleave="onDragLeaveFiles"
           @drop.prevent="onDropFiles"
         >
-          <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
-          <div v-if="mentionMatches.length" class="mention-menu">
-            <button
-              v-for="(mm, i) in mentionMatches"
-              :key="mm.kind + mm.insert"
-              type="button"
-              class="mention-menu-item"
-              @click="pickMention(mm)"
-            >
-              <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
-                <v-icon size="13">mdi-bullhorn-outline</v-icon>
-              </span>
-              <span
-                v-else-if="mm.kind === 'member'"
-                class="mention-avatar"
-                :class="{ 'mention-avatar--agent': mm.agent }"
-                >{{ mm.label.slice(0, 1).toUpperCase() }}</span
-              >
-              <span v-else class="mention-avatar mention-avatar--topic">
-                <v-icon size="13">mdi-pound</v-icon>
-              </span>
-              <span class="mention-menu-name">{{ mm.label }}</span>
-              <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
-              <span class="mention-menu-sub">{{ mm.sub }}</span>
-              <span v-if="i === 0" class="mention-menu-hint">Enter</span>
-            </button>
+          <!-- @-autocomplete: 没打字是「人 / 群播 / 资料库」这一级，打了字就是搜索。 -->
+          <div v-if="mentionMatches.length || mentionLevel === 'library'" class="mention-menu">
+            <div v-if="mentionLevel === 'library'" class="mention-menu-head">
+              <v-icon size="13">mdi-folder-outline</v-icon>
+              <span class="mention-menu-name">资料库</span>
+              <span class="mention-menu-hint">Esc 返回</span>
+            </div>
+            <template v-for="(mm, i) in mentionMatches" :key="mm.kind + mm.insert">
+              <div v-if="mm.group && mm.group !== mentionMatches[i - 1]?.group" class="mention-menu-group">
+                {{ mm.group }}
+              </div>
+              <button type="button" class="mention-menu-item" @click="pickMention(mm)">
+                <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
+                  <v-icon size="13">mdi-bullhorn-outline</v-icon>
+                </span>
+                <span
+                  v-else-if="mm.kind === 'member'"
+                  class="mention-avatar"
+                  :class="{ 'mention-avatar--agent': mm.agent }"
+                  >{{ mm.label.slice(0, 1).toUpperCase() }}</span
+                >
+                <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
+                  <v-icon size="13">mdi-folder-outline</v-icon>
+                </span>
+                <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
+                  <v-icon size="13">mdi-file-outline</v-icon>
+                </span>
+                <span v-else class="mention-avatar mention-avatar--topic">
+                  <v-icon size="13">mdi-pound</v-icon>
+                </span>
+                <span class="mention-menu-name">{{ mm.label }}</span>
+                <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
+                <span class="mention-menu-sub">{{ mm.sub }}</span>
+                <span v-if="mm.kind === 'category'" class="mention-menu-hint">›</span>
+                <span v-else-if="i === 0" class="mention-menu-hint">Enter</span>
+              </button>
+            </template>
+            <div v-if="mentionLevel === 'library' && !mentionMatches.length" class="mention-menu-group">
+              暂无匹配的文件
+            </div>
           </div>
           <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
                「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
@@ -2901,9 +3030,24 @@ details.sys-row > summary::-webkit-details-marker {
   color: var(--surface);
   background: var(--ink);
 }
-.mention-avatar--topic {
+.mention-avatar--topic,
+.mention-avatar--file {
   background: var(--fill);
   color: var(--muted);
+}
+/* 二级菜单的头，和它里面的分组标题：两条都不是可选项，所以不长得像可选项。 */
+.mention-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--muted);
+}
+.mention-menu-group {
+  padding: 6px 12px 2px;
+  font-size: 12px;
+  color: var(--faint);
 }
 .mention-menu-name {
   font-weight: 500;
@@ -3040,6 +3184,32 @@ details.sys-row > summary::-webkit-details-marker {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
+}
+.agent-status-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-status-body {
+  display: inline-block;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.agent-status-body summary {
+  cursor: pointer;
+}
+.agent-status-history {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.agent-status-detail {
+  margin-top: 3px;
+  color: var(--muted);
 }
 /* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
    一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：

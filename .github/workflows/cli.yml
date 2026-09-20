@@ -121,7 +121,28 @@ jobs:
           npm install -g --silent @anthropic-ai/claude-code@2.1.277
           "$NPM_CONFIG_PREFIX/bin/claude" --version
 
+      # The mock API's image, fetched before the suite so a registry hiccup is
+      # this step's failure and not a skipped test. Through mirror.gcr.io, as
+      # every other pull on the pool: Docker Hub's anonymous token endpoint is
+      # what refused the canary on 2026-09-17 and -18. Tagged under the name
+      # the harness runs, which then resolves locally.
+      - name: Pull the mock API image
+        run: |
+          image=mockserver/mockserver:mockserver-7.5.0
+          for attempt in 1 2 3 4 5; do
+            if docker pull -q "mirror.gcr.io/$image"; then
+              docker tag "mirror.gcr.io/$image" "$image"
+              exit 0
+            fi
+            echo "pull attempt $attempt failed; retrying in $((attempt * 15))s" >&2
+            sleep $((attempt * 15))
+          done
+          echo "could not pull $image through the mirror" >&2
+          exit 1
+
       - name: Delivery e2e
+        env:
+          CHEESE_E2E_REQUIRE_DOCKER: "1"
         run: |
           export PATH="$GITHUB_WORKSPACE/.npm-e2e/bin:$PATH"
           go test -tags claudee2e -v -timeout 35m ./e2e/
