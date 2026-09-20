@@ -35,6 +35,7 @@ import uuid
 import pytest
 
 from app.domain.agent import service
+from app.domain.agent.capability import Difference
 from app.domain.agent.harness import HARNESSES, AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.claude_code.hook_events import MessageAssembler
 from app.domain.agent.harness.codex.events import Assembler as CodexAssembler
@@ -149,6 +150,18 @@ def test_a_word_lists_the_fields_that_event_cannot_do_without(word: str) -> None
         if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
     }
     assert set(VOCABULARY["events"][word]["required"]) == required
+
+
+def test_the_difference_codes_are_the_platforms_one_closed_list() -> None:
+    """差异码是全平台一份，不是这个目录一份。
+
+    这里的散文归这个文件（TypeScript 那侧只读得到 JSON），码本身归
+    ``capability.Difference``（功能矩阵要拿它填格子）。两边分头长的那一天，一张
+    矩阵会开始用另一张矩阵不认识的码——所以两份的成员必须一模一样。
+    """
+    assert set(VOCABULARY["differences"]) == {code.value for code in Difference}
+    for code, why in VOCABULARY["differences"].items():
+        assert why.strip(), code
 
 
 def test_the_six_verbs_are_all_there_and_a_runtime_can_keep_them() -> None:
