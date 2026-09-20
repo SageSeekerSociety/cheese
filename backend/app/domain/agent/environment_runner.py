@@ -75,8 +75,8 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-# Every directory the platform has installed this room's own files into, the
-# current one first. A copy of `place.footprint_dirs()`, not a second answer:
+# The platform's directories inside this room's home, the current one first. A
+# copy of `place.session_platform_dirs()`, not a second answer:
 # this file is shipped to the machine as a standalone stdlib-only program, with
 # nothing of ours importable beside it, so it carries the names; the copy is
 # held to the original by test_footprint_root.py.

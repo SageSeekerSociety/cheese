@@ -455,6 +455,13 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 // `backend/app/domain/agent/place.py`; this is a copy because nothing Python is
 // importable from here, and `backend/tests/unit/test_footprint_root.py` fails if
 // the two ever disagree.
+//
+// One directory, and it stays one. `place.py` also names `.claude`, and that is
+// the platform's older directory INSIDE a session home — the session homes are
+// already under this root, so they go with it. The `~/.claude` next to this one
+// belongs to whoever owns the machine: their Claude Code credentials, settings
+// and every transcript they have. An uninstall that reached for it would delete
+// work the platform never wrote and cannot give back.
 const footprintRoot = ".cheese"
 
 // removeFootprint deletes everything `cheese` leaves on a machine: this

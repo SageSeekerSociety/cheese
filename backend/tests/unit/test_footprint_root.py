@@ -4,10 +4,11 @@ Two things have to hold for `cheese uninstall` to mean what it says. Everything
 the platform puts on the machine has to be under one directory, and everything
 that names that directory has to name the same one.
 
-Neither is free here. Four programs run ON the borrowed machine with nothing of
+Neither is free here. Five programs run ON the borrowed machine with nothing of
 ours importable — one arrives on stdin and has no `__file__`, one is exec'd out
-of a string, one is the CLI the agent runs inside the sandbox, one is Go — so
-they carry copies of the name rather than asking for it. A copy that drifts does
+of a string, one is written out beside the room's files and run as a script, one
+is the CLI the agent runs inside the sandbox, one is Go — so they carry copies
+of the name rather than asking for it. A copy that drifts does
 not crash: the room prepares and the probe reads `pending` until the deadline
 runs out, or the teardown decides a room with a live executor never had one and
 deletes the home out from under the daemon. These tests keep the copies honest,
@@ -19,20 +20,33 @@ import re
 import uuid
 from pathlib import Path
 
-from app.domain.agent import device_provider, environment_runner, machine_launcher
+from app.domain.agent import (
+    device_provider,
+    environment_runner,
+    machine_launcher,
+    resource_cleanup,
+)
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-from app.domain.agent.place import footprint_dirs, footprint_root
-from app.domain.agent.resource_cleanup import PLATFORM_DIRS
+from app.domain.agent.place import footprint_root, session_platform_dirs
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 SANDBOX_CLI = REPOSITORY / "backend/sandbox/cheese"
 
 
 def test_the_shipped_programs_carry_the_root_that_place_chose():
-    """The copies that run on the machine, held to the one that chooses."""
-    assert tuple(PLATFORM_DIRS) == footprint_dirs()
-    assert tuple(environment_runner.PLATFORM_DIRS) == footprint_dirs()
-    assert (bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR) == footprint_dirs()
+    """The copies that run on the machine, held to the one that chooses.
+
+    Two names, because the machine has two layers and only one of them is the
+    platform's to delete. Under the machine's own home there is the footprint
+    root and nothing else; the second directory is the platform's older one
+    INSIDE a session home, which is itself under the footprint root.
+    """
+    assert resource_cleanup.FOOTPRINT_ROOT == footprint_root()
+    assert tuple(resource_cleanup.PLATFORM_DIRS) == session_platform_dirs()
+    assert tuple(environment_runner.PLATFORM_DIRS) == session_platform_dirs()
+    assert (bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR) == (
+        session_platform_dirs()
+    )
 
 
 def test_the_connector_uninstalls_the_root_the_platform_writes():
@@ -73,12 +87,14 @@ def test_the_sandbox_cli_carries_the_root_that_place_chose():
     source = SANDBOX_CLI.read_text()
     declared = re.search(r"ENVIRONMENT_RUNNER_PATHS = \(([^)]*)\)", source)
     assert declared, "the sandbox CLI stopped declaring where the runner may be"
-    assert tuple(re.findall(r'"([^"]+)"', declared.group(1))) == footprint_dirs()
+    assert tuple(re.findall(r'"([^"]+)"', declared.group(1))) == (
+        session_platform_dirs()
+    )
     for spelled in sorted(
         {name.split("/")[0] for name in SANDBOX_HOME_DIR.findall(source)}
         - {RUNNER_STATE_DIR}
     ):
-        assert spelled in footprint_dirs(), (
+        assert spelled in session_platform_dirs(), (
             f"the sandbox CLI writes into ~/{spelled}, which is not a root "
             "`place.py` chose"
         )
@@ -129,13 +145,55 @@ def test_the_directories_a_room_is_given_are_inside_the_footprint():
         inside_the_footprint(path)
 
 
-# Where the launch script puts something on the machine: a redirection into
-# `$HOME`/`$REAL_HOME`, or a directory made under one of them. Reads are not
-# write points, and neither is the `rm -rf "$HOME/Library/Caches/uv"` a room
-# does to its own caches on the way up — those are the machine owner's
+def test_the_teardown_looks_where_the_launcher_built():
+    """The other side of the same paths, which no other test here reaches.
+
+    `device_provider` builds a room's home and work tree under the footprint
+    root; `resource_cleanup` is what deletes them, and it runs on the machine
+    with nothing of ours importable, so it carries its own copy of the root.
+    The two copies agreeing is not enough on its own — the teardown could carry
+    the right root and still spell a path with a literal — so what is checked
+    here is the path it actually builds, against the root `place.py` chose.
+
+    A teardown pointed one directory over does not fail. Every check it runs
+    passes vacuously on paths that do not exist, the room is marked reclaimed,
+    and the home and worktree it was supposed to remove — hundreds of gigabytes
+    on a machine that has run a project for a while — stay where they are with
+    nothing left that knows to look for them.
+    """
+    machine_home = Path("/machine-home")
+    for path in resource_cleanup.resource_paths(
+        machine_home, str(uuid.uuid4()), str(uuid.uuid4())
+    ):
+        inside_the_footprint("$HOME" + str(path).removeprefix(str(machine_home)))
+
+
+# Where the launch script puts something on the machine. Two shapes, because a
+# shell write verb takes its target at either end: right after the verb for a
+# redirection or a `mkdir -p`/`touch`/`tee`, and at the far end of the line for
+# `mv`/`cp`. The space after the verb is optional because the launcher leaves it
+# out where the target is a log (`>"$HOME/..."`), and a guard that reads only
+# the spaced form is a guard with two of the script's own write points already
+# outside it.
+#
+# Reads are not write points, and neither is the `rm -rf "$HOME/Library/Caches/uv"`
+# a room does to its own caches on the way up — those are the machine owner's
 # directories, cleared rather than installed into, and naming them here would
 # demand the platform own them.
-LAUNCHER_WRITE = re.compile(r'(?:>>?|mkdir -p) "\$(?:REAL_)?HOME/([^"/]+)')
+LAUNCHER_REDIRECT = re.compile(
+    r'(?:>>?|mkdir -p|touch|tee)\s*"\$(?:REAL_)?HOME/([^"/]+)'
+)
+LAUNCHER_MOVE = re.compile(r"^[^#\n]*?\b(?:mv|cp)\b(?P<arguments>[^\n]*)$", re.M)
+HOME_ARGUMENT = re.compile(r'"\$(?:REAL_)?HOME/([^"/]+)')
+
+
+def launcher_write_points(script: str) -> list[str]:
+    """Every directory under the machine's home the launch script writes into."""
+    written = LAUNCHER_REDIRECT.findall(script)
+    for line in LAUNCHER_MOVE.finditer(script):
+        # `mv`/`cp` read their first arguments and write the last one.
+        written.extend(HOME_ARGUMENT.findall(line.group("arguments"))[-1:])
+    return written
 
 
 def test_the_launcher_installs_only_inside_the_footprint():
@@ -150,7 +208,7 @@ def test_the_launcher_installs_only_inside_the_footprint():
     a machine whose owner has been told the platform is gone.
     """
     script = machine_launcher.launch_script(command="$AGENT")
-    written = LAUNCHER_WRITE.findall(script)
+    written = launcher_write_points(script)
     assert written, "the launcher stopped writing anything under the home"
     for directory in written:
         assert directory == footprint_root(), (

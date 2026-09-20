@@ -11,7 +11,7 @@ from app.domain.agent.executor_transport import RemoteClient
 from app.domain.agent.harness.claude_code import (
     private_execution_target as target,
 )
-from app.domain.agent.place import footprint_dirs
+from app.domain.agent.place import session_platform_dirs
 
 
 def execution_target(
@@ -48,7 +48,7 @@ async def control(
     # prepared before the last move still has its client and its session marker
     # where that launcher put them, and a command that names one root only goes
     # quietly nowhere on it.
-    roots = " ".join(footprint_dirs())
+    roots = " ".join(session_platform_dirs())
     command = (
         f"for d in {roots}; do "
         f'if test -f "{home}/$d/remote-session/execution.json"; then '
@@ -74,7 +74,7 @@ async def release(project_id, topic_id, device_id, hub):
         [
             "sh",
             "-c",
-            f"for d in {' '.join(footprint_dirs())}; do "
+            f"for d in {' '.join(session_platform_dirs())}; do "
             f'if test -f "{home}/$d/remote-target.json"; then '
             f'exec python3 "{home}/$d/remote-execution/client.py" release '
             f'"{home}/$d/remote-target.json"; fi; done',

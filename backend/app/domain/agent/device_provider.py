@@ -50,7 +50,7 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent.place import footprint_dirs, footprint_root
+from app.domain.agent.place import footprint_root, session_platform_dirs
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -450,11 +450,13 @@ def launcher_path(topic_id: uuid.UUID) -> str:
 # of them keep their state in the same `$HOME/.cheese-environment/status.json`,
 # so whichever one we find answers for the place. Probing only the current root
 # is what made a place prepared by another launcher read as `pending` forever:
-# the ready status was on disk, one directory over. Which roots those are is
-# `place.footprint_dirs()`, so a root the platform adds or drops reaches the
-# probe by itself — see test_environment_status_probe.py.
+# the ready status was on disk, one directory over. Which directories those are
+# is `place.session_platform_dirs()`, so one the platform adds or drops reaches
+# the probe by itself — see test_environment_status_probe.py. The `$HOME` below
+# is the place's own: the command that reads these exports it first.
 ENVIRONMENT_RUNNER_PATHS = tuple(
-    f"$HOME/{root}/cheese-environment.py" for root in footprint_dirs()
+    f"$HOME/{directory}/cheese-environment.py"
+    for directory in session_platform_dirs()
 )
 
 
@@ -468,8 +470,15 @@ async def environment_status(
     wait_ready: bool = False,
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
+    # Inside the place's home, like everything else in this command: it runs
+    # after the `export HOME` below, so `$HOME` here is `home` and not the
+    # machine's own. Spelling it `DEVICE_ROOT` would read as the machine root
+    # and land in the same place anyway, which is the kind of agreement that
+    # survives until someone believes it.
+    place_root = session_platform_dirs()[0]
     reset_marker = (
-        f'mkdir -p "{DEVICE_ROOT}"; touch "{DEVICE_ROOT}/environment-restart"; '
+        f'mkdir -p "$HOME/{place_root}"; '
+        f'touch "$HOME/{place_root}/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -955,7 +964,7 @@ class DeviceChannel(Channel):
         token (rotated every turn), and a read of the release marker when the
         caller tracks one. Shared by the launcher ship and the live-screen
         refresh, so both paths write the same files the same way."""
-        hook_dir = f"{home_dir}/{footprint_root()}"
+        hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
         transfer = (
             f'mkdir -p "{hook_dir}"'
             f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
