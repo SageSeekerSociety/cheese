@@ -23,10 +23,10 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
+from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
-from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.topic.retire")
 

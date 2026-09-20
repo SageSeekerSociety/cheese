@@ -19,8 +19,8 @@ from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.codex.launch import script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
-from app.domain.topic.models import Topic
 from app.domain.library import service as library
+from app.domain.topic.models import Topic
 
 logger = logging.getLogger(__name__)
 

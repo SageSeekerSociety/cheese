@@ -26,10 +26,10 @@ from app.core.db import get_db
 from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
+from app.domain.library import service as library
 from app.domain.room_task.place import Place
 from app.domain.site.hosting import content_origin
 from app.domain.topic.services import TopicService
-from app.domain.library import service as library
 
 AUTH_PATH = "/_cheese/session"
 GRANT_TTL = 30

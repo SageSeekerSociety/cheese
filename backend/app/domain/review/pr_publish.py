@@ -29,9 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.github_app import github_app_tokens_for_project
+from app.domain.repository import service as ws
 from app.domain.review import notes
 from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
-from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.pr_publish")
 
@@ -381,9 +381,9 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     upstream, and — the ordinary case, on every tick — a branch with nothing on
     it. A newly created task has no changes to review until its first commit.
     """
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.repository import identity
 
     project_id = task.project_id
     tokens = await github_app_tokens_for_project(project_id, session)
@@ -494,8 +494,8 @@ async def _requester_of(session: AsyncSession, topic_id: uuid.UUID) -> str | Non
     `cheesex-app[bot]`.
 
     Never raises: attribution must not be the reason a PR fails to open."""
-    from app.domain.room_task.place import PlaceResolver
     from app.domain.repository import identity
+    from app.domain.room_task.place import PlaceResolver
 
     try:
         place = await PlaceResolver(session).resolve(topic_id)
@@ -543,10 +543,10 @@ async def _pr_text(
     验收卡即合并本 PR" — is gone. It described the platform's workflow to people
     who were already inside it, while the reviewer opening the PR on GitHub
     wanted to know what changed and why."""
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.repository import identity
 
     place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)

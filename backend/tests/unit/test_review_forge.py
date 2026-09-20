@@ -324,8 +324,8 @@ async def test_the_write_bit_comes_from_the_remote_not_the_url(
     from unittest.mock import AsyncMock
 
     from app.domain.agent import github_app
-    from app.domain.review.services import AcceptService
     from app.domain.repository import service as ws
+    from app.domain.review.services import AcceptService
 
     async def _no_tokens(_pid, _session):
         return None
@@ -360,8 +360,8 @@ async def test_a_project_on_the_app_is_not_asked_to_prove_it_can_push(
     from unittest.mock import AsyncMock
 
     from app.domain.agent import github_app
-    from app.domain.review.services import AcceptService
     from app.domain.repository import service as ws
+    from app.domain.review.services import AcceptService
 
     async def _tokens(_pid, _session):
         return object()

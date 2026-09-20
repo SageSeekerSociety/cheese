@@ -432,10 +432,10 @@ def app_world(client, monkeypatch):
     → False）：平台按项目配置补位，正是本仓库这类 free 计划私有仓的现实。
     """
     from app.domain.agent import github_app
+    from app.domain.repository import service as ws
     from app.domain.review import pr_publish
     from app.domain.review import services as review_services
     from app.domain.review.services import AcceptService
-    from app.domain.repository import service as ws
 
     fake = FakeGitHubPrClient()
     recorded: dict = {
@@ -1383,9 +1383,9 @@ def test_existing_pr_cannot_fall_back_to_local_merge_when_binding_disappears(
 def test_another_forge_owns_its_checks_and_accept_operation(client, monkeypatch):
     """A provider without GitHub must not fall through to the platform merge."""
     from app.core.errors import ValidationError
+    from app.domain.repository import service as ws
     from app.domain.review import forge as forge_mod
     from app.domain.review.models import AcceptStatus
-    from app.domain.repository import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -2109,8 +2109,8 @@ def test_push_fix_puts_the_local_commit_on_the_pr_on_demand(
     """轮询器不再自动重推（#718 删掉了那件事）：工作区的新提交上 PR 的唯一通道
     是 push-fix。这里驱动真实的本地 git 读取（`_local_topic_branch_head` 恢复成
     真实实现），只有到 github.com 的网络一跳是假的。"""
-    from app.domain.review.services import AcceptService
     from app.domain.repository import service as ws
+    from app.domain.review.services import AcceptService
 
     # app_world 默认把本地 head 钉成 None；这条测试要真的读 git。
     monkeypatch.setattr(
@@ -2167,8 +2167,8 @@ def test_push_fix_puts_the_local_commit_on_the_pr_on_demand(
 def test_push_fix_declines_a_doomed_non_fast_forward_and_says_so(
     client, app_world, monkeypatch
 ):
-    from app.domain.review.services import AcceptService
     from app.domain.repository import service as ws
+    from app.domain.review.services import AcceptService
 
     monkeypatch.setattr(
         AcceptService,

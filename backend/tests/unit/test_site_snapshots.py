@@ -8,9 +8,9 @@ import pytest
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.repository import service as ws
 from app.domain.site.models import SiteRelease
 from app.domain.site.services import _snapshot, publication_source, read_release_file
-from app.domain.repository import service as ws
 
 
 def _git(path, *args):

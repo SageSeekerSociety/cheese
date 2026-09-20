@@ -209,4 +209,3 @@ def preview_file_version(
         # The metadata still names a missing/unreadable artifact; the file API
         # supplies its existing detailed error state to the preview panel.
         return None
-

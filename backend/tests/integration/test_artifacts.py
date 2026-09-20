@@ -124,7 +124,6 @@ def test_artifact_type_maps_to_mime(client):
 @pytest.mark.parametrize("size", [100, 1024 * 1024 + 1])
 def test_editing_the_same_artifact_changes_preview_version(client, size):
     from app.domain.library import service as library
-    from app.domain.repository import service as ws
 
     pid, tid = _topic(client)
     project, topic = uuid.UUID(pid), uuid.UUID(tid)
@@ -300,7 +299,6 @@ def test_app_artifact_and_preview(client):
     """`cheese serve` declares a RUNNING app; the preview knocks on it live and
     hands the browser a path a browser can actually fetch."""
     from app.domain.library import service as library
-    from app.domain.repository import service as ws
 
     pr = client.post("/projects", json={"name": "P"})
     pid = pr.json()["data"]["id"]

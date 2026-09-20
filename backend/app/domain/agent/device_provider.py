@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
-from app.domain.agent import machine_launcher, provider_env
+from app.domain.agent import machine_launcher, place, provider_env
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceHub,
@@ -49,7 +49,6 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent import place
 from app.domain.agent.place import footprint_root, session_platform_dirs
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
@@ -65,9 +64,8 @@ from app.domain.device.supply import (
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
-from app.domain.topic.services import TopicService
 from app.domain.library import service as library
-from app.domain.repository import service as ws
+from app.domain.topic.services import TopicService
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
@@ -1831,9 +1829,7 @@ class DeviceChannel(Channel):
             # room the file came from. Say so rather than send a mention that
             # resolves to nothing.
             return [], list(images)
-        home = device_home_dir(
-            screen.project_id, screen.resource_id or screen.topic_id
-        )
+        home = device_home_dir(screen.project_id, screen.resource_id or screen.topic_id)
         staged: list[dict] = []
         lost: list[dict] = []
         for image in images:

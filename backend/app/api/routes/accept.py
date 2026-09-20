@@ -25,6 +25,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.identity.actor import Actor
+from app.domain.repository import service as ws
 from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
     GitHubPRClient,
@@ -45,7 +46,6 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.accept")
 

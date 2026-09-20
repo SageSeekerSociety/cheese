@@ -8,9 +8,8 @@ import pytest
 from app.api.preview_host import cookie_name, mint_preview_token, preview_origin
 from app.core.config import settings
 from app.core.tokens import verify_session_token
-from app.domain.site.hosting import content_origin, mint_site_token
 from app.domain.library import service as library
-from app.domain.repository import service as ws
+from app.domain.site.hosting import content_origin, mint_site_token
 from tests.integration.conftest import session_auth_headers, session_token
 from tests.integration.test_app_preview_proxy import (
     _open_preview,

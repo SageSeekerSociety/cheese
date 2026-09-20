@@ -49,7 +49,7 @@ def call_sites(tree: ast.AST) -> list[int]:
         for payload in [*node.args, *(word.value for word in node.keywords)]:
             if not isinstance(payload, ast.Dict):
                 continue
-            for key, value in zip(payload.keys, payload.values):
+            for key, value in zip(payload.keys, payload.values, strict=True):
                 if (
                     isinstance(key, ast.Constant)
                     and key.value == "subtype"
@@ -75,8 +75,7 @@ def test_only_one_call_in_the_app_writes_a_file_onto_a_machine():
         if lines:
             found[str(source.relative_to(APP))] = lines
     assert found == {}, (
-        "这些地方直接往机器上写文件，绕过了 place.write 的前缀断言："
-        f"{found}"
+        f"这些地方直接往机器上写文件，绕过了 place.write 的前缀断言：{found}"
     )
 
 
@@ -124,15 +123,14 @@ async def test_a_staged_file_lands_beside_the_checkout_and_not_in_it():
         device_id="device",
         screen="screen",
     )
-    (asked, data), = machine.wrote
+    ((asked, data),) = machine.wrote
     assert data == b"bytes"
     assert asked.startswith(f"$HOME/{place.footprint_root()}/")
     assert asked == f"{home}/{place.STAGED_DIR}/uploads/abc/图.png"
     assert f"/{place.CHECKOUT_DIR}/" not in asked.removeprefix("$HOME/")
     # 机器报回来的绝对路径原样交给 agent：后端展不开那台机器的 `$HOME`。
-    assert landed == "/home/owner/.cheese/home/{}/{}/attachments/uploads/abc/图.png".format(
-        project, room
-    )
+    owner_home = f"/home/owner/.cheese/home/{project}/{room}"
+    assert landed == f"{owner_home}/attachments/uploads/abc/图.png"
 
 
 @pytest.mark.parametrize(

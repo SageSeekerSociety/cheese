@@ -26,8 +26,8 @@ author_type=system`，前端一行灰字）。另一条更糟：`runner.submit(a
 import asyncio
 import uuid
 
-from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from app.domain.repository import service as ws
+from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from tests.conftest import wait_work_idle
 
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端

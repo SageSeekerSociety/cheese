@@ -37,10 +37,10 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.repository import service as ws
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
-from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.upstream_conflict")
 

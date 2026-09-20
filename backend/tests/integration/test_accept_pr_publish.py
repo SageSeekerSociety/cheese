@@ -134,9 +134,9 @@ def pr_world(monkeypatch):
     """A world where the card's project has a GitHub upstream and the App is
     configured — with every workspace side effect recorded, not executed."""
     from app.domain.agent import github_app
+    from app.domain.repository import service as ws
     from app.domain.review import github_pr as github_pr_module
     from app.domain.review import services as review_services
-    from app.domain.repository import service as ws
 
     _FakeClient.calls = []
     _FakeClient.view = {
@@ -439,8 +439,8 @@ def _enable_app_pr(monkeypatch) -> None:
     from pathlib import Path
 
     from app.core.config import settings
-    from app.domain.review import pr_publish
     from app.domain.repository import service as ws
+    from app.domain.review import pr_publish
 
     monkeypatch.setattr(settings, "github_app_id", 12345)
     monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
@@ -467,8 +467,8 @@ def test_legacy_discussion_card_on_bound_project_accepts_without_forge_label(
     subject 必填之前）：没有分支、没有交付主张——本地合并 no-op 完成采纳，
     什么都没绕过，也不该戴「未接 GitHub」的标。（带交付主张的卡在同样的
     分支缺失下必须停下——见 test_accept_pr.py 的回归用例。）"""
-    from app.domain.review.repositories import AcceptCardRepository
     from app.domain.repository import service as ws
+    from app.domain.review.repositories import AcceptCardRepository
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -751,8 +751,8 @@ def test_a_push_back_that_fails_is_reported_as_a_push_failure(
     改动确实在平台仓库的 main 上，卡确实是 accepted；再落一条 `accept_stopped`
     会让按类别码分流的告警把一张采纳成功的卡报成半路停下。
     """
-    from app.domain.review import services as review_services
     from app.domain.repository import service as ws
+    from app.domain.review import services as review_services
 
     def _refused(pid, branch, token, *, remote_branch=None):
         raise RuntimeError("Permission denied (publickey)")
@@ -801,8 +801,8 @@ def test_a_branch_name_that_cannot_be_read_is_reported_the_same_way(
     的事务回滚 —— 卡退回 pending、采纳人收到报错 —— 而合并和那句「已合并」都还在，
     三者互相打架。所以读分支名失败也是上报，不是抛。
     """
-    from app.domain.review import services as review_services
     from app.domain.repository import service as ws
+    from app.domain.review import services as review_services
 
     def _cannot_read(pid):
         raise ws.WorkspacePermissionError("git rev-parse: Permission denied")

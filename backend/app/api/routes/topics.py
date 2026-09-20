@@ -76,6 +76,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
+from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
 from app.domain.preview.office import (
@@ -85,6 +86,7 @@ from app.domain.preview.office import (
     render_to_pdf,
 )
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import service as ws
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
@@ -97,6 +99,7 @@ from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
+from app.domain.textfile import content_version
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
@@ -116,9 +119,6 @@ from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.webhook import service as webhook_service
-from app.domain.library import service as library
-from app.domain.repository import service as ws
-from app.domain.textfile import content_version
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 

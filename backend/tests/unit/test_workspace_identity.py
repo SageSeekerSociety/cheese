@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.identity.handles import topic_agent_handle
-from app.domain.topic_membership.services import TopicMemberService
 from app.domain.repository import identity
+from app.domain.topic_membership.services import TopicMemberService
 
 
 def _ids() -> tuple[uuid.UUID, uuid.UUID]:

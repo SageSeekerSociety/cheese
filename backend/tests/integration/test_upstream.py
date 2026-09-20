@@ -440,8 +440,8 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.scheduler.service import SchedulerService
     from app.domain.repository import service as ws
+    from app.domain.scheduler.service import SchedulerService
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -510,8 +510,8 @@ async def test_scheduler_fetches_a_bound_project_as_the_app(
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.scheduler.service import SchedulerService
     from app.domain.repository import service as ws
+    from app.domain.scheduler.service import SchedulerService
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -706,8 +706,8 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.scheduler.service import SchedulerService
     from app.domain.repository import service as ws
+    from app.domain.scheduler.service import SchedulerService
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -866,8 +866,8 @@ async def test_a_failed_sync_is_not_counted_as_a_synced_one(
     project that had not fetched a byte, and the reason went nowhere.
     """
     from app.domain.agent.chat import ChatService
-    from app.domain.scheduler.service import SchedulerService
     from app.domain.repository import service as ws
+    from app.domain.scheduler.service import SchedulerService
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
@@ -902,8 +902,8 @@ async def test_a_conflict_with_no_owner_to_ask_is_named_rather_than_dropped(
 
     from app.domain.agent.chat import ChatService
     from app.domain.project.repositories import ProjectRepository
-    from app.domain.scheduler.service import SchedulerService
     from app.domain.repository import service as ws
+    from app.domain.scheduler.service import SchedulerService
 
     up = _make_upstream(tmp_path)
     pid = _project(client)

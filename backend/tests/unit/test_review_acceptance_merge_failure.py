@@ -7,13 +7,13 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.project.models import AiMode
+from app.domain.repository import service as ws
 from app.domain.review import forge as review_forge
 from app.domain.review import services as review_services
 from app.domain.review.models import AcceptStatus
 from app.domain.review.services import AcceptService
 from app.domain.topic.models import TopicStatus
 from app.domain.webhook import service as webhook_service
-from app.domain.repository import service as ws
 
 
 def _accept_service(

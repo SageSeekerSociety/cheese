@@ -12,7 +12,6 @@ import zipfile
 import pytest
 
 from app.domain.library import service as library
-
 from app.domain.repository import service as ws
 from tests.delivery import delivery_task
 

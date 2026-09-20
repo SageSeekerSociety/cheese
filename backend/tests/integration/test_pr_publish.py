@@ -113,8 +113,8 @@ class _FakeClient:
 
 
 def _github_world(monkeypatch) -> None:
-    from app.domain.review import pr_publish
     from app.domain.repository import service as ws
+    from app.domain.review import pr_publish
 
     _FakeClient.opened = []
     _FakeClient.patched = []
@@ -179,8 +179,8 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
     successful publish (the accept-time retry uses the same record path)
     clears the failure note along with recording the PR."""
     _github_world(monkeypatch)
-    from app.domain.review import pr_publish
     from app.domain.repository import service as ws
+    from app.domain.review import pr_publish
 
     def _boom(pid, tid, token):
         raise RuntimeError("push refused")
@@ -227,8 +227,8 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
 
 def test_non_github_upstream_is_not_applicable(client, monkeypatch):
     _github_world(monkeypatch)
-    from app.domain.review import pr_publish
     from app.domain.repository import service as ws
+    from app.domain.review import pr_publish
 
     monkeypatch.setattr(ws, "get_upstream", lambda pid: "/home/repos/widgets")
 

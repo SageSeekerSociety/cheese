@@ -65,6 +65,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
+from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
@@ -89,6 +90,8 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
+from app.domain.repository import upstream_conflict
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
@@ -96,9 +99,6 @@ from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
-from app.domain.library import service as library
-from app.domain.repository import service as ws
-from app.domain.repository import upstream_conflict
 
 logger = logging.getLogger("cheesex.projects")
 

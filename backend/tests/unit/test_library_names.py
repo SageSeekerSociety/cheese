@@ -37,12 +37,15 @@ def test_same_name_at_the_same_time_loses_neither(project):
     with ThreadPoolExecutor(max_workers=12) as pool:
         names = list(
             pool.map(
-                lambda data: library.write_library_file(project, "同名.txt", data), contents
+                lambda data: library.write_library_file(project, "同名.txt", data),
+                contents,
             )
         )
 
     assert len(set(names)) == len(contents)
-    assert sorted(library.read_library_file(project, n) for n in names) == sorted(contents)
+    assert sorted(library.read_library_file(project, n) for n in names) == sorted(
+        contents
+    )
     assert len(library.list_library_files(project)) == len(contents)
 
 

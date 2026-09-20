@@ -53,6 +53,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project import artifacts
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import identity
 from app.domain.review import (
     archive,
     commit_message,
@@ -73,7 +74,6 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
-from app.domain.repository import identity
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -1716,8 +1716,8 @@ class AcceptService:
         """(owner, repo) the card's PR lives in — from the card when recorded,
         else resolved from the project's upstream and backfilled onto the card
         (pr_publish records only pr_number/pr_url at filing time)."""
-        from app.domain.review.github_pr import parse_github_repo
         from app.domain.repository import service as ws
+        from app.domain.review.github_pr import parse_github_repo
 
         if card.pr_repo and "/" in card.pr_repo:
             owner, _, repo = card.pr_repo.partition("/")
@@ -2242,8 +2242,8 @@ class AcceptService:
         project has no GitHub side at all (no installation, or an upstream that
         is not a GitHub https remote)."""
         from app.domain.agent.github_app import github_app_tokens_for_project
-        from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
         from app.domain.repository import service as ws
+        from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
 
         tokens = await github_app_tokens_for_project(topic.project_id, self._session)
         if tokens is None:
@@ -3428,8 +3428,8 @@ class AcceptService:
             return cached
 
         from app.domain.agent.github_app import github_app_tokens_for_project
-        from app.domain.review.github_pr import parse_github_repo
         from app.domain.repository import service as ws
+        from app.domain.review.github_pr import parse_github_repo
 
         upstream = await asyncio.to_thread(ws.get_upstream, project_id)
         tokens = await github_app_tokens_for_project(project_id, self._session)

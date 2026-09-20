@@ -134,6 +134,7 @@ from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import service as ws
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place, PlaceResolver
@@ -142,7 +143,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.repository import service as ws
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "chat"]

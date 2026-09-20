@@ -24,9 +24,9 @@ class _FakeTokens:
 
 
 def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
+    from app.domain.repository import identity
     from app.domain.review.pr_text import pr_trailers
     from app.domain.topic.models import Topic
-    from app.domain.repository import identity
     from tests.integration.conftest import session_auth_headers
 
     pid, room = _project(client, owner="alice")
@@ -61,9 +61,9 @@ def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
 def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(client):
     from types import SimpleNamespace
 
+    from app.domain.repository import identity
     from app.domain.room_task.place import PlaceResolver
     from app.domain.user.models import User
-    from app.domain.repository import identity
 
     async def seed():
         async with client.test_factory() as session:
@@ -169,8 +169,8 @@ class _FakeClient:
 def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     """A GitHub the platform can push to, plus the set of handles that have
     actually connected an account (`connected[handle] -> their token`)."""
-    from app.domain.review import pr_publish
     from app.domain.repository import service as ws
+    from app.domain.review import pr_publish
 
     _FakeClient.opened = []
     _FakeClient.downgrade = None

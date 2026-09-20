@@ -39,8 +39,8 @@ from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
-from app.domain.topic.models import Topic
 from app.domain.library import service as library
+from app.domain.topic.models import Topic
 
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 logger = logging.getLogger(__name__)

@@ -21,8 +21,8 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
-from app.domain.topic.services import TopicService
 from app.domain.repository import service as ws
+from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
