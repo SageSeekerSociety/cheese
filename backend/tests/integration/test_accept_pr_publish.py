@@ -160,6 +160,9 @@ def pr_world(monkeypatch):
     monkeypatch.setattr(
         ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
     )
+    # 这个远端是 GitHub：写权限由 App 的安装 token 回答，没装 App 的时候我们对它
+    # 一无所有。写在这里，免得哪个用例真的 fork 一次 git 去问 github.com。
+    monkeypatch.setattr(ws, "can_push_upstream", lambda pid: False)
     monkeypatch.setattr(
         ws,
         "push_topic_branch",
@@ -338,20 +341,56 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     monkeypatch.setattr(
         accept_routes, "github_app_tokens_for_project", _tokens_for_project
     )
+    monkeypatch.setattr(ws, "get_upstream", _boom)
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=7)
-    # Only now: an accept whose forge cannot be resolved is refused outright
-    # (#362), so a workspace that is already broken would stop the card being
-    # filed at all — which is not what this route's error handling is about.
-    monkeypatch.setattr(ws, "get_upstream", _boom)
 
     r = client.get(f"/topics/{tid}/pr-checks")
 
     assert r.status_code == 200
     assert r.json()["data"]["available"] is False
+
+
+def test_an_unreadable_workspace_does_not_take_the_card_list_down(
+    client, pr_world, monkeypatch
+):
+    """读一张卡不是挑一条车道。
+
+    `_forge_facts` 要 fork 一次 git 才知道项目接了什么，而那次 fork 会失败（uid
+    split、磁盘、超时）。采纳那一侧必须 fail-closed —— 读不出事实就拒，#362 说的
+    就是不许摸黑合 —— 但这条读路径上同一个失败过去会把整个卡列表端点打成 422：
+    一个项目的 git 坏了，所有项目的卡都打不开。现在卡照常下发，只是它如实说自己
+    这会儿读不出托管方，按钮也因此灰着。
+    """
+    from app.domain.workspace import service as ws
+
+    def _boom(_pid):
+        raise OSError("workspace unavailable")
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    monkeypatch.setattr(ws, "get_upstream", _boom)
+
+    listed = client.get(f"/topics/{tid}/accept-card")
+    assert listed.status_code == 200, listed.text
+    filed = listed.json()["data"]["data"][0]
+    assert filed["forge"]["kind"] == "unknown"
+    assert filed["forge"]["pushes_to_external_remote"] is False
+    assert "读不出" in filed["forge"]["declaration"]
+    # 按钮灰着，理由在卡上，和后端真去采纳时的答案是同一个。
+    assert filed["merge_state"]["state"] == "unknown"
+
+    refused = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert refused.status_code == 422
+    assert "读不出" in refused.text
 
 
 def test_prless_card_never_touches_github(client, pr_world, monkeypatch):
@@ -473,8 +512,8 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     让它和「该走 PR 却没走」的卡一眼可分。
 
     这两种「未接」都填过上游地址（少的是 App 安装，或者那个地址不是 GitHub），
-    所以卡上不能说「本项目未接外部仓库」—— 当着填过地址的人的面说他没填，是把
-    沉默换成一句假话。"""
+    而那个地址我们推不动 —— 远端自己这么回答的。所以卡上不能说「本项目未接外部
+    仓库」：当着填过地址的人的面说他没填，是把沉默换成一句假话。"""
     from app.domain.agent import github_app
     from app.domain.workspace import service as ws
 
@@ -482,8 +521,12 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     _enable_app_pr(monkeypatch)
+    # 填了地址，而远端不让我们写 —— 这一位问出来是 False，于是平台自己就是终点。
+    monkeypatch.setattr(ws, "can_push_upstream", lambda pid_: False)
     if missing == "upstream":
-        monkeypatch.setattr(ws, "get_upstream", lambda pid_: "/srv/repos/widgets")
+        monkeypatch.setattr(
+            ws, "get_upstream", lambda pid_: "https://gitlab.campus.edu/t/course.git"
+        )
     else:
 
         async def _no_tokens(_pid, _session):
@@ -600,6 +643,10 @@ def campus_gitlab(pr_world, monkeypatch):
 
     老师点了同步、看见历史进来了，于是合理地认为这是双向的 —— 所以采纳必须真的
     推回去，否则他的仓库一个 commit 都收不到，而且没有一句话告诉他。
+
+    地址是 `https://`，因为项目设置里那一栏的提示写的就是「https://… 或本机绝对
+    路径」—— 老师填进来的是这个。写得动与否由远端回答（`can_push_upstream`），
+    不由地址的 scheme 回答：这个项目的凭据是有的。
     """
     from app.domain.agent import github_app
     from app.domain.workspace import service as ws
@@ -609,8 +656,9 @@ def campus_gitlab(pr_world, monkeypatch):
 
     monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
     monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "git@campus.example:teacher/course.git"
+        ws, "get_upstream", lambda pid: "https://gitlab.campus.edu/teacher/course.git"
     )
+    monkeypatch.setattr(ws, "can_push_upstream", lambda pid: True)
     monkeypatch.setattr(ws, "base_branch_head", lambda pid: ("main", "deadbeef"))
     return pr_world
 
@@ -701,3 +749,43 @@ def test_a_push_back_that_fails_is_reported_as_a_push_failure(
     # 说清楚改动在哪、不在哪 —— 只有人能决定接下来怎么办。
     assert "没能推回" in line["content"]
     assert "Permission denied" in line["meta"]["detail"]
+
+
+def test_a_branch_name_that_cannot_be_read_is_reported_the_same_way(
+    client, campus_gitlab, monkeypatch
+):
+    """合并之后的每一步失败都走同一条上报，读分支名也不例外。
+
+    `_accept_platform` 回来的时候，squash 已经落在磁盘上了，卡已经是 accepted，
+    房间里的「已合并」是另一条会话发的、已经 commit。这时候再往上抛异常，本次请求
+    的事务回滚 —— 卡退回 pending、采纳人收到报错 —— 而合并和那句「已合并」都还在，
+    三者互相打架。所以读分支名失败也是上报，不是抛。
+    """
+    from app.domain.review import services as review_services
+    from app.domain.workspace import service as ws
+
+    def _cannot_read(pid):
+        raise ws.WorkspacePermissionError("git rev-parse: Permission denied")
+
+    monkeypatch.setattr(ws, "base_branch_head", _cannot_read)
+    monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    r = client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "accepted"
+    # 卡留在 accepted，没有因为回滚退回 pending。
+    listed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
+    assert [c["status"] for c in listed if c["id"] == cid] == ["accepted"]
+
+    types = _event_types_settled(client, tid, "remote_push_failed")
+    assert "remote_push_failed" in types
+    assert "accept_stopped" not in types

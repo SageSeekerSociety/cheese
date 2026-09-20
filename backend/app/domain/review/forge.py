@@ -48,6 +48,12 @@ if TYPE_CHECKING:
 
 FACTS_UNKNOWN_MESSAGE = "采纳未完成：暂时读不出项目的托管方能力，稍后重试采纳"
 
+#: 读路径上事实读不出来时卡上那一档。它不是第四个 forge —— 没有哪个实现承担它，
+#: `resolve()` 也永远不会返回它；它是「这张卡这会儿说不出自己的托管方是谁」这件
+#: 事本身，如实写在卡面上。采纳照旧 fail-closed，拒的时候说的是上面那句话。
+FORGE_KIND_UNKNOWN = "unknown"
+FORGE_UNKNOWN_DECLARATION = "ℹ️ 暂时读不出这个项目的托管方：采纳先等一下，稍后重试"
+
 
 class ForgeKind(enum.StrEnum):
     github_app = "github_app"

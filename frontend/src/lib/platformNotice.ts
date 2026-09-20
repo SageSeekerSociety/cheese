@@ -109,6 +109,8 @@ export const AGENT_STATUS_EVENTS = new Set([
   'upstream_conflict',
   'pr_conflict',
   'pr_review',
+  'pr_identity_downgraded',
+  'remote_push_failed',
   'merge_refused',
   'card_filed',
   'card_rejected',

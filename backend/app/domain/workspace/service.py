@@ -2084,6 +2084,64 @@ def push_branch(project_id: uuid.UUID, branch: str, token: str | None) -> str:
     return branch
 
 
+#: `can_push_upstream` 推给远端看的那个 ref 名。`--dry-run` 不发送任何更新，所以
+#: 远端上不会真的多出它；起个带前缀的名字只是为了万一谁在日志里看见能认出来。
+_WRITE_PROBE_REF = "refs/heads/cheese-write-probe"
+
+#: 探测要连一次网络，而它坐在卡片渲染这条读路径上，所以比 `push_branch` 的 120s
+#: 短得多：连不上就是写不动，等两分钟不会让答案更准。
+_WRITE_PROBE_TIMEOUT_S = 15
+
+
+def can_push_upstream(project_id: uuid.UUID) -> bool:
+    """写得动这个项目的上游吗 —— 问远端，不看地址长什么样。
+
+    「地址以 `git@` 开头所以我们有 key」是一次猜测，两个方向猜错都有人受伤：猜成
+    写得动，卡在人点采纳**之前**就写着「采纳即合并并推回该远端」，而每一次采纳都
+    以推送失败收场；猜成写不动，填了校内 GitLab 地址的老师一个 commit 都收不到。
+    `https://` 的地址两边都可能 —— 配过凭据助手就写得动，没配就写不动 —— 地址本身
+    分不出来，本机绝对路径更是根本不需要凭据。
+
+    所以跑一次真的：`git push --dry-run` 到一个我们自己命名的 ref。push 必须连上
+    远端的 receive-pack 并通过授权（https 没凭据是 401，ssh 没 key 是 publickey
+    失败），而 `--dry-run` 不发送任何更新，远端上什么都不会变。推一个**新** ref
+    而不是 base 分支本身，是因为 base 可能落后于远端，那种拒绝说的是「这次更新不
+    能快进」，不是「我们没有凭据」。
+
+    答不出来就答写不动。这不是拿默认值把失败盖住（I19）：卡落到 `PlatformForge`，
+    上面写着「远端在，平台没有写它的凭据」，那句话在人点采纳之前就在他眼前，比一个
+    推不上去的承诺诚实。
+    """
+    try:
+        repo = ensure_repo(project_id)
+        if get_upstream(project_id) is None:
+            return False
+        _ensure_base_commit(repo)
+        branch = _base_branch(repo)
+        result = _run_subprocess(
+            [
+                "git",
+                "push",
+                "--dry-run",
+                UPSTREAM_REMOTE,
+                f"{branch}:{_WRITE_PROBE_REF}",
+            ],
+            repo,
+            _WRITE_PROBE_TIMEOUT_S,
+            {
+                **os.environ,
+                # 没凭据就当场失败，别停在提示符上等到超时。
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_SSH_COMMAND": os.environ.get(
+                    "GIT_SSH_COMMAND", "ssh -oBatchMode=yes"
+                ),
+            },
+        )
+    except Exception:  # noqa: BLE001 — 读不出来就是写不动，见 docstring
+        return False
+    return result.returncode == 0
+
+
 def branch_has_commits(
     project_id: uuid.UUID, branch: str, *, base: str | None = None
 ) -> bool:

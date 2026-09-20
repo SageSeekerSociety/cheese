@@ -275,3 +275,91 @@ async def test_the_dispatch_names_no_provider() -> None:
         assert isinstance(got, ArchiveForge)
     finally:
         forge_mod.FORGES = registry
+
+
+# ---- 「写得动那个远端」是问出来的，不是从地址猜出来的 ------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "upstream",
+    [
+        "git@campus.example:teacher/course.git",
+        "ssh://git.campus.edu/teacher/course.git",
+        "https://gitlab.campus.edu/teacher/course.git",
+        "/srv/repos/course.git",
+    ],
+    ids=["scp-style", "ssh", "https", "local-path"],
+)
+@pytest.mark.parametrize(
+    "remote_lets_us_write", [True, False], ids=["writable", "refused"]
+)
+async def test_the_write_bit_comes_from_the_remote_not_the_url(
+    monkeypatch, upstream, remote_lets_us_write
+) -> None:
+    """URL 的 scheme 不是凭据，四种地址各自两边都可能。
+
+    `git@` 不证明机器上有 key，`https://` 不排除配过凭据助手，本机绝对路径压根
+    不需要凭据。猜错的两个方向各有一个受害者：猜成写得动，卡在人点**之前**就写着
+    「采纳即合并并推回该远端」，而每次采纳都以推送失败收场；猜成写不动，填了地址
+    的老师一个 commit 都收不到，卡上还写着我们没有他的凭据。所以这一位等远端回答,
+    远端答什么，落哪一档就是什么。
+    """
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import github_app
+    from app.domain.review.services import AcceptService
+    from app.domain.workspace import service as ws
+
+    async def _no_tokens(_pid, _session):
+        return None
+
+    asked: list[uuid.UUID] = []
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
+    monkeypatch.setattr(ws, "get_upstream", lambda _pid: upstream)
+    monkeypatch.setattr(
+        ws,
+        "can_push_upstream",
+        lambda pid: asked.append(pid) or remote_lets_us_write,
+    )
+
+    facts = await AcceptService(AsyncMock())._forge_facts(_pid())
+
+    assert asked, "写得动没有被问过，那就是从地址猜的"
+    assert facts.has_external_remote is True
+    assert facts.remote_write_credential is remote_lets_us_write
+    assert forge_mod.forge_for(forge_mod.capabilities_of(facts)).kind is (
+        forge_mod.ForgeKind.external_remote
+        if remote_lets_us_write
+        else forge_mod.ForgeKind.platform
+    )
+
+
+@pytest.mark.anyio
+async def test_a_project_on_the_app_is_not_asked_to_prove_it_can_push(
+    monkeypatch,
+) -> None:
+    """装了 App 的项目，写权限由安装 token 回答 —— 再去 fork 一次 git 问远端，
+    是拿一次网络往返重新证明一件已经成立的事，而它坐在卡片渲染的路上。"""
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent import github_app
+    from app.domain.review.services import AcceptService
+    from app.domain.workspace import service as ws
+
+    async def _tokens(_pid, _session):
+        return object()
+
+    def _must_not_be_asked(_pid):  # pragma: no cover - the assertion is the test
+        raise AssertionError("App 已经回答了，不该再问远端")
+
+    monkeypatch.setattr(github_app, "github_app_tokens_for_project", _tokens)
+    monkeypatch.setattr(
+        ws, "get_upstream", lambda _pid: "https://github.com/acme/widgets"
+    )
+    monkeypatch.setattr(ws, "can_push_upstream", _must_not_be_asked)
+
+    facts = await AcceptService(AsyncMock())._forge_facts(_pid())
+
+    assert facts.github_app_installed is True
+    assert facts.remote_write_credential is True

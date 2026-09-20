@@ -676,7 +676,9 @@ export interface AutoMergeInfo {
 // 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
 // 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
 export interface ForgeInfo {
-  kind: 'github_app' | 'external_remote' | 'platform'
+  // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
+  // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
+  kind: 'github_app' | 'external_remote' | 'platform' | 'unknown'
   reports_checks: boolean
   hosts_proposals: boolean
   can_write_remote: boolean

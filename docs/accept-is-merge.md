@@ -145,6 +145,16 @@ second declaration of the same fact. They ride on the card from the moment it is
 described, so "which forge is this, and what can it do" is answered before
 anyone clicks, not by a note written afterwards.
 
+"Can we write it" is ASKED of the remote — a `git push --dry-run` to a ref of
+our own naming, which must pass the remote's authorization and changes nothing
+there — because a URL's scheme is not a credential: `git@` does not put a key on
+the machine and `https://` does not rule a credential helper out. It is answered
+once per request, and when it cannot be answered the answer is no, which lands
+the card on the platform forge saying the remote exists and we have no
+credential for it. Accepting stays fail-closed when the facts cannot be read at
+all; READING a card does not, and shows a card whose forge is `unknown` with
+every bit false, rather than failing the whole card list over one project.
+
 `AcceptService` applies shared actor, vote and viewed-revision guards, then calls
 the selected provider. Adding a provider is a class with a `serves()` predicate;
 the acceptance path does not change.

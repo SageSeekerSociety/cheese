@@ -716,24 +716,66 @@ class AcceptService:
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
-        forge = await self._resolve_forge(topic.project_id, card=card)
-        caps = forge.capabilities
+        try:
+            forge: forge_mod.Forge | None = await self._resolve_forge(
+                topic.project_id, card=card
+            )
+        except ValidationError:
+            # 读一张卡不是挑一条车道。采纳那一侧照旧 fail-closed（#362）：读不出
+            # 事实就拒绝，绝不摸黑合一次。但这条读路径上同样的失败过去会把整个
+            # 卡列表端点打成 422 —— 一个项目的 git 出问题，所有项目的卡都看不
+            # 了。这里改成在卡面上如实说「暂时读不出」，失败一点没被盖住（I19），
+            # 只是不再连累别的卡。
+            forge = None
+        caps = forge.capabilities if forge is not None else None
         # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
         # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
-        data["forge"] = {
-            "kind": forge.kind.value,
-            "reports_checks": caps.reports_checks,
-            "hosts_proposals": caps.hosts_proposals,
-            "can_write_remote": caps.can_write_remote,
-            "has_external_remote": caps.has_external_remote,
-            "pushes_to_external_remote": caps.pushes_to_external_remote,
-            "identity": caps.identity.value,
-            "declaration": forge.declaration,
-        }
+        data["forge"] = (
+            {
+                "kind": forge.kind.value,
+                "reports_checks": caps.reports_checks,
+                "hosts_proposals": caps.hosts_proposals,
+                "can_write_remote": caps.can_write_remote,
+                "has_external_remote": caps.has_external_remote,
+                "pushes_to_external_remote": caps.pushes_to_external_remote,
+                "identity": caps.identity.value,
+                "declaration": forge.declaration,
+            }
+            if forge is not None and caps is not None
+            else {
+                "kind": forge_mod.FORGE_KIND_UNKNOWN,
+                # 一位都不敢说是，因为一位都没读出来。界面上每一处「这个托管方能
+                # 做什么」的判断因此都收敛到最保守的那一边。
+                "reports_checks": False,
+                "hosts_proposals": False,
+                "can_write_remote": False,
+                "has_external_remote": False,
+                "pushes_to_external_remote": False,
+                "identity": forge_mod.ForgeIdentity.platform.value,
+                "declaration": forge_mod.FORGE_UNKNOWN_DECLARATION,
+            }
+        )
         data["approvals_required"] = approvals_required_of(project)
         # External checks stay unknown until the PR has a mirrored state.
         # Local acceptance has no checks; only a recorded merge conflict blocks it.
-        if caps.reports_checks:
+        if caps is None:
+            # 按钮灰着，理由就写在卡上：后端这会儿真去采纳也会拒（同一个失败），
+            # 所以闸门和采纳还是同一条线。
+            data["merge_state"] = {
+                "state": "unknown",
+                "who": "platform",
+                "reasons": [
+                    {
+                        "kind": "no_signal",
+                        "checks": [],
+                        "detail": forge_mod.FORGE_UNKNOWN_DECLARATION,
+                    }
+                ],
+                "head_sha": None,
+                "checked_at": None,
+                "since": None,
+            }
+        elif caps.reports_checks:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
                 "state": "unknown",
@@ -774,7 +816,8 @@ class AcceptService:
 
         data["auto_merge"] = {
             "allowed": (
-                branch_protection_of(project).auto_merge_allowed
+                caps is not None
+                and branch_protection_of(project).auto_merge_allowed
                 and caps.reports_checks
                 and card.pr_number is not None
             ),
@@ -1307,12 +1350,22 @@ class AcceptService:
         is reported into the room (I26) rather than logged: the change IS in the
         platform's trunk and is NOT on their remote, and only a person can
         decide what to do about it.
+
+        **Everything after the merge is inside the `try`**, reading the branch
+        name included. Once `_accept_platform` returns, the squash is on disk
+        and the room already has `accept_done` (it goes out on its own session
+        and commits). An exception raised from here rolls this request's
+        transaction back — the card returns to `pending` and the accepter sees
+        an error — while the merge and the "已合并" line stay. So a failure to
+        read the branch takes the same road as a failure to push it: a report,
+        not a raise.
         """
         from app.domain.workspace import service as ws
 
         accepted = await self._accept_platform(card, topic, decided_by)
-        branch, _ = await asyncio.to_thread(ws.base_branch_head, topic.project_id)
+        branch: str | None = None
         try:
+            branch, _ = await asyncio.to_thread(ws.base_branch_head, topic.project_id)
             await asyncio.to_thread(ws.push_branch, topic.project_id, branch, None)
         except Exception as exc:  # noqa: BLE001 — the merge already happened
             logger.exception(
@@ -1332,8 +1385,12 @@ class AcceptService:
                     severity=SEVERITY_ERROR,
                     who=WHO_HUMAN,
                     detail=(
-                        f"改动已经在平台仓库的 {branch} 上，项目自己的远端还没有"
-                        f"收到。\n{exc}"
+                        (
+                            f"改动已经在平台仓库的 {branch} 上"
+                            if branch is not None
+                            else "改动已经合进平台仓库的主干（这次连分支名都没读出来）"
+                        )
+                        + f"，项目自己的远端还没有收到。\n{exc}"
                     ),
                     detail_label="推送报错",
                 ),
@@ -3247,11 +3304,13 @@ class AcceptService:
         the upstream forks a `git remote get-url`, and rendering a card list
         asks for the same project's facts once per card.
 
-        Whether we can WRITE the remote is not one question but three remotes:
-        GitHub answers with the App's installation token; an ssh / git@ remote
-        is reached with the backend's own key; an https remote that is not
-        GitHub leaves us holding nothing, which is why a project can have an
-        upstream and still not push to it.
+        Whether we can WRITE the remote is **asked, not inferred from the URL**:
+        the App's installation token answers for GitHub, and every other remote
+        is asked directly (`ws.can_push_upstream`). A URL's scheme is not a
+        credential — `git@` proves nothing is on the keyring and `https://` does
+        not rule one out — and the probe is what keeps a project from being
+        promised a push nobody can make. It is a network round trip, which is
+        the other half of why this is read once per request.
         """
         cached = self._facts_read.get(project_id)
         if cached is not None:
@@ -3264,11 +3323,14 @@ class AcceptService:
         upstream = await asyncio.to_thread(ws.get_upstream, project_id)
         tokens = await github_app_tokens_for_project(project_id, self._session)
         on_github = tokens is not None and parse_github_repo(upstream) is not None
-        ssh_shaped = upstream is not None and upstream.startswith(("ssh://", "git@"))
+        writable = on_github or (
+            upstream is not None
+            and await asyncio.to_thread(ws.can_push_upstream, project_id)
+        )
         facts = forge_mod.ProjectForgeFacts(
             github_app_installed=on_github,
             has_external_remote=upstream is not None,
-            remote_write_credential=on_github or ssh_shaped,
+            remote_write_credential=writable,
         )
         self._facts_read[project_id] = facts
         return facts
