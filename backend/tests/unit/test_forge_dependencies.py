@@ -106,6 +106,71 @@ async def test_failed_retarget_retries_before_announcing(db_factory, monkeypatch
 
 
 @pytest.mark.anyio
+async def test_detached_parent_preserves_ancestor_review_for_descendants(
+    db_factory, monkeypatch
+):
+    parent, child = await seed(db_factory, delivered=False)
+    reason = "Do not add the obsolete API; keep the independent report."
+    async with db_factory() as session:
+        rejected = AcceptCard(
+            topic_id=parent.room_id,
+            task_id=parent.id,
+            reviewer_handle="reviewer",
+            status=AcceptStatus.rejected,
+            note=reason,
+        )
+        session.add(rejected)
+        grandchild = Task(
+            project_id=child.project_id,
+            room_id=child.room_id,
+            title="Report",
+            branch_name="report",
+            base_branch=child.branch_name,
+            base_task_id=child.id,
+        )
+        session.add(grandchild)
+        await session.flush()
+        descendant = Task(
+            project_id=child.project_id,
+            room_id=child.room_id,
+            title="Publish report",
+            branch_name="publish",
+            base_branch=grandchild.branch_name,
+            base_task_id=grandchild.id,
+        )
+        session.add(descendant)
+        await session.commit()
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock())
+    await retarget_completed_dependencies(db_factory)
+    for completed, notified in ((child, grandchild), (grandchild, descendant)):
+        async with db_factory() as session:
+            saved = await session.get(Task, completed.id)
+            saved.base_task_id = None
+            saved.base_branch = "main"
+            saved.status = TaskStatus.closed
+            saved.closed_at = datetime.now(UTC)
+            saved.delivered_head = "b" * 40
+            await session.commit()
+        await retarget_completed_dependencies(db_factory)
+        await retarget_completed_dependencies(db_factory)
+        async with db_factory() as session:
+            notices = list(
+                await session.scalars(
+                    select(Block).where(
+                        Block.meta["dependency_task_id"].as_string() == str(notified.id)
+                    )
+                )
+            )
+            assert len(notices) == 1
+            meta = notices[0].meta
+            assert meta["dependency_rejection"] is None
+            assert len(meta["dependency_review_history"]) == 1
+            assert meta["dependency_review_history"][0]["card_id"] == str(rejected.id)
+            assert reason in meta["agent_notice"]
+            assert "这不是当前状态" in meta["agent_notice"]
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("parent_open", [True, False])
 @pytest.mark.parametrize("latest_status", [AcceptStatus.rejected, AcceptStatus.pending])
 @pytest.mark.parametrize("reason", ["", "保留原接口。\n不要引入新的外部依赖。"])

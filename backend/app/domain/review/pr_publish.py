@@ -244,7 +244,7 @@ async def retarget_completed_dependencies(
         WHO_CHEESE,
         notice,
     )
-    from app.domain.block.models import AGENT_NOTICE_META_KEY
+    from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
     from app.domain.idempotency import store as idem
     from app.domain.idempotency.keys import action_key
     from app.domain.review.models import AcceptCard, AcceptStatus
@@ -390,6 +390,28 @@ async def retarget_completed_dependencies(
                     and parent_card.status == AcceptStatus.rejected
                     else None
                 )
+                # A parent can detach from a rejected ancestor before merging.
+                # Its durable notices retain the review context after that link
+                # is cleared; pass it on so descendants do not revive old work.
+                review_history = {}
+                parent_notices = await session.scalars(
+                    select(Block)
+                    .where(
+                        Block.topic_id == ancestor.room_id,
+                        Block.meta["dependency_task_id"].as_string()
+                        == str(ancestor.id),
+                    )
+                    .order_by(Block.created_at)
+                )
+                for parent_notice in parent_notices:
+                    previous_reviews = list(
+                        parent_notice.meta.get("dependency_review_history", [])
+                    )
+                    previous_rejection = parent_notice.meta.get("dependency_rejection")
+                    if previous_rejection is not None:
+                        previous_reviews.append(previous_rejection)
+                    for previous_review in previous_reviews:
+                        review_history[previous_review["card_id"]] = previous_review
                 instruction = (
                     f"任务 {task.id} 的父任务 {ancestor.id} {outcome}。\n"
                     f'先执行 cd "$(cheese worktree {task.id})"。\n'
@@ -397,7 +419,10 @@ async def retarget_completed_dependencies(
                         f"当前目标分支为 {task.base_branch}。获取远端分支，"
                         "将本任务的提交整理到目标分支上，解决冲突，重新运行检查并推送。"
                         "父任务可能采用 squash 合并，请核对补丁，"
-                        "避免重复带入父任务的修改。"
+                        "只重放本任务独有的改动；不要重新带入父任务整理时移除、"
+                        "且尚未重新获准的祖先改动。"
+                        "普通 rebase 成功不代表提交范围正确，"
+                        "请核对最终差异是否仅含本任务交付。"
                         if delivered
                         else "保留现有工作，检查本任务依赖了哪些尚未交付的修改。"
                         "根据任务要求决定移除依赖、独立实现或报告无法继续的原因；"
@@ -405,6 +430,16 @@ async def retarget_completed_dependencies(
                     )
                     + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
                 )
+                if review_history:
+                    instruction += (
+                        "\n祖先依赖的历史驳回记录如下；这不是当前状态，"
+                        "请重新读取对应验收卡和任务，核对哪些改动已被撤回或后来获准。"
+                    )
+                    for previous_review in review_history.values():
+                        instruction += (
+                            f"\n验收卡 {previous_review['card_id']} 的历史驳回理由：\n"
+                            + (previous_review.get("reason") or "未填写理由")
+                        )
                 if rejection is not None:
                     instruction += f"\n父任务最近一张验收卡 {rejection.id} 被驳回。" + (
                         f"驳回理由原文：\n{rejection.note}"
@@ -431,6 +466,7 @@ async def retarget_completed_dependencies(
                         ),
                         AGENT_NOTICE_META_KEY: instruction,
                         "dependency_task_id": str(task.id),
+                        "dependency_review_history": list(review_history.values()),
                         "dependency_rejection": (
                             {
                                 "card_id": str(rejection.id),
