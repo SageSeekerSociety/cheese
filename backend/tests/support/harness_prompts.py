@@ -39,7 +39,6 @@ def event_prompts() -> dict[str, str]:
     task_id = uuid.UUID("00000000-0000-4000-8000-000000000001")
     return {
         "room_message": publication_prompt(human),
-        "private_message": publication_prompt(human, is_private=True),
         "platform_notice": platform_prompt(
             strip_platform_notice("DOCUMENT_CHANGED_FIXTURE " + PLATFORM_NOTICE)
         ),

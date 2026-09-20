@@ -186,17 +186,8 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str, *, is_private: bool = False) -> str:
+def publication_prompt(content: str) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
-    if is_private:
-        return (
-            content
-            + "\n\n"
-            + platform_prompt(
-                "这是私聊，最终答复会自动发布给用户。直接回答，"
-                "不要再用 chat_send 重复发送同一答复。"
-            )
-        )
     return (
         content
         + "\n\n"

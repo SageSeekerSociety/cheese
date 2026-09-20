@@ -1456,9 +1456,7 @@ class ChatService:
             for image in images
         )
         state = self._hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt(
-            "\n".join(lines), is_private=bool(state and state.is_private)
-        )
+        line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -1539,7 +1537,6 @@ class ChatService:
             # Background inspections have their own notification policy. Only
             # work answering a person owes a periodic chat update.
             if state.reply_to is not None
-            and not state.is_private
             and (
                 now
                 - max(
@@ -2456,8 +2453,9 @@ class ChatService:
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
             elif event.text.strip():
-                # Private chats publish the direct reply; work topics retain
-                # terminal output in activity and publish through Cheese CLI.
+                # Terminal output, the final response included, stays in
+                # activity: a reply reaches the room only through chat_send,
+                # in a private chat exactly as in any other room.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -2473,17 +2471,11 @@ class ChatService:
                     continuation_id=(
                         state.continuation_id if state is not None else None
                     ),
-                    publish=bool(state and state.is_private),
                 )
                 if payload is not None:
                     if state is not None:
                         state.assistant_count += 1
-                    frame = {
-                        "type": "assistant_block"
-                        if payload["kind"] == "message"
-                        else "event_block",
-                        "block": payload,
-                    }
+                    frame = {"type": "event_block", "block": payload}
         if frame is not None:
             await broker.publish(channel, frame)
             if frame["type"] in ("assistant_block", "event_block", "todo"):
@@ -4660,7 +4652,14 @@ class ChatService:
         # on what is producing the output, not on the machine underneath it.
         runtime = runtime_for(provider)
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-        skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
+        # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
+        # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
+        # 系统提示词里没有 chat_send 的房间：终端里答完而没有发布，房间是空的。
+        skills = (
+            "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
+            if is_private
+            else self._skills
+        )
         system_prompt = build_system_prompt(
             self._base_prompt,
             skills,
@@ -4684,7 +4683,7 @@ class ChatService:
         )
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
-        prompt_text = publication_prompt(prompt_text, is_private=is_private)
+        prompt_text = publication_prompt(prompt_text)
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
             "elapsed_ms=%.3f unix_ms=%.3f",

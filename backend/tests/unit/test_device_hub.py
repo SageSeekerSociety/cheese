@@ -10,6 +10,7 @@ import pytest
 
 from app.domain.agent import connector_build
 from app.domain.agent.device_hub import DeviceHub, DeviceOffline
+from tests.support import wire
 
 
 class FakeDeviceTransport:
@@ -242,16 +243,9 @@ async def test_executor_result_waits_for_complete_response(caplog):
     hub, transport, task, identifier = await _executor_call()
     data = json.dumps({"result": {"text": "中文"}}, ensure_ascii=False).encode()
     for chunk in (data[:23], data[23:]):
-        await hub.on_device_message(
-            "dev1",
-            {
-                "t": "execution.data",
-                "id": identifier,
-                "data": base64.b64encode(chunk).decode(),
-            },
-        )
+        await hub.on_device_message("dev1", wire.execution_data(identifier, chunk))
     assert not task.done()
-    await hub.on_device_message("dev1", {"t": "execution.result", "id": identifier})
+    await hub.on_device_message("dev1", wire.execution_result(identifier))
     assert await task == {"text": "中文"}
     messages = [r.message for r in caplog.records if "execution_timing" in r.message]
     assert [m.split("stage=", 1)[1].split()[0] for m in messages] == [
@@ -283,12 +277,7 @@ async def test_executor_cancellation_reaches_connector():
 async def test_executor_interrupted_response_is_not_returned_as_success():
     hub, _, task, identifier = await _executor_call()
     await hub.on_device_message(
-        "dev1",
-        {
-            "t": "execution.result",
-            "id": identifier,
-            "error": "executor disconnected",
-        },
+        "dev1", wire.execution_result(identifier, "executor disconnected")
     )
     with pytest.raises(RuntimeError, match="disconnected"):
         await task
@@ -730,26 +719,18 @@ async def test_the_machines_own_failure_arrives_as_a_device_call_error():
     hub, _, task, identifier = await _executor_call()
     await hub.on_device_message(
         "dev1",
-        {
-            "t": "execution.result",
-            "id": identifier,
-            "error": "dial unix /tmp/cheese-execution-1000-0c5e.sock: connect: "
+        wire.execution_result(
+            identifier,
+            "dial unix /tmp/cheese-execution-1000-0c5e.sock: connect: "
             "no such file or directory",
-        },
+        ),
     )
     with pytest.raises(DeviceCallError, match="no such file"):
         await task
     # And the runner's own refusal, which comes back inside the JSON it wrote.
     hub, _, task, identifier = await _executor_call()
     data = json.dumps({"error": "Request ID already belongs to different input"})
-    await hub.on_device_message(
-        "dev1",
-        {
-            "t": "execution.data",
-            "id": identifier,
-            "data": base64.b64encode(data.encode()).decode(),
-        },
-    )
-    await hub.on_device_message("dev1", {"t": "execution.result", "id": identifier})
+    await hub.on_device_message("dev1", wire.execution_data(identifier, data.encode()))
+    await hub.on_device_message("dev1", wire.execution_result(identifier))
     with pytest.raises(DeviceCallError, match="Request ID"):
         await task

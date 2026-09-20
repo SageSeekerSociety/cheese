@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
@@ -216,6 +218,20 @@ class PiRuntime:
                     waiting = True
                     logger.warning(
                         "pi entries waiting for the runner topic=%s: %s", topic, exc
+                    )
+                await asyncio.sleep(2)
+            except httpx.TransportError as exc:
+                # The connection owner is being replaced, or the socket to it
+                # went while this read was in flight. Retrying is what this loop
+                # is for, and the owner is back within seconds — but at ERROR
+                # every release of it wrote 「pi entries read failed」 into the alert
+                # channel, as it did at 01:47 UTC on 2026-09-20.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "pi entries waiting for the connection owner topic=%s: %s",
+                        topic,
+                        exc,
                     )
                 await asyncio.sleep(2)
             except Exception:

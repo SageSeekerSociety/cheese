@@ -19,6 +19,7 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 import json
 import shlex
 from pathlib import Path
+from uuid import uuid4
 
 # Perception wiring (settings.json + the cheese-hook forwarder) is the SHARED
 # substrate — identical for the local (tmux) and remote (device) backends so it
@@ -75,15 +76,16 @@ ENV_RV_SOCK = "CHEESE_RV_SOCK"
 ENV_RV_TOKEN_FILE = "CHEESE_RV_TOKEN_FILE"
 
 
-def rendezvous_paths(topic_id: str) -> tuple[str, str]:
-    """``(socket, token_file)`` for a topic, short enough to be bindable.
+def rendezvous_paths() -> tuple[str, str]:
+    """Allocate a socket and token file for one model launch.
 
     A unix socket path is capped near 104 bytes and an isolated home already
     spends ~105 (`~/.cheese/home/<project-uuid>/<topic-uuid>/.claude/`), so the
-    socket cannot live beside the session it belongs to. `/tmp` plus 12 hex of
-    the topic id keeps it at ~32 bytes and still unique per topic."""
-    short = topic_id.replace("-", "")[:12]
-    return f"/tmp/cheese-rv-{short}.sock", f"/tmp/cheese-rv-{short}.token"
+    socket cannot live beside the session it belongs to. Separate launches of
+    the same topic must not bind or authenticate through each other's files.
+    """
+    identity = uuid4().hex
+    return f"/tmp/cheese-rv-{identity}.sock", f"/tmp/cheese-rv-{identity}.token"
 
 
 # Reports what a turn cost. Claude Code writes a usage block per assistant
@@ -414,9 +416,9 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
     if topic_id:
         # Where this screen's prompts arrive. The launcher turns these two into
         # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
-        # reads the same two to dial. Keyed on the topic so an adopted screen
-        # and a fresh one agree on the path.
-        sock, token_file = rendezvous_paths(topic_id)
+        # reads the same two to dial. An adopted screen retains its saved launch
+        # environment, including the paths its running model already uses.
+        sock, token_file = rendezvous_paths()
         env[ENV_RV_SOCK] = sock
         env[ENV_RV_TOKEN_FILE] = token_file
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
@@ -619,7 +621,7 @@ if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{minimum_version}" "$CLAUDE_V
 delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
-# One token per topic, on disk rather than in the env: an ADOPTED claude keeps
+# One token per launch, on disk rather than in the env: an ADOPTED claude keeps
 # the token it booted with, so a freshly generated value would never match. The
 # file is the single copy the connector and this launcher both read.
 if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
