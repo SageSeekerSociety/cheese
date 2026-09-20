@@ -88,7 +88,7 @@ import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../li
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
-import { collapseNotices } from '../lib/platformNotice'
+import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
   renderMarkdown as renderMarkdownWith,
@@ -102,6 +102,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import AgentControls from './AgentControls.vue'
+import AgentNoticeFrame from './AgentNoticeFrame.vue'
 import AttachmentImage from './AttachmentImage.vue'
 import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
@@ -1258,6 +1259,25 @@ function displayName(m: Block): string {
   }
   return memberByHandle.value.get(m.author)?.name || m.author
 }
+
+function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
+  if (notice.mode === 'hidden' || notice.mode === 'backend-error') return null
+  // This event contains the worker's actual result, rather than a status notice.
+  if (block.meta?.event_type === 'subagent_stop') return null
+  if (block.author_type === 'human' || block.meta?.editor_type === 'human') return null
+  if (block.author_type === 'ai' || block.meta?.editor_type === 'ai' || seatByHandle.value.get(block.author)?.agent) {
+    return displayName({ ...block, author_type: 'ai' })
+  }
+  if (seatByHandle.value.has(block.author) || memberByHandle.value.has(block.author)) return null
+  if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return agentName.value
+  if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
+    return agentName.value
+  }
+  if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
+    return agentName.value
+  }
+  return null
+}
 // 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
 const avatarBroken = ref<Set<string>>(new Set())
 function avatarSrc(handle: string): string | null {
@@ -1995,169 +2015,163 @@ onBeforeUnmount(() => {
               :marker="marker"
               @open="emit('open-topic', $event)"
             />
-            <!-- 平台行：一种形态。lib/platformNotice.ts 决定分档，这里只按
-               「严重度改记号、不改形态」画。左边缘和消息正文同一条 54px 轴 ——
-               整列只有一条扫视线，右侧固定放动作/归属，「谁在等我」一眼扫得出。 -->
-            <div
-              v-if="notice?.mode === 'incident'"
-              class="sys-row sys-row--danger platform-incident"
-              role="alert"
-              :data-error-code="notice.incident.code"
-              data-testid="platform-error-card"
+            <AgentNoticeFrame
+              v-if="notice"
+              :name="noticeAgentName(m, notice)"
+              :time="fmtTime(notice.mode === 'agent-status' ? notice.updatedAt : m.created_at)"
             >
-              <div class="sys-line">
-                <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
-                <span class="sys-text">{{ notice.incident.title }}</span>
-                <span class="sys-who">{{ notice.incident.status }}</span>
+              <div
+                v-if="notice?.mode === 'incident'"
+                class="sys-row sys-row--danger platform-incident"
+                role="alert"
+                :data-error-code="notice.incident.code"
+                data-testid="platform-error-card"
+              >
+                <div class="sys-line">
+                  <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
+                  <span class="sys-text">{{ notice.incident.title }}</span>
+                  <span class="sys-who">{{ notice.incident.status }}</span>
+                </div>
+                <div class="sys-sub">{{ notice.lead }}</div>
+                <details v-if="notice.rest" class="sys-more">
+                  <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                  <pre class="sys-detail">{{ notice.rest }}</pre>
+                </details>
               </div>
-              <div class="sys-sub">{{ notice.lead }}</div>
-              <details v-if="notice.rest" class="sys-more">
-                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
-                <pre class="sys-detail">{{ notice.rest }}</pre>
-              </details>
-            </div>
-            <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
+              <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
                「查看改动」是这一行唯一的动作 —— 采纳是话题级的一次性动作，不是
                每轮都问一遍的东西（§14.6）。 -->
-            <div v-else-if="notice?.mode === 'turn-summary'" class="sys-row turn-summary">
-              <div class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text">
-                  <template v-if="notice.changes">
-                    本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
-                      notice.changes.removed
-                    }})
-                  </template>
-                  <template v-for="(act, ai) in notice.actions" :key="ai">
-                    <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
-                    <span v-html="renderPlain(act.text)" />
-                  </template>
-                </span>
-                <button
-                  v-if="notice.changes"
-                  type="button"
-                  class="sys-action"
-                  @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
-                >
-                  查看改动
-                </button>
-              </div>
-              <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
-                {{ notice.changes.files.join(' · ')
-                }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
-              </div>
-            </div>
-            <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
-            <div v-else-if="notice?.mode === 'action'" class="sys-row action-card">
-              <div class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
-                   through the shared token→chip path so the actor is clickable. -->
-                <span class="sys-text" v-html="renderPlain(notice.text)" />
-                <button
-                  v-if="ACTION_META[notice.resource]?.btn"
-                  type="button"
-                  class="sys-action"
-                  @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
-                >
-                  {{ ACTION_META[notice.resource].btn }}
-                </button>
-              </div>
-              <details v-if="notice.detail" class="sys-more">
-                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
-                <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
-                  <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
-                    <div
-                      v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
-                      class="doc-edit-line"
-                      :class="`doc-edit-line--${line.kind}`"
-                      :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
-                    >
-                      <span class="doc-edit-mark" aria-hidden="true">{{
-                        line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
-                      }}</span>
-                      <span>{{ docDiffText(line.text) }}</span>
-                    </div>
-                  </template>
+              <div v-else-if="notice?.mode === 'turn-summary'" class="sys-row turn-summary">
+                <div class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text">
+                    <template v-if="notice.changes">
+                      本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
+                        notice.changes.removed
+                      }})
+                    </template>
+                    <template v-for="(act, ai) in notice.actions" :key="ai">
+                      <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
+                      <span v-html="renderPlain(act.text)" />
+                    </template>
+                  </span>
+                  <button
+                    v-if="notice.changes"
+                    type="button"
+                    class="sys-action"
+                    @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
+                  >
+                    查看改动
+                  </button>
                 </div>
-                <pre v-else class="sys-detail">{{ notice.detail }}</pre>
-              </details>
-            </div>
-            <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
+                <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
+                  {{ notice.changes.files.join(' · ')
+                  }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
+                </div>
+              </div>
+              <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
+              <div v-else-if="notice?.mode === 'action'" class="sys-row action-card">
+                <div class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
+                   through the shared token→chip path so the actor is clickable. -->
+                  <span class="sys-text" v-html="renderPlain(notice.text)" />
+                  <button
+                    v-if="ACTION_META[notice.resource]?.btn"
+                    type="button"
+                    class="sys-action"
+                    @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
+                  >
+                    {{ ACTION_META[notice.resource].btn }}
+                  </button>
+                </div>
+                <details v-if="notice.detail" class="sys-more">
+                  <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                  <div v-if="notice.resource === 'doc'" class="doc-edit-diff" aria-label="文档修改对比">
+                    <template v-for="(line, index) in parseDiffLines(notice.detail)" :key="index">
+                      <div
+                        v-if="(line.kind === 'add' || line.kind === 'del') && docDiffText(line.text)"
+                        class="doc-edit-line"
+                        :class="`doc-edit-line--${line.kind}`"
+                        :aria-label="line.kind === 'add' ? '新增' : line.kind === 'del' ? '删除' : undefined"
+                      >
+                        <span class="doc-edit-mark" aria-hidden="true">{{
+                          line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '
+                        }}</span>
+                        <span>{{ docDiffText(line.text) }}</span>
+                      </div>
+                    </template>
+                  </div>
+                  <pre v-else class="sys-detail">{{ notice.detail }}</pre>
+                </details>
+              </div>
+              <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
                person needs to know it happened. So the line shows by default
                and the stack is one click away — a room is a conversation, not
                a monitoring dashboard. -->
-            <details
-              v-else-if="notice?.mode === 'backend-error'"
-              class="sys-row sys-row--warn backend-error"
-              data-testid="backend-error-event"
-            >
-              <summary class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text">{{ notice.error.line }}</span>
-                <span v-if="notice.error.count" class="sys-count">×{{ notice.error.count }}</span>
-              </summary>
-              <div class="sys-fold">
-                <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
-                  <span v-if="notice.error.where">{{ notice.error.where }}</span>
-                  <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
-                </div>
-                <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
-              </div>
-            </details>
-            <div v-else-if="notice?.mode === 'agent-status'" class="im-row agent-status">
-              <div class="im-gutter"><CheeseAvatar :size="28" :name="agentName" /></div>
-              <div class="im-main">
-                <div class="im-meta">
-                  <span class="im-name">{{ agentName }}</span>
-                  <span class="agent-status-label">运行状态</span>
-                  <span class="im-time">{{ fmtTime(notice.updatedAt) }}</span>
-                </div>
-                <details class="agent-status-body" data-testid="platform-notice">
-                  <summary>{{ notice.line }}</summary>
-                  <div class="agent-status-history">
-                    <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
-                      <div>{{ occ.line }}</div>
-                      <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
-                    </div>
+              <details
+                v-else-if="notice?.mode === 'backend-error'"
+                class="sys-row sys-row--warn backend-error"
+                data-testid="backend-error-event"
+              >
+                <summary class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text">{{ notice.error.line }}</span>
+                  <span v-if="notice.error.count" class="sys-count">×{{ notice.error.count }}</span>
+                </summary>
+                <div class="sys-fold">
+                  <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
+                    <span v-if="notice.error.where">{{ notice.error.where }}</span>
+                    <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
                   </div>
-                </details>
-              </div>
-            </div>
-            <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
+                  <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
+                </div>
+              </details>
+              <details v-else-if="notice?.mode === 'agent-status'" class="cloud-status" data-testid="platform-notice">
+                <summary>{{ notice.line }}</summary>
+                <div class="agent-status-history">
+                  <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                    <div>{{ occ.line }}</div>
+                    <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
+                  </div>
+                </div>
+              </details>
+              <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
                什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
                条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
-            <details
-              v-else-if="notice?.mode === 'fold'"
-              class="sys-row"
-              :class="{ 'sys-row--warn': notice.who === 'human' }"
-              data-testid="platform-notice"
-            >
-              <summary class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text">{{ notice.line }}</span>
-                <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
-                <span v-if="notice.whoLabel" class="sys-who">{{ notice.whoLabel }}</span>
-              </summary>
-              <div class="sys-fold">
-                <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
-                  <div class="sys-meta">
-                    {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+              <details
+                v-else-if="notice?.mode === 'fold'"
+                class="sys-row"
+                :class="{ 'sys-row--warn': notice.who === 'human' }"
+                data-testid="platform-notice"
+              >
+                <summary class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text">{{ notice.line }}</span>
+                  <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
+                  <span v-if="notice.whoLabel" class="sys-who">{{
+                    notice.who === 'cheese' ? `${noticeAgentName(m, notice) || agentName}处理中` : notice.whoLabel
+                  }}</span>
+                </summary>
+                <div class="sys-fold">
+                  <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                    <div class="sys-meta">
+                      {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+                    </div>
+                    <pre v-if="occ.detail" class="sys-detail">{{ occ.detail }}</pre>
                   </div>
-                  <pre v-if="occ.detail" class="sys-detail">{{ occ.detail }}</pre>
                 </div>
-              </div>
-            </details>
-            <!-- system / event blocks. Content may carry a <@handle> actor token
+              </details>
+              <!-- system / event blocks. Content may carry a <@handle> actor token
                (归档/编辑…): render it through the SAME token→chip path as
                messages so the actor is a clickable mention, not raw text. -->
-            <div v-else-if="notice?.mode === 'plain'" class="sys-row im-event">
-              <div class="sys-line">
-                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
-                <span class="sys-text" v-html="renderPlain(m.content)" />
+              <div v-else-if="notice?.mode === 'plain'" class="sys-row im-event">
+                <div class="sys-line">
+                  <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                  <span class="sys-text" v-html="renderPlain(m.content)" />
+                </div>
               </div>
-            </div>
-
+            </AgentNoticeFrame>
             <!-- message row -->
             <div
               v-else-if="!notice"
@@ -3185,21 +3199,7 @@ details.sys-row > summary::-webkit-details-marker {
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
 }
-.agent-status-label {
-  color: var(--muted);
-  font-size: 12px;
-}
-.agent-status-body {
-  display: inline-block;
-  max-width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.agent-status-body summary {
+.cloud-status summary {
   cursor: pointer;
 }
 .agent-status-history {
