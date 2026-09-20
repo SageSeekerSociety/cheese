@@ -373,8 +373,12 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
   `test_task.py` 那五处的前置，改成了建立它的那个 fixture 里的断言，
   所以前置接口坏了是红，不是这条测试消失。
 - **整文件永久 skip 的两个文件整删。已做**：`integration/test_project.py` 与
-  `integration/test_notification.py` 占 33 条里的 18 条，但整删的理由不是同一条。
-  `test_project.py` 测的 gantt 式 int Project REST API 确实没迁过来，表在 fusion merge 里就删了。
+  `integration/test_notification.py` 占 33 条里的 18 条，两个都不是「被测的东西没了」，
+  是覆盖已经被别处接手，旧文件只剩一份永久 skip 的重复件。
+  `test_project.py` 被测的接口在 #370 改名为 `/team-projects`（表 `team_project` 也还在，
+  `app/domain/team_project/models.py`），覆盖由 `tests/integration/test_team_projects.py`
+  与 `contract/test_projects_contract.py` 接手；旧用例断 HTTP 201，而新路由答
+  HTTP 200 + body `code: 201`，本来也接不上。
   `test_notification.py` 测的接口今天还在服务——`/notifications`、`/notifications/unread-count`、
   `/notifications/status` 都在 `app/api/routes/notifications_flat.py`；它删得掉是因为
   `contract/test_notifications_flat_functional.py` 与 `contract/test_notifications_contract.py`
@@ -403,7 +407,9 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
   第三类里混进来过一条不是环境问题的：`unit/test_regression_round12.py` 的
   「迁移链只有一个头」按相对路径找 `migrations/versions`，而真目录是
   `backend/alembic/versions`，于是它在任何 cwd 下都 skip，从没跑过。
-  已改成按 `__file__` 定位并断言目录存在、读出的 revision 不为空。
+  这个事实由 `test.yml` 的 `Exactly one alembic head` 步骤断——它问 alembic 自己，
+  比手搓解析严（那条用例刻意容忍「最终会收敛的 fork」，alembic 那步要求恰好一个头），
+  所以用例删，不复活。
 
 ### 3.4 flaky 政策
 
