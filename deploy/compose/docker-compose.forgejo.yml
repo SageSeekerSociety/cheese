@@ -32,5 +32,9 @@ services:
       - FORGEJO_URL=${FORGEJO_URL:?public URL including the /forge/ prefix}
       - FORGEJO_API_URL=http://forgejo:3000/api/v1
 
+  frontend:
+    environment:
+      - FORGEJO_UPSTREAM=forgejo:3000
+
 volumes:
   forgejo_data:

@@ -12,6 +12,8 @@ cat > "$WORK/base.yml" <<'YAML'
 services:
   backend:
     image: busybox:1.37.0
+  frontend:
+    image: busybox:1.37.0
 YAML
 dc() {
   docker compose -p "$project" -f "$WORK/base.yml" \
