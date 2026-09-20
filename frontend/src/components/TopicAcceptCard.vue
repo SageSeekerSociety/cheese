@@ -102,16 +102,18 @@ const mergeBadge = computed(() => {
 const mergeReasons = computed(() => {
   const card = pendingCard.value
   if (!card) return []
-  return card.has_external_checks && card.pr_number === null
+  return card.forge.reports_checks && card.pr_number === null
     ? card.merge_state.reasons
     : visibleReasons(card.merge_state)
 })
-// Projects without external checks leave acceptance to the reviewer.
+// 读不到检查结论的托管方，采纳就是验收人自己的判断。
 const platformLane = computed(() => {
   const card = pendingCard.value
-  return !!card && !card.has_external_checks
+  return !!card && !card.forge.reports_checks
 })
-const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendingCard.value.pr_number === null)
+// 这个托管方在人点之前就说明了自己是谁（I23）；GitHub 那一档不说话，卡上有链接。
+const forgeDeclaration = computed(() => pendingCard.value?.forge.declaration || '')
+const needsPr = computed(() => !!pendingCard.value?.forge.hosts_proposals && pendingCard.value.pr_number === null)
 // 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
 // services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
 // `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
@@ -450,6 +452,11 @@ defineExpose({ reload: loadAcceptCard })
         >
           <span>{{ r.detail }}</span>
           <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
+        </div>
+        <!-- 托管方自己的一句话，在人点采纳之前就在卡上（I23）：这次采纳会落到
+             哪里、有没有外部检查。不是采纳之后补写的一条 note。 -->
+        <div v-if="forgeDeclaration" class="text-caption text-medium-emphasis mb-2">
+          {{ forgeDeclaration }}
         </div>
         <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
         <div

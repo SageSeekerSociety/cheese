@@ -154,7 +154,7 @@ async def open_pr_for_card(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     client = GitHubPRClient(owner, repo_name, tokens)
-    pr = await client.open_pr(
+    opened = await client.open_pr(
         head=branch,
         base=base,
         title=title,
@@ -165,6 +165,8 @@ async def open_pr_for_card(
         # thing here that is guaranteed to work.
         as_user_token=await _requester_token(session, topic_id),
     )
+    pr = opened.pr
+    await _report_identity_downgrade(session, topic_id, opened.identity_downgrade)
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -406,7 +408,7 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     base = task.base_branch
     who = await identity.attribution(session, room)
     client = GitHubPRClient(*parsed, tokens)
-    pr = await client.open_pr(
+    opened = await client.open_pr(
         head=branch,
         base=base,
         # No `Reviewed-by` and no card: nobody has accepted, and the subject
@@ -417,6 +419,8 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         as_user_token=await _requester_token(session, room.id),
         draft=True,
     )
+    pr = opened.pr
+    await _report_identity_downgrade(session, room.id, opened.identity_downgrade)
     logger.info(
         "draft PR #%s opened for task %s (%s)",
         pr.get("number"),
@@ -424,6 +428,41 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         pr.get("html_url"),
     )
     return pr
+
+
+async def _report_identity_downgrade(
+    session: AsyncSession, room_id: uuid.UUID, sentence: str | None
+) -> None:
+    """Say in the room that the PR went out under the App's name, not theirs.
+
+    Both PR-opening paths substitute the App when the requester's credential is
+    refused, and the substitution is otherwise undetectable from inside Cheese —
+    the card and the room read exactly as they would have. I26: a fallback is as
+    visible as the failure it covers, and a log line is not visible to anyone
+    the PR is attributed away from.
+    """
+    if not sentence:
+        return
+    from app.domain.agent.announce import announce
+    from app.domain.agent.platform_notices import (
+        EVENT_PR_IDENTITY_DOWNGRADED,
+        SEVERITY_WARN,
+        WHO_HUMAN,
+        notice,
+    )
+
+    await announce(
+        session,
+        place_id=room_id,
+        content="PR 开在了芝士名下，不是你名下",
+        meta=notice(
+            EVENT_PR_IDENTITY_DOWNGRADED,
+            severity=SEVERITY_WARN,
+            who=WHO_HUMAN,
+            detail=sentence,
+            detail_label="发生了什么",
+        ),
+    )
 
 
 async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:

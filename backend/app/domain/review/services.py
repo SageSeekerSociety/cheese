@@ -712,11 +712,22 @@ class AcceptService:
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)
         forge = await self._resolve_forge(topic.project_id, card=card)
-        data["has_external_checks"] = forge.has_external_checks
+        caps = forge.capabilities
+        # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
+        # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
+        data["forge"] = {
+            "kind": forge.kind.value,
+            "reports_checks": caps.reports_checks,
+            "hosts_proposals": caps.hosts_proposals,
+            "can_write_remote": caps.can_write_remote,
+            "pushes_to_external_remote": caps.pushes_to_external_remote,
+            "identity": caps.identity.value,
+            "declaration": forge.declaration,
+        }
         data["approvals_required"] = approvals_required_of(project)
         # External checks stay unknown until the PR has a mirrored state.
         # Local acceptance has no checks; only a recorded merge conflict blocks it.
-        if forge.has_external_checks:
+        if caps.reports_checks:
             mirror = card.merge_state if isinstance(card.merge_state, dict) else None
             data["merge_state"] = mirror or {
                 "state": "unknown",
@@ -758,7 +769,7 @@ class AcceptService:
         data["auto_merge"] = {
             "allowed": (
                 branch_protection_of(project).auto_merge_allowed
-                and forge.has_external_checks
+                and caps.reports_checks
                 and card.pr_number is not None
             ),
             "armed_by": card.auto_merge_armed_by,
@@ -1130,19 +1141,16 @@ class AcceptService:
         if (card.change_subject or "").strip():
             await self._stop_accept_no_branch(card, topic)
         # A legacy discussion without a branch has no change to merge.
-        return await self._accept_platform(card, topic, decided_by, note="")
+        return await self._accept_platform(card, topic, decided_by)
 
     async def _accept_platform(
         self,
         card: AcceptCard,
         topic: Topic,
         decided_by: str,
-        *,
-        note: str,
     ) -> AcceptCard:
         """Squash into the platform repository and record the delivery."""
         card_id = card.id
-        unbound_note = note
 
         # 采纳 = merge (spec §6.3) — and the merge DECIDES the outcome. A
         # conflict must never silently archive the topic while the work is
@@ -1250,14 +1258,10 @@ class AcceptService:
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by
         card.decided_at = now
-        # The merge into the platform's own repo is where this accept ends:
-        # nothing is pushed anywhere (#718) — the platform holds no credential
-        # for a remote it is not bound to, and a project on the App forge never
-        # takes this path.
+        # 这个 merge 落在平台自己的仓库里；推不推回项目的远端是调用方的事
+        # （`_accept_external_remote`）。托管方是谁、它能做什么，卡在生成的那一刻
+        # 就已经带着了（I23，`describe()` 的 `forge`），不在这里补一条事后 note。
         notes.clear(card)
-        if unbound_note:
-            # 平台即 forge (#363): 如实标注，而不是让这张卡看起来像绕过了 PR。
-            notes.annotate(card, unbound_note)
 
         # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
         # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
@@ -1281,6 +1285,51 @@ class AcceptService:
             ),
         )
         return card
+
+    async def _accept_external_remote(
+        self, card: AcceptCard, topic: Topic, decided_by: str
+    ) -> AcceptCard:
+        """Squash into the platform repository, then push the trunk to the
+        project's OWN remote — gitee, a campus GitLab, a self-hosted box.
+
+        Same product as the GitHub lane (#363: 一个形状), minus the two things
+        that remote genuinely does not have — a proposal page and check results.
+        Without this the accept landed only in the platform's copy and the
+        teacher's repository never received a commit, with nothing saying so.
+
+        A push that fails after the merge landed is exactly that silence, so it
+        is reported into the room (I26) rather than logged: the change IS in the
+        platform's trunk and is NOT on their remote, and only a person can
+        decide what to do about it.
+        """
+        from app.domain.workspace import service as ws
+
+        accepted = await self._accept_platform(card, topic, decided_by)
+        branch, _ = await asyncio.to_thread(ws.base_branch_head, topic.project_id)
+        try:
+            await asyncio.to_thread(ws.push_branch, topic.project_id, branch, None)
+        except Exception as exc:  # noqa: BLE001 — the merge already happened
+            logger.exception(
+                "accept merged but the push to the project's remote failed "
+                "(project=%s branch=%s)",
+                topic.project_id,
+                branch,
+            )
+            self._notify_merge_result(
+                topic,
+                "采纳已合并，但没能推回项目的远端",
+                meta=notice(
+                    EVENT_ACCEPT_STOPPED,
+                    severity=SEVERITY_ERROR,
+                    who=WHO_HUMAN,
+                    detail=(
+                        f"改动已经在平台仓库的 {branch} 上，项目自己的远端还没有"
+                        f"收到。\n{exc}"
+                    ),
+                    detail_label="推送报错",
+                ),
+            )
+        return accepted
 
     # ---- 两阶段采纳 (PR迭代式, 2026-08-09) ----------------------------------
 
@@ -3174,25 +3223,38 @@ class AcceptService:
         lane is decided (see app.domain.review.forge)."""
         return await forge_mod.resolve(
             project_id=project_id,
-            is_github_bound=self._github_bound,
+            facts=self._forge_facts,
             proposal_url=card.pr_url if card is not None else None,
         )
 
-    async def _github_bound(self, project_id: uuid.UUID) -> bool:
-        """Is this project bound to GitHub — an App installation resolved for
-        it AND a GitHub https upstream? The single judgment the accept path
-        branches on (#363): bound → accepting merges a PR and only a PR;
-        unbound → the platform IS the forge, and the local merge is the one
-        legitimate accept semantics (not a degrade)."""
+    async def _forge_facts(
+        self, project_id: uuid.UUID
+    ) -> "forge_mod.ProjectForgeFacts":
+        """The three facts the five capability bits are computed from.
+
+        Read from the project every time, never stored: a stored capability
+        record would be a second declaration of the same fact, with a window in
+        which the two disagree.
+
+        Whether we can WRITE the remote is not one question but three remotes:
+        GitHub answers with the App's installation token; an ssh / git@ remote
+        is reached with the backend's own key; an https remote that is not
+        GitHub leaves us holding nothing, which is why a project can have an
+        upstream and still not push to it.
+        """
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import parse_github_repo
         from app.domain.workspace import service as ws
 
-        tokens = await github_app_tokens_for_project(project_id, self._session)
-        if tokens is None:
-            return False
         upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-        return parse_github_repo(upstream) is not None
+        tokens = await github_app_tokens_for_project(project_id, self._session)
+        on_github = tokens is not None and parse_github_repo(upstream) is not None
+        ssh_shaped = upstream is not None and upstream.startswith(("ssh://", "git@"))
+        return forge_mod.ProjectForgeFacts(
+            github_app_installed=on_github,
+            has_external_remote=upstream is not None,
+            remote_write_credential=on_github or ssh_shaped,
+        )
 
     async def _stop_accept_pr_unavailable(
         self, card: AcceptCard, topic: Topic, reason: str
@@ -3318,7 +3380,7 @@ class AcceptService:
         request back — the card must keep the PR it now rides, or the next
         attempt would look PR-less again. `open_pr_for_card` can still return
         None (its own not-applicable checks); with the caller pre-checking
-        `_github_bound`, in practice that means a topic with no tree branch.
+        `hosts_proposals`, in practice that means a topic with no tree branch.
         The card is left untouched, and the CALLER decides what a branchless
         topic means: a legacy card with no delivery claim proceeds into the
         no-op local merge, while a card claiming a change stops the accept

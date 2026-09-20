@@ -13,6 +13,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import room_agent_seat
 
@@ -150,9 +151,11 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+    ) -> OpenedPR:
         type(self).opened.append({"body": body, "as_user_token": as_user_token})
-        return {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}
+        return OpenedPR(
+            {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}, None
+        )
 
 
 def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:

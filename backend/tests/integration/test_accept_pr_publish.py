@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
@@ -96,13 +97,16 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+    ) -> OpenedPR:
         type(self).calls.append(("open_pr", head, base, title))
         number = type(self).open_pr_number
-        return {
-            "number": number,
-            "html_url": f"https://github.com/acme/widgets/pull/{number}",
-        }
+        return OpenedPR(
+            {
+                "number": number,
+                "html_url": f"https://github.com/acme/widgets/pull/{number}",
+            },
+            None,
+        )
 
     async def check_runs(self, ref: str) -> list[dict]:
         type(self).calls.append(("check_runs", ref))

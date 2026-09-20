@@ -72,7 +72,15 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals: [],
     approvals_required: 1,
     pr_number: null,
-    has_external_checks: false,
+    forge: {
+      kind: 'platform',
+      reports_checks: false,
+      hosts_proposals: false,
+      can_write_remote: false,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',
+    },
     pr_url: null,
     // 平台 lane 的常态（#363 拍板）：没有检查可读，后端直接下发 clean。
     merge_state: mergeState({
@@ -86,7 +94,20 @@ function card(over: Partial<AcceptCard>): AcceptCard {
 
 /** 绑了 GitHub 的卡：有 PR，合并态来自轮询器的镜像。 */
 function githubCard(over: Partial<AcceptCard>): AcceptCard {
-  return card({ has_external_checks: true, pr_number: 12, pr_url: 'https://github.com/o/r/pull/12', ...over })
+  return card({
+    forge: {
+      kind: 'github_app',
+      reports_checks: true,
+      hosts_proposals: true,
+      can_write_remote: true,
+      pushes_to_external_remote: true,
+      identity: 'user',
+      declaration: '',
+    },
+    pr_number: 12,
+    pr_url: 'https://github.com/o/r/pull/12',
+    ...over,
+  })
 }
 
 async function flush() {

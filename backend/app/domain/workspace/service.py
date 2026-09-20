@@ -2057,11 +2057,16 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     return push_branch(project_id, branch_for_task(topic_id), token)
 
 
-def push_branch(project_id: uuid.UUID, branch: str, token: str) -> str:
+def push_branch(project_id: uuid.UUID, branch: str, token: str | None) -> str:
     """:func:`push_topic_branch`, named by BRANCH instead of by place.
 
     The draft-PR sweep reads the branch from its owning task. A normal push
     refuses divergence so another executor's remote commits remain intact.
+
+    ``token`` is the GitHub App's installation token, and ``None`` is an
+    ordinary case rather than a missing argument: an ssh / git@ remote — a
+    campus GitLab, a self-hosted box — authenticates with the backend's own
+    key, and handing git an inline token helper for it would only shadow that.
     """
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
@@ -2074,7 +2079,7 @@ def push_branch(project_id: uuid.UUID, branch: str, token: str) -> str:
         UPSTREAM_REMOTE,
         f"{branch}:{branch}",
         timeout=120,
-        env=_token_git_env(token),
+        env=_token_git_env(token) if token else None,
     )
     return branch
 

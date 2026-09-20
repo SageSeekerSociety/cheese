@@ -121,6 +121,9 @@ EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
 EVENT_PR_REVIEW: Final = "pr_review"
 #: PR 和它的 base 分支冲突了，GitHub 合不了。
 EVENT_PR_CONFLICT: Final = "pr_conflict"
+#: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
+#: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
+EVENT_PR_IDENTITY_DOWNGRADED: Final = "pr_identity_downgraded"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -160,6 +163,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PROMPT_REPLAYED,
         EVENT_PR_REVIEW,
         EVENT_PR_CONFLICT,
+        EVENT_PR_IDENTITY_DOWNGRADED,
     }
 )
 

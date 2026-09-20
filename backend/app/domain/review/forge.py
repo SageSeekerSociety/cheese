@@ -1,16 +1,39 @@
-"""Forge capabilities and operations used by the acceptance flow (#363).
+"""托管方（forge）：项目的改动落在哪里，以及那个地方能做什么。
 
-Providers declare checks independently of their merge mechanism. A new provider
-implements these operations and adds its binding in resolve(); shared actor,
-vote, and viewed-head checks do not depend on the provider's identity.
+一个 forge 不是按「上游地址长得像不像 github.com」挑出来的，而是按**能力位**挑
+出来的（ARCH §4.5）。能力位有五个，全部从项目今天**已经有的事实**算出来
+（`ProjectForgeFacts`）——不存成一条新的能力记录：存下来就是同一个事实的第二份
+声明，还会多出一个「记录与事实不一致」的窗口。`capabilities_of` 是纯函数。
+
+分三档，中间那一档以前在代码里根本不存在：
+
+- ``GitHubForge``：报检查、托管提案页、推外部远端。
+- ``ExternalRemoteForge``：不报检查、没有提案页，**照样推回那个远端**
+  （gitee、校内 GitLab、自建）。
+- ``PlatformForge``：什么都没绑，平台自己的仓库就是终点。
+
+中间这一档不存在时会发生什么：一个用校内 GitLab 的老师填了自己的仓库地址、点了
+同步、看见历史进来了，于是合理地认为这是双向的。此后每一次采纳都只落在平台自己
+的仓库里，他的 GitLab 一个 commit 都收不到，**没有任何一句话告诉他**。
+
+反过来，一个填了地址却没给我们写权限的项目，会拿到一个永远推不上去的 forge——
+所以 ``pushes_to_external_remote`` 是「有远端」和「写得动」的**合取**，缺一半就是
+同一个坑的镜像版本。
+
+**用户不为了用我们而改任何东西**（结论 50，不变量 I21c）：三档都得能开提案、读
+结论、合并，没有一条路以「请去 GitHub 开个 X」结束。检查结论只**读** forge 的；
+forge 没规则可读时才按平台侧的项目规则判（`project/protection.py`）。
+
+**托管方身份在卡生成的那一刻就在卡上**（I23）：`declaration` 与能力位随
+`AcceptService.describe()` 下发，不是人点完采纳之后才补写上去的一条 note。
 """
 
 import enum
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
-from urllib.parse import urlsplit
 
 from app.core.errors import ValidationError
 
@@ -19,21 +42,87 @@ if TYPE_CHECKING:
     from app.domain.review.services import AcceptService
     from app.domain.topic.models import Topic
 
-PLATFORM_FORGE_NOTE = (
-    "ℹ️ 本项目未接 GitHub：采纳即合并进平台仓库的 main（无 PR、无外部 CI）"
-)
-BINDING_UNKNOWN_MESSAGE = "采纳未完成：暂时无法判定项目的 GitHub 绑定状态，稍后重试采纳"
+FACTS_UNKNOWN_MESSAGE = "采纳未完成：暂时读不出项目的托管方能力，稍后重试采纳"
 
 
 class ForgeKind(enum.StrEnum):
     github_app = "github_app"
+    #: 有 git 远端，但那个远端不报检查、也不托管提案页。
+    external_remote = "external_remote"
     platform = "platform"
 
 
+class ForgeIdentity(enum.StrEnum):
+    """提案与合并署谁的名。"""
+
+    #: 用户自己的凭据（GitHub 上的 PR 属于把活交出来的那个人）。
+    user = "user"
+    #: 平台的 App / 平台自己的仓库。
+    platform = "platform"
+
+
+@dataclass(frozen=True, slots=True)
+class ForgeCapabilities:
+    """ARCH §4.5 的五个能力位。产品判断只许读这五个，不许读「项目有没有绑外部
+    仓库」那个布尔（不变量 I21②）。"""
+
+    #: 这个托管方跑不跑检查、平台能不能读到结论。
+    reports_checks: bool
+    #: 改动在外部有没有一个可以被人打开的提案页。
+    hosts_proposals: bool
+    #: 我们有没有写那个远端的凭据。
+    can_write_remote: bool
+    #: 有远端 ∧ 写得动。
+    pushes_to_external_remote: bool
+    #: 提案与合并署谁的名。
+    identity: ForgeIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectForgeFacts:
+    """能力位算自这三个事实，它们今天都已经在项目里了。"""
+
+    #: 平台的 GitHub App 在这个项目的上游仓库上解析得出安装。
+    github_app_installed: bool
+    #: 项目有一个外部 git 远端。
+    has_external_remote: bool
+    #: 我们手上有写那个远端的凭据。
+    remote_write_credential: bool
+
+
+def capabilities_of(facts: ProjectForgeFacts) -> ForgeCapabilities:
+    """五个能力位，纯函数，无 IO。"""
+    return ForgeCapabilities(
+        reports_checks=facts.github_app_installed,
+        hosts_proposals=facts.github_app_installed,
+        can_write_remote=facts.remote_write_credential,
+        pushes_to_external_remote=(
+            facts.has_external_remote and facts.remote_write_credential
+        ),
+        identity=(
+            ForgeIdentity.user if facts.github_app_installed else ForgeIdentity.platform
+        ),
+    )
+
+
 class Forge(ABC):
-    kind: str
-    has_external_checks: bool
-    note: str
+    kind: ForgeKind
+    #: 这个托管方在人点采纳**之前**就写在卡上的一句话（I23）。GitHub 那一档不需要
+    #: 说什么，卡上有提案页链接。
+    declaration: str = ""
+
+    def __init__(self, capabilities: ForgeCapabilities) -> None:
+        #: 解析这一次时算出来的能力位 —— 卡上的那一份就是它，没有第二份。
+        self.capabilities = capabilities
+
+    @classmethod
+    @abstractmethod
+    def serves(cls, capabilities: ForgeCapabilities) -> bool:
+        """这组能力位该由本实现承担吗？
+
+        三个实现的谓词合起来对任意一组能力位**恰好**命中一个（`forge_for` 会检查
+        这一点），所以加第四个提供者是加一个类，不是在 `resolve` 里加一个分支。
+        """
 
     @abstractmethod
     async def accept(
@@ -86,8 +175,10 @@ class Forge(ABC):
 
 class GitHubForge(Forge):
     kind = ForgeKind.github_app
-    has_external_checks = True
-    note = ""
+
+    @classmethod
+    def serves(cls, capabilities: ForgeCapabilities) -> bool:
+        return capabilities.hosts_proposals
 
     async def accept(self, service, card, topic, decided_by, *, seen_head):
         return await service._accept_github(
@@ -117,16 +208,28 @@ class GitHubForge(Forge):
         )
 
 
-class PlatformForge(Forge):
-    kind = ForgeKind.platform
-    has_external_checks = False
-    note = PLATFORM_FORGE_NOTE
+class ExternalRemoteForge(Forge):
+    """有 git 远端、但那个远端既不报检查也不托管提案页的项目。
+
+    采纳和 GitHub 那一档是同一个产品：squash 进平台仓库的 main，**并把 main 推回
+    项目自己的远端**。少掉的只有外部检查和提案页，这两样是那个远端本来就没有的，
+    不是我们降级给他的。
+    """
+
+    kind = ForgeKind.external_remote
+    declaration = "ℹ️ 本项目的远端不报检查：采纳即合并并推回该远端（无提案页、无外部 CI）"
+
+    @classmethod
+    def serves(cls, capabilities: ForgeCapabilities) -> bool:
+        return (
+            not capabilities.hosts_proposals and capabilities.pushes_to_external_remote
+        )
 
     async def accept(self, service, card, topic, decided_by, *, seen_head):
-        return await service._accept_platform(card, topic, decided_by, note=self.note)
+        return await service._accept_external_remote(card, topic, decided_by)
 
     async def refresh_unseen_head(self, service, card, topic, action) -> NoReturn:
-        raise ValidationError("本项目未接 GitHub，没有可刷新的 PR")
+        raise ValidationError("本项目的远端没有提案页，没有可刷新的东西")
 
     async def poll(self, service, card, topic, *, chat_service, runner) -> None:
         return
@@ -144,25 +247,74 @@ class PlatformForge(Forge):
         raise ValidationError("本项目没有需要人工放行的外部检查")
 
 
-FORGES: dict[ForgeKind, Forge] = {
-    ForgeKind.github_app: GitHubForge(),
-    ForgeKind.platform: PlatformForge(),
-}
+class PlatformForge(Forge):
+    kind = ForgeKind.platform
+    declaration = (
+        "ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）"
+    )
+
+    @classmethod
+    def serves(cls, capabilities: ForgeCapabilities) -> bool:
+        return (
+            not capabilities.hosts_proposals
+            and not capabilities.pushes_to_external_remote
+        )
+
+    async def accept(self, service, card, topic, decided_by, *, seen_head):
+        return await service._accept_platform(card, topic, decided_by)
+
+    async def refresh_unseen_head(self, service, card, topic, action) -> NoReturn:
+        raise ValidationError("本项目没有提案页，没有可刷新的东西")
+
+    async def poll(self, service, card, topic, *, chat_service, runner) -> None:
+        return
+
+    async def merge_despite_checks(
+        self,
+        service,
+        card,
+        topic,
+        decided_by,
+        *,
+        seen_head,
+        reason,
+    ):
+        raise ValidationError("本项目没有需要人工放行的外部检查")
+
+
+#: 注册表。加一个提供者 = 往这里加一个类并写它的 `serves`；采纳流程一行不改
+#: （#363 自己的判据）。
+FORGES: tuple[type[Forge], ...] = (GitHubForge, ExternalRemoteForge, PlatformForge)
+
+#: 一个已经存在的提案页所证明的那组事实。见 `resolve` 里的短路。
+_PROPOSAL_EXISTS = ProjectForgeFacts(
+    github_app_installed=True,
+    has_external_remote=True,
+    remote_write_credential=True,
+)
+
+
+def forge_for(capabilities: ForgeCapabilities) -> Forge:
+    """承担这组能力位的那个实现。恰好一个，否则注册表自己有洞。"""
+    matched = [cls for cls in FORGES if cls.serves(capabilities)]
+    if len(matched) != 1:  # pragma: no cover - a registry bug, not an input
+        raise RuntimeError(f"{len(matched)} forges serve {capabilities}; exactly one must")
+    return matched[0](capabilities)
 
 
 async def resolve(
     *,
     project_id: uuid.UUID,
-    is_github_bound: Callable[[uuid.UUID], Awaitable[bool]],
+    facts: Callable[[uuid.UUID], Awaitable[ProjectForgeFacts]],
     proposal_url: str | None = None,
 ) -> Forge:
-    """Resolve the authoritative forge; an unreadable binding never falls local."""
-    # An existing proposal retains its forge when the project loses credentials.
-    # Otherwise a temporary disconnect could turn a PR acceptance into a local merge.
-    if proposal_url and urlsplit(proposal_url).hostname == "github.com":
-        return FORGES[ForgeKind.github_app]
+    """这次采纳走哪个托管方。读不出事实就停住，绝不摸黑挑一条。"""
+    # 卡上已经有提案页，就说明有一个托管方在托管它——凭据一时读不到也不能把一次
+    # PR 采纳变成一次本地合并（#362 的另一条进路）。
+    if proposal_url:
+        return forge_for(capabilities_of(_PROPOSAL_EXISTS))
     try:
-        bound = await is_github_bound(project_id)
+        observed = await facts(project_id)
     except Exception as exc:  # noqa: BLE001 — cannot pick a lane blind
-        raise ValidationError(BINDING_UNKNOWN_MESSAGE) from exc
-    return FORGES[ForgeKind.github_app if bound else ForgeKind.platform]
+        raise ValidationError(FACTS_UNKNOWN_MESSAGE) from exc
+    return forge_for(capabilities_of(observed))

@@ -18,6 +18,7 @@ import asyncio
 import uuid
 
 from app.api.deps import get_work_runner
+from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_token
 
@@ -41,9 +42,11 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+    ) -> OpenedPR:
         type(self).opened.append({"body": body, "as_user_token": as_user_token})
-        return {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}
+        return OpenedPR(
+            {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}, None
+        )
 
 
 def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None:
