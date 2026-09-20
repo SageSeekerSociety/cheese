@@ -14,9 +14,9 @@ from app.domain.agent.harness.codex.channel import CodexChannel
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.runtime import CodexRuntime, Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
+from app.domain.agent.service import AgentMessage, AgentResult
 from app.domain.agent_session.models import SessionPlace
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.agent.service import AgentMessage, AgentResult
 
 
 @pytest.mark.anyio

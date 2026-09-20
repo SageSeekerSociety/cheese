@@ -496,7 +496,6 @@ async def test_placed_room_uses_session_identity_not_executor(
     from app.core.config import settings as app_settings
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.device.models import DeviceRow
-    from app.domain.topic.models import Topic
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)

@@ -749,9 +749,8 @@ class DeviceChannel(Channel):
             place = await TopicService(session).place_or_404(topic_id)
             if place.room.is_private:
                 from app.domain.agent.private_chat import execution_target
-                from app.domain.device.supply import Visibility
-
                 from app.domain.agent_session.services import AgentSessionService
+                from app.domain.device.supply import Visibility
 
                 # A private chat seats one agent, so its room has at most one
                 # placed session; whichever it is, its machine is this chat's.

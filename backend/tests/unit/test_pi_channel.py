@@ -16,10 +16,10 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent_session.models import SessionPlace
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.pi.channel import PiChannel
+from app.domain.agent_session.models import SessionPlace
+from app.domain.agent_session.services import AgentSessionService
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 

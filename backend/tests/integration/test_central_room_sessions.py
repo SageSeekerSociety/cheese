@@ -327,7 +327,9 @@ async def test_old_executor_process_takes_release_bootstrap(
     assert place is not None
     target = place.lease
     assert target["upgrade_pending"] is upgrade_pending
-    assert target["release"] == ("previous-release" if upgrade_pending else "new-release")
+    assert target["release"] == (
+        "previous-release" if upgrade_pending else "new-release"
+    )
     assert target["desired_release"] == ("new-release" if upgrade_pending else None)
     assert [
         call.args[2] for call in central._hub.call_executor.await_args_list[-2:]

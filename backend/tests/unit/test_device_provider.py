@@ -332,9 +332,7 @@ async def test_screen_inventory_failure_does_not_skip_the_next_device():
 async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     monkeypatch,
 ):
-    from unittest.mock import AsyncMock
-
-    from unittest.mock import patch
+    from unittest.mock import AsyncMock, patch
 
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_hub import DeviceHub
