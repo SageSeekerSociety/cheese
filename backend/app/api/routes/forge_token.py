@@ -59,7 +59,7 @@ async def forge_transport(
 ) -> Response:
     """Relay native Git and API traffic using the caller's leased forge token."""
     from app.core.crypto import decrypt_text
-    from app.domain.project.forge import binding_for_project
+    from app.domain.project.forge import binding_for_project, tokens_for_project
     from app.domain.project.models import ForgeToken
 
     authorization = request.headers.get("authorization", "")
@@ -75,27 +75,57 @@ async def forge_transport(
     if not credential:
         return denied
     binding = await binding_for_project(project_id, db)
-    if binding is None or binding.kind != "forgejo":
+    if binding is None:
         return denied
-    leases = await db.scalars(
-        select(ForgeToken.value).where(
-            ForgeToken.project_id == project_id,
-            ForgeToken.api_url == binding.api_url,
-            ForgeToken.username == binding.repo.split("/", 1)[0],
-            ForgeToken.expires_at > datetime.now(UTC),
-            ForgeToken.value.is_not(None),
+    if binding.kind == "github_app":
+        claims = scoped_token_claims(credential)
+        if not claims or claims.get("p") != str(project_id):
+            return denied
+        repository = binding.repo + ".git/"
+        if not path.startswith(repository) or path[len(repository) :] not in (
+            "info/refs",
+            "git-upload-pack",
+            "git-receive-pack",
+        ):
+            return Response(status_code=403)
+        minter = await tokens_for_project(project_id, db)
+        if minter is None:
+            raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+        try:
+            access_token, _ = await minter.installation_token()
+        except (GitHubAppError, httpx.HTTPError) as error:
+            raise GatewayUnavailableError("代码托管服务暂时无法签发项目凭据") from error
+        authorization = (
+            "Basic "
+            + base64.b64encode(f"x-access-token:{access_token}".encode()).decode()
         )
-    )
-    if not any(
-        hmac.compare_digest(credential.encode(), decrypt_text(value).encode())
-        for value in leases
-        if value is not None
-    ):
+        upstream_url = (
+            binding.url.removesuffix(".git").rstrip("/")
+            + ".git/"
+            + path[len(repository) :]
+        )
+    elif binding.kind == "forgejo":
+        leases = await db.scalars(
+            select(ForgeToken.value).where(
+                ForgeToken.project_id == project_id,
+                ForgeToken.api_url == binding.api_url,
+                ForgeToken.username == binding.repo.split("/", 1)[0],
+                ForgeToken.expires_at > datetime.now(UTC),
+                ForgeToken.value.is_not(None),
+            )
+        )
+        if not any(
+            hmac.compare_digest(credential.encode(), decrypt_text(value).encode())
+            for value in leases
+            if value is not None
+        ):
+            return denied
+        base = binding.api_url.removesuffix("/api/v1").rstrip("/")
+        upstream_url = base + "/" + quote(path, safe="/")
+    else:
         return denied
     if any(part in (".", "..") for part in path.split("/")):
         return Response(status_code=400)
-    base = binding.api_url.removesuffix("/api/v1").rstrip("/")
-    upstream_url = base + "/" + quote(path, safe="/")
     # A long clone must not hold a database connection for its entire transfer.
     await db.rollback()
     headers = {
@@ -111,6 +141,7 @@ async def forge_transport(
             "user-agent",
         )
     }
+    headers["authorization"] = authorization
     client = httpx.AsyncClient(timeout=httpx.Timeout(300, connect=10))
     outgoing = client.build_request(
         request.method,

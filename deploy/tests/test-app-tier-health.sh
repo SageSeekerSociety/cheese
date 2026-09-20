@@ -1051,7 +1051,10 @@ test_forge_migration_release() {
       "$ROOT/deploy/deploy-docker.sh" testsha \
       "$ROOT/deploy/compose/docker-compose.base.yml" > "$run_dir/release.log" 2>&1 \
       || result=1
-    [ "$result" = "$expected" ] || fail "forge $mode returned $result: $run_dir/release.log"
+    if [ "$result" != "$expected" ]; then
+      cat "$run_dir/release.log" >&2
+      fail "forge $mode returned $result: $run_dir/release.log"
+    fi
     grep -F 'docker-compose.forgejo.yml' "$run_dir/docker.log" >/dev/null || fail "default forge service was not included"
     grep -F 'up -d --no-deps forge-events' "$run_dir/docker.log" >/dev/null || fail "event relay was not started"
     grep -Fx bootstrap "$run_dir/docker.log" >/dev/null || fail "admin provisioning did not run"

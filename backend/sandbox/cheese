@@ -125,17 +125,21 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     env = os.environ if environ is None else environ
     topic = TOPIC if environ is None else env.get("CHEESE_TOPIC", "")
     project = PROJECT if environ is None else env.get("CHEESE_PROJECT", "")
-    if tool in {
-        "cheese_ask",
-        "cheese_bind",
-        "cheese_close_task",
-        "cheese_decision",
-        "cheese_feedback_propose",
-        "cheese_members",
-        "cheese_status",
-        "cheese_tell",
-        "cheese_title",
-    } and not topic:
+    if (
+        tool
+        in {
+            "cheese_ask",
+            "cheese_bind",
+            "cheese_close_task",
+            "cheese_decision",
+            "cheese_feedback_propose",
+            "cheese_members",
+            "cheese_status",
+            "cheese_tell",
+            "cheese_title",
+        }
+        and not topic
+    ):
         raise ValueError("Missing CHEESE_TOPIC")
     if (
         tool
@@ -415,10 +419,15 @@ def _git_credential(operation: str) -> None:
     fields = dict(line.rstrip("\n").split("=", 1) for line in sys.stdin if "=" in line)
     data = _call("GET", "/sandbox/forge-token")["data"]
     path = urllib.parse.unquote(fields.get("path", "")).strip("/").removesuffix(".git")
-    destinations = [data["url"]]
-    if data.get("kind") == "forgejo":
-        destinations.append(_forge_git_relay(data["repo"]))
-    for destination in destinations:
+    destinations = [(data["url"], data["token"])]
+    if data.get("kind") in ("forgejo", "github_app"):
+        destinations.append(
+            (
+                _forge_git_relay(data["repo"]),
+                TOKEN if data["kind"] == "github_app" else data["token"],
+            )
+        )
+    for destination, credential in destinations:
         bound = urllib.parse.urlsplit(destination)
         wanted = urllib.parse.unquote(bound.path).strip("/").removesuffix(".git")
         if (
@@ -426,7 +435,7 @@ def _git_credential(operation: str) -> None:
             and fields.get("host", "").lower() == bound.netloc.lower()
             and path == wanted
         ):
-            print(f"username={data['username']}\npassword={data['token']}\n")
+            print(f"username={data['username']}\npassword={credential}\n")
             return
 
 
@@ -435,7 +444,7 @@ def _forge_git_relay(repository: str) -> str:
 
 
 def _configure_git_transport(repo: Path, data: dict) -> None:
-    if data.get("forge_kind") != "forgejo":
+    if data.get("forge_kind") not in ("forgejo", "github_app"):
         return
     relay = _forge_git_relay(data["forge_repo"])
     # Keep origin canonical so native tools retain the repository identity.
@@ -446,7 +455,8 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
     reachable = True
     try:
         root = data["remote"].rsplit("/", 2)[0]
-        request = urllib.request.Request(root + "/api/v1/version")
+        probe = root + ("/api/v1/version" if data["forge_kind"] == "forgejo" else "/")
+        request = urllib.request.Request(probe)
         with urllib.request.urlopen(request, timeout=5):
             pass
     except urllib.error.HTTPError:
@@ -1346,8 +1356,7 @@ def build_parser() -> argparse.ArgumentParser:
         "recover",
         help="把任务最近的文件备份恢复到独立目录",
         description=(
-            "恢复最近一次任务备份并返回恢复目录；"
-            "保留原工作目录，未提交文件不进入 PR。"
+            "恢复最近一次任务备份并返回恢复目录；保留原工作目录，未提交文件不进入 PR。"
         ),
     )
     recovery.add_argument("task_id", help="任务 UUID")
@@ -1525,9 +1534,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="附上当前会话的环境与日志快照(默认不附)",
     )
-    pfbprop.add_argument(
-        "--tags", default=None, help="逗号分隔的标签,最多 20 个"
-    )
+    pfbprop.add_argument("--tags", default=None, help="逗号分隔的标签,最多 20 个")
     pfbprop.add_argument(
         "--session-id", default=None, help="当前会话 id(不填则由平台补)"
     )
@@ -1667,7 +1674,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pa.add_argument(
         "--deliver",
-        help="这次交出去的那一份文件（工作目录里的路径），平台留一份快照；单份最大 80MB",
+        help=(
+            "这次交出去的那一份文件（工作目录里的路径），"
+            "平台留一份快照；单份最大 80MB"
+        ),
     )
     pa.add_argument(
         "--deliver-url",

@@ -98,15 +98,16 @@ def test_relay_receives_only_its_exact_project_repository_token(
         assert bool(capsys.readouterr().out) is expected
 
 
+@pytest.mark.parametrize("kind", ["forgejo", "github_app"])
 def test_offline_transport_preserves_origin_and_recovers_direct_access(
-    cli, monkeypatch, tmp_path
+    cli, monkeypatch, tmp_path, kind
 ):
     monkeypatch.setattr(cli, "API", "https://platform.invalid/api")
     monkeypatch.setattr(cli, "PROJECT", "project-id")
     remote = "https://forge.invalid/forge/owner/repo.git"
     cli._git_task(tmp_path, "init", "--bare")
     cli._git_task(tmp_path, "remote", "add", "origin", remote)
-    metadata = {"forge_kind": "forgejo", "forge_repo": "owner/repo", "remote": remote}
+    metadata = {"forge_kind": kind, "forge_repo": "owner/repo", "remote": remote}
 
     def unreachable(*args, **kwargs):
         raise cli.urllib.error.URLError("network unreachable")
@@ -121,6 +122,44 @@ def test_offline_transport_preserves_origin_and_recovers_direct_access(
     monkeypatch.setattr(cli.urllib.request, "urlopen", lambda *a, **k: io.BytesIO())
     cli._configure_git_transport(tmp_path, metadata)
     assert cli._git_task(tmp_path, "remote", "get-url", "origin") == remote
+
+
+def test_github_relay_receives_platform_credential_only(cli, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "API", "https://platform.invalid")
+    monkeypatch.setattr(cli, "PROJECT", "project-id")
+    monkeypatch.setattr(cli, "TOKEN", "scoped-platform-token")
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda *_: {
+            "data": {
+                "kind": "github_app",
+                "url": "https://github.com/owner/repo.git",
+                "repo": "owner/repo",
+                "username": "x-access-token",
+                "token": "github-token",
+            }
+        },
+    )
+    for host, path, secret in [
+        (
+            "platform.invalid",
+            "sandbox/forge/project-id/owner/repo.git",
+            "scoped-platform-token",
+        ),
+        ("github.com", "owner/repo.git", "github-token"),
+        ("platform.invalid", "sandbox/forge/other/owner/repo.git", None),
+    ]:
+        monkeypatch.setattr(
+            cli.sys,
+            "stdin",
+            io.StringIO(f"protocol=https\nhost={host}\npath={path}\n\n"),
+        )
+        cli._git_credential("get")
+        output = capsys.readouterr().out
+        assert output == (
+            f"username=x-access-token\npassword={secret}\n\n" if secret else ""
+        )
 
 
 @pytest.mark.parametrize("enabled", [True, False])

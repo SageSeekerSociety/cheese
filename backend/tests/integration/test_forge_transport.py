@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from app.core.crypto import encrypt_text
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.project.models import ForgeToken
 
 
@@ -140,6 +141,102 @@ def test_expired_token_is_refused_even_before_upstream_revocation(client, relay)
     response = client.get(
         f"/sandbox/forge/{project_id}/api/v1/user",
         headers={"Authorization": "token project-token"},
+    )
+    assert response.status_code == 401
+    assert requests == []
+
+
+@pytest.fixture
+def github_relay(relay, monkeypatch):
+    project_id, requests, closed = relay
+
+    async def binding_for_project(identifier, session):
+        return SimpleNamespace(
+            kind="github_app",
+            repo="owner/repo",
+            url="https://github.com/owner/repo.git",
+        )
+
+    class Minter:
+        async def installation_token(self):
+            return "github-installation-token", "unused"
+
+    async def tokens_for_project(identifier, session):
+        assert identifier == project_id
+        return Minter()
+
+    monkeypatch.setattr(
+        "app.domain.project.forge.binding_for_project", binding_for_project
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.tokens_for_project", tokens_for_project
+    )
+    return project_id, requests, closed
+
+
+@pytest.mark.parametrize(
+    "operation", ["info/refs", "git-upload-pack", "git-receive-pack"]
+)
+def test_github_git_uses_bound_repository_and_replaces_platform_secret(
+    client, github_relay, operation
+):
+    project_id, requests, closed = github_relay
+    token = mint_scoped_token(project_id=str(project_id))
+    response = client.request(
+        "GET" if operation == "info/refs" else "POST",
+        f"/sandbox/forge/{project_id}/owner/repo.git/{operation}",
+        headers={
+            "Authorization": "Basic "
+            + base64.b64encode(f"git:{token}".encode()).decode()
+        },
+        content=b"git-pack",
+    )
+    assert response.status_code == 200
+    assert response.content == b"first\x00second\xff"
+    [(request, body)] = requests
+    assert str(request.url) == f"https://github.com/owner/repo.git/{operation}"
+    assert body == b"git-pack"
+    assert (
+        request.headers["authorization"]
+        == "Basic "
+        + base64.b64encode(b"x-access-token:github-installation-token").decode()
+    )
+    assert token not in str(request.headers)
+    assert closed == [True]
+
+
+@pytest.mark.parametrize(
+    "path", ["owner/other.git/info/refs", "api/v3/user", "owner/repo.git/other"]
+)
+def test_github_relay_cannot_select_another_destination(client, github_relay, path):
+    project_id, requests, _ = github_relay
+    response = client.get(
+        f"/sandbox/forge/{project_id}/{path}",
+        headers={
+            "Authorization": "Bearer " + mint_scoped_token(project_id=str(project_id)),
+        },
+    )
+    assert response.status_code == 403
+    assert requests == []
+
+
+@pytest.mark.parametrize("credential", ["invalid", "other-project", "expired"])
+def test_github_relay_requires_current_project_authority(
+    client, github_relay, credential
+):
+    project_id, requests, _ = github_relay
+    token = (
+        mint_scoped_token(project_id=str(uuid.uuid4()))
+        if credential == "other-project"
+        else mint_scoped_token(project_id=str(project_id), ttl_s=-1)
+        if credential == "expired"
+        else credential
+    )
+    response = client.get(
+        f"/sandbox/forge/{project_id}/owner/repo.git/info/refs",
+        headers={
+            "Authorization": "Bearer " + token,
+        },
     )
     assert response.status_code == 401
     assert requests == []
