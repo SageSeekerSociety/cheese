@@ -14,20 +14,23 @@ from app.domain.agent.harness.claude_code import (
 from app.domain.agent.place import session_platform_dirs
 
 
-def execution_target(
+def scratch_target(
     project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    resource_id: uuid.UUID | None = None,
+    resource_id: uuid.UUID,
     *,
-    device_id: str | None = None,
+    device_id: str,
 ) -> dict:
-    device_id = device_id or settings.agent_session_device_id
-    if not device_id:
-        raise RuntimeError("私聊中心执行机尚未配置，本轮没有启动")
+    """这条会话自己的草稿区：一个有界的一次性容器 (结论 19)。
+
+    它不是一个地点，所以它不去解析一台机器——机器是这条会话的机器，由调用者从
+    会话行上读出来交进来。从前它自己兜底到 ``settings.agent_session_device_id``，
+    那是私聊绕开会话去挑机器的那条独立路径；会话搬了家，草稿区还留在部署默认的
+    那一台上。
+    """
     return {
-        **target(resource_id or topic_id, settings.private_chat_executor_image),
+        **target(resource_id, settings.private_chat_executor_image),
         "device_id": device_id,
-        "home": device_home_dir(project_id, resource_id or topic_id),
+        "home": device_home_dir(project_id, resource_id),
     }
 
 

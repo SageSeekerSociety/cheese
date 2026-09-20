@@ -268,6 +268,9 @@ class _TurnContext:
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
     provider: ComputeProvider
+    # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
+    # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
+    needs_place: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -4427,21 +4430,17 @@ class ChatService:
                     card_statuses=[c.status for c in open_cards],
                 )
             )
+            # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：不碰仓库文件、
+            # 不跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。私聊
+            # 是今天唯一这样的一轮——它桌上只有对话、记忆和平台工具。
+            needs_place = not is_private
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
-            compute_id = (
-                "device"
-                if is_private
-                else _resolve_compute_id(
-                    project.settings if project else None,
-                    topic.compute_profile,
-                )
+            compute_id = _resolve_compute_id(
+                project.settings if project else None,
+                topic.compute_profile,
             )
-            if (
-                not is_private
-                and compute_id == "device"
-                and topic.compute_config is None
-            ):
+            if needs_place and compute_id == "device" and topic.compute_config is None:
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,
                 )
@@ -4476,7 +4475,8 @@ class ChatService:
                         {"type": "done"},
                     ]
                 )
-            if provider.provisions_machine:
+            # 开一台机器是租手的一部分，所以不租手的一轮也不等它开完。
+            if needs_place and provider.provisions_machine:
                 ready, waiting_text = await provider.prepare_topic(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -4581,9 +4581,9 @@ class ChatService:
             # killing the turn at the generic `agent_turn_timeout_s`. Without this
             # the device's own two-layer fix is dead on arrival — the outer guard
             # still kills at 900s.
-            # 私聊没有机器，所以也不该在它身上钉一台。钉了就是给一段永远不会用到
-            # 机器的对话记上一台机器，而这一行本来是给「以后别换机器」用的。
-            if provider is not None and topic.compute_profile is None:
+            # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
+            # 一台机器，而这一行本来是给「以后别换机器」用的。
+            if needs_place and provider is not None and topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
@@ -4611,6 +4611,7 @@ class ChatService:
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
+            needs_place=needs_place,
             replay_notice=replay_notice,
             resume_session_id=resume_session_id,
             role=role,
@@ -4671,6 +4672,7 @@ class ChatService:
         doc_text = prepared.doc_text
         is_private = prepared.is_private
         memories = prepared.memories
+        needs_place = prepared.needs_place
         pending_ids = prepared.pending_ids
         consumed_ids = pending_ids + prepared.notice_ids
         prior_progress = prepared.prior_progress
@@ -4894,6 +4896,7 @@ class ChatService:
                     model=model_kwargs.get("model"),
                     env=model_kwargs.get("env"),
                     agent_handle=acting_agent,
+                    needs_place=needs_place,
                 ),
                 work_id=turn_id,
                 images=turn_images or None,

@@ -78,7 +78,7 @@ class PiChannel:
         )
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
-        precheck = await self.channel.precheck(session)
+        precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         assert isinstance(precheck, tuple)
         device_id, _agent_user_id, agent = precheck
         if opening.agent_handle and opening.agent_handle != agent:

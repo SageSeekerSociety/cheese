@@ -744,33 +744,9 @@ class DeviceChannel(Channel):
             factory = async_session_factory
         async with factory() as session:
             service = sql_device_service(session)
-            from app.domain.topic.services import TopicService
-
-            place = await TopicService(session).place_or_404(topic_id)
-            if place.room.is_private:
-                from app.domain.agent.private_chat import execution_target
-                from app.domain.agent_session.services import AgentSessionService
-                from app.domain.device.supply import Visibility
-
-                # A private chat seats one agent, so its room has at most one
-                # placed session; whichever it is, its machine is this chat's.
-                placed = await AgentSessionService(session).places_in_room(topic_id)
-                device_id = execution_target(
-                    project_id,
-                    topic_id,
-                    device_id=placed[0].machine if placed else None,
-                )["device_id"]
-                if not self._hub.is_online(device_id):
-                    raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
-                binding = await service.topic_binding(topic_id)
-                if binding is None or binding.device_id != device_id:
-                    await service.bind_topic_device(
-                        topic_id, device_id, visibility=Visibility.host
-                    )
-            else:
-                device_id = await resolve_pinned_device(
-                    service, self._hub.is_online, project_id, topic_id
-                )
+            device_id = await resolve_pinned_device(
+                service, self._hub.is_online, project_id, topic_id
+            )
             if device_id is None:
                 return None
             # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
@@ -1298,10 +1274,10 @@ class DeviceChannel(Channel):
         if (env or {}).get("CHEESE_EXECUTION_TARGET"):
             execution_target = json.loads((env or {})["CHEESE_EXECUTION_TARGET"])
         if (env or {}).get("CHEESE_PRIVATE_CHAT") == "1":
-            from app.domain.agent.private_chat import execution_target as private_target
+            from app.domain.agent.private_chat import scratch_target
 
-            execution_target = private_target(
-                project_id, topic_id, resource_id, device_id=device_id
+            execution_target = scratch_target(
+                project_id, resource_id, device_id=device_id
             )
         if (
             existing is not None
@@ -1654,11 +1630,19 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
-    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
+    async def precheck(
+        self, session: SessionRef, *, needs_place: bool = True
+    ) -> tuple[str, int, str]:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
-        Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
+        Raises ``ScreenSetupError`` (offline pinned device, or none online).
+
+        ``needs_place`` is not read here: this machine is where the session
+        itself runs, so a turn that wants no hands still needs it. Declining a
+        machine is the wrapping central channel's answer, because only there are
+        the session's machine and the work's machine two different ones."""
+        del needs_place
         resolved = await self._resolve_device_agent(
             session.project_id, session.topic_id
         )

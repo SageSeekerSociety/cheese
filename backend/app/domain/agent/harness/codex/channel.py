@@ -56,7 +56,7 @@ class CodexChannel:
         )
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
-        precheck = await self.channel.precheck(session)
+        precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
         agent = precheck[2]
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")

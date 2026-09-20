@@ -137,7 +137,12 @@ class CloudChannel(DeviceChannel):
             await session.commit()
             return lease.device_id, agent.id, agent.username
 
-    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
+    async def precheck(
+        self, session: SessionRef, *, needs_place: bool = True
+    ) -> tuple[str, int, str]:
+        # Same as the device channel: this is the machine the session runs on,
+        # so the turn cannot decline it. See ``DeviceChannel.precheck``.
+        del needs_place
         resolved = await self._resolve_device_agent(
             session.project_id, session.topic_id
         )

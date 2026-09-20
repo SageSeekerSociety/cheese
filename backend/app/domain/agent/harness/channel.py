@@ -158,13 +158,23 @@ class Channel:
         """Drop whatever this channel remembers about a topic being torn down."""
         del topic_id
 
-    async def precheck(self, session: SessionRef) -> object:
+    async def precheck(
+        self, session: SessionRef, *, needs_place: bool = True
+    ) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the
         hook queue is claimed — a turn that cannot run at all must never touch
         the router. Raise ``ScreenSetupError`` to end the turn with a clean
         error result. The return value is handed to ``ensure_ready`` as
         ``precheck`` so a channel doesn't resolve twice (the device channel
-        resolves its pinned device here)."""
+        resolves its pinned device here).
+
+        ``needs_place`` is this TURN's answer to 「要不要一双手」 (结论 19). It
+        matters only to a channel that rents a machine ON TOP of the one the
+        session already runs on: for a channel whose session and files share a
+        machine, that machine is the session host and a turn cannot decline it.
+        So the default ignores it, and a turn that needs no place must not be
+        refused here for a work machine being offline (不变量 I2)."""
+        del needs_place
         return None
 
     async def ensure_ready(

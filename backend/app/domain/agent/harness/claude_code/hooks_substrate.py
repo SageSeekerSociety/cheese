@@ -1453,7 +1453,9 @@ class ClaudeCodeRuntime:
         be a cold start, and no caller can know in advance which one that is.
         """
         started = time.monotonic()
-        precheck = await self._channel.precheck(session)
+        precheck = await self._channel.precheck(
+            session, needs_place=opening.needs_place
+        )
         logger.info(
             "session setup phase=precheck topic=%s elapsed_ms=%d",
             session.topic_id,
