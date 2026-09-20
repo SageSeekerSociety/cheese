@@ -28,7 +28,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness import HARNESSES, harness_name
-from app.domain.topic.models import Topic
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["terminal"])
@@ -48,17 +48,22 @@ def _device_screen_id(topic_id: uuid.UUID) -> str | None:
     return None
 
 
-def _screen_is_watchable(room: Topic) -> bool:
+async def _screen_is_watchable(db: AsyncSession, room_id: uuid.UUID) -> bool:
     """Does this room's harness put anything in the pane it was started in?
 
-    The room's own record of what is running it (``session_placement``) is the
-    only place this is known — the screen itself carries no harness. A room that
-    has never run has no placement and gets the default, which is the harness a
-    room without an opinion runs.
+    The sessions sitting in this room are the only place this is known — the
+    screen itself carries no harness. There is one pane per room, so a room
+    running any harness that draws on it is watchable; a room that has never run
+    has no session and gets the default, which is the harness a room without an
+    opinion runs.
     """
-    placement = room.session_placement or {}
-    harness = HARNESSES.get(harness_name(placement.get("runtime", {}).get("harness")))
-    return harness is None or harness.draws_on_its_screen
+    names = await AgentSessionService(db).harnesses_in_room(room_id) or {
+        harness_name(None)
+    }
+    return any(
+        (harness := HARNESSES.get(name)) is None or harness.draws_on_its_screen
+        for name in names
+    )
 
 
 @router.get("/{topic_id}/terminal")
@@ -84,7 +89,7 @@ async def terminal_status(topic_id: uuid.UUID, request: Request, db: DbSession) 
     place = await TopicService(db).place_or_404(topic_id)
     if not await proxy.may_view_topic(db, place.room_id, request, COOKIE_NAME):
         return ok({"available": False})
-    if not _screen_is_watchable(place.room):
+    if not await _screen_is_watchable(db, place.room_id):
         return ok({"available": False})
     sid = _device_screen_id(place.room_id)
     if sid is None:

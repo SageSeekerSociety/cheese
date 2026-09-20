@@ -3,7 +3,7 @@
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -14,6 +14,8 @@ from app.domain.agent.harness.codex.channel import CodexChannel
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.runtime import CodexRuntime, Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
+from app.domain.agent_session.models import SessionPlace
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.agent.service import AgentMessage, AgentResult
 
 
@@ -21,16 +23,19 @@ from app.domain.agent.service import AgentMessage, AgentResult
 @pytest.mark.parametrize("failure", [DeviceCallError, DeviceOffline, TimeoutError])
 async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
     project = uuid.uuid4()
-    rooms = [
-        SimpleNamespace(
-            id=uuid.uuid4(),
-            project_id=project,
-            session_placement={
-                "device_id": "center",
-                "resource_id": str(uuid.uuid4()),
-                "channel": "central",
-                "runtime": {"harness": "codex", "state": state, "agent_handle": "a"},
-            },
+    sessions = [
+        (
+            project,
+            uuid.uuid4(),
+            "a",
+            "codex",
+            SessionPlace(
+                machine="center",
+                channel="central",
+                resource_id=str(uuid.uuid4()),
+                runtime={"harness": "codex", "state": state, "agent_handle": "a"},
+                lease=None,
+            ),
         )
         for state in ("/dead", "/alive")
     ]
@@ -41,7 +46,7 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
         nonlocal database_open
         database_open = True
         try:
-            yield SimpleNamespace(scalars=AsyncMock(return_value=rooms))
+            yield SimpleNamespace()
         finally:
             database_open = False
 
@@ -60,8 +65,9 @@ async def test_discovery_releases_database_and_skips_a_dead_runner(failure):
         is_online=Mock(return_value=True), call_executor=AsyncMock(side_effect=ping)
     )
     channel = CodexChannel(source, Mock(spec=ExecutorLaunch))
-    found = await channel.discover("center")
-    assert [handle.session.topic_id for handle in found] == [rooms[1].id]
+    with patch.object(AgentSessionService, "placed_sessions", return_value=sessions):
+        found = await channel.discover("center")
+    assert [handle.session.topic_id for handle in found] == [sessions[1][1]]
     assert found[0].thread_id == "retained"
 
 

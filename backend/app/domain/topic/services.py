@@ -719,7 +719,6 @@ class TopicService:
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "complete"}:
                 topic.resource_id = uuid.uuid4()
-                topic.session_placement = None
                 await AgentSessionService(self._session).forget_room(topic.id)
                 from app.domain.machine.services import MachineService
 

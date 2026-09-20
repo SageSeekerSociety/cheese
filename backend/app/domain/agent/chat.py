@@ -3961,7 +3961,15 @@ class ChatService:
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
-        kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
+        kwargs: dict = {
+            "model": model,
+            "env": {"CHEESE_AGENT_CONFIG": config_hash},
+            # Which conversation the turn belongs to, and so which session's
+            # machines it runs on. Separate from `agent_handle` below, which is
+            # the SEAT the turn authors under — the two are different strings
+            # and the place is recorded under this one.
+            "session_agent": agent.handle,
+        }
         if acting_agent is not None:
             kwargs["agent_handle"] = acting_agent
         if environment is not None:
@@ -4828,9 +4836,18 @@ class ChatService:
                 topic_id, prompt_text, [user_block_id], by=acting_agent
             )
         try:
-            await self._compute.activate(SessionRef(project_id, topic_id), runtime)
+            # The same key `_assemble_turn` read this turn's resume token under
+            # — where this conversation runs is recorded under it too, and a ref
+            # built from anything else resolves somebody else's machine.
+            session_ref = SessionRef(
+                project_id,
+                topic_id,
+                prepared.agent.handle,
+                harness_name(prepared.agent.configuration.get("harness")),
+            )
+            await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
-                SessionRef(project_id, topic_id),
+                session_ref,
                 prompt_text,
                 Opening(
                     system_prompt=system_prompt,

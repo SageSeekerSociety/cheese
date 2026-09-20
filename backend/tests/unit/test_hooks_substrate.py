@@ -263,6 +263,7 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -302,6 +303,7 @@ async def test_failed_precheck_never_touches_the_router():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=_uuid.uuid4(),
             topic_id=topic_id,
             prompt="x",
@@ -553,6 +555,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -611,6 +614,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -665,6 +669,7 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -710,6 +715,7 @@ async def test_run_refuses_to_clobber_existing_attribution():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="inspect",
@@ -775,6 +781,7 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -823,6 +830,7 @@ async def test_run_turn_stop_drains_a_partial_message():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -1027,6 +1035,7 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",

@@ -91,9 +91,11 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
-    # NULL = explicit project default, then the deployment default. Switchable only
-    # until the topic has run — i.e. until it has an `agent_sessions` row — after
+    # Default compute pool for the sessions started in this room. NULL = explicit
+    # project default, then the deployment default. It is a default and not a
+    # placement: where a conversation actually runs is its own session's business
+    # (`agent_sessions.runtime_location` / `.work_lease`). Switchable only until
+    # the room has run — i.e. until a session here has a resume token — after
     # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # A room keeps its script revision when project settings change.
@@ -139,8 +141,10 @@ class Topic(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True, index=True
     )
     resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    # Session ownership is independent of the room's execution-device binding.
-    # The resource UUID pins both locations for recovery and delayed controls.
+    # DEAD: nothing reads or writes it. Its two facts moved onto the session that
+    # owns them (`agent_sessions.work_lease` / `.runtime_location`). The column
+    # outlives this change by exactly one deploy, so the image still writing it
+    # keeps working; P19 backfills once more and drops it.
     session_placement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 

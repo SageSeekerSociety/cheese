@@ -153,9 +153,11 @@ class DeviceTeamRow(Timestamps, Base):
 class DeviceTopicRow(Base):
     """A topic→device pin (execution-architecture v4 §affinity). The device a topic's
     turns run on, frozen when a machine is named or when the first automatic turn
-    selects one: the topic's work tree + resumable claude session live on that one
-    machine, so every later turn MUST return to it — never drift to another online
-    device (which would silently start from an empty tree and corrupt session resume).
+    selects one: the topic's work tree lives on that one machine, so every later
+    turn MUST return to it — never drift to another online device (which would
+    silently start from an empty tree). Where a CONVERSATION lives is not said
+    here and never was this row's to say: ``agent_sessions`` records it, one row
+    per agent, and a room's two teammates can sit on two machines.
     ``visibility`` is this topic's access boundary on that machine, not a machine-wide
     grant. 1:1 — ``topic_id`` is the primary key.
     ``project_id`` /

@@ -98,14 +98,27 @@ UnreadProbe = Callable[[uuid.UUID], float | None]
 class SessionRef:
     """Which conversation this is, to the harness holding it.
 
-    One per topic today, which is why a topic id names it. When a room can host
-    two agents working at once, the pair that identifies a session grows a
-    second half and this is the type that grows it — every caller already goes
-    through here rather than passing a topic id around.
+    A room hosts as many conversations as it seats agents, so a topic id does
+    not name one — ``(topic, agent_handle, harness)`` does, and it is the same
+    key ``agent_sessions`` is written under. Everything that resolves where a
+    session runs starts from this, which is why the machines are recorded per
+    session and never per room (结论 60).
+
+    ``agent_handle`` is :attr:`ResolvedAgent.handle`, the agent's key inside its
+    project — not the seat it authors under. The two differ, and reading under
+    one while writing under the other hands back None rather than failing.
+
+    The two halves are left unset by the calls that address a PLACE rather than
+    a conversation: a room's event spool and the screen it is watched in are one
+    per room, so reading them names no agent. Anything that resolves where a
+    session runs must fill them in — that resolution is per session and there is
+    nothing on the room left to fall back to.
     """
 
     project_id: uuid.UUID
     topic_id: uuid.UUID
+    agent_handle: str = ""
+    harness: str = "claude-code"
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,8 +281,14 @@ class AgentRuntime(Protocol):
         turn_id: uuid.UUID | None = None,
         images: list[dict] | None = None,
         agent_handle: str | None = None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         """One turn, start to finish, as the events it produced.
+
+        ``session_agent`` is the conversation's key — :attr:`ResolvedAgent.handle`
+        — which is what the machines this turn runs on are recorded under. It is
+        required rather than optional because a turn with no key resolves no
+        place, and the errand would silently rent a second machine every time.
 
         ``ensure`` + ``send`` + read, for a caller that has nothing to recover
         to: the platform's OWN errands — the activity digest, the heartbeat

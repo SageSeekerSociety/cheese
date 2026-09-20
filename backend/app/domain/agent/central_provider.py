@@ -11,7 +11,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
-from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import async_session_factory
@@ -24,9 +23,10 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
+from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
-from app.domain.topic.models import Topic
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
@@ -87,48 +87,38 @@ class CentralChannel(DeviceChannel):
     async def prepare_topic(self, **kwargs):
         return await self.executor.prepare_topic(**kwargs)
 
-    async def precheck(self, project_id, topic_id):
+    async def precheck(self, session: SessionRef):
         factory = self._session_factory or async_session_factory
-        async with factory() as session:
-            room = await TopicService(session).get_or_404(topic_id)
-            center = (
-                room.session_placement["device_id"]
-                if room.session_placement
-                else settings.agent_session_device_id
+        async with factory() as db:
+            await TopicService(db).get_or_404(session.topic_id)
+            # THIS conversation's session machine, not the room's: two teammates
+            # in one room hold two sessions and may sit on two machines.
+            place = await AgentSessionService(db).place(
+                session.topic_id, session.agent_handle, harness=session.harness
             )
+        center = place.machine if place else settings.agent_session_device_id
         if not center or not self._hub.is_online(center):
             raise ScreenSetupError("Claude Code 中心会话机器尚未配置或未连接")
-        return await self.executor.precheck(project_id, topic_id)
+        return await self.executor.precheck(session)
 
     async def discover(self, device_id=None):
         factory = self._session_factory or async_session_factory
         scopes = []
-        async with factory() as session:
-            rooms = await session.scalars(
-                select(Topic).where(Topic.session_placement.is_not(None))
-            )
-            for room in rooms:
-                placement = room.session_placement
-                if not placement or placement["channel"] != self.name:
-                    continue
-                if (
-                    placement.get("runtime", {}).get("harness", "claude-code")
-                    != "claude-code"
-                ):
-                    continue
-                center = placement["device_id"]
-                if (device_id is None or center == device_id) and self._hub.is_online(
-                    center
-                ):
-                    self._subscription_devices[room.id] = center
-                    scopes.append((room.project_id, room.id, center))
-            placed = {
-                room.id
-                for room in await session.scalars(
-                    select(Topic).where(Topic.session_placement.is_not(None))
-                )
-                if room.session_placement
-            }
+        async with factory() as db:
+            sessions = await AgentSessionService(db).placed_sessions()
+        placed = {room_id for _, room_id, _, _, _ in sessions}
+        for project_id, room_id, _handle, harness, place in sessions:
+            if place.channel != self.name or harness != CLAUDE_CODE:
+                continue
+            center = place.machine
+            if (device_id is None or center == device_id) and self._hub.is_online(
+                center
+            ):
+                self._subscription_devices[room_id] = center
+                # One screen per room is what the hub can hand back today, so a
+                # room whose second agent is also placed is re-adopted once.
+                if room_id not in {scope[1] for scope in scopes}:
+                    scopes.append((project_id, room_id, center))
         found = await self.restore_screens(scopes)
         # Finish consuming turns that began before this deployment. Their next
         # opening transfers the transcript; no new prompt starts on the old host.
@@ -143,8 +133,7 @@ class CentralChannel(DeviceChannel):
     async def ensure_ready(
         self,
         *,
-        project_id,
-        topic_id,
+        session: SessionRef,
         token,
         env,
         launch,
@@ -166,8 +155,7 @@ class CentralChannel(DeviceChannel):
             named = getattr(launch, "harness", type(launch).__name__)
             raise ScreenSetupError(f"{named} 不能在独立执行机上运行，它没有执行器")
         async with self.prepare_session(
-            project_id=project_id,
-            topic_id=topic_id,
+            session=session,
             token=token,
             env=env,
             launch=launch,
@@ -192,8 +180,7 @@ class CentralChannel(DeviceChannel):
     async def prepare_session(
         self,
         *,
-        project_id,
-        topic_id,
+        session: SessionRef,
         token,
         env,
         launch,
@@ -204,6 +191,7 @@ class CentralChannel(DeviceChannel):
         runtime_factory=None,
     ) -> AsyncIterator[PreparedSession]:
         assert isinstance(precheck, tuple)
+        project_id, topic_id = session.project_id, session.topic_id
         started_at = time.monotonic()
 
         def mark(phase):
@@ -216,24 +204,30 @@ class CentralChannel(DeviceChannel):
 
         executor_id, agent_user_id, agent_handle = precheck
         factory = self._session_factory or async_session_factory
-        async with factory() as session:
-            room = await TopicService(session).lock_for_execution(topic_id)
+        async with factory() as db:
+            room = await TopicService(db).lock_for_execution(topic_id)
             mark("room_lock")
             resource = room.resource_id or room.id
-            previous = room.session_placement
-            center = (
-                previous["device_id"] if previous else settings.agent_session_device_id
+            sessions = AgentSessionService(db)
+            # Where THIS conversation was, resolved from its own row. A stale
+            # one — an older generation of the room, or hands that have since
+            # been handed to another executor — is no place at all: this turn
+            # rents again rather than being refused for not matching what some
+            # other session in the same room happens to be holding.
+            place = await sessions.place(
+                topic_id, session.agent_handle, harness=session.harness
             )
+            if place is not None and (
+                place.resource_id != str(resource)
+                or (place.lease or {}).get("device_id") != executor_id
+            ):
+                place = None
+            center = place.machine if place else settings.agent_session_device_id
             if not center or not self._hub.is_online(center):
                 raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
-            if previous and (
-                previous["resource_id"] != str(resource)
-                or previous["execution"]["device_id"] != executor_id
-            ):
-                raise ScreenSetupError("执行机器与本房间已经记录的位置不一致")
             values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
             token = bind_resource_token(token, str(resource))
-            if not previous and launch.resume_session_id:
+            if place is None and launch.resume_session_id:
                 await launch.execution.transfer_history(
                     self._hub,
                     executor_id,
@@ -270,10 +264,10 @@ class CentralChannel(DeviceChannel):
                     "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
                 }
                 info = None
-                if previous:
+                if place is not None and place.lease:
                     try:
                         running = await execution.call(
-                            previous["execution"], "ping", {}, hub=self._hub
+                            place.lease, "ping", {}, hub=self._hub
                         )
                     except httpx.HTTPStatusError as exc:
                         if exc.response.status_code != 500:
@@ -284,7 +278,7 @@ class CentralChannel(DeviceChannel):
                         running = {}
                     if launch.execution.can_prepare(running):
                         info = await execution.call(
-                            previous["execution"],
+                            place.lease,
                             "prepare",
                             launch.execution.payload_for(
                                 project_id, resource, execute_env, running.get("files")
@@ -293,7 +287,7 @@ class CentralChannel(DeviceChannel):
                         )
                 if info is None:
                     # Exclude scoped tool admission until the replacement is ready.
-                    await execution.lock_release(session, resource)
+                    await execution.lock_release(db, resource)
                     result = await self._hub.exec(
                         executor_id,
                         ["python3", "-"],
@@ -351,20 +345,25 @@ class CentralChannel(DeviceChannel):
                     else await self._context_tree(topic_id, target, started_at)
                 )
                 mark("executor_ready")
-            placement = {
+            location = {
                 "device_id": center,
                 "resource_id": str(resource),
                 "channel": self.name,
-                "execution": target,
             }
             if runtime_factory is not None:
-                placement["runtime"] = runtime_factory(resource)
-            room.session_placement = placement
+                location["runtime"] = runtime_factory(resource)
+            await sessions.remember_place(
+                topic_id=topic_id,
+                agent_handle=session.agent_handle,
+                harness=session.harness,
+                work_lease=target,
+                runtime_location=location,
+            )
             # The central bootstrap calls the scoped executor endpoint before it
             # can start Claude. Publish ownership before opening the screen.
-            await session.commit()
-            room = await TopicService(session).lock_for_execution(topic_id)
-            await session.refresh(room)
+            await db.commit()
+            room = await TopicService(db).lock_for_execution(topic_id)
+            await db.refresh(room)
             mark("placement_committed")
             if (room.resource_id or room.id) != resource:
                 raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")

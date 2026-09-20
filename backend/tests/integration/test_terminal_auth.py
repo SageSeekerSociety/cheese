@@ -91,7 +91,7 @@ async def test_a_harness_that_draws_nothing_keeps_the_timeline(client, monkeypat
     puts the same black frame in front of the same person a refused socket did,
     and takes the 施工记录 timeline away to do it.
     """
-    from app.domain.topic.models import Topic
+    from app.domain.agent_session.services import AgentSessionService
     from tests.integration.test_connector_viewer import _login
 
     monkeypatch.setattr(terminal, "_device_screen_id", _screen_open("s-9"))
@@ -99,13 +99,18 @@ async def test_a_harness_that_draws_nothing_keeps_the_timeline(client, monkeypat
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
     async with client.test_factory() as session:
-        room = await session.get(Topic, uuid.UUID(topic["id"]))
-        room.session_placement = {
-            "device_id": "dev",
-            "resource_id": topic["id"],
-            "channel": "device",
-            "runtime": {"harness": "pi"},
-        }
+        await AgentSessionService(session).remember_place(
+            topic_id=uuid.UUID(topic["id"]),
+            agent_handle="agent",
+            harness="pi",
+            work_lease=None,
+            runtime_location={
+                "device_id": "dev",
+                "resource_id": topic["id"],
+                "channel": "device",
+                "runtime": {"harness": "pi"},
+            },
+        )
         await session.commit()
 
     data = client.get(

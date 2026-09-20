@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.models import AgentSession
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
@@ -39,7 +40,10 @@ class Place:
     """A room or a task, as the owner needs it: whose project, and what it runs on."""
 
     project_id: uuid.UUID
-    session_placement: dict | None
+    #: The session machines this place's conversations are sitting on. A room
+    #: seats several agents and each holds its own session, so this is a set and
+    #: not one machine.
+    session_machines: frozenset[str]
 
 
 async def project_exists(session: AsyncSession, project_id: uuid.UUID) -> bool:
@@ -57,19 +61,25 @@ async def project_owner(session: AsyncSession, project_id: uuid.UUID) -> str | N
 async def place(session: AsyncSession, place_id: uuid.UUID) -> Place | None:
     """The room with this id, or the task with it — a place is either."""
     room = (
-        await session.execute(
-            select(Topic.project_id, Topic.session_placement).where(
-                Topic.id == place_id
-            )
-        )
+        await session.execute(select(Topic.project_id).where(Topic.id == place_id))
     ).one_or_none()
     if room is not None:
+        located = (
+            await session.execute(
+                select(AgentSession.runtime_location).where(
+                    AgentSession.topic_id == place_id,
+                    AgentSession.task_id.is_(None),
+                    AgentSession.runtime_location.is_not(None),
+                )
+            )
+        ).scalars()
         return Place(
-            project_id=room.project_id, session_placement=room.session_placement
+            project_id=room.project_id,
+            session_machines=frozenset(where["device_id"] for where in located),
         )
     task = (
         await session.execute(select(Task.project_id).where(Task.id == place_id))
     ).one_or_none()
     if task is None:
         return None
-    return Place(project_id=task.project_id, session_placement=None)
+    return Place(project_id=task.project_id, session_machines=frozenset())
