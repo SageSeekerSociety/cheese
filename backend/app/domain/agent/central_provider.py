@@ -24,7 +24,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.services import TopicService
@@ -87,18 +87,18 @@ class CentralChannel(DeviceChannel):
     async def prepare_topic(self, **kwargs):
         return await self.executor.prepare_topic(**kwargs)
 
-    async def precheck(self, session: SessionRef, *, needs_place: bool = True):
-        # 两条路共同的前提是会话机在线——会话本身跑在它上面。解析它的那条连接在
-        # 这一句里就还掉了：执行机的 precheck 自己要开第二条，持着一条去池里要第
-        # 二条，并发到池子大小的轮次一起开场就互相等到超时 (#1312)。
-        _center, agent_user_id, agent_handle = await self._session_host_agent(session)
+    async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         if needs_place:
-            return await self.executor.precheck(session)
-        # 不碰文件、不跑命令的一轮不去租手 (结论 19，不变量 I2)：上面解析到的 分身
-        # 身份正是租手那条路也只从执行机之外取到的那一样东西，所以这一轮在所有执行
-        # 机离线时照样跑得起来。没有执行机的那一位用 ``None`` 说出来，下游据此走会
-        # 话自己的草稿区而不是一台工作机。
-        return None, agent_user_id, agent_handle
+            # 两条路共同的前提是会话机在线——会话本身跑在它上面。这一问只读机器，
+            # 分身留给执行机那一步解析：在这里也解析一次，就是每一轮多借一次连接、
+            # 多一次提交，而答案被丢掉。连接在这个 ``with`` 结束时就还了，不攥着
+            # 它去池里要第二条 (#1312 正是并发轮次一起开场互相等到超时)。
+            async with self._sessions() as db:
+                await self._resolve_session_host(db, session)
+            return await self.executor.precheck(session, needs_place=True)
+        # 不碰文件、不跑命令的一轮不去租手 (结论 19，不变量 I2)：分身身份租手那条
+        # 路也只从执行机之外取到，所以这一轮在所有执行机离线时照样跑得起来。
+        return await self._session_host_agent(session)
 
     async def discover(self, device_id=None):
         factory = self._session_factory or async_session_factory
@@ -186,7 +186,7 @@ class CentralChannel(DeviceChannel):
         turn_id=None,
         runtime_factory=None,
     ) -> AsyncIterator[PreparedSession]:
-        assert isinstance(precheck, tuple)
+        assert isinstance(precheck, Placement)
         project_id, topic_id = session.project_id, session.topic_id
         started_at = time.monotonic()
 
@@ -198,7 +198,7 @@ class CentralChannel(DeviceChannel):
                 (time.monotonic() - started_at) * 1000,
             )
 
-        executor_id, agent_user_id, agent_handle = precheck
+        executor_id, agent_user_id, agent_handle, rented = precheck
         factory = self._session_factory or async_session_factory
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
@@ -213,16 +213,13 @@ class CentralChannel(DeviceChannel):
             place = await sessions.place(
                 topic_id, session.agent_handle, harness=session.harness
             )
-            if place is not None:
-                # 没租手的一轮，草稿区开在这条会话自己的机器上，所以它该落在的那
-                # 台正是这行记着的那台——拿 ``None`` 去比会把每一轮都判成陌生位置,
-                # 于是每一轮都重放一次历史。
-                hands = executor_id if executor_id is not None else place.machine
-                if (
-                    place.resource_id != str(resource)
-                    or (place.lease or {}).get("device_id") != hands
-                ):
-                    place = None
+            if place is not None and (
+                place.resource_id != str(resource)
+                # 这一轮该落在哪台：租到手的是那双手，没租手的是这条会话自己的机
+                # 器——``precheck`` 已经解析过，两种情况给的都是这一位。
+                or (place.lease or {}).get("device_id") != executor_id
+            ):
+                place = None
             center = place.machine if place else settings.agent_session_device_id
             if not center or not self._hub.is_online(center):
                 raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
@@ -230,7 +227,7 @@ class CentralChannel(DeviceChannel):
             token = bind_resource_token(token, str(resource))
             # 搬历史是把会话文件从租来的那双手搬回会话机；没租手的一轮，它们本来
             # 就在会话机上，没有源可搬。
-            if executor_id is not None and place is None and launch.resume_session_id:
+            if rented and place is None and launch.resume_session_id:
                 await launch.execution.transfer_history(
                     self._hub,
                     executor_id,
@@ -239,15 +236,18 @@ class CentralChannel(DeviceChannel):
                     resource,
                     launch.resume_session_id,
                 )
+            # 记忆算谁的，只决定记忆算谁的：它跟着 ``memory_scope`` 走，不跟着
+            # 「这一轮租没租手」走。
+            if memory_scope == "personal":
+                values["CHEESE_MEMORY_SCOPE"] = "personal"
+                if owner:
+                    values["CHEESE_OWNER"] = owner
             # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区
             # 里：一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
-            if executor_id is None:
+            if not rented:
                 target = private_chat.scratch_target(
                     project_id, resource, device_id=center
                 )
-                values.update(CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal")
-                if owner:
-                    values["CHEESE_OWNER"] = owner
             else:
                 if center == executor_id:
                     raise ScreenSetupError("项目执行机器与中心会话机器需要分别配置")

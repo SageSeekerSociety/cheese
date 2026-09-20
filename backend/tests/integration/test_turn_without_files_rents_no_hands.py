@@ -27,7 +27,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -88,10 +88,11 @@ async def test_a_turn_that_needs_no_place_never_asks_for_hands(
     resolved = await central.precheck(session, needs_place=False)
 
     central.executor.precheck.assert_not_awaited()
-    machine, agent_user_id, agent_handle = resolved
-    # 没有执行机的那一位用 None 说出来；身份照样解析得到，它本来就不在执行机上。
-    assert machine is None
-    assert agent_user_id and looks_like_agent_handle(agent_handle)
+    # 「这一轮租没租手」就说在这一位上，下游读它；机器是这条会话自己的那台，
+    # 身份照样解析得到，它本来就不在执行机上。
+    assert resolved.rented is False
+    assert resolved.machine == "center"
+    assert resolved.agent_user_id and looks_like_agent_handle(resolved.agent_handle)
 
     # 同一条会话、同一台离线的工作机，要手的一轮照旧被挡下来。
     with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
@@ -112,12 +113,11 @@ async def test_a_channel_nobody_wraps_answers_the_question_too(
     channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
     session = SessionRef(project, topic, "cheese", "pi")
 
-    machine, agent_user_id, agent_handle = await channel.precheck(
-        session, needs_place=False
-    )
+    resolved = await channel.precheck(session, needs_place=False)
 
-    assert machine == "center"
-    assert agent_user_id and looks_like_agent_handle(agent_handle)
+    assert resolved.rented is False
+    assert resolved.machine == "center"
+    assert resolved.agent_user_id and looks_like_agent_handle(resolved.agent_handle)
 
     with pytest.raises(ScreenSetupError, match="没有在线的绑定设备"):
         await channel.precheck(session, needs_place=True)
@@ -135,7 +135,7 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=(None, 1, "cheese-x"),
+        precheck=Placement("center", 1, "cheese-x", rented=False),
     )
 
     opened = central._ensure_screen.await_args.kwargs
@@ -147,6 +147,116 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     central._hub.exec.assert_not_awaited()
 
 
+async def test_the_hands_decide_the_workspace_not_the_memory_scope(
+    client, room, monkeypatch
+):
+    """开在草稿区还是项目工作区，由「租到手没有」决定；记忆算谁的只管记忆。
+
+    今天「不租手」与「记忆算个人的」恰好是同一个比特，所以拿后者挑工作区还看不
+    出问题。第二种不租手的轮次一出现（平台自己起的那几轮就是），拿记忆范围去挑
+    的那条路就会在会话机上打开项目工作区——一个事实只该声明一次。
+    """
+    project, topic = room
+    hub: Any = SimpleNamespace(is_online=lambda device: True)
+    channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
+    channel._existing_screen = lambda *args: None
+    channel._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
+    session = SessionRef(project, topic, "cheese", "pi")
+    token = mint_scoped_token(project_id=str(project), topic_id=str(topic))
+
+    await channel.ensure_ready(
+        session=session,
+        token=token,
+        env={},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=None,
+        precheck=Placement("center", 1, "cheese-x", rented=False),
+    )
+
+    opened = channel._ensure_screen.await_args.kwargs
+    target = json.loads(opened["env"]["CHEESE_EXECUTION_TARGET"])
+    assert target["kind"] == "private"
+    assert target["device_id"] == "center"
+
+    # 反过来也要立得住：租到手的一轮，记忆算个人的也照样开在项目工作区里。
+    channel._ensure_screen.reset_mock()
+    await channel.ensure_ready(
+        session=session,
+        token=token,
+        env={},
+        memory_scope="personal",
+        owner="u",
+        turn_id=None,
+        launch=None,
+        precheck=Placement("worker", 1, "cheese-x", rented=True),
+    )
+
+    opened = channel._ensure_screen.await_args.kwargs
+    assert "CHEESE_EXECUTION_TARGET" not in opened["env"]
+    assert opened["env"]["CHEESE_MEMORY_SCOPE"] == "personal"
+
+
+class CountsConnections:
+    """数这条通道同时开着几条数据库连接。"""
+
+    def __init__(self, factory):
+        self._factory = factory
+        self.open = 0
+        self.peak = 0
+
+    def __call__(self):
+        return _Tracked(self, self._factory())
+
+
+class _Tracked:
+    def __init__(self, counter: CountsConnections, session):
+        self._counter = counter
+        self._session = session
+
+    async def __aenter__(self):
+        self._counter.open += 1
+        self._counter.peak = max(self._counter.peak, self._counter.open)
+        return await self._session.__aenter__()
+
+    async def __aexit__(self, *exc):
+        self._counter.open -= 1
+        return await self._session.__aexit__(*exc)
+
+
+async def test_the_session_machine_check_lets_go_before_asking_for_hands(
+    client, room, monkeypatch
+):
+    """要手的一轮不持着一条连接去要第二条 (#1312)。
+
+    会话机在线是两条路共同的前提，问它要开一条连接；执行机那一步自己还要开一条。
+    第一条不还就去要第二条，并发到池子大小的轮次一起开场就互相等到超时——那正是
+    #1312 修过的局面，房间里的每一轮都走这条路。
+    """
+    project, topic = room
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    counter = CountsConnections(client.test_factory)
+    hub: Any = SimpleNamespace(is_online=lambda device: True)
+    executor = DeviceChannel(hub=hub, session_factory=counter)
+    central: Any = CentralChannel(executor)
+    held_when_asked: list[int] = []
+
+    async def hands(session, *, needs_place):
+        held_when_asked.append(counter.open)
+        return Placement("worker", 1, "cheese-x", rented=True)
+
+    executor.precheck = hands
+
+    resolved = await central.precheck(
+        SessionRef(project, topic, "cheese", "claude-code"), needs_place=True
+    )
+
+    assert resolved.rented is True
+    assert held_when_asked == [0], "问执行机的时候手里不该还攥着一条连接"
+    assert counter.peak == 1
+
+
 class HandsRefused(StubChannel):
     """一条只有在这一轮要手的时候才拿得出机器的通道。"""
 
@@ -156,7 +266,7 @@ class HandsRefused(StubChannel):
         super().__init__()
         self.asked: list[bool] = []
 
-    async def precheck(self, session, *, needs_place=True):
+    async def precheck(self, session, *, needs_place):
         self.asked.append(needs_place)
         if needs_place:
             raise ScreenSetupError("没有在线的绑定设备可运行本轮")

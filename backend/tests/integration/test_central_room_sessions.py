@@ -25,7 +25,7 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
@@ -197,7 +197,7 @@ async def test_a_harness_without_an_executor_is_refused_by_name(
             token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
             env={},
             launch=PiLaunch(system_prompt="System", model="glm-5.2"),
-            precheck=await central.precheck(ref(project, topic)),
+            precheck=await central.precheck(ref(project, topic), needs_place=True),
         )
 
 
@@ -271,7 +271,7 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=launch,
-        precheck=await central.precheck(ref(project, topic)),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     assert central._hub.exec.await_args.kwargs["stdin"] == "FIXTURE_EXECUTOR_BOOTSTRAP"
@@ -302,7 +302,7 @@ async def test_stopped_previous_executor_http_failure_takes_installation_path(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(ref(project, topic)),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -334,7 +334,7 @@ async def test_old_executor_process_takes_release_bootstrap(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(ref(project, topic)),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -386,7 +386,7 @@ async def test_running_executor_prepares_without_python_launch(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(ref(project, topic)),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -435,7 +435,7 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(ref(project, topic)),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -463,7 +463,7 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
 ):
     project, topic = room
     central = channel(client, monkeypatch)
-    precheck = await central.precheck(ref(project, topic))
+    precheck = await central.precheck(ref(project, topic), needs_place=True)
     screen = await central.ensure_ready(
         session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
@@ -485,10 +485,10 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     assert place.machine == "center"
     assert place.lease == target
     monkeypatch.setattr(settings, "agent_session_device_id", "another-host")
-    assert await central.precheck(ref(project, topic)) == precheck
+    assert await central.precheck(ref(project, topic), needs_place=True) == precheck
     central._hub.is_online = lambda device: device == "executor"
     with pytest.raises(ScreenSetupError, match="未连接"):
-        await central.precheck(ref(project, topic))
+        await central.precheck(ref(project, topic), needs_place=True)
 
 
 @pytest.mark.anyio
@@ -515,7 +515,7 @@ async def test_a_lease_on_another_executor_is_rented_again_not_refused(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=("executor", 1, "agent"),
+        precheck=Placement("executor", 1, "agent", rented=True),
     )
     central._hub.exec.assert_awaited_once()
     place = await session_place(client.test_factory, topic)
@@ -552,7 +552,7 @@ async def test_executor_readiness_reuses_bootstrap_reply(
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'} if has_environment else {},
         launch=ClaudeLaunch("System"),
-        precheck=("executor", 1, "agent"),
+        precheck=Placement("executor", 1, "agent", rented=True),
     )
     assert [item.args[1] for item in call.await_args_list] == (
         ["context_fs"] if running else ["ping", "context_fs"]
@@ -581,7 +581,7 @@ async def test_running_executor_does_not_hide_failed_environment(
             token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
             env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
             launch=ClaudeLaunch("System"),
-            precheck=("executor", 1, "agent"),
+            precheck=Placement("executor", 1, "agent", rented=True),
         )
     status.assert_awaited_once()
     ping.assert_not_awaited()

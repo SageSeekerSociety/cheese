@@ -22,6 +22,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
 
@@ -69,7 +70,7 @@ async def _open(central, project, topic, agent, executor, *, resume=None):
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System", resume_session_id=resume),
-        precheck=(executor, 1, agent),
+        precheck=Placement(executor, 1, agent, rented=True),
     )
 
 

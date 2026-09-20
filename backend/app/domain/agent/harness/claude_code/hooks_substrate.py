@@ -1605,7 +1605,11 @@ class ClaudeCodeRuntime:
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
         try:
-            precheck = await self._channel.precheck(session)
+            # 平台自己起的那几轮（活动消化、定期巡检、一页纸总结）今天照旧租手：
+            # 它们跑在项目那台工作机的根话题沙箱里，不租手会把它们搬到会话机的草
+            # 稿区去，那是另一件事，不在 P21 里。写出来是为了让它看得见——这里没
+            # 有默认值可继承。
+            precheck = await self._channel.precheck(session, needs_place=True)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc),

@@ -387,6 +387,10 @@ class CodexRuntime:
                     memory_scope,
                     owner,
                     agent_handle,
+                    # 平台自己起的那几轮走这条入口，今天照旧租手：它们跑在项目工
+                    # 作机的根话题沙箱里。写出来是为了让这条老路看得见，改不改是
+                    # 另一件事 (P21 只动房间里的那一轮)。
+                    needs_place=True,
                 ),
                 work_id=work,
                 on_mark=lambda _: None,

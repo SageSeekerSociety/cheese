@@ -4,11 +4,10 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -51,6 +50,9 @@ class CloudChannel(DeviceChannel):
 
     name = "cloud"
     provisions_machine = True
+    # 要手要不到的那一句。要不要手、要不到就停，那条分支在基类上只有一份 —— 这
+    # 条通道改的只有供给和这一句话。
+    no_machine_message = "Cloud 机器尚未完成连接"
 
     def __init__(
         self,
@@ -78,14 +80,6 @@ class CloudChannel(DeviceChannel):
         opened. Inverting the base channel's answer is the whole of it — see
         ``DeviceChannel.discover`` for what a topic recovered by both costs."""
         return supply is Supply.cloud
-
-    def _sessions(self) -> AsyncSession:
-        factory = self._session_factory
-        if factory is None:
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        return factory()
 
     async def prepare_topic(
         self,
@@ -136,17 +130,3 @@ class CloudChannel(DeviceChannel):
             agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
             await session.commit()
             return lease.device_id, agent.id, agent.username
-
-    async def precheck(
-        self, session: SessionRef, *, needs_place: bool = True
-    ) -> tuple[str, int, str]:
-        if not needs_place:
-            # 不租手的一轮不开云机器：它落在这条会话自己的机器上，和自托管那条
-            # 通道同一个答案。pi 也跑在这条通道上，所以这一问在这里同样要答。
-            return await self._session_host_agent(session)
-        resolved = await self._resolve_device_agent(
-            session.project_id, session.topic_id
-        )
-        if resolved is None:
-            raise ScreenSetupError("Cloud 机器尚未完成连接")
-        return resolved

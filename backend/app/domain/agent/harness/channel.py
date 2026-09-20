@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
@@ -27,6 +27,26 @@ class ScreenSetupError(Exception):
     def __init__(self, message: str, *, failure_code: str | None = None) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+
+
+class Placement(NamedTuple):
+    """``precheck`` 的答案：这一轮落在哪台机器上、以这个房间的哪个分身，以及这台
+    机器是不是为这一轮租来的一双手 (结论 19)。
+
+    ``rented`` 是「这一轮要不要一双手」这一问的答案本身，落在解析的产物上，下游
+    读它而不是各自再推一遍：没租手的一轮跑在这条会话自己的草稿区里，租到手的一轮
+    跑在项目的工作区里。房间是不是私聊、记忆算谁的，都是另外的事实，谁也不兼这一
+    份差。
+
+    ``machine`` 在中心通道上是租来的那台执行机，在别的通道上就是开屏的那一台；
+    没租手时三条通道给的都是这条会话自己的机器。哪一种都解析得出一台在线的机器，
+    解析不出来这一轮就已经带着原因停了，所以这里没有「没有机器」这一档。
+    """
+
+    machine: str
+    agent_user_id: int
+    agent_handle: str
+    rented: bool
 
 
 class Channel:
@@ -158,9 +178,7 @@ class Channel:
         """Drop whatever this channel remembers about a topic being torn down."""
         del topic_id
 
-    async def precheck(
-        self, session: SessionRef, *, needs_place: bool = True
-    ) -> object:
+    async def precheck(self, session: SessionRef, *, needs_place: bool) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the
         hook queue is claimed — a turn that cannot run at all must never touch
         the router. Raise ``ScreenSetupError`` to end the turn with a clean
@@ -169,10 +187,12 @@ class Channel:
         resolves its pinned device here).
 
         ``needs_place`` is this TURN's answer to 「要不要一双手」 (结论 19).
-        Every channel that resolves a work machine has to answer it, because a
-        turn that touches no file must not be refused for a work machine being
-        offline (不变量 I2) — it runs on the session's own machine instead. This
-        base resolves nothing, so it has nothing to decline."""
+        It has no default: every caller says which kind of turn this is, so a
+        new one cannot inherit 「租」 by saying nothing. Every channel that
+        resolves a work machine has to answer it, because a turn that touches no
+        file must not be refused for a work machine being offline (不变量 I2) —
+        it runs on the session's own machine instead. This base resolves
+        nothing, so it has nothing to decline."""
         del needs_place
         return None
 

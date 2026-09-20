@@ -13,7 +13,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.codex.launch import script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
@@ -57,7 +57,8 @@ class CodexChannel:
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
         precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
-        agent = precheck[2]
+        assert isinstance(precheck, Placement)
+        agent = precheck.agent_handle
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
         metadata = {}
