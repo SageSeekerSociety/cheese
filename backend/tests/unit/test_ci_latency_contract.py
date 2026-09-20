@@ -189,3 +189,25 @@ def test_deploy_bounds_cache_without_making_every_build_cold():
     assert "--max-used-space 6GB" in prune
     assert "--min-free-space 10GB" in deploy
     assert "docker builder prune -af >/dev/null" not in deploy
+
+
+def test_a_layer_can_hit_its_own_ceiling_before_the_job_hits_its_own():
+    """The three layer steps exist so a wedge names the layer it is in. A
+    per-step ceiling only ever fires if the job can still be alive when it does:
+    ceilings adding up past the job's own leave the last layer — integration,
+    the likeliest place to wedge — killed by the job instead, which reports as
+    "something hung somewhere in the suite" and is the failure the split was
+    made to stop. So the job's budget has to hold all three plus the setup steps
+    above them, which carry no ceiling of their own.
+    """
+    test_job = load_workflow("test.yml")["jobs"]["test"]
+    layers = [
+        step_named(test_job, f"Run the {layer} layer")["timeout-minutes"]
+        for layer in ("pure", "contract", "integration")
+    ]
+
+    assert sum(layers) < test_job["timeout-minutes"], (
+        f"the layer steps can take {sum(layers)} minutes between them and the"
+        f" job dies at {test_job['timeout-minutes']} — the last layer's ceiling"
+        " can never fire, and setup still has to fit as well"
+    )
