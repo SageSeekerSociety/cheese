@@ -1187,9 +1187,8 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
-        # What the running sessions have said about their child agents, per room:
-        # agent id -> still running / finished. Only the harness's own lifecycle
-        # events can answer this. They fire in the session's process and carry
+        # Which child agents the running sessions say are still doing something,
+        # per room. Only the harness's own lifecycle events can answer this. They fire in the session's process and carry
         # the child's id, while every tool call goes through the MCP transport,
         # whose request has no caller identity on it at all — which is why a
         # worker that only runs tools leaves no trace of its own. The board's
