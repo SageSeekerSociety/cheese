@@ -64,6 +64,19 @@ class DeviceCallError(RuntimeError):
     """
 
 
+class DeviceNotReady(DeviceCallError):
+    """The link is up, but this machine cannot serve calls yet.
+
+    A connector that has just dialled in finishes updating itself before it can
+    run anything, and a call that arrives in that window has nothing to reach.
+    It is the same standing as the machine being away — the caller's next poll,
+    a second or two later, finds it ready — but as a bare RuntimeError it was an
+    unhandled 500 and one alert per release: 「Device connector must finish
+    updating before execution」 arrived that way at 01:47 UTC on 2026-09-20,
+    seconds after the owner was replaced and the fleet re-attached.
+    """
+
+
 def _read_a_failure_nobody_awaited(future: asyncio.Future[Any]) -> None:
     """A call registers its future and then writes to the link; when the write
     itself finds the link dead, ``drop_transport`` fails that very future and
@@ -595,7 +608,10 @@ class DeviceHub:
             raise DeviceOffline(device_id)
         identifier = trace_id or "execution-" + uuid.uuid4().hex
         if not device.executor:
-            raise RuntimeError("Device connector must finish updating before execution")
+            raise DeviceNotReady(
+                f"device {device_id} is still updating its connector; "
+                "execution is available once it reports ready"
+            )
         future = asyncio.get_running_loop().create_future()
         device.executor_pending[identifier] = (future, bytearray())
         # The stage lines are DEBUG, and `device_error` below is not. They carry
