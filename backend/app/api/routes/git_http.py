@@ -14,6 +14,7 @@ history, deletes and conflict handling badly; with this the agent uses plain
 `git push`.
 """
 
+import asyncio
 import os
 import subprocess
 import uuid
@@ -105,6 +106,16 @@ async def _cgi(
     The body is read whole rather than streamed: a project repo here is small,
     and streaming both ways through a subprocess is a lot of machinery to get
     subtly wrong. If repos grow, this is the place to revisit.
+
+    It runs in a worker thread because `subprocess.run` does not yield: it waits
+    for the child and reads its output with the event loop held, and this
+    process runs everything else on that one loop. A clone of a project that had
+    grown to 169 MB took 3.7 s, and for those 3.7 s every other request in the
+    backend was frozen — measured on dev at 02:10:22 UTC on 2026-09-20, where
+    the loop-lag watchdog logged a 3.6 s stall in the same second the request
+    log recorded that clone. What the stall surfaced as elsewhere was
+    `Timeout reading from …:6379`: a Redis read whose answer had arrived and
+    which nobody was free to take, at a 5 s client timeout.
     """
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -125,7 +136,8 @@ async def _cgi(
     if encoding:
         env["HTTP_CONTENT_ENCODING"] = encoding
 
-    process = subprocess.run(
+    process = await asyncio.to_thread(
+        subprocess.run,
         [_backend_path()],
         input=body or b"",
         capture_output=True,
