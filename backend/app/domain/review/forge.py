@@ -326,6 +326,7 @@ class PlatformForge(Forge):
 #: （#363 自己的判据）。
 FORGES: tuple[type[Forge], ...] = (GitHubForge, ExternalRemoteForge, PlatformForge)
 
+
 def _is_github_proposal(proposal_url: str | None) -> bool:
     """这条提案页链接是不是 GitHub 上的一个 PR。"""
     if not proposal_url:

@@ -677,10 +677,9 @@ def test_accepting_pushes_the_trunk_back_to_the_projects_own_remote(
     monkeypatch.setattr(
         ws,
         "push_branch",
-        lambda pid, branch, token, *, remote_branch=None: pushed.append(
-            (branch, remote_branch)
-        )
-        or branch,
+        lambda pid, branch, token, *, remote_branch=None: (
+            pushed.append((branch, remote_branch)) or branch
+        ),
     )
 
     pid = _make_project(client)
@@ -722,10 +721,9 @@ def test_an_upstream_whose_trunk_is_master_gets_its_master_not_a_new_main(
     monkeypatch.setattr(
         ws,
         "push_branch",
-        lambda pid, branch, token, *, remote_branch=None: pushed.append(
-            (branch, remote_branch)
-        )
-        or branch,
+        lambda pid, branch, token, *, remote_branch=None: (
+            pushed.append((branch, remote_branch)) or branch
+        ),
     )
 
     pid = _make_project(client)

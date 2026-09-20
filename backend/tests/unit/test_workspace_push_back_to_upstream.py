@@ -57,7 +57,9 @@ def _teacher_repo(tmp_path: Path, default_branch: str) -> Path:
     subprocess.run(["git", "clone", "-q", str(bare), str(seed)], check=True)
     (seed / "README.md").write_text("课程仓库\n", encoding="utf-8")
     _run(seed, "add", "-A")
-    _run(seed, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "seed")
+    _run(
+        seed, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "seed"
+    )
     _run(seed, "push", "-q", "origin", f"HEAD:refs/heads/{default_branch}")
     return bare
 
