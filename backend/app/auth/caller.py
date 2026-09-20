@@ -19,9 +19,8 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
+from app.auth.project_access import may_read_project
 from app.core.tokens import verify_session_token
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
 from app.domain.user.repositories import UserRepository
 
 
@@ -53,11 +52,13 @@ async def caller_handle(request: Request, session: AsyncSession) -> str | None:
 async def may_access_project(
     request: Request, session: AsyncSession, project_id: uuid.UUID
 ) -> bool:
-    """Whether the caller is a member or the owner of this project."""
-    handle = await caller_handle(request, session)
-    if not handle:
-        return False
-    if await MemberRepository(session).get(project_id=project_id, user_handle=handle):
-        return True
-    project = await ProjectRepository(session).get(project_id)
-    return project is not None and project.owner_handle == handle
+    """Whether the caller may read this project's conversations.
+
+    The claim set itself lives in ``app.auth.project_access`` — one answer for
+    every route that reads a project's conversations, rather than one per route.
+    This function is only the HTTP-shaped half: pull the credential off the
+    request, then ask.
+    """
+    return await may_read_project(
+        session, project_id=project_id, handle=await caller_handle(request, session)
+    )

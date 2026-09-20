@@ -16,8 +16,7 @@ from starlette.websockets import WebSocket
 
 from app.core.config import GATEWAY_MOUNT
 from app.core.tokens import verify_session_token
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
+from app.auth.project_access import may_read_project
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 
@@ -95,10 +94,9 @@ async def may_view_topic(
     project_id = topic.project_id
     if project_id is None:
         return False
-    if await MemberRepository(session).get(project_id=project_id, user_handle=handle):
-        return True
-    project = await ProjectRepository(session).get(project_id)
-    return project is not None and project.owner_handle == handle
+    return await may_read_project(
+        session, project_id=project_id, handle=handle
+    )
 
 
 def attach_cookie(

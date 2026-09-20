@@ -34,8 +34,7 @@ from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
 from app.domain.identity.services import IdentityService
-from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
+from app.auth.project_access import may_read_project
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
@@ -509,26 +508,11 @@ class ActorResolver:
         accepted a team invitation minutes earlier got 200 on
         ``/projects/{id}`` and 403 on ``/topics?project_id=``.
 
-        Team membership is keyed by user id while every other authorization key
-        is the handle string (see ``_recover_numeric_handle``), so the handle is
-        resolved to its user here rather than trusting ``actor.user_id`` — a
-        session token carries none."""
-        if await MemberRepository(self._session).get(
-            project_id=project_id, user_handle=handle
-        ):
-            return True
-        project = await ProjectRepository(self._session).get(project_id)
-        if project is None:
-            return False
-        if project.owner_handle == handle:
-            return True
-        if project.team_id is None:
-            return False
-        user = await UserRepository(self._session).get_by_username(handle)
-        if user is None:
-            return False
-        return await TeamRepository(self._session).is_team_member(
-            project.team_id, user.id
+        The claim set itself now lives in ``app.auth.project_access`` so that
+        every route reading a project's conversations asks the same question —
+        this method is the in-request form of it."""
+        return await may_read_project(
+            self._session, project_id=project_id, handle=handle
         )
 
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
