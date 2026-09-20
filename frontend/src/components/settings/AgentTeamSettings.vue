@@ -185,7 +185,7 @@ async function confirmDeactivate() {
 </script>
 
 <template>
-  <section class="page-section">
+  <section class="page-section agent-team">
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-robot-outline</v-icon>
       <span class="page-section-title">AI 队友</span>

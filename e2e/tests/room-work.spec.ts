@@ -61,13 +61,14 @@ test.describe('房间里派出去的活', () => {
     await expect(page.locator('.panel-card')).toBeVisible();
   });
 
-  test('侧栏的「看板」是一直在的入口，进去是整个项目的视角', async ({ page }) => {
+  test('侧栏上的项目名就是回看板的入口，进去是整个项目的视角', async ({ page }) => {
     const stamp = Date.now();
     const roomId = await freshRoom(page, `跨房间 ${stamp}`);
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
-    // 从侧栏那条常驻入口进去，而不是直接敲地址：这一条要钉的一半正是「找得到」。
-    await page.locator('.pinned-row').filter({ hasText: '看板' }).first().click();
+    // 从侧栏那个常驻入口进去，而不是直接敲地址：这一条要钉的一半正是「找得到」。
+    // 看板就是项目首页，所以侧栏上点项目名就到，不再单占一行。
+    await page.locator('.rail-header__home').click();
     // 路由名和路径仍是 running：改地址会打断所有已经发出去的链接，改的只是这块
     // 界面叫什么。
     await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}\/running/);
