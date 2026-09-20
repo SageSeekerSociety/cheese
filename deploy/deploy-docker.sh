@@ -695,6 +695,15 @@ ensure_device_connection_owner
 reload_api_front_routes
 check_session_base_survives_release
 
+# The repo server, before the frontend that proxies to it. Not one of the
+# optional services below: the front nginx sends every machine fetch and push
+# to `git:8084`, so a deploy that leaves it down answers 502 on the only route
+# a machine has to the code — and it does it quietly, because a bare `git`
+# resolves on a box whose resolver answers for unqualified names, so nginx
+# starts happily and proxies to a stranger instead of refusing its config.
+log "bringing up git…"
+dc up -d git || fail "compose up git failed; machines cannot fetch or push"
+
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   [ -d "$ACTIVE_BACKEND_DIR" ] \
     || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
