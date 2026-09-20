@@ -2475,12 +2475,7 @@ class ChatService:
                 if payload is not None:
                     if state is not None:
                         state.assistant_count += 1
-                    frame = {
-                        "type": "assistant_block"
-                        if payload["kind"] == "message"
-                        else "event_block",
-                        "block": payload,
-                    }
+                    frame = {"type": "event_block", "block": payload}
         if frame is not None:
             await broker.publish(channel, frame)
             if frame["type"] in ("assistant_block", "event_block", "todo"):
@@ -4657,7 +4652,14 @@ class ChatService:
         # on what is producing the output, not on the machine underneath it.
         runtime = runtime_for(provider)
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-        skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
+        # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
+        # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
+        # 系统提示词里没有 chat_send 的房间：终端里答完而没有发布，房间是空的。
+        skills = (
+            "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
+            if is_private
+            else self._skills
+        )
         system_prompt = build_system_prompt(
             self._base_prompt,
             skills,

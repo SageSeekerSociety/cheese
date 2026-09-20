@@ -66,6 +66,10 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
     # 一条发布路径 (结论 19): the private chat is told what a room is told, and
     # its terminal reply lands in activity exactly as a room's does.
     assert "final responses are not published to chat" in screen.prompts[0]
+    # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
+    # prompt like any room, and still told what is particular to a private chat.
+    assert "chat_send" in screen.last_system_prompt
+    assert ("cheese_remember" in screen.last_system_prompt) is private
     assert not (project_machine if private else central).prompts
     assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
     async with factory() as session:
