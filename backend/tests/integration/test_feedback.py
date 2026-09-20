@@ -18,7 +18,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.identity.handles import looks_like_agent_handle
 from tests.integration.conftest import session_auth_headers
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
@@ -338,7 +338,6 @@ def test_a_proposal_lands_as_a_card_that_a_person_then_sends(client):
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
     token = mint_scoped_token(project_id=project, topic_id=topic)
-    agent = topic_agent_handle(topic)
 
     proposed = _propose(client, topic, token)
     assert proposed.status_code == 200, proposed.text
@@ -348,7 +347,14 @@ def test_a_proposal_lands_as_a_card_that_a_person_then_sends(client):
         f"/topics/{topic}/feedback-proposals", headers=session_auth_headers(REPORTER)
     ).json()["data"]
     assert [c["block_id"] for c in live] == [block_id]
-    assert live[0]["author_handle"] == agent
+    # Which agent is credited comes off the card, not off a derivation: an
+    # identity belongs to the agent (`agent_instance_handle`), and a room no
+    # longer names one — a test that recomputes the handle would be testing the
+    # naming rule rather than this route. What matters here is that the author is
+    # an agent and is not the person who filed it.
+    agent = live[0]["author_handle"]
+    assert looks_like_agent_handle(agent)
+    assert agent != REPORTER
 
     sent = client.post(
         f"/topics/{topic}/feedback-proposals/{block_id}/accept",
