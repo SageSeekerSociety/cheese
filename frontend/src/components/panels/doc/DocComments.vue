@@ -150,6 +150,7 @@ defineExpose({ open, locate })
         <v-textarea
           ref="input"
           v-model="text"
+          autocomplete="off"
           variant="plain"
           rows="2"
           auto-grow

@@ -11,10 +11,15 @@ Protocol (unchanged frontend contract):
   connect → /api/topics/{id}/chat?token=<session token>   (required)
   client → {"type":"message","content": str, "summon": bool,
             "attachments"?: [{"path": str, "mime": str}]}
+  client → {"type":"ping"}  →  server → {"type":"pong"}
   server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / error / done
-(No token streaming: 芝士 speaks in discrete assistant_block messages — one per
-completed SDK AssistantMessage — Slack-style.)
+(The ping is the browser's liveness probe. A socket can sit OPEN for minutes
+after its path stopped carrying frames — the browser only learns when TCP
+gives up — so the client asks every few seconds and replaces the socket when
+no answer comes; the reply is the whole point, it carries nothing.)
+(No token streaming: explicit chat publications arrive as assistant_block
+messages; terminal output arrives as activity event_block records.)
 
 The `?token=` is not optional and a socket the connect check refuses is closed
 (1008) after one `error` frame carrying `code: auth_required` (no token),
@@ -34,10 +39,12 @@ the frame itself stays JSON text, no binary over the socket.
 
 import asyncio
 import contextlib
+import time
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service, get_work_runner
@@ -71,6 +78,14 @@ async def chat(
         async with send_lock:
             with contextlib.suppress(WebSocketDisconnect, RuntimeError):
                 await websocket.send_json(frame)
+                if frame.get("type") in {"user_block", "assistant_block"}:
+                    _log.info(
+                        "chat_message_frame_sent",
+                        topic=str(topic_id),
+                        frame_type=frame["type"],
+                        block_id=(frame.get("block") or {}).get("id"),
+                        sent_unix_ms=time.time() * 1000,
+                    )
 
     token = websocket.query_params.get("token") or ""
     conn_actor: Actor
@@ -135,8 +150,18 @@ async def chat(
 
         relay_task = asyncio.create_task(relay(queue))
         try:
-            while True:
+            # A send that finds the peer gone closes the socket on our side and
+            # is swallowed by `send` above, so nothing raises: the next read is
+            # what notices — and a read on a socket already closed is answered
+            # with a RuntimeError, not a disconnect. That is uvicorn's
+            # 「Exception in ASGI application」 for a browser that merely went
+            # away (three on 2026-09-18, each one an alert); the state is the
+            # fact to check, and it ends the loop the way a disconnect does.
+            while websocket.application_state == WebSocketState.CONNECTED:
                 payload = await websocket.receive_json()
+                if payload.get("type") == "ping":
+                    await send({"type": "pong"})
+                    continue
                 if payload.get("type") != "message":
                     await send({"type": "error", "message": "unsupported message type"})
                     continue
@@ -174,8 +199,14 @@ async def chat(
                     continue
                 # Await only the short durable receive. Any model work is still
                 # background-owned by AgentWorkRunner and survives this socket.
+                received_at = time.monotonic()
+                _log.info(
+                    "chat_message_received",
+                    topic=str(topic_id),
+                    received_unix_ms=time.time() * 1000,
+                )
                 try:
-                    await runner.submit_message(
+                    turn_id = await broker.receive_message(
                         chat_service,
                         topic_id,
                         author=author,
@@ -185,6 +216,12 @@ async def chat(
                         attachments=attachments,
                         provision_actor=conn_actor,
                         client_id=client_id,
+                    )
+                    _log.info(
+                        "chat_message_submitted",
+                        topic=str(topic_id),
+                        turn=str(turn_id),
+                        duration_ms=(time.monotonic() - received_at) * 1000,
                     )
                 except AppError as exc:
                     await send({"type": "error", "message": exc.message})

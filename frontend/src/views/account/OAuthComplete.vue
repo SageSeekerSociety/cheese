@@ -68,7 +68,10 @@
         <v-form ref="createFormRef" @submit.prevent="handleCreateAccount">
           <div class="mb-4">
             <v-text-field
+              id="field-createUsername"
               v-model="createUsername"
+              autocomplete="username"
+              name="createUsername"
               label="用户名"
               variant="outlined"
               :rules="usernameRules"
@@ -78,7 +81,10 @@
             />
 
             <v-text-field
+              id="field-createNickname"
               v-model="createNickname"
+              autocomplete="nickname"
+              name="createNickname"
               label="昵称"
               variant="outlined"
               :rules="nicknameRules"
@@ -102,7 +108,10 @@
             <!-- 密码输入字段 -->
             <div v-if="setPassword" class="mb-4">
               <v-text-field
+                id="field-createPassword"
                 v-model="createPassword"
+                autocomplete="new-password"
+                name="createPassword"
                 label="密码"
                 type="password"
                 variant="outlined"
@@ -113,7 +122,10 @@
               />
 
               <v-text-field
+                id="field-confirmPassword"
                 v-model="confirmPassword"
+                autocomplete="new-password"
+                name="confirmPassword"
                 label="确认密码"
                 type="password"
                 variant="outlined"
@@ -143,7 +155,10 @@
         <v-form ref="bindFormRef" @submit.prevent="handleBindAccount">
           <div class="mb-4">
             <v-text-field
+              id="field-bindUsername"
               v-model="bindUsername"
+              autocomplete="username"
+              name="bindUsername"
               label="用户名"
               variant="outlined"
               :rules="usernameRules"
@@ -152,7 +167,10 @@
             />
 
             <v-text-field
+              id="field-bindPassword"
               v-model="bindPassword"
+              autocomplete="current-password"
+              name="bindPassword"
               label="密码"
               type="password"
               variant="outlined"

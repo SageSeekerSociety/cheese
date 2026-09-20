@@ -20,6 +20,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Enum,
     ForeignKey,
@@ -90,23 +91,14 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # WHICH agent works here. NULL = the project's default, so a topic nobody
-    # chose an agent for still resolves without carrying a copy of the default
-    # around (and follows the project when the default changes).
-    #
-    # Changing it destroys nothing: a conversation is keyed by (topic, agent) in
-    # `agent_sessions`, so the new agent looks up a key with no row and starts
-    # fresh while the old one's row stays where it is.
-    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("agent_instances.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
     # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
-    # NULL = project sticky, then the owning team's default. Switchable only
+    # NULL = explicit project default, then the deployment default. Switchable only
     # until the topic has run — i.e. until it has an `agent_sessions` row — after
     # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # A room keeps its script revision when project settings change.
+    environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).
@@ -137,6 +129,49 @@ class Topic(UuidPk, Timestamps, Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # When the raw Claude session files from this topic's device home last
+    # reached the platform (topic/transcripts.py). Null until they have; a home
+    # is only deleted after this is set or when it never ran a session.
+    transcripts_archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cleanup_due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # Session ownership is independent of the room's execution-device binding.
+    # The resource UUID pins both locations for recovery and delayed controls.
+    session_placement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+
+class RoomCleanup(UuidPk, Timestamps, Base):
+    __tablename__ = "room_cleanups"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    resource_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    state: Mapped[str] = mapped_column(String(16), default="pending")
+    resources: Mapped[list] = mapped_column(JSON, default=list)
+    last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Which sweep is working on this cleanup, until when (see retire.py).
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lease_holder: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class RawTranscript(UuidPk, Timestamps, Base):
+    """One original file generation; chunks and identity survive room cleanup."""
+
+    __tablename__ = "raw_transcripts"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    source: Mapped[str] = mapped_column(String(1024))
+    size: Mapped[int] = mapped_column(BigInteger, default=0)
+    chunks: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class TopicReadState(UuidPk, Timestamps, Base):

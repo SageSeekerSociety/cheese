@@ -14,9 +14,6 @@ class TopicCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     parent_id: uuid.UUID | None = None
     created_by: str | None = None
-    # Which agent works here. Omitted = the project's default, and it keeps
-    # following that default rather than freezing a copy of it now.
-    agent_instance_id: uuid.UUID | None = None
 
 
 class TopicOut(BaseModel):
@@ -42,9 +39,9 @@ class TopicOut(BaseModel):
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
+    cleanup_due_at: datetime | None = None
+    can_archive: bool = False
     upgraded_from_block_id: uuid.UUID | None = None
-    # NULL = this topic uses the project's default agent.
-    agent_instance_id: uuid.UUID | None = None
     # 本轮是否在跑 (AgentWorkRunner, in-memory — separate from `status`/归档: a topic
     # can be "active" and idle, or "active" and mid-turn). False unless the
     # caller explicitly fills it in (see list_topics/get_topic) — the ORM model
@@ -76,6 +73,7 @@ class TopicOut(BaseModel):
 
 class UpgradeBlockIn(BaseModel):
     created_by: str | None = None
+    reviewer_handle: str | None = Field(default=None, max_length=64)
 
 
 class SplitIn(BaseModel):
@@ -84,16 +82,14 @@ class SplitIn(BaseModel):
     # 任务简报: what the 分身 is expected to do, in the splitter's own words.
     # Preset as the child's living doc so the kickoff turn starts informed.
     brief: str | None = None
-    # 这条活要碰哪些路径. Separate from `brief` on purpose: the brief is written
-    # once and can never be changed, and a claim always grows as work reaches
-    # files nobody predicted. A path ending in `/` is a directory.
-    paths: list[str] = Field(default_factory=list)
-
-
-class ClaimIn(BaseModel):
-    """Add to what this piece of work says it will touch (`cheese claim`)."""
-
-    paths: list[str] = Field(default_factory=list)
+    base_task_id: uuid.UUID | None = None
+    # 谁来验收这条活 (#718 设置表「任务默认 reviewer」). Omitted means the
+    # project's default — resolved at dispatch and STORED, not re-derived at
+    # 递卡: the setting can change between the two, and the person a piece of
+    # work was handed to is a fact about that moment.
+    reviewer_handle: str | None = Field(default=None, max_length=64)
+    reporter_handle: str | None = Field(default=None, max_length=64)
+    contributor_handles: list[str] = Field(default_factory=list)
 
 
 class CheckResultIn(BaseModel):
@@ -108,19 +104,26 @@ class CheckResultIn(BaseModel):
 
 
 class LockIn(BaseModel):
-    """Take or give back one of the room's two locks.
+    """Acquire or release the room's heavy-operation lane."""
 
-    `file` names one path and guards a whole-file overwrite; `heavy` is the
-    room's single lane for test runs, dependency installs and dev servers, and
-    names nothing.
-    """
-
-    kind: str = Field(pattern="^(file|heavy)$")
-    resource: str = ""
+    kind: str = Field(pattern="^heavy$")
+    task_id: uuid.UUID
+    resource: str = Field(default="", max_length=0)
 
 
 class ConclusionIn(BaseModel):
-    conclusion: str = Field(min_length=1)
+    """收卡. Empty means "the worker's last word stands" — the platform already
+    wrote it on the card, so the room usually has nothing to add."""
+
+    conclusion: str = ""
+    reporter_handle: str | None = Field(default=None, max_length=64)
+    contributor_handles: list[str] | None = None
+
+
+class BindSubagentIn(BaseModel):
+    """认领: which worker in this room's session is doing this piece of work."""
+
+    agent_id: str = Field(min_length=1, max_length=64)
 
 
 class RelayIn(BaseModel):
@@ -142,24 +145,3 @@ class DocEditIn(BaseModel):
     # writer with no version is a writer about to erase whatever it did not
     # read. Everything that writes here has just read the doc.
     expected_version: int
-
-
-class BackgroundTaskIn(BaseModel):
-    """`cheese await` registering a command it is about to run in its sandbox."""
-
-    command: str = Field(min_length=1, max_length=4000)
-    label: str = Field(default="", max_length=120)
-    # Wall-clock ceiling the sandbox-side child enforces; the wake token is
-    # minted to outlive it. Bounds are re-checked in awaited_tasks.register.
-    timeout_s: int = 3600
-    # Where the child is writing the command's full output, so the wake can point
-    # at it (the tail alone is bounded).
-    log_path: str = Field(default="", max_length=500)
-
-
-class BackgroundTaskDoneIn(BaseModel):
-    """The detached child reporting how the command ended."""
-
-    exit_code: int
-    tail: str = ""
-    duration_s: float = 0.0

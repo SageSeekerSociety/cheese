@@ -118,7 +118,7 @@ const handleSubmitWithReapproval = async (formData: any) => {
 }
 
 const navigateToDetail = () => {
-  router.push({ name: 'TasksDetail', params: { taskId: taskId } })
+  router.push({ name: 'TasksDetail', params: { spaceId: taskData.value?.space?.id, taskId: taskId } })
 }
 
 onMounted(async () => {

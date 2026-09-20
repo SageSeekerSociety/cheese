@@ -6,9 +6,8 @@
 // handle→name and id→title maps are provided by the caller (roster / topics).
 import type { Block } from '../cx_types'
 
-import DOMPurify from 'dompurify'
-
-import { markdown } from './markdown'
+import { isAgentBlock } from './authorship'
+import { markdown, sanitizeRendered } from './markdown'
 
 export interface RefMaps {
   mentionNames: Record<string, string>
@@ -55,7 +54,7 @@ export function highlightTokens(html: string, maps: RefMaps): string {
 // breaks:true — this is chat: a single newline the author typed IS a line
 // break; strict-markdown paragraph rules would silently swallow it.
 export function renderMarkdown(text: string, maps: RefMaps): string {
-  return DOMPurify.sanitize(
+  return sanitizeRendered(
     highlightTokens(markdown.parse(text, { async: false, gfm: true, breaks: true }) as string, maps)
   )
 }
@@ -64,7 +63,7 @@ export function renderMarkdown(text: string, maps: RefMaps): string {
 // newlines. The newlines survive here as literal \n; the host element must
 // render with `white-space: pre-wrap` or the browser collapses them.
 export function renderPlain(text: string, maps: RefMaps): string {
-  return DOMPurify.sanitize(highlightTokens(escapeHtml(text), maps))
+  return sanitizeRendered(highlightTokens(escapeHtml(text), maps))
 }
 
 interface FenceState {
@@ -102,13 +101,7 @@ function scanFenceState(text: string, initial: FenceState | null): FenceState | 
 }
 
 function sameLegacyMessageRun(a: Block, b: Block): boolean {
-  if (
-    a.kind !== 'message' ||
-    b.kind !== 'message' ||
-    a.author_type !== 'ai' ||
-    b.author_type !== 'ai' ||
-    a.author !== b.author
-  ) {
+  if (a.kind !== 'message' || b.kind !== 'message' || !isAgentBlock(a) || !isAgentBlock(b) || a.author !== b.author) {
     return false
   }
   // A real turn id is a hard boundary. Null IDs occur on older affected rows;
@@ -128,7 +121,7 @@ export function coalesceSplitFencedCodeBlocks(blocks: Block[]): Block[] {
   for (let i = 0; i < blocks.length; i += 1) {
     const first = blocks[i]
     let state = scanFenceState(first.content, null)
-    if (state === null || first.kind !== 'message' || first.author_type !== 'ai') {
+    if (state === null || first.kind !== 'message' || !isAgentBlock(first)) {
       out.push(first)
       continue
     }

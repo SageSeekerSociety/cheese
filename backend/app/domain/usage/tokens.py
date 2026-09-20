@@ -47,8 +47,6 @@ _DIALECTS: dict[str, tuple[str, str, str, str]] = {
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
     ),
-    # The hook forwarder's short names (app.domain.agent.hook_events).
-    "hook": ("input", "output", "cache_read", "cache_write"),
 }
 
 

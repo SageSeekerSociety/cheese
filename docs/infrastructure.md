@@ -12,8 +12,8 @@ separate data — don't conflate them.
 
 | Env | Public | App host | DB | Stack | Deploys via |
 |---|---|---|---|---|---|
-| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | bare-metal (systemd + local `.venv`) | **auto on merge to `main`** |
-| **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | bare-metal (systemd + local `.venv`) | **published GitHub Release → approval** |
+| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
+| **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | Docker Compose (`deploy/deploy-docker.sh`) | **published GitHub Release → approval** |
 | **etrip** | `etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
 
 Notes:
@@ -38,14 +38,92 @@ private on GHCR; boxes pull with their existing GHCR auth.
 
 dev and prod (RUC) run the app as **Docker containers** (`deploy/deploy-docker.sh`
 + `deploy/compose/docker-compose.base.yml`): pull the per-commit `backend` +
-`frontend` images, migrate, `up`, health-check, auto-rollback. The frontend image
-bundles nginx (SPA + `/api` reverse-proxy), so there's **no host nginx** — the ghg
-edge (APISIX) proxies to the box on **:8080** (frontend) + **:8081** (backend),
-bound `0.0.0.0` (private net, safe). DB/Redis are **external** ghg hosts (the app
-only holds `DATABASE_URL`/`REDIS_URL`); uploads bind-mount a host dir outside the
-containers (`/home/nictheboy/shared/uploads` on prod — the 赛题 PDFs). Each box
-was cut over from bare-metal once (`deploy/{dev,prod}-docker-cutover.sh`); the old
-systemd service is kept **installed-but-disabled** as an instant rollback.
+`frontend` images, migrate, bring the app tier up, health-check, auto-rollback.
+The frontend image bundles nginx (SPA + `/api` reverse-proxy). DB/Redis are
+**external** ghg hosts (the app only holds `DATABASE_URL`/`REDIS_URL`); uploads
+bind-mount a host dir outside the containers (`/home/nictheboy/shared/uploads`
+on prod — the 赛题 PDFs).
+
+The boxes ran bare-metal releases before this, and two traces of that are still
+load-bearing rather than historical. `~/cheese-backend-py` is still a SYMLINK
+into a release directory under `~/releases/`, and the deploy reads the backend
+env file and the compose file through it — so neither the symlink nor that
+release directory can be cleaned up as leftovers; moving them takes a deliberate
+migration to a version-free path such as `~/ops/`. The old
+`cheese-backend-py.service` systemd unit is also still installed and disabled;
+it would start that same July release, so treat it as an artefact, not as a
+rollback path. Rollback is `deploy-docker.sh` restoring the previous images.
+
+Device control connections have a separate release boundary. The
+`device-connection` service owns `/connector/agent`, live terminal WebSockets,
+and the in-memory `DeviceHub`. It does not run chat recovery, cleanup, or machine
+wake-up work; the current business backend performs those jobs after reading the
+owner's connection snapshot. A normal app release starts it if it is absent,
+then leaves its running container and image unchanged while backend and frontend
+are replaced. The business backend calls the owner over an authenticated
+compose-network endpoint and restores its online-device and screen view from the
+owner at startup. Executor calls remain in the owner under their existing trace
+ID, so replacing a backend waiter neither cancels the device call nor prevents a
+replacement backend from collecting its result.
+
+On boxes with `cheese-api-front`, the deploy copies the versioned nginx config,
+checks it, and gracefully reloads nginx before replacing the backend. The exact
+`/connector/agent` and live-terminal paths go to the owner's loopback port;
+other API paths continue through the active backend switch. Updating the owner
+itself is a separate release operation because it closes the connections it
+owns. Dispatch **Release device connection owner** with a tested ref and target;
+that workflow runs `deploy/release-device-connection.sh`, which pulls and
+force-recreates only `device-connection`, then waits for its health check. It is
+manual-only, waits for the owner to atomically enter draining after all device
+calls finish, and is never called by the normal app deployment workflows. It
+reads the same box-local deploy environment and compose overlays as the app
+deployment.
+
+The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
+`DB_MAX_OVERFLOW=5` on `device-connection`) and the backend's in
+`app/core/config.py`; together they are sized so the two backends of a rollout
+plus the owner fit a 100-connection server.
+
+Which side of that arithmetic a deploy actually moves depends on where the
+change is. A change to the compose file's `device-connection` block is picked
+up by the next ordinary deploy, because compose recreates a service whose
+definition changed (observed on dev, 2026-09-19: the owner came up on the new
+pool without anyone releasing it). A change that lives only in the image —
+`app/core/config.py`, or anything else the backend carries — does not reach the
+owner until it is released, because the deploy leaves its container alone. So
+on a box whose server still has the default 100 (prod, etrip), **a release that
+raises the backend pool without also changing the owner's compose block goes
+out owner-first**: until the owner is released it holds the pool its running
+image was built with, and a backend rollout beside it can ask the server for
+more connections than it has — the 2026-09-16 failure. dev's server was raised
+to 200, so the order does not matter there.
+
+Cloud-machine SSH forwards share this stable connection boundary. Normal app
+deployments leave `cheese-cloud-control` running. To update it, dispatch
+**Release cloud control** with the full SHA of a commit already merged into
+`main`; the workflow waits for the same owner drain, restarts the service, and
+confirms every previously online managed device reconnects with a new connection
+generation before resuming execution. This maintenance causes one brief device
+reconnection after active calls have finished.
+
+**On dev the backend rolls out without downtime.** The box's **:8081** is
+`cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
+backend upstream comes from an include file (`~/ops/llm-tunnel/active/
+backend.conf`). With `ACTIVE_BACKEND_DIR` set in `~/ops/deploy.env`, the deploy
+script starts the new image as `cheese-backend-next` on **:18082**, waits for
+its `/healthz`, points api-front at it and reloads, recreates the compose
+`backend` (on **:18081**) behind it, points api-front back, and removes the
+temporary container. The frontend container reaches the backend through that
+same host port (`API_UPSTREAM=host.docker.internal:8081`), so its `/api` never
+sees the swap either; the ghg edge (APISIX) proxies to **:8080** (frontend) and
+**:8081** (api-front). What remains is about one second on **:8080** when the
+frontend container itself is recreated. Measured on the first rollout
+(2026-09-04): 0 failed requests on :8081 across the swap, 1 second of refused
+connections on :8080. Before it, every deploy cut the backend for the ~13 s a
+container takes to boot. A box without `ACTIVE_BACKEND_DIR` — prod (RUC),
+etrip — still recreates in place, gap included; the first deploy after
+enabling it on a box pays the old gap once, because the frontend that is still
+running resolves `backend` by compose name.
 
 ### dev — continuous deploy
 
@@ -87,12 +165,22 @@ auto-delete on merge). Every PR lands as one squashed commit.
 
 Heavy CI (`test.yml`'s migration-heads/test, `e2e.yml`'s e2e) runs on the
 **cheese-ci** label — a pool of MicroCloud VMs (prod tenant, customer
-`cheese-ci`, offering 103 standard-vm, 8c/8G/40G, one runner slot per machine:
-`cheese-ci-runner-{1..3}` at `192.168.30.{3..5}`), NOT on the dev box. The box
+`cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
+`192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
 keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
+- **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
+  (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
+  two jobs that together want more than 8G did not slow down — the kernel killed
+  a process, and not necessarily one belonging to the job that caused it:
+  `oom-kill: cpuset=...runner-1.service, global_oom, task_memcg=...runner-1b.service,
+  task=esbuild`. What that looks like from inside the job is `exit code 137`, or
+  a Vite dev server that stops answering, or four pytest workers reporting "node
+  down" at once — none of which name memory. Swap does not make a box bigger; it
+  makes the same overload arrive as slowness, which is why `test` and `e2e` carry
+  timeouts at roughly twice their median runtime rather than just above it.
 - Provisioning is scripted: `deploy/ci-runner/deps.sh` (build-essential +
   rustup — `uv sync` compiles the local srp_rs crate; weekly docker prune —
   nothing else reclaims layers here) then `deploy/ci-runner/provision.sh
@@ -120,25 +208,48 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
   workflow is the knob. The unit-test third never touched the disk and runs at
   the same pace either way.
-- One runner slot per machine is deliberate: the workflows bind host ports
-  5432/6379 for service containers, so two heavy jobs on one machine would
-  collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
-  host port bindings) would double the pool to 6 slots on the same three
-  machines — the open follow-up from the CI plan's P2.
-- Liveness (alerting): `box-heartbeat.yml`'s `ci-pool` job proves **at least
-  one** of the three is alive; `box-uptime.yml` alerts when it stays queued. It
-  cannot see a partial outage, because `provision.sh` gives every machine the
-  same single `cheese-ci` label. **Open ops step**: re-register each runner with
-  `--labels cheese-ci,<name>` (`config.sh --replace`), then fan the heartbeat
-  out to a matrix over the per-machine labels. Until that lands, a single dead
-  pool machine shows up only as slower CI.
-- Liveness (on demand): `box-diag.yml`'s `ci-pool` job **does** cover all three
-  today — three concurrent jobs on the one shared label cannot land on the same
-  machine, since each VM has a single slot. It prints hostname, disk, and
-  dangling-volume count per machine; a job left **Queued** means the pool is
-  short a machine. This trick is fine for a manual probe (it saturates the pool
-  for ~20s) but not for the hourly heartbeat, which would then false-alarm
-  whenever a merge burst holds the slots — hence the ops step above.
+- Two runner slots per machine, six in the pool. Slot 0 is `~/actions-runner`
+  and slot 1 `~/actions-runner-1`, which is also what gives each its own
+  `RUNNER_TEMP` and therefore its own uv venv and Cargo target rather than a
+  concurrent `uv sync` into one. Postgres and Valkey are resident on the machine
+  (`deploy/ci-runner/resident-services.sh`, on 5442/6389) and shared by its
+  slots: a job's own service containers bind 5432/6379 and bring a 3 GB tmpfs
+  each, which is what held a machine to one job. What keeps two concurrent runs
+  apart is the slot each declares in its runner `.env` — see
+  `backend/tests/isolation.py` for the names it scopes, and note that the test
+  harness creates its databases with `DROP DATABASE ... WITH (FORCE)`, so two
+  runs handed one name delete each other's data mid-test.
+- **Addressing one machine**: `provision.sh` gives each runner its box's own
+  label beside the shared one — `cheese-ci-runner-1` and `cheese-ci-runner-1b`
+  are both `cheese-ci-box-1`. `runs-on: [self-hosted, cheese-ci-box-1]`
+  therefore reaches that machine and only that machine, and a job for a box
+  whose slots are both busy stays **queued** rather than being served by another
+  box. That is the only way to be sure a given machine was touched;
+  `runner-swap.yml` uses it. An already-registered runner takes the label with
+  `config.sh --replace`, which is how the three in the pool got theirs before
+  provisioning assigned them — so a box rebuilt from an older `provision.sh`
+  would come back reachable only through the shared label.
+- **Fanning out over slots does not cover the pool.** The intuition that N jobs
+  on the shared label must land on N different machines is false, in both its
+  three-job and six-job forms: a job goes to whichever slot frees first, so one
+  machine can take several while another, busy with a long `test`, takes none.
+  Measured 2026-09-17 with six jobs: five landed on `cheese-ci-runner-2`, one on
+  `cheese-ci-runner-3`, and `cheese-ci-runner-1` was never touched. This is why
+  the hourly liveness check below asks the API instead of running a job per box.
+- Liveness (alerting): `box-uptime.yml`'s `ci-pool` job names every machine that
+  is not there, hourly, by ASKING the runner API rather than running a job on
+  each — a job per machine would need a slot per machine every hour and would
+  queue behind a merge burst, which the alert would have to read as death. The
+  per-machine labels above are what let a half-dead machine (one slot gone) be
+  named rather than averaged away. It says so in Feishu when
+  `FEISHU_ALERT_WEBHOOK` is set, and reddens the run either way.
+  `box-heartbeat.yml`'s `ci-pool` job remains as the "can the pool still run
+  anything at all" check.
+- Liveness (on demand): `box-diag.yml`'s `ci-pool` job prints hostname, disk,
+  dangling-volume count, memory, swap and this boot's kernel OOM kills. It fans
+  out over slots, so by the paragraph above it samples the pool rather than
+  covering it — read the `host:` line of each job to see which machines you
+  actually got, and dispatch it again for the ones you did not.
 
 ## Disk — what actually fills a box, and what may be deleted
 
@@ -151,6 +262,41 @@ Two mechanisms, deliberately different in kind:
   the things that actually fill them.
 - **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
   Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
+  Run by hand — nothing schedules it.
+- **`deploy/reclaim-room-caches.sh`** is the *room-local* reclaim, and the only
+  one of the three a deploy runs on its own (`deploy-docker.sh`, right before
+  `DEPLOY OK`). Every room of a project now installs out of one store, so the
+  copies a room made under its own HOME are read by nothing; the launcher drops
+  them when that room next starts, and this reaches the rooms that never do.
+  On dev, 2026-09-17, that was nearly all of them: of 102 checkouts, 3 had been
+  touched in a week.
+
+  Same idiom as the one above — reports by default, `--apply` deletes,
+  `--self-test` checks itself — plus one thing neither of the others needs: it
+  takes each room's own `.cheese-environment/lock`, the lock
+  `agent/environment_runner.py` holds while a setup script installs, and skips a
+  room that is installing right now. It never touches `.claude` (transcripts),
+  `.cheese` (the room's spool and credentials) or `.local/share/uv` (the
+  interpreter a venv points at by absolute path).
+
+  What it CANNOT reclaim is the per-room Node install and the interpreter. Those
+  need the room gone, which is archival's job and verifies the backend holds the
+  transcript first — see `deploy/README-room-cleanup.md`.
+- **`deploy/reclaim-legacy-room-checkouts.py`** is the third, and the deploy runs
+  it too. Until #936 (2026-09-09) a room's working directory was
+  `~/.cheese/work/<project>/<room>` and held a full checkout; that commit moved a
+  room's cwd under its own home and the repository work to tasks, which
+  `cheese worktree` puts in `<room home>/.cheese/tasks`. Nothing has written the
+  old root since — `device_work_dir()` has had no caller, and
+  `agent/resource_cleanup.py` already calls what is there "legacy checkouts". On
+  dev, 2026-09-17, it was **107GB across 102 rooms**.
+
+  Being unreachable is not what makes it safe to delete; being **published** is.
+  A pre-#936 checkout can hold commits or edits that never left the box. So each
+  directory goes through `check_no_writers` and `check_published` — imported from
+  `resource_cleanup`, the module archival uses, so there is one definition of
+  "safe to delete" rather than two — and anything that fails either check is kept
+  and reported with the reason.
 
 What filled `cheese-dev-env6-app` (measured 2026-08-11 at **92%**, 2.6G free):
 docker build cache 3.0G (71 entries, none in use) · apt archives 1.7G · Go build
@@ -227,15 +373,32 @@ Changing backend env (e.g. enabling an OAuth provider):
    bash deploy/deploy-docker.sh "$SHA"
    ```
 
-3. The box holds no ghcr login outside workflow runs (deploy-dev.yml logs in
-   per-run). If the pull is denied, use local-image mode:
+3. **The pull will be denied** — the box holds no ghcr login outside workflow
+   runs (`deploy-dev.yml` logs in per-run and logs out after). The cheapest fix
+   is not to run the script by hand at all: **dispatch `Deploy (dev/test box)`
+   manually** (Actions → that workflow → Run workflow → `main`). It logs into
+   ghcr, runs this same script on the self-hosted runner that lives ON the box,
+   and reads the very `.env` you just edited. Check first that `main`'s HEAD is
+   the sha you want redeployed, since a dispatch deploys the ref's HEAD rather
+   than what is currently running, and that HEAD is not a docs-only commit (the
+   `Skip docs-only commits` step would no-op the deploy).
+
+   To stay on the command line, log in and re-run step 2 unchanged:
 
    ```bash
-   DEPLOY_APP_IMAGE_SOURCE=local \
-   BACKEND_IMAGE=ghcr.io/sageseekersociety/cheese/backend:$SHA \
-   FRONTEND_IMAGE=ghcr.io/sageseekersociety/cheese/frontend:$SHA \
-   bash deploy/deploy-docker.sh "$SHA"
+   docker login ghcr.io -u <github user>   # password = PAT with read:packages
    ```
+
+   `DEPLOY_APP_IMAGE_SOURCE=local` does **not** substitute for that login on a
+   box that runs agents. It covers the two app images only; the agent runtime
+   images are launched through docker.sock, so compose cannot hold them and the
+   script pulls `SANDBOX_IMAGE` unconditionally whenever
+   `AGENT_RUNTIME_IMAGES_REQUIRED` is true — which the subscription overlay
+   makes it. Local mode gets you past `pull backend frontend` and straight into
+   the identical denial one step later. Do not reach for
+   `AGENT_RUNTIME_IMAGES_REQUIRED=false` to skip it either: that same block
+   creates the image-retainer containers that keep the next `docker image prune
+   -a` from reclaiming the sandbox image out from under every turn.
 
 4. Verify: container env via `docker inspect` (parse the JSON — don't split on
    commas, values like `OAUTH_ENABLED_PROVIDERS=ruc,github_app` get chopped),
@@ -273,17 +436,91 @@ docker exec -w /app cheese-backend-1 \
 
 Two things to know before flipping it:
 
-- **That directory IS the database.** Not Postgres, not the image. It is
-  excluded from the PG backup job, so if these memories are to survive a box
-  rebuild it needs its own backup line.
+- **That directory IS the database.** Not Postgres, not the image. The PG backup
+  job does not cover it; it has a backup line of its own
+  (`cheese-viking-backup.timer`, every 6h, off-site to R2 — see
+  `deploy/README-backup.md`). Installing that timer is part of the same manual
+  runbook as the DB backup, so confirm it is actually running on this box before
+  you flip the switch, not after.
 - **The key buys extraction, not just vectors.** Every remembered fact costs a
   chat call (OpenViking's extractor) plus embedding calls. A key that only
   works on the embedding endpoint gets you a backend that stores nothing.
 
+#### Checking that it actually came up
+
+A wrong key does not raise anything. Extraction runs in a background task
+inside OpenViking and the read path returns empty on error, so a rejected key
+looks *exactly* like the db backend: no memories, no complaint. So the backend
+calls both endpoints itself at boot and reports what happened. Two places to
+look, in this order:
+
+1. **The container log, right after the redeploy.** On success:
+
+   ```
+   memory: openviking model endpoints answered — embedding at …, chat at …
+   ```
+
+   On failure it is an `ERROR` line naming the endpoint, the HTTP status, the
+   vendor's own message, and — the part that usually is the answer — *which
+   setting the key came from*. `key from anthropic_auth_token` means the
+   openviking keys were never set and it fell back to the agent gateway's
+   token, which these endpoints will always reject.
+
+2. **`/health/detailed`, any time after.** `checks.memory` carries the same
+   verdict, per endpoint, with a `checked_at`; it is re-probed in the
+   background every 5 minutes, so a key that expires later shows up here too.
+
+   ```bash
+   docker exec cheese-backend-1 curl -s localhost:8081/health/detailed \
+     | jq .checks.memory
+   ```
+
+A failing memory check makes `/health/detailed` report `degraded`, and that is
+all it does: it does **not** 503 `/readyz` and does **not** touch `/healthz`,
+which is the container health check and therefore the deploy's rollback gate.
+Turning "the model vendor is having a bad afternoon" into a rolled-back release
+would cost more than the silence this check exists to break.
+
+One more thing the probe catches that a key test would not: it compares the
+width of the vector it gets back against `OPENVIKING_EMBEDDING_DIMENSION`.
+OpenViking does not ask the endpoint for a specific width, so a model whose
+native width differs from the configured one gives you a working key and a
+broken index.
+
 `backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
 whole path against a local stand-in endpoint, so the wiring is verifiable
 without a key — but it says nothing about extraction quality, which is exactly
-what the real key is for.
+what the real key is for. The self-check has its own key-less coverage in
+`backend/tests/integration/test_memory_endpoint_probe.py`.
+
+### Turning on 记忆整理 / dreaming (#187)
+
+Independent of the openviking switch above, and much cheaper to try: dreaming
+reads the **db** backend's existing rows (`memory_entries`, `memory_dreams`), so
+it needs no vendor key and does not care what `MEMORY_BACKEND` is set to. One
+line, then the same redeploy as any other env change:
+
+```
+DREAM_ENABLED=true
+```
+
+Memory consolidation runs independently of resource cleanup:
+
+- `SANDBOX_REAP_INTERVAL_SECONDS` remains the compatibility name for its interval
+  (one hour by default); it no longer releases idle rooms.
+- `SANDBOX_IDLE_HOURS` sets the required inactivity (eight hours by default).
+  Existing idle time counts immediately; enabling dreams does not start a new wait.
+- Each pass consolidates memory for at most `DREAM_MAX_PER_SWEEP` rooms (one by
+  default). `DREAM_MIN_BLOCKS` defaults to twenty. Rooms keep their sessions.
+
+To inspect the running job:
+
+```bash
+docker logs cheese-backend-1 --since 1h 2>&1 | grep 'shipped to device'
+```
+
+It **spends model budget** on a background trigger — about one agent turn per
+organized topic. That is the whole reason it is off by default.
 
 ## Backups
 
@@ -293,6 +530,17 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
+- **Memory** (`VIKING_HOST_PATH`, the openviking tree): 6-hourly full tar →
+  verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
+  the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
+  tree is empty and the run is skipped, not failed.
+- **Transcripts**: live collection writes immutable original byte ranges and source
+  identity records directly to the private `TRANSCRIPT_S3_BUCKET`, alongside a
+  PostgreSQL index. Existing tar archives remain in `TRANSCRIPTS_HOST_PATH`
+  (`/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`) and keep
+  their hourly additive R2 mirror through `cheese-transcripts-mirror.timer`.
+  Neither archived-room cleanup nor this mirror deletes retained transcript objects.
+  See [archived-room cleanup deployment](../deploy/README-room-cleanup.md).
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
@@ -376,8 +624,9 @@ both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — and `VIKING_HOST_PATH`, the openviking
-memory tree) hold files written by the pre-2026-08 backend as uid 1001.
+where git reads its global config from — `VIKING_HOST_PATH`, the openviking
+memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
+written by the pre-2026-08 backend as uid 1001.
 `deploy/deploy-docker.sh` hands them over once via
 `deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container
@@ -396,17 +645,6 @@ holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
 *back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
 when that run actually moved them, which the script reports to the caller.
 Rolling images back without rolling ownership back is not a rollback.
-
-`GIT_CREDENTIALS_FILE` **is** handed over with everything else, mode untouched
-(600 before, 600 after). It is operator-owned and outside git, but it is mounted
-read-only into the backend at a fixed path, so its owner has to *be* the
-backend's uid — it was 1001 only because the backend was. An earlier version of
-this script deliberately refused to move it and only checked readability; that
-protected nothing and stopped the deploy on a step whose only remedy was a sudo
-nobody in the deploy path has. The readability check survives and still fails the
-deploy loudly with the exact `chown` to run, but it now runs *after* the
-handover, so it only fires on something a chown cannot fix. The default
-`/dev/null` (feature off) is a device node and is skipped, never chowned.
 
 These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
 by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue

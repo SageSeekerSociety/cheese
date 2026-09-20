@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import (
     ColumnElement,
@@ -12,8 +12,16 @@ from sqlalchemy.sql.elements import (
     UnaryExpression,
 )
 
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_dm_key,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
+from app.domain.project.environment import project_environment
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
@@ -75,16 +83,16 @@ class TopicRepository:
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
-        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
+        project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            environment=project_environment(project.settings if project else None),
             title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
             upgraded_from_block_id=upgraded_from_block_id,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(topic)
         await self._session.flush()
@@ -93,6 +101,18 @@ class TopicRepository:
 
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         return await self._session.get(Topic, topic_id)
+
+    async def lock(self, topic_id: uuid.UUID) -> Topic | None:
+        return (
+            await self._session.scalars(
+                select(Topic)
+                .where(Topic.id == topic_id)
+                # Serialize execution admission with archival while allowing
+                # hook writes whose foreign keys only take KEY SHARE.
+                .with_for_update(key_share=True)
+                .execution_options(populate_existing=True)
+            )
+        ).one_or_none()
 
     async def list_for_project(
         self,
@@ -109,24 +129,81 @@ class TopicRepository:
         filters the flat list, so a kept topic's parent may be filtered out;
         callers that rebuild the tree should not combine it with the filter.
         """
+        stmt = self._project_topics_stmt(
+            project_id, sort=sort, order=order, active_since=active_since
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_projects(self, project_ids: list[uuid.UUID]) -> list[Topic]:
+        """同一棵树，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目。
+
+        私聊照样不在里面（见 `_project_topics_stmt`）：它不是话题树的一部分，也从
+        来不会有验收卡或者待确认问题挂在上面。
+        """
+        if not project_ids:
+            return []
+        stmt = select(Topic).where(
+            Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    def _project_topics_stmt(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None,
+        order: SortOrder,
+        active_since: datetime | None,
+    ) -> Select[tuple[Topic]]:
+        """The one definition of "this project's topic tree, flat, in order".
+
+        Shared so ``list_for_project`` and ``list_for_project_with_activity``
+        cannot drift into filtering or ordering the same list differently.
+        """
         # Private chats are not part of the topic tree.
         stmt = select(Topic).where(
             Topic.project_id == project_id, Topic.is_private.is_(False)
         )
         if active_since is not None:
             stmt = stmt.where(_last_activity() >= active_since)
-        stmt = stmt.order_by(_order_by(sort, order))
-        return list((await self._session.scalars(stmt)).all())
+        return stmt.order_by(_order_by(sort, order))
+
+    async def list_for_project_with_activity(
+        self,
+        project_id: uuid.UUID,
+        *,
+        sort: TopicSortField | None = None,
+        order: SortOrder = "asc",
+        active_since: datetime | None = None,
+    ) -> list[tuple[Topic, datetime]]:
+        """The same list, each row paired with its 最后活动时间 — in ONE query.
+
+        The list endpoint needs both, and asking for them separately made the
+        database derive ``_last_activity`` twice over the same topics: once to
+        sort by it, once to report it. Selecting it alongside the rows it
+        already sorted costs nothing extra, because it is the expression the
+        ORDER BY evaluates anyway.
+
+        Separate from ``list_for_project`` rather than replacing it: that one's
+        ``list[Topic]`` is what mentions, the agent's context builders and the
+        dashboard want, and none of them look at last activity.
+        """
+        stmt = self._project_topics_stmt(
+            project_id, sort=sort, order=order, active_since=active_since
+        ).add_columns(_last_activity())
+        rows = (await self._session.execute(stmt)).all()
+        return [(topic, last) for topic, last in rows]
 
     async def last_activity_for_topics(
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         """{topic_id: last activity} for a batch of topics, in ONE query.
 
-        Kept off ``list_for_project`` so its return type stays ``list[Topic]``
-        for the callers that only want the rows (mentions, the agent's context
-        builders, the dashboard); the list endpoint joins the two by id, the
-        same way it joins the unread counts.
+        For callers holding topics they did not get from
+        ``list_for_project_with_activity`` — a single room's header opened by
+        deep link, which has one topic and no list to have derived it with.
+        A caller that is about to list a project's topics should use that
+        method instead and get both from one query.
         """
         if not topic_ids:
             return {}
@@ -135,46 +212,30 @@ class TopicRepository:
         return {topic_id: last for topic_id, last in rows}
 
     async def get_or_create_private(
-        self,
-        *,
-        project_id: uuid.UUID,
-        user_handle: str,
-        peer_handle: str | None = None,
+        self, *, project_id: uuid.UUID, owner: str, peer: str, title: str
     ) -> Topic:
-        """A 1:1 private conversation in this project.
+        """The 1:1 private conversation between ``owner`` and ``peer`` in this
+        project, created with ``title`` if it does not exist yet.
 
-        Without ``peer_handle`` this is the member's 1:1 with 芝士 (private_peer
-        NULL). With ``peer_handle`` it is a person-to-person DM between the two
-        humans; the unordered pair is canonicalized (owner = min, peer = max) so
-        both participants get and share the same row regardless of who opens it.
+        Who the two are — two people in canonical order, or a person and an AI
+        teammate's seat — is the service's decision; here a DM is two handles.
         """
-        if peer_handle is not None:
-            owner, peer = sorted((user_handle, peer_handle))
-            stmt = select(Topic).where(
-                Topic.project_id == project_id,
-                Topic.is_private.is_(True),
-                Topic.private_owner == owner,
-                Topic.private_peer == peer,
-            )
-        else:
-            owner, peer = user_handle, None
-            stmt = select(Topic).where(
-                Topic.project_id == project_id,
-                Topic.is_private.is_(True),
-                Topic.private_owner == user_handle,
-                Topic.private_peer.is_(None),
-            )
+        stmt = select(Topic).where(
+            Topic.project_id == project_id,
+            Topic.is_private.is_(True),
+            Topic.private_owner == owner,
+            Topic.private_peer == peer,
+        )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:
             return existing
-        # Title is a rendering hint only; the sidebar/ChatPanel show the peer's
-        # own name from the roster. Deterministic, no NL parsing (CLAUDE.md §4).
-        title = f"私聊 · {owner} · {peer}" if peer else f"与芝士私聊 · {owner}"
+        project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            environment=project_environment(project.settings if project else None),
             title=title,
             kind=TopicKind.topic,
-            created_by=user_handle,
+            created_by=owner,
             is_private=True,
             private_owner=owner,
             private_peer=peer,
@@ -189,6 +250,28 @@ class TopicRepository:
             select(Topic).where(Topic.parent_id == parent_id).order_by(Topic.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def archival_for_project(
+        self, project_id: uuid.UUID
+    ) -> dict[uuid.UUID, datetime | None]:
+        """Every topic of the project — private chats included, since they have
+        directories too — mapped to when it was archived (None while active).
+        What the storage sweep reconciles the disk against."""
+        stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
+        return dict((await self._session.execute(stmt)).tuples().all())
+
+    async def mark_transcripts_archived(
+        self, topic_id: uuid.UUID, at: datetime
+    ) -> bool:
+        """Record that the topic's raw session files reached the platform.
+        False when no topic has this id."""
+        stamped = await self._session.execute(
+            update(Topic)
+            .where(Topic.id == topic_id)
+            .values(transcripts_archived_at=at)
+            .returning(Topic.id)
+        )
+        return stamped.scalar() is not None
 
     async def count_for_project(self, project_id: uuid.UUID) -> int:
         stmt = (
@@ -250,17 +333,45 @@ class TopicRepository:
     async def private_unread_counts(
         self, project_id: uuid.UUID, user_handle: str
     ) -> dict[str, int]:
-        """Unread count per 私聊, keyed by the OTHER party's handle.
+        """Unread count per 私聊, keyed by the OTHER party.
 
         Same definition of "unread" as :meth:`unread_counts` — the two differ
         only in how the caller addresses a row. Private chats are not in the
-        topic tree, so the sidebar renders one DM row per project member from
-        the roster and never learns the conversation's topic id; a map keyed by
-        topic id is therefore unusable there. The member's 1:1 with 芝士 (a
-        private topic with no peer) is keyed by ``CHEESE_HANDLE``.
+        topic tree, so the roster page renders one DM row per member and per AI
+        teammate and never learns the conversation's topic id; a map keyed by
+        topic id is therefore unusable there. A person is keyed by their handle,
+        an AI teammate by ``agent_dm_key`` — see there for why a teammate does
+        not get to use the bare handle.
+
+        A teammate sits in a DM under its seat handle, the way a person sits
+        under theirs; the key the UI wants is the teammate's own handle, so the
+        seat is mapped back through the project's saved teammates. A seat that
+        is not a saved teammate's (a room-derived seat from before teammates had
+        seats of their own) is answered by the project's default and counts
+        against it.
         """
+        seats = {
+            agent_instance_handle(row.id): row.handle
+            for row in (
+                await self._session.scalars(
+                    select(AgentInstance).where(AgentInstance.project_id == project_id)
+                )
+            ).all()
+        }
+        project = await self._session.get(Project, project_id)
+        default_handle = CHEESE_HANDLE
+        if project is not None and project.default_agent_instance_id is not None:
+            default = await self._session.get(
+                AgentInstance, project.default_agent_instance_id
+            )
+            if default is not None:
+                default_handle = default.handle
         stmt = (
-            select(Topic.private_owner, Topic.private_peer, func.count())
+            select(
+                Topic.private_owner,
+                Topic.private_peer,
+                func.count(),
+            )
             .select_from(Topic)
             .join(Block, Block.topic_id == Topic.id)
             .outerjoin(
@@ -293,10 +404,11 @@ class TopicRepository:
         rows = (await self._session.execute(stmt)).all()
         counts: dict[str, int] = {}
         for owner, peer, count in rows:
-            if peer is None:
-                key = CHEESE_HANDLE
+            other = peer if owner == user_handle else owner
+            if looks_like_agent_handle(other):
+                key = agent_dm_key(seats.get(other, default_handle))
             else:
-                key = peer if owner == user_handle else owner
+                key = other
             counts[key] = counts.get(key, 0) + int(count)
         return counts
 

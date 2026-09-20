@@ -21,14 +21,14 @@ async def main() -> None:
         print(html)
         texts = await pg.evaluate("[...document.querySelectorAll('h2,h3')].map(e=>e.textContent.trim())")
         print("headings:", texts)
-        await pg.screenshot(path="tmp/shots/team_projects_direct.png")
+        await pg.screenshot(path=".tmp/shots/team_projects_direct.png")
         btn = await pg.query_selector("button:has-text('新建项目')")
         print("btn found:", btn is not None)
         if btn:
             await btn.click()
             await pg.wait_for_timeout(3500)
             print("after create url:", pg.url)
-            await pg.screenshot(path="tmp/shots/team_projects_created.png")
+            await pg.screenshot(path=".tmp/shots/team_projects_created.png")
         await b.close()
 
 asyncio.run(main())

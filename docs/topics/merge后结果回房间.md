@@ -4,24 +4,24 @@
 
 ## 依赖确认（不变）
 
-- 卡1（webhook 原语）已合并进 main：`backend/app/domain/webhook/service.py` 的 `post_with_retries(session_factory, *, project_id, topic_id, content, source)` 就是要调的内部函数——不鉴权、不走 HTTP。
+- 卡1（webhook 原语）已合并进 main：`backend/app/domain/webhook/service.py` 的 `post_with_retries(session_factory, *, topic_id, content, source)` 就是要调的内部函数——不鉴权、不走 HTTP。
 - `ACCEPT_VIA_PR`（#195 开关）这个沙箱的 main 上还搜不到，#195 还没合并。本卡只覆盖现在活着的 `AcceptService.accept()` → `ws.merge_topic()` 路径；#195 合并后再补一处调用，不算这张卡的返工。
 
 ## 实现（`backend/app/domain/review/services.py`）
 
-`AcceptService._notify_merge_result(topic, content)`：内部辅助方法，`asyncio.get_running_loop().create_task(webhook_service.post_with_retries(async_session_factory, project_id=..., topic_id=..., content=..., source="accept"))`。
+`AcceptService._notify_merge_result(topic, content)`：内部辅助方法，`asyncio.get_running_loop().create_task(webhook_service.post_with_retries(async_session_factory, topic_id=..., content=..., source="accept"))`。
 
 `accept()` 里四个收尾点各调一次（都不 `await`，只是调度）：
 1. `ws.merge_topic()` 抛异常 → 失败通知，`raise ValidationError`。
 2. 合并冲突（`conflicts` 非空）→ 失败通知（含冲突原因），card 转 `conflict`，正常 return。
 3. 非冲突的其他合并失败（`noop` 不为真）→ 失败通知，`raise ValidationError`。
-4. 合并成功（含 noop 直接可验收）→ 成功通知，复用已算好的 `card.note`（push 结果）。
+4. 合并成功（含 noop 直接可验收）→ 成功通知，复用已算好的 `card.note`。
 
-**为什么改成 fire-and-forget**：最初实现是 `await post_with_retries(...)`。`post_with_retries` 失败会重试 3 次（0s/5s/30s，最坏 35s）——集成测试里一撞就是 35 秒卡在采纳请求上，暴露出这个设计问题：写一条房间通知不该让采纳者的 HTTP 响应等一个失败重试。改成 `asyncio.create_task` 调度、不等待，跟 `workspace/service.py` 里 `watch_dogfood_push` 的既有写法一致。单测里对应加了 `await asyncio.sleep(0)`（"give the loop one tick"）再断言，抄的是 `test_push_back.py::test_local_upstream_hook_schedules_a_result_watcher` 的写法。
+**为什么改成 fire-and-forget**：最初实现是 `await post_with_retries(...)`。`post_with_retries` 失败会重试 3 次（0s/5s/30s，最坏 35s）——集成测试里一撞就是 35 秒卡在采纳请求上，暴露出这个设计问题：写一条房间通知不该让采纳者的 HTTP 响应等一个失败重试。改成 `asyncio.create_task` 调度、不等待。单测里对应加了 `await asyncio.sleep(0)`（"give the loop one tick"）再断言。
 
 ## 单测（`backend/tests/unit/test_review_acceptance_merge_failure.py`）
 
-6 个场景，全部 mock `webhook_service.post_with_retries`，断言 project_id/topic_id/source="accept"/成功失败文案：
+6 个场景，全部 mock `webhook_service.post_with_retries`，断言 topic_id/source="accept"/成功失败文案：
 - 合并抛异常 → 失败通知
 - 合并失败无冲突路径 → 失败通知
 - 合并冲突（真实 conflicts 路径）→ 失败通知 + card 转 conflict

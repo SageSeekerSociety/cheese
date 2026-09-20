@@ -9,9 +9,21 @@ dependencies = [
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
     "bcrypt>=5.0.0",
-    "claude-agent-sdk>=0.2.101",
     "fastapi>=0.137.0",
     "httpx>=0.28.1",
+    # Fetching the web for an agent (app.domain.fetch). markdownify converts a
+    # page without deciding what its "main content" is — the readability-style
+    # extractors discard list pages wholesale. curl_cffi carries a real browser
+    # TLS fingerprint, which is the only thing that gets past a class of sites
+    # that refuse on JA3 alone.
+    "markdownify>=0.13",
+    # The revision panel reads a .docx's tracked changes through the same
+    # script the room runs (app.domain.documents.revisions), so that what
+    # counts as one change has a single answer. That script needs lxml: it
+    # is the only parser that writes an OOXML part back without rewriting
+    # namespace declarations it had no reason to touch.
+    "lxml>=5.3.0",
+    "curl-cffi>=0.7",
     "meilisearch-python-sdk>=7.1.4",
     "openviking>=0.4.7",
     "pydantic>=2.13.4",
@@ -29,6 +41,8 @@ dependencies = [
     "uvicorn[standard]>=0.49.0",
     "webauthn>=3.0.0",
     "websockets>=16.0",
+    "fusepy>=3.0.1",
+    "pywebpush>=2.5.0",
 ]
 
 [dependency-groups]
@@ -117,6 +131,29 @@ venv = ".venv"
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 testpaths = ["tests"]
+# The suite runs as three layers, one pytest per layer. Nothing writes these on
+# a test: tests/conftest.py's pytest_collection_modifyitems derives the layer
+# from where the test lives and what its fixture closure reaches for. A test
+# that declares one of these itself aborts the collection; a test that declares
+# none has one added, and there is no third case, because that hook's
+# `_layer_of` always answers with one of the three.
+#
+# Registered because the hook adds them by name and --strict-markers refuses an
+# unregistered one even from there. What the flag is actually for is the other
+# direction: a marker written on a test and registered nowhere is an error
+# ("'bogus' not found in `markers` configuration option") instead of a
+# decoration that silently does nothing, which is what @pytest.mark.asyncio had
+# been here for as long as it existed — pytest-asyncio is not installed — and
+# why those two had to go in the same commit that turned this on. It also
+# catches a hand-written layer marker whose name is mistyped past the hook's
+# own check. It does not read `-m` expressions: `-m puree` deselects the whole
+# suite and exits 5, so a typo there is a red step, never a quiet green one.
+markers = [
+    "pure: no Postgres, no ASGI app — runs on a machine with nothing but Python",
+    "contract: one side of a seam real and the other a double",
+    "integration: real Postgres, real alembic, real ASGI app",
+]
+addopts = ["--strict-markers"]
 # A wedged test must name itself. Without this, one test that never returns
 # looks exactly like a slow suite: the run produces progress dots, then
 # nothing, and CI kills the job at its own ceiling — so the log ends with a
@@ -134,6 +171,11 @@ testpaths = ["tests"]
 # It applies locally too, deliberately: the same silence is just as unreadable
 # on a laptop, and pytest-timeout stands down on its own under a debugger.
 timeout = 300
+# A signal can interrupt anyio's run_until_complete without cancelling the
+# async test. Fixture teardown then queues behind that still-running test and
+# hangs before the timeout report reaches CI. Dump the stack and exit the
+# worker instead; xdist reports the crashed test and runs the remaining work.
+timeout_method = "thread"
 
 [tool.uv.workspace]
 members = [

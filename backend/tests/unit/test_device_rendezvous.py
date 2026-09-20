@@ -2,7 +2,7 @@
 binary, and a version floor that refuses to degrade quietly.
 
 What these guard, in one line each: a socket path short enough to bind, an
-adopted screen and a fresh one agreeing on the same token, and an old `claude`
+separate launches using separate sockets, and an old `claude`
 failing the launch instead of falling back to typing into a terminal.
 """
 
@@ -10,12 +10,14 @@ import subprocess
 from pathlib import Path
 
 from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import MachinePlace
 
 TOPIC = "c43d2e12-6d4f-436d-b436-05278a879f81"
 
 
 def test_socket_path_fits_the_kernel_limit():
-    sock, token_file = device_launch.rendezvous_paths(TOPIC)
+    sock, token_file = device_launch.rendezvous_paths()
     # sockaddr_un.sun_path is 104 bytes on macOS / 108 on Linux, and bind fails
     # with a bare EINVAL that reads like a bug in our code. The isolated home
     # alone spends ~105, which is exactly why these live in /tmp.
@@ -24,34 +26,38 @@ def test_socket_path_fits_the_kernel_limit():
     assert sock.endswith(".sock") and token_file.endswith(".token")
 
 
-def test_socket_path_is_per_topic_and_stable():
-    a, _ = device_launch.rendezvous_paths(TOPIC)
-    b, _ = device_launch.rendezvous_paths("73ac850d-3759-415c-b112-c8e06b20aefd")
-    assert a != b
-    # Stable across calls: the connector dials the path the launcher bound, and
-    # an adopted screen must resolve to the same one a fresh launch would.
-    assert device_launch.rendezvous_paths(TOPIC)[0] == a
+def test_separate_launches_of_the_same_topic_have_independent_input_paths():
+    first = _env(TOPIC)
+    second = _env(TOPIC)
+    assert first[device_launch.ENV_RV_SOCK] != second[device_launch.ENV_RV_SOCK]
+    assert (
+        first[device_launch.ENV_RV_TOKEN_FILE]
+        != second[device_launch.ENV_RV_TOKEN_FILE]
+    )
+
+
+def _env(topic: str) -> dict[str, str]:
+    place = MachinePlace(
+        home="/h",
+        workdir="/w",
+        store="/s",
+        state="$HOME/.cheese/harness/p/r/claude-code/d",
+        api_base="http://h",
+        project_id="P",
+        topic_id=topic,
+        agent_handle="ops",
+    )
+    return ClaudeLaunch(system_prompt="").on(place).env
 
 
 def test_screen_env_carries_the_socket_only_with_a_topic():
-    _, env = device_launch.build_screen_launch(
-        hook_url="http://h",
-        hook_token="t",
-        home_dir="/h",
-        work_dir="/w",
-        topic_id=TOPIC,
-    )
-    assert env[device_launch.ENV_RV_SOCK] == device_launch.rendezvous_paths(TOPIC)[0]
+    env = _env(TOPIC)
+    assert env[device_launch.ENV_RV_SOCK].endswith(".sock")
     assert env[device_launch.ENV_RV_TOKEN_FILE].endswith(".token")
 
     # No topic (a probe / bare screen) means no delivery socket to name; a made-up
     # path would just be a file nobody binds.
-    _, bare = device_launch.build_screen_launch(
-        hook_url="http://h",
-        hook_token="t",
-        home_dir="/h",
-        work_dir="/w",
-    )
+    bare = _env("")
     assert device_launch.ENV_RV_SOCK not in bare
     assert device_launch.ENV_RV_TOKEN_FILE not in bare
 
@@ -66,9 +72,6 @@ def test_launcher_arms_claude_codes_own_env_trio():
     assert (
         "export CLAUDE_BG_BACKEND CLAUDE_BG_RENDEZVOUS_SOCK CLAUDE_BG_RV_AUTH" in script
     )
-    # tmux seeds a new session from the SERVER's frozen global env, so the trio
-    # must also travel on the explicit -e list (#409/#433 class of bug).
-    assert '"CLAUDE_BG_RENDEZVOUS_SOCK=$CLAUDE_BG_RENDEZVOUS_SOCK"' in script
 
 
 def test_launcher_reuses_an_existing_token_file():
@@ -87,7 +90,11 @@ def test_launcher_refuses_an_old_claude_instead_of_falling_back():
     # The failure must be an exit, not a warning: a silent downgrade to pasting
     # is the exact behaviour this replaced.
     assert "exit 1" in script
-    assert "claude install stable" in script  # and it says how to fix it
+    # And before judging what the machine has, it places the platform's pin
+    # itself, from the same route enrollment uses — so a machine enrolled under
+    # an older pin heals at its next launch instead of needing a re-provision.
+    assert "/connector/claude/" in script
+    assert "is older than" in script
 
 
 def test_version_floor_compares_semver_the_right_way_round():
@@ -102,8 +109,10 @@ def test_version_floor_compares_semver_the_right_way_round():
     cases = {
         "2.1.220": False,  # the version the dev box was stuck on
         "2.1.223": False,
-        "2.1.224": True,  # the floor itself
-        "2.1.233": True,
+        "2.1.224": False,  # the old floor: reads a mid-tool prompt, no receipt
+        "2.1.233": False,
+        "2.1.261": False,  # the previous floor
+        "2.1.277": True,  # the floor itself
         "2.2.0": True,
         "3.0.1": True,
         "2.0.99": False,
@@ -121,7 +130,7 @@ def test_version_floor_compares_semver_the_right_way_round():
 def test_launcher_prefers_the_pinned_build():
     script = device_launch.build_launch_script()
     assert device_launch.CLAUDE_PINNED_VERSION in script
-    assert ".local/share/claude/versions/" in script
+    assert ".cheese/claude/versions/" in script
     # PATH stays as the last resort so a device that pins nothing still runs —
     # but it is still subject to the floor above.
     assert "command -v claude" in script

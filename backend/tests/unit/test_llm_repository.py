@@ -15,8 +15,15 @@ from app.domain.llm.repositories import (
     AIUserQuotaRepository,
 )
 
-# Use "today" so that get_or_create won't trigger a day-reset
-NOW = datetime.now(UTC).replace(tzinfo=None, hour=12, minute=0, second=0, microsecond=0)
+# Collection and execution can straddle UTC midnight in the full CI suite.
+NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def fixed_clock(monkeypatch):
+    clock = MagicMock(wraps=datetime)
+    clock.now.return_value = NOW
+    monkeypatch.setattr("app.domain.llm.repositories.datetime", clock)
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +141,12 @@ class TestAIUserQuotaRepository:
         session.execute.return_value = _mock_scalar(existing)
         repo = AIUserQuotaRepository(session)
 
-        remaining, reset_at = await repo.consume(10, 10.0, 100.0)
+        remaining, reset_at, total = await repo.consume(10, 10.0, 10.0)
         assert remaining == 40.0
+        assert total == 100.0
         assert existing.total_seu_consumed == 60.0
+        assert reset_at > NOW
+        assert (reset_at.hour, reset_at.minute, reset_at.second) == (0, 0, 0)
 
     @pytest.mark.anyio
     async def test_consume_exhausted(self):
@@ -155,8 +165,9 @@ class TestAIUserQuotaRepository:
         session.execute.return_value = _mock_scalar(existing)
         repo = AIUserQuotaRepository(session)
 
-        remaining, reset_at = await repo.get_quota(10, 100.0)
+        remaining, reset_at, total = await repo.get_quota(10, 10.0)
         assert remaining == 75.0
+        assert total == 100.0
 
 
 # ---------------------------------------------------------------------------

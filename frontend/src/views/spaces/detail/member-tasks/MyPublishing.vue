@@ -63,6 +63,7 @@
       <div class="filter-grid">
         <v-select
           v-model="categoryIdModel"
+          autocomplete="off"
           :items="categoryItems"
           label="分类"
           density="comfortable"
@@ -71,6 +72,7 @@
         />
         <v-select
           v-model="approvedModel"
+          autocomplete="off"
           :items="approvedItems"
           label="题目审批状态"
           density="comfortable"
@@ -79,6 +81,7 @@
         />
         <v-select
           v-model="sortByModel"
+          autocomplete="off"
           :items="sortByItems"
           label="排序字段"
           density="comfortable"
@@ -87,6 +90,7 @@
         />
         <v-select
           v-model="sortOrderModel"
+          autocomplete="off"
           :items="sortOrderItems"
           label="排序方向"
           density="comfortable"

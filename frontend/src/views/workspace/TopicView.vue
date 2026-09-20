@@ -8,10 +8,11 @@ import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import { listTopicMembers } from '@/api'
+import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
+import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { isThread, roomIdOf } from '@/lib/place'
-import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -45,23 +46,31 @@ function onPanelTab(key: string) {
   void router.replace({ query: { ...route.query, tab: key } })
 }
 
+// 看板上点开的那张卡。**一件活不是地点**：做它的分身住在这个房间的会话里，所以
+// 打开一张卡不离开房间，只是总览那一格往下钻一层——地址里记的就是这一层，于是
+// 「你看一下这条活」是一条能发出去的链接。
+const openCardId = computed(() => {
+  const q = route.query.card
+  return typeof q === 'string' && q ? q : null
+})
+// 「去验收」：决策在聊天，审查在面板 —— 它不把人带去任何地方，只把右栏切到
+// 「改动」那一格。对话栏末尾那张验收卡和总览里那张卡上的按钮是同一个动作，所以
+// 只有这一处定义（`chatEvents.review` 和 `<WorkPanel @review>` 都指过来）。
+function onReview() {
+  onPanelTab('changes')
+}
+
+function onOpenCard(taskId: string | null) {
+  if (openCardId.value === taskId) return
+  // push，不是 replace：往下钻一层是「去了一个地方」，浏览器的返回该退回看板。
+  const query = { ...route.query, tab: 'overview', card: taskId ?? undefined }
+  void router.push({ query })
+}
+
 const AUTHOR = myHandle()
 
-// URL 里的这个 id 指向一个「地点」——房间，或者房间里的一条支线 (lib/place.ts)。
-//
-// 这里以前只在 `store.topics` 里找，而那张表来自 `GET /topics?project_id=`，只查
-// topics 表：**支线永远不在里面**。于是点房间时间线上那条「已派出《X》」，或者刚
-// 把一条消息升级成一件活，跳过去看到的是「这个话题不存在」——一个完全好使的 id，
-// 一个空状态。
-//
-// 修的方向不是把支线塞进那张表（侧栏只列房间是设计，塞进去等于每条支线在侧栏长
-// 一行，正是这次改造要省掉的成本），而是：**在列表里找不到就直接去问这个 id**。
+// URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
 const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
-const room = computed<Topic | null>(() => {
-  const place = selectedTopic.value
-  if (!place || !isThread(place)) return null
-  return store.topics.find((t) => t.id === roomIdOf(place)) ?? null
-})
 
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
@@ -76,8 +85,7 @@ watch(
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
-// one while this id is being asked about directly — that is the path a thread
-// always takes, so without the third clause opening one flashes 「不存在」 first.
+// one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
   () =>
     !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
@@ -97,11 +105,12 @@ const focusMode = ref(false) // 专注模式 (spec §7.1): session-only, a trans
 const panelRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
-  openFile?: (path: string) => void
+  openFile?: (path: string, taskId?: string | null) => void
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
   reloadAccept: (silent?: boolean) => void
+  say: (content: string) => boolean
 } | null>(null)
 
 // Drag the chat|panel splitter: set chat's width as a % of the panes row.
@@ -132,28 +141,28 @@ const activityTick = ref(0)
 // needs a handle on the panel it lives in for the connection dot in the header.
 const composerReady = computed(() => !!chatColumn.value?.connected)
 
+// 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
+// 长期锚点：它只在下一轮被读一次。
+function onLocate(message: string) {
+  chatColumn.value?.say(message)
+}
+
 // 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
 const chatEvents = {
   'turn-done': handleTurnDone,
   working: handleWorking,
-  'tool-used': handleToolUsed,
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
-  'open-file': (path: string) => panelRef.value?.openFile?.(path),
+  'open-file': (path: string, taskId?: string | null) => panelRef.value?.openFile?.(path, taskId),
   'open-resource': handleOpenResource,
   'upgrade-message': handleUpgradeMessage,
   'open-topic': openTopic,
   phase: (p: CardPhase) => (cardPhase.value = p),
-  review: () => onPanelTab('changes'),
+  review: onReview,
 }
 
-// 施工现场 live feed for the current topic — the 现场 tab shows it with a pulsing
-// dot while the turn runs; cleared when the turn ends (the persisted transcript
-// takes over as the durable record).
-// platform: amber dot (cheese platform action) vs neutral dot (plain work).
-const worklog = ref<{ label: string; text: string; platform: boolean }[]>([])
+// 芝士 是不是正在这个话题里干活 —— 话题头上的状态词和工作面板的 tab 都读它。
 const working = ref(false)
-const workingSince = ref<number | null>(null)
 
 // ---- 话题此刻处在哪一段 (规则 3/4) ----
 // The accept card owns its own data, but not the one word that summarises it:
@@ -176,24 +185,16 @@ watch(
 )
 
 // 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
-// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到第一
-// 个工具帧。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
+// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
+// 一次动手。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
 // 么都没有，除非刷新一次页面。
 function handleWorking(now: boolean) {
-  if (now) {
-    if (!working.value) workingSince.value = Date.now()
-    working.value = true
-  } else {
-    working.value = false
-    workingSince.value = null
-  }
+  working.value = now
 }
 
 function handleTurnDone() {
-  // The live feed's job is over — the persisted 现场 transcript is the record.
+  // 这一轮干完了 —— 现场那条时间线就是它留下的记录。
   working.value = false
-  workingSince.value = null
-  worklog.value = []
   activityTick.value += 1
   void store.refreshTopics()
   // 芝士's reply landed after our read cursor — the user is watching this
@@ -244,38 +245,45 @@ function handleMentionClick(handle: string) {
   void router.push({ name: 'member', params: { projectId: props.projectId, handle } })
 }
 
-function handleToolUsed(name: string, input?: Record<string, unknown>) {
-  worklog.value.push({
-    label: toolLabel(name),
-    text: formatToolAction(name, input),
-    platform: isPlatformAction(name, input),
-  })
-  if (name === 'update_doc') {
-    activityTick.value += 1
-  } else if (name === 'create_subtopic') {
-    void store.refreshTopics()
-  } else if (name === 'request_accept') {
-    // 芝士 递出验收卡: refresh the banner so it shows up immediately.
-    chatColumn.value?.reloadAccept()
-  }
-}
-
-// ⤴ 升级为话题 from a message bubble (eval A1).
+// ⤴ 升级 from a message bubble (eval A1). 房间里的消息变成这个房间的一张卡，
+// 私聊里的变成一个新房间——两种落点，两种去处。
 async function handleUpgradeMessage(messageId: string) {
   const upgraded = await store.upgradeMessage(messageId)
-  if (upgraded) openTopic(upgraded.id)
+  if (!upgraded) return
+  if (upgraded.kind === 'card') onOpenCard(upgraded.id)
+  else openTopic(upgraded.id)
 }
 
 // Everything topic-scoped resets when the URL names a different topic.
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
 // 所以在归零之前抓一次，交给对话栏去画那条线。
 const unreadOnOpen = ref(0)
+
+// 这个房间名册上每个 handle 叫什么。「现场」那一格给每一行署名用它，人和 AI 队
+// 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
+// 那一格自己不拉名册，所以在这里拉一次传下去。
+const memberNames = ref<Record<string, string>>({})
+async function loadMemberNames(id: string) {
+  try {
+    const payload = await listTopicMembers(id)
+    if (props.topicId === id)
+      memberNames.value = Object.fromEntries(payload.data.map((m) => [m.member_handle, m.name || m.member_handle]))
+  } catch {
+    // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
+  }
+}
+watch(
+  () => props.topicId,
+  () => {
+    memberNames.value = {}
+    if (props.topicId) void loadMemberNames(props.topicId)
+  },
+  { immediate: true }
+)
 watch(
   () => props.topicId,
   async (id) => {
-    worklog.value = []
     working.value = false
-    workingSince.value = null
     if (!id) return
     unreadOnOpen.value = store.unreadMap[id] ?? 0
     // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
@@ -302,7 +310,6 @@ watch(
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
-        :room="room"
         :phase="phase"
         :members="store.members"
         :me="AUTHOR"
@@ -311,6 +318,21 @@ watch(
         @toggle-focus="focusMode = !focusMode"
         @open-topic="openTopic"
       />
+
+      <!-- 「这个房间还没准备好」——横跨四格，因为环境没起来时改动/现场/预览同样
+           都是空的，人可能正在任何一格里等。在标题**之下**：一个会消失的临时状态
+           不该把常驻的标题挤下去。总览（root）没有自己的运行环境，那里不显示。 -->
+      <RoomEnvironmentStatus
+        v-if="selectedTopic.kind !== 'root'"
+        class="env-strip"
+        :project-id="projectId"
+        :topic-id="topicId"
+      />
+
+      <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
+           什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
+           画。放在这里而不是首屏：见组件自己的说明。 -->
+      <PushPermissionPrompt class="env-strip" :working="working" />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
         <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
@@ -339,16 +361,19 @@ watch(
           :style="{ flex: '1 1 0', minWidth: 0 }"
           :topic="selectedTopic"
           :activity-tick="activityTick"
-          :worklog="worklog"
           :working="working"
-          :working-since="workingSince"
           :topic-list="store.topics"
           :tab="panelTab"
           :phase="phase"
           :with-chat="!mdAndUp"
+          :open-card-id="openCardId"
+          :member-names="memberNames"
           @open-topic="openTopic"
+          @open-card="onOpenCard"
+          @review="onReview"
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
+          @locate="onLocate"
         >
           <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
           <template #chat>
@@ -369,6 +394,13 @@ watch(
 </template>
 
 <style scoped>
+/* 这条不参与伸缩：它有内容时占自己那点高度，没内容时整个不在 DOM 里，四格的高度
+   都不会因为它变来变去。 */
+.env-strip {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+}
+
 .topic-view {
   flex: 1 1 auto;
   overflow: hidden;

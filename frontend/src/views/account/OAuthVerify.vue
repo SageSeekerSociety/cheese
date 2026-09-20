@@ -20,7 +20,10 @@
     <!-- 验证表单 -->
     <v-form ref="formRef" class="mb-8" @submit.prevent="handleVerify">
       <v-text-field
+        id="field-password"
         v-model="password"
+        autocomplete="current-password"
+        name="password"
         label="密码"
         type="password"
         variant="outlined"

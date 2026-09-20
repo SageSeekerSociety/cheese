@@ -13,6 +13,7 @@
         <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
         <v-select
           v-model="participationApprovedModel"
+          autocomplete="off"
           :items="participationItems"
           label="报名审批状态"
           density="comfortable"
@@ -22,6 +23,7 @@
         />
         <v-select
           v-model="completionStatusModel"
+          autocomplete="off"
           :items="completionItems"
           label="完成状态"
           density="comfortable"
@@ -31,6 +33,7 @@
         />
         <v-select
           v-model="realNameModel"
+          autocomplete="off"
           :items="realNameItems"
           label="实名状态"
           density="comfortable"
@@ -39,6 +42,7 @@
         />
         <v-select
           v-model="groupByModel"
+          autocomplete="off"
           :items="groupByItems"
           label="趋势粒度"
           density="comfortable"

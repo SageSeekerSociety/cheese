@@ -9,10 +9,12 @@ from app.domain.notification.dedup import NotificationDeduplicator
 from app.domain.notification.events import NotificationTriggerEvent
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
+    NotificationChannelHandler,
     NotificationEventHandler,
     RedisEmailQueueNotificationHandler,
 )
 from app.domain.notification.models import NotificationType
+from app.domain.notification.push import RedisPushQueueNotificationHandler
 
 
 def build_notification_event_handler(session: AsyncSession) -> NotificationEventHandler:
@@ -24,7 +26,7 @@ def build_notification_event_handler(session: AsyncSession) -> NotificationEvent
             ttl_seconds=settings.notification_dedup_ttl_seconds,
         )
 
-    channel_handlers = [
+    channel_handlers: list[NotificationChannelHandler] = [
         InAppNotificationHandler(session=session),
         RedisEmailQueueNotificationHandler(
             redis_client,
@@ -32,6 +34,16 @@ def build_notification_event_handler(session: AsyncSession) -> NotificationEvent
             batch_size=settings.notification_email_batch_size,
         ),
     ]
+    # 这个部署没配 VAPID 密钥就不挂这个渠道 —— 挂上去只会往一个没有消费者的队列里
+    # 堆东西。缺密钥不是故障，是这个部署没开浏览器推送。
+    if settings.web_push_configured:
+        channel_handlers.append(
+            RedisPushQueueNotificationHandler(
+                redis_client,
+                queue_key=settings.notification_push_queue_key,
+                batch_size=settings.notification_push_batch_size,
+            )
+        )
 
     return NotificationEventHandler(
         session=session,

@@ -27,8 +27,9 @@ const Version = 1
 // Msg is the union of every field any control message uses. Only the relevant
 // ones are set per message type; the rest are omitted.
 type Msg struct {
-	T string `json:"t"`
-	V int    `json:"v,omitempty"` // protocol version (hello / welcome)
+	T        string `json:"t"`
+	V        int    `json:"v,omitempty"`        // protocol version (hello / welcome)
+	Executor bool   `json:"executor,omitempty"` // resident executor socket calls
 	// Which binary is speaking, sent up in `hello`: Build is the sha256 of this
 	// connector's own executable, Target its `<os>-<arch>`. V cannot carry this
 	// — it moves only for a breaking change, so a build missing a compatibly
@@ -151,7 +152,7 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 		c.mu.Unlock()
 	}()
 
-	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target})
+	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true})
 
 	// Liveness: reset the read deadline on every pong (and every message below).
 	_ = conn.SetReadDeadline(time.Now().Add(pongWait))

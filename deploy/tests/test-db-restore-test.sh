@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CASE_ROOT="$ROOT/tmp/db-restore-test-regression.$$"
+CASE_ROOT="$ROOT/.tmp/db-restore-test-regression.$$"
 FAKE_BIN="$CASE_ROOT/bin"
 OUTPUT="$CASE_ROOT/output.log"
 DUMP="$CASE_ROOT/cheese-test.dump"

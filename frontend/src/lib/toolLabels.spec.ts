@@ -1,9 +1,9 @@
-// 现场圆点分级 + display-time translation: the platform rule is deterministic
-// (tool-name prefix / literal `cheese <sub>` in a Bash command) — never
-// guessed from natural language.
+// 现场圆点分级 + display-time translation: the platform rule reads the
+// structured fields the backend persisted — never guessed from natural
+// language.
 import { describe, expect, it } from 'vitest'
 
-import { formatToolAction, isPlatformAction, isPlatformEvent, toolLabel } from './toolLabels'
+import { isPlatformEvent, toolLabel } from './toolLabels'
 
 describe('toolLabel', () => {
   it('translates native tools (incl. the ones that used to leak raw)', () => {
@@ -13,31 +13,30 @@ describe('toolLabel', () => {
     expect(toolLabel('Task')).toBe('派出分身')
   })
 
+  it('translates the pi tools, whose names are another set entirely', () => {
+    expect(toolLabel('bash')).toBe('执行命令')
+    expect(toolLabel('read')).toBe('读取文件')
+    expect(toolLabel('edit')).toBe('修改文件')
+    expect(toolLabel('grep')).toBe('搜索内容')
+  })
+
+  it('translates the platform commands a pi room calls as tools', () => {
+    // 同一件事在两个 harness 里叫不同的名字：一边是 MCP 工具，一边是 CLI 的
+    // 命令树生成的目录。两边都得有词，否则现场那一行显示的是它内部的拼法。
+    expect(toolLabel('cheese_accept_request')).toBe('提交验收卡')
+    expect(toolLabel('cheese_doc_set')).toBe('更新实况文档')
+    expect(toolLabel('chat_send')).toBe('发布消息')
+    expect(toolLabel('cheese_chat_send')).toBe('发布消息')
+  })
+
+  it('translates the background jobs, which pi has none of on its own', () => {
+    expect(toolLabel('bash_start')).toBe('启动后台任务')
+    expect(toolLabel('bash_kill')).toBe('终止后台任务')
+  })
+
   it('strips the mcp__cheese__ prefix and falls back to the raw name', () => {
     expect(toolLabel('mcp__cheese__update_doc')).toBe('更新文档')
     expect(toolLabel('FutureTool')).toBe('FutureTool')
-  })
-})
-
-describe('isPlatformAction (live worklog dots)', () => {
-  it('flags cheese MCP tools, prefixed or short-named', () => {
-    expect(isPlatformAction('mcp__cheese__update_doc', {})).toBe(true)
-    expect(isPlatformAction('update_doc', {})).toBe(true)
-    expect(isPlatformAction('remember', { fact: 'x' })).toBe(true)
-  })
-
-  it('flags Bash commands invoking the cheese CLI', () => {
-    expect(isPlatformAction('Bash', { command: 'cheese title "新标题"' })).toBe(true)
-    expect(isPlatformAction('Bash', { command: '/usr/local/bin/cheese doc set' })).toBe(true)
-  })
-
-  it('keeps plain work neutral', () => {
-    expect(isPlatformAction('Bash', { command: 'ls -la' })).toBe(false)
-    expect(isPlatformAction('Bash', { command: 'echo cheese' })).toBe(false)
-    expect(isPlatformAction('Bash', {})).toBe(false)
-    expect(isPlatformAction('Grep', { pattern: 'cheese title' })).toBe(false)
-    expect(isPlatformAction('Read', { file_path: '/a/cheese title.txt' })).toBe(false)
-    expect(isPlatformAction('Agent', { description: '查 cheese 用法' })).toBe(false)
   })
 })
 
@@ -55,17 +54,5 @@ describe('isPlatformEvent (persisted event blocks)', () => {
   it('stays neutral when neither structured signal exists', () => {
     expect(isPlatformEvent(undefined, undefined)).toBe(false)
     expect(isPlatformEvent(null, [])).toBe(false)
-  })
-})
-
-describe('formatToolAction', () => {
-  it('renders verb · preview from the live tool input', () => {
-    expect(formatToolAction('Grep', { pattern: 'TODO' })).toBe('搜索内容 · TODO')
-    expect(formatToolAction('mcp__cheese__notify', { title: '进展' })).toBe('发送通知 · 进展')
-  })
-
-  it('renders the bare verb when the preview arg is missing', () => {
-    expect(formatToolAction('Grep', null)).toBe('搜索内容')
-    expect(formatToolAction('FutureTool', { x: 1 })).toBe('FutureTool')
   })
 })

@@ -1,5 +1,5 @@
 // 「AI 队友」管理页。四件事值得被盯着，都是渲染不会失败但人会被误导的：
-//   1. 一行里那两个数字要真的对上这个队友（记忆条数、几个话题在用）
+//   1. 一行里那个数字要真的对上这个队友（记忆条数）
 //   2. 后端那一半还没上线时，这一页得说「还没上线」，不能是白屏也不能是报错
 //   3. 空名册要说清楚队友是什么、能拿它干嘛，不能只画个空盒子
 //   4. 停用必须先问一遍，并且说明「已经在用的话题照常工作、记忆保留」
@@ -14,9 +14,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const listProjectAgents = vi.fn()
 const listAgentTypes = vi.fn()
 const listMemory = vi.fn()
-const listTopics = vi.fn()
 const setProjectDefaultAgent = vi.fn()
 const deactivateProjectAgent = vi.fn()
+const getProjectAgentOptions = vi.fn()
 
 vi.mock('../api', async (importOriginal) => {
   // ApiError / isEndpointMissing stay REAL: "the backend is not deployed here"
@@ -28,9 +28,9 @@ vi.mock('../api', async (importOriginal) => {
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
     listAgentTypes: (...a: unknown[]) => listAgentTypes(...a),
     listMemory: (...a: unknown[]) => listMemory(...a),
-    listTopics: (...a: unknown[]) => listTopics(...a),
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
     deactivateProjectAgent: (...a: unknown[]) => deactivateProjectAgent(...a),
+    getProjectAgentOptions: (...a: unknown[]) => getProjectAgentOptions(...a),
   }
 })
 
@@ -38,10 +38,13 @@ import { ApiError } from '../api'
 
 import ProjectAgentsView from './ProjectAgentsView.vue'
 
+import { clearPageCache } from '@/lib/pageCache'
+
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 
 function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
   return {
+    configuration: { body: '', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
     id: 'a1',
     project_id: PROJECT,
     handle: 'cheese',
@@ -49,6 +52,7 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     display_name: '芝士',
     is_default: true,
     configured: true,
+    is_active: true,
     ...overrides,
   }
 }
@@ -87,17 +91,50 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 页面缓存是模块级的、跨用例活着的：不清的话上一条用例的名册会被下一条用例的
+  // 第一帧画出来（那正是「第二次进不转圈」的设计），断言就打在旧数据上。
+  clearPageCache()
   listProjectAgents.mockReset()
   listAgentTypes.mockReset().mockResolvedValue({ data: [], total: 0 })
   listMemory.mockReset().mockResolvedValue({ data: [], total: 0 })
-  listTopics.mockReset().mockResolvedValue({ data: [], total: 0 })
   setProjectDefaultAgent.mockReset()
   deactivateProjectAgent.mockReset()
+  getProjectAgentOptions.mockReset().mockResolvedValue({
+    harness: {
+      state: 'choosable',
+      choices: [
+        { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet'] },
+        { id: 'pi', label: 'pi', default: false, models: ['sonnet'] },
+      ],
+    },
+    model: { state: 'choosable', choices: [{ id: 'sonnet', label: 'Sonnet', default: true }] },
+  })
 })
 
 afterEach(() => cleanup())
 
 describe('队友名册', () => {
+  // 「用什么跑」和「哪个模型」现在都是人挑的，名册就得把两件都说出来 —— 否则
+  // 一个走 pi、一个走 Claude Code 的两个队友，这一栏长得一模一样。
+  it('每一行说清这个队友用什么跑、背后是哪个模型', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [
+        agent({ id: 'a1', handle: 'cheese', display_name: '芝士' }),
+        agent({
+          id: 'a2',
+          handle: 'pi-mate',
+          display_name: 'pi 队友',
+          is_default: false,
+          configuration: { body: '', model: 'sonnet', harness: 'pi', skills: [], mcp_servers: [], effort: null },
+        }),
+      ],
+      total: 2,
+    })
+    mountPage()
+    expect(await screen.findByText('@cheese · Claude Code · sonnet')).toBeTruthy()
+    expect(await screen.findByText('@pi-mate · pi · sonnet')).toBeTruthy()
+  })
+
   it('每一行带上这个队友自己的记忆条数和在用话题数', async () => {
     listProjectAgents.mockResolvedValue({
       data: [
@@ -120,31 +157,12 @@ describe('队友名册', () => {
       ],
       total: 3,
     })
-    listTopics.mockResolvedValue({
-      data: [
-        { id: 't1', project_id: PROJECT, parent_id: null, title: 'A', kind: 'root', status: 'active', created_at: '' },
-        {
-          id: 't2',
-          project_id: PROJECT,
-          parent_id: null,
-          title: 'B',
-          kind: 'root',
-          status: 'active',
-          created_at: '',
-          agent_instance_id: 'a2',
-        },
-      ],
-      total: 2,
-    })
     mountPage()
 
     expect(await screen.findByText('芝士')).toBeTruthy()
     // 芝士 owns two facts; the project-pool one is nobody's.
     expect(await screen.findByText('2 条记忆')).toBeTruthy()
     expect(await screen.findByText('0 条记忆')).toBeTruthy()
-    // 默认那一个接手了没自己选队友的话题。
-    const inUse = await screen.findAllByText('1 个话题在用')
-    expect(inUse).toHaveLength(2)
   })
 
   it('点开记忆能看到这个队友学到的东西', async () => {
@@ -236,6 +254,20 @@ describe('停用', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
     await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
+  })
+
+  it('已停用的还列在名册上，标出来，并且不再给「停用」和「设为默认」', async () => {
+    // 管理页要能看到它们 —— 一个队友攒下的记忆还在，它只是不接新活了。
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false, is_active: false })],
+      total: 1,
+    })
+    mountPage()
+
+    expect(await screen.findByText('评审')).toBeTruthy()
+    expect(screen.getByText('已停用')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '停用' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '设为默认' })).toBeNull()
   })
 
   it('确认之后才真的停用', async () => {

@@ -3,7 +3,7 @@ import asyncio, sys
 from playwright.async_api import async_playwright
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5200"
-SHOT = "tmp/shots/login_probe"
+SHOT = ".tmp/shots/login_probe"
 
 async def main() -> None:
     async with async_playwright() as p:

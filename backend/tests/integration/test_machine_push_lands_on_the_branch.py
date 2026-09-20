@@ -12,14 +12,15 @@ import uuid
 
 from app.api.routes.git_http import _configure_for_push
 from app.domain.workspace import service as ws
-from tests.machine_work import machine_commits
+from tests.machine_work import declare_task, machine_commits
 
 
 def test_a_machine_can_push_to_a_topic_that_has_a_worktree(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
+    declare_task(project, topic)
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_tree(topic)
+    branch = ws.branch_for_task(topic)
     ws._ensure_worktree(project, topic)  # the topic is open on the platform
     _configure_for_push(repo)
 

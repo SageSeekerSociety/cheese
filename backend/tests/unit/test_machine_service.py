@@ -27,6 +27,13 @@ from app.domain.machine.services import MachineService, customer_ref, derive_hos
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def runtime_limit(monkeypatch):
+    limit = AsyncMock(return_value=2)
+    monkeypatch.setattr("app.domain.machine.services.get_machine_limit", limit)
+    return limit
+
+
 OFFERING = {
     "id": 1,
     "status": "active",
@@ -102,6 +109,12 @@ class FakeMicroCloud:
     async def get_machine(self, machine_id):
         return self.machines.get(machine_id)
 
+    async def find_machine(self, customer_id, hostname):
+        for machine in self.machines.values():
+            if machine.get("hostname") == hostname:
+                return machine
+        return None
+
     async def delete_machine(self, machine_id):
         self.deleted.append(machine_id)
         self.machines.pop(machine_id, None)
@@ -127,11 +140,23 @@ class FakeRepo:
         self.rows: list[SimpleNamespace] = []
 
     async def add(self, **kwargs):
+        kwargs.setdefault("warm_claim_pending", False)
         kwargs.setdefault("last_seen_at", None)
         kwargs.setdefault("released_at", None)
+        kwargs.setdefault("created_at", datetime.now(UTC))
         row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
+
+    async def list_reservations_older_than(self, cutoff):
+        return [
+            r
+            for r in self.rows
+            if r.machine_id is None
+            and not r.warm_claim_pending
+            and r.released_at is None
+            and r.created_at < cutoff
+        ]
 
     async def get(self, row_id):
         return next((r for r in self.rows if r.id == row_id), None)
@@ -139,7 +164,7 @@ class FakeRepo:
     async def lock_topic(self, _topic_id):
         return None
 
-    async def lock_provisioning(self, _project_id, _topic_id):
+    async def lock_team_quota(self, _team_id):
         return None
 
     async def get_active_for_topic(self, topic_id):
@@ -159,6 +184,9 @@ class FakeRepo:
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
 
+    async def list_for_team(self, _team_id):
+        return self.rows
+
     async def list_ai_mode_mismatch(self, desired, limit):
         return [
             r
@@ -169,8 +197,18 @@ class FakeRepo:
         ][:limit]
 
     async def set_state(
-        self, machine, *, status, ip, ai_mode=None, ai_status=None, seen_at=None
+        self,
+        machine,
+        *,
+        status,
+        ip,
+        ai_mode=None,
+        ai_status=None,
+        seen_at=None,
+        machine_id=None,
     ):
+        if machine_id is not None:
+            machine.machine_id = machine_id
         machine.status = status
         if ip:
             machine.ip = ip
@@ -222,12 +260,18 @@ _UNSET = object()
 
 def build_service(client=None, project=_UNSET, repo=None):
     service = MachineService.__new__(MachineService)
-    service._session = None
+    # The service commits around provider calls and re-reads afterwards.
+    service._session = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
     service._client = client or FakeMicroCloud()
     service._repo = repo or FakeRepo()
     service._devices = FakeDevices()
+    service._warm_pool = SimpleNamespace(
+        reserve=AsyncMock(return_value=None), finish_claim=AsyncMock(return_value=False)
+    )
     if project is _UNSET:
-        project = SimpleNamespace(id=uuid.uuid4(), name="Cheese 自建")
+        project = SimpleNamespace(
+            id=uuid.uuid4(), name="Cheese 自建", team_id=1, settings={}
+        )
     service._projects = SimpleNamespace(get=_returning(project))
     return service
 
@@ -239,19 +283,35 @@ def _returning(value):
     return _get
 
 
-async def test_provision_clamps_a_spec_the_offering_cannot_honour():
+async def test_quota_counts_stopped_and_deleting_but_not_released_machines():
+    service = build_service()
+    project_id = uuid.uuid4()
+    for status in MachineStatus:
+        await service._repo.add(project_id=project_id, status=status)
+    await service._repo.add(
+        project_id=project_id,
+        status=MachineStatus.running,
+        released_at=datetime.now(UTC),
+    )
+    counted = await service.quota_machines(project_id)
+    assert {machine.status for machine in counted} == set(MachineStatus) - {
+        MachineStatus.deleted
+    }
+    assert len(counted) == len(MachineStatus) - 1
+
+
+async def test_provision_rejects_an_unsupported_spec_without_buying_a_machine():
     client = FakeMicroCloud()
     service = build_service(client)
-    project_id = uuid.uuid4()
-
-    await service.provision(
-        project_id=project_id, requested_by="andy", cores=64, memory_mb=1, disk_gb=9999
-    )
-
-    body = client.created[0]
-    assert body["cores"] == OFFERING["coresMax"]
-    assert body["memoryMb"] == OFFERING["memoryMbMin"]
-    assert body["diskGb"] == OFFERING["diskGbMax"]
+    with pytest.raises(ValidationError, match="超出当前供应范围"):
+        await service.provision(
+            project_id=uuid.uuid4(),
+            requested_by="andy",
+            cores=64,
+            memory_mb=1,
+            disk_gb=9999,
+        )
+    assert client.created == []
 
 
 async def test_provision_bills_the_project_not_the_person():
@@ -273,12 +333,30 @@ async def test_topic_release_deletes_once_and_stamps_the_lease():
         project_id=uuid.uuid4(), topic_id=topic_id, requested_by="owner"
     )
 
-    released = await service.release_topic_machine(topic_id)
-    repeated = await service.release_topic_machine(topic_id)
+    await service.release_archived_machine(machine.id)
+    await service.release_archived_machine(machine.id)
 
     assert client.deleted == [machine.machine_id]
-    assert released is machine and released.released_at is not None
-    assert repeated is None
+    assert machine.released_at is not None
+
+
+async def test_cloud_release_preserves_unrecognized_device_directories(monkeypatch):
+    client = FakeMicroCloud()
+    service = build_service(client)
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=uuid.uuid4(), requested_by="owner"
+    )
+    machine.device_id = "cloud"
+    service._devices.list_topic_bindings = AsyncMock(return_value=[])
+    inventory = AsyncMock(return_value=[("home", "unknown-project", "old-room")])
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.list_device_storage", inventory
+    )
+    from app.core.errors import ConflictError
+
+    with pytest.raises(ConflictError, match="still contains"):
+        await service.release_archived_machine(machine.id)
+    assert client.deleted == []
 
 
 async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
@@ -290,11 +368,16 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),
         created_by="owner",
+        compute_profile="cloud",
+        compute_config=None,
         status=TopicStatus.active,
     )
 
     class _Session:
         async def refresh(self, _row):
+            return None
+
+        async def commit(self):
             return None
 
     class _Identities:
@@ -308,7 +391,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def get_or_404(self, _topic_id):
+        async def lock_for_execution(self, _topic_id):
             return topic
 
     service._session = _Session()
@@ -318,7 +401,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     authority = AsyncMock()
-    monkeypatch.setattr(service, "require_create_authority", authority)
+    monkeypatch.setattr(service, "require_use_authority", authority)
     actor = Actor(handle="owner", user_id=1, is_agent=False, via="token")
 
     first = await service.ensure_topic_machine(topic.id, actor=actor)
@@ -343,11 +426,14 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
         async def refresh(self, _row):
             return None
 
+        async def commit(self):
+            return None
+
     class _Topics:
         def __init__(self, _session):
             pass
 
-        async def get_or_404(self, _topic_id):
+        async def lock_for_execution(self, _topic_id):
             return topic
 
     service._session = _Session()
@@ -359,19 +445,22 @@ async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeyp
     assert client.customers == {}
 
 
-async def test_topic_machines_share_the_project_quota(monkeypatch):
-    from app.core.config import settings
+async def test_topic_machines_share_the_team_quota(monkeypatch):
     from app.domain.topic.models import TopicStatus
 
     client = FakeMicroCloud()
     project_id = uuid.uuid4()
     service = build_service(
         client,
-        project=SimpleNamespace(id=project_id, name="Quota", team_id=None),
+        project=SimpleNamespace(id=project_id, name="Quota", team_id=1, settings={}),
     )
     topics = {
         topic_id: SimpleNamespace(
-            id=topic_id, project_id=project_id, status=TopicStatus.active
+            id=topic_id,
+            project_id=project_id,
+            status=TopicStatus.active,
+            compute_profile="cloud",
+            compute_config=None,
         )
         for topic_id in (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
     }
@@ -380,11 +469,14 @@ async def test_topic_machines_share_the_project_quota(monkeypatch):
         async def refresh(self, _row):
             return None
 
+        async def commit(self):
+            return None
+
     class _Topics:
         def __init__(self, _session):
             pass
 
-        async def get_or_404(self, topic_id):
+        async def lock_for_execution(self, topic_id):
             return topics[topic_id]
 
     class _Identities:
@@ -395,15 +487,14 @@ async def test_topic_machines_share_the_project_quota(monkeypatch):
             return SimpleNamespace(id=41)
 
     service._session = _Session()
-    monkeypatch.setattr(settings, "microcloud_max_machines_per_project", 2)
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
-    monkeypatch.setattr(service, "require_create_authority", AsyncMock())
+    monkeypatch.setattr(service, "require_use_authority", AsyncMock())
     actor = Actor("owner", 1, False, "token")
 
     for topic_id in list(topics)[:2]:
         await service.ensure_topic_machine(topic_id, actor=actor)
-    with pytest.raises(ValidationError, match="already has 2 machine"):
+    with pytest.raises(ValidationError, match="2 / 2"):
         await service.ensure_topic_machine(list(topics)[2], actor=actor)
 
     assert len(client.created) == 2
@@ -425,14 +516,30 @@ async def test_provision_reuses_the_projects_existing_account():
     )
 
 
-async def test_provision_refuses_past_the_per_project_ceiling():
-    from app.core.config import settings
+async def test_provision_uses_updated_limit_without_rebuilding_service(runtime_limit):
+    service = build_service()
+    project_id = uuid.uuid4()
+    runtime_limit.return_value = 50
+    for _ in range(50):
+        await service.provision(project_id=project_id, requested_by="owner")
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="owner")
+    runtime_limit.return_value = 51
+    await service.provision(project_id=project_id, requested_by="owner")
+    runtime_limit.return_value = 49
+    with pytest.raises(ValidationError):
+        await service.provision(project_id=project_id, requested_by="owner")
+    assert len(service._client.created) == 51
+    assert service._client.deleted == []
+
+
+async def test_provision_refuses_past_the_team_ceiling():
 
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
 
-    for _ in range(settings.microcloud_max_machines_per_project):
+    for _ in range(2):
         await service.provision(project_id=project_id, requested_by="andy")
 
     with pytest.raises(ValidationError):
@@ -675,14 +782,13 @@ async def test_a_destroyed_machine_stops_occupying_the_projects_slot():
     unreclaimable: the delete returned 200 and the next create was refused for a
     machine that no longer existed.
     """
-    from app.core.config import settings
 
     client = FakeMicroCloud()
     service = build_service(client)
     project_id = uuid.uuid4()
 
     made = []
-    for _ in range(settings.microcloud_max_machines_per_project):
+    for _ in range(2):
         made.append(await service.provision(project_id=project_id, requested_by="andy"))
 
     with pytest.raises(ValidationError):
@@ -887,3 +993,119 @@ async def test_forgetting_waits_when_ccproxy_revocation_is_unconfirmed(caplog):
     # ...but its row survives for the retry.
     assert machine in await service._repo.list_for_project(project_id)
     assert any("revocation" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_reservation_counts_against_quota_before_the_provider_answers(
+    monkeypatch,
+):
+    """Two rooms of a team at the limit: the second is refused while the
+    first's create is still at the provider, because the row was written
+    before the call — with no lock held across it."""
+    import asyncio
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    monkeypatch.setattr(
+        "app.domain.machine.services.get_machine_limit", AsyncMock(return_value=1)
+    )
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+    original = client.create_machine
+
+    async def slow_create(body):
+        in_flight.set()
+        await release.wait()
+        return await original(body)
+
+    client.create_machine = slow_create
+    project_id = uuid.uuid4()
+    first = asyncio.create_task(
+        service.provision(project_id=project_id, requested_by="a")
+    )
+    await asyncio.wait_for(in_flight.wait(), timeout=5)
+    assert [m.machine_id for m in service._repo.rows] == [None]
+    with pytest.raises(ValidationError, match="1 / 1"):
+        await service.provision(project_id=project_id, requested_by="b")
+    release.set()
+    machine = await asyncio.wait_for(first, timeout=5)
+    assert machine.machine_id == 101 and machine.status == MachineStatus.provisioning
+    assert len(service._repo.rows) == 1
+
+
+async def test_a_failed_create_gives_the_slot_back():
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    async def refused(body):
+        raise MicroCloudError("no capacity", status=503)
+
+    client.create_machine = refused
+    with pytest.raises(MicroCloudError):
+        await service.provision(project_id=uuid.uuid4(), requested_by="a")
+    assert service._repo.rows == []
+
+
+async def test_settling_adopts_a_machine_the_provider_has_and_drops_one_it_does_not():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    old = datetime.now(UTC) - timedelta(hours=1)
+    adopted = await service._repo.add(
+        project_id=uuid.uuid4(),
+        machine_id=None,
+        customer_id=1,
+        account_id=1,
+        offering_id=1,
+        hostname="p-1",
+        login_user="dev",
+        cores=1,
+        memory_mb=512,
+        disk_gb=4,
+        status=MachineStatus.provisioning,
+        ip=None,
+        requested_by="a",
+        created_at=old,
+    )
+    dropped = await service._repo.add(
+        project_id=uuid.uuid4(),
+        machine_id=None,
+        customer_id=1,
+        account_id=1,
+        offering_id=1,
+        hostname="p-2",
+        login_user="dev",
+        cores=1,
+        memory_mb=512,
+        disk_gb=4,
+        status=MachineStatus.provisioning,
+        ip=None,
+        requested_by="a",
+        created_at=old,
+    )
+    fresh = await service._repo.add(
+        project_id=uuid.uuid4(),
+        machine_id=None,
+        customer_id=1,
+        account_id=1,
+        offering_id=1,
+        hostname="p-3",
+        login_user="dev",
+        cores=1,
+        memory_mb=512,
+        disk_gb=4,
+        status=MachineStatus.provisioning,
+        ip=None,
+        requested_by="a",
+    )
+    client.machines[777] = {
+        "id": 777,
+        "hostname": "p-1",
+        "status": "running",
+        "ip": "10.0.0.7",
+        "aiMode": "ccproxy",
+        "aiStatus": "ready",
+    }
+    assert await service.settle_reservations() == 2
+    assert adopted.machine_id == 777 and adopted.status == MachineStatus.running
+    assert adopted.ip == "10.0.0.7"
+    assert dropped not in service._repo.rows
+    assert fresh in service._repo.rows and fresh.machine_id is None

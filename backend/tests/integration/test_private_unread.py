@@ -117,11 +117,14 @@ def test_opening_the_dm_clears_it_and_new_messages_light_it_again(client):
     assert _private_unread(client, project_id, "user-1") == {"mentor-1": 1}
 
 
-def test_cheese_dm_is_keyed_by_the_cheese_handle(client):
+def test_a_teammate_dm_is_keyed_by_that_teammate(client):
+    """A DM with an AI teammate is addressed `agent:<handle>`, not by the bare
+    handle: teammate names are chosen per project and can collide with a
+    person's (see test_private_chat_per_agent)."""
     project_id = _project(client)
-    dm = _dm(client, project_id, "user-1")  # no peer → the 芝士 DM
+    dm = _dm(client, project_id, "user-1")  # no peer → the default teammate
     _seed_message(client, project_id, dm, "cheese")
-    assert _private_unread(client, project_id, "user-1") == {"cheese": 1}
+    assert _private_unread(client, project_id, "user-1") == {"agent:cheese": 1}
 
 
 def test_other_peoples_dms_are_invisible(client):

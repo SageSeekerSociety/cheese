@@ -19,8 +19,11 @@ the existing ``/sandbox/hooks/{topic_id}`` endpoint (scoped-token auth + shared
 ``hook_router``) — the connector adds no second hook path.
 """
 
+import asyncio
+import contextlib
 import json
 import logging
+import time
 import uuid
 from typing import Annotated, Any
 
@@ -29,6 +32,7 @@ from fastapi import (
     Depends,
     Header,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -38,16 +42,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
+from app.core.errors import (
+    BadRequestError,
+    BaseError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from app.core.tokens import verify_session_token
-from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
+from app.domain.agent.device_hub import (
+    DeviceCallError,
+    DeviceOffline,
+    HubScreen,
+    ViewerTransport,
+    device_hub,
+)
+from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
+from app.domain.topic import transcripts
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -64,6 +81,67 @@ def get_device_service(db: DbSession) -> DeviceService:
 
 
 DeviceServiceDep = Annotated[DeviceService, Depends(get_device_service)]
+
+
+# How many machines are recovered at once. Recovery is per device and every
+# device does it on connect, so a backend restart starts one per machine at the
+# same instant — 71 on dev. Each walks that machine's sessions, and each session
+# takes a database connection and then talks to the machine; unbounded, the
+# burst wants far more connections than the pool has (20 + 15), and what it
+# starves is every OTHER request, which is how a restart came out as minutes of
+# 「QueuePool limit … connection timed out」 on page loads and background jobs
+# (2026-09-19, and the same shape in the 09-18 flood). Nothing is dropped by
+# waiting: a machine queued here is recovered a moment later, and its device
+# link is already up.
+_RECOVERY_AT_ONCE = 4
+_recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
+
+
+async def recover_business_state(device_id: str) -> None:
+    async with _recovering:
+        await _recover_business_state(device_id)
+
+
+async def _recover_business_state(device_id: str) -> None:
+    try:
+        from app.api.deps import get_chat_service
+
+        await get_chat_service().recover_sessions(device_id)
+    except DeviceOffline:
+        # It connected and went again before recovery could talk to it. The next
+        # connection runs this, so there is nothing here to fix.
+        logger.warning(
+            "hook subscriptions not recovered: device %s went offline", device_id
+        )
+    except DeviceCallError as exc:
+        # The machine answered with a failure of its own — a runner whose socket
+        # is not up yet, a home that is gone. Its next connection runs this
+        # again, so this is a state to wait out, not a fault to report: at ERROR
+        # it was one alert per reconnect of a machine in that state (「dial unix
+        # /tmp/cheese-execution-…sock: no such file」, 2026-09-19).
+        logger.warning(
+            "hook subscriptions not recovered: device %s said %s", device_id, exc
+        )
+    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+        logger.exception("hook subscription recovery failed for device %s", device_id)
+    # Restore screen ownership before cleanup looks for sessions to close.
+    from app.core.background import spawn
+    from app.core.db import async_session_factory
+    from app.domain.topic.retire import sweep_retired_storage
+
+    spawn(
+        sweep_retired_storage(async_session_factory),
+        name="cleanup device reconnect",
+    )
+    try:
+        # A Cloud topic whose machine just came up has been holding a message;
+        # this attach is the last fact it was waiting for, so deliver now instead
+        # of at the next sweep tick (machine/wakeup.py).
+        from app.api.deps import get_cloud_wakeup
+
+        await get_cloud_wakeup().wake_device(device_id)
+    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
+        logger.exception("cloud wake-up on attach failed for device %s", device_id)
 
 
 # --- request/response schemas --------------------------------------------------
@@ -176,7 +254,13 @@ class _WebSocketDeviceTransport:
         self._websocket = websocket
 
     async def send_json(self, msg: dict[str, Any]) -> None:
-        await self._websocket.send_json(msg)
+        try:
+            await self._websocket.send_json(msg)
+        except (WebSocketDisconnect, RuntimeError) as exc:
+            # Starlette answers a write on a socket it already closed with a
+            # RuntimeError, and a peer that dropped mid-write with a disconnect;
+            # to the hub both mean the same thing: no link.
+            raise ConnectionError(str(exc)) from exc
 
 
 @router.websocket("/agent")
@@ -212,33 +296,126 @@ async def agent_socket(
     await device_hub.attach_device(
         device.device_id, transport, name=device.name
     )  # sends welcome{v}
-    try:
-        from app.api.deps import get_chat_service
 
-        await get_chat_service().recover_sessions(device.device_id)
-    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
-        logger.exception(
-            "hook subscription recovery failed for device %s", device.device_id
-        )
-    try:
-        # A Cloud topic whose machine just came up has been holding a message;
-        # this attach is the last fact it was waiting for, so deliver now instead
-        # of at the next sweep tick (machine/wakeup.py).
-        from app.api.deps import get_cloud_wakeup
-
-        await get_cloud_wakeup().wake_device(device.device_id)
-    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
-        logger.exception(
-            "cloud wake-up on attach failed for device %s", device.device_id
-        )
+    recovery = (
+        None
+        if settings.device_connection_owner
+        else asyncio.create_task(recover_business_state(device.device_id))
+    )
+    opened_at = time.monotonic()
+    close_code: int | None = None
     try:
         while True:
             message = await websocket.receive_json()
             await device_hub.on_device_message(device.device_id, message)
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as disconnect:
+        close_code = disconnect.code
     finally:
+        if recovery is not None:
+            recovery.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await recovery
+        # This link is meant to last the machine's whole uptime, and when it does
+        # not, nothing anywhere said so: `except WebSocketDisconnect: pass`
+        # discarded the close code, the only fact that names who hung up, and the
+        # device's own cli has logged one line since it started. On dev the whole
+        # fleet is replaced about once a minute — 71 closes and 71 accepts per
+        # minute against 71 online devices — and that was invisible until the
+        # alert noise around it was cleared (#1140).
+        #
+        # The code tells the halves apart: 1000/1001 is the peer closing on
+        # purpose, 1006 is the connection dropping under it, and None means this
+        # loop left by raising rather than by a disconnect at all. The age says
+        # whether a link died young, which a count of closes cannot.
+        logger.info(
+            "device link closed device=%s code=%s after=%.1fs",
+            device.device_id,
+            close_code,
+            time.monotonic() - opened_at,
+        )
         await device_hub.detach_device(device.device_id, transport)
+
+
+# --- transcripts: a device stores a home's raw session files here before the
+# home is deleted (topic/retire.py, docs/where-a-turn-runs.md §8) --------------
+
+
+async def _device_ran_place(
+    service: DeviceService,
+    device: Device,
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+) -> bool:
+    """Whether this machine is the one whose home holds the place's transcripts.
+
+    The pin says so directly while it stands. Once it is gone — the compute
+    picker replaced it, or the place is not in the database any more — the
+    machine has to at least be one the project may run on, directly or through
+    its team, which is the same set `DeviceChannel` picks from."""
+    binding = await service.topic_binding(place_id)
+    if binding is not None:
+        return binding.device_id == device.device_id
+    return any(
+        d.device_id == device.device_id
+        for d in await service.list_devices_for_project(project_id)
+    )
+
+
+@router.put("/transcripts/{project_id}/{place_id}")
+async def store_transcripts(
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+    request: Request,
+    service: DeviceServiceDep,
+    db: DbSession,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Receive one home's `.claude/projects` + `.claude/todos` as a tar.gz body.
+
+    Authenticated with the durable device token as a bearer (the cli's own
+    `CHEESE_TOKEN`), authorized by the pin. The archive is kept as a new
+    timestamped file under `transcripts_dir/<project>/<place>/`, never
+    replacing an earlier one; 413 past `transcripts_max_bytes`, 400 for a body
+    that is not a whole archive, and neither keeps anything on disk."""
+    scheme, _, token = (authorization or "").partition(" ")
+    device = await service.verify_token(
+        token.strip() if scheme.lower() == "bearer" else ""
+    )
+    if device is None:
+        raise UnauthorizedError("unknown or missing device token")
+    if not await owner_reads.project_exists(db, project_id):
+        raise NotFoundError("no such project")
+    # The place may be a room or a thread, or already deleted; what it must not
+    # be is a place of some other project wearing this project's path.
+    place = await owner_reads.place(db, place_id)
+    if place is not None and place.project_id != project_id:
+        raise NotFoundError("no such place in this project")
+    allowed = await _device_ran_place(service, device, project_id, place_id)
+    placement = place.session_placement if place is not None else None
+    if placement and placement["device_id"] == device.device_id:
+        allowed = True
+    # Every read is done. Release the transaction before the body streams in:
+    # an upload can take minutes, and a session held open across it would sit
+    # `idle in transaction` on the topic tables for that long (#356).
+    await db.commit()
+    if not allowed:
+        raise ForbiddenError("this machine did not run that place")
+    try:
+        stored = await transcripts.store(project_id, place_id, request.stream())
+    except transcripts.ArchiveTooLarge as exc:
+        raise BaseError(413, str(exc)) from exc
+    except transcripts.NotAnArchive as exc:
+        raise BadRequestError(str(exc)) from exc
+    logger.info(
+        "transcripts stored: project=%s place=%s device=%s file=%s size=%d sha256=%s",
+        project_id,
+        place_id,
+        device.device_id,
+        stored.path.name,
+        stored.size,
+        stored.sha256,
+    )
+    return {"file": stored.path.name, "size": stored.size, "sha256": stored.sha256}
 
 
 # --- 现场 viewer: a browser watches a device screen's real terminal, and can type
@@ -278,8 +455,7 @@ async def _may_view_screen(
             project_id=screen.project_id, user_handle=handle
         ):
             return True
-        project = await ProjectRepository(session).get(screen.project_id)
-        if project is not None and project.owner_handle == handle:
+        if await owner_reads.project_owner(session, screen.project_id) == handle:
             return True
     if screen.topic_id is not None:
         if await TopicMembershipRepository(session).get(

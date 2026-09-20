@@ -16,9 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
+    TOPIC_AGENT_PREFIX,
+    agent_instance_handle,
     looks_like_agent_handle,
     topic_agent_handle,
 )
+from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
@@ -117,7 +120,13 @@ class TopicMemberService:
             return False
         return any(m.user_handle == actor for m in members)
 
-    async def seed(self, topic_id: uuid.UUID, *, owner_handle: str | None) -> None:
+    async def seed(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        agent_handle: str | None = None,
+    ) -> None:
         """Seed a newborn topic's roster: the creator becomes owner and 芝士
         joins as a member (fusion-design §3). Idempotent — re-seeding never
         duplicates a row. Called at topic-create time, outside the actor check
@@ -128,7 +137,10 @@ class TopicMemberService:
         and individually revocable."""
         if owner_handle and not self._is_agent_handle(owner_handle):
             await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        await self.ensure_topic_agent_seat(topic_id)
+        if agent_handle:
+            await self.ensure_agent_seat(topic_id, agent_handle)
+        else:
+            await self.ensure_topic_agent_seat(topic_id)
 
     async def seed_root(
         self,
@@ -146,23 +158,15 @@ class TopicMemberService:
         )
 
     async def seed_private(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        owner_handle: str,
-        peer_handle: str | None,
+        self, topic_id: uuid.UUID, *, owner_handle: str, peer_handle: str
     ) -> None:
-        """Seed exactly the two seats a private conversation contains.
-
-        A member↔芝士 DM has the human owner plus this topic's agent seat. A
-        human↔human DM has the canonical owner plus the peer and no agent.
-        Idempotency also repairs private topics created before rosters existed.
+        """Seed exactly the two seats a private conversation contains: the
+        owner, and the peer — a person's handle or a teammate's seat, the same
+        row either way. Idempotency also repairs private topics created before
+        rosters existed.
         """
         await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        if peer_handle is None:
-            await self.ensure_topic_agent_seat(topic_id)
-        else:
-            await self._ensure_member(topic_id, peer_handle, role=TopicRole.member)
+        await self._ensure_member(topic_id, peer_handle, role=TopicRole.member)
 
     async def seed_split(
         self,
@@ -222,6 +226,18 @@ class TopicMemberService:
         return (
             await self._repo.list_for_topic(topic_id),
             await self._repo.count_for_topic(topic_id),
+        )
+
+    async def require_archive_manager(self, topic_id: uuid.UUID, actor: str) -> None:
+        member = await self._repo.get(topic_id=topic_id, member_handle=actor)
+        if member is None or member.role not in _MANAGER_ROLES:
+            raise ForbiddenError("只有房间的 owner / admin 能归档或取消归档")
+
+    async def managed_topic_ids(
+        self, topic_ids: list[uuid.UUID], actor: str
+    ) -> set[uuid.UUID]:
+        return await self._repo.topic_ids_for_member(
+            topic_ids, actor, roles=_MANAGER_ROLES
         )
 
     async def owner_of(self, topic_id: uuid.UUID) -> str | None:
@@ -287,23 +303,31 @@ class TopicMemberService:
             and user.id in agent_ids
         ]
 
-    async def ensure_topic_agent_seat(self, topic_id: uuid.UUID) -> str:
-        """Give this topic its own 分身: an agent-user row plus a roster seat.
+    async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
+        """Seat THIS agent in this room, and return the handle it acts under.
 
-        The seat is the grant. One 分身 per room is what makes an action
-        attributable to it, and what makes de-authorizing it a single row delete
-        instead of waiting out a shared token's TTL.
+        The seat is the grant: an action is attributable to the agent that holds
+        one, and de-authorizing it is a single row delete rather than waiting out
+        a token's TTL. What the seat does not do is tell the room who its agent
+        is — a room is a collaboration space and may seat several, so the caller
+        names the agent it means.
 
         Idempotent, and cheap on the fast path (one indexed lookup)."""
-        handle = topic_agent_handle(topic_id)
         if await self._repo.get(topic_id=topic_id, member_handle=handle) is None:
-            from app.domain.identity.services import IdentityService
-
-            await IdentityService(self._session).ensure_topic_agent_user(topic_id)
             await self._repo.add(
                 topic_id=topic_id, member_handle=handle, role=TopicRole.member
             )
         return handle
+
+    async def ensure_topic_agent_seat(self, topic_id: uuid.UUID) -> str:
+        """Seat the room-derived 分身. Reached only where no agent has been named
+        yet — a room seeded before an agent could hold an identity of its own —
+        and kept until every seat is an agent's own."""
+        handle = topic_agent_handle(topic_id)
+        from app.domain.identity.services import IdentityService
+
+        await IdentityService(self._session).ensure_topic_agent_user(topic_id)
+        return await self.ensure_agent_seat(topic_id, handle)
 
     async def migrate_shared_agent_seat(self, topic_id: uuid.UUID) -> None:
         """Retire a pre-分身独立身份 room's shared ``cheese`` seat in favour of its
@@ -335,6 +359,11 @@ class TopicMemberService:
         "who am I", and answering with the shared account would put the collapsed
         identity back into the audit trail.
 
+        Several agents seated: the project's default answers for the room when
+        it is one of them — the room-scoped credentials and the room's own
+        pass (memory dream, git identity) all mean the same one — else the
+        first on the roster.
+
         Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
         the room's (threads do not have one), but the fallback has to stay the
         thread's own, because that is the handle its sandbox was started with.
@@ -342,13 +371,38 @@ class TopicMemberService:
         writes, another on the token it writes them with.
         """
         handles = await self.agent_handles(room_id or topic_id)
-        return handles[0] if handles else topic_agent_handle(topic_id)
+        if not handles:
+            return topic_agent_handle(topic_id)
+        if len(handles) > 1:
+            topic = await self._topics.get(room_id or topic_id)
+            project = (
+                await ProjectRepository(self._session).get(topic.project_id)
+                if topic is not None
+                else None
+            )
+            if project is not None and project.default_agent_instance_id is not None:
+                own = agent_instance_handle(project.default_agent_instance_id)
+                if own in handles:
+                    return own
+        return handles[0]
 
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
     ) -> TopicMembership:
-        await self._ensure_topic(topic_id)
+        topic = await self._topics.get(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
         await self._require_manager(topic_id, actor)
+        if handle.startswith(TOPIC_AGENT_PREFIX):
+            # A teammate's seat is derived from its instance, and an instance
+            # keys a memory pool inside ITS project — so another project's
+            # teammate must not be seated here: nothing in this project would
+            # address it, and its token would write as this room's default.
+            from app.domain.agent_instance.services import AgentInstanceService
+
+            owner = await AgentInstanceService(self._session).project_of_seat(handle)
+            if owner is not None and owner != topic.project_id:
+                raise NotFoundError("这个项目里没有这个 AI 队友")
         existing = await self._repo.get(topic_id=topic_id, member_handle=handle)
         if existing is not None:
             raise ValidationError("该成员已在话题里")

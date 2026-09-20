@@ -1,7 +1,4 @@
-"""Slack-style discrete messages (no token streaming).
-
-Tool calls are real message boundaries.
-"""
+"""Terminal message boundaries remain durable activity through Stop."""
 
 import uuid
 
@@ -53,47 +50,46 @@ def test_each_message_boundary_lands_as_own_block(client):
 
     # No delta frames ever reach the chat; messages arrive as they complete,
     # interleaved with the tool activity that separates them.
-    types = [f["type"] for f in frames]
+    # 芝士's 👀 rides the harness's prompt receipt, reported on its own task, so
+    # it has no fixed position here and is filtered out (asserted in
+    # test_reactions.py).
+    types = [f["type"] for f in frames if f["type"] != "reaction"]
     assert "delta" not in types
     assert types == [
         "user_block",
         "turn_started",  # explicit lifecycle for every open client
-        "reaction",  # the platform's ✅ receipt on the summoning message
-        "turn_started",  # again, from the session that picked the work up
-        "assistant_block",
+        "event_block",  # execution note
         "event_block",  # the tool call, as the 现场 record of it
-        "assistant_block",
+        "event_block",  # complete final text retained in activity
         "done",
     ]
 
     user_block = next(f for f in frames if f["type"] == "user_block")["block"]
-    first, second = [f["block"] for f in frames if f["type"] == "assistant_block"]
+    first, second = [
+        f["block"]
+        for f in frames
+        if f["type"] == "event_block" and f["block"]["meta"].get("progress")
+    ]
     assert first["content"] == "我先查一下代码，稍等"
     assert second["content"] == "查完了：一共 3 处 TODO"
     assert first["id"] != second["id"]
-    # The first message threads under the summoning message; follow-ups stand
-    # alone (Slack-style consecutive sends).
+    assert first["meta"]["in_room"] is False
+    assert second["meta"]["in_room"] is False
+    assert not any(f["type"] == "assistant_block" for f in frames)
     assert first["reply_to"] == user_block["id"]
-    assert second["reply_to"] is None
 
 
 def test_result_text_is_not_duplicated_as_extra_block(client):
     topic_id, _frames = _run_turn(client)
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     ai_messages = [
-        b for b in blocks if b["author_type"] == "ai" and b["kind"] == "message"
+        b for b in blocks if b["author"].startswith("cheese") and b["kind"] == "message"
     ]
-    # Exactly the two boundary messages — the final result text (which repeats
-    # the last message) must not land a third time.
-    assert [b["content"] for b in ai_messages] == [
-        "我先查一下代码，稍等",
-        "查完了：一共 3 处 TODO",
-    ]
+    assert ai_messages == []
 
 
-def test_plain_result_only_agent_still_lands_one_message(client, stub_hooks):
-    """Fallback: a session that never displays a message and only stops still
-    lands its reply as one block."""
+def test_stop_only_text_stays_in_activity(client, stub_hooks):
+    """A missing MessageDisplay never promotes Stop text into chat."""
 
     def _plain(topic_id, prompt, reply):
         del reply
@@ -103,6 +99,8 @@ def test_plain_result_only_agent_still_lands_one_message(client, stub_hooks):
 
     stub_hooks.emit_turn = _plain  # type: ignore[method-assign]
     topic_id, frames = _run_turn(client)
-    assistant = [f["block"] for f in frames if f["type"] == "assistant_block"]
+    assert not any(f["type"] == "assistant_block" for f in frames)
+    assistant = [f["block"] for f in frames if f["type"] == "event_block"]
     assert len(assistant) == 1
     assert assistant[0]["content"] == "Hello world"
+    assert assistant[0]["meta"]["in_room"] is False

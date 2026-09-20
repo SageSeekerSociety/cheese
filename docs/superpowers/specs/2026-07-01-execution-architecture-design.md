@@ -225,9 +225,9 @@ ExecutionProfile(project):
 
 ---
 
-# v4 修订（算力：归属=团队 context / 选择=会话级 / 默认=项目 sticky / session_id 冻结锁）
+# Compute ownership, project defaults, and room affinity
 
-v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。经与 andyl 过 UI/IA 后细化：算力的**归属**在团队(context)、**选择**在会话(topic)、**默认**靠项目 sticky 记忆；并把"话题实例化后钉住、绝不漂"这条**数据正确性红线**写死（原始 PR bug 的定稿修复）。与上文冲突处以本节为准。
+Teams own permissions and quotas. Projects store explicit defaults and favorites. Rooms inherit the project default until they select or start an environment; a room choice never changes project settings. These rules supersede the earlier selection model above.
 
 > 前提：产品形态 = **一套代码的 N 个隔离部署**（每机构一个 + 消费版），deployment = 机构/租户。v3 "三级可见"的**机构级 = 部署本身**，不再是 in-app 多空间。归属层（团队/工作区一等公民、项目归属收敛到团队）由 **Space refactor**（独立 issue #47）承载；本节算力模型踩在它上面，但**下面的 §affinity 冻结不依赖它，可独立落地**。
 
@@ -237,15 +237,15 @@ v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。�
 - **可见性 = 同 context**：一个项目能选的算力 = **它所属团队的设备 + 平台**。无跨团队借用；想共享给别的团队 = 改设备归属（显式动作）。deployment 已隔离机构，故无跨租户算力。
 - 这取代了早先的 `device_project` N:N「登记」争论：归属在团队、项目可见性由团队派生。
 
-## §选择：团队池 → 项目 sticky → 会话选择（三级，各管各的）
+## Selection: team access, project defaults, room choices
 
 | 层 | 管什么 | 载体 |
 |---|---|---|
-| **团队** | 算力池（self-hosted 设备 / 虚拟 GPU 节点 / 平台默认）+ 团队默认 | 团队页（成员+算力） |
-| **项目** | **记住上次用的算力**（sticky，初始=团队默认），作新会话起点 | `Project.sticky_compute`（隐式记忆，**无独立配置页**） |
-| **会话(topic)** | 建时默认沿用项目 sticky，**发第一条消息前可切**；切了同时更新项目 sticky | `Topic.compute`（冻结的 target） |
+| Team | Resource permissions, quotas, shared devices | Team compute page |
+| Project | Explicit default and optional favorites | `Project.settings.compute_configs`, first in project settings |
+| Room | Inherits project default; a temporary choice affects only this room | `Topic.compute_config` and the pinned device binding |
 
-即：**团队给池 → 项目记住上次 → 新会话默认沿用、可改、发消息即锁**。零配置页，却不用每次手选。
+New projects use standard cloud when provisioning is available. A project may instead default to a shared device. The room picker lists the actual default first with a badge, followed by favorites; other resources stay collapsed. Starting execution or creating a cloud lease freezes the room environment.
 
 ## §affinity：实例化冻结（数据正确性红线，独立可落地）
 
@@ -262,6 +262,6 @@ v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。�
 
 ## §对 v2/v3 落点的修正
 
-- v3 `ComputePool.select(project)` → 细化为 `select(team-context)` 得池、`resolve(topic)` 得该会话冻结的 target。`Topic` 增 `compute` 字段；`Project` 增 `sticky_compute`；冻结分界线是「这个话题有没有 `agent_sessions` 行」。
+- Resolve room snapshots before project defaults. Existing team/profile defaults migrate into explicit project settings; room selection does not write project settings.
 - v2 R1 `topic_turn` lease / R2 `run_turn` 契约不变；**affinity 冻结与 lease 正交**（lease 管"同话题串行"，affinity 管"钉在哪台"）。
 - UI 落点（实现细节，非本 spec）：会话算力选择器落在**新建话题流程 / 草稿话题 composer 那条**（`# 本话题 · @芝士` 旁），锁定态显示 🔒。

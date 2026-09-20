@@ -7,11 +7,14 @@ rather than failing somewhere inside a provider call.
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock
 
+import pytest
 from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ValidationError
 from app.domain.identity.actor import Actor
 from app.domain.machine import enrollment
 from app.domain.machine.models import MachineStatus
@@ -20,10 +23,14 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
+from app.domain.topic.models import RoomCleanup
 from app.domain.topic.repositories import TopicRepository
-from tests.integration.conftest import UserCreator
+from app.domain.topic.services import TopicService
+from tests.conftest import seed_user
+from tests.integration.conftest import UserCreator, session_auth_headers
 from tests.unit.test_machine_service import FakeMicroCloud
 
 
@@ -279,7 +286,12 @@ def test_machines_are_scoped_to_their_project(
 
 
 def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monkeypatch):
-    project_id = _project(client)
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    token = seed_user(client, "owner")
+    project_id = _project(client, {"Authorization": f"Bearer {token}"})
     first_topic_id = client.post(
         "/topics",
         json={"project_id": project_id, "title": "First", "created_by": "owner"},
@@ -298,7 +310,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
     async def _authorized(_self, _project_id, _actor):
         return None
 
-    monkeypatch.setattr(MachineService, "require_create_authority", _authorized)
+    monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
     actor = Actor("owner", 1, False, "token")
 
     async def _ensure(topic_id: str) -> tuple[int, uuid.UUID]:
@@ -323,7 +335,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
     assert other_topic[0] != same_topic[0][0]
 
 
-def test_direct_and_cascading_archive_release_every_topic_machine(client):
+def test_direct_and_cascading_archive_retain_machines_during_grace(client):
     async def _seed():
         async with client.test_factory() as session:
             project = await ProjectRepository(session).add(name="Archive Cloud")
@@ -344,8 +356,14 @@ def test_direct_and_cascading_archive_release_every_topic_machine(client):
             return direct.id, parent.id, child.id
 
     direct_id, parent_id, child_id = asyncio.run(_seed())
-    assert client.post(f"/topics/{direct_id}/archive", json={"by": "u"}).is_success
-    assert client.post(f"/topics/{parent_id}/archive", json={"by": "u"}).is_success
+
+    async def archive_both():
+        async with client.test_factory() as session:
+            await TopicService(session).archive(direct_id, by="u")
+            await TopicService(session).archive(parent_id, by="u")
+            await session.commit()
+
+    asyncio.run(archive_both())
 
     async def _released():
         async with client.test_factory() as session:
@@ -355,14 +373,22 @@ def test_direct_and_cascading_archive_release_every_topic_machine(client):
                 for tid in (direct_id, parent_id, child_id)
             ]
 
-    assert asyncio.run(_released()) == [None, None, None]
+    assert all(machine is not None for machine in asyncio.run(_released()))
 
 
-def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
+def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    seed_user(client, "owner")
+
     async def _seed():
         async with client.test_factory() as session:
-            project = await ProjectRepository(session).add(name="Reactivate Cloud")
-            topic = await TopicRepository(session).add(
+            project = await ProjectService(session).create(
+                name="Reactivate Cloud", owner_handle="owner"
+            )
+            topic = await TopicService(session).create(
                 project_id=project.id, title="Again", created_by="owner"
             )
             old = await _add_topic_machine(
@@ -375,8 +401,21 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
             return topic.id, old.id
 
     topic_id, old_id = asyncio.run(_seed())
-    assert client.post(f"/topics/{topic_id}/archive", json={"by": "u"}).is_success
-    assert client.post(f"/topics/{topic_id}/unarchive", json={"by": "u"}).is_success
+    assert client.post(
+        f"/topics/{topic_id}/archive", json={}, headers=session_auth_headers("owner")
+    ).is_success
+
+    async def claim_cleanup():
+        async with client.test_factory() as session:
+            room = await TopicService(session).get_or_404(topic_id)
+            operation = await session.get(RoomCleanup, room.cleanup_id)
+            operation.state = "claimed"
+            await session.commit()
+
+    asyncio.run(claim_cleanup())
+    assert client.post(
+        f"/topics/{topic_id}/unarchive", json={}, headers=session_auth_headers("owner")
+    ).is_success
     cloud = FakeMicroCloud()
 
     async def _keypair():
@@ -387,7 +426,7 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
     async def _authorized(_self, _project_id, _actor):
         return None
 
-    monkeypatch.setattr(MachineService, "require_create_authority", _authorized)
+    monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
 
     async def _reprovision():
         async with client.test_factory() as session:
@@ -402,3 +441,70 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
     assert new_id != old_id
     assert released_at is not None
     assert len(cloud.created) == 1
+
+
+def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
+    """While one room's machine is being created at the provider, another
+    room of the same team is admitted at once — and the first room's slot is
+    already counted, so the team limit still holds."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    monkeypatch.setattr(
+        "app.domain.machine.services.get_machine_limit", AsyncMock(return_value=2)
+    )
+    token = seed_user(client, "owner")
+    project_id = _project(client, {"Authorization": f"Bearer {token}"})
+    topics = [
+        client.post(
+            "/topics",
+            json={"project_id": project_id, "title": title, "created_by": "owner"},
+        ).json()["data"]["id"]
+        for title in ("First", "Second", "Third")
+    ]
+    cloud = FakeMicroCloud()
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+    original = cloud.create_machine
+
+    async def slow_create(body):
+        if body["hostname"].endswith("-1"):
+            in_flight.set()
+            await release.wait()
+        return await original(body)
+
+    cloud.create_machine = slow_create
+
+    async def _keypair():
+        return "private", "ssh-ed25519 public"
+
+    monkeypatch.setattr(enrollment, "generate_keypair", _keypair)
+
+    async def _authorized(_self, _project_id, _actor):
+        return None
+
+    monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
+    actor = Actor("owner", 1, False, "token")
+
+    async def _ensure(topic_id: str):
+        async with client.test_factory() as session:
+            machine = await MachineService(session, cloud).ensure_topic_machine(
+                uuid.UUID(topic_id), actor=actor
+            )
+            await session.commit()
+            return machine.machine_id
+
+    async def _run():
+        first = asyncio.create_task(_ensure(topics[0]))
+        await asyncio.wait_for(in_flight.wait(), timeout=5)
+        # The team lock is free: the second room does not wait for the first.
+        second = await asyncio.wait_for(_ensure(topics[1]), timeout=5)
+        # And the first room's reservation already counts: the team is full.
+        with pytest.raises(ValidationError, match="2 / 2"):
+            await _ensure(topics[2])
+        release.set()
+        return await asyncio.wait_for(first, timeout=5), second
+
+    first, second = asyncio.run(_run())
+    assert {first, second} == {101, 102}

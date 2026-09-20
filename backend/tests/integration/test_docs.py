@@ -59,6 +59,73 @@ def test_doc_edit_emits_conversation_event(client):
     assert any(b["kind"] == "event" and "编辑了文档" in b["content"] for b in blocks)
 
 
+def test_empty_editor_paragraph_is_saved_without_a_contribution_notice(client):
+    tid = _topic(client)
+    for version, content in enumerate(
+        ["调查安排", "调查安排\n\n&nbsp;", "调查安排\n\n实地计数"]
+    ):
+        response = client.put(
+            f"/topics/{tid}/doc",
+            json={"content": content, "author": "user-1", "expected_version": version},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["content"] == content
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    edits = [b for b in blocks if (b.get("meta") or {}).get("action") == "doc"]
+    assert len(edits) == 2
+    assert "+实地计数" in edits[-1]["meta"]["detail"]
+    assert "&nbsp;" not in edits[-1]["meta"]["detail"]
+
+
+def test_literal_entity_in_code_remains_in_edit_evidence(client):
+    tid = _topic(client)
+    client.put(
+        f"/topics/{tid}/doc",
+        json={
+            "content": "```html\n&nbsp;\n```",
+            "author": "user-1",
+            "expected_version": 0,
+        },
+    )
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    edits = [b for b in blocks if (b.get("meta") or {}).get("action") == "doc"]
+    assert "+&nbsp;" in edits[-1]["meta"]["detail"]
+
+
+def test_document_save_pushes_persisted_notice_and_refresh_to_teammates(
+    client, monkeypatch
+):
+    from app.api.routes import topics
+
+    frames = []
+
+    async def publish(channel, frame):
+        frames.append((channel, frame))
+
+    monkeypatch.setattr(topics.get_broker(), "publish", publish)
+    tid = _topic(client)
+    frames.clear()
+    response = client.put(
+        f"/topics/{tid}/doc",
+        json={"content": "调查安排", "author": "user-1", "expected_version": 0},
+    )
+    assert response.status_code == 200
+    assert [frame["type"] for _, frame in frames] == ["event_block", "state"]
+    assert all(channel == tid for channel, _ in frames)
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
+    assert frames[0][1]["block"]["id"] in {block["id"] for block in blocks}
+    frames.clear()
+    client.put(
+        f"/topics/{tid}/doc",
+        json={
+            "content": "调查安排\n\n&nbsp;",
+            "author": "user-1",
+            "expected_version": 1,
+        },
+    )
+    assert [frame["type"] for _, frame in frames] == ["state"]
+
+
 def test_doc_canonicalizes_friendly_mentions(client, bearer):
     """A + backstop: friendly "@handle / @话题名" in doc content is rewritten to
     structured tokens on PUT, same as chat replies (裸名 stays untouched)."""

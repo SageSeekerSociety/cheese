@@ -7,7 +7,6 @@ project default and freezes once the topic has run (a session exists).
 import asyncio
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,15 +14,13 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
-from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
-from app.domain.project.repositories import ProjectRepository
-from app.domain.team.models import Team
 
 
 def _project(client, owner: str = "andyl") -> str:
@@ -47,6 +44,7 @@ def _mark_started(client, tid: str) -> None:
                 topic_id=uuid.UUID(tid),
                 agent_handle=CHEESE_HANDLE,
                 resume_token="sess-1",
+                harness="claude-code",
             )
             await s.commit()
 
@@ -118,45 +116,16 @@ def test_new_topic_inherits_default_and_is_unlocked(client):
     assert "local-docker" not in {p["id"] for p in body["profiles"]}
 
 
-def test_fresh_project_inherits_its_team_default(client):
-    pid = _project(client)
-    tid = _topic(client, pid)
-
-    async def _seed_team_default() -> None:
-        async with client.test_factory() as session:
-            now = datetime.now(UTC)
-            team = Team(
-                name="Default compute team",
-                intro="",
-                description="",
-                avatar_id=1,
-                compute_profile="remote-cheesed",
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(team)
-            await session.flush()
-            project = await ProjectRepository(session).get(uuid.UUID(pid))
-            project.team_id = team.id
-            await session.commit()
-
-    asyncio.run(_seed_team_default())
-    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
-    assert body["current"] == "remote-cheesed"
-    assert body["sticky"] == "remote-cheesed"
-    assert body["inherited"] is True
-
-
 async def _online(*_args, **_kwargs) -> bool:
     return True
 
 
-def test_select_persists_to_topic_and_project_sticky(client, monkeypatch):
+def test_select_persists_only_to_topic(client, monkeypatch):
     pid = _project(client)
     tid = _topic(client, pid)
     # `device` is the carrier: local-docker is retired (#358) and Cloud demands a
     # verified human caller (it provisions a billed VM — see the authorization test
-    # below). What is under test here is sticky propagation, not either of those.
+    # below). This test covers room-local profile selection.
     monkeypatch.setattr("app.api.routes.topics.project_device_online", _online)
     monkeypatch.setattr("app.api.routes.projects.project_device_online", _online)
 
@@ -177,7 +146,7 @@ def test_select_persists_to_topic_and_project_sticky(client, monkeypatch):
     # Persisted on the topic (no longer inheriting)...
     tbody = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert tbody["inherited"] is False
-    # ...and remembered as the project's sticky default for the next new topic.
+    # The deployment's existing device default is unchanged.
     pbody = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
     assert pbody["current"] == "device"
 

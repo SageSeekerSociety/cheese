@@ -63,7 +63,7 @@ beforeEach(() => {
   history = []
   // 未读只数「别人发的」，所以这些测试必须有一个真实的自己。没有它，
   // myHandle() 返回空串，那条过滤永远不成立，测试会因为别的原因通过。
-  localStorage.setItem('cheesex.me', JSON.stringify({ id: '1', handle: 'me', name: 'me', token: '' }))
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
     class {

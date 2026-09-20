@@ -1,14 +1,17 @@
 <script setup lang="ts">
 // 小队的项目 (项目归团队, v4): every project this team owns — the default tab of
-// the team page, personal team included (个人项目 = 个人团队的项目). 新建项目 is
-// one click: create with a default name, land inside, rename whenever.
+// the team page, personal team included (个人项目 = 个人团队的项目). 新建项目
+// opens the app-wide dialog with this team preselected: a project cannot be
+// renamed once made, so it has to get its name here, and it has to land in
+// THIS team or the rest of the team never sees it.
 import type { Project } from '@/cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { createProject, listProjects } from '@/api'
-import { myHandle } from '@/me'
+import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
+
+import { listProjects } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,8 +19,8 @@ const teamId = computed(() => Number(route.params.teamId))
 
 const projects = ref<Project[]>([])
 const loading = ref(false)
-const creating = ref(false)
 const error = ref<string | null>(null)
+const { show: showNewProjectDialog } = useNewProjectDialog()
 
 async function load() {
   loading.value = true
@@ -31,15 +34,8 @@ async function load() {
   }
 }
 
-async function newProject() {
-  creating.value = true
-  try {
-    const p = await createProject('未命名项目', myHandle(), teamId.value)
-    router.push(`/project/${p.id}`)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '新建项目失败'
-    creating.value = false
-  }
+function newProject() {
+  showNewProjectDialog(teamId.value)
 }
 
 function open(p: Project) {
@@ -65,9 +61,7 @@ watch(teamId, load)
         </p>
       </div>
       <v-spacer />
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" :loading="creating" @click="newProject">
-        新建项目
-      </v-btn>
+      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject"> 新建项目 </v-btn>
     </div>
 
     <div v-if="loading" class="py-10 text-center">
@@ -82,9 +76,7 @@ watch(teamId, load)
       <v-icon icon="mdi-rocket-launch-outline" size="56" class="mb-3 empty-state-icon" />
       <h3 class="text-subtitle-1 font-weight-medium mb-1">还没有项目</h3>
       <p class="text-body-2 text-medium-emphasis mb-4">点「新建项目」直接开一个，进去就能和芝士开工。</p>
-      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" :loading="creating" @click="newProject">
-        新建项目
-      </v-btn>
+      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="newProject"> 新建项目 </v-btn>
     </div>
 
     <v-row v-else>

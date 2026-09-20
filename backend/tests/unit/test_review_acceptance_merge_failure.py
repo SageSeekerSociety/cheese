@@ -7,6 +7,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.project.models import AiMode
+from app.domain.review import forge as review_forge
 from app.domain.review import services as review_services
 from app.domain.review.models import AcceptStatus
 from app.domain.review.services import AcceptService
@@ -15,13 +16,14 @@ from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
 
-def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
+def _accept_service(
+    monkeypatch,
+) -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
-        # The card is the room's own main line, not one thread's — delivery
-        # therefore gets stamped on the room.
-        task_id=None,
+        # The card delivers this task; the surrounding room stays active.
+        task_id=uuid.uuid4(),
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         decided_by=None,
@@ -30,6 +32,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         # No PR riding this card — accept takes the local merge path.
         pr_number=None,
         pr_url=None,
+        # 合的是人看到的那个 commit：采纳会核对请求声明的 head 与卡上的。平台
+        # lane 的卡从来没有 head，两边都是 None —— 「没有哪一版可以过时」。
+        pr_head_sha=None,
     )
     topic = SimpleNamespace(
         id=card.topic_id,
@@ -43,6 +48,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         # owner should be credited, and a fake missing the field would send it
         # down its error path instead of its ordinary "nobody to credit" one.
         parent_id=None,
+        # The squash message the platform-lane accept now writes (#363) reads
+        # the requester off the topic when the roster gives no answer.
+        created_by="alice",
     )
     project = SimpleNamespace(
         ai_mode=AiMode.collaborative,
@@ -50,6 +58,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         owner_handle="owner",
     )
     session = AsyncMock()
+    session.get.return_value = None
+    session.scalars.return_value = SimpleNamespace(all=lambda: [])
+    session.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
     service = AcceptService(session)
     service._repo = AsyncMock()
     service._repo.get.return_value = card
@@ -61,8 +72,19 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._topic_or_404 = AsyncMock(return_value=topic)
     service._projects = AsyncMock()
     service._projects.get.return_value = project
-    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
+    # Nothing bound: the platform is the forge and the local merge is the
+    # accept (#363) — the lane under test here.
+    service._forge_facts = AsyncMock(
+        return_value=review_forge.ProjectForgeFacts(
+            github_app_installed=False,
+            has_external_remote=False,
+            remote_write_credential=False,
+        )
+    )
+    monkeypatch.setattr(review_services.TaskService, "require_in_room", AsyncMock())
+    service._mark_task_merged = AsyncMock()
+    service._stamp_delivery = AsyncMock()
     return service, card, topic
 
 
@@ -79,17 +101,16 @@ def _patch_notify(monkeypatch) -> AsyncMock:
 async def _drain_notify() -> None:
     """accept() schedules the notify via asyncio.create_task (fire-and-forget,
     it must not block the accepter's response on a room post) — give the loop
-    one tick to actually run it before asserting, same idiom as
-    test_push_back.py's watch_dogfood_push scheduling test."""
+    one tick to actually run it before asserting."""
     await asyncio.sleep(0)
 
 
 @pytest.mark.anyio
 async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
 
-    def fail_merge(*_args):
+    def fail_merge(*_args, **_kwargs):
         raise RuntimeError("git object database unavailable")
 
     monkeypatch.setattr(ws, "merge_topic", fail_merge)
@@ -104,7 +125,6 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
-    assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
     # 房间只看到一行；报错原话在展开区里，一个字没少。
@@ -114,12 +134,12 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
 
 @pytest.mark.anyio
 async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
         "merge_topic",
-        lambda *_args: {
+        lambda *_args, **_kwargs: {
             "merged": False,
             "reason": "git merge failed before paths were available",
             "conflicts": [],
@@ -142,12 +162,12 @@ async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
 
 @pytest.mark.anyio
 async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
         "merge_topic",
-        lambda *_args: {
+        lambda *_args, **_kwargs: {
             "merged": False,
             "reason": "CONFLICT (content): Merge conflict in app/main.py",
             "conflicts": ["app/main.py"],
@@ -163,7 +183,6 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
-    assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
     assert kwargs["content"] == "采纳未完成：合并冲突"
@@ -173,12 +192,12 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
 @pytest.mark.anyio
 @pytest.mark.parametrize("reason", ["no topic branch", "topic is the base branch"])
 async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
-    service, card, topic = _accept_service()
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
         ws,
         "merge_topic",
-        lambda *_args: {"merged": False, "noop": True, "reason": reason},
+        lambda *_args, **_kwargs: {"merged": False, "noop": True, "reason": reason},
     )
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
@@ -187,12 +206,11 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
     assert card.status == AcceptStatus.accepted
     # 交付完成 ≠ 话题结束 (#442 decision 1).
     assert topic.status == TopicStatus.active
-    assert topic.accepted_at is not None
+    service._stamp_delivery.assert_awaited_once()
     service._repo.add_approval.assert_awaited_once_with(card.id, "alice")
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
-    assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
     assert "alice" in kwargs["content"]
@@ -200,16 +218,13 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
 
 
 @pytest.mark.anyio
-async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
-    service, card, topic = _accept_service()
+async def test_successful_merge_notifies_room(monkeypatch):
+    service, card, topic = _accept_service(monkeypatch)
     notify = _patch_notify(monkeypatch)
     monkeypatch.setattr(
-        ws, "merge_topic", lambda *_args: {"merged": True, "commit": "abc123"}
-    )
-    monkeypatch.setattr(
         ws,
-        "push_back",
-        lambda *_args: {"mode": "upstream", "target": "origin/main"},
+        "merge_topic",
+        lambda *_args, **_kwargs: {"merged": True, "delivered_head": "abc123"},
     )
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
@@ -217,13 +232,13 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
     assert returned is card
     assert card.status == AcceptStatus.accepted
     assert topic.status == TopicStatus.active
-    assert topic.accepted_by == "alice"
-    # 计费云 VM 仍然在交付时回收（它没有 reaper），容器/设备屏不再动。
-    service._machines.release_topic_machine.assert_awaited_once_with(topic.id)
+    service._stamp_delivery.assert_awaited_once()
+    # Delivery retains the open room's Cloud machine.
+    service._mark_task_merged.assert_awaited_once_with(card, delivered_head="abc123")
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
     assert kwargs["meta"]["severity"] == "info"
-    # 推送去向是交付说明的一部分，收进展开区，不占房间那一行。
-    assert "origin/main" in kwargs["meta"]["detail"]
+    # 合进平台仓库就是终点：交付说明里没有任何「推到哪里去了」。
+    assert "推送" not in kwargs["meta"]["detail"]

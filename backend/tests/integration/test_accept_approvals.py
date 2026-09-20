@@ -8,6 +8,7 @@ AI cannot vote (collaborative mode, same rule as "AI 不能验收自己").
 
 import pytest
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -32,8 +33,10 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
@@ -45,7 +48,7 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
 
 def _require(client, project_id: str, n: int) -> None:
     r = client.put(
-        f"/projects/{project_id}/quality-gate", json={"approvals_required": n}
+        f"/projects/{project_id}/branch-protection", json={"approvals_required": n}
     )
     assert r.status_code == 200
 
@@ -109,7 +112,13 @@ def test_approvals_then_accept_merges(client):
     out = r.json()["data"]
     assert out["status"] == "accepted"
     assert sorted(out["approvals"]) == ["alice", "bob"]
-    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
+    assert (
+        client.get(
+            f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}",
+            headers=delivery_headers(client, tid),
+        ).json()["data"]["accepted_by"]
+        == "alice"
+    )
 
 
 def test_ai_cannot_approve_collaborative(client):

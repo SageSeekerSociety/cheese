@@ -134,3 +134,15 @@ repos:
         language: system
         pass_filenames: false
         files: ^\.github/workflows/
+
+      # The user manual's anchors: the site's llms.txt is built from them, and
+      # a model answers with those URLs. A slug generated from a heading dies
+      # the moment someone rewords it, and a section with no opening sentence
+      # ships an entry the model has to guess from — neither turns anything
+      # else in the tree red.
+      - id: manual-anchors
+        name: user manual anchors (explicit slugs, every section has a summary)
+        entry: python3 .claude/scripts/check-manual-anchors.py
+        language: system
+        pass_filenames: false
+        files: ^docs/manual/

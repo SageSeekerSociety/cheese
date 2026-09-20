@@ -20,14 +20,21 @@ from app.domain.review import github_pr
 from app.domain.review.notes import NoteCode
 from app.domain.review.pr_signals import REVIEW_NUDGE_LIMIT, ReviewSignal
 from tests.conftest import wait_work_idle
-from tests.integration.test_accept_app_waits_for_ci import (
-    _authorized,
+from tests.integration.test_accept_pr import (
     _cards,
     _poll,
+    _ready_card,
 )
-from tests.integration.test_accept_app_waits_for_ci import (
+from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
+
+
+def _authorized(client, app_world) -> tuple[str, str, int, str]:
+    """一张等采纳、骑着 PR 的卡（#718：不再有「授权」，事件在 pending 上回流）。"""
+    _pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    return tid, cid, number, head_sha
+
 
 #: 复用「接了平台 GitHub App、卡停在 pr_open 等 CI」那个世界 —— 生产上这条链路
 #: 就跑在它上面。重新包一次而不是直接 import 那个 fixture：直接 import 会让它在
@@ -377,20 +384,23 @@ def test_a_repush_failure_still_outranks_a_ci_failure(client, app_world):
     assert _cards(client, tid)[0]["note"] == "平台自动重推失败"
 
 
-def test_a_green_pr_leaves_the_conflict_to_the_merge_attempt(client, app_world):
-    """检查绿了之后，合并会真打一次 GitHub，它的拒绝理由由 `_note_merge_blocked`
-    说。同一件事两个人说，房间里就是两条重复消息。"""
+def test_a_green_but_conflicted_pr_summons_the_agent_not_the_merge(client, app_world):
+    """检查全绿但和 main 冲突（DIRTY）：#718 的表把它派给芝士 —— 冲突事件到
+    做活的 agent，而轮询器不去替人调那次注定 409 的合并。"""
     fake = app_world["fake"]
     tid, cid, number, head_sha = _authorized(client, app_world)
     fake.check_state_by_sha[head_sha] = ("success", "全部 9 项检查通过")
     fake.mergeable_by_number[number] = False
-    fake.merge_blocked_by_number[number] = "HTTP 409：merge conflict"
 
     _poll(client)
     wait_work_idle()
 
-    assert _nudges(client, tid, "pr_conflict") == []
-    assert "拒绝合并" in _cards(client, tid)[0]["note"]
+    assert len(_nudges(client, tid, "pr_conflict")) == 1
+    assert fake.merge_calls == []
+    # 60s 轮询：同一个冲突不重复叫。
+    _poll(client)
+    wait_work_idle()
+    assert len(_nudges(client, tid, "pr_conflict")) == 1
 
 
 def test_the_reviews_api_failing_does_not_take_the_ci_failure_down_with_it(

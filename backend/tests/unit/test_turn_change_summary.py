@@ -75,6 +75,17 @@ def test_an_empty_diff_has_no_files():
     assert _diff_file_stats("") == []
 
 
+def test_git_quoted_chinese_paths_are_readable():
+    diff = (
+        r'diff --git "a/docs/\346\226\271\346\241\210.md" '
+        r'"b/docs/\346\226\271\346\241\210.md"'
+        "\n@@ -1 +1 @@\n-old\n+new\n"
+    )
+    assert _diff_file_stats(diff) == [
+        {"path": "docs/方案.md", "added": 1, "removed": 1}
+    ]
+
+
 def test_the_room_line_leads_with_the_counts():
     line = _format_change_summary(_diff_file_stats(DIFF))
     head, paths = line.split("\n")

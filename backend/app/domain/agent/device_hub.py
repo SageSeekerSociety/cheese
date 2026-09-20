@@ -21,7 +21,10 @@ Our adaptations vs the reference:
 """
 
 import asyncio
+import base64
+import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -44,12 +47,71 @@ class DeviceOffline(RuntimeError):
         self.device_id = device_id
 
 
+class DeviceCallError(RuntimeError):
+    """The machine answered a call with a failure of its own.
+
+    「dial unix …sock: no such file」 is the connector saying the runner's
+    socket is not there yet; 「lstat …/.cheese/executor: no such file」 that the
+    home it was asked about is gone. Those are answers, and the message is the
+    whole of what the person in the room can act on. Raised as a bare
+    RuntimeError they were the owner's unhandled 500, the backend's unhandled
+    500 on top of it, and two alerts describing this server for every one the
+    machine sent — 17 alerts folding 29 more repeats on 2026-09-18 alone, with
+    the machine's words cut out of the ones that reached the room.
+
+    A subclass, so every ``except RuntimeError`` that already waits one of
+    these out keeps doing so.
+    """
+
+
+class DeviceNotReady(DeviceCallError):
+    """The link is up, but this machine cannot serve calls yet.
+
+    A connector that has just dialled in finishes updating itself before it can
+    run anything, and a call that arrives in that window has nothing to reach.
+    It is the same standing as the machine being away — the caller's next poll,
+    a second or two later, finds it ready — but as a bare RuntimeError it was an
+    unhandled 500 and one alert per release: 「Device connector must finish
+    updating before execution」 arrived that way at 01:47 UTC on 2026-09-20,
+    seconds after the owner was replaced and the fleet re-attached.
+    """
+
+
+def _read_a_failure_nobody_awaited(future: asyncio.Future[Any]) -> None:
+    """A call registers its future and then writes to the link; when the write
+    itself finds the link dead, ``drop_transport`` fails that very future and
+    the write raises ``DeviceOffline`` — so the caller leaves through the send
+    and never awaits the future it registered. asyncio reports that at garbage
+    collection as 「Future exception was never retrieved」, an ERROR with no
+    route and a traceback into the collector, for a device the caller already
+    reported offline. Reading the exception here is what makes that untrue;
+    a future the caller did await answers the same thing twice for free."""
+    if future.done() and not future.cancelled():
+        future.exception()
+
+
+def configure_subscription_cleanup(remote_hub: Any) -> None:
+    """Wire business subscription cleanup without coupling the RPC transport."""
+    from app.domain.agent.harness.claude_code import (
+        drop_device_subscriptions,
+        drop_screen_subscriptions,
+    )
+
+    remote_hub.set_subscription_cleanup_callbacks(
+        drop_device=drop_device_subscriptions,
+        drop_screen=drop_screen_subscriptions,
+    )
+
+
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
 
 class DeviceTransport(Protocol):
     """A live device control channel. Satisfied by a ``fastapi.WebSocket`` adapter
-    and trivially fakeable."""
+    and trivially fakeable.
+
+    ``send_json`` raises ``ConnectionError`` when the channel can no longer carry
+    a frame; the hub then treats the device as gone."""
 
     async def send_json(self, msg: dict[str, Any]) -> None: ...
 
@@ -73,6 +135,7 @@ class HubScreen:
     agent_handle: str
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
+    resource_id: uuid.UUID | None = None
     hook_key: str = ""
     # UNIX expiry of the model credential the screen's `claude` was LAUNCHED with
     # (its `CHEESE_TOKEN_EXPIRES`). A bare `claude` reads that credential — the
@@ -85,6 +148,9 @@ class HubScreen:
     # `None` = never recorded (a screen adopted after a server restart, or a dev
     # token with no decodable expiry) → treated as fresh, never retired on it.
     credential_expires: int | None = None
+    agent_configuration: str = ""
+    execution_target: dict | None = None
+    closing: bool = False
     viewers: set[ViewerTransport] = field(default_factory=set)
 
 
@@ -102,6 +168,7 @@ class HubDevice:
     # connector built before it announced either.
     build: str = ""
     target: str = ""
+    executor: bool = False
     # Whether this CONNECTION has already been told to update itself. Reset on
     # every attach, so a machine whose self-update failed is told again the next
     # time it dials in rather than once and never again.
@@ -119,15 +186,44 @@ class HubDevice:
     )
     call_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     file_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    executor_pending: dict[str, tuple[asyncio.Future[Any], bytearray]] = field(
+        default_factory=dict
+    )
+    session_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    connection_generation: int = 0
 
     async def send(self, msg: dict[str, Any]) -> None:
         # Serialize sends to one device: a WebSocket is not safe for concurrent
         # writes, and the orchestrator, exec, and every viewer's fan-out all send
         # here. Without this, interleaved frames corrupt the channel.
         async with self.send_lock:
-            if self.transport is not None:
-                await self.transport.send_json(msg)
+            transport = self.transport
+            if transport is None:
+                return
+            try:
+                await transport.send_json(msg)
+            except ConnectionError as exc:
+                # The receive loop only learns of a dead link when the peer says
+                # so; a peer that vanished never does, and then the socket stays
+                # attached for good — every caller that trusts ``is_online`` sends
+                # into it and fails, once a minute for a storage sweep. A failed
+                # send is the proof the receive loop never gets.
+                self.drop_transport(transport)
+                raise DeviceOffline(self.device_id) from exc
+
+    def drop_transport(self, transport: DeviceTransport) -> bool:
+        """Forget ``transport`` if it is still the live one; fail what waited on it."""
+        if self.transport is not transport:
+            return False
+        self.transport = None
+        for future, _ in self.executor_pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline(self.device_id))
+        for future in self.session_pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline(self.device_id))
+        return True
 
 
 class DeviceHub:
@@ -145,7 +241,16 @@ class DeviceHub:
         self, device_id: str, transport: DeviceTransport, *, name: str = ""
     ) -> None:
         device = self._device(device_id)
+        if device.transport is not None and device.transport is not transport:
+            for future, _ in device.executor_pending.values():
+                if not future.done():
+                    future.set_exception(DeviceOffline(device_id))
+            for future in device.session_pending.values():
+                if not future.done():
+                    future.set_exception(DeviceOffline(device_id))
         device.transport = transport
+        device.connection_generation += 1
+        device.executor = False
         if name:
             device.name = name
         device.update_pushed = False
@@ -153,16 +258,16 @@ class DeviceHub:
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
         device = self._devices.get(device_id)
-        if device is not None and device.transport is transport:
-            device.transport = None
-            from app.domain.agent.harness.claude_code import (
-                drop_device_subscriptions,
-                drop_screen_subscriptions,
-            )
+        if device is not None and device.drop_transport(transport):
+            if not settings.device_connection_owner:
+                from app.domain.agent.harness.claude_code import (
+                    drop_device_subscriptions,
+                    drop_screen_subscriptions,
+                )
 
-            for screen in list(device.screens.values()):
-                await drop_screen_subscriptions(screen)
-            await drop_device_subscriptions(device_id)
+                for screen in list(device.screens.values()):
+                    await drop_screen_subscriptions(screen)
+                await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -276,7 +381,11 @@ class DeviceHub:
         command: list[str] | None = None,
         project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
+        resource_id: uuid.UUID | None = None,
         hook_key: str = "",
+        credential_expires: int | None = None,
+        agent_configuration: str = "",
+        execution_target: dict | None = None,
     ) -> HubScreen:
         """Re-register a screen the *device* is still running after the server lost its
         in-memory state (a restart). The frozen cli auto-reconnects its control channel
@@ -284,16 +393,21 @@ class DeviceHub:
         screen token to the agent identity so viewers/attribution work again without
         restarting the screen. Idempotent per (device, sid).
 
-        NOTE (P3 Phase B, item 5 skeleton): the caller that reconstructs the identity
-        from the DB (agent_user_id/handle/project/topic per persisted screen row) and
-        replays the device's re-announce into this is not yet wired — see
-        ``connector.agent_socket``'s inbound loop. The mechanism is here and tested;
-        the persistence + replay is the remaining TODO.
+        The channel checks room ownership against the DB before adopting the
+        identity retained by the device's tmux session.
         """
         device = self._device(device_id)
         existing = device.screens.get(sid)
         if existing is not None:
+            if (existing.project_id, existing.topic_id, existing.token) != (
+                project_id,
+                topic_id,
+                token,
+            ):
+                raise ValueError("screen identity changed during recovery")
             return existing
+        if sid in self._screens or token in self._by_screen_token:
+            raise ValueError("screen identity belongs to another device")
         screen = HubScreen(
             sid=sid,
             device_id=device_id,
@@ -303,28 +417,75 @@ class DeviceHub:
             agent_handle=agent_handle,
             project_id=project_id,
             topic_id=topic_id,
+            resource_id=resource_id,
             hook_key=hook_key,
+            credential_expires=credential_expires,
+            agent_configuration=agent_configuration,
+            execution_target=execution_target,
         )
         device.screens[sid] = screen
         self._screens[sid] = screen
         self._by_screen_token[token] = screen
         return screen
 
+    def update_screen(
+        self,
+        sid: str,
+        *,
+        resource_id: uuid.UUID | None,
+        execution_target: dict | None,
+        credential_expires: int | None = None,
+        agent_configuration: str | None = None,
+    ) -> HubScreen:
+        screen = self._screens.get(sid)
+        if screen is None:
+            raise KeyError("screen not found")
+        screen.resource_id = resource_id
+        screen.execution_target = execution_target
+        if credential_expires is not None:
+            screen.credential_expires = credential_expires
+        if agent_configuration is not None:
+            screen.agent_configuration = agent_configuration
+        return screen
+
     async def close_screen(self, device_id: str, sid: str) -> bool:
-        """Close a screen: tell the device to end the session and forget it here."""
+        """Forget a screen only after its owner confirms that it has stopped."""
         device = self._device(device_id)
-        screen = device.screens.pop(sid, None)
+        screen = device.screens.get(sid)
+        if screen is not None:
+            screen.closing = True
+        await self.session_request(device_id, device_link.session_close(sid))
         if screen is None:
             return False
+        device.screens.pop(sid, None)
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
-        from app.domain.agent.harness.claude_code import (
-            drop_screen_subscriptions,
-        )
+        if not settings.device_connection_owner:
+            from app.domain.agent.harness.claude_code import (
+                drop_screen_subscriptions,
+            )
 
-        await drop_screen_subscriptions(screen)
-        await device.send(device_link.session_close(sid))
+            await drop_screen_subscriptions(screen)
         return True
+
+    async def session_request(
+        self, device_id: str, message: dict[str, Any], *, timeout: float = 30
+    ) -> Any:
+        device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
+        request_id = uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        device.session_pending[request_id] = future
+        try:
+            await device.send({**message, "id": request_id})
+            return await asyncio.wait_for(future, timeout)
+        finally:
+            device.session_pending.pop(request_id, None)
+            _read_a_failure_nobody_awaited(future)
+
+    async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
+        return await self.session_request(device_id, {"t": "session.list"})
 
     def screen_by_token(self, token: str) -> HubScreen | None:
         return self._by_screen_token.get(token)
@@ -343,12 +504,7 @@ class DeviceHub:
         ]
 
     def screens_for_topic(self, topic_id: uuid.UUID) -> list[HubScreen]:
-        """Every screen bound to a topic, ACROSS devices and whether or not the
-        device is online — the reverse lookup the lifecycle reaper needs to free a
-        topic's screen when it is archived/accepted (``topic_id`` is globally unique,
-        so this is the whole set). Offline devices are included on purpose: closing
-        their screen still forgets it here, so an archived topic leaves no stale
-        registry entry to re-surface if the device reconnects."""
+        """Include offline screens so a close can remain pending until reconnect."""
         return [s for s in self._screens.values() if s.topic_id == topic_id]
 
     async def call_screen(
@@ -419,23 +575,79 @@ class DeviceHub:
         eid = f"e{device.exec_seq}"
         fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         device.exec_pending[eid] = fut
-        await device.send(
-            device_link.exec_cmd(
-                exec_id=eid,
-                command=argv,
-                timeout=int(timeout),
-                cwd=cwd,
-                env=env,
-                stdin=stdin,
-            )
-        )
         try:
+            await device.send(
+                device_link.exec_cmd(
+                    exec_id=eid,
+                    command=argv,
+                    timeout=int(timeout),
+                    cwd=cwd,
+                    env=env,
+                    stdin=stdin,
+                )
+            )
             return await asyncio.wait_for(fut, timeout=timeout + 5)
         except TimeoutError:
             await device.send(device_link.exec_cancel(eid))
             raise
         finally:
             device.exec_pending.pop(eid, None)
+
+    async def call_executor(
+        self,
+        device_id: str,
+        state: str,
+        method: str,
+        params: dict,
+        *,
+        timeout: float = 660,
+        trace_id: str | None = None,
+    ) -> dict:
+        device = self._device(device_id)
+        if device.transport is None:
+            raise DeviceOffline(device_id)
+        identifier = trace_id or "execution-" + uuid.uuid4().hex
+        if not device.executor:
+            raise DeviceNotReady(
+                f"device {device_id} is still updating its connector; "
+                "execution is available once it reports ready"
+            )
+        future = asyncio.get_running_loop().create_future()
+        device.executor_pending[identifier] = (future, bytearray())
+        # The stage lines are DEBUG, and `device_error` below is not. They carry
+        # raw `mono_ns` for someone to subtract while chasing latency (#951) —
+        # a debugging artifact, not an event an operator acts on. At INFO they
+        # made this process's log unreadable: measured 2026-09-15, four of them
+        # per call meant a 600-line tail of the owner held TWELVE SECONDS, and
+        # the refused-socket RuntimeError behind a room that would not answer
+        # had already scrolled out of reach of the only probe that can read it.
+        try:
+            logger.debug(
+                "execution_timing stage=device_send_start trace=%s mono_ns=%d",
+                identifier,
+                time.monotonic_ns(),
+            )
+            await device.send(
+                device_link.execution_call(
+                    call_id=identifier,
+                    state=state,
+                    method=method,
+                    params=params,
+                    timeout=int(timeout),
+                )
+            )
+            logger.debug(
+                "execution_timing stage=device_sent trace=%s mono_ns=%d",
+                identifier,
+                time.monotonic_ns(),
+            )
+            return await asyncio.wait_for(future, timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            await device.send(device_link.exec_cancel(identifier))
+            raise
+        finally:
+            device.executor_pending.pop(identifier, None)
+            _read_a_failure_nobody_awaited(future)
 
     # -- viewers (browser <-> device screen) -------------------------------
 
@@ -491,6 +703,7 @@ class DeviceHub:
             device.proto = msg.v
             device.build = msg.build
             device.target = msg.target
+            device.executor = msg.executor
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
             await self._update_if_stale(device, msg)
@@ -521,6 +734,41 @@ class DeviceHub:
                     }
                 )
             return
+        if msg.t in {"execution.data", "execution.result"}:
+            pending = device.executor_pending.get(msg.id)
+            if pending is None or pending[0].done():
+                return
+            future, data = pending
+            try:
+                if msg.t == "execution.data":
+                    if not data:
+                        logger.debug(
+                            "execution_timing stage=device_first_data "
+                            "trace=%s mono_ns=%d",
+                            msg.id,
+                            time.monotonic_ns(),
+                        )
+                    data.extend(base64.b64decode(msg.data, validate=True))
+                elif msg.error:
+                    logger.info(
+                        "execution_timing stage=device_error trace=%s mono_ns=%d",
+                        msg.id,
+                        time.monotonic_ns(),
+                    )
+                    raise DeviceCallError(msg.error)
+                else:
+                    logger.debug(
+                        "execution_timing stage=device_complete trace=%s mono_ns=%d",
+                        msg.id,
+                        time.monotonic_ns(),
+                    )
+                    response = json.loads(data)
+                    if "error" in response:
+                        raise DeviceCallError(response["error"])
+                    future.set_result(response["result"])
+            except (ValueError, KeyError, RuntimeError) as exc:
+                future.set_exception(exc)
+            return
         if msg.t == "screen.data" and screen is not None:
             await self._fan_out_screen_data(screen, msg.decoded_data())
             return
@@ -528,15 +776,20 @@ class DeviceHub:
             fut = device.call_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(RuntimeError(msg.error))
+                    fut.set_exception(DeviceCallError(msg.error))
                 else:
                     fut.set_result(msg.value)
             return
-        if msg.t == "file.result":
-            fut = device.file_pending.get(msg.id)
+        if msg.t in ("file.result", "session.result"):
+            pending = (
+                device.file_pending
+                if msg.t == "file.result"
+                else device.session_pending
+            )
+            fut = pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(RuntimeError(msg.error))
+                    fut.set_exception(DeviceCallError(msg.error))
                 else:
                     fut.set_result(msg.value)
             return
@@ -604,5 +857,15 @@ class DeviceHub:
         pass
 
 
-# Shared singleton: the connector route and the DeviceChannel import this instance.
-device_hub = DeviceHub()
+# Shared singleton: the connection-owner process keeps the local implementation;
+# rolling business backends use its RPC facade.
+from app.core.config import settings  # noqa: E402
+
+if settings.device_connection_url:
+    from app.domain.agent.device_hub_rpc import RemoteDeviceHub  # noqa: E402
+
+    device_hub = RemoteDeviceHub(
+        settings.device_connection_url, settings.device_connection_auth_secret
+    )
+else:
+    device_hub = DeviceHub()

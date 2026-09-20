@@ -20,8 +20,18 @@
 <script setup lang="ts">
 import type { JSONContent } from 'vuetify-pro-tiptap'
 
-import { computed, ref } from 'vue'
+import { computed, getCurrentInstance, ref } from 'vue'
 import { VuetifyTiptap } from 'vuetify-pro-tiptap'
+
+import { installVuetifyProTipTap } from '@/plugins/tiptap'
+
+// The editor plugin is no longer installed at app boot — that put ~1.09 MB of
+// vuetify-pro-tiptap/prosemirror/tiptap on every first load, login page
+// included. Install it here instead: this runs during THIS component's setup,
+// which is before the VuetifyTiptap child below reads the configured extension
+// list, so Bold/Table/Heading/AttachmentImage… are all live on the first mount.
+const currentApp = getCurrentInstance()?.appContext.app
+if (currentApp) installVuetifyProTipTap(currentApp)
 
 const props = defineProps<{
   output?: 'json' | 'html' | 'text'

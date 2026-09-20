@@ -1,0 +1,71 @@
+name: Harness request contracts
+
+on:
+  pull_request:
+    paths:
+      - "backend/app/domain/agent/**"
+      - "backend/tests/**"
+      - "backend/scripts/test_harness_contracts.py"
+      # The gate this job now ends on lives here, so a change to it alone must
+      # still run the job it gates.
+      - "backend/scripts/assert_suite_ran.py"
+      - "backend/uv.lock"
+      - ".github/workflows/harness-contract.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-requests:
+    runs-on: ubuntu-latest
+    # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
+    # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for
+    # the tests alone is spent before they run, and a job killed by its own
+    # timeout reports as cancelled with no failure to read.
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.12.1"
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.13
+          uv sync --frozen --group dev
+      # As a module, not a path: the script reads its own results.xml back
+      # through backend/scripts/assert_suite_ran.py, and only `-m` puts
+      # backend/ (this job's working directory) on the import path.
+      - name: Verify actual provider requests with pinned binaries
+        run: uv run python -m scripts.test_harness_contracts
+      - name: Retain synthetic requests and test logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        # Tolerated: this is debug output, and the account's artifact storage
+        # filling up is not this change being broken. On 2026-09-16 it reported
+        # exactly that — E2E, acceptance and harness contracts all red with every
+        # test passing and only the upload step failing.
+        continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
+        with:
+          name: harness-contract-${{ github.sha }}
+          path: |
+            logs/harness-contracts/*/inputs.json
+            logs/harness-contracts/*/*.log
+            logs/harness-contracts/*/results.xml
+            logs/harness-contracts/*/pytest/**/provider-requests.json
+            logs/harness-contracts/*/pytest/**/runner.log
+          retention-days: 3

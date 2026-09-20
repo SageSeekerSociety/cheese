@@ -305,10 +305,6 @@ detail:
 The dividing line is not whether a human *can* intervene — Claude Code shows they
 can, in all four of its forms. It is **who** the output is visible to.
 
-The same rule answers the question that prompted this document's sibling
-discussion: a script like `on-dogfood-push.sh` is a platform concept exactly to
-the degree its results become visible in a room.
-
 ## What a task looks like
 
 Not an entry in the left-hand tree. A **card in the room's timeline** — a task

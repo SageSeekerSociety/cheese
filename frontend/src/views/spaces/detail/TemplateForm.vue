@@ -31,6 +31,7 @@
             <v-col cols="12">
               <v-text-field
                 v-model="template.name"
+                autocomplete="off"
                 :label="t('spaces.detail.templateForm.templateName')"
                 required
               ></v-text-field>
@@ -38,6 +39,7 @@
             <v-col cols="12">
               <v-textarea
                 v-model="template.description"
+                autocomplete="off"
                 :label="t('spaces.detail.templateForm.templateDescription')"
                 rows="3"
               ></v-textarea>
@@ -45,6 +47,7 @@
             <v-col cols="12">
               <v-text-field
                 v-model="template.title"
+                autocomplete="off"
                 :label="t('spaces.detail.templateForm.contestTitle')"
                 required
               ></v-text-field>

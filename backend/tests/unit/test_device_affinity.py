@@ -13,7 +13,7 @@ import uuid
 import pytest
 
 from app.domain.agent.device_provider import resolve_pinned_device
-from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService

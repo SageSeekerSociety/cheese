@@ -56,7 +56,7 @@ export interface Task {
   submitterType: TaskSubmitterType
   creator: User
   registrationStartAt?: number
-  deadline: number
+  deadline: number | null
   participantLimit: number
   defaultDeadline: number
   resubmittable: boolean

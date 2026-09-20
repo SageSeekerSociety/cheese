@@ -1,6 +1,6 @@
 """怎么在一块屏幕上把 claude 开起来，以及它开机前要在盘上看到什么。
 
-Symmetric to ``device_launch.build_screen_launch``, for a screen the backend
+Symmetric to ``device_launch.on_machine``, for a screen the backend
 shares a filesystem with: the argv, the env keys ``claude`` itself reads, and
 the files it reads exactly once at launch. A channel takes the three and does
 its own transport with them — write the files where its mount points, pass the
@@ -23,10 +23,10 @@ The three files are not belt-and-braces:
 - ``.claude.json`` pre-accepts the first-launch dialogs. With
   ``CLAUDE_CONFIG_DIR`` set, claude reads AND writes its config under THAT
   directory and never falls back to ``$HOME`` (verified on the device path), so
-  an image that bakes the gates into ``$HOME`` does not help: the onboarding
-  dialog eats the first prompt, the pane never reaches ``❯``, and the turn dies
-  at the ready handshake with nothing saying why. The trust entry names the
-  session's OWN cwd for the same reason — a baked file cannot know it.
+  an image that bakes the gates into ``$HOME`` does not help: the fresh session
+  comes up showing an onboarding dialog instead of taking input, and nothing
+  says why. The trust entry names the session's OWN cwd for the same reason — a
+  baked file cannot know it.
 - the system prompt file, which ``--append-system-prompt-file`` points at.
 
 All three are read ONCE, at launch: a session that is merely reused keeps what
@@ -35,17 +35,23 @@ for the NEXT fresh session — a container rebuild, a crash — and a stale prom
 served to that one is the failure this prevents.
 """
 
-import asyncio
 import json
-from collections.abc import Awaitable, Callable
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
-from app.domain.agent.harness.launch import LaunchSpec, ScreenPlace, SessionFile
+from app.domain.agent.harness.launch import (
+    ExecutorLaunch,
+    LaunchSpec,
+    MachineLaunch,
+    MachinePlace,
+    ScreenPlace,
+    SessionFile,
+)
+from app.domain.agent.skills import native_skill_files
 
 # THE isolation boundary between two claudes on one machine: claude reads AND
 # writes its config — settings.json, .claude.json, the transcripts --resume
@@ -66,7 +72,9 @@ GATES_FILE = ".claude.json"
 SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
 
 
-def hooks_settings(extra_stop: list[str] | None = None) -> dict:
+def hooks_settings(
+    extra_stop: list[str] | None = None, *, remote_control: bool = False
+) -> dict:
     """``~/.claude/settings.json`` for a hooks-driven session: pre-accept the
     bypass disclaimer AND forward every structured event to our hook endpoint via
     a COMMAND hook (``cheese-hook``).
@@ -89,23 +97,56 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     ]
     return {
         "skipDangerousModePermissionPrompt": True,
-        # Tools with no way out of this platform (AskUserQuestion — see
-        # cli.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
-        # launch line; a deny rule that only lives in one of the two is a deny
-        # rule that a future launcher tweak can silently drop.
-        "permissions": {"deny": list(DISALLOWED_TOOLS)},
+        # Stream liveness is separate from WebFetch's response-error handling.
+        "env": {
+            "CLAUDE_ENABLE_STREAM_WATCHDOG": "1",
+        },
+        # Previews belong in Cheese, not on claude.ai via the Artifact tool.
+        "enableArtifact": False,
+        # Native questions need the RC answer channel. Without it, keep the
+        # matching CLI deny rule so a question cannot strand the turn.
+        "permissions": {"deny": [] if remote_control else list(DISALLOWED_TOOLS)},
+        # Set before the first turn: changing this later cannot remove a URL
+        # already present in the conversation's model-visible history.
+        **({"attribution": {"sessionUrl": False}} if remote_control else {}),
         "hooks": {
             "SessionStart": plain,
-            # The delivery receipt. We inject a prompt by typing it into the
-            # terminal, and typing has no return value: tmux confirms the bytes
-            # reached the pane and nothing confirms a prompt box read them. This
-            # hook fires for pasted input exactly as for a human's keystrokes,
-            # so its arrival is the proof that the message became a user turn.
+            # The consumption receipt. A prompt reaches the session over its
+            # rendezvous socket, and that protocol has no positive ack: a frame
+            # that was written and not refused has entered the queue, and nothing
+            # on that channel says it was read. This hook fires when the session
+            # takes a queued text as a user turn, so its arrival is the proof.
+            # Not every build fires it for every consumption — see the note in
+            # hooks_substrate's `send` about what 2.1.224 does with a text
+            # delivered while a tool is running.
             "UserPromptSubmit": plain,
             "PreToolUse": tool_matched,
             "PostToolUse": tool_matched,
+            # The tool call that ended in an error. Claude Code fires this
+            # INSTEAD of `PostToolUse` (same shape as `StopFailure` below), so
+            # without it a failed step is indistinguishable from one still
+            # running: the platform sees the call start and nothing come back.
+            "PostToolUseFailure": tool_matched,
             "MessageDisplay": plain,
+            # A subagent's own boundaries. Its tool calls already arrive through
+            # PreToolUse/PostToolUse above (those fire inside a subagent exactly
+            # as on the main thread) — what they cannot say is that a worker
+            # started, or which of several is speaking, because the room sees
+            # one undifferentiated stream. These two carry that: the id to
+            # attribute the rest by, and the closing message, which otherwise
+            # reaches only the thread that spawned it.
+            "SubagentStart": plain,
+            # NOT part of `stop_hooks`: those hand a machine's work back at TURN
+            # end, and a subagent finishing is not the turn finishing — the
+            # session keeps working, and often spawns another.
+            "SubagentStop": plain,
             "Stop": [{"hooks": stop_hooks}],
+            # The turn that ends because the API refused it. Claude Code fires
+            # this INSTEAD of `Stop` (measured on 2.1.224 and 2.1.260, in `-p`
+            # and interactive, for 529/402/429/401), so without it such a turn
+            # never ends from the platform's side: the process sits alive at its
+            # prompt, the probe says alive, and nothing else is coming.
+            "StopFailure": plain,
         },
     }
 
@@ -149,7 +190,13 @@ def build_session_launch(
         command += f" --model {model}"
     return LaunchSpec(
         command=command,
-        env={CONFIG_DIR_ENV: config_dir, HARNESS_ENV: CLAUDE_CODE},
+        env={
+            CONFIG_DIR_ENV: config_dir,
+            HARNESS_ENV: CLAUDE_CODE,
+            "BUN_OPTIONS": shlex.quote(
+                "--preload=" + config_dir + "/webfetch_transport.cjs"
+            ),
+        },
         files=(
             # 0o666: the sandbox's claude rewrites both of these itself, under a
             # different uid than the backend that plants them.
@@ -161,6 +208,15 @@ def build_session_launch(
             SessionFile(GATES_FILE, _gates(workdir), 0o666),
             # Ours alone; claude only reads it.
             SessionFile(SYSTEM_PROMPT_FILE, system_prompt, 0o644),
+            SessionFile(
+                "webfetch_transport.cjs",
+                Path(__file__).with_name("webfetch_transport.cjs").read_text(),
+                0o644,
+            ),
+            *(
+                SessionFile(name, content, 0o644)
+                for name, content in native_skill_files().items()
+            ),
         ),
     )
 
@@ -206,6 +262,29 @@ class ClaudeLaunch:
     system_prompt: str
     model: str | None = None
     resume_session_id: str | None = None
+    harness: str = CLAUDE_CODE
+
+    @property
+    def execution(self) -> ExecutorLaunch:
+        from app.domain.agent.harness.claude_code.remote_execution import launch
+
+        return launch
+
+    def on(self, place: MachinePlace) -> MachineLaunch:
+        from app.domain.agent.harness.claude_code.device_launch import on_machine
+
+        return on_machine(
+            place,
+            system_prompt=self.system_prompt,
+            model=self.model,
+            # The third thing a plan carries, and the one the device channel
+            # used to drop on the floor. A screen is retired and reopened for
+            # reasons that say nothing about the conversation, and until this
+            # was passed on, every one of them started the topic's agent from a
+            # blank slate — the room's memory of its own turns ending at
+            # whichever gate last fired.
+            resume_session_id=self.resume_session_id,
+        )
 
     def at(self, place: ScreenPlace) -> LaunchSpec:
         return build_session_launch(
@@ -218,103 +297,6 @@ class ClaudeLaunch:
             # has to look at the transcript through the mount.
             transcripts_at=place.state_at,
         )
-
-
-# How long a fresh `claude` gets to draw its input box, and how often to look.
-# A cold start on a new container is the slow case (the launcher's first-run
-# gates, then the TUI's own boot); past this the screen is not coming up and the
-# turn ends with a clean error instead of hanging.
-READY_TIMEOUT_S = 45.0
-READY_POLL_S = 0.4
-
-
-def input_box_ready(screen_text: str) -> bool:
-    """True when a captured screen shows Claude Code's input box.
-
-    The ``❯`` prompt is the ONLY signal that this TUI is ready to be typed at,
-    and typing before it appears loses the prompt into a boot-time modal. Pure,
-    so it costs no container to test.
-    """
-    return "❯" in screen_text
-
-
-async def wait_for_input_box(capture: Callable[[], Awaitable[str | None]]) -> bool:
-    """Poll a screen until claude's input box shows, or give up (就绪握手).
-
-    The transport supplies the reading; how long a claude takes to come up, and
-    what "up" looks like, are this side's.
-    """
-    deadline = asyncio.get_event_loop().time() + READY_TIMEOUT_S
-    while asyncio.get_event_loop().time() < deadline:
-        screen_text = await capture()
-        if screen_text is not None and input_box_ready(screen_text):
-            return True
-        await asyncio.sleep(READY_POLL_S)
-    return False
-
-
-class ScreenHost[ScreenT](Protocol):
-    """What a transport must be able to do to a screen for a claude to live on
-    it. Six verbs, none of which mention Claude Code — the policy that sequences
-    them (``ensure_claude``) is the part that does.
-
-    Parameterised by whatever the transport calls one screen — a tmux pane here,
-    a device binding there. All six verbs take the SAME handle, and saying so is
-    the difference between a host that satisfies this and one that merely has
-    six methods of the right names.
-    """
-
-    async def session_exists(self, screen: ScreenT) -> bool:
-        """Is there still a session here at all?"""
-        ...
-
-    async def session_deaf(self, screen: ScreenT) -> bool:
-        """Can this session still reach us? A live one that cannot is worse than
-        none: it works perfectly and reports nothing."""
-        ...
-
-    async def retire_session(self, screen: ScreenT) -> None:
-        """Take this session down, and say so — its conversation goes with it."""
-        ...
-
-    async def start_session(self, screen: ScreenT, launch: LaunchSpec) -> None:
-        """Bring a fresh session up running ``launch``."""
-        ...
-
-    async def reclaim_session(self, screen: ScreenT) -> None:
-        """Make a session that was left running usable again."""
-        ...
-
-    async def capture_session(self, screen: ScreenT) -> str | None:
-        """What the screen currently shows, or None if it cannot be read."""
-        ...
-
-
-async def ensure_claude[ScreenT](
-    host: ScreenHost[ScreenT], screen: ScreenT, launch: LaunchSpec
-) -> bool:
-    """Have a claude on this screen, ready to be typed at. False = it never came
-    up in time.
-
-    A session that already exists is REUSED — it is the conversation's
-    continuity, and restarting it throws that away — but only if it can still
-    report. A claude reads its wiring once at exec and never again, so a session
-    whose reporting path has since died is a process that works perfectly and
-    tells nobody: cheaper to lose its memory than to run turns nobody can see.
-
-    The input-box wait happens on both paths, not just the fresh one. A reused
-    session can be mid-render (a previous turn's output still painting), and the
-    first thing done to it either way is typing.
-    """
-    if await host.session_exists(screen):
-        if await host.session_deaf(screen):
-            await host.retire_session(screen)
-            await host.start_session(screen, launch)
-        else:
-            await host.reclaim_session(screen)
-    else:
-        await host.start_session(screen, launch)
-    return await wait_for_input_box(lambda: host.capture_session(screen))
 
 
 def harness_of(env: dict[str, str]) -> str:

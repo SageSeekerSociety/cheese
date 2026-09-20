@@ -3,16 +3,16 @@
 The platform's GitHub credential is the cheesex-app private key. It stays on
 the backend and is NEVER handed to a sandbox. An agent that works on a repo
 calls ``/sandbox/github-token`` with its scoped cheese token; the backend mints
-an **installation access token carrying everything the App holds on that
-installation** and returns that instead. GitHub expires it after an hour;
+an installation access token with the App grants on the bound repository.
+GitHub expires it after an hour;
 minting is cached until shortly before expiry, so a burst of calls costs one
 upstream mint.
 
 Same containment shape as the LLM gateway path (``llm_proxy``): what the
-sandbox holds is short-lived, scoped to one installation, and centrally
+sandbox holds is short-lived, scoped to the bound repository, and centrally
 revocable, while the long-lived secret behind it never moves. That is the
-containment, and it is the whole of it — the token is deliberately NOT
-narrowed below the App. An agent is a full member of the room
+containment. Permission levels remain those granted to the App.
+An agent is a full member of the room
 (``docs/agent-principles.md`` §2), so it commits, pushes and opens its PR with
 the same grants the platform itself would have used on its behalf.
 
@@ -72,12 +72,14 @@ class GitHubAppTokens:
         app_id: int,
         private_key_path: str,
         installation_id: int,
+        repository: str | None = None,
         api_base: str = "https://api.github.com",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self._app_id = app_id
         self._key_path = private_key_path
         self._installation_id = installation_id
+        self._repository = repository
         self._api_base = api_base.rstrip("/")
         self._transport = transport
         self._key_text: str | None = None
@@ -208,7 +210,10 @@ class GitHubAppTokens:
                 resp = await client.post(
                     f"{self._api_base}/app/installations/"
                     f"{self._installation_id}/access_tokens",
-                    json={"permissions": permissions},
+                    json={"permissions": permissions}
+                    | (
+                        {"repositories": [self._repository]} if self._repository else {}
+                    ),
                     headers={
                         "Authorization": f"Bearer {self._app_jwt()}",
                         "Accept": "application/vnd.github+json",
@@ -232,23 +237,27 @@ def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
-_instances: dict[int, GitHubAppTokens] = {}
+_instances: dict[tuple[int, str], GitHubAppTokens] = {}
 
 
-def _tokens_for_installation(installation_id: int) -> GitHubAppTokens | None:
+def _tokens_for_installation(
+    installation_id: int, repository: str
+) -> GitHubAppTokens | None:
     """The cached minter for one installation, or None when the App is not
     configured. One process serves every connected project, so instances are
-    cached per installation_id rather than a single global one."""
+    cached per installation and repository so tokens cannot cross project bindings."""
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return None
-    minter = _instances.get(installation_id)
+    cache_key = (installation_id, repository)
+    minter = _instances.get(cache_key)
     if minter is None:
         minter = GitHubAppTokens(
             app_id=settings.github_app_id,
             private_key_path=settings.github_app_private_key_path,
             installation_id=installation_id,
+            repository=repository,
         )
-        _instances[installation_id] = minter
+        _instances[cache_key] = minter
     return minter
 
 
@@ -263,79 +272,61 @@ async def github_app_tokens_for_project(
     )
     if installation is None:
         return None
-    return _tokens_for_installation(installation.installation_id)
-
-
-def _settings_app_jwt() -> str | None:
-    """A 10-minute App JWT from the platform credential, or None when the App
-    is not configured. App-level endpoints (``/app/installations``) take this
-    directly — no installation context exists yet."""
-    if not settings.github_app_id or not settings.github_app_private_key_path:
-        return None
-    now = int(time.time())
-    return jwt.encode(
-        {
-            "iat": now - 60,
-            "exp": now + _JWT_TTL_S,
-            "iss": str(settings.github_app_id),
-        },
-        Path(settings.github_app_private_key_path).read_text(),
-        algorithm="RS256",
+    return _tokens_for_installation(
+        installation.installation_id, installation.repo.split("/", 1)[1]
     )
 
 
-async def list_app_installations() -> list[dict]:
-    """Every installation of the App, via the App JWT.
+async def github_app_read_token_for_project(
+    project_id: uuid.UUID, session: AsyncSession
+) -> str | None:
+    """A read-capable installation token for `project_id`'s repo, or None when
+    there is no installation to mint from.
 
-    The install flow needs this because GitHub's ``installations/new`` page
-    dead-ends when the App is ALREADY installed on the org: it shows the
-    installation settings page and never fires the setup_url callback, so the
-    signed state is lost and the platform waits forever. The connect route
-    therefore looks for an existing installation itself first.
+    This is what a fetch of the project's upstream authenticates with: the
+    App's own identity for a bound project, nothing at all for an unbound one
+    — there is no third credential. "Read" is the full installation grant, the
+    same mint a sandbox receives; the named write set (`write_token`) is for
+    pushing and merging.
     """
-    token = _settings_app_jwt()
-    if token is None:
-        raise GitHubAppError("GitHub App is not configured on this deployment")
+    tokens = await github_app_tokens_for_project(project_id, session)
+    if tokens is None:
+        return None
+    token, _expires_at = await tokens.installation_token()
+    return token
+
+
+async def _user_installation_items(token: str, path: str, key: str) -> list[dict]:
+    """Read all pages using the user's authority, never the platform App JWT."""
+    items: list[dict] = []
     async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.get(
-            "https://api.github.com/app/installations",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-        )
-    if resp.status_code != 200:
-        raise GitHubAppError(
-            f"GitHub refused to list installations (HTTP {resp.status_code}): "
-            f"{resp.text[:200]}"
-        )
-    return list(resp.json())
+        page = 1
+        while True:
+            response = await client.get(
+                f"https://api.github.com{path}",
+                params={"per_page": 100, "page": page},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            if response.status_code != 200:
+                raise GitHubAppError(
+                    "GitHub could not verify repository access "
+                    f"(HTTP {response.status_code})"
+                )
+            batch = response.json().get(key, [])
+            items.extend(batch)
+            if len(batch) < 100:
+                return items
+            page += 1
 
 
-async def fetch_installation_repos(installation_id: int) -> list[dict]:
-    """The repos `installation_id` can access, via its own read-only token.
+async def list_user_installations(token: str) -> list[dict]:
+    return await _user_installation_items(token, "/user/installations", "installations")
 
-    Used right after the #192 install callback: GitHub's setup_url redirect
-    carries only the installation_id, not which repo(s) got connected — and
-    ``/installation/repositories`` needs nothing beyond the `metadata` every
-    installation grants.
-    """
-    minter = _tokens_for_installation(installation_id)
-    if minter is None:
-        raise GitHubAppError("GitHub App is not configured on this deployment")
-    token, _expires_at = await minter.installation_token()
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.get(
-            f"{minter.api_base}/installation/repositories",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-        )
-    if resp.status_code != 200:
-        raise GitHubAppError(
-            f"GitHub refused to list installation repos (HTTP {resp.status_code}): "
-            f"{resp.text[:200]}"
-        )
-    repos = resp.json().get("repositories", [])
-    return list(repos)
+
+async def fetch_user_installation_repos(token: str, installation_id: int) -> list[dict]:
+    return await _user_installation_items(
+        token, f"/user/installations/{installation_id}/repositories", "repositories"
+    )

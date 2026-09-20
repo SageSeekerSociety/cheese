@@ -93,6 +93,10 @@ describe('explainRepoInstallFailure', () => {
       'no_accessible_repos',
       'installation_conflict',
       'github_error',
+      'access_denied',
+      'upstream_not_accessible',
+      'repository_selection_required',
+      'repository_write_required',
       'internal_error',
     ]) {
       expect(explainRepoInstallFailure(code)).not.toContain(code)

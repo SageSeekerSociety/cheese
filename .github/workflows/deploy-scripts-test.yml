@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   shell-tests:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -60,15 +60,32 @@ jobs:
       - name: Ensure a YAML-capable python3
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq python3-yaml
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh python3-yaml
           python3 -c 'import yaml'
 
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
+
+      - name: Cloud control connection lifecycle
+        run: python3 deploy/tests/test_cloud_control.py
 
       - name: Workspace ownership handover
         run: bash deploy/tests/test-workspace-ownership.sh
 
       - name: Disk-pressure guard
         run: bash deploy/tests/test-disk-pressure-guard.sh
+
+      - name: Foreign-container eviction
+        run: bash deploy/tests/test-evict-foreign-container.sh
+
+      - name: CI runner job-started hook
+        run: bash deploy/tests/test-ci-runner-job-hook.sh
+
+      - name: CI runner disk guard
+        run: bash deploy/tests/test-ci-runner-disk-guard.sh
+
+      - name: CI runner provisioning
+        run: bash deploy/tests/test-ci-runner-provision.sh
+
+      - name: Openviking memory backup
+        run: bash deploy/tests/test-viking-backup.sh

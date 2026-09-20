@@ -8,23 +8,24 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.harness.claude_code import event_spool
+from app.domain.agent.harness.channel import Channel
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from app.domain.agent.harness.claude_code.hooks_substrate import (
-    Channel,
-    ClaudeCodeRuntime,
-)
+from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
     AgentResult,
+    AgentSubagentStart,
+    AgentSubagentStop,
+    AgentToolUse,
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
@@ -180,12 +181,13 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
     conversation = [
         block
         for block in rows
-        if block.kind == BlockKind.message
-        and block.author_type in {AuthorType.human, AuthorType.ai}
+        if (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
+        and block.author_type == AuthorType.participant
     ]
-    assert [block.author_type for block in conversation] == [
-        AuthorType.human,
-        AuthorType.ai,
+    # 一句人说的，一句芝士说的 —— 两条同档，分得开的是署名。
+    assert [looks_like_agent_handle(block.author) for block in conversation] == [
+        False,
+        True,
     ]
     assert {block.turn_id for block in conversation} == {work_id}
     assert len(usage_rows) == 1
@@ -220,7 +222,8 @@ async def test_human_summon_uses_message_id_as_work_attribution(
         answers = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.ai and block.kind == BlockKind.message
+            if looks_like_agent_handle(block.author)
+            and (block.meta or {}).get("progress")
         ]
     assert [str(block.turn_id) for block in answers] == [user["id"]]
     async with factory() as session:
@@ -289,7 +292,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
             )
         )
     )
-    await asyncio.wait_for(provider.started.wait(), 1)
+    await asyncio.wait_for(provider.started.wait(), 5)
     second_frames = await asyncio.wait_for(
         _drain(
             service.converse(
@@ -299,7 +302,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
                 summon=True,
             )
         ),
-        1,
+        2,
     )
 
     assert all(frame["type"] != "done" for frame in second_frames)
@@ -309,7 +312,9 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     # about the session, never about whether a caller is still holding on.
     assert any(t == topic_id for t, _ in service._hook_work)
     assert provider.runs == 1
-    assert provider.delivered == ["[u2]: Also handle B"]
+    assert len(provider.delivered) == 1
+    assert provider.delivered[0].startswith("[u2]: Also handle B\n")
+    assert "chat_send" in provider.delivered[0]
     # #539 decision A: the write-accept delivered it, but the consumed stamp
     # waits for the session's UserPromptSubmit receipt — until then the
     # message stays pending so a session death replays it.
@@ -325,11 +330,13 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     assert consumed_turn(delivered[0]) is not None
 
     provider.release.set()
-    await asyncio.wait_for(first, 1)
+    await asyncio.wait_for(first, 5)
     await settle_turn(service, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    answer = next(block.content for block in rows if block.author_type == AuthorType.ai)
+    answer = next(
+        block.content for block in rows if looks_like_agent_handle(block.author)
+    )
     # One answer, covering both messages: the second reached the session that
     # was already working, rather than queueing behind the turn.
     assert "Handle A" in answer
@@ -366,7 +373,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
             str(topic_id),
             {
                 "hook_event_name": "MessageDisplay",
-                "delta": "Background work finished",
+                "delta": "后台那件事跑完了",
                 "_eid": "message-autonomous-1",
             },
         )
@@ -374,28 +381,31 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
             str(topic_id),
             {
                 "hook_event_name": "Stop",
-                "last_assistant_message": "Background work finished",
+                "last_assistant_message": "后台那件事跑完了",
                 "session_id": "session-autonomous",
                 "_eid": "stop-autonomous-1",
             },
         )
         started_frame = await asyncio.wait_for(room.get(), 1)
-        message_frame = await asyncio.wait_for(room.get(), 1)
+        progress_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
         finished_frame = await asyncio.wait_for(room.get(), 1)
 
     assert started_frame["type"] == "turn_started"
-    assert message_frame["type"] == "assistant_block"
+    assert progress_frame["type"] == "event_block"
+    assert progress_frame["block"]["meta"]["in_room"] is False
     assert done_frame == {"type": "done"}
     assert finished_frame == {
         "type": "turn_finished",
         "turn_id": started_frame["turn_id"],
     }
-    block = message_frame["block"]
+    block = progress_frame["block"]
     assert block["turn_id"] is not None
     assert block["meta"] == {
         "eid": "message-autonomous-1",
         "platform_unsolicited": True,
+        "progress": True,
+        "in_room": False,
     }
 
     async with factory() as session:
@@ -406,14 +416,200 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     ai_messages = [
         row
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ]
-    assert [row.content for row in ai_messages] == ["Background work finished"]
+    assert ai_messages == []
     assert resumes_by == "session-autonomous"
 
     await provider._close_topic(topic_id)
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
+
+
+async def test_an_all_english_message_lands_but_stays_out_of_the_room(
+    client, tmp_path
+) -> None:
+    """通篇没有中文的一条，照常落库，但带着「不露面」那一格。
+
+    上面那条测的是正常情况(芝士说中文、消息露面);这条测的是它偶尔漏出一句英文
+    时会怎样 —— 一样存进去、一样能查到,只是聊天区不显示它。**藏不是删**,所以
+    这里既要看见 `in_room: False`,也要看见那条块确实在库里。
+    """
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
+    ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "session-english",
+                "_eid": "session-english-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "Now the tests:",
+                "_eid": "message-english-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "Now the tests:",
+                "session_id": "session-english",
+                "_eid": "stop-english-1",
+            },
+        )
+        await asyncio.wait_for(room.get(), 1)  # turn_started
+        progress_frame = await asyncio.wait_for(room.get(), 1)
+        done_frame = await asyncio.wait_for(room.get(), 1)
+
+    assert progress_frame["type"] == "event_block"
+    assert progress_frame["block"]["content"] == "Now the tests:"
+    assert progress_frame["block"]["meta"]["in_room"] is False
+    assert progress_frame["block"]["meta"]["progress"] is True
+    assert done_frame["type"] == "done"
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    ai_messages = [
+        row
+        for row in rows
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
+    ]
+    assert ai_messages == []
+    assert any(row.content == "Now the tests:" for row in rows)
+
+    await provider._close_topic(topic_id)
+
+
+async def test_a_subagents_boundaries_pass_through_the_room_untouched(
+    client, tmp_path
+) -> None:
+    """一个会话里同时有几个工人干活时，房间该看到的东西一点没变。
+
+    分身的起止是给平台看的归属信息，不是房间里的一条动静：它们不落库、不广播、
+    也不点亮「正在处理」。会话自己说的话、分身发出的工具调用照旧落地——分身的
+    工具钩子本来就一直混在这条流里，只是从今天起带上了它是谁。
+    """
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
+    ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    # Watch what the REAL consumer is handed, not just what the room ends up
+    # showing: "nothing was published" is also what a hook nobody translated
+    # looks like, and those two have to be told apart.
+    handed: list[object] = []
+    consumer = provider._event_consumer
+    assert consumer is not None
+
+    async def watching(*args):
+        handed.append(args[3])
+        return await consumer(*args)
+
+    provider.bind_events(watching)
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SubagentStart",
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "session_id": "session-subagent",
+                "_eid": "subagent-start-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "rg TODO"},
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "_eid": "subagent-tool-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SubagentStop",
+                "agent_id": "worker-1",
+                "agent_type": "general-purpose",
+                "last_assistant_message": "分身查完了",
+                "agent_transcript_path": "/home/u/.claude/projects/w/sub.jsonl",
+                "_eid": "subagent-stop-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "会话答完了",
+                "session_id": "session-subagent",
+                "_eid": "stop-subagent-1",
+            },
+        )
+        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+
+    kinds = [frame["type"] for frame in frames]
+    assert kinds == [
+        "turn_started",
+        "event_block",
+        "event_block",
+        "done",
+        "turn_finished",
+    ]
+    assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
+    assert frames[2]["block"]["content"] == "会话答完了"
+
+    started = [e for e in handed if isinstance(e, AgentSubagentStart)]
+    stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
+    assert [(e.agent_id, e.agent_type) for e in started] == [
+        ("worker-1", "general-purpose")
+    ]
+    assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
+    # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
+    tool = next(e for e in handed if isinstance(e, AgentToolUse))
+    assert (tool.agent_id, tool.agent_type) == ("worker-1", "general-purpose")
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    # 分身的收尾话没有变成第二条 AI 发言：它今天只是被认出来，还没有归属可写。
+    assert [
+        row.content
+        for row in rows
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
+    ] == []
+    assert "分身查完了" not in [row.content for row in rows]
+
+    await provider._close_topic(topic_id)
 
 
 async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
@@ -474,18 +670,19 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
             },
         )
         started = await asyncio.wait_for(room.get(), 1)
-        frame = await asyncio.wait_for(room.get(), 1)
+        progress = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
         finished = await asyncio.wait_for(room.get(), 1)
 
     assert started["type"] == "turn_started"
-    assert frame["type"] == "assistant_block"
+    assert progress["type"] == "event_block"
+    assert progress["block"]["meta"]["in_room"] is False
     assert finished == {
         "type": "turn_finished",
         "turn_id": started["turn_id"],
     }
-    assert uuid.UUID(frame["block"]["turn_id"]) != requested_id
-    assert frame["block"]["meta"]["platform_unsolicited"] is True
+    assert uuid.UUID(progress["block"]["turn_id"]) != requested_id
+    assert progress["block"]["meta"]["platform_unsolicited"] is True
     await provider._close_topic(topic_id)
 
 
@@ -500,7 +697,7 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
         "restart-message-1",
         {
             "hook_event_name": "MessageDisplay",
-            "delta": "Finished during restart",
+            "delta": "重启期间跑完了",
         },
     )
     event_spool.append(
@@ -508,7 +705,7 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
         "restart-stop-1",
         {
             "hook_event_name": "Stop",
-            "last_assistant_message": "Finished during restart",
+            "last_assistant_message": "重启期间跑完了",
             "session_id": "session-after-restart",
         },
     )
@@ -526,19 +723,22 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     async with broker.subscribe(str(topic_id)) as room:
         assert await service.recover_sessions() == 1
         started = await asyncio.wait_for(room.get(), 1)
-        message = await asyncio.wait_for(room.get(), 1)
+        progress = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
         finished = await asyncio.wait_for(room.get(), 1)
 
     assert started["type"] == "turn_started"
-    assert message["type"] == "assistant_block"
+    assert progress["type"] == "event_block"
+    assert progress["block"]["meta"]["in_room"] is False
     assert finished == {
         "type": "turn_finished",
         "turn_id": started["turn_id"],
     }
-    assert message["block"]["meta"] == {
+    assert progress["block"]["meta"] == {
         "eid": "restart-message-1",
         "platform_unsolicited": True,
+        "progress": True,
+        "in_room": False,
     }
     # Replayed to the end. The files stay for their retention window; what says
     # they were consumed is the cursor, so the tail past it must be empty.
@@ -603,9 +803,11 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     assert await runner.resume_orphans(service) == 0
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in blocks if b.author_type == AuthorType.ai] == [
-        "跑绿了，收工"
-    ]
+    assert [
+        b.content
+        for b in blocks
+        if looks_like_agent_handle(b.author) and (b.meta or {}).get("progress")
+    ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
     assert [b for b in blocks if b.author_type == AuthorType.system] == []
     # And the Stop closed the books on the interval the dead process opened.
@@ -700,8 +902,16 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
+
+    class RecoveringChannel(_IdleChannel):
+        alive = False
+
+        async def confirm_alive(self, screen):
+            return self.alive
+
+    channel = RecoveringChannel()
     provider = ClaudeCodeRuntime(
-        _IdleChannel(),
+        channel,
         router=router,
         idle_suspect_s=0.2,
         hard_ceiling_s=0.2,
@@ -741,6 +951,9 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     assert subscription.current_work is None
     assert router.subscribe(str(topic_id)) is subscription.sink
 
+    # Late output comes from a live session; the dead verdict belongs to the
+    # first turn, not to the new unsolicited activity processing these hooks.
+    channel.alive = True
     async with broker.subscribe(str(topic_id)) as room:
         assert router.push(
             str(topic_id),
@@ -762,7 +975,7 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
 
     assert [frame["type"] for frame in late_frames] == [
         "turn_started",
-        "assistant_block",
+        "event_block",
         "done",
         "turn_finished",
     ]

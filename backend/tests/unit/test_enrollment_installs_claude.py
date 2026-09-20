@@ -7,7 +7,10 @@ the binary is installed, and it comes from us rather than from a host the
 machine may not be able to reach.
 """
 
+import pytest
+
 from app.domain.agent.harness.claude_code import device_launch
+from app.domain.machine import enrollment
 from app.domain.machine.enrollment import bootstrap_script
 
 ORIGIN = "https://cheese.example.com"
@@ -22,7 +25,7 @@ def test_claude_is_installed_at_the_pinned_version():
     pin = device_launch.CLAUDE_PINNED_VERSION
     assert f"/connector/claude/{pin}/" in s
     # Laid out exactly where the launcher's pin looks for it.
-    assert f'claude_pin="$HOME/.local/share/claude/versions/{pin}"' in s
+    assert f'claude_pin="$HOME/.cheese/claude/versions/{pin}"' in s
 
 
 def test_the_machine_owners_claude_is_left_alone():
@@ -103,3 +106,34 @@ def test_claude_is_fatal_at_enrollment_like_tmux_and_git():
     s = script()
     claude_block = s[s.index("claude_pin=") : s.index("cheesehost.new")]
     assert ">&2" in claude_block and "exit 1" in claude_block
+
+
+def test_native_preparation_receives_the_subscription_proxy_ca(monkeypatch, tmp_path):
+    certificate = tmp_path / "meter-ca.pem"
+    certificate.write_text("fixture deployment CA\n")
+    monkeypatch.setattr(enrollment.settings, "subscription_enabled", True)
+    monkeypatch.setattr(
+        enrollment.settings, "subscription_ca_backend_path", str(certificate)
+    )
+    captured = []
+
+    def prepare(version, *, ca_pem):
+        captured.append((version, ca_pem))
+        return ""
+
+    monkeypatch.setattr(enrollment, "build_warm_session_prepare", prepare)
+    bootstrap_script(
+        origin=ORIGIN, token="TOK", device_id="DEV", prepare_native_session=True
+    )
+    assert captured == [(device_launch.CLAUDE_PINNED_VERSION, certificate.read_text())]
+
+
+def test_native_preparation_refuses_a_missing_subscription_ca(monkeypatch):
+    monkeypatch.setattr(enrollment.settings, "subscription_enabled", True)
+    monkeypatch.setattr(enrollment.settings, "subscription_ca_backend_path", "")
+    with pytest.raises(
+        enrollment.EnrollmentError, match="SUBSCRIPTION_CA_BACKEND_PATH"
+    ):
+        bootstrap_script(
+            origin=ORIGIN, token="TOK", device_id="DEV", prepare_native_session=True
+        )

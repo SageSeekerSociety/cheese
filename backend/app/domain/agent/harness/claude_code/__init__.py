@@ -17,7 +17,7 @@ paid off.
 What the list says today, honestly: the transports (tmux / device / cloud) are
 ``Channel`` implementations, so they import that one seam and the errors it
 raises. That is the whole crossing — one runtime driven over any channel — and
-what still shows up next to it (a ledger row taking ``build_screen_launch``,
+what still shows up next to it (a ledger row taking this adapter's names,
 or the hook env a transport still wires by hand) is Claude Code knowledge that
 has not made it across the seam yet.
 """
@@ -27,9 +27,7 @@ from app.domain.agent.harness.claude_code.device_launch import (
     CLAUDE_PINNED_VERSION,
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
-    build_screen_launch,
 )
-from app.domain.agent.harness.claude_code.event_spool import append as append_event
 from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     MessageAssembler,
@@ -38,9 +36,7 @@ from app.domain.agent.harness.claude_code.hook_events import (
 from app.domain.agent.harness.claude_code.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    Channel,
     ClaudeCodeRuntime,
-    ScreenSetupError,
     SpoolBacklog,
     TopicSubscription,
     acknowledge_log,
@@ -51,17 +47,34 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     log_cursor,
     read_log,
 )
+from app.domain.agent.harness.claude_code.remote_execution import (
+    launch as executor_launch,
+)
+from app.domain.agent.harness.claude_code.remote_execution import (
+    release as resident_release,
+)
+from app.domain.agent.harness.claude_code.remote_execution.client import (
+    REMOTE_CONTROLS,
+)
+from app.domain.agent.harness.claude_code.remote_execution.private import (
+    target as private_execution_target,
+)
 from app.domain.agent.harness.claude_code.session_launch import (
     HARNESS_ENV,
-    ScreenHost,
     build_session_launch,
-    ensure_claude,
     harness_of,
     hooks_settings,
-    input_box_ready,
 )
+from app.domain.agent.harness.claude_code.startup_cache import (
+    build_startup_cache_prepare,
+)
+from app.domain.agent.harness.claude_code.warm_session import build_warm_session_prepare
 
 __all__ = [
+    "executor_launch",
+    "resident_release",
+    "REMOTE_CONTROLS",
+    "private_execution_target",
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",
     "DEVICE_ALIVE_PROBE",
@@ -69,19 +82,15 @@ __all__ = [
     "HARNESS_ENV",
     "SESSION_TOKEN_TTL_S",
     "ActivityTracker",
-    "Channel",
     "ClaudeCodeRuntime",
     "HookRouter",
     "MessageAssembler",
-    "ScreenHost",
-    "ScreenSetupError",
     "SpoolBacklog",
     "TopicSubscription",
     "acknowledge_log",
-    "append_event",
-    "build_screen_launch",
     "build_session_launch",
-    "ensure_claude",
+    "build_startup_cache_prepare",
+    "build_warm_session_prepare",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",
     "drop_topic_subscriptions",
@@ -89,7 +98,6 @@ __all__ = [
     "harness_of",
     "hooks_settings",
     "hook_router",
-    "input_box_ready",
     "log_cursor",
     "read_log",
 ]

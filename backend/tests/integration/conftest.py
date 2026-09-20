@@ -88,6 +88,16 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     return mint_session_token(handle=handle, user_id=None, ttl_s=ttl_s)
 
 
+def room_agent_seat(client, topic_id) -> str:
+    """The seat of the one agent seated in this room — the identity a
+    room-scoped credential (a token or a screen naming the room's stand-in)
+    acts as, and the author of everything the room's agent writes."""
+    rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    seats = [m["member_handle"] for m in rows if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]
+
+
 def session_auth_headers(handle: str) -> dict[str, str]:
     """``Authorization`` header carrying :func:`session_token` for ``handle``."""
     return {"Authorization": f"Bearer {session_token(handle)}"}
@@ -422,3 +432,17 @@ def authenticated_user(
 @pytest.fixture
 def auth_headers(authenticated_user: CreatedUser) -> dict[str, str]:
     return {"Authorization": f"Bearer {authenticated_user.token}"}
+
+
+@pytest.fixture
+def github_binding_user(client, monkeypatch):
+    """A real project caller with a stubbed, already-linked GitHub App token."""
+    from app.domain.oauth.services import OAuthService
+    from tests.conftest import seed_user
+
+    seed_user(client, "alice")
+
+    async def token(self, user_id):
+        return "test-github-user-token"
+
+    monkeypatch.setattr(OAuthService, "get_github_user_token", token)

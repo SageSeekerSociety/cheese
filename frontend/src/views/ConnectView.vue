@@ -88,6 +88,7 @@ async function approve() {
 
         <v-text-field
           v-model="deviceName"
+          autocomplete="off"
           label="设备名称"
           placeholder="例如：andy-macbook"
           variant="outlined"

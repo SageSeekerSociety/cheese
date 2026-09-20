@@ -61,6 +61,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -99,6 +100,16 @@ INJECT_TOKEN_FILE = Path(
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
 ALLOW_HEADER_ATTR = os.environ.get("CHEESE_ALLOW_HEADER_ATTR", "") == "1"
 ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
+# Same backend as admission; no second public listener or deployment secret.
+RC_BASE = ADMISSION_URL.removesuffix("/llm/admission") if ADMISSION_URL else ""
+RC_EXTRA_HOSTS = frozenset(
+    {"claude.ai", "cdn.growthbook.io", "api.statsig.com", "statsig.anthropic.com"}
+)
+RC_FLAGS = {
+    "tengu_ccr_bridge": True,
+    "tengu_ccr_v2_bridge_create_cli": True,
+    "tengu_ccr_v2_session_crud_cli": True,
+}
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
 # Route the upstream through the EXPLICIT ccproxy (m161): measured, the OAuth
@@ -286,10 +297,40 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     # downstream, which is how a swapped credential silently 401s).
     flow.request.headers["authorization"] = f"Bearer {key}"
     flow.request.headers.pop("x-api-key", None)
+    # LiteLLM records API spend; the subscription ledger must not charge it again.
+    flow.metadata["cheese_pool"] = GATEWAY
+    flow.metadata["cheese_route_ready"] = time.time()
     return True
 
 
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
+    """Answer this request here, and take back the streaming decision.
+
+    Setting a response and streaming the request body are mutually exclusive in
+    mitmproxy: once the `requestheaders` hook returns, a flow with `stream` set
+    goes to `start_request_stream`, which raises `NotImplementedError("Can't set
+    a response and enable streaming at the same time.")` — and that kills the
+    whole connection instead of delivering the refusal. Only a request that
+    CARRIES A BODY reaches that branch, which is what made this so hard to see:
+    every refusal of a GET was delivered normally while every refused
+    `POST /v1/messages` crashed the proxy, so the caller waited out its timeout
+    and reported a hung platform rather than the reason it was refused. Measured
+    on the dev box: 68 refused message turns over 48h, zero 503s delivered, 350
+    crashes.
+
+    Clearing the flag here rather than at each refusal site is deliberate. There
+    are eight of them across `requestheaders` and more will be added; a rule that
+    lives at the one point all of them go through cannot be forgotten by the
+    ninth. (`http_connect` answers 407 without coming through here, and does not
+    need to: a CONNECT has no body, so it never reaches the streaming branch.)
+
+    The cost is that a refused request's body is buffered instead of streamed
+    (mitmproxy offers no third option — a response is delivered only from the
+    buffering path). That is not the #654 leak coming back: nothing is forwarded
+    and nothing is held for the length of a turn, the body is consumed and
+    dropped as soon as the refusal goes out.
+    """
+    flow.request.stream = False
     flow.response = http.Response.make(
         status,
         json.dumps(
@@ -374,8 +415,98 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
     mode = getattr(data.context.client, "proxy_mode", None)
     if getattr(mode, "type_name", "") != "regular":
         return
-    if (data.client_hello.sni or "") not in ANTHROPIC_HOSTS:
+    pinned = _SCOPED_BY_CLIENT.get(getattr(data.context.client, "id", ""))
+    rc_host = bool(
+        pinned and pinned[1].get("rc") and data.client_hello.sni in RC_EXTRA_HOSTS
+    )
+    if (data.client_hello.sni or "") not in ANTHROPIC_HOSTS and not rc_host:
         data.ignore_connection = True
+
+
+def _rc_route(flow: http.HTTPFlow) -> bool:
+    """Route RC before any upstream credential is attached.
+
+    RC ownership comes from the verified token's place, never the attribution
+    header (which may select another topic for metering).
+    """
+    pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
+    token, claims = pinned if pinned else ("", None)
+    if not claims:
+        token = _caller_bearer(flow)
+        claims = verify_scoped_token(token, SCOPED_SECRET) if SCOPED_SECRET else None
+    rc = bool(claims and claims.get("rc") and claims.get("p") and claims.get("t"))
+    path = flow.request.path.split("?", 1)[0]
+    if not rc:
+        return False
+    model = claims.get("m")
+    if isinstance(model, str) and model and not model.startswith("claude-"):
+        # API-backed Cheese control sessions use Cheese's project identity and
+        # policy. No Anthropic account or subscription entitlement is asserted.
+        local = None
+        if path == "/api/oauth/profile":
+            local = {
+                "account": {"uuid": claims["t"], "email": "cheese@agent.cheese.local"},
+                "organization": {"uuid": claims["p"]},
+            }
+        elif path == "/api/claude_code/settings":
+            local = {}
+        elif path == "/api/claude_code/policy_limits":
+            local = {"restrictions": {"allow_remote_control": {"allowed": True}}}
+        if local is not None:
+            flow.server_conn.via = None
+            flow.request.stream = False
+            flow.response = http.Response.make(
+                204 if path.endswith("/settings") else 200,
+                b"" if path.endswith("/settings") else json.dumps(local).encode(),
+                {"Content-Type": "application/json"},
+            )
+            return True
+    if path.startswith("/api/eval/"):
+        flow.metadata["cheese_rc_flags"] = True
+        return False
+    if path.startswith("/api/event_logging/") or flow.request.host in {
+        "api.statsig.com",
+        "statsig.anthropic.com",
+    }:
+        # RC telemetry contains control-session identifiers. Consume it here;
+        # neither its payload nor an upstream credential leaves this boundary.
+        flow.request.stream = False
+        flow.response = http.Response.make(
+            200, b"{}", {"Content-Type": "application/json"}
+        )
+        return True
+    if flow.request.host in RC_EXTRA_HOSTS and not path.startswith("/v1/code/"):
+        _refuse(
+            flow,
+            403,
+            "permission_error",
+            "This endpoint is outside the Cheese RC transport",
+        )
+        return True
+    if not path.startswith("/v1/code/"):
+        return False
+    if not RC_BASE:
+        _refuse(flow, 503, "api_error", "Cheese RC backend is not configured")
+        return True
+    parsed = urlparse(RC_BASE)
+    flow.server_conn.via = None
+    flow.request.scheme = parsed.scheme
+    flow.request.host = parsed.hostname
+    flow.request.port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    flow.request.path = parsed.path.rstrip("/") + flow.request.path
+    # Strip provider credentials even when the caller carries a ccproxy ticket.
+    for name in (
+        "authorization",
+        "x-api-key",
+        "cookie",
+        "proxy-authorization",
+        X_ATTR_HEADER,
+    ):
+        flow.request.headers.pop(name, None)
+    flow.request.headers["host"] = parsed.netloc
+    flow.request.headers["x-cheese-token"] = token
+    flow.metadata["cheese_rc"] = True
+    return True
 
 
 async def requestheaders(flow: http.HTTPFlow) -> None:
@@ -386,8 +517,9 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # its entire grown conversation as the request body every turn; buffering
     # that (together with the response) is what OOM-kills this proxy on long
     # runs, after which the client just sees a refused connection until it
-    # restarts. Refusals still work: setting flow.response here short-circuits
-    # before any body is forwarded upstream.
+    # restarts. Refusals still work, but they must go through `_refuse` — a
+    # refusal and a streamed body cannot both stand, and that is where the flag
+    # is taken back.
 
     # Multi-host by SNI: the sandbox --add-hosts api.anthropic.com AND the login
     # hosts (console.anthropic.com, platform.claude.com) to this one proxy, so
@@ -397,6 +529,13 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     sni = getattr(flow.client_conn, "sni", None)
     if sni:
         flow.request.host = sni
+    if (
+        getattr(flow.client_conn, "tls_established", False)
+        and flow.request.host in ANTHROPIC_HOSTS | RC_EXTRA_HOSTS
+    ):
+        flow.request.stream = True
+        if _rc_route(flow):
+            return
         flow.request.headers["host"] = sni
 
     # Only the Anthropic names are served, and only over TLS the proxy
@@ -416,8 +555,10 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         return
 
     # Host is allowed and we intend to forward: stream the body rather than
-    # buffer it. (A path below may still refuse via flow.response, which
-    # short-circuits regardless of this flag.)
+    # buffer it. A path below may still refuse, and refusing TAKES THIS BACK —
+    # see `_refuse`, which is where the two decisions are reconciled. They are
+    # not independent: leaving the flag on while setting a response is a fatal
+    # error in mitmproxy, not a harmless contradiction.
     flow.request.stream = True
 
     via = _via()
@@ -435,12 +576,46 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # opened by whichever request comes first, and Claude Code's startup
     # api/oauth/profile check beats the first turn to it — so the identity that
     # connection authenticates as has to be settled by then, or the turn's own
-    # ticket goes out over the wrong one. Cheap: verdicts are cached per project.
+    # ticket goes out over the wrong one. Cheap: verdicts are cached per
+    # (project, topic) — the topic is part of the answer, not just of the
+    # question, because the identity it resolves belongs to that topic's machine.
     verdict = None
     if project_id and ADMISSION_URL:
         # Off-loop: urllib blocks, and one slow admission call must not stall
         # every other flow through the proxy.
-        verdict = await asyncio.to_thread(ADMISSION.check, project_id, bearer)
+        admission_started = time.perf_counter()
+
+        def check_admission():
+            check_started = time.perf_counter()
+            verdict = ADMISSION.check(project_id, topic_id, bearer)
+            return verdict, check_started, time.perf_counter()
+
+        verdict, check_started, check_finished = await asyncio.to_thread(
+            check_admission
+        )
+        admission_finished = time.perf_counter()
+        flow.metadata["cheese_admission_ms"] = (
+            admission_finished - admission_started
+        ) * 1000
+        flow.metadata["cheese_admission_phases_ms"] = {
+            "thread_queue": (check_started - admission_started) * 1000,
+            "check": (check_finished - check_started) * 1000,
+            "loop_resume": (admission_finished - check_finished) * 1000,
+        }
+
+    if (
+        verdict is not None
+        and verdict.pool == GATEWAY
+        and flow.metadata.get("cheese_rc_flags")
+    ):
+        # Cheese supplies its own RC flags; _rc_route handles the API session's
+        # project identity and control policy before provider authentication.
+        flow.server_conn.via = None
+        flow.request.stream = False
+        flow.response = http.Response.make(
+            200, b'{"features":{}}', {"Content-Type": "application/json"}
+        )
+        return
 
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
@@ -599,6 +774,12 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        resp.stream = True
+        return
+    if flow.metadata.get("cheese_rc_flags"):
+        # Feature evaluation is small JSON. Inference SSE remains streamed.
+        return
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
         project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
@@ -610,9 +791,7 @@ def responseheaders(flow: http.HTTPFlow) -> None:
             else:  # end-of-stream sentinel
                 extractor.close()
                 if extractor.usage:
-                    METER.record(
-                        project_id, topic_id, extractor.usage, extractor.model
-                    )
+                    METER.record(project_id, topic_id, extractor.usage, extractor.model)
             return chunk
 
         resp.stream = tee
@@ -623,7 +802,65 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         resp.stream = True
 
 
+def _log_gateway_timing(flow: http.HTTPFlow) -> None:
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    resp = flow.response
+    logger.info(
+        "gateway_request_timing %s",
+        json.dumps(
+            {
+                "project": project,
+                "topic": topic,
+                "gateway_request_id": resp.headers.get("x-litellm-call-id")
+                if resp
+                else None,
+                "request_start": getattr(flow.request, "timestamp_start", None),
+                "request_end": getattr(flow.request, "timestamp_end", None),
+                "client_connection": {
+                    "id": flow.client_conn.id,
+                    "start": getattr(flow.client_conn, "timestamp_start", None),
+                    "tls_setup": getattr(flow.client_conn, "timestamp_tls_setup", None),
+                },
+                "server_connection": {
+                    "id": getattr(flow.server_conn, "id", None),
+                    "start": getattr(flow.server_conn, "timestamp_start", None),
+                    "tcp_setup": getattr(flow.server_conn, "timestamp_tcp_setup", None),
+                    "tls_setup": getattr(flow.server_conn, "timestamp_tls_setup", None),
+                },
+                "route_ready": flow.metadata.get("cheese_route_ready"),
+                "admission_ms": flow.metadata.get("cheese_admission_ms"),
+                "admission_phases_ms": flow.metadata.get("cheese_admission_phases_ms"),
+                "response_start": getattr(resp, "timestamp_start", None),
+                "response_end": getattr(resp, "timestamp_end", None),
+                "status": resp.status_code if resp else None,
+                "failed": bool(getattr(flow, "error", None)),
+            }
+        ),
+    )
+
+
+def error(flow: http.HTTPFlow) -> None:
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        _log_gateway_timing(flow)
+
+
 def response(flow: http.HTTPFlow) -> None:
+    if flow.metadata.get("cheese_pool") == GATEWAY:
+        _log_gateway_timing(flow)
+        return
+    if (
+        flow.metadata.get("cheese_rc_flags")
+        and flow.response
+        and flow.response.status_code == 200
+    ):
+        try:
+            payload = json.loads(flow.response.content)
+            features = payload.setdefault("features", {})
+            features.update({k: {"defaultValue": v} for k, v in RC_FLAGS.items()})
+            flow.response.content = json.dumps(payload).encode()
+        except (ValueError, AttributeError, TypeError):
+            logger.error("RC feature evaluation returned an invalid response")
+        return
     # SSE turns are metered incrementally in the responseheaders streaming tee;
     # the only body still buffered here is a non-streaming JSON message.
     if "/v1/messages" not in flow.request.path or not flow.response:

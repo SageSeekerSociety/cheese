@@ -4,8 +4,8 @@
     <!-- 页面栈里的一层：← 回上一层。汉堡只留给**还真挂着抽屉**的那几页
          （1.0 的空间/小队详情，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
-      <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
-      <v-app-bar-nav-icon v-else-if="hasDrawer" @click="toggleDrawer" />
+      <ParentBackButton />
+      <v-app-bar-nav-icon v-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
     <!-- 中间这一格：要么是路由的标题，要么由当前页自己填（它 Teleport 到这里）。
@@ -27,6 +27,11 @@
       <!-- 通知的铃铛不在这儿了：手机上它的去处是底栏「待办」那一格
            (docs/plans/2026-08-18-mobile-shell-design.md §3.3)。 -->
 
+      <!-- 反馈入口：桌面上在 AppBar 右侧，手机上顶栏只有这一条，同一个入口得
+           在这儿也有一份。和桌面同样只挂在一级目的地上——页面栈里那几层右边
+           是这一页自己的操作。 -->
+      <v-btn v-if="!backTo" to="/feedback" variant="text" size="small" class="feedback-entry">反馈</v-btn>
+
       <!-- 用户头像菜单：只在一级目的地上。页面栈里的那几层（有 ← 的）右边留给
            这一页自己的操作——个人项在那儿既不相关，也挤掉了标题的宽度 (§3.4)。 -->
       <v-menu
@@ -39,18 +44,43 @@
       >
         <template #activator="{ props }">
           <v-btn icon v-bind="props" variant="text">
-            <v-avatar size="28">
-              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
-              <v-icon v-else icon="mdi-account" />
+            <!-- 没挑过头像的人画彩色首字母，不画 mdi-account：那个图标对每个人
+                 都一样，等于告诉你「这是某个人」而不是「这是你」。和左栏
+                 (LeftAppRail) 同一套兜底。 -->
+            <v-avatar
+              size="28"
+              :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+            >
+              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+                <template #error>
+                  <span class="bar-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
+                    userMenu.avatarInitial.value
+                  }}</span>
+                </template>
+              </v-img>
+              <span v-else class="bar-avatar-char">{{ userMenu.avatarInitial.value }}</span>
             </v-avatar>
           </v-btn>
         </template>
 
         <v-card class="user-menu-card rounded-lg elevation-1 border pa-0" min-width="300">
           <v-card-item class="user-header pa-4 pb-3">
-            <v-avatar size="56" class="mb-2" elevation="1">
-              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value" />
-              <v-icon v-else icon="mdi-account" size="large" />
+            <v-avatar
+              size="56"
+              class="mb-2"
+              elevation="1"
+              :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
+            >
+              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
+                <template #error>
+                  <span
+                    class="bar-avatar-char bar-avatar-char--lg"
+                    :style="{ backgroundColor: userMenu.avatarColor.value }"
+                    >{{ userMenu.avatarInitial.value }}</span
+                  >
+                </template>
+              </v-img>
+              <span v-else class="bar-avatar-char bar-avatar-char--lg">{{ userMenu.avatarInitial.value }}</span>
             </v-avatar>
             <div class="mt-2">
               <v-card-title class="px-0 py-0 text-h6 font-weight-bold">{{ userMenu.nickname.value }}</v-card-title>
@@ -81,13 +111,13 @@
                 <div class="d-flex justify-space-between align-center text-body-2 mb-2">
                   <span>今日剩余额度</span>
                   <span class="font-weight-medium">
-                    {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.total ?? '-' }}
+                    {{ userMenu.aiQuota.value?.remaining ?? '-' }}/{{ userMenu.aiQuota.value?.daily ?? '-' }}
                   </span>
                 </div>
 
                 <v-progress-linear
                   :model-value="
-                    userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.total) * 100 : 0
+                    userMenu.aiQuota.value ? (userMenu.aiQuota.value.remaining / userMenu.aiQuota.value.daily) * 100 : 0
                   "
                   color="primary"
                   bg-color="primary-lighten-5"
@@ -97,7 +127,7 @@
 
                 <div class="text-caption mt-1">
                   将在
-                  {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.reset_time).fromNow() : '-' }} 重置
+                  {{ userMenu.aiQuota.value ? userMenu.dayjs(userMenu.aiQuota.value.resetTime).fromNow() : '-' }} 重置
                 </div>
               </v-card-text>
             </v-card>
@@ -115,6 +145,12 @@
                 <v-list-item-title>个人中心</v-list-item-title>
               </v-list-item>
               <ThemeToggle />
+              <v-list-item to="/about" rounded="lg" class="mb-1" color="primary">
+                <template #prepend>
+                  <v-icon icon="mdi-information-outline" class="me-2"></v-icon>
+                </template>
+                <v-list-item-title>了解知是</v-list-item-title>
+              </v-list-item>
               <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
                 <template #prepend>
                   <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
@@ -134,11 +170,13 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
+
+import ParentBackButton from './ParentBackButton.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useNavigationStore } from '@/stores/navigation'
@@ -148,16 +186,11 @@ import { usePageTitleStore } from '@/stores/title'
 const userMenu = useUserMenu()
 
 const route = useRoute()
-const router = useRouter()
 const navigationStore = useNavigationStore()
 
 // 栈末端的路由自己说它回哪儿去（meta.backTo），而不是靠 history.back()——
 // 从别处直接打开一个话题链接时，后退会离开这个 app。
 const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.meta.backTo : null))
-
-function goBack() {
-  if (backTo.value) void router.push({ name: backTo.value, params: route.params })
-}
 
 // 汉堡由路由说了算：一个点了没反应的入口比没有入口更糟，而这条顶栏看不见自己
 // 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。
@@ -211,6 +244,30 @@ watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true }
   font-weight: 600;
   line-height: 1.4;
   color: var(--ink);
+}
+
+/* 没挑过头像时的彩色首字母，同 LeftAppRail 的 .rail-avatar-char。
+   #fff 是刻意写死的：底色是 avatarColor() 算出来的那个 #rrggbb，它按固定的
+   感知亮度取（OKLCH L = 0.54），深浅两套主题下是同一个值，所以压在它上面的字
+   也必须是同一个值 —— 跟着 --v-theme-on-surface 走反而会在两套主题里各错一次。 */
+.bar-avatar-char {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
+  /* stylelint-disable-next-line color-no-hex -- 这是「压在头像底色上」的墨色，
+     底色是 avatarColor() 算出来的 #rrggbb（固定感知亮度，深浅两套主题同一个
+     值），所以它也必须是同一个值。改成 token 反而会在两套主题里各错一次。
+     和 LeftAppRail 的 .rail-avatar-char 是同一处判断。 */
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+
+  &--lg {
+    font-size: 22px;
+  }
 }
 
 .user-menu-card {

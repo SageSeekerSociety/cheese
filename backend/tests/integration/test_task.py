@@ -7,6 +7,143 @@ from tests.integration.conftest import UserCreator, unique_int
 
 
 class TestTaskIntegration:
+    @pytest.mark.parametrize("as_team", [False, True])
+    def test_registration_opens_shared_workspace(
+        self,
+        api_client: TestClient,
+        task_setup: dict,
+        as_team: bool,
+        db_session,
+        _portal,
+    ) -> None:
+        creator = task_setup["creator"]
+        student = task_setup["participant"]
+        teammate = task_setup["participant2"]
+        admin = {"Authorization": f"Bearer {creator.token}"}
+        student_headers = {"Authorization": f"Bearer {student.token}"}
+        teammate_headers = {"Authorization": f"Bearer {teammate.token}"}
+        team_id = None
+        if as_team:
+            response = api_client.post(
+                "/teams",
+                headers=student_headers,
+                json={
+                    "name": "调研团队",
+                    "intro": "调研",
+                    "description": "调研",
+                    "avatarId": 1,
+                },
+            )
+            assert response.status_code == 201, response.text
+            team_id = response.json()["data"]["team"]["id"]
+            response = api_client.post(
+                f"/teams/{team_id}/members",
+                headers=student_headers,
+                json={"userId": teammate.user_id, "role": "MEMBER"},
+            )
+            assert response.status_code == 201, response.text
+        response = api_client.post(
+            "/tasks",
+            headers=admin,
+            json={
+                "name": "校园步行调研",
+                "intro": "找出三个需要改善的路口",
+                "description": "记录观察结果并注明资料来源",
+                "space": task_setup["space_id"],
+                "categoryId": task_setup["category_id"],
+                "submitterType": "TEAM" if as_team else "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": task_setup["deadline_ms"],
+            },
+        )
+        assert response.status_code == 200, response.text
+        task_id = response.json()["data"]["task"]["id"]
+
+        async def supply_resources():
+            from app.domain.task.models import Task
+
+            task = await db_session.get(Task, task_id)
+            task.protocol_override = {"resource_pack": {"compute_credits": 100}}
+            await db_session.flush()
+
+        _portal.call(supply_resources)
+        response = api_client.patch(
+            f"/tasks/{task_id}", headers=admin, json={"approved": "APPROVED"}
+        )
+        assert response.status_code == 200, response.text
+        endpoint = f"/tasks/{task_id}/participations/{'team' if as_team else 'user'}"
+        payload = {"teamId": team_id} if as_team else {}
+        response = api_client.post(endpoint, json=payload, headers=student_headers)
+        assert response.status_code == 200, response.text
+        project = response.json()["data"]["project"]
+        membership_id = response.json()["data"]["participant"]["id"]
+        credits_url = f"/projects/{project['id']}/credits"
+        assert (
+            api_client.get(credits_url, headers=student_headers).json()["data"][
+                "grants"
+            ]
+            == []
+        )
+        assert project["team_id"] is not None
+        if as_team:
+            assert project["team_id"] == team_id
+        for headers in (
+            [student_headers, teammate_headers] if as_team else [student_headers]
+        ):
+            response = api_client.get(f"/projects/{project['id']}", headers=headers)
+            assert response.status_code == 200, response.text
+            assert response.json()["data"]["external_task_id"] == task_id
+            response = api_client.get(
+                f"/topics/{project['root_topic_id']}/doc", headers=headers
+            )
+            assert response.status_code == 200, response.text
+            assert "三个需要改善的路口" in response.text
+            assert (
+                f"[查看完整赛题要求](/spaces/{task_setup['space_id']}/tasks/{task_id})"
+                in response.json()["data"]["content"]
+            )
+            expected_deadline = datetime.fromtimestamp(
+                task_setup["deadline_ms"] / 1000, UTC
+            ).strftime("%Y-%m-%d %H:%M UTC")
+            assert expected_deadline in response.json()["data"]["content"]
+        if as_team:
+            doc = response.json()["data"]
+            response = api_client.put(
+                f"/topics/{project['root_topic_id']}/doc",
+                headers=teammate_headers,
+                json={
+                    "content": "我们补充了实地观察",
+                    "expected_version": doc["doc_version"],
+                },
+            )
+            assert response.status_code == 200, response.text
+            response = api_client.get(
+                f"/topics/{project['root_topic_id']}/doc", headers=student_headers
+            )
+            assert response.json()["data"]["content"] == "我们补充了实地观察"
+        # Approval releases the pack once; repeated approval cannot mint it again.
+        for _ in range(2):
+            response = api_client.patch(
+                f"/tasks/{task_id}/participants/{membership_id}",
+                headers=admin,
+                json={"approved": "APPROVED"},
+            )
+            assert response.status_code == 200, response.text
+            credits = api_client.get(credits_url, headers=student_headers).json()[
+                "data"
+            ]
+            assert credits["credits_total"] == 100
+            assert len(credits["grants"]) == 1
+        # Repeating the application must not create a second workspace.
+        response = api_client.post(endpoint, json=payload, headers=student_headers)
+        assert response.status_code == 400, response.text
+        response = api_client.get(
+            f"/projects?team_id={project['team_id']}", headers=student_headers
+        )
+        assert [p["id"] for p in response.json()["data"]["data"]] == [project["id"]]
+
     @pytest.fixture
     def task_setup(self, user_client: UserCreator, api_client: TestClient) -> dict:
         creator = user_client.create_user()
@@ -347,9 +484,10 @@ class TestTaskIntegration:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert team_resp.status_code in [200, 201], (
-            f"Team creation failed: {team_resp.text}"
-        )
+        assert team_resp.status_code in [
+            200,
+            201,
+        ], f"Team creation failed: {team_resp.text}"
 
         create_resp = api_client.post(
             "/tasks",
@@ -1650,6 +1788,43 @@ class TestTeamTask:
         )
         assert join_resp.status_code == 200, f"Join failed: {join_resp.text}"
 
+        participants_resp = api_client.get(
+            f"/tasks/{task_id}/participants",
+            params={"queryTeamInfo": True},
+            headers=headers,
+        )
+        assert participants_resp.status_code == 200
+        registration = next(
+            row
+            for row in participants_resp.json()["data"]["participants"]
+            if row["memberId"] == team_task_setup["team_id"]
+        )
+        expected_name = f"Test Team ({team_task_setup['suffix']})"
+        assert registration["member"]["name"] == expected_name
+        assert registration["member"]["avatarId"] == 1
+        detail_resp = api_client.get(
+            f"/tasks/{task_id}/participants/{registration['id']}", headers=headers
+        )
+        assert detail_resp.status_code == 200
+        assert (
+            detail_resp.json()["data"]["participant"]["member"]["name"] == expected_name
+        )
+        deadline = int((datetime.now(UTC).timestamp() + 86400) * 1000)
+        approval = api_client.patch(
+            f"/tasks/{task_id}/participants/{registration['id']}",
+            json={"approved": "APPROVED", "deadline": deadline},
+            headers=headers,
+        )
+        assert approval.status_code == 200
+        task_detail = api_client.get(f"/tasks/{task_id}", headers=headers)
+        identity = next(
+            row
+            for row in task_detail.json()["data"]["participation"]["identities"]
+            if row["id"] == registration["id"]
+        )
+        assert identity["deadline"] == deadline
+        assert identity["teamName"] == expected_name
+
     def test_get_teams_for_task(
         self, api_client: TestClient, team_task_setup: dict
     ) -> None:
@@ -2789,9 +2964,10 @@ class TestCategoryDeletion:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        custom_category_id = None
-        if custom_cat_resp.status_code in (200, 201):
-            custom_category_id = custom_cat_resp.json()["data"]["category"]["id"]
+        assert custom_cat_resp.status_code in (200, 201), (
+            f"Custom category was not created: {custom_cat_resp.text}"
+        )
+        custom_category_id = custom_cat_resp.json()["data"]["category"]["id"]
 
         empty_cat_resp = api_client.post(
             f"/spaces/{space_id}/categories",
@@ -2801,9 +2977,10 @@ class TestCategoryDeletion:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        empty_category_id = None
-        if empty_cat_resp.status_code in (200, 201):
-            empty_category_id = empty_cat_resp.json()["data"]["category"]["id"]
+        assert empty_cat_resp.status_code in (200, 201), (
+            f"Empty category was not created: {empty_cat_resp.text}"
+        )
+        empty_category_id = empty_cat_resp.json()["data"]["category"]["id"]
 
         api_client.post(
             "/tasks",
@@ -2812,7 +2989,7 @@ class TestCategoryDeletion:
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,
-                "categoryId": custom_category_id or default_category_id,
+                "categoryId": custom_category_id,
                 "submitterType": "USER",
                 "resubmittable": True,
                 "editable": True,
@@ -2853,9 +3030,6 @@ class TestCategoryDeletion:
         space_id = data["space_id"]
         custom_category_id = data["custom_category_id"]
 
-        if custom_category_id is None:
-            pytest.skip("Custom category was not created")
-
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{custom_category_id}",
             headers={"Authorization": f"Bearer {creator.token}"},
@@ -2871,9 +3045,6 @@ class TestCategoryDeletion:
         creator = data["creator"]
         space_id = data["space_id"]
         empty_category_id = data["empty_category_id"]
-
-        if empty_category_id is None:
-            pytest.skip("Empty category was not created")
 
         resp = api_client.delete(
             f"/spaces/{space_id}/categories/{empty_category_id}",
@@ -2932,14 +3103,15 @@ class TestArchivedCategoryAndRejectReason:
             },
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        archived_category_id = None
-        if archived_cat_resp.status_code in (200, 201):
-            archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
-            api_client.patch(
-                f"/spaces/{space_id}/categories/{archived_category_id}",
-                json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
-                headers={"Authorization": f"Bearer {creator.token}"},
-            )
+        assert archived_cat_resp.status_code in (200, 201), (
+            f"Could not create archived category: {archived_cat_resp.text}"
+        )
+        archived_category_id = archived_cat_resp.json()["data"]["category"]["id"]
+        api_client.patch(
+            f"/spaces/{space_id}/categories/{archived_category_id}",
+            json={"archivedAt": int(datetime.now(UTC).timestamp() * 1000)},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
 
         task_resp = api_client.post(
             "/tasks",
@@ -2974,9 +3146,6 @@ class TestArchivedCategoryAndRejectReason:
         data = archived_category_setup
         creator = data["creator"]
         archived_category_id = data["archived_category_id"]
-
-        if archived_category_id is None:
-            pytest.skip("Could not create archived category")
 
         resp = api_client.post(
             "/tasks",
@@ -3054,9 +3223,6 @@ class TestArchivedCategoryAndRejectReason:
         creator = data["creator"]
         task_id = data["task_id"]
         archived_category_id = data["archived_category_id"]
-
-        if archived_category_id is None:
-            pytest.skip("Could not create archived category")
 
         resp = api_client.patch(
             f"/tasks/{task_id}",

@@ -11,7 +11,6 @@ notification_seq = Sequence("notification_seq")
 
 
 class NotificationType(str, Enum):
-    # Align enum values with DB CHECK constraint and OpenAPI NotificationType
     MENTION = "MENTION"
     REPLY = "REPLY"
     REACTION = "REACTION"
@@ -26,6 +25,16 @@ class NotificationType(str, Enum):
     TEAM_INVITATION_DECLINED = "TEAM_INVITATION_DECLINED"
     TEAM_INVITATION_CANCELED = "TEAM_INVITATION_CANCELED"
     TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
+
+    #: 平台在房间里说的、要人动手的那一句（`app.domain.agent.announce`）。所有
+    #: 平台提示共用这一个码：要显示的文字是后端给的 `payload.content`，前端不按
+    #: 类别拼模板，具体是哪件事看 `payload.eventType`。
+    ROOM_NOTICE = "ROOM_NOTICE"
+
+    #: 芝士提出待确认问题，本轮停止等待回答（`announce.notify_question`）。
+    #: 与 `ROOM_NOTICE` 分开是因为它不是平台说的：文字是芝士自己的话，不受那一行
+    #: 40 字的约束，前端也要按「一个问题」渲染，而不是按一条平台提示。
+    CHEESE_QUESTION = "CHEESE_QUESTION"
 
 
 class Notification(Base):

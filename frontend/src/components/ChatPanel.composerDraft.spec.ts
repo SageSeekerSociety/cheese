@@ -14,6 +14,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
+import { loadComposerDraft, saveComposerDraft } from '@/lib/composerDrafts'
+
 const Panel = ChatPanel as unknown as Component
 
 function topicOf(id: string): Topic {
@@ -124,6 +126,78 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     await settle()
     // 留着的话，下一条发到 t2 的消息会带上 t1 的 reply_to。
     expect(container.querySelector('.reply-bar')).toBeNull()
+  })
+})
+
+// 刷新（尤其是 service worker 更新引发的那一次自动刷新）不会走「离开这个话题」，
+// 所以草稿不能只存在内存里——那是 lib/composerDrafts.ts 存在的理由，这里钉的是
+// ChatPanel 那一头的接线：写下去、接回来、以及故意不写下去的那一样。
+describe('刷新之后草稿还在', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('内存里那份没了（刚刷新过）就从落盘的那份接回来', async () => {
+    // 直接往 localStorage 里放，等价于「上一次页面退出时存下的」。
+    saveComposerDraft('from-disk', { draft: '上次没发出去的话', reply: null, atts: [] })
+
+    const { container } = render(Panel, {
+      props: { topic: topicOf('from-disk'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('上次没发出去的话')
+  })
+
+  it('边打边存：不必等切话题/卸载，输入本身就落盘', async () => {
+    const { container } = render(Panel, {
+      props: { topic: topicOf('live-save'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    await fireEvent.update(container.querySelector('textarea') as HTMLTextAreaElement, '打了一半')
+    await new Promise((r) => setTimeout(r, 900))
+
+    expect(loadComposerDraft('live-save')?.draft).toBe('打了一半')
+  })
+
+  it('没送出去的消息**不**落盘——它会在下次打开时被自动发出去', async () => {
+    const { container } = render(Panel, {
+      props: { topic: topicOf('out-persist'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    textarea.focus()
+    await fireEvent.update(textarea, '这条还没送到')
+    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    await new Promise((r) => setTimeout(r, 900))
+
+    // 屏幕上那条还在（发件箱），但磁盘上没有它。
+    expect(container.querySelector('.im-row--pending')?.textContent).toContain('这条还没送到')
+    expect(loadComposerDraft('out-persist')).toBeNull()
+  })
+
+  it('发出去了就把落盘的那份也删掉', async () => {
+    const { container } = render(Panel, {
+      props: { topic: topicOf('sent-away'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    await fireEvent.update(textarea, '先打一句')
+    await new Promise((r) => setTimeout(r, 900))
+    expect(loadComposerDraft('sent-away')?.draft).toBe('先打一句')
+
+    textarea.focus()
+    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    await new Promise((r) => setTimeout(r, 900))
+
+    expect(loadComposerDraft('sent-away')).toBeNull()
   })
 })
 

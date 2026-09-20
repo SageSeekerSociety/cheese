@@ -20,4 +20,13 @@
 #   `docker compose -p cheese-dataplane down`.
 set -euo pipefail
 cd "$(dirname "$0")"
+# Seed the backend switch on a box that has never had one: point it at the
+# compose backend's published port. deploy-docker.sh flips it from then on and
+# always leaves it pointing back here, so an existing file is never overwritten.
+ACTIVE_DIR="${ACTIVE_BACKEND_DIR:-./active}"
+mkdir -p "$ACTIVE_DIR"
+if [ ! -f "$ACTIVE_DIR/backend.conf" ]; then
+  printf 'upstream backend_active { server 127.0.0.1:%s; }\n' "${BACKEND_PORT:-18081}" \
+    > "$ACTIVE_DIR/backend.conf"
+fi
 exec docker compose -p cheese-dataplane --env-file .env -f compose.yml up -d "$@"

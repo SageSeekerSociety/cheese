@@ -5,6 +5,7 @@ from sqlalchemy import Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer
+from app.domain.avatars.models import Avatar
 from app.domain.knowledge.models import Knowledge
 from app.domain.questions.models import Question
 from app.domain.user.models import (
@@ -129,6 +130,37 @@ class UserProfileRepository:
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.user_id: row for row in rows}
+
+    async def chosen_avatar_ids(self, user_ids: Sequence[int]) -> dict[int, int]:
+        """user_id -> the avatar this person actually PICKED, for those who did.
+
+        A user who never picked one is absent from the mapping rather than
+        mapped to the global default, because "everyone who never chose shares
+        one face" is strictly worse at telling people apart than the per-handle
+        hashed initial the UI falls back to — and telling people apart is the
+        entire job of an avatar. Every registration path hardcodes
+        ``default_avatar_id: int = 1`` (``domain/user/services.py``), so that
+        state is the common one, not an edge case.
+
+        The default row is recognised by ``avatar_type``, not by comparing
+        against a literal 1: which row holds the default is seed data and
+        differs per environment.
+        """
+        if not user_ids:
+            return {}
+        stmt = (
+            select(UserProfile.user_id, UserProfile.avatar_id)
+            .join(Avatar, Avatar.id == UserProfile.avatar_id)
+            .where(
+                and_(
+                    UserProfile.user_id.in_(list(user_ids)),
+                    UserProfile.deleted_at.is_(None),
+                    Avatar.avatar_type != "default",
+                )
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {user_id: avatar_id for (user_id, avatar_id) in rows}
 
     async def get_profile_by_user_id(self, user_id: int) -> UserProfile | None:
         stmt: Select[tuple[UserProfile]] = select(UserProfile).where(

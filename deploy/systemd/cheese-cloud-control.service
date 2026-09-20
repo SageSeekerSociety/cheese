@@ -1,0 +1,16 @@
+[Unit]
+Description=Encrypted control connections for Cheese cloud machines
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/lib/cheese-cloud-control/cloud-control.py
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target

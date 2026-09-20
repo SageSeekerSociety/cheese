@@ -1,4 +1,4 @@
-import type { TopicComputeProfile } from '../cx_types'
+import type { ComputeChoice, TopicComputeProfile } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -7,17 +7,30 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTopicComputeProfile = vi.fn()
-const setTopicComputeProfile = vi.fn()
+const setTopicComputeChoice = vi.fn()
 
 vi.mock('../api', () => ({
   getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
-  setTopicComputeProfile: (...args: unknown[]) => setTopicComputeProfile(...args),
+  setTopicComputeChoice: (...args: unknown[]) => setTopicComputeChoice(...args),
 }))
 
 import TopicComputePicker from './TopicComputePicker.vue'
 
+const cloud: ComputeChoice = {
+  name: '云端 · 标准配置',
+  profile: 'cloud',
+  device_id: null,
+  cores: null,
+  memory_mb: null,
+  disk_gb: null,
+}
+const lab: ComputeChoice = { ...cloud, name: '实验室工作站', profile: 'device', device_id: 'office' }
+
 function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProfile {
   return {
+    choice: cloud,
+    project_default: cloud,
+    favorites: [],
     current: 'cloud',
     device_id: null,
     devices: [
@@ -26,7 +39,6 @@ function profile(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProf
     ],
     locked: false,
     inherited: false,
-    sticky: 'cloud',
     profiles: [
       {
         kind: 'compute',
@@ -107,101 +119,50 @@ beforeAll(() => {
 
 beforeEach(() => {
   getTopicComputeProfile.mockReset()
-  setTopicComputeProfile.mockReset()
+  setTopicComputeChoice.mockReset()
 })
 
 afterEach(() => cleanup())
 
-describe('topic compute machine selection', () => {
-  it('shows automatic and named choices and allows an offline machine', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile())
-    setTopicComputeProfile.mockResolvedValue({
-      current: 'device',
-      device_id: 'home',
-      locked: false,
-      inherited: false,
-    })
+describe('room compute choices', () => {
+  it('keeps the default first without listing every team device', async () => {
+    getTopicComputeProfile.mockResolvedValue(profile({ project_default: lab, choice: cloud, favorites: [lab] }))
     mountPicker()
-
-    const activator = await screen.findByRole('button', { name: /Cloud/ })
-    await fireEvent.click(activator)
-
-    expect(await screen.findByText('系统挑一台')).toBeTruthy()
-    const office = screen.getByRole('button', { name: /办公室 Mac mini/ })
-    const home = screen.getByRole('button', { name: /家里那台/ })
-    expect(within(office).getByText('在线')).toBeTruthy()
-    expect(within(home).getByText('离线')).toBeTruthy()
-    expect((home as HTMLButtonElement).disabled).toBe(false)
-
-    await fireEvent.click(home)
-    await waitFor(() => {
-      expect(setTopicComputeProfile).toHaveBeenCalledWith('topic-1', 'device', 'home')
-    })
+    await fireEvent.click(await screen.findByRole('button', { name: /云端/ }))
+    const list = screen.getAllByRole('button').filter((b) => /自有设备|平台标准配置/.test(b.textContent ?? ''))
+    expect(list).toHaveLength(2)
+    expect(list[0].textContent).toContain('实验室工作站')
+    expect(within(list[0]).getByText('项目默认')).toBeTruthy()
+    expect(screen.queryByText('家里那台')).toBeNull()
+    expect(screen.getByRole('button', { name: /其他配置与设备/ })).toBeTruthy()
   })
-
-  it('disables automatic choice without an online machine but keeps named choices enabled', async () => {
-    const state = profile({
-      devices: [{ device_id: 'home', name: '家里那台', online: false }],
-    })
-    state.profiles[0] = { ...state.profiles[0], available: false }
-    getTopicComputeProfile.mockResolvedValue(state)
-    setTopicComputeProfile.mockResolvedValue({
-      current: 'device',
-      device_id: 'home',
-      locked: false,
-      inherited: false,
-    })
+  it('selects a project favorite for this room only', async () => {
+    getTopicComputeProfile.mockResolvedValue(profile({ favorites: [lab] }))
+    setTopicComputeChoice.mockResolvedValue({ choice: lab })
     mountPicker()
-
-    await fireEvent.click(await screen.findByRole('button', { name: /Cloud/ }))
-    const automatic = await screen.findByRole('button', { name: /系统挑一台/ })
-    const home = screen.getByRole('button', { name: /家里那台/ })
-    expect((automatic as HTMLButtonElement).disabled).toBe(true)
-    expect((home as HTMLButtonElement).disabled).toBe(false)
-
-    await fireEvent.click(home)
-    await waitFor(() => {
-      expect(setTopicComputeProfile).toHaveBeenCalledWith('topic-1', 'device', 'home')
-    })
+    await fireEvent.click(await screen.findByRole('button', { name: /云端/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab))
   })
-
-  it('keeps automatic selection as a null device choice', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile())
-    setTopicComputeProfile.mockResolvedValue({
-      current: 'device',
-      device_id: null,
-      locked: false,
-      inherited: false,
-    })
+  it('keeps a named offline default visible without silently substituting cloud', async () => {
+    const home = { ...lab, name: '家里那台', device_id: 'home' }
+    getTopicComputeProfile.mockResolvedValue(profile({ choice: home, project_default: home }))
     mountPicker()
-
-    await fireEvent.click(await screen.findByRole('button', { name: /Cloud/ }))
-    await fireEvent.click(await screen.findByRole('button', { name: /系统挑一台/ }))
-
-    await waitFor(() => {
-      expect(setTopicComputeProfile).toHaveBeenCalledWith('topic-1', 'device', null)
-    })
+    await fireEvent.click(await screen.findByRole('button', { name: /家里那台/ }))
+    expect(screen.getByRole('button', { name: /自有设备.*离线/ })).toBeTruthy()
+    expect(setTopicComputeChoice).not.toHaveBeenCalled()
   })
-
-  it('shows only the locked machine after the topic has run', async () => {
+  it('keeps a running room locked and preserves its machine access notice', async () => {
     getTopicComputeProfile.mockResolvedValue(
       profile({
-        current: 'device',
-        device_id: 'home',
+        choice: lab,
         locked: true,
-        visibility: {
-          options: [],
-          effective: 'host',
-          machine_access: true,
-          notice: '让它看到整台机器',
-        },
+        visibility: { options: [], effective: 'host', machine_access: true, notice: '让它看到整台机器' },
       })
     )
     mountPicker()
-
-    expect(await screen.findByText('家里那台')).toBeTruthy()
-    expect(screen.queryByText('系统挑一台')).toBeNull()
+    expect(await screen.findByText('实验室工作站')).toBeTruthy()
+    expect(screen.getByText('整台机器')).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
-    expect(setTopicComputeProfile).not.toHaveBeenCalled()
   })
 })

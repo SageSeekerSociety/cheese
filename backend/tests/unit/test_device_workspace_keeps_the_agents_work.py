@@ -1,244 +1,341 @@
-"""Bringing a device's workspace up must never cost the agent its work.
+"""Task checkouts preserve independent commits and unfinished work on devices."""
 
-Three separate incidents, one shape: the launcher decided whether a workspace
-was usable by asking `[ -d "$CHEESE_WORK/.git" ]`, and that question has a wrong
-answer. git points HEAD at `refs/heads/.invalid` for the whole duration of a
-clone and only names the real branch as the very last step, so a clone that is
-killed in between — a container torn down, a machine rebooted — leaves a `.git`
-that satisfies `[ -d ]` and answers `git log` with "fatal: your current branch
-appears to be broken". Every later launch stepped straight over it.
-
-The clone itself was written `2>/dev/null || true`, so when it failed there was
-nothing anywhere to say so; and because git refuses to clone into a directory
-that is not empty, a workspace that had lost only its `.git` got no repository
-at all while its files sat there looking fine.
-
-These tests run the launcher's own generated shell against real repositories and
-assert on git state, never on the script's text.
-"""
-
+import importlib.util
+import json
 import os
+import shutil
 import subprocess
-import tempfile
+import sys
+import threading
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.domain.agent.harness.claude_code.device_launch import build_launch_script
+import pytest
 
-_MARKER = "# A device starts with an empty work dir."
-_IDENT = ("-c", "user.email=t@cheese.local", "-c", "user.name=t")
+from app.domain.agent import environment_runner
+from app.domain.project.environment import EnvironmentConfig
 
-
-def _bringup_body() -> str:
-    """The workspace bring-up section of the real generated launcher.
-
-    Taken from the shipped script rather than re-typed, so the test cannot pass
-    against a fix that never reached the launcher. The section is one top-level
-    `if ... fi`, so it ends at the first `fi` in column zero.
-    """
-    script = build_launch_script()
-    tail = script.split(_MARKER, 1)[1].splitlines()
-    body = []
-    for line in tail:
-        body.append(line)
-        if line == "fi":
-            break
-    return "\n".join(body) + "\n"
+CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
 
 
-def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *_IDENT, *args], cwd=cwd, capture_output=True, text=True
+def git(cwd, *args):
+    result = subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True
     )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
 
-def _origin_with_a_commit(root: Path) -> str:
-    """A bare remote holding `topic/abc` with one committed file."""
-    remote = root / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(remote)], capture_output=True)
-    seed = root / "seed"
+@pytest.fixture
+def device(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    project, room = str(uuid.uuid4()), str(uuid.uuid4())
+    seed = tmp_path / "seed"
     seed.mkdir()
-    _git(seed, "init", "-q")
-    (seed / "app.py").write_text("production line\n")
-    _git(seed, "add", "-A")
-    _git(seed, "commit", "-qm", "base")
-    _git(seed, "push", "-q", str(remote), "HEAD:refs/heads/topic/abc")
-    return str(remote)
+    git(seed, "init", "-b", "main")
+    git(seed, "config", "user.name", "worker")
+    git(seed, "config", "user.email", "worker@example.com")
+    (seed / "same.txt").write_text("base\n")
+    git(seed, "add", ".")
+    git(seed, "commit", "-m", "base")
+    remote = tmp_path / "origin.git"
+    git(tmp_path, "clone", "--bare", str(seed), str(remote))
+    tasks = {}
+    for _ in range(2):
+        task = str(uuid.uuid4())
+        branch = f"task/{uuid.UUID(task).hex[:8]}"
+        git(remote, "branch", branch, "main")
+        tasks[task] = {
+            "task_id": task,
+            "room_id": room,
+            "branch": branch,
+            "base": "main",
+            "closed": False,
+        }
 
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            task = self.path.rsplit("/", 1)[-1]
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps({"data": tasks[task]}).encode())
 
-def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess:
-    bindir = work.parent / "bin"
-    bindir.mkdir(exist_ok=True)
-    (bindir / "cheese-hook").write_text(
-        f'#!/bin/sh\ncat >> "{hook_log}"\necho >> "{hook_log}"\n'
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    for key, value in {
+        "HOME": str(home),
+        "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
+        "CHEESE_PROJECT": project,
+        "CHEESE_TOPIC": room,
+        "CHEESE_GIT_REMOTE": str(remote),
+        "CHEESE_TOKEN": "test-secret",
+        "PATH": str(CLI.parent) + os.pathsep + os.environ["PATH"],
+    }.items():
+        monkeypatch.setenv(key, value)
+    loader = SourceFileLoader("task_cli", str(CLI))
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(loader.name, loader)
     )
-    (bindir / "cheese-hook").chmod(0o755)
-    script = work.parent / "bringup.sh"
-    script.write_text(_bringup_body())
-    env = {
-        **os.environ,
-        "PATH": f"{bindir}:{os.environ['PATH']}",
-        "CHEESE_GIT_REMOTE": remote,
-        "CHEESE_GIT_BRANCH": "topic/abc",
-        "CHEESE_WORK": str(work),
-        "CHEESE_TOKEN": "t",
-        "CHEESE_GIT_AUTHOR_NAME": "芝士",
-        "CHEESE_GIT_AUTHOR_EMAIL": "cheese@zhishi.local",
-    }
-    return subprocess.run(
-        ["sh", str(script)], env=env, capture_output=True, text=True, timeout=120
+    loader.exec_module(module)
+    try:
+        yield module, tasks, remote, home
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_committing_in_one_task_pushes_only_its_branch(device):
+    cli, tasks, remote, _ = device
+    first, second = tasks
+    a, b = cli._task_worktree(first), cli._task_worktree(second)
+    before = git(remote, "rev-parse", tasks[second]["branch"])
+    (a / "same.txt").write_text("first\n")
+    git(a, "add", "same.txt")
+    git(a, "commit", "-m", "fix: first task")
+    assert git(remote, "show", tasks[first]["branch"] + ":same.txt") == "first"
+    assert git(remote, "rev-parse", tasks[second]["branch"]) == before
+    assert (b / "same.txt").read_text() == "base\n"
+
+
+def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device):
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = git(work, "rev-parse", "HEAD")
+    (work / "same.txt").write_text("staged\n")
+    git(work, "add", "same.txt")
+    (work / "same.txt").write_text("unstaged\n")
+    before = git(work, "diff", "--cached")
+    cli._sync_task(task)
+    assert git(work, "diff", "--cached") == before
+    assert git(work, "rev-parse", "HEAD") == head
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    refs = git(
+        remote,
+        "for-each-ref",
+        "--format=%(refname)",
+        f"refs/cheese/snapshots/task/{task}",
+    ).splitlines()
+    assert len(refs) == 1
+    assert git(remote, "show", refs[0] + ":same.txt") == "unstaged"
+
+
+def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
+    cli, tasks, _, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("local commit\n")
+    git(work, "add", "same.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "fix: local")
+    head = git(work, "rev-parse", "HEAD")
+    (work / "draft.txt").write_text("unfinished")
+    assert cli._task_worktree(task) == work
+    assert git(work, "rev-parse", "HEAD") == head
+    assert (work / "draft.txt").read_text() == "unfinished"
+
+
+def test_failed_push_leaves_work_and_a_durable_failure_log(device):
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    hook = remote / "hooks/pre-receive"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    (work / "draft.txt").write_text("keep me")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    log = Path(git(work, "rev-parse", "--absolute-git-dir")) / "cheese-sync.log"
+    assert "failed RuntimeError" in log.read_text()
+    assert "test-secret" not in log.read_text()
+    assert (work / "draft.txt").read_text() == "keep me"
+
+
+def test_failed_push_is_spooled_to_the_room_hook(device, monkeypatch):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    hook = home / "cheese-hook"
+    hook.write_text('#!/bin/sh\ncat >> "$HOME/hook.json"\n')
+    hook.chmod(0o755)
+    monkeypatch.setenv("PATH", str(home) + os.pathsep + os.environ["PATH"])
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
+    (work / "unfinished.txt").write_text("keep me")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    report = json.loads((home / "hook.json").read_text())
+    assert report["hook_event_name"] == "CheeseSync"
+    assert report["status"] == "failed"
+    assert report["task_id"] == task
+    assert report["branch"] == tasks[task]["branch"]
+
+
+def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    other = tmp_path / "other"
+    git(tmp_path, "clone", "--branch", tasks[task]["branch"], str(remote), str(other))
+    git(other, "config", "user.name", "other")
+    git(other, "config", "user.email", "other@example.com")
+    (other / "other.txt").write_text("other writer")
+    git(other, "add", ".")
+    git(other, "commit", "-m", "feat: another writer")
+    git(other, "push", "origin", "HEAD")
+    remote_head = git(other, "rev-parse", "HEAD")
+    (work / "local.txt").write_text("local writer")
+    git(work, "add", ".")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "feat: local writer")
+    local_head = git(work, "rev-parse", "HEAD")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == remote_head
+    assert git(work, "rev-parse", "HEAD") == local_head
+    assert (
+        git(remote, "show", f"refs/cheese/snapshots/task/{task}/{local_head}:local.txt")
+        == "local writer"
     )
 
 
-def _head_ref(work: Path) -> str:
-    return _git(work, "symbolic-ref", "-q", "HEAD").stdout.strip()
+def test_closed_task_sync_preserves_files_without_moving_its_delivered_branch(device):
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = git(remote, "rev-parse", tasks[task]["branch"])
+    tasks[task]["closed"] = True
+    (work / "draft.txt").write_text("late work")
+    cli._sync_task(task)
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    with pytest.raises(SystemExit):
+        cli._task_worktree(task)
 
 
-def test_a_clone_killed_midway_is_repaired_instead_of_stepped_over():
-    """The state a torn-down container leaves behind: objects and remote refs
-    arrived, HEAD never got past the placeholder, no files in the tree."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        remote = _origin_with_a_commit(root)
-        work = root / "work"
-        work.mkdir()
-        subprocess.run(["git", "clone", "-q", remote, str(work)], capture_output=True)
-        for leftover in work.iterdir():
-            if leftover.name != ".git":
-                leftover.unlink()
-        (work / ".git" / "HEAD").write_text("ref: refs/heads/.invalid\n")
-
-        result = _run(work, remote, root / "hook.log")
-
-        assert result.returncode == 0, result.stderr
-        assert _head_ref(work) == "refs/heads/topic/abc", (
-            "the launcher stepped over a half-made clone and left HEAD broken: "
-            + (work / ".git" / "HEAD").read_text()
-        )
-        assert (work / "app.py").read_text() == "production line\n"
+def test_renaming_a_checkout_cannot_deliver_it_as_another_task(device):
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = git(remote, "rev-parse", tasks[task]["branch"])
+    git(work, "branch", "-m", "another-task")
+    (work / "unfinished.txt").write_text("retained")
+    with pytest.raises(RuntimeError, match="Expected task branch"):
+        cli._sync_task(task)
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    assert not git(remote, "branch", "--list", "another-task")
+    assert (work / "unfinished.txt").read_text() == "retained"
 
 
-def test_a_clone_that_fails_leaves_a_trace_instead_of_a_silent_ruin():
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        work = root / "work"
-        work.mkdir()
-        hook_log = root / "hook.log"
+# Which directory holds the runner is the launcher's choice, not the CLI's: the
+# machine launcher writes `.cheese/`, the claude-code remote-execution payload
+# writes its own config dir. Opening a task named one of them, so a room on a
+# machine prepared by the other launcher died before it could print the task id
+# — the checkout and the task record were already on disk, and the room saw
+# nothing happen at all.
+@pytest.mark.parametrize("shipped_by", (".cheese", ".claude"))
+def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
+    device, shipped_by
+):
+    _, tasks, remote, home = device
+    seed = remote.parent / "seed"
+    for directory in ("backend", "frontend"):
+        (seed / directory).mkdir()
+        (seed / directory / "dependency-version").write_text("1")
+    git(seed, "add", ".")
+    git(seed, "commit", "-m", "Add dependency fixtures")
+    git(seed, "push", str(remote), "main")
+    for data in tasks.values():
+        git(remote, "branch", "-f", data["branch"], "main")
+    room = home / "room"
+    room.mkdir()
+    helpers = home / shipped_by
+    helpers.mkdir()
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    config = EnvironmentConfig(
+        setup_script=(
+            'echo setup >> "$HOME/setup-count"\n'
+            'mkdir -p "$HOME/.local/bin"\n'
+            "printf '#!/bin/sh\\ncat dependency-version\\n' "
+            '> "$HOME/.local/bin/install-dependencies"\n'
+            'chmod +x "$HOME/.local/bin/install-dependencies"\n'
+            "export ONLY_SETUP=yes"
+        ),
+        startup_script=(
+            "test ! -f fail-install || exit 23\n"
+            "(cd backend && install-dependencies > installed-version)\n"
+            "(cd frontend && install-dependencies > installed-version)\n"
+            'printf "%s" "$PROJECT_VALUE" > project-value\n'
+            'test -z "${ONLY_SETUP:-}"\n'
+            "echo startup >> startup-count"
+        ),
+        variables={"PROJECT_VALUE": "$(touch injected) 'literal'"},
+    )
+    started = subprocess.run(
+        [sys.executable, environment_runner.__file__, "touch", "agent-started"],
+        env={
+            **os.environ,
+            "CHEESE_WORK": str(room),
+            "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert started.returncode == 0, started.stderr
+    assert (room / "agent-started").exists()
+    assert not (room / "backend").exists()
 
-        result = _run(work, str(root / "no-such-remote"), hook_log)
-
-        assert result.returncode == 0, result.stderr
-        assert hook_log.exists(), "a workspace that could not be cloned said nothing"
-        reported = hook_log.read_text()
-        assert "CheeseWorkspace" in reported, reported
-        assert "no-such-remote" in reported, (
-            "the report must carry what git actually said, not a generic failure"
-        )
-
-
-def test_a_workspace_that_lost_its_git_keeps_the_files_the_agent_wrote():
-    """git refuses to clone into a non-empty directory. The old launcher asked
-    it to anyway and threw the refusal away, so the agent was left with its
-    files and no repository at all — and nothing said so."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        remote = _origin_with_a_commit(root)
-        work = root / "work"
-        work.mkdir()
-        (work / "app.py").write_text("production line\nthe agent's edit\n")
-        (work / "brand_new.py").write_text("only copy\n")
-
-        result = _run(work, remote, root / "hook.log")
-
-        assert result.returncode == 0, result.stderr
-        assert (work / "brand_new.py").read_text() == "only copy\n"
-        assert (work / "app.py").read_text() == "production line\nthe agent's edit\n"
-        assert _head_ref(work) == "refs/heads/topic/abc", (
-            "the files survived but the workspace is not a repository"
-        )
-        dirty = _git(work, "status", "--porcelain").stdout
-        assert "app.py" in dirty and "brand_new.py" in dirty, dirty
-
-
-def test_repairing_a_workspace_never_moves_a_branch_that_has_unpushed_commits():
-    """Repair must not become the third way to lose work: a branch that is ahead
-    of the remote is the agent's only copy of those commits."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        remote = _origin_with_a_commit(root)
-        work = root / "work"
-        work.mkdir()
-        subprocess.run(
-            ["git", "clone", "-q", "-b", "topic/abc", remote, str(work)],
+    def open_task(task):
+        return subprocess.run(
+            [sys.executable, str(CLI), "worktree", task],
+            cwd=room,
             capture_output=True,
-        )
-        (work / "app.py").write_text("production line\nnever pushed\n")
-        _git(work, "add", "-A")
-        _git(work, "commit", "-qm", "the agent's own commit")
-        local = _git(work, "rev-parse", "HEAD").stdout.strip()
-        (work / ".git" / "HEAD").write_text("ref: refs/heads/.invalid\n")
-
-        result = _run(work, remote, root / "hook.log")
-
-        assert result.returncode == 0, result.stderr
-        assert _head_ref(work) == "refs/heads/topic/abc"
-        assert _git(work, "rev-parse", "HEAD").stdout.strip() == local, (
-            "the repair reset the branch onto the remote and dropped a commit "
-            "that existed nowhere else"
-        )
-        assert (work / "app.py").read_text() == "production line\nnever pushed\n"
-
-
-def test_a_git_too_broken_to_read_is_set_aside_not_deleted():
-    """Whatever is left in an unreadable repository may still be the only copy
-    of something. The launcher may replace it; it may not throw it away."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        remote = _origin_with_a_commit(root)
-        work = root / "work"
-        work.mkdir()
-        (work / ".git").mkdir()
-        (work / ".git" / "HEAD").write_text("ref: refs/heads/.invalid\n")
-        (work / ".git" / "objects").mkdir()
-        (work / ".git" / "objects" / "keepsake").write_text("the only copy\n")
-
-        result = _run(work, remote, root / "hook.log")
-
-        assert result.returncode == 0, result.stderr
-        assert _head_ref(work) == "refs/heads/topic/abc", "no usable workspace"
-        rescued = [
-            p / "objects" / "keepsake"
-            for p in work.iterdir()
-            if p.name.startswith(".git.broken")
-        ]
-        assert rescued and rescued[0].read_text() == "the only copy\n", (
-            "the unreadable repository was deleted rather than set aside: "
-            + str(sorted(p.name for p in work.iterdir()))
+            text=True,
+            timeout=15,
         )
 
+    first, second = tasks
+    opened = open_task(first)
+    assert opened.returncode == 0, opened.stderr
+    first_work = Path(opened.stdout.strip())
+    opened = open_task(second)
+    assert opened.returncode == 0, opened.stderr
+    second_work = Path(opened.stdout.strip())
+    assert first_work != second_work
+    for work in (first_work, second_work):
+        for directory in ("backend", "frontend"):
+            assert (work / directory / "installed-version").read_text() == "1"
+        assert (work / "project-value").read_text() == config.variables["PROJECT_VALUE"]
+        assert not (work / "injected").exists()
+    (first_work / "backend/dependency-version").write_text("2")
+    (first_work / "draft.txt").write_text("unfinished work")
+    assert open_task(first).returncode == 0
+    assert (first_work / "backend/installed-version").read_text() == "2"
+    assert (second_work / "backend/installed-version").read_text() == "1"
+    assert (first_work / "startup-count").read_text() == "startup\nstartup\n"
 
-def test_a_healthy_workspace_is_left_exactly_as_it_was():
-    """The guard on the fix itself. Bringing a workspace up runs on EVERY turn,
-    so a repair that also fires on a healthy tree would reset the agent's
-    commits and overwrite its edits once per turn."""
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        remote = _origin_with_a_commit(root)
-        work = root / "work"
-        work.mkdir()
-        subprocess.run(
-            ["git", "clone", "-q", "-b", "topic/abc", remote, str(work)],
-            capture_output=True,
-        )
-        (work / "app.py").write_text("production line\nnever pushed\n")
-        _git(work, "add", "-A")
-        _git(work, "commit", "-qm", "the agent's own commit")
-        (work / "app.py").write_text("production line\nmid-edit\n")
-        (work / "scratch.py").write_text("uncommitted\n")
-        before = _git(work, "rev-parse", "HEAD").stdout.strip()
-
-        result = _run(work, remote, root / "hook.log")
-
-        assert result.returncode == 0, result.stderr
-        assert _git(work, "rev-parse", "HEAD").stdout.strip() == before
-        assert (work / "app.py").read_text() == "production line\nmid-edit\n"
-        assert (work / "scratch.py").read_text() == "uncommitted\n"
+    (first_work / "fail-install").touch()
+    failed = open_task(first)
+    assert failed.returncode == 23
+    assert not failed.stdout.strip(), "A failed task must not be returned as ready"
+    assert "startup script exited with status 23" in failed.stderr
+    assert (first_work / "draft.txt").read_text() == "unfinished work"
+    root = home / ".cheese-environment"
+    assert json.loads((root / "status.json").read_text())["state"] == "ready"
+    task_status = json.loads((root / "tasks" / first / "status.json").read_text())
+    assert task_status["state"] == "failed"
+    assert task_status["stage"] == "startup"
+    assert task_status["exit_code"] == 23
+    (first_work / "fail-install").unlink()
+    assert open_task(first).returncode == 0
+    task_status = environment_runner.read_status(root / "tasks" / first)
+    assert task_status["state"] == "complete"
+    assert (home / "setup-count").read_text() == "setup\n"
+    assert (first_work / "draft.txt").read_text() == "unfinished work"

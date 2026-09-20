@@ -12,7 +12,8 @@
     "unknownDiscussion": "未知讨论",
     "teamAdmin": "团队管理员",
     "reason": "原因",
-    "member": "成员"
+    "member": "成员",
+    "unknownProject": "未知项目"
   },
   "default": {
     "title": "未知类型通知: {type}",
@@ -96,5 +97,13 @@
     "title_anonymous": "加入请求已取消",
     "body": "已取消加入团队 \"{team}\" 的请求",
     "status": "已取消"
+  },
+  "ROOM_NOTICE": {
+    "body": "在「{topicTitle}」",
+    "untitled": "平台有一条提示"
+  },
+  "CHEESE_QUESTION": {
+    "body": "在「{topicTitle}」，本轮已暂停等待回答",
+    "untitled": "芝士有一个待确认问题"
   }
 }

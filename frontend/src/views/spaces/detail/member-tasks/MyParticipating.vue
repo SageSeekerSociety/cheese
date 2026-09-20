@@ -70,6 +70,7 @@
       <div class="filter-grid">
         <v-select
           v-model="approvedModel"
+          autocomplete="off"
           :items="approvedItems"
           label="报名审批状态"
           density="comfortable"
@@ -78,6 +79,7 @@
         />
         <v-select
           v-model="completionStatusModel"
+          autocomplete="off"
           :items="completionItems"
           label="完成状态"
           density="comfortable"
@@ -86,6 +88,7 @@
         />
         <v-select
           v-model="identityTypeModel"
+          autocomplete="off"
           :items="identityTypeItems"
           label="参与身份"
           density="comfortable"
@@ -94,6 +97,7 @@
         />
         <v-select
           v-model="sortByModel"
+          autocomplete="off"
           :items="sortByItems"
           label="排序字段"
           density="comfortable"
@@ -105,6 +109,7 @@
       <div class="filter-grid filter-grid--secondary">
         <v-select
           v-model="sortOrderModel"
+          autocomplete="off"
           :items="sortOrderItems"
           label="排序方向"
           density="comfortable"

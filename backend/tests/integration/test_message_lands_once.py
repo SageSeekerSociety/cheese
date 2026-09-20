@@ -14,8 +14,9 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import stub_compute
@@ -38,7 +39,9 @@ async def _ai_messages(factory, topic_id: uuid.UUID) -> list[str]:
     return [
         b.content
         for b in blocks
-        if b.author_type == AuthorType.ai and b.kind == BlockKind.message
+        if looks_like_agent_handle(b.author)
+        and b.kind == BlockKind.event
+        and (b.meta or {}).get("progress")
     ]
 
 

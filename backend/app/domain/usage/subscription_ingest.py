@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.place import room_and_task
+from app.domain.topic.models import Topic
 from app.domain.usage.credits import tokens_to_credits
 from app.domain.usage.models import IngestCheckpoint
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
@@ -147,17 +147,14 @@ class WorkIndex:
     async def _load(
         self, session: AsyncSession, topic_id: uuid.UUID
     ) -> list[tuple[datetime, uuid.UUID]]:
-        # `topic_id` is a place id and may name a thread, whose blocks carry the
-        # ROOM's topic_id. Matching on it raw would find nothing and quietly
-        # leave every one of that thread's rows unattributed.
-        room_id, task_id = await room_and_task(session, topic_id)
+        # The room's OWN line. A card's blocks sit under the same `topic_id`
+        # with a `task_id` on them, and they carry the room's turn ids — folding
+        # them in here would attribute the same turn twice.
         stmt = (
             select(Block.turn_id, func.min(Block.created_at))
             .where(
-                Block.topic_id == room_id,
-                Block.task_id.is_(None)
-                if task_id is None
-                else Block.task_id == task_id,
+                Block.topic_id == topic_id,
+                Block.task_id.is_(None),
                 Block.turn_id.is_not(None),
             )
             .group_by(Block.turn_id)
@@ -177,6 +174,19 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
     if await ProjectRepository(session).get(project_id) is None:
         return False
     topic_id = _uuid_or_none(row.get("topic_id"))
+    if topic_id is not None:
+        topic = await session.scalar(
+            select(Topic.id)
+            .where(Topic.id == topic_id, Topic.project_id == project_id)
+            .with_for_update(read=True, key_share=True)
+        )
+        if topic is None:
+            logger.warning(
+                "usage topic %s is absent from project %s; retaining project usage",
+                topic_id,
+                project_id,
+            )
+            topic_id = None
     # Cache reads fold into the input count — AgentUsage has no cache field,
     # and leaving them out would under-report work by more than it reports.
     input_tokens, output_tokens = input_output_tokens(row)

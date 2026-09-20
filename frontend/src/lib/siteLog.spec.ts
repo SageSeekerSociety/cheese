@@ -6,14 +6,7 @@
 import { render } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
-import {
-  countLines,
-  isLongSiteEntry,
-  shouldFollowTail,
-  shouldKeepPinning,
-  SITE_CLAMP_LINES,
-  SITE_TAIL_PIN_FRAMES,
-} from './siteLog'
+import { countLines, isLongSiteEntry, shouldKeepPinning, SITE_CLAMP_LINES, SITE_TAIL_PIN_FRAMES } from './siteLog'
 
 describe('isLongSiteEntry', () => {
   it('catches wide prose and tall output alike', () => {
@@ -44,18 +37,6 @@ describe('countLines', () => {
     expect(countLines('a\nb\nc')).toBe(3)
     expect(countLines('single')).toBe(1)
     expect(countLines('')).toBe(0)
-  })
-})
-
-describe('shouldFollowTail', () => {
-  it('follows when the reader is parked at the bottom', () => {
-    expect(shouldFollowTail({ scrollTop: 1318, scrollHeight: 1818, clientHeight: 500 })).toBe(true)
-  })
-
-  it('does not yank a reader who scrolled up', () => {
-    // 有人往上翻是因为他在读那一条。芝士又落一行工具日志就把他拽回底部，
-    // 比让他自己滚回去更糟。
-    expect(shouldFollowTail({ scrollTop: 0, scrollHeight: 1818, clientHeight: 500 })).toBe(false)
   })
 })
 

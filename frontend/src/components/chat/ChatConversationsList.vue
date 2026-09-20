@@ -3,6 +3,7 @@
     <div class="px-2">
       <v-text-field
         v-model="searchQuery"
+        autocomplete="off"
         density="compact"
         flat
         hide-details

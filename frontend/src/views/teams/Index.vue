@@ -45,6 +45,7 @@
               <v-col cols="12" md="8">
                 <v-text-field
                   v-model="teamName"
+                  autocomplete="off"
                   label="小队名称"
                   variant="outlined"
                   color="primary"

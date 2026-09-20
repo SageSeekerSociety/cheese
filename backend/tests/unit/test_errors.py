@@ -1,3 +1,5 @@
+import logging
+
 from starlette.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_401_UNAUTHORIZED,
@@ -186,3 +188,56 @@ class TestUnhandledExceptionHandler:
         """出了什么事写进日志，不写进给发起请求的人的回复里。"""
         body = self._client().get("/boom").json()
         assert "QueuePool" not in body["message"]
+
+
+class TestConditionsThatAreNotThisServerSFault:
+    """A 500 says 「this server broke」. Two things that are not that were
+    reaching the catch-all and saying it anyway — and, because an unhandled
+    exception is logged on three separate ways out of a request, saying it three
+    times into the alert channel.
+    """
+
+    def _client(self) -> TestClient:
+        from fastapi import FastAPI
+        from starlette.requests import ClientDisconnect
+
+        from app.core.errors import register_exception_handlers
+        from app.domain.agent.device_hub import DeviceOffline
+
+        app = FastAPI()
+        register_exception_handlers(app)
+
+        @app.get("/offline")
+        async def _offline() -> None:
+            raise DeviceOffline("machine-7")
+
+        @app.get("/hung-up")
+        async def _hung_up() -> None:
+            raise ClientDisconnect()
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_a_device_that_is_off_is_answered_not_blamed_on_the_server(self) -> None:
+        response = self._client().get("/offline")
+        assert response.status_code == 409
+        assert response.headers["X-Device-Id"] == "machine-7"
+        assert "machine-7" in response.json()["message"]
+
+    def test_the_offline_answer_names_the_condition_clients_switch_on(self) -> None:
+        body = self._client().get("/offline").json()
+        assert body["error"]["name"] == "DeviceOffline"
+
+    def test_a_device_that_is_off_is_not_logged_as_an_error(self, caplog) -> None:
+        """This was 162 of the alert channel's first 600 messages — more than a
+        quarter of everything it said, for a state with nothing to fix."""
+        with caplog.at_level(logging.DEBUG):
+            self._client().get("/offline")
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    def test_a_browser_that_hung_up_is_not_an_error_either(self, caplog) -> None:
+        """A tab closed mid-upload. Nobody is left to receive an answer, and
+        nothing here failed."""
+        with caplog.at_level(logging.DEBUG):
+            response = self._client().get("/hung-up")
+        assert response.status_code == 499
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []

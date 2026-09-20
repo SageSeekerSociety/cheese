@@ -64,6 +64,13 @@ describe('逐文件 diff', () => {
     expect(splitDiffByFile(d)[0].path).toBe('my docs/a b.md')
   })
 
+  it('decodes Git UTF-8 octal paths without decoding literal backslashes twice', () => {
+    const chinese = String.raw`diff --git "a/docs/\346\226\271\346\241\210.md" "b/docs/\346\226\271\346\241\210.md"`
+    expect(splitDiffByFile(chinese)[0].path).toBe('docs/方案.md')
+    const literal = String.raw`diff --git "a/docs/\\346.md" "b/docs/\\346.md"`
+    expect(splitDiffByFile(literal)[0].path).toBe(String.raw`docs/\346.md`)
+  })
+
   it('读不懂的文件头不会把后面的 diff 一起吞掉', () => {
     const d = `diff --git 乱码
 @@ -1 +1 @@

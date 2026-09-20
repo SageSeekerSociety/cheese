@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.core.errors import AuthenticationRequiredError
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import (
     TopicMemberCreate,
@@ -38,30 +41,51 @@ async def list_topic_members(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     members, total = await TopicMemberService(db).list_for_topic(topic_id)
-    # Attach display names so the UI can label 头像 without a second round-trip.
+    # Attach display names and avatars so the UI can draw the roster without a
+    # second round-trip.
     users = UserRepository(db)
     profiles = UserProfileRepository(db)
     bindings = AgentBindingRepository(db)
     # Resolve handles → users once, then derive is-agent from the binding (never
     # a hard-coded handle check): a member is an agent iff it carries a binding.
-    rows = {
-        m.member_handle: await users.get_by_handle(m.member_handle) for m in members
-    }
-    user_ids = [u.id for u in rows.values() if u is not None]
+    rows = await users.get_by_handles([m.member_handle for m in members])
+    user_ids = [u.id for u in rows.values()]
     agent_ids = await bindings.agent_user_ids(user_ids)
     # The human-readable display name lives on the profile (nickname); the core
     # User row only carries the handle (username). Fall back to the handle.
     profile_by_uid = await profiles.get_profiles_by_user_ids(user_ids)
+    avatar_by_uid = await profiles.chosen_avatar_ids(user_ids)
+    # An agent seat's profile nickname is a constant fixed when the seat's user
+    # row was created, so the name has to come from the agent. Each seat carries
+    # its OWN agent's: a room may seat several, and one name for all of them
+    # showed two teammates as the same person — the same defect the mention
+    # roster had. A seat still under the room-derived handle belongs to the
+    # agent the room points at, which is what `fallback_name` is.
+    seats = {
+        agent_instance_handle(instance.id): instance
+        for instance in await AgentInstanceService(db).list_for_project(
+            topic.project_id
+        )
+    }
+    fallback_name = (await TopicService(db).resolve_agent(topic)).display_name
     items = []
     for m in members:
         d = TopicMemberOut.model_validate(m).model_dump(mode="json")
         user = rows.get(m.member_handle)
         profile = profile_by_uid.get(user.id) if user is not None else None
-        d["name"] = (
-            profile.nickname if profile and profile.nickname else m.member_handle
-        )
         # Agent members wear an Agent badge — derived from the execution binding.
-        d["agent"] = user is not None and user.id in agent_ids
+        is_agent = user is not None and user.id in agent_ids
+        d["agent"] = is_agent
+        if is_agent:
+            seated = seats.get(m.member_handle)
+            d["name"] = seated.display_name if seated else fallback_name
+        else:
+            d["name"] = (
+                profile.nickname if profile and profile.nickname else m.member_handle
+            )
+        # Absent = this person never picked an avatar; the UI draws its coloured
+        # initial rather than the one face everybody else who never picked has.
+        d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
         items.append(d)
     return ok(page(items, total))
 
@@ -73,8 +97,9 @@ async def add_topic_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    # A verified token pins the acting handle; body.actor is the Phase-0 fallback.
-    who = await resolver.resolve(fallback_handle=body.actor, topic_id=topic_id)
+    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    if not who.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).add(
         topic_id=topic_id, handle=body.handle, role=body.role, actor=who.handle
     )
@@ -90,7 +115,9 @@ async def update_topic_member_role(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=body.actor, topic_id=topic_id)
+    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    if not who.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).update_role(
         topic_id=topic_id, handle=handle, role=body.role, actor=who.handle
     )
@@ -102,11 +129,12 @@ async def update_topic_member_role(
 async def remove_topic_member(
     topic_id: uuid.UUID,
     handle: str,
-    actor: str,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(fallback_handle=actor, topic_id=topic_id)
+    who = await resolver.resolve(fallback_handle=None, topic_id=topic_id)
+    if not who.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
     await TopicMemberService(db).remove(
         topic_id=topic_id, handle=handle, actor=who.handle
     )

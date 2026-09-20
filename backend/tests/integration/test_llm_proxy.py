@@ -211,6 +211,71 @@ async def test_admission_answers_from_the_grant_balance(client):
     assert "5.0000" in body["reason"]
 
 
+async def _exhaust(client, pid: str) -> None:
+    from app.domain.usage.repositories import ComputeGrantRepository
+
+    async with client.test_factory() as session:
+        await ComputeGrantRepository(session).grant(
+            project_id=uuid.UUID(pid), source_task_id=None, credits_total=1.0
+        )
+        await ComputeGrantRepository(session).consume(uuid.UUID(pid), 1.0)
+        await session.commit()
+
+
+@pytest.mark.anyio
+async def test_admission_tells_the_room_once_for_a_refused_turn_in_flight(client):
+    """The metering proxy caches a verdict for 30s and Claude Code retries ten
+    times, so admission gets asked again and again for the SAME refusal
+    (#715) — asking five times must still post the room's exhaustion notice
+    exactly once, on the turn admission actually refused."""
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
+    from tests.turn_log import open_turn
+
+    pid = _make_project(client)
+    topic_id = client.post("/topics", json={"project_id": pid, "title": "T"}).json()[
+        "data"
+    ]["id"]
+    turn_id = await open_turn(client.test_factory, uuid.UUID(topic_id))
+    await _exhaust(client, pid)
+    token = mint_scoped_token(project_id=pid, topic_id=topic_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for _ in range(5):
+        r = client.post("/llm/admission", headers=headers)
+        assert r.json()["data"]["allow"] is False
+
+    async with client.test_factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
+    notices = [b for b in blocks if b.content == CREDITS_EXHAUSTED_EVENT]
+    assert len(notices) == 1
+    assert notices[0].turn_id == turn_id
+
+
+@pytest.mark.anyio
+async def test_admission_refusal_posts_nothing_with_no_turn_running(client):
+    """No turn is in flight at this place — that is the turn-START refusal
+    path's job (it already posts its own exhaustion notice), not admission's.
+    A refusal here must invent nothing."""
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
+
+    pid = _make_project(client)
+    topic_id = client.post("/topics", json={"project_id": pid, "title": "T"}).json()[
+        "data"
+    ]["id"]
+    await _exhaust(client, pid)
+    token = mint_scoped_token(project_id=pid, topic_id=topic_id)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = client.post("/llm/admission", headers=headers)
+    assert r.json()["data"]["allow"] is False
+
+    async with client.test_factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
+    assert not any(b.content == CREDITS_EXHAUSTED_EVENT for b in blocks)
+
+
 @pytest.mark.anyio
 async def test_admission_says_which_pool_serves_the_project(client, monkeypatch):
     """The proxy asks once and learns both things: may it run, and where does
@@ -418,4 +483,139 @@ async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
     }
     body = client.post("/llm/admission", headers=headers).json()["data"]
 
+    assert "upstream" not in body["supply"]
+
+
+@pytest.mark.parametrize("central_upstream", ["central:ticket", None])
+@pytest.mark.parametrize("model", ["claude-sonnet-5", "deepseek-flash", "glm-5.2"])
+async def test_placed_room_uses_session_identity_not_executor(
+    client, monkeypatch, central_upstream, model, _project_key
+):
+    from datetime import UTC, datetime
+
+    from app.core.config import settings as app_settings
+    from app.domain.device.models import DeviceRow
+    from app.domain.topic.models import Topic
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    room_id = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Central room", "created_by": "alice"},
+    ).json()["data"]["id"]
+    await _pin_topic_to_self_hosted_device(
+        client,
+        topic_id=uuid.UUID(room_id),
+        device_id="executor",
+        upstream="executor:ticket",
+    )
+    async with client.test_factory() as session:
+        executor = await session.get(DeviceRow, "executor")
+        session.add(
+            DeviceRow(
+                device_id="central",
+                name="central",
+                token="tok-central",
+                owner_user_id=executor.owner_user_id,
+                created_at=datetime.now(UTC),
+                ccproxy_upstream=central_upstream,
+            )
+        )
+        room = await session.get(Topic, uuid.UUID(room_id))
+        room.session_placement = {
+            "device_id": "central",
+            "resource_id": room_id,
+            "channel": "device",
+            "execution": {"kind": "device", "device_id": "executor"},
+        }
+        await session.commit()
+
+    response = client.post(
+        "/llm/admission",
+        headers={
+            "Authorization": "Bearer "
+            + mint_scoped_token(project_id=pid, topic_id=room_id, model=model)
+        },
+    )
+    assert response.status_code == 200
+    supply = response.json()["data"]["supply"]
+    assert supply["pool"] == (
+        "subscription" if model.startswith("claude-") else "gateway"
+    )
+    if supply["pool"] == "gateway":
+        assert supply["key"].startswith("sk-virtual-for-")
+    if central_upstream is None:
+        assert "upstream" not in supply
+    else:
+        assert supply["upstream"] == central_upstream
+
+
+async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:
+    """A real room and one thread of work in it — (room_id, thread_id).
+
+    Both halves have to be real rows, not two uuids: the whole failure is that
+    a thread's id is not a `topics` id, so a test that invents one would place
+    the pin and the token on the same key and pass either way.
+    """
+    from app.domain.room_task.services import TaskService
+
+    room_id = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "房间", "created_by": "alice"},
+    ).json()["data"]["id"]
+    async with client.test_factory() as session:
+        task = await TaskService(session).open_thread(
+            project_id=uuid.UUID(project_id),
+            room_id=uuid.UUID(room_id),
+            title="一件活",
+            owner_handle="alice",
+            created_by="alice",
+        )
+        thread_id = str(task.id)
+        await session.commit()
+    return room_id, thread_id
+
+
+async def test_admission_names_the_machine_the_room_is_pinned_to(client, monkeypatch):
+    """一轮跑在哪台机器上，是**房间**的 pin 说了算 —— 一个房间一块屏幕，它派出去
+    的每一个分身都跑在那一台上，所以没有第二个 pin 可查。
+
+    查不到不是「无所谓」：带着自己 ccproxy 票的调用方在解析不出身份时会被**拒绝**，
+    而不是记到平台账上。所以这个查询答错一次，那台机器上的每一轮都被拒。
+    """
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    room_id, _card_id = await _room_with_a_thread(client, pid)
+    await _pin_topic_to_machine(
+        client,
+        project_id=pid,
+        topic_id=uuid.UUID(room_id),
+        machine_id=784,
+        upstream="m784:pw784",
+    )
+
+    headers = {
+        "Authorization": "Bearer " + mint_scoped_token(project_id=pid, topic_id=room_id)
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+
+    assert body["supply"]["upstream"] == "m784:pw784"
+
+
+async def test_admission_still_names_nothing_for_a_room_that_owns_no_machine(
+    client, monkeypatch
+):
+    """没 pin 过的房间还是「用部署级那一个」—— 今天每一轮没落位的都是这样。"""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    room_id, _card_id = await _room_with_a_thread(client, pid)
+
+    headers = {
+        "Authorization": "Bearer " + mint_scoped_token(project_id=pid, topic_id=room_id)
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
     assert "upstream" not in body["supply"]

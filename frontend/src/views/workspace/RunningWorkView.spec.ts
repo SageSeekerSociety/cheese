@@ -3,6 +3,10 @@
  * 这一份钉的是那个区别本身——列按「该谁动」分、短语一个字都不改地照抄后端、空列
  * 不消失、已完成不占板面，以及排序是全序（不然板会在两次刷新之间自己跳）。
  */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type { Component } from 'vue'
 import type { RoomTask } from '@/cx_types'
 
@@ -16,11 +20,17 @@ const listProjectTasks = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listProjectTasks: (...a: unknown[]) => listProjectTasks(...a) }
+  // 这些用例问的是板，所以清单是空的：那一块自己就不出现（它的行为在
+  // `components/ArtifactManifest.spec.ts` 里）。不给这一条，组件会去真发一次请求。
+  return {
+    ...actual,
+    listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
+    listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+  }
 })
 
 const push = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), useRoute: () => ({ query: {} }) }))
 
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
@@ -28,6 +38,7 @@ vi.mock('@/stores/workspace', () => ({
       { id: 'room-1', title: '运维' },
       { id: 'room-2', title: '前端' },
     ],
+    members: [{ user_handle: 'ligan', role: 'member', name: '李干' }],
   }),
 }))
 
@@ -42,7 +53,6 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     room_id: 'room-1',
     title: '查一下分页接口',
     status: 'open',
-    residency: 'idle',
     owner_handle: 'ligan',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
@@ -129,8 +139,8 @@ describe('空列不消失', () => {
       total: 1,
     })
     const { container } = mount()
-    await waitFor(() => expect(columnHead(container, 'needs_you')).toBe('等你 1'))
-    // 整列消失会让板在两次刷新之间跳，而「等你」在哪个位置本身就是信息。
+    await waitFor(() => expect(columnHead(container, 'needs_you')).toBe('待处理 1'))
+    // 整列消失会让板在两次刷新之间跳，而「待处理」在哪个位置本身就是信息。
     expect(columnHead(container, 'building')).toBe('施工中 0')
     expect(columnHead(container, 'delivering')).toBe('交付中 0')
   })
@@ -199,7 +209,7 @@ describe('这一页原来的两个用处都还在', () => {
     const { container } = mount()
     await waitFor(() => {
       const head = container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')
-      expect(head).toBe('施工中1·等你1·已完成1')
+      expect(head).toBe('施工中1·待处理1·已完成1')
     })
   })
 
@@ -258,21 +268,77 @@ describe('卡片上的其余几行', () => {
     await findByText('暂无负责人')
   })
 
-  it('点一张卡就打开那件活', async () => {
+  it('点一张卡就打开它所在的房间，并钻进这张卡', async () => {
+    // 一件活不是地点：做它的分身住在房间的会话里。所以地址是房间的，卡在 query
+    // 上——「你看一下这条活」因此还是一条能发出去的链接。
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('.board-card')).not.toBeNull())
     await fireEvent.click(container.querySelector('.board-card') as HTMLElement)
     expect(push).toHaveBeenCalledWith({
       name: 'workspace-topic',
-      params: { projectId: 'p1', topicId: 'task-1' },
+      params: { projectId: 'p1', topicId: 'room-1' },
+      query: { tab: 'overview', card: 'task-1' },
     })
   })
 })
 
 describe('一件活都没有', () => {
-  it('说「暂无派出去的活」，而不是画三个空列了事', async () => {
+  it('说「暂无派出去的任务」，而不是画三个空列了事', async () => {
     listProjectTasks.mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
-    await findByText('暂无派出去的活')
+    await findByText('暂无派出去的任务')
+  })
+
+  it('每一列自己说它空，「施工中」那一列还说得出下一步', async () => {
+    // 这不是收尾的一句话：一个项目几百条活里同时活着的常常只有几条，三列全空是
+    // 第一屏的常态，所以那几行字就是这一屏的主要内容。
+    listProjectTasks.mockResolvedValue({ data: [], total: 0 })
+    const { findByText } = mount()
+    await findByText('暂无施工中的任务')
+    await findByText('暂无交付中的任务')
+    await findByText('暂无待处理的任务')
+    await findByText('在房间里说明要做什么，芝士会把它拆成任务')
+  })
+
+  it('活全在「已完成」里的时候，板面照样说得出下一步', async () => {
+    listProjectTasks.mockResolvedValue({
+      data: [
+        task({ id: 'a', title: '甲', presentation: { column: 'done', display_status: '已收工' } }),
+        task({ id: 'b', title: '乙', presentation: { column: 'done', display_status: '已收工' } }),
+      ],
+      total: 2,
+    })
+    const { container, getByText } = mount()
+    // 顶上那行仍然说得出这个项目交付过多少：板面空不等于什么都没发生过。
+    await waitFor(() =>
+      expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
+    )
+    getByText('在房间里说明要做什么，芝士会把它拆成任务')
+  })
+})
+
+// 板的高度必须在这一格上定死，列里那些 `min-height: 0` 才有意义。以前这里只有
+// `flex: 1 1 auto`，而外面那层 `.project-shell` 只给了 `overflow: hidden`、不是
+// flex 容器 —— 那句 flex 一路空转，板的高度等于内容高度，`.board-col__list` 的
+// `overflow-y: auto` 于是永远等于自己的内容高、永远不滚：活一多，板的下半截就被
+// 外壳裁掉，整页没有滚动条（马霄宇报「验收的地方显示不全」时一起查出来的同类）。
+// 这是 CSS，jsdom 量不到布局，照 `PanelCard.spec.ts` 的老办法用源码断言钉住。
+describe('板自己钉在视口高度上', () => {
+  it('.board 有确定高度，而且是 border-box', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'RunningWorkView.vue'), 'utf8')
+    const start = src.indexOf('\n.board {')
+    expect(start).toBeGreaterThan(-1)
+    const rule = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start)).replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(rule).toContain('height: 100%')
+    // 这一格带内边距：content-box 会让它比 100% 再高 28px，底部照样被裁。
+    expect(rule).toContain('box-sizing: border-box')
+  })
+
+  it('列里的清单仍然是唯一的滚动层', () => {
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'RunningWorkView.vue'), 'utf8')
+    const start = src.indexOf('\n.board-col__list {')
+    const rule = src.slice(src.indexOf('{', start) + 1, src.indexOf('}', start)).replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(rule).toContain('overflow-y: auto')
+    expect(rule).toContain('min-height: 0')
   })
 })

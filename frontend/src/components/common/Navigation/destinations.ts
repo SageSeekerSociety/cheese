@@ -1,6 +1,8 @@
 import type { Project } from '@/cx_types'
 import type { NavGenericItem, NavItem } from './types'
 
+import { t } from '@/i18n'
+
 // 一级导航在两端是**两份清单**，不是一份清单加两个否定式过滤器。
 //
 // 过滤器那版的毛病不在于它存在，在于它读起来像一份清单：手机上「首页」被
@@ -61,7 +63,12 @@ export function workspaceProject(
 // 那等于给每天的主路径加一跳。一个项目都没有的时候它没有落地上下文，此时唯一
 // 有意义的动作就是建一个，所以这一格就是那个动作。
 function workspace(src: NavSources): NavItem {
-  const tab = { key: 'Workspace', type: 'item' as const, title: '工作区', icon: 'mdi-folder-multiple-outline' }
+  const tab = {
+    key: 'Workspace',
+    type: 'item' as const,
+    title: t('navigation.workspace'),
+    icon: 'mdi-folder-multiple-outline',
+  }
   return src.workspaceProjectId
     ? { ...tab, to: `/projects/${src.workspaceProjectId}` }
     : { ...tab, action: src.createProject }
@@ -70,13 +77,14 @@ function workspace(src: NavSources): NavItem {
 /** 桌面左侧 rail：首页（容器，空间/小队在它的侧栏里）+ 项目实例 + ＋新建项目。 */
 export function railItems(src: NavSources): NavGenericItem[] {
   return [
-    HOME,
+    { ...HOME, title: t('navigation.home') },
     ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
     // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
     ...src.projects.map((p, i) => ({
       key: `cx-${p.id}`,
       type: 'item' as const,
       title: p.name,
+      projectId: p.id,
       to: `/projects/${p.id}`,
       img: src.projectAvatar(p.name),
       shortcut: i + 2, // ⌘1 = 首页，然后是项目
@@ -84,7 +92,7 @@ export function railItems(src: NavSources): NavGenericItem[] {
     {
       key: 'cx-add',
       type: 'item' as const,
-      title: '新建项目',
+      title: t('navigation.newProject'),
       icon: 'mdi-plus',
       add: true,
       action: src.createProject,
@@ -92,7 +100,23 @@ export function railItems(src: NavSources): NavGenericItem[] {
   ]
 }
 
+/**
+ * 按下 ⌘N 该去哪儿，没有对应的格子就是 null。
+ *
+ * rail 的悬停浮层一直在显示这个键（`shortcut`），而在此之前没有任何地方绑它——
+ * 一个指着不存在功能的提示。
+ *
+ * 只认有地址的格子：「＋新建项目」是个动作而不是目的地，给它一个数字键等于把一
+ * 个会建出东西来的操作放在一个手滑就按到的键上。
+ */
+export function shortcutTarget(items: NavGenericItem[], digit: number): string | null {
+  for (const item of items) {
+    if (item.type === 'item' && item.shortcut === digit && item.to) return item.to
+  }
+  return null
+}
+
 /** 手机底栏：格数固定，不随项目数量增长。 */
 export function tabItems(src: NavSources): NavItem[] {
-  return [SPACES, workspace(src), INBOX]
+  return [{ ...SPACES, title: t('navigation.spaces') }, workspace(src), { ...INBOX, title: t('navigation.inbox') }]
 }

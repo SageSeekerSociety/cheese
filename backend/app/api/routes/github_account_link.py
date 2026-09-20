@@ -42,8 +42,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/users/me/github-account", tags=["github"])
 
 _PROVIDER_ID = "github_app"
-# Namespaces the reservation keys. The repo-install flow (github_install.py)
-# carries the same forwardable-state shape and is NOT covered here — see #222.
+# Account and repository installation flows reserve states in separate namespaces.
 _LINK_SCOPE = "github_account_link"
 
 

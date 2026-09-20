@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
+from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -57,11 +58,20 @@ async def sandbox_github_token(
     # at: `gh api repos/:owner/:repo/...` needs a name the sandbox has no
     # other way to learn (the workspace is not a git checkout of the repo).
     installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
+    if installation is None:
+        raise GatewayUnavailableError(
+            "GitHub repository not connected. Project owner/lead: open "
+            + settings.frontend_url
+            + f"/projects/{project_id}/settings "
+            "and connect their GitHub account, then the repository. "
+            "Do not request a PAT in chat."
+        )
     minter = await github_app_tokens_for_project(project_id, db)
     if minter is None:
         raise GatewayUnavailableError(
-            "This project has no connected GitHub repo, or the App is not "
-            "configured on this deployment"
+            "The repository is connected, but the GitHub App is not configured on "
+            "this deployment. Report this platform configuration error; reconnecting "
+            "the account or providing a PAT will not fix it."
         )
     try:
         gh_token, expires_at = await minter.installation_token()

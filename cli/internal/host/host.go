@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -217,7 +218,19 @@ func (h *Host) onMsg(m link.Msg) {
 	case "session.create":
 		h.createSession(m)
 	case "session.close":
-		h.closeSession(m.Sid)
+		err := h.closeSession(m.Sid)
+		reply := link.Msg{T: "session.result", ID: m.ID, Sid: m.Sid}
+		if err != nil {
+			reply.Error = err.Error()
+		}
+		_ = h.conn.Send(reply)
+	case "session.list":
+		screens, err := h.restoreSessions()
+		reply := link.Msg{T: "session.result", ID: m.ID, Value: screens}
+		if err != nil {
+			reply.Error = err.Error()
+		}
+		_ = h.conn.Send(reply)
 	case "rpc.call": // the server asks this screen to do something
 		if s := h.session(m.Sid); s != nil {
 			go h.serveCall(m, s)
@@ -240,6 +253,8 @@ func (h *Host) onMsg(m link.Msg) {
 		}
 	case "exec": // run a one-shot command on this machine and return its output
 		go h.runExec(m)
+	case "execution.call":
+		go h.runExecutor(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
 	case "update": // server-pushed forced update: update in place and re-exec
@@ -291,11 +306,34 @@ func (h *Host) createSession(m link.Msg) {
 	// path; HasSession is the ground truth we act on.
 	var term *terminal.Session
 	if h.tm.HasSession(m.Sid) {
+		identities, err := h.tm.Identities(h.base)
+		if err != nil {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
+			return
+		}
+		var birth link.Msg
+		data, exists := identities[m.Sid]
+		if !exists || json.Unmarshal([]byte(data), &birth) != nil || birth.Sid != m.Sid {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: "Cannot adopt session without its saved launch identity"})
+			return
+		}
+		// The running model still listens at its original socket. A reassertion
+		// can carry a fresh launch environment, which no process has consumed.
+		m = birth
 		term = h.tm.Adopt(m.Sid)
 	} else {
 		var err error
 		term, err = h.tm.Spawn(m.Sid, m.Command, env, m.Cols, m.Rows)
 		if err != nil {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
+			return
+		}
+		data, err := json.Marshal(m)
+		if err == nil {
+			err = h.tm.SaveIdentity(m.Sid, h.base, string(data))
+		}
+		if err != nil {
+			_ = term.Close()
 			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
 			return
 		}
@@ -346,13 +384,49 @@ func (h *Host) unsubscribeScreen(sid string) {
 	}
 }
 
-func (h *Host) closeSession(sid string) {
+func (h *Host) closeSession(sid string) error {
 	h.mu.Lock()
 	s := h.sessions[sid]
+	h.mu.Unlock()
+	if s == nil {
+		identities, err := h.tm.Identities(h.base)
+		if err != nil {
+			return err
+		}
+		if _, exists := identities[sid]; !exists {
+			return nil
+		}
+		s = &sess{term: h.tm.Adopt(sid)}
+	}
+	h.release(s)
+	if h.tm.HasSession(sid) {
+		if err := s.term.Close(); err != nil {
+			return err
+		}
+	}
+	h.mu.Lock()
 	delete(h.sessions, sid)
 	h.mu.Unlock()
-	h.teardown(s)
 	h.publishState()
+	return nil
+}
+
+func (h *Host) restoreSessions() ([]link.Msg, error) {
+	identities, err := h.tm.Identities(h.base)
+	if err != nil {
+		return nil, err
+	}
+	screens := make([]link.Msg, 0, len(identities))
+	for sid, data := range identities {
+		var screen link.Msg
+		if err := json.Unmarshal([]byte(data), &screen); err != nil {
+			return nil, fmt.Errorf("screen %s identity: %w", sid, err)
+		}
+		screen.Sid = sid
+		h.createSession(screen)
+		screens = append(screens, screen)
+	}
+	return screens, nil
 }
 
 // closeViewerClients detaches every live viewer pty (s.client) WITHOUT touching the
@@ -401,16 +475,6 @@ func (h *Host) release(s *sess) {
 		s.rv = nil
 	}
 	s.rvMu.Unlock()
-}
-
-// teardown ends a screen for good: release, then kill the tmux session with the
-// program in it. Only for a close the SERVER asked for.
-func (h *Host) teardown(s *sess) {
-	if s == nil {
-		return
-	}
-	h.release(s)
-	_ = s.term.Close()
 }
 
 // The screen-env keys the launcher and this host agree on. The launcher derives
@@ -545,12 +609,14 @@ func (h *Host) deliverPrompt(m link.Msg, s *sess) {
 		return
 	}
 
-	c, err := h.rendezvousClient(s)
+	c, delivered, err := h.rendezvousClient(s, text)
 	if err != nil {
 		reply(nil, err.Error())
 		return
 	}
-	err = c.Reply(text)
+	if !delivered {
+		err = c.Reply(text)
+	}
 	if err == nil {
 		reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous"}, "")
 		return
@@ -561,23 +627,27 @@ func (h *Host) deliverPrompt(m link.Msg, s *sess) {
 	// rejected or unwritable frame never reached the queue, so a retry cannot
 	// duplicate a delivered prompt.
 	h.dropRendezvous(s)
-	if c2, err2 := h.rendezvousClient(s); err2 == nil {
-		if err3 := c2.Reply(text); err3 == nil {
+	if c2, delivered2, err2 := h.rendezvousClient(s, text); err2 == nil {
+		if !delivered2 {
+			err2 = c2.Reply(text)
+		}
+		if err2 == nil {
 			reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous", "retried": true}, "")
 			return
 		} else {
-			err = err3
+			err = err2
 		}
 	}
 	reply(nil, fmt.Sprintf("rendezvous delivery failed: %v", err))
 }
 
-// rendezvousClient returns a live client for the screen, dialling on first use.
-func (h *Host) rendezvousClient(s *sess) (*rendezvous.Client, error) {
+// rendezvousClient sends the first prompt while connecting; a cached client
+// leaves delivery to the caller. The boolean prevents sending that prompt twice.
+func (h *Host) rendezvousClient(s *sess, prompt string) (*rendezvous.Client, bool, error) {
 	s.rvMu.Lock()
 	defer s.rvMu.Unlock()
 	if s.rv != nil && s.rv.Alive() {
-		return s.rv, nil
+		return s.rv, false, nil
 	}
 	if s.rv != nil {
 		s.rv.Close()
@@ -585,21 +655,22 @@ func (h *Host) rendezvousClient(s *sess) (*rendezvous.Client, error) {
 	}
 	token, err := readRvToken(s.rvTokenFile)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	ctx, cancel := context.WithTimeout(h.ctx, rvDialWindow+15*time.Second)
 	defer cancel()
 	c, err := rendezvous.Dial(ctx, s.rvPath, token, rendezvous.Options{
+		InitialPrompt: prompt,
 		WaitForSocket: rvDialWindow,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "cheese: rendezvous: "+format+"\n", args...)
 		},
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	s.rv = c
-	return c, nil
+	return c, true, nil
 }
 
 func (h *Host) dropRendezvous(s *sess) {
@@ -611,9 +682,15 @@ func (h *Host) dropRendezvous(s *sess) {
 	}
 }
 
-// rvTokenWait bounds the wait below. A var, not a const, so a test does not
-// have to spend it.
-var rvTokenWait = 20 * time.Second
+// rvTokenWait bounds the wait below. The token file is written on the launcher's
+// way to exec'ing claude — necessarily BEFORE the socket claude then binds — so
+// this window must be at least rvDialWindow, never a fraction of it. It was 20s
+// against a 120s socket window: a first prompt for a cold screen gave up on the
+// token six times sooner than it would have waited for the socket, and a new
+// topic whose workspace was still coming up died at ~20s every time. The wait
+// now covers a full cold start (workspace bring-up + node + TUI mount) with
+// margin. A var, not a const, so a test does not have to spend it.
+var rvTokenWait = 180 * time.Second
 
 // serveCall answers one server->screen call. `prompt` is the only thing a screen
 // can be asked to do, and it goes over the rendezvous socket the launcher armed.

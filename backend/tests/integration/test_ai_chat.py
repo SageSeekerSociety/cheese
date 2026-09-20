@@ -1,9 +1,41 @@
-from fastapi.testclient import TestClient
+from datetime import UTC, datetime, timedelta
 
+from fastapi.testclient import TestClient
+from sqlalchemy import update
+
+from app.domain.llm.models import AIUserQuota
 from tests.integration.conftest import CreatedUser
 
 
 class TestAIChatIntegration:
+    def test_quota_reports_the_accounts_stored_daily_allowance(
+        self,
+        authenticated_user: CreatedUser,
+        api_client: TestClient,
+        db_session,
+        _portal,
+    ):
+        headers = {"Authorization": f"Bearer {authenticated_user.token}"}
+        assert api_client.get("/ai/quota", headers=headers).status_code == 200
+
+        async def set_existing_allowance():
+            await db_session.execute(
+                update(AIUserQuota)
+                .where(AIUserQuota.user_id == authenticated_user.user_id)
+                .values(
+                    daily_seu_quota=100.0, remaining_seu=75.0, total_seu_consumed=25.0
+                )
+            )
+            await db_session.flush()
+
+        _portal.call(set_existing_allowance)
+        response = api_client.get("/ai/quota", headers=headers)
+        assert response.status_code == 200
+        quota = response.json()["data"]["quota"]
+        assert quota["daily"] == 100.0
+        assert quota["remaining"] == 75.0
+        assert quota["used"] == 25.0
+
     def test_list_models(self, authenticated_user: CreatedUser, api_client: TestClient):
         resp = api_client.get(
             "/ai/models",
@@ -120,6 +152,7 @@ class TestAIChatIntegration:
         assert data["conversation"]["title"] == "Updated Title"
 
     def test_get_quota(self, authenticated_user: CreatedUser, api_client: TestClient):
+        before = datetime.now(UTC)
         resp = api_client.get(
             "/ai/quota",
             headers={"Authorization": f"Bearer {authenticated_user.token}"},
@@ -131,3 +164,6 @@ class TestAIChatIntegration:
         assert "quota" in data
         quota = data["quota"]
         assert "daily" in quota or "remaining" in quota or "used" in quota
+        reset_at = datetime.fromisoformat(quota["resetTime"])
+        assert before < reset_at <= datetime.now(UTC) + timedelta(days=1)
+        assert (reset_at.hour, reset_at.minute, reset_at.second) == (0, 0, 0)

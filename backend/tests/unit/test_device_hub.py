@@ -1,13 +1,16 @@
 """DeviceHub: the server end of the link.Msg protocol (I/O-free, fake transports)."""
 
+import asyncio
 import base64
 import hashlib
+import json
 import uuid
 
 import pytest
 
 from app.domain.agent import connector_build
 from app.domain.agent.device_hub import DeviceHub, DeviceOffline
+from tests.support import wire
 
 
 class FakeDeviceTransport:
@@ -26,6 +29,179 @@ class FakeViewer:
         self.bytes_.append(data)
 
 
+async def test_close_waits_for_confirmation_and_retries_after_disconnect():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev", transport)
+    screen = await hub.open_screen("dev", ["sleep", "60"], **_screen_args())
+    await hub.detach_device("dev", transport)
+    with pytest.raises(DeviceOffline):
+        await hub.close_screen("dev", screen.sid)
+    assert hub.screen(screen.sid) is screen
+    assert screen.closing
+    await hub.attach_device("dev", transport)
+    closing = asyncio.create_task(hub.close_screen("dev", screen.sid))
+    await asyncio.sleep(0)
+    assert not closing.done()
+    assert hub.screen(screen.sid) is screen
+    request = transport.sent[-1]
+    await hub.on_device_message(
+        "dev", {"t": "session.result", "id": request["id"], "error": "kill failed"}
+    )
+    with pytest.raises(RuntimeError, match="kill failed"):
+        await closing
+    assert hub.screen(screen.sid) is screen
+    closing = asyncio.create_task(hub.close_screen("dev", screen.sid))
+    await asyncio.sleep(0)
+    await hub.on_device_message(
+        "dev", {"t": "session.result", "id": transport.sent[-1]["id"]}
+    )
+    assert await closing is True
+    assert hub.screen(screen.sid) is None
+
+
+@pytest.mark.parametrize("owner", [False, True])
+async def test_local_hub_only_runs_subscription_cleanup_for_business_role(
+    monkeypatch, owner
+):
+    from unittest.mock import AsyncMock
+
+    from app.core.config import settings
+
+    drop_device = AsyncMock()
+    drop_screen = AsyncMock()
+    monkeypatch.setattr(settings, "device_connection_owner", owner)
+    monkeypatch.setattr(
+        "app.domain.agent.harness.claude_code.drop_device_subscriptions", drop_device
+    )
+    monkeypatch.setattr(
+        "app.domain.agent.harness.claude_code.drop_screen_subscriptions", drop_screen
+    )
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev", transport)
+    screen = hub.adopt_screen("dev", "screen", token="token", **_screen_args())
+
+    await hub.detach_device("dev", transport)
+
+    assert drop_device.await_count == (0 if owner else 1)
+    assert drop_screen.await_count == (0 if owner else 1)
+
+    await hub.attach_device("dev", transport)
+    closing = asyncio.create_task(hub.close_screen("dev", screen.sid))
+    await asyncio.sleep(0)
+    await hub.on_device_message(
+        "dev", {"t": "session.result", "id": transport.sent[-1]["id"]}
+    )
+    assert await closing is True
+    assert drop_screen.await_count == (0 if owner else 2)
+
+
+async def test_inventory_accepts_a_reply_during_send():
+    hub = DeviceHub()
+
+    class ImmediateTransport:
+        async def send_json(self, msg):
+            if msg["t"] == "session.list":
+                await hub.on_device_message(
+                    "dev",
+                    {
+                        "t": "session.result",
+                        "id": msg["id"],
+                        "value": [{"sid": "survivor"}],
+                    },
+                )
+
+    await hub.attach_device("dev", ImmediateTransport())
+    assert await hub.list_screens("dev") == [{"sid": "survivor"}]
+
+
+def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import connector
+    from app.core.db import get_db
+
+    hub = DeviceHub()
+    recovered = []
+
+    class Chat:
+        async def recover_sessions(self, device_id):
+            inventory = await hub.session_request(
+                device_id, {"t": "session.list"}, timeout=1
+            )
+            recovered.extend(inventory)
+
+    class Wakeup:
+        async def wake_device(self, device_id):
+            await hub._device(device_id).send({"t": "recovery.finished"})
+
+    monkeypatch.setattr(connector, "device_hub", hub)
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
+    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
+    monkeypatch.setattr("app.domain.topic.retire.sweep_retired_storage", AsyncMock())
+    app = FastAPI()
+    app.include_router(connector.router)
+    app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
+    service = SimpleNamespace(
+        verify_token=AsyncMock(
+            return_value=SimpleNamespace(device_id="dev", name="fixture")
+        )
+    )
+    app.dependency_overrides[connector.get_device_service] = lambda: service
+    with (
+        TestClient(app) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        request = ws.receive_json()
+        assert request["t"] == "session.list"
+        ws.send_json(
+            {"t": "session.result", "id": request["id"], "value": [{"sid": "survivor"}]}
+        )
+        assert ws.receive_json()["t"] == "recovery.finished"
+    assert recovered == [{"sid": "survivor"}]
+
+
+def test_connection_owner_attaches_without_running_business_recovery(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import connector
+    from app.core.db import get_db
+
+    hub = DeviceHub()
+    monkeypatch.setattr(connector, "device_hub", hub)
+    monkeypatch.setattr(connector.settings, "device_connection_owner", True)
+    monkeypatch.setattr(
+        "app.api.deps.get_chat_service",
+        lambda: (_ for _ in ()).throw(AssertionError("owner ran ChatService")),
+    )
+    app = FastAPI()
+    app.include_router(connector.router)
+    app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
+    service = SimpleNamespace(
+        verify_token=AsyncMock(
+            return_value=SimpleNamespace(device_id="dev", name="fixture")
+        )
+    )
+    app.dependency_overrides[connector.get_device_service] = lambda: service
+
+    with (
+        TestClient(app) as client,
+        client.websocket_connect("/connector/agent?token=fixture") as ws,
+    ):
+        assert ws.receive_json()["t"] == "welcome"
+        assert hub.is_online("dev")
+
+
 def _screen_args() -> dict:
     return {
         "agent_user_id": uuid.uuid4(),
@@ -41,6 +217,70 @@ async def test_attach_sends_welcome():
     await hub.attach_device("dev1", t)
     assert t.sent == [{"t": "welcome", "v": 1}]
     assert hub.is_online("dev1")
+
+
+async def _executor_call():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev1", transport)
+    await hub.on_device_message("dev1", {"t": "hello", "executor": True})
+    task = asyncio.create_task(hub.call_executor("dev1", "/room/state", "ping", {}))
+    await asyncio.sleep(0)
+    return hub, transport, task, transport.sent[-1]["id"]
+
+
+async def test_executor_does_not_wait_for_an_unsupported_connector():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev1", transport)
+    with pytest.raises(RuntimeError, match="updating"):
+        await hub.call_executor("dev1", "/room/state", "ping", {})
+    assert len(transport.sent) == 1
+
+
+async def test_executor_result_waits_for_complete_response(caplog):
+    caplog.set_level("DEBUG", logger="app.domain.agent.device_hub")
+    hub, transport, task, identifier = await _executor_call()
+    data = json.dumps({"result": {"text": "中文"}}, ensure_ascii=False).encode()
+    for chunk in (data[:23], data[23:]):
+        await hub.on_device_message("dev1", wire.execution_data(identifier, chunk))
+    assert not task.done()
+    await hub.on_device_message("dev1", wire.execution_result(identifier))
+    assert await task == {"text": "中文"}
+    messages = [r.message for r in caplog.records if "execution_timing" in r.message]
+    assert [m.split("stage=", 1)[1].split()[0] for m in messages] == [
+        "device_send_start",
+        "device_sent",
+        "device_first_data",
+        "device_complete",
+    ]
+    assert all(f"trace={identifier}" in m for m in messages)
+    assert all("中文" not in m for m in messages)
+
+
+async def test_executor_disconnect_reports_unknown_outcome_without_replay():
+    hub, transport, task, _ = await _executor_call()
+    await hub.detach_device("dev1", transport)
+    with pytest.raises(DeviceOffline):
+        await task
+    assert len([m for m in transport.sent if m["t"] == "execution.call"]) == 1
+
+
+async def test_executor_cancellation_reaches_connector():
+    _, transport, task, identifier = await _executor_call()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert transport.sent[-1] == {"t": "exec.cancel", "id": identifier}
+
+
+async def test_executor_interrupted_response_is_not_returned_as_success():
+    hub, _, task, identifier = await _executor_call()
+    await hub.on_device_message(
+        "dev1", wire.execution_result(identifier, "executor disconnected")
+    )
+    with pytest.raises(RuntimeError, match="disconnected"):
+        await task
 
 
 async def test_open_screen_sends_session_create_and_registers_token():
@@ -205,9 +445,25 @@ async def test_adopt_screen_reregisters_running_screen_after_restart():
     assert screen.agent_user_id == agent and screen.topic_id == topic
     # Idempotent: adopting the same sid returns the already-registered screen.
     again = hub.adopt_screen(
-        "dev1", "s-kept", token="other", agent_user_id=uuid.uuid4(), agent_handle="y"
+        "dev1",
+        "s-kept",
+        token="kept-tok",
+        agent_user_id=agent,
+        agent_handle="agent-x",
+        project_id=project,
+        topic_id=topic,
     )
     assert again is screen
+    with pytest.raises(ValueError, match="identity"):
+        hub.adopt_screen(
+            "other-device",
+            "s-kept",
+            token="kept-tok",
+            agent_user_id=agent,
+            agent_handle="agent-x",
+            project_id=project,
+            topic_id=topic,
+        )
 
 
 async def test_inbound_frame_updates_last_seen():
@@ -376,3 +632,105 @@ async def test_update_is_pushed_once_per_connection_and_again_on_reconnect(
     await hub.attach_device("dev1", t2)
     await hub.on_device_message("dev1", {"t": "hello", "v": 1})
     assert t2.sent[-1] == {"t": "update"}
+
+
+class DyingTransport(FakeDeviceTransport):
+    """A socket whose peer vanishes mid-life: writes start failing, but the
+    receive loop hears nothing, so nobody calls ``detach_device``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.alive = True
+
+    async def send_json(self, msg: dict) -> None:
+        if not self.alive:
+            raise ConnectionError(
+                'Cannot call "send" once a close message has been sent.'
+            )
+        self.sent.append(msg)
+
+
+async def test_a_failed_send_takes_the_device_offline_and_leaks_nothing():
+    hub = DeviceHub()
+    transport = DyingTransport()
+    await hub.attach_device("dev", transport)
+    await hub.on_device_message("dev", {"t": "hello", "executor": True})
+    waiting = asyncio.create_task(hub.call_executor("dev", "/state", "ping", {}))
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    transport.alive = False
+    # The first write into the dead link fails at once, not after the timeout.
+    with pytest.raises(DeviceOffline):
+        await asyncio.wait_for(hub.exec("dev", ["true"], timeout=30), 1)
+    assert not hub.is_online("dev") and "dev" not in hub.online_device_ids()
+    # Work that was waiting on the link learns it is gone, and nothing waits on.
+    with pytest.raises(DeviceOffline):
+        await waiting
+    assert hub._device("dev").exec_pending == {}
+    assert hub._device("dev").executor_pending == {}
+    # A later caller does not even try the dead link.
+    with pytest.raises(DeviceOffline):
+        await hub.exec("dev", ["true"], timeout=1)
+    # The machine dialing back in is fully usable again.
+    fresh = FakeDeviceTransport()
+    await hub.attach_device("dev", fresh)
+    assert hub.is_online("dev")
+    pending = asyncio.create_task(hub.exec("dev", ["true"], timeout=1))
+    await asyncio.sleep(0)
+    assert fresh.sent[-1]["t"] == "exec"
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+
+async def test_a_call_whose_own_write_finds_the_link_dead_leaves_no_unread_failure():
+    """The call registers its future, then writes; the write is what discovers
+    the peer gone, and ``drop_transport`` fails the future the writer never
+    gets to await. asyncio reports such a future at collection as 「Future
+    exception was never retrieved」 — an ERROR with no route, for a device the
+    caller has already been told is offline. Several a day on 2026-09-18."""
+    import gc
+
+    hub = DeviceHub()
+    transport = DyingTransport()
+    await hub.attach_device("dev", transport)
+    await hub.on_device_message("dev", {"t": "hello", "executor": True})
+    transport.alive = False
+    unread: list[dict] = []
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _loop, context: unread.append(context))
+    try:
+        with pytest.raises(DeviceOffline):
+            await hub.call_executor("dev", "/state", "ping", {})
+        with pytest.raises(DeviceOffline):
+            await hub.list_screens("dev")
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+    assert unread == []
+
+
+async def test_the_machines_own_failure_arrives_as_a_device_call_error():
+    """The words are the machine's, and the type says so — a caller can tell
+    「the runner's socket is not there」 from a fault of this process."""
+    from app.domain.agent.device_hub import DeviceCallError
+
+    hub, _, task, identifier = await _executor_call()
+    await hub.on_device_message(
+        "dev1",
+        wire.execution_result(
+            identifier,
+            "dial unix /tmp/cheese-execution-1000-0c5e.sock: connect: "
+            "no such file or directory",
+        ),
+    )
+    with pytest.raises(DeviceCallError, match="no such file"):
+        await task
+    # And the runner's own refusal, which comes back inside the JSON it wrote.
+    hub, _, task, identifier = await _executor_call()
+    data = json.dumps({"error": "Request ID already belongs to different input"})
+    await hub.on_device_message("dev1", wire.execution_data(identifier, data.encode()))
+    await hub.on_device_message("dev1", wire.execution_result(identifier))
+    with pytest.raises(DeviceCallError, match="Request ID"):
+        await task

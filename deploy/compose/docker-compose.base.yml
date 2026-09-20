@@ -12,7 +12,46 @@
 # commit). The frontend image bundles nginx and reverse-proxies /api + /uploads
 # to `backend` (compose service name), so no separate/host nginx is needed.
 services:
+  # Owns machine and terminal WebSockets. deploy-docker.sh starts this service
+  # once and deliberately leaves it alone during app-tier releases, so a backend
+  # image swap cannot close a device link or cancel an in-flight executor call.
+  device-connection:
+    image: ${DEVICE_CONNECTION_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      - DEVICE_CONNECTION_URL=
+      - DEVICE_CONNECTION_OWNER=1
+      - DEPLOYED_VIA_COMPOSE=1
+      # A light database user; the backend pair takes the server's budget
+      # (see db_pool_size in app/core/config.py).
+      - DB_POOL_SIZE=5
+      - DB_MAX_OVERFLOW=5
+    command:
+      - uvicorn
+      - app.device_connection_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8082"
+    ports:
+      - "127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}:8082"
+    init: true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
   backend:
+    labels:
+      li.zhifei.cheese.room-cleanup: "true"
     # Default is the current-path image by sha. Override BACKEND_IMAGE for an env
     # pinned to a different release/path — e.g. prod (RUC) runs the v0.16.4 release,
     # whose image is under the pre-rename path `cheese-backend-py/*`. prod deploys
@@ -29,14 +68,18 @@ services:
       # the guard waves itself through. Anything interpolated here would inherit
       # the same weakness, so this must stay a constant with no ${...} in it.
       - DEPLOYED_VIA_COMPOSE=1
+      - DEVICE_CONNECTION_URL=http://device-connection:8082
+      # The office-render service below. Unset, a Word or PowerPoint deliverable
+      # falls back to a download and the panel says why — so this belongs here
+      # rather than in a deployment note nobody reads.
+      - OFFICE_RENDER_ENDPOINT=${OFFICE_RENDER_ENDPOINT:-http://cheese-office-render:8901}
+      # The browser-render service below. Unset, the fetch ladder simply never
+      # reaches its browser rung — no error anywhere, just worse coverage — so
+      # this belongs here and not in a doc telling an operator to set it.
+      - FETCH_BROWSER_ENDPOINT=${FETCH_BROWSER_ENDPOINT:-http://cheese-browser-render:8900}
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
-      # Wire git (inside the container) to the mounted credential store — env
-      # config needs no image change and applies to every git the backend runs.
-      - GIT_CONFIG_COUNT=1
-      - GIT_CONFIG_KEY_0=credential.helper
-      - GIT_CONFIG_VALUE_0=store --file /data/git-credentials
       # The image's app user has HOME=/nonexistent; git needs a writable,
       # PERSISTENT home. Backed by a host path so its global config and the
       # repo-trust records survive redeploys.
@@ -48,6 +91,9 @@ services:
       # Set here rather than in backend/.env because the value is a CONTAINER
       # path that only makes sense together with the bind mount below.
       - OPENVIKING_DATA_DIR=/data/viking
+      # Preserve earlier tar archives and their additive R2 mirror. New raw
+      # transcript increments go directly to the private TRANSCRIPT_S3_BUCKET.
+      - TRANSCRIPTS_DIR=/data/transcripts
       # Agent containers are siblings spawned through docker.sock, not compose
       # services. Pin them to this deployment's sha so a floating/local alias
       # cannot disappear or drift independently of the backend.
@@ -58,24 +104,26 @@ services:
       # Platform workspaces (project git repos / topic worktrees / sessions)
       # must OUTLIVE container recreations — without this bind every deploy
       # erased them (they lived in the container FS). Required for the fused
-      # platform features (topics/芝士) and the self-hosting dogfood loop.
+      # platform features (topics/芝士).
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
-      # Git credentials for the platform's upstream-sync / push_back against
-      # private GitHub repos: a host-side store file (chmod 600, NOT in git).
-      # Default /dev/null = feature off (git prompts fail cleanly).
-      - ${GIT_CREDENTIALS_FILE:-/dev/null}:/data/git-credentials:ro
       - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
       # Everything the openviking memory backend remembers. Mounted
       # unconditionally: on MEMORY_BACKEND=db the directory just stays empty,
       # and having it already in place is what makes flipping the backend a
       # one-line env change instead of a deploy edit.
       - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
+      # The transcript archives (TRANSCRIPTS_DIR above). Mounted so they
+      # outlive the container alongside their off-site backup.
+      - ${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}:/data/transcripts
       # The claude binaries the backend serves to machines it enrols. It fetches
       # each version once from the vendor and caches it under connector-dist,
       # which is image content — so every deploy threw the cache away and the
       # next enrolment re-downloaded ~40MB inside its own timeout (a dev box
       # deploys many times a day, so in practice every enrolment paid).
       - ${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}:/app/connector-dist/claude-cache
+      # The pi builds, cached for exactly the same reason and thrown away by
+      # exactly the same deploy — and this archive is ~40MB per platform too.
+      - ${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}:/app/connector-dist/pi-cache
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from
@@ -115,6 +163,54 @@ services:
         # stable and is what anyone searching already knows.
         tag: "{{.Name}}"
 
+  git:
+    # Serving a repo is not the platform's API. `git http-backend` computes and
+    # streams a pack — 169 MB and 3.7 s for one project on dev — and sharing a
+    # process with every other request means one of those competes with all of
+    # them, for memory, for worker threads and for the release that restarts
+    # them. Same image, same repos on disk, its own process: app/git_app.py.
+    #
+    # It needs no database, no Redis and no secrets beyond the one that signs
+    # the project-scoped tokens it verifies, so it takes the same env file as
+    # the backend rather than a second copy that would drift from it.
+    image: ${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}}
+    command:
+      - uvicorn
+      - app.git_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8084"
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    environment:
+      - DEPLOYED_VIA_COMPOSE=1
+      # git needs a writable, persistent home for its global config and the
+      # repo-trust records, exactly as the backend does.
+      - HOME=/data/apphome
+    volumes:
+      # The same repos the backend and every topic worktree read and write.
+      - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
+      - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
+    # Reached through the front nginx, not from outside the box.
+    expose:
+      - "8084"
+    # tini as PID 1: git's own children outlive the git this process waited on
+    # and reparent to PID 1, and uvicorn never waits on a process it did not
+    # start — 77 zombie `git` in 17 hours on dev without it.
+    init: true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/healthz"]
+      interval: 15s
+      timeout: 8s
+      start_period: 20s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
     # No env_file. It used to load the BACKEND's, which handed this container the
@@ -140,6 +236,16 @@ services:
       # prod (RUC) needs its WS-edge override (https://119pve.ghg.org.cn) because
       # the cheese.ruc.edu.cn edge strips WebSocket Upgrade; set per box.
       - VITE_CONNECTOR_WS_BASE=${VITE_CONNECTOR_WS_BASE:-}
+      # Where this nginx forwards /api and /connector. The default is the
+      # compose backend. A box that deploys without downtime sets it (in
+      # ops/deploy.env) to host.docker.internal:8081, the host nginx that
+      # deploy-docker.sh moves between backends during a rollout.
+      - API_UPSTREAM=${API_UPSTREAM:-backend:8081}
+      - DEVICE_CONNECTION_UPSTREAM=${DEVICE_CONNECTION_UPSTREAM:-device-connection:8082}
+      - GIT_UPSTREAM=${GIT_UPSTREAM:-git:8084}
+    # Lets API_UPSTREAM name the host; unused otherwise.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # The ghg edge proxies the SPA to the box on :8080; also publish :80 so direct
     # in-net access and any :80 probe keep working (bare-metal exposed both). Both
     # are overridable so a parallel validation run can use alt ports without
@@ -164,6 +270,90 @@ services:
     logging:
       # Same reason as the backend above: a deploy must not delete the record
       # of what happened before it.
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
+  # One browser for the box, shared by every topic's fetches.
+  #
+  # It belongs in this file rather than a compose of its own because it now has
+  # to survive the same events the platform survives. Run by hand it was fine
+  # until the first full redeploy, and its failure mode is silent: fetching
+  # falls back a rung and coverage drops from 19-of-20 real sites to 17,
+  # with nothing in any log to say why.
+  #
+  # Measured: one shared instance served six concurrent pages in 4.7s where a
+  # browser per caller took 9.5s for three, and Chrome is installed once here
+  # instead of once per topic home (185MB each).
+  browser-render:
+    image: ${BROWSER_RENDER_IMAGE:-ghcr.io/sageseekersociety/cheese/browser-render:${IMAGE_TAG:-main}}
+    container_name: cheese-browser-render
+    # Chromium writes to /dev/shm, and Docker's 64MB default is where headless
+    # Chrome starts crashing on real pages. This is the single most common way
+    # a working browser container turns flaky under load.
+    shm_size: "1gb"
+    environment:
+      # Playwright does NOT read this on its own; the service hands it to the
+      # browser explicitly. Named here so a box behind a proxy can set it —
+      # and so nobody inherits a sandbox's own 127.0.0.1 tunnel by accident,
+      # which points at the container itself and reaches nothing.
+      - HTTPS_PROXY=${BROWSER_RENDER_PROXY:-}
+      - RENDER_MAX_CONCURRENT=${BROWSER_RENDER_CONCURRENCY:-6}
+    # A browser is the one process here that will happily eat the box. Six
+    # concurrent pages measured healthy; these bounds make a burst queue
+    # instead of swap.
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request; urllib.request.urlopen('http://127.0.0.1:8900/healthz', timeout=3)
+      interval: 30s
+      timeout: 8s
+      # Chromium's first launch is slow; failing the check before then would
+      # restart it into the same cold start forever.
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+
+  # LibreOffice for the box, so a Word report or a deck can be SHOWN rather than
+  # only downloaded. It sits beside browser-render for the same reason that one
+  # does: it has to survive every event the platform survives, and a service
+  # started by hand is a service that disappears at the first full redeploy.
+  #
+  # Measured on this image: 1.1s for a one-page paper (docx) and 1.1s for a deck
+  # (pptx), cold or warm — which is why it runs a process per request instead of
+  # supervising a resident LibreOffice. Five concurrent conversions complete in
+  # 2.2s at the concurrency cap below.
+  office-render:
+    image: ${OFFICE_RENDER_IMAGE:-ghcr.io/sageseekersociety/cheese/office-render:${IMAGE_TAG:-main}}
+    container_name: cheese-office-render
+    environment:
+      - OFFICE_RENDER_CONCURRENT=${OFFICE_RENDER_CONCURRENCY:-4}
+    # LibreOffice is memory-hungry per process and this runs several at once.
+    # These bounds make a burst queue behind the semaphore instead of swapping.
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import urllib.request; urllib.request.urlopen('http://127.0.0.1:8901/healthz', timeout=3)
+      interval: 30s
+      timeout: 8s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+    logging:
       driver: journald
       options:
         tag: "{{.Name}}"

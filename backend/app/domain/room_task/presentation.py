@@ -13,7 +13,7 @@
 
 - `building` 施工中 —— 还没递出交付。
 - `delivering` 交付中 —— 下一步在**平台/芝士**手上。
-- `needs_you` 等你 —— 下一步在**人**手上。
+- `needs_you` 待处理 —— 下一步在**人**手上。
 - `done` 已完成 —— 已采纳，或已收工且没交付。
 - `archived` 已归档 —— 房间才有；活不归档。
 
@@ -40,7 +40,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
-from app.domain.room_task.models import Residency, Task, TaskStatus
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:
@@ -53,14 +53,9 @@ if TYPE_CHECKING:
 #: 条活上实测，轮内间隔中位数 8 秒、p90 34 秒。10 分钟是 p90 的十几倍，一段安静的
 #: 工具活动撑不到它；而一条真的停住的活，10 分钟就在看板上现形，不用等两小时。
 #:
-#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在一轮**开始**时盖一次，跑起来之
-#: 后不再刷新（见 `ResidencyService.touch` 的调用点），所以按它算，宽限期必须长过
-#: 最长的一轮，否则正在干活的活会被说成失联。它只作兜底 —— 一条刚开跑、还没来得
-#: 及说第一句话的活，靠的是它。
-#:
-#: 也刻意不等于清理幽灵槽位的那个门槛（`GHOST_RESIDENCY_AFTER`，2 小时）：那一步
-#: 会**放掉别人的槽位**，早一步是破坏性的；这里只是在屏幕上说一句话，说早了改回来
-#: 就是了。两种代价不一样，所以两个数不该是同一个。
+#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**认领分身**那一刻盖一次，之后
+#: 不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条刚被认领、
+#: 还没来得及说第一句话的活，靠的是它。
 LOST_SIGNAL_AFTER = timedelta(minutes=10)
 
 
@@ -78,7 +73,6 @@ class Building(enum.StrEnum):
     """还没递出交付。"""
 
     running = "运行中"
-    queued = "排队中"
     idle = "空闲"
     #: 房间才有：还没开工。活没有草稿态。
     draft = "草稿"
@@ -93,10 +87,11 @@ class Delivering(enum.StrEnum):
     gate_running = "检查运行中"
     awaiting_checks = "等待检查"
     fixing_checks = "修复检查"
-    #: 采纳时撞了合并冲突，芝士已经被派去解 —— 今天 `NoteCode.merge_conflict`
-    #: 就在写（review/services.py 两处），所以这一格是点得亮的，不是空契约。
+    #: 撞了合并冲突，芝士已经被派去解 —— `NoteCode.merge_conflict` 在写，
+    #: 合并态 DIRTY 也落在这里，所以这一格是点得亮的，不是空契约。
     resolving_conflict = "解决冲突"
-    awaiting_merge = "等待合并"
+    #: 合并态 BEHIND（strict）：平台自己在 update-branch，人不用动。
+    updating_branch = "平台更新分支"
 
 
 class NeedsYou(enum.StrEnum):
@@ -105,6 +100,9 @@ class NeedsYou(enum.StrEnum):
     checks_failed = "检查未通过"
     awaiting_review = "等待验收"
     bounced = "交付被退回"
+    #: 芝士提出了待确认问题，本轮停止等待回答。这是唯一一种**会中断运行**的：
+    #: 其余几格都是一轮结束之后的状态。
+    awaiting_answer = "待确认"
 
 
 class Done(enum.StrEnum):
@@ -163,19 +161,35 @@ class CardFacts:
     status: str
     #: 卡停在什么上。文案在 `note` 里，判断只看码 —— `review/notes.py` 的规矩。
     note_code: NoteCode | None = None
-    pr_merged_at: datetime | None = None
+    #: 合并态镜像（#718，`AcceptCard.merge_state`）里的 state / who —— 等采纳的
+    #: 卡靠它们分列：CI 在跑是 delivering，检查红了是芝士在修，也是 delivering，
+    #: CLEAN 才真的在等人。None = 还没镜像过（或这张卡不骑 PR）。
+    merge_state_word: str | None = None
+    merge_who: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TaskFacts:
     status: str
-    residency: str
-    queued_at: datetime | None
     #: 最后一次有东西确认这条活还在动。见 `LOST_SIGNAL_AFTER`：优先是它最后一个
-    #: block 的时间，没说过话就退回这一轮是什么时候开的。
+    #: block 的时间，没说过话就退回它是什么时候被认领的。
     last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None
+    #: 有没有分身在做这条活（`Task.subagent_id`）。
+    has_worker: bool = False
+    #: 那个分身活在**房间的**会话里，所以房间的屏幕没了，它一定也没了 —— 这一位
+    #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
+    #: 所以它得从外面喂进来（这一层不碰 I/O）。
+    room_screen_live: bool = True
+    #: 分身已经交回过一句结论（`Task.conclusion`）。它是干完了在等房间收卡，
+    #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
+    #: 只用来解释安静，从不用来说这条活结束了。
+    has_conclusion: bool = False
+    #: 最近一条提问消息还没有回答（`BlockRepository.tasks_awaiting_an_answer`）。
+    #: 回答记在提问那一块上，所以这一位不需要新增存储；但它要查一次库，所以和别的
+    #: 事实一样从外面喂进来。
+    awaiting_answer: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,15 +200,21 @@ class RoomFacts:
     running: bool
     accepted_at: datetime | None
     card: CardFacts | None
+    #: 见 `TaskFacts.awaiting_answer`，问的是房间自己那条线。
+    awaiting_answer: bool = False
 
 
 def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
     if card is None:
         return None
+    mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
+    state_word = mirror.get("state")
+    who = mirror.get("who")
     return CardFacts(
         status=str(card.status),
         note_code=card.note_code,
-        pr_merged_at=card.pr_merged_at,
+        merge_state_word=state_word if isinstance(state_word, str) else None,
+        merge_who=who if isinstance(who, str) else None,
     )
 
 
@@ -202,32 +222,42 @@ def facts_for_task(
     task: Task,
     card: "AcceptCard | None" = None,
     last_block_at: datetime | None = None,
+    *,
+    room_screen_live: bool = True,
+    awaiting_answer: bool = False,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
 
-    两个信号取晚的那个，因为它们各自会缺：一条刚开跑、还没说第一句话的活只有
-    `last_turn_at`；一条跑了很久的活，`last_turn_at` 停在开跑那一刻，真正在动的
+    两个信号取晚的那个，因为它们各自会缺：一条刚被认领、还没说第一句话的活只有
+    `last_turn_at`；一条干了很久的活，`last_turn_at` 停在认领那一刻，真正在动的
     证据在 block 上。取晚的 = 「有任何一个东西确认过它还活着」。
     """
     signals = [t for t in (last_block_at, task.last_turn_at) if t is not None]
     return TaskFacts(
         status=str(task.status),
-        residency=str(task.residency),
-        queued_at=task.queued_at,
         last_signal_at=max(signals) if signals else None,
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
+        has_worker=bool(task.subagent_id),
+        room_screen_live=room_screen_live,
+        has_conclusion=bool(task.conclusion),
+        awaiting_answer=awaiting_answer,
     )
 
 
 def facts_for_room(
-    topic: Topic, running_ids: set[uuid.UUID], card: "AcceptCard | None" = None
+    topic: Topic,
+    running_ids: set[uuid.UUID],
+    card: "AcceptCard | None" = None,
+    *,
+    awaiting_answer: bool = False,
 ) -> RoomFacts:
     return RoomFacts(
         status=str(topic.status),
         running=topic.id in running_ids,
         accepted_at=topic.accepted_at,
         card=facts_for_card(card),
+        awaiting_answer=awaiting_answer,
     )
 
 
@@ -257,8 +287,8 @@ def _is_stuck(code: NoteCode | None) -> bool:
 def _card_presentation(card: CardFacts) -> Presentation | None:
     """这张卡此刻把这条活摆在哪一格。None = 它已经不说话了。
 
-    先读码再读 status，因为码说的是「卡停在什么上」，比 status 具体：一张 `pr_open`
-    的卡带着 `repush_failed`，说的是「PR 上那个红是旧的、芝士推不上新的去清它」，
+    先读码再读 status，因为码说的是「卡停在什么上」，比 status 具体：一张卡带着
+    `repush_failed`，说的是「PR 上那个红是旧的、芝士推不上新的去清它」，
     不是「还在等 CI」。
     """
     if card.status in _SETTLED_CARD:
@@ -267,7 +297,7 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     # 平台已经把这个红交回给芝士去修 —— 下一步在芝士手上，别去催人。
     if card.note_code is NoteCode.checks_failed:
         return _show(Delivering.fixing_checks)
-    # 采纳时撞了冲突，芝士被派去解；解完由人重试采纳，但此刻在推的是平台。
+    # 撞了冲突，芝士被派去解；解完由人重试采纳，但此刻在推的是平台。
     if card.note_code is NoteCode.merge_conflict:
         return _show(Delivering.resolving_conflict)
     # 芝士的修复推不上 GitHub / 本地分支和 PR 分支分叉了：PR 上的红清不掉，而且
@@ -276,21 +306,28 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
         return _show(NeedsYou.checks_failed)
     # 其余所有「停住了」的码。刻意不再列一遍名字：`notes.py` 已经维护着那张表，
     # 而它的注释说得很清楚 —— 漏进 info 的码会和「还在等检查」长得一模一样。新增
-    # 的停住码在这里自动落到「等你」，而不是安静地被算成还在走。
+    # 的停住码在这里自动落到「待处理」，而不是安静地被算成还在走。
     if _is_stuck(card.note_code):
         return _show(NeedsYou.bounced)
 
     if card.status == "pending_gate":
         return _show(Delivering.gate_running)
     if card.status == "pending":
-        return _show(NeedsYou.awaiting_review)
+        # 等采纳的卡按「谁的活」分列 (#718，合并态镜像)：CI 在跑 / 检查红了 /
+        # 平台在换基，都不是在等人；CLEAN（或还没镜像）才真的把球放在人手上。
+        match card.merge_who:
+            case "agent":
+                if card.merge_state_word == "dirty":
+                    return _show(Delivering.resolving_conflict)
+                return _show(Delivering.fixing_checks)
+            case "platform" if card.merge_state_word == "behind":
+                return _show(Delivering.updating_branch)
+            case "ci":
+                return _show(Delivering.awaiting_checks)
+            case _:
+                return _show(NeedsYou.awaiting_review)
     if card.status == "conflict":
         return _show(NeedsYou.bounced)
-    if card.status == "pr_open":
-        # 合过了，等落地；否则 PR 开着等检查。
-        if card.pr_merged_at is not None:
-            return _show(Delivering.awaiting_merge)
-        return _show(Delivering.awaiting_checks)
     # 认不出来的状态不冒充答案 —— 让调用方的其余判据接着说。
     return None
 
@@ -311,9 +348,27 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.accepted_at is not None:
         return _show(Done.accepted)
 
-    if facts.residency == Residency.running:
-        if _lost_signal(facts.last_signal_at, now=now):
-            return _show(Building.lost)
+    # 芝士提出了待确认问题 —— **压过「运行中」**。这是规矩 2 唯一的例外，而它正是
+    # 规矩 2 的道理：进程可能还在，但「在跑」已经不是此刻成立的事实，它不会自己往下
+    # 走。而看板显示「运行中」，正是让人不来看的那一句，所以这一格必须排在前面。
+    #
+    # 也压过卡：一条活同时有未回答的提问和一张待验收的卡，两者都在等人，而提问是挡
+    # 住其余所有事的那一件。
+    if facts.awaiting_answer:
+        return _show(NeedsYou.awaiting_answer)
+
+    # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
+    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
+    #
+    # 已经交回过结论的不算在内：那是干完了在等房间收卡，不是还在做。
+    worker_on_it = (
+        facts.has_worker
+        and facts.status == TaskStatus.open
+        and not facts.has_conclusion
+    )
+    alive = facts.room_screen_live and not _lost_signal(facts.last_signal_at, now=now)
+    # 规矩 2：在跑压过纸面。
+    if worker_on_it and alive:
         return _show(Building.running)
 
     if facts.card is not None:
@@ -321,8 +376,13 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         if shown is not None:
             return shown
 
-    if facts.queued_at is not None:
-        return _show(Building.queued)
+    # 说自己有人在做，却没有任何东西确认过 —— **在卡说完之后才轮到这一句**。一条
+    # 递了卡、安静地等人验收的活，安静得理直气壮：它不是断了联系，它在等人来看。分身
+    # 干完活并不会把 `subagent_id` 抹掉，所以抢在卡前面说，等于把每一条等验收的活
+    # 都误报成失联。
+    if worker_on_it:
+        return _show(Building.lost)
+
     # 放在最后：一条已交付的活即使关掉了，它首先是已交付的（规矩 1 已经拦了它）。
     if facts.status == TaskStatus.closed:
         return _show(Done.closed)
@@ -358,6 +418,11 @@ def room_presentation(facts: RoomFacts, *, now: datetime) -> Presentation:
         return _show(Done.accepted)
     if facts.status == TopicStatus.archived:
         return _show(Archived.archived)
+
+    # 见 `task_presentation` 里同一格的理由：提问压过「运行中」，因为本轮不会自己
+    # 往下走了。
+    if facts.awaiting_answer:
+        return _show(NeedsYou.awaiting_answer)
 
     if facts.running:
         return _show(Building.running)

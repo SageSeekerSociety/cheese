@@ -1,15 +1,15 @@
-"""同一把钥匙执行两次，只产生一次效果 (④ 超时重跑, 下半).
+"""同一把钥匙执行两次，只产生一次效果 (④ 重发, 下半).
 
 The upper half (``test_turn_exit_paths.py``) narrows the window in which a side
 effect can be committed while the record of it is not. It cannot close it:
 ``asyncio.shield`` survives cancellation, not SIGKILL, and nothing survives the
-power going out. So every side effect an auto-resumed turn could repeat carries
-a durable key, and this file asserts the property one action at a time.
+power going out. So every side effect a re-sent turn could repeat carries a
+durable key, and this file asserts the property one action at a time.
 
 The key is scoped to the **continuation** — the logical unit of work that a turn
-and all of its auto-resumes share (``AgentWorkRunner.continuation_for``). That is
-what makes "the resumed 芝士 re-doing it" and "someone legitimately doing the
-same thing next week" distinguishable at all; see ``domain.idempotency.keys``.
+and its re-send share (``AgentWorkRunner.continuation_for``). That is what makes
+"the re-sent 芝士 re-doing it" and "someone legitimately doing the same thing
+next week" distinguishable at all; see ``domain.idempotency.keys``.
 
 Five actions, five tests:
 
@@ -38,7 +38,7 @@ from app.domain.idempotency.keys import action_key
 from app.domain.milestone.models import Milestone
 from app.domain.room_task.models import Task
 from tests.conftest import StubChannel, settle_turn, stub_compute
-from tests.integration.conftest import session_auth_headers
+from tests.delivery import delivery_headers, delivery_task_id
 
 # One fixed continuation for every test here: it stands for "the interrupted
 # turn and the turn that resumed it", which is the whole point — two separate
@@ -127,12 +127,13 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.message,
+                Block.kind == BlockKind.event,
+                Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
             ),
         )
     )
-    assert said == 1, "续跑把同一句话又说了一遍"
+    assert said == 1, "重发把同一句话又说了一遍"
 
 
 def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
@@ -168,12 +169,13 @@ def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.message,
+                Block.kind == BlockKind.event,
+                Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
             ),
         )
     )
-    assert said == 1, "kickoff 的续跑把同一句话又说了一遍"
+    assert said == 1, "kickoff 的重发把同一句话又说了一遍"
 
 
 def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
@@ -215,7 +217,8 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
             .select_from(Block)
             .where(
                 Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.message,
+                Block.kind == BlockKind.event,
+                Block.meta["progress"].as_boolean().is_(True),
                 Block.content == text,
             ),
         )
@@ -227,8 +230,13 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
 
 
 def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
-    """The costliest repeat of the five: a duplicate split does not just write a
-    row, it starts a second agent working the same brief."""
+    """A re-sent turn re-splitting leaves the room holding two threads on one
+    brief, and nobody can tell which of them the work is happening in.
+
+    Dispatch starts no worker of its own any more — the caller does that, and
+    would do it once per row it was handed. So the row is the whole of what has
+    to not double.
+    """
     kickoffs: list[uuid.UUID] = []
     monkeypatch.setattr(
         in_a_turn,
@@ -239,8 +247,12 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     tid = _topic(client, pid)
     body = {"title": "数据清洗", "brief": "把脏数据洗掉", "created_by": "cheese"}
 
-    first = client.post(f"/topics/{tid}/split", json=body)
-    second = client.post(f"/topics/{tid}/split", json=body)
+    first = client.post(
+        f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
+    )
+    second = client.post(
+        f"/topics/{tid}/split", json=dict(reviewer_handle="alice", **body)
+    )
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
 
@@ -252,8 +264,8 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
             .where(Task.room_id == uuid.UUID(tid)),
         )
     )
-    assert children == 1, "续跑派出了第二条支线"
-    assert len(kickoffs) == 1, "第二个分身被叫起来干活了"
+    assert children == 1, "重发派出了第二条支线"
+    assert kickoffs == [], "派活不该起任何会话——分身是调用方在自己会话里起的"
     # The replay gets the FIRST child back, not an error: a resumed 芝士 asking
     # again should learn what already exists.
     assert second.json()["data"]["id"] == first.json()["data"]["id"]
@@ -281,7 +293,7 @@ def test_decision_is_recorded_once(client, in_a_turn):
             ),
         )
     )
-    assert rows == 1, "续跑把同一条决策记了两遍"
+    assert rows == 1, "重发把同一条决策记了两遍"
 
 
 # --- 4. 钉里程碑 -------------------------------------------------------------
@@ -307,7 +319,7 @@ def test_milestone_is_pinned_once(client, in_a_turn):
             .where(Milestone.project_id == uuid.UUID(pid)),
         )
     )
-    assert rows == 1, "续跑把同一个里程碑钉了两次"
+    assert rows == 1, "重发把同一个里程碑钉了两次"
 
 
 # --- 5. 开 PR ----------------------------------------------------------------
@@ -315,7 +327,7 @@ def test_milestone_is_pinned_once(client, in_a_turn):
 
 def test_second_accept_card_is_refused_so_no_second_pr(client):
     """开 PR 的幂等不是这次加的，是本来就有的：一个话题同时只能有一张非终态
-    验收卡，而 PR 只能由卡开出。续跑的芝士再递一张卡会被拒，所以开不出第二个 PR。
+    验收卡，而 PR 只能由卡开出。重发的芝士再递一张卡会被拒，所以开不出第二个 PR。
 
     (The second guard sits on the GitHub side: the head branch is derived from
     the topic id, so a re-open resolves to the PR already on that branch and is
@@ -325,24 +337,26 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     tid = _topic(client, pid)
 
     first = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
         },
-        headers=session_auth_headers("cheese"),
+        headers=delivery_headers(client, tid),
     )
     assert first.status_code == 200, first.text
 
     second = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
         },
-        headers=session_auth_headers("cheese"),
+        headers=delivery_headers(client, tid),
     )
     assert second.status_code >= 400, "第二张验收卡没被拦住——它能开出第二个 PR"
 
@@ -354,7 +368,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     """Proves the three endpoint tests above are not vacuous, and states the
     rule deliberately: outside an automatic turn there is no continuation and
     no dedup. A human pressing 记决策 twice means it twice — the risk this whole
-    mechanism exists for is created by 自动续跑, not by people."""
+    mechanism exists for is created by 自动重发, not by people."""
     runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: None)
     kickoffs: list[uuid.UUID] = []
@@ -387,7 +401,10 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
         assert (
             client.post(
                 f"/topics/{tid}/split",
-                json={"title": "同一个子话题", "created_by": "cheese"},
+                json=dict(
+                    reviewer_handle="alice",
+                    **{"title": "同一个子话题", "created_by": "cheese"},
+                ),
             ).status_code
             == 200
         )

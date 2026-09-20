@@ -134,6 +134,7 @@
               <v-col cols="12">
                 <v-text-field
                   v-model="form.name"
+                  autocomplete="off"
                   label="子项目名称"
                   variant="outlined"
                   density="comfortable"
@@ -145,6 +146,7 @@
               <v-col cols="12">
                 <v-textarea
                   v-model="form.description"
+                  autocomplete="off"
                   label="子项目描述"
                   variant="outlined"
                   rows="3"
@@ -189,6 +191,7 @@
               <v-col cols="12">
                 <v-autocomplete
                   v-model="form.leaderId"
+                  autocomplete="off"
                   label="负责人"
                   variant="outlined"
                   density="comfortable"

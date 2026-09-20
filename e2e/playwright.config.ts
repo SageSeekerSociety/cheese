@@ -25,6 +25,8 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
+    // Existing workspace scenarios assert Chinese UI labels explicitly.
+    locale: 'zh-CN',
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
@@ -39,6 +41,18 @@ export default defineConfig({
   webServer: [
     {
       command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}`,
+      // Exercise model selection without configuring a live inference provider.
+      //
+      // FEEDBACK_ADMIN_HANDLES: the feedback admin surface (feedback-flows.spec.ts
+      // 的「管理员」那条) is gated on a platform-level handle allowlist that no
+      // deployment config sets, so without it every admin step is a 403 and the
+      // spec fails on the gate instead of on what it means to check. Value is a
+      // JSON list — pydantic-settings parses it, commas make the app refuse to
+      // boot (the "Comma-separated in env" comment in core/config.py is wrong).
+      env: {
+        AGENT_HARNESS_MODELS: '{"codex": ["codex-ci-fixture"]}',
+        FEEDBACK_ADMIN_HANDLES: '["alice"]',
+      },
       url: `${BACKEND_URL}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

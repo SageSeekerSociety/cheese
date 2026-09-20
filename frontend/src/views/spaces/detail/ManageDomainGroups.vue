@@ -45,6 +45,7 @@
           <v-form ref="formRef" @submit.prevent="submitForm">
             <v-text-field
               v-model="formData.name"
+              autocomplete="off"
               :label="t('spaces.domainGroups.groupName')"
               required
               v-bind="nameProps"
@@ -52,6 +53,7 @@
 
             <v-textarea
               v-model="formData.description"
+              autocomplete="off"
               :label="t('spaces.domainGroups.groupDescription')"
               rows="2"
               auto-grow
@@ -61,6 +63,7 @@
             <v-row v-for="(_, index) in domainList" :key="index" align="center" class="mb-1">
               <v-col cols="10">
                 <v-text-field
+                  autocomplete="off"
                   :model-value="domainList[index]"
                   :placeholder="t('spaces.domainGroups.domainPlaceholder')"
                   density="compact"

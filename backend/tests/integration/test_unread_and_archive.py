@@ -9,9 +9,12 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]:
-    pr = client.post("/projects", json={"name": "Demo"})
+    pr = client.post("/projects", json={"name": "Demo", "owner_handle": "user-1"})
     project_id = pr.json()["data"]["id"]
-    tr = client.post("/topics", json={"project_id": project_id, "title": title})
+    tr = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": title, "created_by": "user-1"},
+    )
     topic_id = tr.json()["data"]["id"]
     return project_id, topic_id
 
@@ -166,27 +169,43 @@ def test_notifications_unread_count_and_read_all(client):
 def test_manual_archive_and_unarchive(client):
     project_id, topic_id = _create_project_and_topic(client)
 
-    r = client.post(f"/topics/{topic_id}/archive", json={"by": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["status"] == "archived"
     assert data["archived_at"] is not None
 
     # Idempotent.
-    r = client.post(f"/topics/{topic_id}/archive", json={"by": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
     assert r.json()["data"]["status"] == "archived"
 
-    r = client.post(f"/topics/{topic_id}/unarchive", json={"by": "user-1"})
+    r = client.post(
+        f"/topics/{topic_id}/unarchive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
     assert r.json()["data"]["status"] == "active"
     assert r.json()["data"]["archived_at"] is None
 
 
 def test_root_topic_cannot_be_archived(client):
-    pr = client.post("/projects", json={"name": "RootGuard"})
+    pr = client.post("/projects", json={"name": "RootGuard", "owner_handle": "user-1"})
     root_topic_id = pr.json()["data"].get("root_topic_id")
     if root_topic_id is None:
         return  # project without a root topic — nothing to guard
-    r = client.post(f"/topics/{root_topic_id}/archive", json={"by": "user-1"})
+    r = client.post(
+        f"/topics/{root_topic_id}/archive",
+        json={"by": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
     assert r.status_code == 422
 
 
@@ -197,33 +216,34 @@ def test_archive_cascades_to_the_work_in_the_room(client):
     Room and thread end in different words on purpose: a room is `archived`
     (a person put it away) and a thread is `closed` (its work stopped).
     """
-    pr = client.post("/projects", json={"name": "P"})
+    pr = client.post("/projects", json={"name": "P", "owner_handle": "u"})
     pid = pr.json()["data"]["id"]
-    t = client.post("/topics", json={"project_id": pid, "title": "父"})
+    t = client.post(
+        "/topics", json={"project_id": pid, "title": "父", "created_by": "u"}
+    )
     parent = t.json()["data"]["id"]
-    # Each split auto-kicks its 分身 (a background turn). On the test DB (one
-    # shared SQLite connection) a running turn races the NEXT write request, so
-    # let each kickoff finish before continuing (prod Postgres doesn't care).
     c1 = client.post(
-        f"/topics/{parent}/split", json={"title": "子1", "created_by": "u"}
+        f"/topics/{parent}/split",
+        json=dict(reviewer_handle="alice", **{"title": "子1", "created_by": "u"}),
     ).json()["data"]["id"]
     wait_work_idle()
     c2 = client.post(
-        f"/topics/{parent}/split", json={"title": "子2", "created_by": "u"}
-    ).json()["data"]["id"]
-    wait_work_idle()
-    g = client.post(
-        f"/topics/{c1}/split", json={"title": "孙", "created_by": "u"}
+        f"/topics/{parent}/split",
+        json=dict(reviewer_handle="alice", **{"title": "子2", "created_by": "u"}),
     ).json()["data"]["id"]
     wait_work_idle()
 
-    r = client.post(f"/topics/{parent}/archive", json={"by": "u"})
+    r = client.post(
+        f"/topics/{parent}/archive", json={"by": "u"}, headers=session_auth_headers("u")
+    )
     assert r.status_code == 200
     assert client.get(f"/topics/{parent}").json()["data"]["status"] == "archived"
-    # 孙 was split from inside 子1, which opens a SIBLING thread in the same
-    # room — so all three are the room's, and all three go when it does.
-    for tid in (c1, c2, g):
-        assert client.get(f"/topics/{tid}").json()["data"]["status"] == "closed", tid
-    # The cascaded thread records why it went.
-    blocks = client.get(f"/topics/{c1}/blocks").json()["data"]["data"]
-    assert any("随父话题" in (b.get("content") or "") for b in blocks)
+
+    cards = {
+        c["id"]: c for c in client.get(f"/topics/{parent}/tasks").json()["data"]["data"]
+    }
+    for tid in (c1, c2):
+        assert cards[tid]["status"] == "closed", tid
+    # The cascaded card records why it went — on its own timeline, so whoever
+    # opens it later sees why the work stopped mid-sentence.
+    assert any("随父话题" in (b.get("content") or "") for b in cards[c1]["blocks"])

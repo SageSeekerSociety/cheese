@@ -61,7 +61,6 @@ async def receive_webhook(
 
     landed = await webhook_service.post_with_retries(
         async_session_factory,
-        project_id=topic.project_id,
         topic_id=topic_id,
         content=content,
         source=source,

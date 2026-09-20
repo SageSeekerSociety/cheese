@@ -113,12 +113,6 @@
 
 镜像基底 `node:22-bookworm-slim` 里实测 git 2.39.5：普通 `git push` 够用，相对 `gitdir:` 指针也认。
 
-**4. 归属 —— 作者是人类需求方，用 git 自己的两个身份位。**
-
-`workspace/identity.py` 已经把「话题属于谁」解析成一个 GitHub 认得的 `<id>+<login>@users.noreply.github.com`，并落盘在工作区旁边（`git-identity.json`），开屏路径没有 DB session 也读得到。芝士自己提交时把它读成 `GIT_AUTHOR_*`。
-
-顺带**变好一件事**：平台不再自己提交之后，「一个旋钮，不是两个」那条 jj 限制就不成立了——author 是人类需求方（`GIT_AUTHOR_*`），committer 是芝士（`GIT_COMMITTER_*`），`Co-authored-by:` 照 #546 的口径进 trailer。
-
 ## 五、还没做：存量项目的 `.jj`
 
 工作区那一层已经迁完了（原地收编，见第四节第二条）。**主仓里那个 `.jj` 目录还在**，

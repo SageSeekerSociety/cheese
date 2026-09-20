@@ -1,26 +1,13 @@
-"""GitHub PR clients for PR-based accept — two mechanisms live here side by
-side (2026-08-09):
+"""GitHub PR clients for PR-based accept — two client shapes live here:
 
-- `GitHubPRClient` (capital PR) — #188 §5.1's original design. Auth is the
-  cheesex-app installation token (write mint for pull/merge, read-only mint
-  for check runs); a PR is opened fire-and-forget by `review/pr_publish.py`
-  when a card turns pending (behind `settings.accept_via_pr`, off by
-  default), and `AcceptService._accept_via_pr` merges it synchronously when
-  a human clicks accept.
+- `GitHubPRClient` (capital PR) — bound to one repo + `GitHubAppTokens`
+  (write mint for push/open, read-only mint for check runs). Used by
+  `review/pr_publish.py` to open the card's PR fire-and-forget when the card
+  is filed.
 - `GitHubPrClient` (lowercase pr) Protocol + `HttpxGitHubPrClient` — the
-  两阶段采纳 (PR迭代式, 2026-08-09) design. Auth is the APPROVING HUMAN's own
-  connected GitHub token (attribution matters — see the PR trailer); a PR is
-  opened when accept() is clicked and tracked asynchronously by the
-  scheduler's poller through CI, merge, and the deploy workflow it triggers,
-  before the topic finally archives.
-
-Both are real, live code paths — see `AcceptService.accept()` for how they're
-tried in order (an already-PR'd card is never re-published; a PR-less one
-tries opening a fresh one via the human's token, then falls back to a local
-merge). Not implemented here: opening the App's own write-scoped token for
-the 两阶段采纳 flow — per 2026-08-09 拍板 that flow deliberately uses the
-approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
-`GitHubPRClient`'s concern.
+  token-per-call client the accept click and the scheduler's poller drive:
+  PR status, raw check runs, compares, merge (with the head-sha guard,
+  #718), update-branch.
 """
 
 import functools
@@ -41,12 +28,11 @@ from app.domain.review.pr_signals import ReviewSignal
 
 logger = logging.getLogger(__name__)
 
-#: `no_checks` (人类授权动作前移, 2026-08-10) is NOT a flavour of success: it
-#: means "no workflow will ever produce a check for this ref" (every workflow's
-#: `paths-ignore` skipped it). The zero-check deadlock fix still holds — the
-#: poller stops waiting — but a ref nothing checked has never had its tests
-#: run, so it does not get the machine's免人 auto-merge. See
-#: `_resolve_zero_checks` here and `_authorization_exception` in services.py.
+#: `no_checks` is NOT a flavour of success: it means "no workflow will ever
+#: produce a check for this ref" (every workflow's `paths-ignore` skipped it).
+#: The zero-check deadlock fix still holds — the reader stops waiting — but a
+#: ref nothing checked has never had its tests run, and the wording must not
+#: claim otherwise. See `_resolve_zero_checks`.
 CheckState = Literal["pending", "success", "failure", "no_checks"]
 
 
@@ -98,10 +84,23 @@ class PullRequestStatus:
     #: would announce a conflict on every freshly-pushed PR, and treating it as
     #: True would silently drop a real one.
     mergeable: bool | None = None
+    #: GitHub REST's `mergeable_state` — the lowercase twin of GraphQL's
+    #: `mergeStateStatus` (clean/unstable/blocked/behind/dirty/draft/unknown/
+    #: has_hooks…). Kept RAW on purpose: the verdict a card shows is computed
+    #: in one place (`merge_state.compute_merge_state`, #718), and this field
+    #: is that function's input, not a judgement of its own. None = the
+    #: payload didn't carry it (fake/older payload) — distinct from the
+    #: string "unknown", which is GitHub saying it hasn't computed one yet.
+    mergeable_state: str | None = None
     #: How many INLINE review comments the PR carries, from the PR payload
     #: itself. The poller uses it to decide whether the extra request that
     #: lists those comments is worth making — most ticks it is 0.
     review_comment_count: int = 0
+    #: GitHub's own `draft` flag. `mergeable_state == "draft"` usually says the
+    #: same thing, but the two are separate fields in the payload and the
+    #: verdict must be draft-blocked when EITHER says so
+    #: (`merge_state.compute_merge_state` takes both).
+    draft: bool = False
 
 
 @dataclass
@@ -113,10 +112,17 @@ class MergeResult:
     GitHub refused (405/409). The refusal MUST carry a reason: returning a
     bare None here is what hid the squash-only bug for half a day (405 on a
     disabled merge_method never clears, so "just retry next tick" looped
-    forever with nothing written anywhere)."""
+    forever with nothing written anywhere).
+
+    `stale_head` is the 409 half told apart from the 405 half (#718): the
+    merge was called with the `sha` the human saw, and GitHub answered 409 —
+    the head moved under them (or the base conflicts). The accept path treats
+    it as "refresh the card and ask the human to look again", which is a
+    different instruction from a 405's "GitHub is refusing this merge"."""
 
     sha: str | None = None
     blocked_reason: str | None = None
+    stale_head: bool = False
 
 
 @dataclass
@@ -191,6 +197,43 @@ def _parse_github_time(raw: object) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def parse_pull_request_status(data: dict) -> PullRequestStatus:
+    """One REST PR payload → `PullRequestStatus`, shared by BOTH read paths
+    (`HttpxGitHubPrClient.pull_request_status` and `GitHubPRClient.pr_status`).
+
+    Extracted (#718) so the two clients cannot drift on the subtle fields:
+    the three-valued `mergeable`, the merged-gated `merge_commit_sha`, and
+    `mergeable_state` all encode traps documented on `PullRequestStatus`."""
+    merged = bool(data.get("merged"))
+    mergeable = data.get("mergeable")
+    mergeable_state = data.get("mergeable_state")
+    review_comments = data.get("review_comments")
+    return PullRequestStatus(
+        head_sha=data["head"]["sha"],
+        head_ref=str(data["head"].get("ref") or ""),
+        state=str(data.get("state") or ""),
+        merged=merged,
+        # Anything that isn't a real bool stays None — "GitHub hasn't said
+        # yet" and "GitHub said no" must not collapse (see the field).
+        mergeable=mergeable if isinstance(mergeable, bool) else None,
+        # Raw and lowercased, absent stays None — never collapsed into
+        # "unknown", which is a value GitHub actually sends (see the field).
+        mergeable_state=(
+            mergeable_state.lower()
+            if isinstance(mergeable_state, str) and mergeable_state
+            else None
+        ),
+        review_comment_count=(
+            review_comments if isinstance(review_comments, int) else 0
+        ),
+        draft=bool(data.get("draft")),
+        # Gated on `merged` on purpose — see PullRequestStatus's docstring
+        # for what this field holds on an unmerged PR.
+        merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
+        merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+    )
 
 
 class GitHubPrClient(Protocol):
@@ -269,7 +312,7 @@ class GitHubPrClient(Protocol):
         already merged it. The poller reads this first thing every tick: a PR
         merged by hand on GitHub is invisible to every other signal here (its
         checks can be red, its branch unpushable), and without noticing it the
-        card sits at `pr_open` forever."""
+        card waits forever."""
         ...
 
     async def merge_pull_request(
@@ -281,13 +324,30 @@ class GitHubPrClient(Protocol):
         token: str,
         commit_title: str | None = None,
         commit_message: str | None = None,
+        sha: str | None = None,
     ) -> MergeResult:
         """Merge the PR. `commit_title`/`commit_message` are GitHub's two
         squash-commit fields (title line / body) — see the caller in
         `review/services.py` for why both are passed explicitly.
 
+        `sha` is the merge API's own guard (#718): "SHA that pull request
+        head must match to allow merge". Callers pass the head the human
+        actually saw, so a push that lands between the click and the merge
+        makes GitHub answer 409 (`stale_head` on the result) instead of
+        merging a commit nobody looked at.
+
         Returns the merge commit SHA on success, else a `blocked_reason` the
-        poller surfaces on the card — never a silent "try again later"."""
+        caller surfaces on the card — never a silent "try again later"."""
+        ...
+
+    async def list_check_runs(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> list[dict]:
+        """The raw check-runs on `ref`, one dict per run with at least
+        `name` / `status` / `conclusion` — the input
+        `merge_state.compute_merge_state` reads. Distinct from `check_state`,
+        which collapses them into one verdict and fetches failure logs; this
+        one translates nothing."""
         ...
 
     async def workflow_run_state(
@@ -814,26 +874,7 @@ class HttpxGitHubPrClient:
             raise GitHubPrError(
                 f"GitHub 拒绝查 PR 状态（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
-        data = resp.json()
-        merged = bool(data.get("merged"))
-        mergeable = data.get("mergeable")
-        review_comments = data.get("review_comments")
-        return PullRequestStatus(
-            head_sha=data["head"]["sha"],
-            head_ref=str(data["head"].get("ref") or ""),
-            state=str(data.get("state") or ""),
-            merged=merged,
-            # Anything that isn't a real bool stays None — "GitHub hasn't said
-            # yet" and "GitHub said no" must not collapse (see the field).
-            mergeable=mergeable if isinstance(mergeable, bool) else None,
-            review_comment_count=(
-                review_comments if isinstance(review_comments, int) else 0
-            ),
-            # Gated on `merged` on purpose — see PullRequestStatus's docstring
-            # for what this field holds on an unmerged PR.
-            merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
-            merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
-        )
+        return parse_pull_request_status(resp.json())
 
     async def merge_pull_request(
         self,
@@ -844,6 +885,7 @@ class HttpxGitHubPrClient:
         token: str,
         commit_title: str | None = None,
         commit_message: str | None = None,
+        sha: str | None = None,
     ) -> MergeResult:
         method = self._merge_method or settings.accept_pr_merge_method
         body: dict = {"merge_method": method}
@@ -851,6 +893,10 @@ class HttpxGitHubPrClient:
             body["commit_title"] = commit_title
         if commit_message:
             body["commit_message"] = commit_message
+        if sha:
+            # 合的是人看到的那个 commit (#718): GitHub 409s when the PR head no
+            # longer matches, instead of merging whatever is there now.
+            body["sha"] = sha
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.put(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/merge",
@@ -863,14 +909,35 @@ class HttpxGitHubPrClient:
             # 405 = GitHub REFUSED the merge, and NOT only for transient
             # reasons: a merge_method the repo disabled (this repo is
             # squash-only) refuses forever, as do draft PRs and unsatisfied
-            # branch protection. 409 = the head moved under us / conflict.
-            # Both are safe to retry next poll, so this is not a
-            # GitHubPrError — but the reason travels with it so the poller
+            # branch protection. 409 = the head moved from the `sha` the
+            # caller vouched for (or the base conflicts) — the "refresh and
+            # look again" case, flagged as `stale_head`. Neither is a
+            # GitHubPrError: the reason travels with the result so the caller
             # can put it on the card instead of retrying blind.
-            return MergeResult(blocked_reason=_github_message(resp))
+            return MergeResult(
+                blocked_reason=_github_message(resp),
+                stale_head=resp.status_code == 409,
+            )
         raise GitHubPrError(
             f"GitHub 拒绝合并 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
+
+    async def list_check_runs(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> list[dict]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝列出 check-runs（HTTP {resp.status_code}）："
+                f"{resp.text[:300]}"
+            )
+        runs = resp.json().get("check_runs") or []
+        return [run for run in runs if isinstance(run, dict)]
 
     async def workflow_run_state(
         self, *, owner: str, repo: str, workflow_file: str, head_sha: str, token: str
@@ -1292,6 +1359,20 @@ class GitHubPRMergeBlocked(GitHubPRError):
     """The merge was refused because the PR is not mergeable (conflict)."""
 
 
+@dataclass(frozen=True, slots=True)
+class OpenedPR:
+    """The PR ``open_pr`` opened or adopted, and whose name it went out under.
+
+    ``identity_downgrade`` is the one sentence to put in front of a person when
+    the requester's own credential could not open the PR and the App's was used
+    instead. None on the ordinary paths. It is a return value rather than a log
+    line because a fallback has to be as visible as the failure it covers.
+    """
+
+    pr: dict
+    identity_downgrade: str | None
+
+
 def _as_pr_error[**P, R](
     fn: Callable[P, Awaitable[R]],
 ) -> Callable[P, Coroutine[Any, Any, R]]:
@@ -1357,23 +1438,45 @@ class GitHubPRClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+        draft: bool = False,
+    ) -> OpenedPR:
         """Open (or find the already-open) PR for a branch.
 
         Re-submitting a card for the same topic must not fail on GitHub's
         "a pull request already exists" — the existing PR IS this topic's PR.
+
+        `draft` opens it as a draft — GitHub's word for 进行中 (#718 拍板①).
+        REST can only open one that way; it cannot flip an existing PR either
+        direction, which is why `mark_ready_for_review` below has to speak
+        GraphQL. An adopted PR keeps whatever draft state it already had: this
+        argument describes the PR being CREATED, and re-deriving the state of
+        one that already exists is `mark_ready_for_review`'s job.
 
         `as_user_token` is the requester's own user-to-server token, and it
         decides WHOSE PR this is: GitHub attributes a PR to whoever's
         credential created it, and an App token makes every PR on the platform
         belong to the bot — no avatar, no "opened by you", no filter-by-author
         for the person whose work it is. An App can never impersonate a user,
-        so the only way to open it as them is to use their token. Falls back to
-        the App on any failure: a PR that exists under the wrong name beats no
-        PR at all, and the fallback is invisible to everything downstream.
+        so the only way to open it as them is to use their token.
+
+        When their token cannot open it (they left the org, revoked the
+        authorization, uninstalled the App for themselves) the App opens it
+        instead — a PR that exists under the wrong name beats no PR at all —
+        and the returned :class:`OpenedPR` says so in ``identity_downgrade``.
+        The substitution used to be invisible to everything downstream, which
+        is a fallback quieter than the failure it covers (I26): the person is
+        left believing GitHub simply attributes their work to a bot. The
+        callers put that sentence in the room.
         """
         app_token, _ = await self._tokens.write_token()
-        payload = {"title": title, "head": head, "base": base, "body": body}
+        payload: dict[str, object] = {
+            "title": title,
+            "head": head,
+            "base": base,
+            "body": body,
+        }
+        if draft:
+            payload["draft"] = True
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
 
             async def _create(token: str) -> httpx.Response:
@@ -1382,24 +1485,21 @@ class GitHubPRClient:
                 )
 
             resp = None
+            downgrade: str | None = None
             if as_user_token:
                 resp = await _create(as_user_token)
                 if resp.status_code == 201:
-                    return resp.json()
+                    return OpenedPR(resp.json(), None)
                 if resp.status_code != 422 or "already exist" not in resp.text:
-                    # Their token may simply not reach this repo (left the org,
-                    # authorization revoked, App uninstalled for them). Not an
-                    # error worth surfacing — the App opens it instead.
-                    logger.info(
-                        "opening PR as the requester failed (HTTP %s); "
-                        "falling back to the App token",
-                        resp.status_code,
+                    downgrade = (
+                        f"你的 GitHub 授权开不了这个 PR（HTTP {resp.status_code}），"
+                        "已改用芝士的 App 身份开——PR 会记在机器人名下，不在你名下。"
                     )
                     resp = None
             if resp is None:
                 resp = await _create(app_token)
                 if resp.status_code == 201:
-                    return resp.json()
+                    return OpenedPR(resp.json(), downgrade)
             if resp.status_code == 422 and "already exist" in resp.text:
                 listing = await client.get(
                     self._url("/pulls"),
@@ -1407,7 +1507,9 @@ class GitHubPRClient:
                     headers=self._headers(app_token),
                 )
                 if listing.status_code == 200 and listing.json():
-                    return listing.json()[0]
+                    # An adopted PR was opened earlier under whatever identity
+                    # opened it then; this call substituted nothing.
+                    return OpenedPR(listing.json()[0], None)
             raise GitHubPRError(
                 f"PR creation failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )
@@ -1424,6 +1526,98 @@ class GitHubPRClient:
                 f"PR read failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )
         return resp.json()
+
+    async def pr_status(self, number: int) -> PullRequestStatus:
+        """`pr_view`, parsed — the structured twin of the raw dict.
+
+        Exists (#718) so this lane's callers get `mergeable_state`, the
+        three-valued `mergeable` and the merged-gated `merge_commit_sha`
+        through the SAME parser as the poller lane
+        (`parse_pull_request_status`), instead of each caller sniffing the
+        raw json ad hoc."""
+        return parse_pull_request_status(await self.pr_view(number))
+
+    @_as_pr_error
+    async def update_pr(
+        self,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        base: str | None = None,
+    ) -> dict:
+        """Rewrite the PR's title and description — nothing else.
+
+        The card is the single source of both, so correcting the card
+        (`AcceptService.redescribe`) writes here in the same breath: what a
+        reviewer reads on GitHub and what lands in `git log` come out of one
+        value, and cannot drift into saying two different things about one
+        change (#735 landed a description the review had already corrected).
+        """
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.patch(
+                self._url(f"/pulls/{number}"),
+                json={
+                    key: value
+                    for key, value in {
+                        "title": title,
+                        "body": body,
+                        "base": base,
+                    }.items()
+                    if value is not None
+                },
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPRError(
+                f"PR 正文更新失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+        return resp.json()
+
+    @_as_pr_error
+    async def mark_ready_for_review(self, node_id: str) -> None:
+        """Flip a draft PR to ready — the ONE call here that is not REST.
+
+        REST can open a PR as a draft and cannot take it out of draft:
+        `PATCH /pulls/{n}` has no `draft` field, and GitHub exposes the
+        transition only as the GraphQL mutation `markPullRequestReadyForReview`,
+        keyed by the PR's node id (which the REST response already carries, so
+        nothing has to be stored for this). That is the whole reason a GraphQL
+        request appears in a REST client — it is a hole in the REST API, not a
+        second way of talking to GitHub, so this stays one private method
+        instead of growing a GraphQL layer nothing else would use.
+
+        Already-ready is not an error and not this method's business to detect:
+        the mutation is idempotent, and the caller (`AcceptService.mark_ready`)
+        is the one that knows whether it had anything to flip.
+
+        Failures raise. A draft PR that silently stayed draft is a delivery
+        nobody can review while everything on the platform says it is waiting
+        for them.
+        """
+        token, _ = await self._tokens.write_token()
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.post(
+                f"{self._api_base}/graphql",
+                json={
+                    "query": (
+                        "mutation($id:ID!){markPullRequestReadyForReview("
+                        "input:{pullRequestId:$id}){pullRequest{isDraft}}}"
+                    ),
+                    "variables": {"id": node_id},
+                },
+                headers=self._headers(token),
+            )
+        if resp.status_code != 200:
+            raise GitHubPRError(
+                f"PR 转 ready 失败 (HTTP {resp.status_code}): {resp.text[:300]}"
+            )
+        # GraphQL answers 200 with an `errors` array, so a non-200 check alone
+        # would read every refusal as a success.
+        payload = resp.json()
+        if payload.get("errors"):
+            raise GitHubPRError(f"PR 转 ready 失败：{str(payload['errors'])[:300]}")
 
     @_as_pr_error
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:

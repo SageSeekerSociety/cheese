@@ -91,3 +91,33 @@ def test_unknown_project_404(client):
         json={"project_id": str(uuid.uuid4()), "errors": [{"message": "x"}]},
     )
     assert r.status_code == 404
+
+
+def test_a_new_error_reaches_a_person_and_a_repeat_does_not(client, monkeypatch):
+    """The timeline has had these errors all along; what it has never had is a
+    reader. An alert is that reader — but only for something not seen before,
+    because the same error repeats hundreds of times a second in a render loop
+    and a channel that receives all of them is muted by the end of the day."""
+    from app.core import alerting
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        alerting.settings, "feishu_alert_webhook", "https://example/hook"
+    )
+    monkeypatch.setattr(alerting, "budget", alerting._Budget())
+    monkeypatch.setattr(alerting, "send", lambda title, lines: sent.append(title))
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    body = {
+        "project_id": pid,
+        "topic_id": tid,
+        "errors": [{"message": "boom", "stack": "at f (a.js:1:1)", "page": "/x"}],
+    }
+
+    assert client.post("/frontend-errors", json=body).status_code == 200
+    assert sent == ["前端报错：boom"]
+
+    # Same fingerprint again: the intake drops it, so nobody is told twice.
+    assert client.post("/frontend-errors", json=body).status_code == 200
+    assert sent == ["前端报错：boom"]

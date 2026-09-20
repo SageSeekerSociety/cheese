@@ -39,6 +39,16 @@ describe('renderMarkdown (芝士 replies)', () => {
     expect(renderMarkdown('见 <&backend/app/core/db.py:55>', MAPS)).toContain('data-file="backend/app/core/db.py:55"')
   })
 
+  // 点开一个链接不该把人带出这个房间：单页应用回来要整个重载，输入框里没发出
+  // 去的字也没了。说明书的链接是最常被点的那种，但这条对 PR、外部资料一样成立。
+  it('opens a link in a new tab instead of navigating the room away', () => {
+    const html = renderMarkdown('见[成员](https://okcheese.com/docs/members#mention)', MAPS)
+    expect(html).toContain('href="https://okcheese.com/docs/members#mention"')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noopener noreferrer"')
+    expect(html).toContain('>成员</a>')
+  })
+
   it('renders a <#topicId> token as a topic chip with its title', () => {
     const html = renderMarkdown('进展见 <#abc12345-0000-0000-0000-000000000000>', MAPS)
     expect(html).toContain('data-topic="abc12345-0000-0000-0000-000000000000"')

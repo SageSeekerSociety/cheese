@@ -5,7 +5,7 @@ job is to answer 「要不要停下来重读文档」 — so it has to locate th
 must not carry the change. Every test below is one of those two halves.
 """
 
-from app.domain.agent.chat import PLATFORM_NOTICE
+from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.topic.doc_change import summarize_doc_change
 
 DOC = """# 目标

@@ -1,0 +1,15 @@
+[Unit]
+Description=Cheese openviking memory backup (tar + verify + prune + off-site)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=nictheboy
+# Stable copy installed out of band; canonical source is deploy/viking-backup.sh.
+ExecStart=/home/nictheboy/ops/viking-backup.sh
+# The memory archives get their own R2 keyspace; on prod set prod-viking here,
+# the same way the uploads mirror sets its prefix.
+Environment=CHEESE_VIKING_R2_PREFIX=viking
+Nice=10
+IOSchedulingClass=idle

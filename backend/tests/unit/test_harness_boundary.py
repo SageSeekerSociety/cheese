@@ -22,17 +22,16 @@ harness 一样都不用付。
 
 三类，性质完全不同：
 
-- **channels**（device / cloud）：它们实现 ``Channel``，拿走这一个接缝、它抛
-  的错，以及 ``ensure_claude``（一块屏幕上什么时候可以复用一个会话、什么时候必须
-  重开）——这些都是 transport 拿来照做的，不是它自己定的。**「跑什么」不在这张表
+- **channels**（device / cloud）：它们实现 ``Channel``，拿走这一个接缝和它抛
+  的错——这些都是 transport 拿来照做的，不是它自己定的。**「跑什么」不在这张表
   里**：那是 ``harness.launch`` 的 ``LaunchPlan``，通道说自己的坐标、拿回一份它读
-  不懂的 ``LaunchSpec``，所以 tmux 那一行不再有 ``build_session_launch``。device 还
-  有：一台远程机器的启动是这边写出来的一段 shell，脚本里写着 claude，所以
-  ``build_screen_launch`` 留在账上。剩下 ``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE``
-  同理：Claude Code 的知识，今天还长在传输层里。``ensure_claude`` 是半笔——复用顺序
-  谁都一样，但它等的是 ``❯``，那是 Claude Code 画的。等到第二个 harness 的 spike
-  说清「起来了」在它那儿长什么样，这个判据才该搬进 ``LaunchPlan``；在那之前照着
-  它猜一个接口，猜错的概率比省下的功夫大。
+  不懂的 ``LaunchSpec``。device 那段 shell 也还清了：平台那一半是
+  ``machine_launcher``，harness 那一半是 ``LaunchPlan.on`` 答的，channel 只说
+  「在哪」。剩下 ``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE`` 还没还：Claude Code
+  的知识，今天还长在传输层里。「起来了」的判据今天是 rendezvous socket 开始接受
+  连接，那是连接器在
+  ``dialWhenReady`` 里等的；等第二个 harness 的 spike 说清它那儿长什么样，再考虑
+  把这个判据搬进 ``LaunchPlan``。
 - **平台侧（chat.py）：一行也没有了。** 曾经它拿走 ``MessageAssembler`` 和 spool 的
   四个读写函数——「把 hook 翻译成房间里的东西」有一半住在平台侧，认得的是 Claude Code
   的事件形状。现在它只通过 ``AgentRuntime`` 的 ``backlog`` 拿到已经拼好的
@@ -47,30 +46,36 @@ harness 一样都不用付。
 import ast
 from pathlib import Path
 
+import pytest
+
 APP = Path(__file__).resolve().parents[2] / "app"
 PKG = "app.domain.agent.harness.claude_code"
 
 # 模块 → 它从适配器拿走的名字（排序后的元组）。见上面「账本是棘轮」。
 _LEDGER: dict[str, tuple[str, ...]] = {
+    "app.domain.agent.private_chat": ("private_execution_target",),
+    "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
     # --- 边缘：适配器对外的那条边 ---
-    "app.api.routes.sandbox": ("append_event", "hook_router"),
-    "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
+    "app.api.routes.sandbox": ("hook_router",),
+    # Enrollment prepares the native cache and idle process before advertising capacity.
+    "app.domain.machine.enrollment": (
+        "CLAUDE_MIN_VERSION",
+        "CLAUDE_PINNED_VERSION",
+        "build_startup_cache_prepare",
+        "build_warm_session_prepare",
+    ),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
-    "app.domain.agent.compute": ("Channel", "ClaudeCodeRuntime"),
+    "app.domain.agent.compute": ("ClaudeCodeRuntime", "executor_launch"),
     "app.domain.agent.device_hub": (
         "drop_device_subscriptions",
         "drop_screen_subscriptions",
     ),
     # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
-    "app.domain.agent.cloud_provider": ("ScreenSetupError",),
     "app.domain.agent.device_provider": (
-        "Channel",
         "DEVICE_ALIVE_PROBE",
         "DEVICE_TUNNEL_PROBE",
         "SESSION_TOKEN_TTL_S",
-        "ScreenSetupError",
-        "build_screen_launch",
-        "drop_topic_subscriptions",
+        "resident_release",
     ),
 }
 
@@ -79,29 +84,30 @@ def _module_name(path: Path) -> str:
     return "app." + ".".join(path.relative_to(APP).with_suffix("").parts)
 
 
-def _crossings() -> tuple[dict[str, set[str]], list[str]]:
+def _crossings(package: str = PKG) -> tuple[dict[str, set[str]], list[str]]:
     """Who imports the adapter, what they take, and who reached past the door."""
     taken: dict[str, set[str]] = {}
     through_a_submodule: list[str] = []
     for path in sorted(APP.rglob("*.py")):
         module = _module_name(path)
-        if module.startswith(PKG):
+        if module.startswith(package):
             continue
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom) or not node.module:
                 continue
-            if node.module == PKG:
+            if node.module == package:
                 taken.setdefault(module, set()).update(a.name for a in node.names)
-            elif node.module.startswith(PKG + "."):
+            elif node.module.startswith(package + "."):
                 through_a_submodule.append(f"{module} → {node.module}")
     return taken, through_a_submodule
 
 
-def test_nothing_outside_reaches_past_the_package_door():
+@pytest.mark.parametrize("package", [PKG, "app.domain.agent.harness.codex"])
+def test_nothing_outside_reaches_past_the_package_door(package):
     """一个 harness 的内部结构不该是别人能依赖的东西。从包门口拿，门口那张表才
     能当账本用；直接摸子模块，账本就不知道有这回事。"""
-    _, reached_past = _crossings()
+    _, reached_past = _crossings(package)
     assert not reached_past, (
         "这些地方越过了 claude_code 的包门口，直接 import 了它的子模块。"
         "要么从包本身 import，要么把名字加进 __init__ 的导出表：\n  "

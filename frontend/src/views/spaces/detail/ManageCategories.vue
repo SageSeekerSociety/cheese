@@ -92,6 +92,7 @@
           <v-form ref="form" @submit.prevent="submitForm">
             <v-text-field
               v-model="formData.name"
+              autocomplete="off"
               :label="t('spaces.detail.manageCategories.name')"
               required
               v-bind="nameProps"
@@ -99,6 +100,7 @@
 
             <v-textarea
               v-model="formData.description"
+              autocomplete="off"
               :label="t('spaces.detail.manageCategories.description')"
               v-bind="descriptionProps"
               rows="3"

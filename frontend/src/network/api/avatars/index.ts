@@ -17,6 +17,10 @@ export namespace AvatarsApi {
     avatarId: number
   }
 
+  export type GetDefaultAvatarIdResponse = {
+    avatarId: number
+  }
+
   export const getAvailableAvatarIds = (params: GetAvailableAvatarIdsParams = {}) =>
     ApiInstance.request<GetAvailableAvatarIdsResponse>({
       url: '/avatars',
@@ -36,6 +40,12 @@ export namespace AvatarsApi {
       },
     })
   }
+
+  export const getDefaultAvatarId = () =>
+    ApiInstance.request<GetDefaultAvatarIdResponse>({
+      url: '/avatars/default/id',
+      method: 'GET',
+    })
 
   export const getDefaultAvatar = () =>
     ApiInstance.request<Blob>({

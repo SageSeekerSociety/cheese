@@ -20,7 +20,7 @@
 - `alembic upgrade heads`：干净跑完全部迁移链，`access_token` 列在真实表上确认存在。
 - `ruff check .`：全仓库绿。
 - `pyright`：0 errors, 0 warnings。
-- `pytest tests/unit`：**2436 passed, 22 failed, 1 skipped**。失败里 21 个是已知环境缺口（`test_machine_service.py`/`test_tmux_control.py`，沙箱镜像没有 `kill`/`tmux` 二进制，卡1当时也记录过同类失败）；另 2 个（`test_dogfood_notices.py`）是跟这次改动完全无关的模块（`app.domain.workspace.dogfood_notices`，pydantic `BlockOut` 校验错误），单独跑该文件也复现，确认是改动前就存在的问题，不在本卡范围内，未处理。
+- `pytest tests/unit`：**2436 passed, 22 failed, 1 skipped**。失败里 21 个是已知环境缺口（`test_machine_service.py`/`test_tmux_control.py`，沙箱镜像没有 `kill`/`tmux` 二进制，卡1当时也记录过同类失败）；另 2 个是与本卡无关的模块里改动前就存在的失败，单独跑也复现，不在本卡范围内，未处理。
 - oauth 相关测试单独跑：`test_oauth_service.py`/`test_oauth_repository.py`/`test_oauth_callback_route.py`/`test_github_account_link.py` 共 **101 passed**，覆盖 token 存储、读取、过期、加密解密、刷新（成功/失败）、relink 更新在位（不重复建行）、真实 DB 往返（不是 mock repo）。
 
 ## 下一步

@@ -29,7 +29,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
-from tests.machine_work import machine_commits
+from tests.machine_work import declare_task, machine_commits
 
 WORKFLOW = ".github/workflows/e2e.yml"
 _E2E_V2 = "name: e2e\n# v2\n"
@@ -152,7 +152,7 @@ def _push(pid: uuid.UUID, tid: uuid.UUID, remote_branch: str = "cheesex/x") -> d
 
 
 def _branch_head(repo: Path, tid: uuid.UUID) -> str:
-    return _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip()
+    return _run(repo, "rev-parse", ws.branch_for_task(tid)).strip()
 
 
 def _remote_head(bare: Path, ref: str = "refs/heads/cheesex/x") -> str:
@@ -168,6 +168,7 @@ def test_branch_with_lagging_workflows_still_reaches_github(
     current workflow files."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
     _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
@@ -192,6 +193,7 @@ def test_push_that_github_accepts_costs_nothing_extra(tmp_path, project, monkeyp
     keeps the 60s re-push poll as cheap as it was."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)  # GitHub has NOT moved
     _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
     _use_github(monkeypatch, bare)
@@ -213,6 +215,7 @@ def test_repeated_pushes_after_a_sync_do_not_keep_moving_the_branch(
     head never matches card.pr_head_sha again."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
     _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
@@ -235,6 +238,7 @@ def test_a_later_agent_commit_builds_on_the_synced_branch(
     later re-push a rejected non-fast-forward."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
     _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
@@ -271,6 +275,7 @@ def test_the_sync_reaches_the_checkout_the_agent_goes_on_working_in(
     """
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
     _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
@@ -317,6 +322,7 @@ def test_conflicting_sync_reports_the_conflict_and_leaves_the_branch_alone(
     the topic branch must be left exactly where it was — never half-merged."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(
         tmp_path,
@@ -346,6 +352,7 @@ def test_card_that_edits_a_workflow_itself_is_still_rejected(
     the reason has to say so."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)  # GitHub has NOT moved
     _topic_commit(pid, tid, WORKFLOW, "name: e2e\n# edited by the card\n")
     _use_github(monkeypatch, bare)
@@ -366,6 +373,7 @@ def test_card_editing_a_workflow_on_a_lagging_branch_is_rejected_after_syncing(
     edit survives the merge. Exactly one retry, then degrade."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(
         tmp_path, bare, {".github/workflows/release.yml": "name: release\n"}
@@ -385,6 +393,7 @@ def test_other_push_failures_are_not_retried(tmp_path, project, monkeypatch):
     with no fetch and no merge."""
     pid, repo = project
     tid = uuid.uuid4()
+    declare_task(pid, tid)
     bare = _make_github(tmp_path, repo)
     _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
     (bare / "hooks" / "pre-receive").write_text(_HOSTILE_PRE_RECEIVE, encoding="utf-8")

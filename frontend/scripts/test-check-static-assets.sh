@@ -38,12 +38,15 @@ HTML
   : > "$fixture/assets/vendor.js"
   : > "$fixture/assets/font.woff2"
   : > "$fixture/assets/app.js"
+  mkdir -p "$fixture/docs"
+  : > "$fixture/docs/index.html"
+  : > "$fixture/docs/llms.txt"
 }
 
 complete="$TEST_ROOT/complete"
 make_complete_fixture "$complete"
 output="$(sh "$CHECKER" "$complete")"
-assert_contains "$output" "STATIC ASSETS OK: 4 local references"
+assert_contains "$output" "STATIC ASSETS OK: 4 local references, manual present"
 echo "PASS: complete asset tree"
 
 missing="$TEST_ROOT/missing"
@@ -67,6 +70,15 @@ fi
 assert_contains "$output" "no JavaScript asset reference"
 assert_contains "$output" "no CSS asset reference"
 echo "PASS: missing entrypoints rejected"
+
+no_manual="$TEST_ROOT/no-manual"
+make_complete_fixture "$no_manual"
+rm -r "$no_manual/docs"
+if output="$(sh "$CHECKER" "$no_manual" 2>&1)"; then
+  fail "checker accepted an image with no user manual under /docs"
+fi
+assert_contains "$output" "missing docs/index.html"
+echo "PASS: missing manual rejected"
 
 no_index="$TEST_ROOT/no-index"
 mkdir -p "$no_index"

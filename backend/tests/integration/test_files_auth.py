@@ -7,6 +7,8 @@ routes return is the source itself, not a rendering of it.
 
 import uuid
 
+from tests.machine_work import declare_task
+
 
 def test_listing_a_projects_files_needs_a_credential(client):
     project = client.post(
@@ -42,7 +44,8 @@ def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_tree(topic)
+    declare_task(project, topic)
+    branch = ws.branch_for_task(topic)
     ws._ensure_worktree(project, topic)
     _configure_for_push(repo)
 
@@ -114,7 +117,8 @@ def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_tree(topic)
+    declare_task(project, topic)
+    branch = ws.branch_for_task(topic)
     wt = ws._ensure_worktree(project, topic)
 
     (wt / "being_edited.txt").write_text("a human is typing here\n")
@@ -132,7 +136,8 @@ def test_a_clean_workspace_picks_the_push_up(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws2"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_tree(topic)
+    declare_task(project, topic)
+    branch = ws.branch_for_task(topic)
     ws._ensure_worktree(project, topic)
 
     _push_a_file(repo, tmp_path, branch, "landed.txt")

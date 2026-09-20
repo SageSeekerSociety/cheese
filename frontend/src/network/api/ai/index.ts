@@ -4,7 +4,7 @@ import { NewApiInstance } from '../index'
 
 export namespace AIApi {
   export const getQuota = () =>
-    NewApiInstance.request<QuotaInfo>({
+    NewApiInstance.request<{ quota: QuotaInfo }>({
       url: '/ai/quota',
       method: 'GET',
     })

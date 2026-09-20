@@ -41,7 +41,11 @@ class TopicMembershipRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def topic_ids_for_member(
-        self, topic_ids: list[uuid.UUID], member_handle: str
+        self,
+        topic_ids: list[uuid.UUID],
+        member_handle: str,
+        *,
+        roles: frozenset[TopicRole] | None = None,
     ) -> set[uuid.UUID]:
         """Which of these topics this handle sits in the roster of, in ONE query.
 
@@ -56,6 +60,8 @@ class TopicMembershipRepository:
             TopicMembership.topic_id.in_(topic_ids),
             TopicMembership.member_handle == member_handle,
         )
+        if roles is not None:
+            stmt = stmt.where(TopicMembership.role.in_(roles))
         return set((await self._session.scalars(stmt)).all())
 
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:

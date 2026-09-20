@@ -1,7 +1,7 @@
 """Project workspace — a git repo per project (spec §6.3: 所有产出都是 git).
 
 每个 project = 一个 git 仓,每棵树 = 一个工作区目录 + 一条 git 分支
-(`branch_for_tree`)。**提交这一步不在这里**:干活的分身在自己的机器上
+(`branch_for_task`)。**提交这一步不在这里**:干活的分身在自己的机器上
 `git commit`,再把分支推回来(`api/routes/git_http.py`)。这个模块读那条分支
 ——diff、采纳、推 PR 全是分支上的提交——并维护一份跟着它走的检出,供文件面板
 和合并使用。
@@ -13,6 +13,8 @@
 """
 
 import contextlib
+import hashlib
+import json
 import logging
 import os
 import re
@@ -21,14 +23,12 @@ import subprocess
 import time
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from app.core.background import spawn
 from app.core.config import settings
-from app.core.errors import ConflictError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
-from app.domain.workspace.dogfood_notices import watch_dogfood_push
 from app.domain.workspace.textfile import (
     MAX_TEXT_BYTES,
     content_version,
@@ -54,8 +54,7 @@ SANDBOX_IMAGE = "python:3.12-slim"
 # today, so both sides must still be the same uid.
 #
 # 1000 = `node` in the sandbox image (node:22 + USER node, started with
-# `--user node`), which is the side we do not fully control — a project can
-# point `sandbox_image` at any other node-based image. The backend image is
+# `--user node`). The backend image is
 # built to match (backend/Dockerfile); tests/unit/test_workspace_uid_alignment.py
 # pins all three together.
 AGENT_UID = 1000
@@ -149,21 +148,8 @@ def _repo(project_id: uuid.UUID) -> Path:
     return (Path(settings.workspace_root) / str(project_id)).resolve()
 
 
-def branch_for_tree(tree_id: uuid.UUID) -> str:
-    """一棵树 = 一条 git 分支. Deterministic from the tree's id.
-
-    A tree is a batch of work — many tasks share one, and it opens one PR. The
-    branch belongs to the tree rather than to whoever is writing on it, which is
-    the whole point: a room and every task batched with it write to one branch,
-    and that branch is what the PR is open on.
-
-    The `topic/` prefix stays even though a tree is not a topic. Each room's
-    first tree carries the room's own id (migration `b8e2f4a90d33`), so the
-    derived name is byte-for-byte what every existing branch, worktree and
-    container path is already called; renaming the prefix would rename all of
-    them and buy nothing.
-    """
-    return f"topic/{tree_id.hex[:8]}"
+def branch_for_task(task_id: uuid.UUID) -> str:
+    return _task_workspace(task_id)["branch"]
 
 
 def _git(
@@ -316,60 +302,28 @@ def _base_branch(repo: Path) -> str:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() or DEFAULT_BRANCH
 
 
-def _tree_dirname(topic_id: uuid.UUID) -> str:
-    """On-disk (and in-container) name of a topic's workspace directory.
-
-    Derived from the topic id ALONE — deliberately not from `branch_for_tree`,
-    even though the two agree today (`topic/<hex8>` → `topic_<hex8>`). The
-    directory name is baked into things that survive a rename and cannot be
-    migrated cheaply: the worktree's admin directory under
-    `.git/worktrees/<name>`, the relative `.git` pointer inside every worktree
-    (whose depth `sandbox_vcs_mounts` reproduces), the container workdir, and —
-    through that workdir — the session name the device backend hashes, so a
-    changed path retires a live claude session and drops its context. Naming
-    the branch is a git-side decision; it must not be able to move anyone's
-    files.
-    """
-    return f"topic_{topic_id.hex[:8]}"
+def _tree_dirname(task_id: uuid.UUID) -> str:
+    return _task_workspace(task_id)["directory"]
 
 
-def _worktree_path(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
-    """Where a place's files are: its TREE's directory.
+def _worktree_path(project_id: uuid.UUID, task_id: uuid.UUID) -> Path:
+    return task_worktree_path(project_id, task_id)
 
-    The argument is a place rather than a tree because every caller has a place
-    and none of them should have to know that a room's tree changes when a batch
-    is sealed. `tree_for_place` is the one place that answers it, and it answers
-    "itself" for a room on its first tree — which is what keeps every existing
-    directory exactly where it already is.
-    """
+
+def task_worktree_path(project_id: uuid.UUID, task_id: uuid.UUID) -> Path:
     return (
         Path(settings.workspace_root)
         / ".worktrees"
         / str(project_id)
-        / _tree_dirname(tree_for_place(place_id))
+        / _tree_dirname(task_id)
     ).resolve()
 
 
 def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
-    """每棵树一个 git worktree：一批活共用一个工作目录，不同的树互不覆盖。工作区
-    检出在这棵树自己的分支上（`branch_for_tree`）——分身在容器里那次 `git commit`
-    直接就把分支往前挪了，没有导出、没有代推、也没有一步会失败的中转。分支名与
-    工作区目录名各自独立派生，见 `_tree_dirname`。
-
-    一棵**新**树从 base 分支长出来。它以前不是这样：一件活的树从它所在房间的树
-    fork，因为那件活的提交最后要合回房间那一条分支。现在一批活共用一棵树、
-    一起进同一个 PR，没有东西要合回去，所以也没有 fork 点要挑——下一批从 main
-    开始，和任何一个并行的 PR 一样。
-
-    但树的分支不一定是新的，因为这个目录不是它唯一的作者：文件不在这里的分身
-    只能用 git 推到它（`api/routes/git_http.py`），而那次推送可能远早于有人第一
-    次需要这个目录。分支已经存在时就检出**它**。以前不看这一眼，于是这里
-    先给树铺一个空工作区、再把分支移到那个空提交上——一整批活被一个零文件的
-    提交顶掉，而下一张验收卡正是拿它去开 PR 的。"""
+    """Check out this task's branch, preserving any existing local work."""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a worktree needs a base commit to fork from
-    tree_id = tree_for_place(place_id)
-    branch = branch_for_tree(tree_id)
+    branch = branch_for_task(place_id)
     wt = _worktree_path(project_id, place_id)
     if (wt / ".git").exists():
         return wt
@@ -381,7 +335,7 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
     with contextlib.suppress(ValidationError):
         _git(main, "worktree", "prune")
     delivered = _branch_exists(main, branch)
-    start = branch if delivered else _base_branch(main)
+    start = branch if delivered else _task_workspace(place_id)["base"]
     create = [] if delivered else ["-b", branch]
     if wt.exists() and any(wt.iterdir()):
         _adopt_the_directory_that_is_already_there(main, wt, start, create)
@@ -482,66 +436,13 @@ def sandbox_vcs_mounts(
 
 
 # Container mount point of a project's whole `.worktrees/<project>` tree in a
-# sandbox. One mount covering every topic's worktree AND the
-# shared dependency stores below, because hardlinks cannot cross bind mounts
-# (link(2) → EXDEV even on the same filesystem): pnpm/uv only dedup against a
-# store that lives on the SAME mount as the tree they install into. Verified
-# live on the dev box — a cross-mount ln inside a sandbox fails with "Invalid
-# cross-device link", and pnpm/uv then silently fall back to full copies, which
-# is how one project's 220 worktrees came to hold 236GB.
+# sandbox — one mount covering every topic's worktree.
 SANDBOX_TOPICS_ROOT = "/topics"
-
-# Where uv keeps the Python builds it downloads. The base sandbox image ships
-# system python 3.11 and this project needs >=3.13, so uv fetches a managed
-# interpreter at RUNTIME — and uv's default home for it is `~/.local/share/uv`,
-# i.e. `/home/node`, which is the container's own overlay layer. The worktree
-# (and its `.venv`) is a host bind mount and outlives the container; the
-# interpreter it points at does not. `.venv/bin/python` is an absolute symlink
-# into that layer and `pyvenv.cfg`'s `home =` names the same directory, so
-# every container rebuild leaves the surviving venv pointing at nothing:
-#
-#     $ .venv/bin/python -V
-#     No such file or directory
-#     $ .venv/bin/pyright --version
-#     cannot execute: required file not found      # shebang -> that same symlink
-#
-# `uv run` does repair this on its own (it recreates the venv from scratch),
-# so this is a cost, not a breakage — measured in a sandbox on 2026-08-13:
-# 15s and a 33MiB interpreter re-download per rebuild, versus 1s and no
-# download once the interpreter lives here. Rebuilds are frequent (#316: 23 in
-# one day), the re-download is NOT served by `.uv-cache` (uv caches wheels,
-# not managed interpreters), and anything invoking `.venv/bin/<tool>` directly
-# — or via `uv run --no-sync`, which recreates the venv WITHOUT reinstalling
-# and so hands back an empty one — is broken until a plain `uv run` runs.
-#
-# `backend/Dockerfile` hit the identical symlink problem across image stages
-# and fixed it the identical way (`ENV UV_PYTHON_INSTALL_DIR=/opt/python`);
-# this is the same fix on the axis the sandbox varies along, which is time
-# rather than stages.
-UV_PYTHON_STORE = ".uv-python"
-
-# Shared per-project stores that live on the HOST, as (host dirname, container
-# env var). Dot-named so they can never collide with a topic worktree dir
-# (`topic_<hex>`) or the merge-worktree root (`_merge`).
-#
-# The first two are dependency caches: pnpm reads npm_config_store_dir (its
-# documented env form of store-dir), uv reads UV_CACHE_DIR, and both install by
-# hardlinking out of their store when it is on the same filesystem/mount, so
-# every topic's node_modules/.venv shares one physical copy per file. The third
-# is not a cache — see UV_PYTHON_STORE: it is the interpreter the venv POINTS
-# AT, and it is here because a venv that outlives its container has to be.
-_SANDBOX_STORES = (
-    (".pnpm-store", "npm_config_store_dir"),
-    (".uv-cache", "UV_CACHE_DIR"),
-    (UV_PYTHON_STORE, "UV_PYTHON_INSTALL_DIR"),
-)
 
 
 def sandbox_topic_workdir(topic_id: uuid.UUID) -> str:
-    """A topic's worktree path inside a sandbox — its REAL path under the
-    project-tree mount (not a per-topic remap), so hardlinks to the shared
-    stores on the same mount work."""
-    return f"{SANDBOX_TOPICS_ROOT}/{_tree_dirname(topic_id)}"
+    """Stable room session directory, independent of task checkout names."""
+    return f"{SANDBOX_TOPICS_ROOT}/topic_{topic_id.hex[:8]}"
 
 
 # Container mount point of a project's whole `.sessions/<project>` tree — the
@@ -603,41 +504,30 @@ def _write_marker(path: Path, value: str, what: str) -> None:
         logger.warning("could not record %s for %s", what, path.name, exc_info=True)
 
 
-# --- which tree a place writes to -------------------------------------------
-#
-# A place (a room, or one thread in it) does not own a tree; it WRITES to one,
-# and which one changes over a room's life: a batch is sealed when its PR opens
-# and the next batch starts a fresh tree. That mapping is a DB fact, and this
-# module is deliberately sync and DB-free — so the layer that knows writes the
-# answer here, exactly the way `bind_room` already does for boxes.
-#
-# No binding means "this place writes to the tree named by its own id", which is
-# true of every room on its first tree (that tree carries the room's id) and of
-# everything that existed before trees did. A degraded answer, never a wrong
-# one.
-_PLACE_TREES_DIRNAME = ".place-trees"
+# Task workspace descriptors mirror persisted task fields for synchronous git
+# operations. A missing descriptor is an error; a room id cannot create a branch.
+def bind_task(task_id: uuid.UUID, *, branch: str, directory: str, base: str) -> None:
+    path = Path(settings.workspace_root) / ".task-workspaces" / f"{task_id.hex}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = json.dumps({"branch": branch, "directory": directory, "base": base})
+    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    temporary.write_text(descriptor)
+    temporary.replace(path)
 
 
-def _place_trees_dir() -> Path:
-    return Path(settings.workspace_root) / _PLACE_TREES_DIRNAME
-
-
-def bind_tree(place_id: uuid.UUID, tree_id: uuid.UUID) -> None:
-    """Record that *place_id*'s files live on *tree_id*."""
-    _write_marker(_place_trees_dir() / place_id.hex, tree_id.hex, "place tree")
-
-
-def tree_for_place(place_id: uuid.UUID) -> uuid.UUID:
-    """The tree this place writes to — itself when nothing says otherwise."""
+def _task_workspace(task_id: uuid.UUID) -> dict[str, str]:
+    path = Path(settings.workspace_root) / ".task-workspaces" / f"{task_id.hex}.json"
     try:
-        return uuid.UUID(hex=(_place_trees_dir() / place_id.hex).read_text().strip())
-    except (OSError, ValueError):
-        return place_id
+        return json.loads(path.read_text())
+    except FileNotFoundError as exc:
+        raise ValidationError("请先选择有工作分支的任务") from exc
 
 
-def forget_tree(place_id: uuid.UUID) -> None:
-    with contextlib.suppress(OSError):
-        (_place_trees_dir() / place_id.hex).unlink()
+def forget_task(task_id: uuid.UUID) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        (
+            Path(settings.workspace_root) / ".task-workspaces" / f"{task_id.hex}.json"
+        ).unlink()
 
 
 def gate_workdir_for(worktree: Path) -> str:
@@ -651,53 +541,6 @@ def gate_workdir_for(worktree: Path) -> str:
     enough — a gate needs no topic argument to agree with the sandbox.
     """
     return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
-
-
-def sandbox_store_env(root: Path) -> list[str]:
-    """`docker run -e` args pointing each tool at its shared store, creating the
-    host dirs (world-writable — the backend may run as a different uid than the
-    container user that fills them).
-
-    Split out of `sandbox_project_mounts` so the one place that decides where a
-    sandbox puts its interpreter can be read by a test without standing up a
-    repo — see tests/unit/test_sandbox_stores.py.
-    """
-    env_args: list[str] = []
-    for dirname, env_var in _SANDBOX_STORES:
-        store = root / dirname
-        store.mkdir(parents=True, exist_ok=True)
-        try:  # the sandbox's non-root `node` user fills the store
-            os.chmod(store, 0o777)
-        except OSError:
-            pass
-        env_args += ["-e", f"{env_var}={SANDBOX_TOPICS_ROOT}/{dirname}"]
-    return env_args
-
-
-def sandbox_project_mounts(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
-    """`docker run` args mounting the project's `.worktrees` tree (topics +
-    shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the git store
-    mount anchored to the topic's in-container workdir, plus the store env.
-
-    Ensures the store dirs exist host-side, writable by the sandbox's non-root
-    `node` user (the backend may run as a different uid; the stores are filled
-    from inside containers).
-
-    Isolation note: every topic sandbox of a project sees (and can write) its
-    sibling topics' worktrees. That is not a new trust boundary — the same
-    containers already share the project's writable `.git` store, so
-    same-project topics were never isolated from each other; cross-project
-    isolation is unchanged."""
-    root = _worktree_path(project_id, topic_id).parent
-    root.mkdir(parents=True, exist_ok=True)
-    env_args = sandbox_store_env(root)
-    workdir = sandbox_topic_workdir(topic_id)
-    return [
-        "-v",
-        f"{root}:{SANDBOX_TOPICS_ROOT}",
-        *env_args,
-        *sandbox_vcs_mounts(project_id, topic_id, container_workdir=workdir),
-    ]
 
 
 def audit_workspace_ownership() -> list[str]:
@@ -796,6 +639,9 @@ def list_files(project_id: uuid.UUID, topic_id: uuid.UUID | None = None) -> list
     for root, dirnames, filenames in os.walk(tree):
         dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
         for name in sorted(filenames):
+            # Linked worktrees use a .git file, which is still VCS metadata.
+            if name == ".git":
+                continue
             p = Path(root) / name
             rel = p.relative_to(tree)
             # lstat, not stat: a symlink pointing at something that no longer
@@ -838,6 +684,10 @@ def read_text_file(
     """
     tree = _tree(project_id, topic_id)
     target = _safe_path(tree, path)
+    return _read_text_path(target, path)
+
+
+def _read_text_path(target: Path, path: str) -> dict:
     if not target.is_file():
         raise ValidationError("file not found")
     size = target.stat().st_size
@@ -916,6 +766,247 @@ def read_file_bytes(
         raise WorkspacePermissionError(_uid_split_hint(f"读 {path}: {exc}")) from exc
 
 
+def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
+    """Room attachments and published previews have no code branch."""
+    root = (
+        Path(settings.workspace_root) / ".room-files" / str(project_id) / str(room_id)
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def write_room_file(
+    project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: bytes
+) -> None:
+    if path.split("/")[0] == LIBRARY_PREFIX:
+        # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
+        # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。
+        raise ValidationError(f"{LIBRARY_PREFIX}/ 留给资料库，房间文件不能写在这里")
+    target = _safe_path(room_files_root(project_id, room_id), path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
+def read_room_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
+    target = _safe_path(room_files_root(project_id, room_id), path)
+    if not target.is_file():
+        raise ValidationError("file not found")
+    return target.read_bytes()
+
+
+def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
+    return _read_text_path(_safe_path(room_files_root(project_id, room_id), path), path)
+
+
+# ---- 资料库 -----------------------------------------------------------------
+# 用户给这个项目的文件。项目级、按原名寻址、只读：「上周那份预算表」这句话里，名字
+# 就是它的身份，所以这里不放随机串。不在任何 git 树里——这些字节是输入，不是成品的
+# 源，而被托管的仓库不该因为我们多出一个目录。
+#
+# 一份资料在消息里、在设备的工作目录里、在字节端点的 query 上都是同一个地址
+# `library/<名字>`——**不拷贝**。带着房间走的那种地址（`uploads/<随机串>/<名字>`）
+# 只属于贴进来的那一份：它没有名字，也就没有第二个房间会引用它。
+
+LIBRARY_PREFIX = "library"
+
+
+def library_ref(name: str) -> str:
+    """资料库里那一份在消息和工作目录里的地址。"""
+    return f"{LIBRARY_PREFIX}/{name}"
+
+
+def library_name(path: str) -> str | None:
+    """这个地址指的是资料库里哪一份,不是的话给 None。"""
+    prefix = f"{LIBRARY_PREFIX}/"
+    return path[len(prefix) :] if path.startswith(prefix) else None
+
+
+def read_attachment(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
+    """一个附件的字节:资料库里那一份,或者只属于这个房间的那一份。"""
+    name = library_name(path)
+    if name is not None:
+        return read_library_file(project_id, name)
+    return read_room_file(project_id, room_id, path)
+
+
+def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
+    """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
+    name = library_name(path)
+    if name is not None:
+        target = _safe_path(library_root(project_id), name)
+        if not target.is_file():
+            # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
+            # 地址没错，是东西不在了。
+            raise ValidationError("这份资料已经不在资料库里")
+        return _read_text_path(target, path)
+    return read_room_text_file(project_id, room_id, path)
+
+
+def library_root(project_id: uuid.UUID) -> Path:
+    root = Path(settings.workspace_root) / ".library" / str(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def _next_name(name: str, attempt: int) -> str:
+    if attempt == 1:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        return f"{name}({attempt})"
+    return f"{stem}({attempt}).{ext}"
+
+
+def write_library_file(project_id: uuid.UUID, name: str, data: bytes) -> str:
+    """Keep the name the user gave it; a taken name takes the next `(n)`.
+
+    Allocating the name IS the write (`open(..., "xb")`): two uploads of the
+    same name in flight is the case this exists for, and check-then-write loses
+    one of them. Returns the name it ended up with."""
+    root = library_root(project_id)
+    for attempt in range(1, 1000):
+        candidate = _next_name(name, attempt)
+        target = _safe_path(root, candidate)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with target.open("xb") as sink:
+                sink.write(data)
+        except FileExistsError:
+            continue
+        return candidate
+    raise ValidationError(f"同名文件太多：{name}")
+
+
+def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
+    target = _safe_path(library_root(project_id), path)
+    if not target.is_file():
+        raise NotFoundError("资料库里没有这份文件")
+    return target.read_bytes()
+
+
+def delete_library_file(project_id: uuid.UUID, name: str) -> None:
+    """扔掉一份资料。
+
+    旧消息里引用它的那枚 chip 随之打不开了，这是对的：那条引用指的就是这一份，而
+    这一份没有了——在它的位置上摆一份别的东西，才是把读者读到的内容换掉。"""
+    target = _safe_path(library_root(project_id), name)
+    if not target.is_file():
+        raise NotFoundError("资料库里没有这份文件")
+    target.unlink()
+
+
+def list_library_files(project_id: uuid.UUID) -> list[dict]:
+    """Newest first: the file someone just gave the project is the one they are
+    about to reference."""
+    root = library_root(project_id)
+    files = []
+    for entry in root.rglob("*"):
+        if not entry.is_file():
+            continue
+        stat = entry.stat()
+        files.append(
+            {
+                "path": str(entry.relative_to(root)),
+                "bytes": stat.st_size,
+                "modified": stat.st_mtime,
+            }
+        )
+    files.sort(key=lambda f: f["modified"], reverse=True)
+    return files
+
+
+def read_preview_file(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
+) -> bytes:
+    """Read web assets only inside the explicitly selected artifact's directory."""
+    parts = relative.split("/")
+    if not relative or any(
+        not part or part.startswith(".") or "\\" in part or "\x00" in part
+        for part in parts
+    ):
+        raise ValidationError("preview path unavailable")
+    tree = room_files_root(project_id, topic_id)
+    directory = _safe_path(tree, str(PurePosixPath(entry).parent))
+    target = _safe_path(directory, relative)
+    return read_room_file(project_id, topic_id, str(target.relative_to(tree)))
+
+
+def preview_file_version(
+    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str
+) -> str | None:
+    """Track HTML edits without loading a large artifact into the editor API."""
+    target = _safe_path(room_files_root(project_id, topic_id), entry)
+    try:
+        with target.open("rb") as source:
+            return hashlib.file_digest(source, "sha256").hexdigest()[:16]
+    except OSError:
+        # The metadata still names a missing/unreadable artifact; the file API
+        # supplies its existing detailed error state to the preview panel.
+        return None
+
+
+def accepted_revision(project_id: uuid.UUID) -> str:
+    """Pin the project's accepted branch, without reading its mutable checkout."""
+    repo = ensure_repo(project_id)
+    return _git(repo, "rev-parse", f"{_base_branch(repo)}^{{commit}}").strip()
+
+
+def committed_files(project_id: uuid.UUID, revision: str) -> list[dict]:
+    """List the exact tree, including build directories hidden by the file panel."""
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", revision):
+        raise ValidationError("invalid commit revision")
+    out = _git(ensure_repo(project_id), "ls-tree", "-r", "-z", "-l", revision)
+    files = []
+    for entry in out.split("\0"):
+        if not entry:
+            continue
+        meta, path = entry.split("\t", 1)
+        mode, kind, oid, size = meta.split()
+        files.append(
+            {
+                "path": path,
+                "mode": mode,
+                "kind": kind,
+                "oid": oid,
+                "bytes": int(size) if size != "-" else 0,
+            }
+        )
+    return files
+
+
+def read_committed_blobs(
+    project_id: uuid.UUID, object_ids: list[str]
+) -> dict[str, bytes]:
+    """Read known blob ids in one binary-safe git call; callers bound tree sizes."""
+    ids = list(dict.fromkeys(object_ids))
+    if not ids:
+        return {}
+    if any(not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", oid) for oid in ids):
+        raise ValidationError("invalid git object")
+    result = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=ensure_repo(project_id),
+        input=("\n".join(ids) + "\n").encode(),
+        capture_output=True,
+        timeout=60,
+    )
+    if result.returncode:
+        raise ValidationError("无法读取已采纳版本的文件")
+    data = result.stdout
+    offset = 0
+    blobs = {}
+    for oid in ids:
+        end = data.index(b"\n", offset)
+        header = data[offset:end].decode("ascii").split()
+        if len(header) != 3 or header[0] != oid or header[1] != "blob":
+            raise ValidationError("发布文件不是普通 Git 文件")
+        size = int(header[2])
+        offset = end + 1
+        blobs[oid] = data[offset : offset + size]
+        offset += size + 1
+    return blobs
+
+
 def write_file_bytes(
     project_id: uuid.UUID, path: str, data: bytes, topic_id: uuid.UUID | None = None
 ) -> None:
@@ -949,10 +1040,10 @@ def git_log(
     if not _git(repo, "rev-list", "-n", "1", "--all").strip():
         return []
     if topic_id is not None:
-        branch = branch_for_tree(tree_for_place(topic_id))
+        branch = branch_for_task(topic_id)
         if not _branch_exists(repo, branch):
             return []
-        base = _base_branch(repo)
+        base = _task_workspace(topic_id)["base"]
         if branch == base:
             return []
         out = _git(
@@ -970,6 +1061,23 @@ def git_log(
         if len(parts) == 3:
             rows.append({"hash": parts[0], "author": parts[1], "message": parts[2]})
     return rows
+
+
+def accepted_commit_revision(project_id: uuid.UUID, ref: str) -> str:
+    """Resolve a public history selection without exposing unaccepted room work."""
+    if ref.startswith("-"):
+        raise ValidationError("invalid ref")
+    repo = ensure_repo(project_id)
+    try:
+        revision = _git(
+            repo, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"
+        ).strip()
+        _git(
+            repo, "merge-base", "--is-ancestor", revision, accepted_revision(project_id)
+        )
+    except ValidationError as exc:
+        raise NotFoundError("Commit not found in accepted project history") from exc
+    return revision
 
 
 def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:
@@ -1002,10 +1110,10 @@ def _diff_base(repo: Path) -> str:
 def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     """Full diff of a topic's branch vs what it grew out of (`_diff_base`)."""
     repo = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
+    branch = branch_for_task(topic_id)
     if not _branch_exists(repo, branch):
         return ""
-    return _git(repo, "diff", f"{_diff_base(repo)}...{branch}")
+    return _git(repo, "diff", f"{_task_workspace(topic_id)['base']}...{branch}")
 
 
 def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
@@ -1022,10 +1130,12 @@ def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]
     topic that has never written anything changes nothing.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
+    branch = branch_for_task(topic_id)
     if not _branch_exists(repo, branch):
         return []
-    out = _git(repo, "diff", "--name-only", f"{_diff_base(repo)}...{branch}")
+    out = _git(
+        repo, "diff", "--name-only", f"{_task_workspace(topic_id)['base']}...{branch}"
+    )
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
@@ -1042,10 +1152,10 @@ def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     has not written anything cannot collide with anything.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
+    branch = branch_for_task(topic_id)
     if not _branch_exists(repo, branch):
         return []
-    base = _base_branch(repo)
+    base = _task_workspace(topic_id)["base"]
     out = _git(repo, "diff", "--name-only", "--diff-filter=A", f"{base}...{branch}")
     return [line.strip() for line in out.splitlines() if line.strip()]
 
@@ -1108,6 +1218,70 @@ def _discard_worktree(repo: Path, wt: Path) -> None:
         _git(repo, "worktree", "prune")
     except ValidationError:
         pass
+
+
+def remove_worktree(project_id: uuid.UUID, wt: Path) -> bool:
+    """Take a topic tree's worktree off this box for good. True when nothing
+    of it is left on disk afterwards (including when there was nothing to begin
+    with). `wt` is a `task_worktree_path` or an entry `topic_worktrees_on_disk`
+    returned — never the merge staging tree, which `_discard_worktree` owns.
+
+    The branch is untouched: its commits are the record of the work, and the
+    tree's directory is only ever a checkout of them plus whatever was never
+    committed — which, for a place being archived, is abandoned by definition.
+
+    Same teardown as `_discard_worktree`, with one difference it has to have:
+    the project's main repo may itself be gone (a deleted project leaves its
+    `.worktrees/<project>` behind), and then there is nothing to ask git to
+    unregister from — the directory just goes.
+    """
+    if not wt.exists():
+        return True
+    repo = _repo(project_id)
+    if (repo / ".git").exists():
+        # A generous timeout: this deletes a whole checkout, and a run that is
+        # cut short falls through to rmtree below rather than being lost.
+        with contextlib.suppress(ValidationError):
+            _git(repo, "worktree", "remove", "--force", str(wt), timeout=300)
+    if wt.exists():
+        shutil.rmtree(wt, ignore_errors=True)
+    if (repo / ".git").exists():
+        with contextlib.suppress(ValidationError):
+            _git(repo, "worktree", "prune")
+    return not wt.exists()
+
+
+# A topic tree's directory, and nothing else that lives beside one: the merge
+# staging root (`_merge`), the adoption staging dirs (`.adopting-*`) and the
+# shared stores (`.pnpm-store`, ...) all fail this on purpose.
+_TOPIC_TREE_DIR = re.compile(r"^(?:topic|task)_([0-9a-f]{8})$")
+
+
+def topic_worktrees_on_disk() -> list[tuple[uuid.UUID, str, Path]]:
+    """Every topic tree directory under the workspace, as
+    ``(project_id, tree id hex prefix, path)`` — the disk's own account of what
+    is there, for the sweep that reconciles it against the database.
+
+    Only the eight hex digits are on disk (`_tree_dirname`), never the whole
+    id; resolving them is the caller's job. A `.worktrees/<project>` entry that
+    is not a uuid is not one of ours and is passed over."""
+    root = Path(settings.workspace_root) / ".worktrees"
+    found: list[tuple[uuid.UUID, str, Path]] = []
+    if not root.is_dir():
+        return found
+    for project_dir in sorted(root.iterdir()):
+        try:
+            project_id = uuid.UUID(project_dir.name)
+        except ValueError:
+            continue
+        if not project_dir.is_dir():
+            continue
+        for entry in sorted(project_dir.iterdir()):
+            match = _TOPIC_TREE_DIR.match(entry.name)
+            if match is None or not entry.is_dir():
+                continue
+            found.append((project_id, match.group(1), entry))
+    return found
 
 
 @contextlib.contextmanager
@@ -1285,6 +1459,20 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
 _MERGE_RETRY_LIMIT = 5
 
 
+def _staged_is_empty(wt: Path) -> bool:
+    """Whether a `merge --squash` staged nothing (already merged, or the branch
+    is content-identical to the base)."""
+    return (
+        subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=wt,
+            capture_output=True,
+            timeout=20,
+        ).returncode
+        == 0
+    )
+
+
 def _merge_ref_into_base(
     project_id: uuid.UUID,
     repo: Path,
@@ -1294,6 +1482,8 @@ def _merge_ref_into_base(
     *,
     allow_unrelated_histories: bool = False,
     sync_checkout: bool = True,
+    squash: bool = False,
+    author: identity_mod.GitIdentity | None = None,
 ) -> dict:
     """Merge `merge_ref` into `base` without ever running the merge itself in
     the project's shared working directory. The merge happens in a throwaway
@@ -1303,6 +1493,13 @@ def _merge_ref_into_base(
     (`update-ref old new`) — if another accept landed on `base` in the
     meantime, this retries against the new tip rather than clobbering it or
     silently merging on top of a stale base.
+
+    `squash=True` lands the whole ref as ONE commit on `base` (#363): the
+    author knob names the acting agent (falling back to 芝士),
+    the committer stays 芝士, same two-knob split as every commit the
+    platform makes (`workspace.identity`). A ref that adds nothing —
+    already merged, or content-identical — lands no commit at all and still
+    reports merged, matching what the merge form did for an ancestor.
 
     `sync_checkout=False` for a `base` that is NOT the project's base branch.
     The shared directory mirrors the base tip and nothing else; pointing it at a
@@ -1321,16 +1518,18 @@ def _merge_ref_into_base(
         with _isolated_worktree(project_id, repo, old_sha) as wt:
             args = [
                 "-c",
-                "user.name=芝士",
+                f"user.name={identity_mod.CHEESE_NAME}",
                 "-c",
-                "user.email=cheese@zhishi.local",
+                f"user.email={identity_mod.CHEESE_EMAIL}",
                 "merge",
-                "--no-ff",
-                "-q",
             ]
+            args += ["--squash"] if squash else ["--no-ff"]
+            args.append("-q")
             if allow_unrelated_histories:
                 args.append("--allow-unrelated-histories")
-            args += ["-m", message, merge_ref]
+            if not squash:  # --squash refuses -m: there is no commit yet
+                args += ["-m", message]
+            args.append(merge_ref)
             try:
                 _git(wt, *args)
             except ValidationError as exc:
@@ -1343,14 +1542,41 @@ def _merge_ref_into_base(
                 except ValidationError:
                     conflicts = []
                 try:
-                    _git(wt, "merge", "--abort")
+                    # A conflicted --squash leaves no MERGE_HEAD to abort, so
+                    # reset instead; the worktree is discarded either way, this
+                    # only keeps the conflict listing above honest next attempt.
+                    if squash:
+                        _git(wt, "reset", "-q", "--hard")
+                    else:
+                        _git(wt, "merge", "--abort")
                 except ValidationError:
                     pass
                 reason = (
                     "合并冲突：" + "、".join(conflicts[:20]) if conflicts else str(exc)
                 )
                 return {"merged": False, "reason": reason, "conflicts": conflicts}
-            new_sha = _git(wt, "rev-parse", "HEAD").strip()
+            if squash and _staged_is_empty(wt):
+                # Nothing to deliver (branch already merged / content-identical):
+                # minting an empty commit would put a delivery in history that
+                # delivered nothing.
+                new_sha = old_sha
+            elif squash:
+                _git(
+                    wt,
+                    "-c",
+                    f"user.name={identity_mod.CHEESE_NAME}",
+                    "-c",
+                    f"user.email={identity_mod.CHEESE_EMAIL}",
+                    "commit",
+                    "-q",
+                    "--author",
+                    str(author or identity_mod.CHEESE_IDENTITY),
+                    "-m",
+                    message,
+                )
+                new_sha = _git(wt, "rev-parse", "HEAD").strip()
+            else:
+                new_sha = _git(wt, "rev-parse", "HEAD").strip()
         try:
             _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
         except ValidationError:
@@ -1388,29 +1614,107 @@ def _merge_ref_into_base(
     }
 
 
-def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
+def merge_topic(
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    message: str,
+    author: identity_mod.GitIdentity | None = None,
+) -> dict:
+    """采纳 = merge (spec §6.3): SQUASH the topic's branch into the base branch,
+    one commit per accepted delivery — the platform forge's merge has the same
+    shape as the GitHub lane's (#363), instead of `--no-ff` dragging every
+    branch commit (including 芝士's auto-snapshots) into main.
+
+    The caller writes the commit: `message` is the whole squash message
+    (subject + body + trailers — `pr_text.local_merge_commit_message`), and
+    `author` names the acting agent. The author and message belong to the accept card,
+    which this module cannot reach (no DB session here) — that is why they are
+    parameters and not lookups. Committer stays 芝士 regardless.
 
     Whatever is on the branch is what gets merged, and nothing is added to it on
     the way in. Work that was never committed was never delivered — the person
     who wrote it decides when it becomes a commit, and until they do it is not
     in the diff anyone reviewed either.
 
+    The ONE branch that still merges with `--no-ff`: a topic that completes an
+    upstream sync (`prepare_upstream_conflict_resolution`), recognizable as the
+    upstream tip being an ancestor of the branch but not of the base. Its whole
+    point is joining the upstream history — squashing it lands the resolved
+    CONTENT while leaving upstream's commits unreachable from base, so the next
+    `sync_upstream` still counts itself behind, re-merges, and hits the very
+    conflict the topic just resolved, forever.
+
     On conflict it aborts and reports, never half-merges."""
     repo = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
+    branch = branch_for_task(topic_id)
     if not _branch_exists(repo, branch):
         return {"merged": False, "noop": True, "reason": "no topic branch"}
-    base = _base_branch(repo)
+    base = _task_workspace(topic_id)["base"]
     if branch == base:
         return {
             "merged": False,
             "noop": True,
             "reason": "topic is the base branch",
         }
-    return _merge_ref_into_base(
-        project_id, repo, base, branch, f"chore: merge {branch} into {base}"
+    tip = _known_upstream_tip(repo)
+    joins_upstream = (
+        tip is not None
+        and _is_ancestor(repo, tip, branch)
+        and not _is_ancestor(repo, tip, base)
     )
+    # Freeze the delivered revision: a concurrent push must not change which
+    # commit is merged or recorded as this task's delivery boundary.
+    delivered_head = _git(repo, "rev-parse", branch).strip()
+    result = _merge_ref_into_base(
+        project_id,
+        repo,
+        base,
+        delivered_head,
+        message,
+        squash=not joins_upstream,
+        author=author,
+        sync_checkout=base == _base_branch(repo),
+    )
+    result["branch"] = branch
+    if result.get("merged"):
+        result["delivered_head"] = delivered_head
+    return result
+
+
+def _known_upstream_branch(repo: Path) -> str | None:
+    """上游默认分支的**名字**，按上次 fetch 留下的远端跟踪分支读：`main`，没有
+    就 `master`。从没 fetch 过（或根本没有上游）时是 None。
+
+    这是 `_upstream_ref` 与 `synced_upstream_branch` 共同的那一问，分别以「同步
+    从哪条拉」和「采纳推回哪条」的身份被问到——必须是同一条。"""
+    for name in (DEFAULT_BRANCH, "master"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "-q", f"{UPSTREAM_REMOTE}/{name}"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return name
+    return None
+
+
+def _known_upstream_tip(repo: Path) -> str | None:
+    """The last-fetched upstream tip's sha, or None when the project has no
+    upstream (or it was never fetched). Non-raising counterpart of
+    `_upstream_ref`, for callers that only need to know whether a branch
+    carries the upstream history."""
+    name = _known_upstream_branch(repo)
+    if name is None:
+        return None
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"{UPSTREAM_REMOTE}/{name}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return probe.stdout.strip() if probe.returncode == 0 else None
 
 
 def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
@@ -1473,17 +1777,24 @@ def set_upstream(project_id: uuid.UUID, url: str) -> str | None:
 
 def _upstream_ref(repo: Path) -> str:
     """The upstream branch to sync from: main, falling back to master."""
-    for name in (DEFAULT_BRANCH, "master"):
-        ref = f"{UPSTREAM_REMOTE}/{name}"
-        probe = subprocess.run(
-            ["git", "rev-parse", "--verify", "-q", ref],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-        )
-        if probe.returncode == 0:
-            return ref
-    raise ValidationError("上游仓库没有 main/master 分支")
+    name = _known_upstream_branch(repo)
+    if name is None:
+        raise ValidationError("上游仓库没有 main/master 分支")
+    return f"{UPSTREAM_REMOTE}/{name}"
+
+
+def synced_upstream_branch(project_id: uuid.UUID) -> str | None:
+    """项目**自己的远端**上，被平台基线分支镜像的那条分支叫什么。
+
+    同步从哪条拉，采纳就推回哪条。平台侧的基线恒为 `main`（`ensure_repo` 用
+    `git init -b main` 建仓），而上游的默认分支可以是 `master`——同步做的正是把
+    `upstream/master` 拉进本地的 `main`。两侧按同名推，老师那个 `master` 仓库就会
+    凭空多出一条谁也不看的 `main`，他的 `master` 一个 commit 都收不到，而且没有
+    任何一句话告诉他：本来要消灭的那次沉默，换了个分支名活下来。
+
+    从没 fetch 过时是 None——一个刚填上地址、还没同步过的空仓库上没有哪条分支可
+    以对上，这时候推本地这条名字是唯一能做的事，也正是对的事。"""
+    return _known_upstream_branch(ensure_repo(project_id))
 
 
 def _base_adds_nothing(repo: Path, ref: str, base: str) -> bool:
@@ -1542,9 +1853,15 @@ def _fast_forward_base(project_id: uuid.UUID, repo: Path, base: str, ref: str) -
     }
 
 
-def sync_upstream(project_id: uuid.UUID) -> dict:
+def sync_upstream(project_id: uuid.UUID, *, token: str | None = None) -> dict:
     """同步上游: bring the project's base branch up to the upstream's default
     branch.
+
+    `token` is the platform App's installation token when the project is bound
+    to GitHub, and the fetch authenticates with that and nothing else. An
+    unbound project fetches with no credential at all: a private upstream it
+    is not bound to fails here, visibly, rather than being read on a key the
+    platform cannot account for.
 
     **For a bound project the base branch is a MIRROR of the upstream's default
     branch, not a branch of its own.** That is the whole design, and getting it
@@ -1566,7 +1883,13 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
     if get_upstream(project_id) is None:
         return {"synced": False, "reason": "未关联上游仓库"}
     try:
-        _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+        _git(
+            repo,
+            "fetch",
+            UPSTREAM_REMOTE,
+            timeout=120,
+            env=_token_git_env(token) if token else None,
+        )
         ref = _upstream_ref(repo)
     except ValidationError as exc:
         return {"synced": False, "reason": str(exc)}
@@ -1607,16 +1930,21 @@ def prepare_conflict_resolution(
     `git add` + `git commit` 就是那次合并提交，落在话题分支上，重试采纳即可干净
     合并。"""
     repo = ensure_repo(project_id)
-    base = _base_branch(repo)
+    base = _task_workspace(topic_id)["base"]
     return _materialize_conflicts(project_id, topic_id, _git(repo, "rev-parse", base))
 
 
 def prepare_upstream_conflict_resolution(
-    project_id: uuid.UUID, topic_id: uuid.UUID
+    project_id: uuid.UUID, topic_id: uuid.UUID, *, token: str | None = None
 ) -> list[str]:
     """同步上游冲突 → 派芝士解决的前置。Same contract as
     `prepare_conflict_resolution`, but the side being merged in is the UPSTREAM
     branch rather than the project's base.
+
+    `token` is the same credential `sync_upstream` fetches with: the App's
+    installation token for a bound project, nothing for an unbound one. The
+    conflict this materializes was found by a fetch that used it, and the
+    re-fetch here reads the same private upstream.
 
     Why this exists at all: `sync_upstream` aborts cleanly on conflict and
     reports — which is the right thing for the shared repo, but on its own it is
@@ -1625,12 +1953,19 @@ def prepare_upstream_conflict_resolution(
     had diverged simply could not pull, and every later sync hit the same wall.
 
     Accepting the resulting topic finishes the sync: the merge commit 芝士 makes
-    carries upstream as a parent, so `merge_topic` folding it into base brings
-    the upstream history along with the resolution."""
+    carries upstream as a parent, and `merge_topic` recognizes such a branch and
+    folds it in with a real merge (its one non-squash case), so base gains the
+    upstream history along with the resolution."""
     repo = ensure_repo(project_id)
     # A commit id rather than a ref name: `upstream/main` means nothing inside
     # the worktree until it fetches, and a raw sha needs no name at all.
-    _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
+    _git(
+        repo,
+        "fetch",
+        UPSTREAM_REMOTE,
+        timeout=120,
+        env=_token_git_env(token) if token else None,
+    )
     return _materialize_conflicts(
         project_id, topic_id, _git(repo, "rev-parse", _upstream_ref(repo))
     )
@@ -1693,11 +2028,23 @@ def _materialize_conflicts(
     return files
 
 
-def upstream_default_branch(repo: Path) -> str | None:
+def upstream_default_branch(repo: Path, *, token: str | None = None) -> str | None:
     """The upstream's own default branch (what its HEAD points at), so a push
-    lands where that repo actually keeps its trunk instead of a guessed name."""
+    lands where that repo actually keeps its trunk instead of a guessed name.
+
+    `token` is the App's installation token for a bound project: a private
+    upstream answers `ls-remote` to nothing else, and without it the caller
+    falls back to guessing `main`."""
     try:
-        out = _git(repo, "ls-remote", "--symref", UPSTREAM_REMOTE, "HEAD", timeout=60)
+        out = _git(
+            repo,
+            "ls-remote",
+            "--symref",
+            UPSTREAM_REMOTE,
+            "HEAD",
+            timeout=60,
+            env=_token_git_env(token) if token else None,
+        )
     except ValidationError:
         return None
     for line in out.splitlines():
@@ -1707,109 +2054,17 @@ def upstream_default_branch(repo: Path) -> str | None:
     return None
 
 
-def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
-    """采纳即上线: propagate an accepted merge to the upstream repo.
-
-    采纳 IS the merge — the topic branch is already merged into the project's
-    base by the time we get here — so the upstream should receive THAT merge,
-    fast-forward, not a side branch waiting for someone to decide again. Landing
-    it must never need cheese-specific setup in the target repo (the whole point
-    of "import a repo and it just works").
-
-    Order:
-      1. fast-forward the upstream's own default branch (never forced — a
-         rejected push means the upstream moved or protects the branch, which is
-         information, not something to overwrite);
-      2. if that is refused, fall back to pushing ``dogfood/<topic>`` so the work
-         is never stuck on our side, and say so — the caller surfaces it instead
-         of leaving the user to wonder why nothing shipped.
-
-    Auth comes from the HOST's git credentials, never from the DB. A local-path
-    upstream additionally runs its ``scripts/on-dogfood-push.sh`` DETACHED
-    (operator-trusted only for local paths)."""
-    repo = ensure_repo(project_id)
-    url = get_upstream(project_id)
-    if not url:
-        return {"pushed": False, "mode": "none", "reason": "无上游，跳过回推"}
-    base = _base_branch(repo)
-    branch = f"dogfood/{topic_id.hex[:8]}"
-    target = upstream_default_branch(repo) or base
-    if not url.startswith("/"):
-        # Take the upstream's new commits FIRST. A fast-forward push is refused
-        # whenever the upstream moved since the project was imported — i.e. on any
-        # repo with other contributors — and every accept would silently degrade
-        # to a side branch (observed live: "remote contains work that you do not
-        # have locally"). Syncing here makes landing the normal outcome and keeps
-        # the merge semantics identical to 同步上游 (conflicts abort cleanly).
-        synced = sync_upstream(project_id)
-        if not synced.get("synced"):
-            return {
-                "pushed": False,
-                "mode": "blocked",
-                "target": target,
-                "reason": f"上游同步失败，未回推：{synced.get('reason', '')}",
-            }
-        # 120s: the first remote push negotiates history (the remote already has
-        # upstream's objects, so the delta stays small — but be safe).
-        try:
-            _git(repo, "push", UPSTREAM_REMOTE, f"{base}:{target}", timeout=120)
-            return {"pushed": True, "mode": "upstream", "target": target}
-        except ValidationError as exc:
-            reason = str(exc)[-400:]
-            _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
-            return {
-                "pushed": True,
-                "mode": "branch",
-                "branch": branch,
-                "target": target,
-                "reason": reason,
-            }
-    # Local-path upstream: keep the branch + hook flow (the hook merges/deploys).
-    # -f: re-accepting (after revoke / a follow-up round) moves the same branch.
-    _git(repo, "push", "-f", UPSTREAM_REMOTE, f"{base}:{branch}", timeout=120)
-    hook = Path(url) / "scripts" / "on-dogfood-push.sh"
-    hook_started = False
-    if hook.is_file() and os.access(hook, os.X_OK):
-        log = Path(url) / "tmp_dogfood_push.log"
-        # The log is shared across every push-back run for this project (and a
-        # re-accept can reuse the same branch name), so grepping it for our
-        # branch would risk picking up a stale prior run. Recording the byte
-        # offset before we start pins the watcher to exactly this run's output.
-        log_offset = log.stat().st_size if log.exists() else 0
-        with open(log, "a") as out:
-            proc = subprocess.Popen(  # noqa: S603 — operator-trusted local repo hook
-                [str(hook), branch],
-                cwd=url,
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,  # survives our own redeploy
-            )
-        hook_started = True
-        # Report the eventual result back into the topic timeline without
-        # making this call wait for it (accept() must return immediately).
-        # `spawn` holds a strong reference (asyncio keeps only a weak one) and
-        # is a no-op with no running loop, e.g. sync tests/scripts. This watcher
-        # outlives a whole subprocess, so it is precisely the shape that can be
-        # collected mid-await, taking the topic's push result with it.
-        spawn(
-            watch_dogfood_push(topic_id, proc, log, log_offset, branch),
-            name=f"dogfood push watch topic={topic_id}",
-        )
-    return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
-
-
-def _token_push_env(token: str) -> dict[str, str]:
-    """Subprocess env that authenticates one git push with a GitHub token.
+def _token_git_env(token: str) -> dict[str, str]:
+    """Subprocess env that authenticates one git push or fetch with a GitHub
+    token.
 
     The token travels via env var into an inline credential helper — never argv
-    (visible in ps), never disk. The helper list is reset first: the container
-    wires a store-file helper through GIT_CONFIG_* (compose), and letting it run
-    first would push with the host credential instead of the token's identity.
+    (visible in ps), never disk. The helper list is reset first so that nothing
+    configured elsewhere (a helper in the backend's persistent HOME, say) can
+    answer before this one and act as some other identity.
     """
     helper = (
-        "!f() { echo username=x-access-token; "
-        'echo "password=$CHEESE_GIT_PUSH_TOKEN"; }; f'
+        '!f() { echo username=x-access-token; echo "password=$CHEESE_GIT_TOKEN"; }; f'
     )
     return {
         **os.environ,
@@ -1818,32 +2073,157 @@ def _token_push_env(token: str) -> dict[str, str]:
         "GIT_CONFIG_VALUE_0": "",
         "GIT_CONFIG_KEY_1": "credential.helper",
         "GIT_CONFIG_VALUE_1": helper,
-        "CHEESE_GIT_PUSH_TOKEN": token,
+        "CHEESE_GIT_TOKEN": token,
     }
 
 
 def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) -> str:
-    """Push the topic's branch to the upstream (PR-based accept, #188 §5.1).
+    """Push this task's branch, refusing to overwrite divergent remote work."""
+    return push_branch(project_id, branch_for_task(topic_id), token)
 
-    The branch as it stands is what the PR carries. --force-with-lease: a
-    re-push after a conflict fix must move the remote branch, but never trample
-    one somebody else moved."""
+
+def push_branch(
+    project_id: uuid.UUID,
+    branch: str,
+    token: str | None,
+    *,
+    remote_branch: str | None = None,
+) -> str:
+    """:func:`push_topic_branch`, named by BRANCH instead of by place.
+
+    The draft-PR sweep reads the branch from its owning task. A normal push
+    refuses divergence so another executor's remote commits remain intact.
+
+    ``token`` is the GitHub App's installation token, and ``None`` is an
+    ordinary case rather than a missing argument: an ssh / git@ remote — a
+    campus GitLab, a self-hosted box — authenticates with the backend's own
+    key, and handing git an inline token helper for it would only shadow that.
+
+    ``remote_branch`` 是远端那一侧的分支名，默认与本地同名。同名对话题分支是对的
+    （推上去开提案页的就是这条分支本身），对基线分支不是：平台的基线恒为 `main`，
+    而上游的默认分支可以是 `master`，所以推基线的调用方要自己说清推到哪条
+    （`synced_upstream_branch`）。
+    """
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
-    branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
     _git(
         repo,
         "push",
-        "--force-with-lease",
         UPSTREAM_REMOTE,
-        f"{branch}:{branch}",
+        f"{branch}:refs/heads/{remote_branch or branch}",
         timeout=120,
-        env=_token_push_env(token),
+        env=_token_git_env(token) if token else None,
     )
     return branch
+
+
+#: `can_push_upstream` 推给远端看的那个 ref 名。`--dry-run` 不发送任何更新，所以
+#: 远端上不会真的多出它；起个带前缀的名字只是为了万一谁在日志里看见能认出来。
+_WRITE_PROBE_REF = "refs/heads/cheese-write-probe"
+
+#: 探测要连一次网络，而它坐在卡片渲染这条读路径上，所以比 `push_branch` 的 120s
+#: 短得多：连不上就是写不动，等两分钟不会让答案更准。
+_WRITE_PROBE_TIMEOUT_S = 15
+
+
+#: 探测结果的进程级缓存：`(项目, 上游地址) -> (读到的时刻, 写得动吗)`。键里带地址，
+#: 所以换了上游地址就是另一个键，上一个地址的答案自动作废。
+_write_probe_cache: dict[tuple[uuid.UUID, str], tuple[float, bool]] = {}
+
+#: 一个答案活多久。它只在两件事发生时会变：换了上游地址（那是换了键），或者对方
+#: 服务器那边的授权被人改了——后者分钟级的滞后没有代价，而每次请求都重问一遍的
+#: 代价是实打实的，见 `can_push_upstream` 的 docstring。
+_WRITE_PROBE_TTL_S = 600.0
+
+
+def can_push_upstream(project_id: uuid.UUID) -> bool:
+    """写得动这个项目的上游吗 —— 问远端，不看地址长什么样。
+
+    「地址以 `git@` 开头所以我们有 key」是一次猜测，两个方向猜错都有人受伤：猜成
+    写得动，卡在人点采纳**之前**就写着「采纳即合并并推回该远端」，而每一次采纳都
+    以推送失败收场；猜成写不动，填了校内 GitLab 地址的老师一个 commit 都收不到。
+    `https://` 的地址两边都可能 —— 配过凭据助手就写得动，没配就写不动 —— 地址本身
+    分不出来，本机绝对路径更是根本不需要凭据。
+
+    所以跑一次真的：`git push --dry-run` 到一个我们自己命名的 ref。push 必须连上
+    远端的 receive-pack 并通过授权（https 没凭据是 401，ssh 没 key 是 publickey
+    失败），而 `--dry-run` 不发送任何更新，远端上什么都不会变。推一个**新** ref
+    而不是 base 分支本身，是因为 base 可能落后于远端，那种拒绝说的是「这次更新不
+    能快进」，不是「我们没有凭据」。
+
+    答不出来就答写不动。这不是拿默认值把失败盖住（I19）：卡落到 `PlatformForge`，
+    上面写着「远端在，平台没有写它的凭据」，那句话在人点采纳之前就在他眼前，比一个
+    推不上去的承诺诚实。
+
+    **答案按 `(项目, 上游地址)` 在进程里记 `_WRITE_PROBE_TTL_S` 秒。** 这一位坐在
+    卡片渲染的读路径上：`describe()` 每张卡问一次，而 `describe()` 挂在十来个端点
+    上。不记的代价两条都是真的——远端不可达时每一次刷新卡列表都要等满 15s，这段
+    时间本次请求的 DB 会话一直开着；以及推不动的项目每被打开一次，就对老师那台
+    GitLab 发一次失败鉴权，自建 GitLab 的 fail2ban 会因此锁账号或封 IP。
+
+    读路径自己在缓存过期时补一次探测，而不是只读一份别处写好的缓存：冷缓存答
+    「写不动」就是把一个填了地址、我们也推得动的项目一路写成 `PlatformForge`，采纳
+    于是只落在平台仓库里——正是这一档存在要消灭的那次沉默。
+    """
+    try:
+        upstream = get_upstream(project_id)
+        if upstream is None:
+            return False
+        key = (project_id, upstream)
+        cached = _write_probe_cache.get(key)
+        asked_at = time.monotonic()
+        if cached is not None and asked_at - cached[0] < _WRITE_PROBE_TTL_S:
+            return cached[1]
+        repo = ensure_repo(project_id)
+        _ensure_base_commit(repo)
+        branch = _base_branch(repo)
+        result = _run_subprocess(
+            [
+                "git",
+                "push",
+                "--dry-run",
+                UPSTREAM_REMOTE,
+                f"{branch}:{_WRITE_PROBE_REF}",
+            ],
+            repo,
+            _WRITE_PROBE_TIMEOUT_S,
+            {
+                **os.environ,
+                # 没凭据就当场失败，别停在提示符上等到超时。
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_SSH_COMMAND": os.environ.get(
+                    "GIT_SSH_COMMAND", "ssh -oBatchMode=yes"
+                ),
+            },
+        )
+    except Exception:  # noqa: BLE001 — 读不出来就是写不动，见 docstring
+        return False
+    answer = result.returncode == 0
+    _write_probe_cache[key] = (asked_at, answer)
+    return answer
+
+
+def branch_has_commits(
+    project_id: uuid.UUID, branch: str, *, base: str | None = None
+) -> bool:
+    """Does this branch have commits outside its target branch?"""
+    repo = ensure_repo(project_id)
+    base = base or _base_branch(repo)
+    if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
+        return False
+    return not _is_ancestor(repo, branch, base)
+
+
+def base_branch_head(project_id: uuid.UUID) -> tuple[str, str]:
+    """The project base branch and revision from which independent tasks start."""
+    repo = ensure_repo(project_id)
+    _ensure_base_commit(repo)
+    branch = _base_branch(repo)
+    sha = _git(repo, "rev-parse", "-q", "--verify", branch).strip()
+    return branch, sha
 
 
 def pr_base_branch(project_id: uuid.UUID) -> str:
@@ -1852,38 +2232,12 @@ def pr_base_branch(project_id: uuid.UUID) -> str:
     return _base_branch(ensure_repo(project_id))
 
 
-def has_undelivered_commits(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
-    """Does this topic's branch hold anything the base branch does not?
-
-    This is the fact behind "can this room deliver again". A room outlives the
-    work done in it (#536), so it files a card, that card merges, and then work
-    continues — the next task's commits land on the same branch and are, right
-    then, undelivered. Answering from history instead ("has a card ever been
-    accepted?") freezes the room after its first delivery, which is the whole
-    of 一个 task 完成了可以再新开 task.
-
-    False also covers the branch that never existed: nothing to deliver is
-    nothing to deliver, and the caller's refusal reads the same either way.
-    """
-    repo = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
-    base = _base_branch(repo)
-    if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
-        return False
-    # Ahead-ness, not equality: the base moves under a long-lived room branch
-    # all the time, and a room that is merely behind main still has its own
-    # commits to deliver.
-    return not _is_ancestor(repo, branch, base)
-
-
 def topic_branch_exists(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     """Does this topic have a branch a PR could carry? Discussion-only topics
     never grow one — for them the PR path is NOT APPLICABLE (accept merges
     nothing and archives), which callers must distinguish from a push/API
     FAILURE (where accept must stop rather than silently direct-merge)."""
-    return _branch_exists(
-        ensure_repo(project_id), branch_for_tree(tree_for_place(topic_id))
-    )
+    return _branch_exists(ensure_repo(project_id), branch_for_task(topic_id))
 
 
 def _github_push_url(owner: str, repo: str) -> str:
@@ -2078,13 +2432,11 @@ def push_topic_branch_for_github_pr(
     """两阶段采纳 (PR迭代式): push the topic's OWN branch (not the base) to the
     project's connected GitHub repo under `remote_branch`, authenticated as
     the approving human's own token — never the App's, since attribution is
-    the point (see the PR trailer). Distinct from push_back(), which pushes
-    the ALREADY-MERGED base branch via the host's own git credentials and the
-    `upstream` remote; this instead prepares a branch for review, using
+    the point (see the PR trailer). This prepares a branch for review, using
     whichever repo #192 connected the project to (not necessarily the same
     remote `push_topic_branch` above pushes to).
 
-    Auth reuses `_token_push_env` (credential helper via env var, never argv)
+    Auth reuses `_token_git_env` (credential helper via env var, never argv)
     rather than embedding the token in the push URL. Raises ValidationError on
     any git failure (bad/expired token, network, GitHub outage) — the caller
     treats that as "mechanism unavailable" and degrades to the old
@@ -2101,11 +2453,11 @@ def push_topic_branch_for_github_pr(
     before. Syncing only after a rejection keeps the happy path (including the
     60s re-push poll) exactly as cheap as it was — no fetch, no extra commit."""
     repo_path = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
+    branch = branch_for_task(topic_id)
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
     url = _github_push_url(owner, repo)
-    env = _token_push_env(token)
+    env = _token_git_env(token)
     refspec = f"{branch}:refs/heads/{remote_branch}"
     try:
         _git(repo_path, "push", url, refspec, timeout=120, env=env)
@@ -2173,13 +2525,6 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     spool = d / "cheese-spool"
     spool.mkdir(parents=True, exist_ok=True)
     _loosen(str(spool), 0o777)
-    # Same treatment for `cheese await`'s output logs: they live in the session
-    # mount (not the container's own filesystem) so a multi-hour command's output
-    # outlives the container that ran it, and not in the worktree so it never
-    # reaches a commit.
-    awaited = d / "cheese-await"
-    awaited.mkdir(parents=True, exist_ok=True)
-    _loosen(str(awaited), 0o777)
     skills_dst = d / "skills"
     if _SKILL_SRC.is_dir():
         shutil.copytree(_SKILL_SRC, skills_dst, dirs_exist_ok=True)
@@ -2233,15 +2578,6 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
     session_dir's base so both sides agree on ONE location."""
     return identity_mod.session_dir(project_id, topic_id) / "cheese-spool"
-
-
-def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Host path of the topic's `cheese await` output logs. The container writes
-    here via CHEESE_AWAIT_LOGS=/home/node/.claude/cheese-await (the session dir
-    mounts to /home/node/.claude), so the output of a command that runs for hours
-    survives the container being rebuilt under it. Mirrors spool_dir's base so
-    both sides agree on ONE location."""
-    return identity_mod.session_dir(project_id, topic_id) / "cheese-await"
 
 
 # `docker info` costs ~50ms, and the answer changes only when someone starts or

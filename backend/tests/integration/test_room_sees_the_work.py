@@ -14,6 +14,7 @@ import pytest
 
 from app.domain.workspace import service as ws
 from tests.conftest import StubChannel
+from tests.delivery import delivery_task
 from tests.integration.conftest import chat_ws_url
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
@@ -61,10 +62,12 @@ def _chat(client, topic_id: str) -> None:
 
 def _topic(client) -> str:
     p = client.post("/projects", json={"name": "P"}).json()["data"]
-    return client.post(
+    room = client.post(
         "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]["id"]
+    delivery_task(client, room, commit=False)
+    return room
 
 
 def _transcript(client, topic_id: str) -> list[dict]:
@@ -173,8 +176,10 @@ def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
     assert work and conclusions
     assert not [b for b in work + conclusions if in_room(b)]
 
-    # …并且是那一格说了算：现场里藏起来的事件，作者写的是真作者。
-    assert {b["author_type"] for b in conclusions} == {"ai"}
+    # …并且是那一格说了算：现场里藏起来的事件，作者写的是真作者 —— 分身交回的
+    # 结论是芝士自己的话，署名是它的座位，不是平台的。
+    assert all(b["author"].startswith("cheese") for b in conclusions)
+    assert {b["author_type"] for b in conclusions} == {"participant"}
 
 
 def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
@@ -244,8 +249,10 @@ def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
         for b in _transcript(client, topic_id)
         if (b.get("meta") or {}).get("changeset")
     ]
-    # The turn itself still landed 芝士's reply.
+    # The turn still records terminal output even when the workspace is broken.
     assert any(
-        b["kind"] == "message" and b["author_type"] == "ai"
+        b["kind"] == "event"
+        and b["author"].startswith("cheese")
+        and (b.get("meta") or {}).get("progress")
         for b in _blocks(client, topic_id)
     )

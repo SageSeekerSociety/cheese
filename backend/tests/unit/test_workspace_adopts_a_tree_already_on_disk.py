@@ -20,6 +20,7 @@ import pytest
 
 from app.core.config import settings
 from app.domain.workspace import service as ws
+from tests.machine_work import declare_task
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def _a_tree_someone_else_made(project: uuid.UUID, topic: uuid.UUID) -> Path:
 
 def test_the_files_survive_becoming_a_worktree(project):
     topic = uuid.uuid4()
+    declare_task(project, topic)
     existing = _a_tree_someone_else_made(project, topic)
 
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
@@ -64,6 +66,7 @@ def test_what_was_uncommitted_still_reads_as_uncommitted(project):
     """Not merely preserved on disk — preserved AS work git can see, so the next
     `git add` carries it onto the branch like any other change."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws._ensure_worktree(project, topic)  # noqa: SLF001 -- an ordinary tree first
     wt = ws._worktree_path(project, topic)  # noqa: SLF001
     _git(wt, "config", "user.email", "cheese@zhishi.local")
@@ -83,7 +86,7 @@ def test_what_was_uncommitted_still_reads_as_uncommitted(project):
 
     assert "committed.md" in _git(readopted, "status", "--porcelain")
     assert _git(readopted, "rev-parse", "--abbrev-ref", "HEAD").strip() == (
-        ws.branch_for_tree(topic)
+        ws.branch_for_task(topic)
     )
     # The commit that WAS delivered is still on the branch behind it.
     assert "feat: delivered" in _git(readopted, "log", "-1", "--format=%s")
@@ -94,6 +97,7 @@ def test_the_other_vcs_metadata_does_not_survive(project):
     colocated repo to anyone who opens the directory, and to any tool that
     looks for one."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     wt = _a_tree_someone_else_made(project, topic)
 
     ws._ensure_worktree(project, topic)  # noqa: SLF001
@@ -105,6 +109,7 @@ def test_the_other_vcs_metadata_does_not_survive(project):
 def test_an_empty_directory_is_just_a_worktree(project):
     """The ordinary path is not affected by any of the above."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     ws._worktree_path(project, topic).mkdir(parents=True)  # noqa: SLF001
 
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001

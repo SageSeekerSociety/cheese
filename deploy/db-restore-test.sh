@@ -15,7 +15,7 @@ PGIMG="${CHEESE_PG_IMAGE:-postgres:17}"
 MIN_TABLES="${CHEESE_RESTORE_MIN_TABLES:-40}"
 ALLOW_EMPTY="${CHEESE_RESTORE_ALLOW_EMPTY:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_DIR="${CHEESE_RESTORE_LOG_DIR:-$SCRIPT_DIR/../tmp/restore-tests}"
+LOG_DIR="${CHEESE_RESTORE_LOG_DIR:-$SCRIPT_DIR/../.tmp/restore-tests}"
 
 case "$MIN_TABLES" in
   ''|*[!0-9]*) echo "ERROR: CHEESE_RESTORE_MIN_TABLES must be a non-negative integer"; exit 1 ;;

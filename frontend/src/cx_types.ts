@@ -8,9 +8,33 @@ export interface Project {
   summary?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
+  /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
+  owner_handle?: string | null
+  /**
+   * 这个项目归哪个小队（项目归团队 v4）。历史遗留的行是 null——新建项目一律会落到
+   * 创建者的个人小队。顶栏那颗 ← 在没记到来路时拿它当兜底。
+   */
+  team_id?: number | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
+}
+
+export interface ProjectSite {
+  id: string
+  url: string
+  source_revision: string
+  directory: string
+  published_at: string
+  published_by: string
+}
+
+export interface ProjectSiteInfo {
+  can_publish: boolean
+  source_revision: string | null
+  candidates: { directory: string; entry_file: string }[]
+  site: ProjectSite | null
+  unavailable_reason?: string | null
 }
 
 export interface Topic {
@@ -31,6 +55,8 @@ export interface Topic {
   accepted_by?: string | null
   accepted_at?: string | null
   archived_at?: string | null
+  cleanup_due_at?: string | null
+  can_archive?: boolean
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
@@ -44,12 +70,6 @@ export interface Topic {
   // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
-  // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
-  // 所以换了项目默认，这个话题也跟着换。
-  agent_instance_id?: string | null
-  // 只有 kind='thread' 的地点有：这件活当前骑的那张验收卡 / PR。房间的交付是
-  // 整条分支一张卡，不挂在这里。
-  card?: ThreadCard | null
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
@@ -59,10 +79,12 @@ export interface Topic {
   presentation?: Presentation
 }
 
-export type AuthorType = 'human' | 'ai' | 'system'
+// 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
+// ——见 `lib/authorship.ts`。`human`/`ai` 是旧值，只出现在这次改动之前写下的行上。
+export type AuthorType = 'participant' | 'system' | 'human' | 'ai'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
-// e.g. {emoji: '✅', count: 2, authors: ['cheese', 'alice']}.
+// e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
 export interface ReactionAgg {
   emoji: string
   count: number
@@ -73,7 +95,18 @@ export interface BlockMeta {
   [key: string]: unknown
   tool?: string
   arg?: string
+  // 参数原文，给摊开这一行的人看。和 `arg` 并存而不是替掉它：那一行为了能扫而
+  // 重写过、剪短过，摊开的人要的正是被剪掉的那截。
+  detail?: string
+  // 这一步的工具报错回来了，以及它最后说的那截。成功的步骤两个都没有 —— 绝大
+  // 多数步骤因此一个字节都不必存。
+  failed?: boolean
+  error?: string
   platform?: boolean
+  // 现场那一行的动词覆盖：值是「标签更贴切的那个工具名」（Bash 跑的 `cat x.py`
+  // 显示成「读取文件」）。和 `action` 是两回事 —— 那个答的是「这张平台动作卡指
+  // 向哪个资源」，共用一个键就会让卡片指向一个叫 Read 的资源。
+  as_tool?: string
   action?: string
   event_type?: string
   code?: string
@@ -83,6 +116,7 @@ export interface BlockMeta {
 }
 
 export interface Block {
+  task_id?: string | null
   id: string
   topic_id: string
   kind: string
@@ -127,6 +161,40 @@ export interface ListPayload<T> {
   total: number
 }
 
+/** 待我处理清单里的一件事（后端 `room_task/awaiting.py`）。
+ *
+ *  `displayStatus` 就是看板卡面上那一句，后端算好的 —— 前端不做第二张映射表，理由
+ *  和 `Presentation` 那一段一样。`reason` 说的是这件事为什么点到我：递给我验收
+ *  (`reviewer`)、我提的需求有了结果 (`reporter`)、或者芝士停在一个只有我能回答的
+ *  待确认问题上 (`asked`)。 */
+export interface WaitingItem {
+  projectId: string
+  projectName: string
+  topicId: string
+  topicTitle: string
+  taskId: string | null
+  taskTitle: string | null
+  displayStatus: string
+  reason: 'reviewer' | 'reporter' | 'asked'
+  at: string
+}
+
+/** 一份 .docx 里的一处修订（后端 `documents/revisions.py`）。
+ *
+ *  一次替换在 XML 里是一个 `<w:ins>` 加一个 `<w:del>`，这里是**一条**：读者要判断的
+ *  是「这处改动要不要」，分成两条就可以只接受一半——新句子进来了，旧句子还留着。
+ *  `paragraph` 是段号，和 `office.py text` 报的是同一个坐标；XML 里没有页的概念，
+ *  页要等排版之后才存在。 */
+export interface DocumentRevision {
+  number: number
+  paragraph: number
+  kind: 'replace' | 'insert' | 'delete'
+  added: string
+  removed: string
+  author: string
+  date: string
+}
+
 // A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
 // in the in-progress message). Live during a turn; persisted between turns as
 // the topic's 进度层 (#187) so a new machine — and the room — can still see how
@@ -148,18 +216,24 @@ export interface RoomTask {
   room_id: string
   title: string
   status: string
-  // 它此刻占没占着这个房间四个槽位里的一个，和从什么时候开始等的。和 `status`
-  // 是两个问题：四条都 open 的房间可能三条在跑一条排队，也可能全都闲着。
-  residency?: 'running' | 'idle'
-  queued_at?: string | null
   owner_handle?: string | null
+  // 谁来验收这条活 —— 派活那一刻定下的（显式指定，否则项目的默认验收人）。递卡
+  // 沿用它。null 只可能来自历史记录。
+  reviewer_handle?: string | null
   created_by?: string | null
-  agent_instance_id?: string | null
   branch_name?: string | null
-  // 它干在哪一批上。一棵树 = 一个分支 = 一个 PR = 一批活，所以这是「我这条活最后
-  // 会从哪个 PR 出去」的答案，也是总览把活和 PR 对上的唯一依据。
-  tree_id?: string | null
-  // 交付，和 `status` 不是同一个问题：活可以已交付但还开着，也可以关掉却什么都没交付。
+  // 派它出去时说的那份要求，和分身交回来的那句话。两样都住在卡上：简报以前存在
+  // 「活自己的实况文档」里，而做活的分身拿的是房间的 token，够不着那个地址，
+  // 于是那份文档从播种那一刻起就再没人改过。
+  brief?: string
+  conclusion?: string | null
+  base_branch?: string | null
+  base_task_id?: string | null
+  historical_delivery_id?: string | null
+  pr_number?: number | null
+  pr_url?: string | null
+  delivered_head?: string | null
+  // 采纳会关闭任务；单独关闭任务不代表已交付。
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
@@ -181,7 +255,7 @@ export interface RoomTask {
  *
  *    building   施工中 —— 还没递出交付
  *    delivering 交付中 —— 下一步在平台/芝士手上
- *    needs_you  等你   —— 下一步在人手上
+ *    needs_you  待处理 —— 下一步在人手上
  *    done       已完成 —— 已采纳，或已收工且没交付
  *    archived   已归档 —— 房间才有；活不归档
  */
@@ -196,22 +270,6 @@ export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'ar
 export interface Presentation {
   column: BoardColumn
   display_status: string
-}
-
-/** 一批活 —— 一棵树 = 一个分支 = 一个 PR。房间封口一批、开下一批，所以一个房间
- *  同时可以有好几棵，但只有一棵是 `open` 的。 */
-export interface RoomTree {
-  id: string
-  status: 'open' | 'sealed' | 'merged'
-  created_at: string
-  sealed_at?: string | null
-  merged_at?: string | null
-  // 快检最后一次说了什么，关于这棵树现在的内容。它谁也不拦（#296 定了由 PR 上
-  // 真的 CI 决定），在这里只是为了让红的那次被将要验收的人看见。
-  last_check_at?: string | null
-  last_check_ok?: boolean | null
-  last_check_detail?: string
-  card?: ThreadCard | null
 }
 
 /** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
@@ -231,9 +289,8 @@ export interface TopicProgress {
 // discrete assistant_block messages (one per completed SDK message boundary).
 export type WsServerFrame =
   | { type: 'user_block'; block: Block }
-  // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
+  // A block's reactions changed (someone toggled / 芝士's 👀 receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
-  | { type: 'tool'; name: string; input: Record<string, unknown> }
   // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
   // turn start; without the flag the UI cannot tell it from live progress.
   | { type: 'todo'; items: TodoItem[]; restored?: boolean }
@@ -254,8 +311,38 @@ export type WsServerFrame =
   // An existing block's data changed in place (e.g. an option question got
   // answered) — replace it in the timeline.
   | { type: 'block_updated'; block: Block }
+  // Answer to the client's liveness ping; carries nothing.
+  | { type: 'pong' }
+  // The room's session state moved: the agent asked something, a session
+  // appeared, went quiet or came back. Carries what the platform's own store
+  // knows. The machine's background-task list is NOT in here — nothing tells
+  // the platform when that changes — so the panel that shows it still reads it
+  // over HTTP.
+  | { type: 'agent_control'; state: AgentControlState }
 
-// 图片输入: an uploaded worktree image the message carries. `path` comes from
+export interface AgentControlRequest {
+  request_id: string
+  request: {
+    subtype: string
+    tool_name?: string
+    input?: Record<string, unknown>
+  }
+}
+
+export interface AgentControlState {
+  id: string | null
+  connected: boolean
+  title?: string
+  controls?: string[]
+  pending?: Record<string, AgentControlRequest>
+  tasks?: Record<
+    string,
+    { task_id: string; description?: string; status?: string; subtype?: string; tool_use_id?: string }
+  >
+  state?: Record<string, Record<string, unknown>>
+}
+
+// An uploaded worktree file the message carries. `path` comes from
 // POST /topics/{id}/attachments; the WS frame only references it (no binary).
 export interface ChatAttachment {
   path: string
@@ -264,7 +351,9 @@ export interface ChatAttachment {
 
 // WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
 // reply, false (default) just posts the message (spec §7.1 默认不 @).
-export interface WsClientMessage {
+export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
+
+export interface WsClientChatMessage {
   type: 'message'
   content: string
   // No `author`: the backend takes it from the socket's ?token=. Sending one
@@ -272,7 +361,7 @@ export interface WsClientMessage {
   // session post as 匿名者 — so the client no longer names itself at all.
   summon: boolean
   reply_to?: string // B3: thread this message under another
-  attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
   // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
   client_id?: string
@@ -301,6 +390,11 @@ export interface ProjectMember {
 export interface ProjectMemberRow {
   user_handle: string
   role: string
+  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人，或者
+  // 项目的所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据）。
+  // 没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
+  source?: 'team' | 'owner'
+  team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
   // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
@@ -313,6 +407,20 @@ export interface ProjectMemberRow {
   [key: string]: unknown
 }
 
+/** 一张「请你加入这个项目」的邀请，等对方回答。 */
+export interface ProjectInvitation {
+  id: string
+  project_id: string
+  invitee_handle: string
+  inviter_handle: string
+  role: string
+  status: 'pending' | 'accepted' | 'declined' | 'revoked'
+  created_at: string
+  responded_at?: string | null
+  /** 后端不回项目名，界面上要显示得自己从项目列表里配；配不到就退成 id。 */
+  [key: string]: unknown
+}
+
 // 话题成员名册 (fusion-design §3): a topic's group-room roster. Roles are
 // owner/admin/member (distinct from ProjectMemberRow's lead/member/mentor);
 // `agent` marks 芝士 (the AI member) so the UI can badge it.
@@ -321,7 +429,12 @@ export interface TopicMemberRow {
   topic_id: string
   member_handle: string
   role: 'owner' | 'admin' | 'member'
+  // 芝士那一行上，这是**这个房间现在交给的那个队友**的名字（换队友就跟着变），
+  // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
+  // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
+  // null，画彩色首字母。别拿它去取 /avatars/default。
+  avatar_id?: number | null
   agent?: boolean
   created_at: string
 }
@@ -468,14 +581,13 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
-  // kind=file → render the file's content; kind=app → iframe straight to the app
-  // the agent started on its machine, carried here over that machine's preview
-  // tunnel (url, live-resolved on every fetch).
+  /** Content fingerprint for refreshing an updated static preview. */
+  version?: string | null
+  // File and app previews share an isolated topic content origin.
   kind?: 'file' | 'app'
   path: string
   mime: string | null
-  // kind=app: the backend's reverse-proxy path (root-relative), or null when the
-  // app isn't answering. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
+  // Isolated content URL for files and live apps; null when the app is offline. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
   // "通道在，但应用没在跑" — without it both look like an empty white frame.
   url?: string | null
   tunnel_up?: boolean
@@ -522,20 +634,66 @@ export type AcceptStatus =
   | 'gate_failed'
   // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
   | 'gate_blocked'
-  // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
-  // open and the machine stretch (CI → merge → deploy) is still running.
+  // 两阶段采纳 (2026-08-16 → #718 退役): 历史状态。采纳回到「点一下就是合并」
+  // 之后不再有卡进入它，存量卡也已迁回 pending —— 这里留着只为极端残留兜底。
   | 'pr_open'
   | string
 
-// GET /topics/{id}/accept-card (list, newest first).
-export interface DeliveryStep {
-  key: string
-  label: string
-  state: 'done' | 'active' | 'todo'
+// 合并态 (#718): the card's status IS the merge state. Computed server-side
+// (backend domain/review/merge_state.py) — the browser never derives it, it
+// only puts words and a dot next to what the backend said.
+export type MergeStateWord = 'clean' | 'unstable' | 'blocked' | 'behind' | 'dirty' | 'unknown'
+
+// 谁的活 (#718 的表格): who moves next. `human` + no PR = the platform lane,
+// where accepting is purely a human judgment and never gated by the state.
+export type MergeWho = 'ci' | 'agent' | 'platform' | 'human'
+
+export interface MergeReason {
+  kind: string
+  // The check names involved, ready for the card face (红了哪个要能看见).
+  checks: string[]
+  detail: string
+}
+
+export interface MergeStateInfo {
+  state: MergeStateWord
+  who: MergeWho
+  // At least one entry server-side; the basis for the verdict.
+  reasons: MergeReason[]
+  head_sha: string | null
+  checked_at: string | null
+  since: string | null
+}
+
+// 绿了自动合 (#718): only meaningful when the project allows it; armed by a
+// reviewer while the card is blocked/behind, merged by the platform when the
+// rules are met.
+export interface AutoMergeInfo {
+  allowed: boolean
+  armed_by: string | null
+  armed_at: string | null
+}
+
+// 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
+// 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
+// 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
+export interface ForgeInfo {
+  // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
+  // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
+  kind: 'github_app' | 'external_remote' | 'platform' | 'unknown'
+  reports_checks: boolean
+  hosts_proposals: boolean
+  can_write_remote: boolean
+  /** 填了远端地址没有。和 can_write_remote 分开：填了而我们推不动是第三种情况。 */
+  has_external_remote: boolean
+  pushes_to_external_remote: boolean
+  identity: 'user' | 'platform'
+  declaration: string
 }
 
 export interface AcceptCard {
   id: string
+  task_id?: string | null
   topic_id: string
   reviewer_handle: string
   routing_reason: string
@@ -562,11 +720,13 @@ export interface AcceptCard {
   // platform opened one (flag-gated, best-effort).
   pr_number: number | null
   pr_url: string | null
-  // 交付进度: the steps THIS project has, sent by the backend. Whether a
-  // project has external checks is a property of its forge, which the browser
-  // cannot see — so the chain is no longer derived here. Empty whenever there
-  // is no machine work in flight, which is most of the time.
-  stages: DeliveryStep[]
+  // 合并态 (#718): what stands between this card and the trunk, and whose move
+  // it is. Always present — a platform-lane card carries who="human".
+  merge_state: MergeStateInfo
+  // 托管方是谁、它能做什么 —— 卡生成的那一刻就带着（后端 domain/review/forge.py）。
+  // 这是卡上唯一的一份：别从别的字段推「这个项目接没接 GitHub」。
+  forge: ForgeInfo
+  auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
   pr_repo: string | null
@@ -673,14 +833,17 @@ export interface MarketNodes {
 // One credit grant (issued when the project linked an institutional task).
 export interface ComputeGrantRow {
   id: string
-  source_task_id: string | null
+  project_id: string | null
+  source_task_id: number | null
   credits_total: number
   credits_used: number
   created_at: string
 }
 
-// GET /projects/{id}/credits — unlimited=true means no grants (自治项目).
+// Shared team grants plus credits restricted to the requesting project.
 export interface ProjectCredits {
+  team_id: number | null
+  tokens_per_credit: number
   unlimited: boolean
   credits_total: number
   credits_used: number
@@ -691,20 +854,6 @@ export interface ProjectCredits {
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
-export interface ExecProfileOption {
-  name: string
-  label: string
-  tier: string
-  model: string
-  available: boolean
-}
-
-// GET /projects/{id}/execution-profiles
-export interface ExecProfiles {
-  current: string
-  profiles: ExecProfileOption[]
-}
-
 // GET /projects/{id}/compute-profiles
 export interface ComputeProfiles {
   current: string
@@ -729,7 +878,7 @@ export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'er
 export interface ProjectMachine {
   id: string
   project_id: string
-  machine_id: number
+  machine_id: number | null
   hostname: string
   login_user: string
   cores: number
@@ -774,45 +923,63 @@ export interface TopicComputeDevice {
 }
 
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
-// `current` is effective (topic → project sticky → team default → platform);
+// `current` is effective (room choice → project default → deployment default);
 // `locked` freezes the picker once the topic has run (session started);
-// `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default;
+// `inherited` = still following the project default (no own choice yet);
 // `device_id` is the self-hosted machine pinned to this topic, or null while
 // 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
+  choice: ComputeChoice
+  project_default: ComputeChoice
+  favorites: ComputeChoice[]
   current: string
   device_id: string | null
   devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
-  sticky: string
   profiles: PoolListing[]
   visibility: TopicComputeVisibility
 }
 
-// GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
-// project's agent. current=null → using the pool default base image.
-export interface SandboxImageOption {
-  image: string
-  label: string
+export interface EnvironmentConfig {
+  setup_script: string
+  startup_script: string
+  variables: Record<string, string>
+  revision: string
 }
-export interface SandboxImageInfo {
-  current: string | null
-  default: string
-  options: SandboxImageOption[]
+export interface ProjectEnvironmentInfo {
+  config: EnvironmentConfig
+  can_edit: boolean
+  rooms: { id: string; title: string; revision: string | null }[]
+}
+export interface EnvironmentStatus {
+  busy?: boolean
+  state: 'unbound' | 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
+  recovery_state?: 'requested' | 'retrying' | 'needs_help' | 'closed' | null
+  stage?: string
+  log?: string
+  error?: string
+  exit_code?: number | null
+  pinned_revision?: string | null
+  started_at?: string
+  finished_at?: string | null
 }
 
-// 当前用户 (Phase 0 极简登录): what /users/login returns and what we keep locally.
-export interface Me {
-  id: string
-  handle: string
+export interface ComputeChoice {
   name: string
-  // P1 真鉴权: signed session token minted at login. Sent as
-  // `Authorization: Bearer` on every request (and as ?token= on the chat WS) so
-  // the backend resolves the actor from a verified token, not a forgeable body
-  // field. Optional so an older stored identity (pre-token) still type-checks.
-  token?: string
+  profile: 'cloud' | 'device'
+  device_id: string | null
+  cores: number | null
+  memory_mb: number | null
+  disk_gb: number | null
+}
+
+export interface ProjectComputeConfigs {
+  default: ComputeChoice
+  favorites: ComputeChoice[]
+  can_manage: boolean
+  devices: TopicComputeDevice[]
+  cloud_available: boolean
 }
 
 // 上游仓库 (spec §6.3): a project can bind an existing git repo (关联已有 repo)
@@ -832,6 +999,37 @@ export interface GithubConnection {
   connected: boolean
   repo?: string
   account?: string
+}
+
+// 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。
+// GitHub 能判定的听 GitHub，判定不了的平台按这份配置补位。
+export interface RequiredCheck {
+  name: string
+  // 相对仓库根的 glob；缺省/为空 = 每个 PR 都要求这条检查。
+  paths?: string[]
+}
+// 可写的规则本体。PUT partial-update：body 里出现哪个键就改哪个，返回值也是这一块。
+export interface BranchProtectionRules {
+  required_checks: RequiredCheck[]
+  strict: boolean
+  dismiss_stale: boolean
+  auto_merge_allowed: boolean
+  // null = 未配置：默认由项目 owner 和 lead 放行。
+  override_handles: string[] | null
+  approvals_required: number
+  // '' = 未指定。
+  default_reviewer: string
+}
+export type BranchProtectionPatch = Partial<BranchProtectionRules>
+// GET 额外带两块只读附注，说明 GitHub 那一侧的现实。
+export interface BranchProtection extends BranchProtectionRules {
+  // 绑定 GitHub 的项目从仓库设置读；未绑定固定 'squash'。只读。
+  merge_method: string
+  github_protection: {
+    enforced: boolean
+    status: 'unbound' | 'enforced' | 'none' | 'unknown'
+    detail?: string | null
+  }
 }
 
 // A user's OAuth/App connections — GET /users/{userId}/oauth/connections
@@ -892,16 +1090,7 @@ export interface DeviceApproval {
 
 // ---- AI 队友 (agent 类型与实例) ----
 //
-// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
-// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
-// working inside one project, and it owns the memory it accumulated there; a
-// session is where one conversation got to and may be thrown away.
-//
-// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
-// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
-// INSTANCE. The management page shows both, which is why it reads two endpoints.
-
-// GET /agent-types — presets merged with the project's custom types.
+// GET /agent-types: built-in starting configurations for new agents.
 export interface AgentType {
   name: string
   title: string
@@ -921,17 +1110,211 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+export interface AgentConfiguration {
+  body: string
+  model: string
+  harness: string
+  skills: string[]
+  mcp_servers: string[]
+  effort: string | null
+}
+
 export interface ProjectAgent {
-  // Null for the implicit 芝士 a project has before anyone configured one.
+  configuration: AgentConfiguration
+  // Current project rosters always return saved IDs; nullable for older clients.
   id: string | null
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
+  // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
+  // 旧客户端和还没保存的行没有。
+  seat_handle?: string | null
   type_name: string | null
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // False = it resolves and owns a memory pool, but there is no row to edit.
+  // Retained for older clients; current project roster entries are always saved.
   configured: boolean
+  // False = 已停用. Still listed and still working in the topics that already
+  // have it — just not offered when picking an agent for new work.
+  is_active: boolean
   created_at?: string | null
+}
+
+// ---- 反馈 (feedback) ----
+//
+// 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
+// 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
+// 变成每次读前端代码都要回去查一遍的事。
+//
+// 三处**故意**不叫原型里的名字：
+//   * `supports` 是计数、`comments` 也是计数（原型里 `comments` 是数组），
+//     详情页的评论在 `FeedbackDetail.thread`。
+//   * 作者是 `author_handle`、时间是 `created_at`：蛇形是这一层的约定。
+//   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
+//     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
+//     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
+export type FeedbackKind = 'bug' | 'suggestion' | 'other'
+/** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
+export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed'
+export type FeedbackVisibility = 'public' | 'private'
+export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
+
+/** 列表里的一行。计数由后端一并算好（见 `schemas.FeedbackCard`）。 */
+export interface FeedbackCard {
+  id: string
+  /** 「FB-1042」。人念的和粘贴的是这个，`id` 是 uuid，只用来发请求。 */
+  display_id: string
+  kind: FeedbackKind
+  title: string
+  summary: string
+  status: FeedbackStatus
+  priority: FeedbackPriority
+  visibility: FeedbackVisibility
+  /** 安全问题：管理员标的标记，比 private 更窄（见 services.may_see）。 */
+  security: boolean
+  author_handle: string
+  author_is_agent: boolean
+  /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
+  submitted_by_handle: string | null
+  assignee_handle: string | null
+  tags: string[]
+  supports: number
+  comments: number
+  supported: boolean
+  last_activity_at: string | null
+  created_at: string
+}
+
+export interface FeedbackTimelineEntry {
+  status: FeedbackStatus
+  /** 谁推的。人推是 handle，agent 发现的那条是 null。 */
+  by_handle: string | null
+  at: string
+}
+
+/** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以
+ *  层级恒为两层，前端不需要自己判断「这算第几层」。 */
+export interface FeedbackComment {
+  id: string
+  parent_id: string | null
+  author_handle: string
+  author_is_agent: boolean
+  body: string
+  created_at: string
+}
+
+/** 管理员之间的内部备注。**只增不改**，所以是行不是列。 */
+export interface FeedbackNote {
+  id: string
+  author_handle: string
+  body: string
+  created_at: string
+}
+
+export interface FeedbackDetail extends FeedbackCard {
+  problem: string
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  /** 这条反馈是从哪个话题来的。没有话题（harness 在沙箱里撞的墙）时为 null。 */
+  topic_id: string | null
+  project_id: string | null
+  timeline: FeedbackTimelineEntry[]
+  thread: FeedbackComment[]
+  /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
+  notes: FeedbackNote[]
+}
+
+export interface FeedbackCounts {
+  all: number
+  hot: number
+  active: number
+  resolved: number
+  /** 「我的反馈」里未读的条数。 */
+  unread: number
+  /** 管理端才有：还没指派给任何人的条数。 */
+  unassigned?: number
+}
+
+export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
+  counts: FeedbackCounts
+}
+
+/** `GET /feedback/meta` —— 词表。
+ *
+ *  **颜色不在这里**（那是前端的视觉决定，见 lib/feedbackMeta.ts），这里回答的是
+ *  「有哪些取值、按什么顺序流动」。加一个状态是后端改一处的事，前端靠这一份跟上，
+ *  不需要发版。`is_admin` 同理：它由服务端算，前端不猜。 */
+export interface FeedbackMeta {
+  kinds: FeedbackKind[]
+  statuses: FeedbackStatus[]
+  priorities: FeedbackPriority[]
+  visibilities: FeedbackVisibility[]
+  /** 状态梯子：时间线把还没到的步骤也画出来，靠的就是它。 */
+  status_ladder: FeedbackStatus[]
+  tabs: string[]
+  admin_tabs: string[]
+  /** 「热门」的门槛，前端不写死 5。 */
+  hot_supports: number
+  is_admin: boolean
+}
+
+export interface FeedbackSupportResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  supported: boolean
+}
+
+/** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
+export interface FeedbackCreateBody {
+  kind: FeedbackKind
+  title: string
+  summary?: string
+  problem?: string
+  visibility: FeedbackVisibility
+  priority?: FeedbackPriority
+  why?: string | null
+  expectation?: string | null
+  what_happened?: string | null
+  repro?: string | null
+  evidence?: string | null
+  logs?: string | null
+  session_id?: string | null
+  environment?: string | null
+  tags?: string[]
+}
+
+/** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */
+export interface FeedbackProposalPayload {
+  kind: FeedbackKind
+  title: string
+  summary: string
+  problem: string
+  visibility: FeedbackVisibility
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  tags: string[]
+  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
+  user_said: string
+  /** 服务端算的指纹，「不用」和去重都认它。 */
+  fingerprint: string
+}
+
+export interface FeedbackProposal {
+  block_id: string
+  author_handle: string
+  authored_at: string
+  payload: FeedbackProposalPayload
 }

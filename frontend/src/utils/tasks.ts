@@ -9,7 +9,7 @@ export const getTaskStatusText = (task?: Task | null) => {
   // if (task.submitterType === 'TEAM' && task.joinedAsTeam?.length) return t('tasks.status.joined')
   if (task.approved === 'DISAPPROVED') return t('tasks.status.rejected')
   if (task.approved === 'NONE') return t('tasks.status.pending')
-  if (task.deadline < Date.now()) return t('tasks.status.ended')
+  if (task.deadline != null && task.deadline < Date.now()) return t('tasks.status.ended')
   if (task.registrationStartAt && task.registrationStartAt > Date.now()) return t('tasks.status.notStarted')
   return t('tasks.status.ongoing')
 }
@@ -20,7 +20,7 @@ export const getTaskStatusType = (task?: Task | null) => {
   // if (task.submitterType === 'TEAM' && task.joinedAsTeam?.length) return 'success'
   if (task.approved === 'DISAPPROVED') return 'error'
   if (task.approved === 'NONE') return 'info'
-  if (task.deadline < Date.now()) return 'error'
+  if (task.deadline != null && task.deadline < Date.now()) return 'error'
   if (task.registrationStartAt && task.registrationStartAt > Date.now()) return 'info'
   return 'primary'
 }

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check archived-room cleanup deadlines every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

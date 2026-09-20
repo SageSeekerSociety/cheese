@@ -15,6 +15,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -36,6 +37,9 @@ class DeviceRow(Base):
 
     device_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    cloud_control_private: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     # The durable device token. TODO(security): store a hash and deliver the raw
     # token once via poll, so a DB read alone cannot impersonate a device.
     token: Mapped[str] = mapped_column(

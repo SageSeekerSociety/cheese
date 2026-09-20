@@ -1,0 +1,72 @@
+name: Release cloud control
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target box
+        required: true
+        type: choice
+        options: [dev, production]
+      sha:
+        description: Full commit SHA already merged into main
+        required: true
+      operation:
+        description: Release tunnel service or migrate existing device routes
+        type: choice
+        options: [release, migrate-one, migrate-all]
+        default: release
+      legacy_manifest:
+        description: Optional legacy machine JSON manifest with provider-verified SSH host keys
+        required: false
+        default: ''
+      interrupt:
+        description: >-
+          Recreate even while device calls are in flight. Each interrupted
+          executor call fails once; the forwards reconnect on their own.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-control-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    environment: ${{ inputs.environment }}
+    runs-on: ${{ inputs.environment == 'production' && fromJSON('["self-hosted","cheese-prod"]') || fromJSON('["self-hosted","cheese-dev"]') }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+      - name: Require an exact commit already merged into main
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+      - name: Drain execution and release cloud control
+        if: inputs.operation == 'release' || inputs.operation == ''
+        run: bash deploy/release-cloud-control.sh
+        env:
+          DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
+      - name: Migrate device routes without restarting tunnels
+        if: inputs.operation == 'migrate-one' || inputs.operation == 'migrate-all'
+        env:
+          ROUTE_LIMIT: ${{ inputs.operation == 'migrate-one' && '1' || '0' }}
+          LEGACY_DEVICE_MANIFEST: ${{ inputs.legacy_manifest }}
+        run: |
+          # System-service runners do not inherit the operator's user bus.
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          args=(--limit "$ROUTE_LIMIT")
+          if [ -n "$LEGACY_DEVICE_MANIFEST" ]; then args+=(--legacy); fi
+          python3 deploy/migrate-device-routes.py "${args[@]}"

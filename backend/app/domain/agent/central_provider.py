@@ -1,0 +1,476 @@
+"""Central agent sessions with independently selected room execution."""
+
+import asyncio
+import contextlib
+import json
+import logging
+import time
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+
+import httpx
+from sqlalchemy import select
+
+from app.core.config import settings
+from app.core.db import async_session_factory
+from app.core.sandbox_auth import bind_resource_token
+from app.domain.agent import execution, private_chat
+from app.domain.agent.device_provider import (
+    DeviceChannel,
+    EnvironmentPreparationError,
+    _preview_ws_url,
+    device_home_dir,
+    environment_status,
+)
+from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
+
+logger = logging.getLogger(__name__)
+
+# Setup normally clears this stretch in well under a second, and a wait that
+# short has nothing to say. Past a few seconds the room is showing a spinner
+# with no end in sight, so the wait has to name what is holding it — and keep
+# naming it, because a line that only arrives once the wait is over is the very
+# silence this reporting exists to end.
+_WAIT_REPORT_AFTER = 5.0
+_WAIT_REPORT_EVERY = 30.0
+
+
+def _failure_reason(exc: Exception) -> str:
+    """Why a call failed, as one short log field — never itself a raiser."""
+    body = ""
+    with contextlib.suppress(Exception):
+        body = getattr(getattr(exc, "response", None), "text", "") or ""
+    return " ".join((body or str(exc)).split())[:120] or type(exc).__name__
+
+
+async def _report_while_waiting(topic_id, phase, began, detail):
+    """Keep saying what a step is waiting on for as long as it waits."""
+    delay = _WAIT_REPORT_AFTER
+    while True:
+        await asyncio.sleep(delay)
+        logger.info(
+            "central_setup_timing topic=%s phase=%s waited_ms=%.3f %s",
+            topic_id,
+            phase,
+            (time.monotonic() - began) * 1000,
+            detail,
+        )
+        delay = _WAIT_REPORT_EVERY
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedSession:
+    device_id: str
+    agent_user_id: int
+    agent_handle: str
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    token: str
+    env: dict[str, str]
+
+
+class CentralChannel(DeviceChannel):
+    def __init__(self, executor):
+        super().__init__(hub=executor._hub, session_factory=executor._session_factory)
+        self.executor = executor
+        self.name = executor.name
+        self.provisions_machine = executor.provisions_machine
+
+    def available(self):
+        return self.executor.available()
+
+    async def prepare_topic(self, **kwargs):
+        return await self.executor.prepare_topic(**kwargs)
+
+    async def precheck(self, project_id, topic_id):
+        factory = self._session_factory or async_session_factory
+        async with factory() as session:
+            room = await TopicService(session).get_or_404(topic_id)
+            center = (
+                room.session_placement["device_id"]
+                if room.session_placement
+                else settings.agent_session_device_id
+            )
+        if not center or not self._hub.is_online(center):
+            raise ScreenSetupError("Claude Code 中心会话机器尚未配置或未连接")
+        return await self.executor.precheck(project_id, topic_id)
+
+    async def discover(self, device_id=None):
+        factory = self._session_factory or async_session_factory
+        scopes = []
+        async with factory() as session:
+            rooms = await session.scalars(
+                select(Topic).where(Topic.session_placement.is_not(None))
+            )
+            for room in rooms:
+                placement = room.session_placement
+                if not placement or placement["channel"] != self.name:
+                    continue
+                if (
+                    placement.get("runtime", {}).get("harness", "claude-code")
+                    != "claude-code"
+                ):
+                    continue
+                center = placement["device_id"]
+                if (device_id is None or center == device_id) and self._hub.is_online(
+                    center
+                ):
+                    self._subscription_devices[room.id] = center
+                    scopes.append((room.project_id, room.id, center))
+            placed = {
+                room.id
+                for room in await session.scalars(
+                    select(Topic).where(Topic.session_placement.is_not(None))
+                )
+                if room.session_placement
+            }
+        found = await self.restore_screens(scopes)
+        # Finish consuming turns that began before this deployment. Their next
+        # opening transfers the transcript; no new prompt starts on the old host.
+        for scope in await self.executor.discover(device_id):
+            if scope[1] not in placed:
+                found.append(scope)
+                old_device = self.executor._subscription_devices.get(scope[1])
+                if old_device:
+                    self._subscription_devices[scope[1]] = old_device
+        return found
+
+    async def ensure_ready(
+        self,
+        *,
+        project_id,
+        topic_id,
+        token,
+        env,
+        launch,
+        precheck=None,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+    ):
+        # This route assigns an executor machine, so the plan has to be able to
+        # install one and move a conversation onto it. A harness that runs where
+        # the files already are answers neither, and belongs on the device
+        # channel this one wraps. Codex reaches `prepare_session` directly with
+        # exactly those two values and no screen at all, which is why the check
+        # is here and not there.
+        if not isinstance(launch, LaunchPlan):
+            # `harness` is read through getattr because this branch is exactly
+            # the one where the object did not satisfy the protocol that
+            # guarantees it — a message that crashes reports nothing.
+            named = getattr(launch, "harness", type(launch).__name__)
+            raise ScreenSetupError(f"{named} 不能在独立执行机上运行，它没有执行器")
+        async with self.prepare_session(
+            project_id=project_id,
+            topic_id=topic_id,
+            token=token,
+            env=env,
+            launch=launch,
+            precheck=precheck,
+            memory_scope=memory_scope,
+            owner=owner,
+            turn_id=turn_id,
+        ) as prepared:
+            return await self._ensure_screen(
+                device_id=prepared.device_id,
+                agent_user_id=prepared.agent_user_id,
+                agent_handle=prepared.agent_handle,
+                project_id=prepared.project_id,
+                topic_id=prepared.topic_id,
+                token=prepared.token,
+                env=prepared.env,
+                launch=launch,
+                environment_before={},
+            )
+
+    @asynccontextmanager
+    async def prepare_session(
+        self,
+        *,
+        project_id,
+        topic_id,
+        token,
+        env,
+        launch,
+        precheck=None,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        runtime_factory=None,
+    ) -> AsyncIterator[PreparedSession]:
+        assert isinstance(precheck, tuple)
+        started_at = time.monotonic()
+
+        def mark(phase):
+            logger.info(
+                "central_setup_timing topic=%s phase=%s elapsed_ms=%.3f",
+                topic_id,
+                phase,
+                (time.monotonic() - started_at) * 1000,
+            )
+
+        executor_id, agent_user_id, agent_handle = precheck
+        factory = self._session_factory or async_session_factory
+        async with factory() as session:
+            room = await TopicService(session).lock_for_execution(topic_id)
+            mark("room_lock")
+            resource = room.resource_id or room.id
+            previous = room.session_placement
+            center = (
+                previous["device_id"] if previous else settings.agent_session_device_id
+            )
+            if not center or not self._hub.is_online(center):
+                raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
+            if previous and (
+                previous["resource_id"] != str(resource)
+                or previous["execution"]["device_id"] != executor_id
+            ):
+                raise ScreenSetupError("执行机器与本房间已经记录的位置不一致")
+            values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
+            token = bind_resource_token(token, str(resource))
+            if not previous and launch.resume_session_id:
+                await launch.execution.transfer_history(
+                    self._hub,
+                    executor_id,
+                    center,
+                    project_id,
+                    resource,
+                    launch.resume_session_id,
+                )
+            if room.is_private:
+                target = private_chat.execution_target(
+                    project_id, topic_id, resource, device_id=center
+                )
+                values.update(CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal")
+                if owner:
+                    values["CHEESE_OWNER"] = owner
+            else:
+                if center == executor_id:
+                    raise ScreenSetupError("项目执行机器与中心会话机器需要分别配置")
+                api = await self.executor._device_api_base(executor_id)
+                mark("executor_route")
+                execute_env = {
+                    **values,
+                    "CHEESE_API": api,
+                    "CHEESE_TOKEN": token,
+                    "CHEESE_PROJECT": str(project_id),
+                    "CHEESE_TOPIC": str(topic_id),
+                    "CHEESE_AUTHOR": agent_handle,
+                    "CHEESE_GIT_REMOTE": f"{api}/projects/{project_id}/git",
+                    "CHEESE_GIT_AUTHOR_NAME": agent_handle,
+                    "CHEESE_GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
+                    "GIT_AUTHOR_NAME": agent_handle,
+                    "GIT_AUTHOR_EMAIL": f"{agent_handle}@agent.cheese.local",
+                    "CHEESE_PREVIEW_URL": _preview_ws_url(api),
+                    "CHEESE_HOOK_URL": f"{api}/sandbox/hooks/{topic_id}",
+                }
+                info = None
+                if previous:
+                    try:
+                        running = await execution.call(
+                            previous["execution"], "ping", {}, hub=self._hub
+                        )
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code != 500:
+                            raise
+                        running = {}
+                    except RuntimeError:
+                        # A stopped executor must take the installation path.
+                        running = {}
+                    if launch.execution.can_prepare(running):
+                        info = await execution.call(
+                            previous["execution"],
+                            "prepare",
+                            launch.execution.payload_for(
+                                project_id, resource, execute_env, running.get("files")
+                            ),
+                            hub=self._hub,
+                        )
+                if info is None:
+                    # Exclude scoped tool admission until the replacement is ready.
+                    await execution.lock_release(session, resource)
+                    result = await self._hub.exec(
+                        executor_id,
+                        ["python3", "-"],
+                        stdin=launch.execution.script(
+                            project_id, resource, execute_env
+                        ),
+                        timeout=660,
+                    )
+                    if result.get("exit") != 0 or result.get("truncated"):
+                        raise ScreenSetupError(
+                            result.get("stderr") or "执行环境启动失败"
+                        )
+                    info = json.loads(result["stdout"])
+                mark("executor_launch")
+                if info.get("upgrade_pending"):
+                    logger.info(
+                        "executor_upgrade_deferred topic=%s release=%s desired=%s",
+                        topic_id,
+                        info.get("release"),
+                        info.get("desired_release"),
+                    )
+                target = {
+                    "kind": "device",
+                    "resource_id": str(resource),
+                    "device_id": executor_id,
+                    "home": device_home_dir(project_id, resource),
+                    # Where the installation actually put the executor, asked of
+                    # the installation. Whoever reaches it later must not derive
+                    # this: that reader runs in the device connection owner,
+                    # which an app deploy leaves alone — see
+                    # `agent.execution.executor_state`.
+                    "state": info["state"],
+                    "release": info.get("release"),
+                    "upgrade_pending": info.get("upgrade_pending", False),
+                    "desired_release": info.get("desired_release"),
+                    "workspace": info["workspace"],
+                    "mcp_servers": info["mcp_servers"],
+                    "url": (
+                        f"{await self._device_api_base(center)}"
+                        f"/topics/{topic_id}/execution/{resource}"
+                    ),
+                }
+                has_environment = bool(values.get("CHEESE_ENVIRONMENT"))
+                # Bootstrap already checked the running executor and its environment
+                # in one process. Fresh or unfinished environments still wait here.
+                if not info.get("pid") or (
+                    has_environment and info.get("environment_status") != "ready"
+                ):
+                    await self._wait_executor(
+                        project_id, topic_id, resource, target, has_environment
+                    )
+                target["context_tree"] = (
+                    info["context_tree"]
+                    if "context_tree" in info
+                    else await self._context_tree(topic_id, target, started_at)
+                )
+                mark("executor_ready")
+            placement = {
+                "device_id": center,
+                "resource_id": str(resource),
+                "channel": self.name,
+                "execution": target,
+            }
+            if runtime_factory is not None:
+                placement["runtime"] = runtime_factory(resource)
+            room.session_placement = placement
+            # The central bootstrap calls the scoped executor endpoint before it
+            # can start Claude. Publish ownership before opening the screen.
+            await session.commit()
+            room = await TopicService(session).lock_for_execution(topic_id)
+            await session.refresh(room)
+            mark("placement_committed")
+            if (room.resource_id or room.id) != resource:
+                raise ScreenSetupError("房间已经重新打开，本轮没有启动旧执行环境")
+            values.pop("CHEESE_ENVIRONMENT", None)
+            values["CHEESE_EXECUTION_TARGET"] = json.dumps(target)
+            # Retain the room lock until the selected harness finishes starting.
+            yield PreparedSession(
+                device_id=center,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                env=values,
+            )
+            mark("screen_ready")
+        self._subscription_devices[topic_id] = center
+
+    async def _wait_executor(
+        self, project_id, topic_id, resource, target, has_environment
+    ):
+        started = time.monotonic()
+        deadline = started + (3660 if has_environment else 30)
+        report_at = started + _WAIT_REPORT_AFTER
+        attempts = 0
+        reported = False
+        detail = "waiting_on=executor_ping"
+        while True:
+            attempts += 1
+            if has_environment:
+                status = await environment_status(
+                    self._hub,
+                    target["device_id"],
+                    project_id,
+                    resource,
+                    wait_ready=True,
+                )
+                if status["state"] == "failed":
+                    raise EnvironmentPreparationError(status)
+                ready = status["state"] == "ready"
+                detail = f"waiting_on=environment state={status['state']}"
+            else:
+                ready = True
+            if ready:
+                try:
+                    await execution.call(target, "ping", {}, hub=self._hub)
+                    if reported:
+                        logger.info(
+                            "central_setup_timing topic=%s phase=executor_wait_done "
+                            "waited_ms=%.3f attempts=%d",
+                            topic_id,
+                            (time.monotonic() - started) * 1000,
+                            attempts,
+                        )
+                    return
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 500:
+                        raise
+                    detail = (
+                        "waiting_on=executor_ping status=500 "
+                        f"reason={_failure_reason(exc)}"
+                    )
+                    if time.monotonic() >= deadline:
+                        raise
+                except RuntimeError as exc:
+                    detail = f"waiting_on=executor_ping reason={_failure_reason(exc)}"
+                    if time.monotonic() >= deadline:
+                        raise
+            now = time.monotonic()
+            if now >= report_at:
+                logger.info(
+                    "central_setup_timing topic=%s phase=executor_wait "
+                    "waited_ms=%.3f attempts=%d %s",
+                    topic_id,
+                    (now - started) * 1000,
+                    attempts,
+                    detail,
+                )
+                reported = True
+                report_at = now + _WAIT_REPORT_EVERY
+            if now >= deadline:
+                raise ScreenSetupError("执行环境准备超时，请查看环境日志")
+            await asyncio.sleep(0.2)
+
+    async def _context_tree(self, topic_id, target, started_at):
+        """Walk the room's workspace, saying so while the walk is what is slow."""
+        began = time.monotonic()
+        notice = asyncio.create_task(
+            _report_while_waiting(
+                topic_id, "context_tree", began, "waiting_on=context_fs"
+            )
+        )
+        try:
+            tree = await execution.call(
+                target, "context_fs", {"operation": "tree"}, hub=self._hub
+            )
+        finally:
+            # Cancel and let it unwind on its own: awaiting it here would make
+            # the turn's own cancellation look like the notice's and swallow it.
+            notice.cancel()
+        now = time.monotonic()
+        logger.info(
+            "central_setup_timing topic=%s phase=context_tree elapsed_ms=%.3f "
+            "took_ms=%.3f",
+            topic_id,
+            (now - started_at) * 1000,
+            (now - began) * 1000,
+        )
+        return tree

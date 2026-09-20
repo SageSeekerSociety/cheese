@@ -73,25 +73,30 @@ async def test_project_service_get_finds_project_and_returns_none_for_unknown(cl
 # ---------------------------------------------------------------------------
 
 
-async def _card(session, topic_id, *, status: AcceptStatus):
-    return await AcceptCardRepository(session).add(
+async def _card(session, topic_id, *, status: AcceptStatus, pr_number=None):
+    card = await AcceptCardRepository(session).add(
         topic_id=topic_id,
         reviewer_handle="alice",
         routing_reason="",
         status=status,
     )
+    if pr_number is not None:
+        card.pr_number = pr_number
+    return card
 
 
-async def test_open_pr_card_ids_lists_only_cards_with_an_open_pr(client):
+async def test_open_pr_card_ids_lists_only_pending_cards_riding_a_pr(client):
     async with client.test_factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_open = await topics.create(project_id=project.id, title="A", created_by="u")
         t_other = await topics.create(project_id=project.id, title="B", created_by="u")
         t_done = await topics.create(project_id=project.id, title="C", created_by="u")
-        open_card = await _card(session, t_open.id, status=AcceptStatus.pr_open)
-        await _card(session, t_other.id, status=AcceptStatus.pending)
-        await _card(session, t_done.id, status=AcceptStatus.accepted)
+        open_card = await _card(
+            session, t_open.id, status=AcceptStatus.pending, pr_number=7
+        )
+        await _card(session, t_other.id, status=AcceptStatus.pending)  # PR-less
+        await _card(session, t_done.id, status=AcceptStatus.accepted, pr_number=8)
         await session.commit()
         open_id = open_card.id
 
@@ -104,8 +109,8 @@ async def test_open_pr_card_ids_skips_cards_on_archived_topics(client):
     """孤儿卡修复 (#291) 的判据也在这个接缝里：已归档话题上的卡不算「开着」。
 
     这里直接改话题状态，而不是走 ``TopicService.archive``——归档路径自己就会把卡关掉，
-    要造的恰恰是它防的那种历史遗留行：卡还挂着 ``pr_open``，话题已经归档。轮询器要是
-    还去推它，就是拿当初批准人的 GitHub token 去动没人跟的活儿。
+    要造的恰恰是它防的那种历史遗留行：卡还骑着 PR 等采纳，话题已经归档。轮询器要是
+    还去跟进它，就是拿 GitHub 凭据去动没人跟的活儿。
     """
     async with client.test_factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
@@ -116,8 +121,10 @@ async def test_open_pr_card_ids_skips_cards_on_archived_topics(client):
         t_gone = await topics.create(
             project_id=project.id, title="归档了", created_by="u"
         )
-        live_card = await _card(session, t_live.id, status=AcceptStatus.pr_open)
-        await _card(session, t_gone.id, status=AcceptStatus.pr_open)
+        live_card = await _card(
+            session, t_live.id, status=AcceptStatus.pending, pr_number=7
+        )
+        await _card(session, t_gone.id, status=AcceptStatus.pending, pr_number=8)
         t_gone.status = TopicStatus.archived
         await session.commit()
         live_id = live_card.id

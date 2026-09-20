@@ -31,6 +31,14 @@ export default {
           name: 'UserSettingsRealName',
           component: () => import('@/views/user/settings/RealName.vue'),
         },
+        {
+          // 「安装到手机」：装到主屏幕的说明 + 一次 beforeinstallprompt 机会。
+          // 路径叫 app 而不是 install，是因为将来这一页还会放别的客户端形态
+          // （桌面端安装、版本信息）——它答的是「芝士在哪些设备上是应用」。
+          path: 'app',
+          name: 'UserSettingsApp',
+          component: () => import('@/views/user/settings/Install.vue'),
+        },
       ],
     },
     {
@@ -47,21 +55,25 @@ export default {
         {
           path: 'real-name-info',
           name: 'PrivacyCenterRealNameInfo',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/RealNameInfo.vue'),
         },
         {
           path: 'access-logs',
           name: 'PrivacyCenterAccessLogs',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/AccessLogs.vue'),
         },
         {
           path: 'data-sharing',
           name: 'PrivacyCenterDataSharing',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/DataSharing.vue'),
         },
         {
           path: 'privacy-policy',
           name: 'PrivacyCenterPolicy',
+          meta: { backTo: 'PrivacyCenter' },
           component: () => import('@/views/user/privacy/PrivacyPolicy.vue'),
         },
       ],

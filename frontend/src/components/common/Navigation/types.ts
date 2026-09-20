@@ -15,6 +15,9 @@ export type NavItem = {
   permanent?: boolean
   // Discord-style ⌘N quick-switch number shown in the hover tooltip.
   shortcut?: number
+  // 项目格子才有。rail 上的项目可以拖着换顺序，这个 id 就是被拖的那一个——首页、
+  // 分隔线和「＋新建项目」没有，所以它们既拖不动，也接不住别人拖过来。
+  projectId?: string
   // 这一格在哪些地址上算「正待着」。默认由 `to` 自己说了算（router-link 的
   // 规则：目标那条记录得在当前路由的 matched 里）—— 一格底下住着好几条并列的
   // 顶层路由时那条规则不够用，底栏于是整排都不亮。

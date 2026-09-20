@@ -9,8 +9,8 @@
 
 Both statements run on the CALLER's session, so the key and the effect commit
 together. That is the property Redis cannot give us here: a Redis SETNX plus a
-DB write are two commits with a hole between them, and 自动续跑 is precisely a
-mechanism for arriving in that hole.
+DB write are two commits with a hole between them, and a re-sent turn (重发) is
+precisely a mechanism for arriving in that hole.
 
 ``INSERT ... ON CONFLICT DO NOTHING RETURNING id`` rather than SELECT-then-INSERT:
 the latter races two concurrent claims into both believing they won, and it also

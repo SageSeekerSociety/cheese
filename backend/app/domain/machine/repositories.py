@@ -27,7 +27,7 @@ class ProjectMachineRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID | None = None,
-        machine_id: int,
+        machine_id: int | None,
         customer_id: int,
         account_id: int,
         offering_id: int,
@@ -72,27 +72,13 @@ class ProjectMachineRepository:
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
         return await self._session.get(ProjectMachine, machine_row_id)
 
-    async def lock_provisioning(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> None:
-        """Serialize paid creates for a project before calling MicroCloud.
-
-        The partial unique index is the durable invariant for one active row per
-        topic. This transaction lock closes the earlier external side-effect race:
-        two requests must not both create a VM and only then discover the index.
-        Project scope also makes the existing per-project quota concurrency-safe.
-        """
+    async def lock_team_quota(self, team_id: int) -> None:
+        """Hold the team's last slot through the provider call and DB commit."""
         await self._session.execute(
             text(
                 "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
             ),
-            {"key": f"cloud-project:{project_id}"},
-        )
-        await self._session.execute(
-            text(
-                "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
-            ),
-            {"key": f"cloud-topic:{topic_id}"},
+            {"key": f"cloud-team:{team_id}"},
         )
 
     async def lock_topic(self, topic_id: uuid.UUID) -> None:
@@ -122,7 +108,7 @@ class ProjectMachineRepository:
             ProjectMachine.topic_id.is_not(None),
             ProjectMachine.released_at.is_(None),
             ProjectMachine.status == MachineStatus.running,
-            ProjectMachine.ai_status == AiStatus.ready,
+            ProjectMachine.ai_status.in_((AiStatus.ready, AiStatus.disabled)),
             ProjectMachine.device_id.is_not(None),
         ]
         if device_id is not None:
@@ -156,6 +142,18 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
+    async def list_for_team(self, team_id: int) -> list[ProjectMachine]:
+        from app.domain.project.services import ProjectService
+
+        # Personal teams also own their pre-team projects, as on the project list.
+        projects = await ProjectService(self._session).list_for_team(team_id)
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.project_id.in_([p.id for p in projects])
+            )
+        )
+        return list(result.scalars())
+
     async def find_by_hostname(
         self, project_id: uuid.UUID, hostname: str
     ) -> ProjectMachine | None:
@@ -176,7 +174,10 @@ class ProjectMachineRepository:
         ai_mode: str | None = None,
         ai_status: AiStatus | None = None,
         seen_at: datetime | None = None,
+        machine_id: int | None = None,
     ) -> ProjectMachine:
+        if machine_id is not None:
+            machine.machine_id = machine_id
         machine.status = status
         if ai_mode is not None:
             machine.ai_mode = ai_mode
@@ -204,6 +205,20 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+
+    async def list_reservations_older_than(
+        self, cutoff: datetime
+    ) -> list[ProjectMachine]:
+        """Rows still waiting for a provider id past the point a create can take."""
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.machine_id.is_(None),
+                ProjectMachine.warm_claim_pending.is_(False),
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.created_at < cutoff,
+            )
+        )
+        return list(result.scalars())
 
     async def mark_released(
         self, machine: ProjectMachine, *, when: datetime
@@ -270,7 +285,7 @@ class ProjectMachineRepository:
         conditions = [
             ProjectMachine.device_id.is_(None),
             ProjectMachine.status == MachineStatus.running,
-            ProjectMachine.ai_status == AiStatus.ready,
+            ProjectMachine.ai_status.in_((AiStatus.ready, AiStatus.disabled)),
             ProjectMachine.bootstrap_key.is_not(None),
             ProjectMachine.ip.is_not(None),
             ProjectMachine.enroll_attempts < MAX_ENROLL_ATTEMPTS,
@@ -317,26 +332,29 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
-    async def ccproxy_upstream_for_topic(self, topic_id: uuid.UUID) -> str | None:
-        """The ccproxy identity of the machine this topic's turns run on.
+    async def ccproxy_upstream_for_place(self, place_id: uuid.UUID) -> str | None:
+        """Use the model session host's credential, independently of execution.
 
-        One join rather than two round trips, because the metering proxy asks
-        this on the admission path — the hop every turn already waits on. The
-        chain is topic → pinned device → machine: a topic's work tree and its
-        resumable claude session live on ONE machine, and that pin is write-once
-        (``bind_topic_device``), so the answer is stable for the topic's life.
-
-        Two sources, one meaning. A MicroCloud machine's identity is captured at
-        enrollment into `ProjectMachine`; a self-hosted device has no enrollment,
-        so its identity lives on `DeviceRow` (set by whoever administers the
-        device — the dev box first). Checked in that order; they cannot disagree,
-        because a device is only ever one of the two kinds.
-
-        None whenever every link is missing — an unpinned topic, a device that
-        brings no identity, a machine enrolled before the identity was recorded.
-        Every one of those means "use the deployment-wide identity", which is
-        the behaviour those turns have today.
+        A placed room never borrows its executor's model identity. An empty
+        central identity selects the platform credential. Unmigrated sessions
+        still finish on their original pinned device.
         """
+        from app.domain.topic.models import Topic
+
+        placement = await self._session.scalar(
+            select(Topic.session_placement).where(Topic.id == place_id)
+        )
+        if placement:
+            return await self._session.scalar(
+                select(DeviceRow.ccproxy_upstream).where(
+                    DeviceRow.device_id == placement["device_id"]
+                )
+            )
+        return await self._upstream_of_pinned_device(place_id)
+
+    async def _upstream_of_pinned_device(self, topic_id: uuid.UUID) -> str | None:
+        """The ccproxy identity behind one `device_topic` pin, from whichever of
+        the two device kinds carries it."""
         from_machine = await self._session.scalar(
             select(ProjectMachine.ccproxy_upstream)
             .join(DeviceTopicRow, DeviceTopicRow.device_id == ProjectMachine.device_id)
@@ -367,6 +385,7 @@ class ProjectMachineRepository:
         result = await self._session.execute(
             select(ProjectMachine)
             .where(
+                ProjectMachine.machine_id.is_not(None),
                 ProjectMachine.status == MachineStatus.running,
                 ProjectMachine.ai_status == AiStatus.ready,
                 ProjectMachine.ai_mode != desired,

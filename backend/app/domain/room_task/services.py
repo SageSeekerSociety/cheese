@@ -1,191 +1,22 @@
 """Task services — reading a room's threads, and the trees they work on."""
 
+import asyncio
 import uuid
-from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.block.models import Block
 from app.domain.room_task.models import (
-    FILE_LOCK_TTL,
     HEAVY_LOCK_TTL,
-    MAX_RESIDENT_TASKS_PER_ROOM,
     LockKind,
-    Residency,
     RoomLock,
     Task,
     TaskStatus,
-    WorkTree,
 )
-from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
-
-#: A `running` row older than this is a ghost: the backend that was driving it
-#: died, and nothing else will ever move it. Generous on purpose — a real turn
-#: can be long, and freeing a slot out from under live work is worse than
-#: leaving a dead one held for a while.
-GHOST_RESIDENCY_AFTER = timedelta(hours=2)
-
-
-class ResidencyService:
-    """一个房间最多同时开 4 条后台子代理，多的排队。
-
-    The cap counts what is RUNNING, not what exists: a thread that finished its
-    turn is holding nothing, and it comes straight back if anyone speaks to it.
-    See `Residency` for why that distinction is the whole design.
-    """
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-        self._repo = TaskRepository(session)
-
-    async def admit(self, task: Task) -> bool:
-        """Give *task* a slot if the room has one; queue it if not.
-
-        Returns whether it may start now. A False is not a failure — the room is
-        busy, the task keeps its thread, its brief and its owner, and it starts
-        when a slot frees. Refusing instead would push a decision onto the
-        dispatcher about a condition that clears by itself.
-        """
-        if await self._repo.count_resident(task.room_id) >= MAX_RESIDENT_TASKS_PER_ROOM:
-            task.queued_at = task.queued_at or datetime.now(UTC)
-            await self._session.flush()
-            return False
-        task.residency = Residency.running
-        task.queued_at = None
-        task.last_turn_at = datetime.now(UTC)
-        await self._session.flush()
-        return True
-
-    async def touch(self, task: Task) -> None:
-        """A turn is running here — hold the slot and reset the ghost clock."""
-        task.residency = Residency.running
-        task.queued_at = None
-        task.last_turn_at = datetime.now(UTC)
-        await self._session.flush()
-
-    async def release(self, task: Task) -> Task | None:
-        """The turn ended: free the slot, and hand it to whoever is next.
-
-        Returns the task that just got the slot, so the caller can start it.
-        None when nobody was waiting.
-        """
-        task.residency = Residency.idle
-        await self._session.flush()
-        return await self.dequeue(task.room_id)
-
-    async def dequeue(self, room_id: uuid.UUID) -> Task | None:
-        """Start the longest-waiting queued task, if a slot is now free.
-
-        The ONLY place the queue moves. Spreading this over several call sites
-        is how two of them race and admit five.
-        """
-        if await self._repo.count_resident(room_id) >= MAX_RESIDENT_TASKS_PER_ROOM:
-            return None
-        nxt = await self._repo.next_queued(room_id)
-        if nxt is None:
-            return None
-        await self.admit(nxt)
-        return nxt
-
-    async def queue_position(self, task: Task) -> int:
-        """1-based place in its room's queue; 0 when it is not queued."""
-        if task.queued_at is None:
-            return 0
-        queued = await self._repo.list_queued(task.room_id)
-        return next((i + 1 for i, t in enumerate(queued) if t.id == task.id), 0)
-
-    async def holders(self, room_id: uuid.UUID) -> list[Task]:
-        """Who is holding this room's slots.
-
-        A room at its cap must be able to say WHO, with when each was last
-        active — "排队中" on its own tells the person nothing about which thread
-        to go and finish.
-        """
-        return await self._repo.list_resident(room_id)
-
-    async def sweep_ghosts(self) -> list[Task]:
-        """Free slots held by turns that died with the process driving them."""
-        stale = await self._repo.list_stale_resident(
-            datetime.now(UTC) - GHOST_RESIDENCY_AFTER
-        )
-        for task in stale:
-            task.residency = Residency.idle
-        if stale:
-            await self._session.flush()
-        return stale
-
-
-class WorkTreeService:
-    """一棵树 = 一个分支 = 一个 PR = 一批活."""
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-        self._repo = WorkTreeRepository(session)
-
-    async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
-        return await self._repo.get(tree_id)
-
-    async def current(self, room_id: uuid.UUID) -> WorkTree | None:
-        """The tree this room is writing to, or None while it is sealed."""
-        return await self._repo.open_tree_for_room(room_id)
-
-    async def ensure_open(
-        self, *, project_id: uuid.UUID, room_id: uuid.UUID
-    ) -> WorkTree:
-        """The room's writable tree, starting the next batch if there isn't one.
-
-        Being sealed is not a reason to refuse: sealing means "this batch's PR
-        is flying, do not touch its content", and the answer to new work
-        arriving is a NEW tree, not a queue. That is the whole reason a room may
-        hold more than one — before it could, a PR in flight froze the room for
-        as long as CI took.
-
-        The very first tree carries the room's own id so that its branch,
-        worktree directory, container workdir and tmux session are
-        byte-for-byte the names they already had (migration `b8e2f4a90d33`).
-        Later trees get fresh ids, and therefore fresh branches.
-        """
-        from app.domain.workspace import service as ws
-
-        current = await self._repo.open_tree_for_room(room_id)
-        if current is None:
-            first = not await self._repo.list_for_room(room_id)
-            current = await self._repo.add(
-                project_id=project_id,
-                room_id=room_id,
-                tree_id=room_id if first else None,
-            )
-        # The workspace layer is sync and DB-free, so it cannot ask which tree a
-        # room is on. Tell it — same arrangement `bind_room` uses for boxes.
-        ws.bind_tree(room_id, current.id)
-        return current
-
-    async def seal(self, tree: WorkTree) -> WorkTree:
-        return await self._repo.seal(tree)
-
-    async def mark_merged(self, tree: WorkTree) -> WorkTree:
-        return await self._repo.mark_merged(tree)
-
-    async def tasks_on(self, tree_id: uuid.UUID) -> list[Task]:
-        return await self._repo.list_tasks(tree_id)
-
-    async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
-        return await self._repo.list_for_room(room_id)
-
-    async def record_check(self, tree: WorkTree, *, ok: bool, detail: str) -> WorkTree:
-        """Remember what the quick check said about this tree's content.
-
-        It decides nothing — #296 settled that the PR's real CI is what does.
-        The point is that a red check becomes VISIBLE on the card somebody is
-        about to accept, because a check nobody sees is a check nobody runs.
-        """
-        tree.last_check_at = datetime.now(UTC)
-        tree.last_check_ok = ok
-        tree.last_check_detail = detail[:2000]
-        await self._session.flush()
-        return tree
+from app.domain.room_task.repositories import TaskRepository
 
 
 class TaskService:
@@ -196,6 +27,204 @@ class TaskService:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
 
+    @staticmethod
+    def _bind_workspace(task: Task) -> None:
+        if task.branch_name:
+            from app.domain.workspace import service as ws
+
+            if task.workspace_name is None:
+                raise ValidationError("任务分支缺少工作目录记录")
+            if task.base_branch is None:
+                task.base_branch, _ = ws.base_branch_head(task.project_id)
+            ws.bind_task(
+                task.id,
+                branch=task.branch_name,
+                directory=task.workspace_name,
+                base=task.base_branch,
+            )
+
+    async def open_without_pr(self) -> list[Task]:
+        rows = await self._session.scalars(
+            select(Task).where(
+                Task.status == TaskStatus.open,
+                Task.branch_name.is_not(None),
+                Task.pr_number.is_(None),
+            )
+        )
+        return list(rows.all())
+
+    async def claim_for_pr(self, task_id: uuid.UUID) -> Task | None:
+        task = (
+            await self._session.scalars(
+                select(Task)
+                .where(
+                    Task.id == task_id,
+                    Task.status == TaskStatus.open,
+                    Task.branch_name.is_not(None),
+                    Task.pr_number.is_(None),
+                )
+                .with_for_update(skip_locked=True)
+            )
+        ).first()
+        if task is not None:
+            self._bind_workspace(task)
+        return task
+
+    async def record_pr(self, task: Task, *, number: int, url: str | None) -> Task:
+        task.pr_number, task.pr_url = number, url
+        await self._session.flush()
+        return task
+
+    async def record_check(self, task: Task, *, ok: bool, detail: str) -> Task:
+        task.last_check_at = datetime.now(UTC)
+        task.last_check_ok, task.last_check_detail = ok, detail[:2000]
+        await self._session.flush()
+        return task
+
+    async def require_in_room(self, room_id: uuid.UUID, task_id: uuid.UUID) -> Task:
+        task = await self.get(task_id)
+        if task is None or task.room_id != room_id:
+            raise NotFoundError("这个房间里没有这条任务")
+        self._bind_workspace(task)
+        return task
+
+    async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
+        return await self._repo.list_for_project(project_id)
+
+    async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
+        """Every piece of work this room has dispatched, oldest first.
+
+        The rows only — `threads_for_room` is the same set with each thread's
+        conversation attached, and a caller that wants to know *which work
+        exists* should not pay for every block ever written in the room to find
+        out.
+        """
+        return await self._repo.list_for_room(room_id)
+
+    async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
+        """These rows, oldest first, silently skipping ids that name nothing.
+
+        Ordered by the table and not by the argument, so that a set of ids
+        always renders in one fixed order however it was assembled — the caller
+        is `Cheese-Task:`, and trailer order that depended on the order someone
+        typed `--task` would make two identical declarations produce two
+        different commit messages.
+        """
+        return await self._repo.list_by_ids(task_ids)
+
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Stamp the thread with when its device home's transcripts reached
+        the platform (topic/retire.py). False when no thread has this id."""
+        return await self._repo.mark_transcripts_archived(task_id, at)
+
+    async def open_by_subagent(
+        self, *, room_id: uuid.UUID, subagent_id: str
+    ) -> Task | None:
+        """The open thread in *room_id* this worker is doing, if any.
+
+        Asked once per hook event a worker produces, which is what the
+        (room_id, subagent_id) index is for.
+        """
+        return await self._repo.open_by_subagent(room_id, subagent_id)
+
+    async def bind_subagent(
+        self, *, room_id: uuid.UUID, task_id: uuid.UUID, subagent_id: str
+    ) -> Task:
+        """Say which worker in *room_id*'s session is doing *task_id*.
+
+        The room spawns a worker and then reports the id it got, because the id
+        does not exist until the worker does — nothing the platform hands out
+        in advance could name it. Everything downstream keys off this: without
+        the binding a worker's events are indistinguishable from the room's own.
+
+        Refuses rather than overwrites when the id is already doing other work
+        in this room. Reassigning it would not move the work, it would silently
+        re-address the events of a worker still running — the first thread would
+        stop receiving its own tool calls and never say why.
+        """
+        subagent_id = subagent_id.strip()
+        if not subagent_id:
+            raise ValidationError("要绑定的分身 id 是空的")
+        task = await self._repo.get(task_id)
+        if task is None or task.room_id != room_id:
+            # Same answer for "no such task" and "someone else's task": which of
+            # the two it is, is exactly what a caller poking at ids wants told.
+            raise NotFoundError("这个房间里没有这条活")
+        if task.status is not TaskStatus.open:
+            raise ConflictError("这条活已经收了，不能再绑分身")
+        held = await self._repo.open_by_subagent(room_id, subagent_id)
+        if held is not None and held.id != task.id:
+            raise ConflictError(
+                f"这个分身正在做「{held.title}」，一个分身同时只做一条活"
+            )
+        task.subagent_id = subagent_id
+        # A worker starting IS this work starting, and this is the signal the
+        # board falls back on before the worker has said anything: without it a
+        # thread reads 失联 for the whole gap between being claimed and its first
+        # tool call, which is the busiest moment it has.
+        task.last_turn_at = datetime.now(UTC)
+        await self._session.flush()
+        return task
+
+    async def record_conclusion(self, task: Task, conclusion: str) -> Task:
+        """分身交回来的那句话，落在卡上 —— overwriting whatever was there.
+
+        Called for every `SubagentStop` from a BOUND worker, and a worker stops
+        more than once: parking a long command in its own background reads as
+        finishing, and it stops again when it resumes and finishes for real. So
+        the last one is the only one worth keeping. Acceptance closes delivered
+        work; an explicit close abandons it. A stop notification does neither.
+        """
+        task.conclusion = conclusion
+        await self._session.flush()
+        return task
+
+    async def set_credits(
+        self,
+        task: Task,
+        *,
+        reporter_handle: str | None,
+        contributor_handles: list[str],
+    ) -> None:
+        """Record declared human contributions after validating their accounts."""
+        from app.domain.identity.handles import names_a_person
+        from app.domain.user.services import user_by_handle
+
+        contributors = list(dict.fromkeys(contributor_handles))
+        for handle in contributors + ([reporter_handle] if reporter_handle else []):
+            if (
+                not names_a_person(handle)
+                or await user_by_handle(self._session, handle) is None
+            ):
+                raise ValidationError(f"贡献署名必须指向真实用户：{handle}")
+        task.reporter_handle = reporter_handle
+        task.contributor_handles = contributors
+        await self._session.flush()
+
+    async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
+        """收卡 —— the room says this piece of work is over.
+
+        The room is the only thing that can say it. It read what the worker
+        handed back, folded the changes into its branch, and is the one place
+        holding both halves; the platform sees a worker stop and cannot tell
+        that from a worker pausing.
+
+        `conclusion` overrides what the worker's last stop left, for the case
+        where what came back was a fragment (a parked command's "running the
+        tests…") and the room knows the real answer. Absent, the worker keeps
+        the last word.
+
+        Idempotent: closing a closed thread keeps the first `closed_at` — the
+        moment it stopped being live is a fact, not a re-statement of intent.
+        """
+        if conclusion is not None:
+            task.conclusion = conclusion
+        if task.status is not TaskStatus.closed:
+            task.status = TaskStatus.closed
+            task.closed_at = datetime.now(UTC)
+        await self._session.flush()
+        return task
+
     async def open_thread(
         self,
         *,
@@ -204,38 +233,40 @@ class TaskService:
         title: str,
         owner_handle: str | None,
         created_by: str | None,
-        agent_instance_id: uuid.UUID | None,
+        reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
+        base_task_id: uuid.UUID | None = None,
     ) -> Task:
-        """Open a new thread of work in a room, on the room's current tree.
-
-        A service, not the repository, because the callers are in other domains
-        (dispatch and 讨论升级 both live in `topic`), and a domain reaching into
-        another's repository is what the import guard forbids.
-
-        The tree is resolved HERE rather than asked of the caller: every caller
-        wants the same answer — the batch this room is currently taking work
-        into — and making each of them look it up is how two of them end up
-        disagreeing about which batch a task belongs to.
-        """
+        """Create a task and its worktree before any executor starts writing."""
         from app.domain.workspace import service as ws
 
-        tree = await WorkTreeService(self._session).ensure_open(
-            project_id=project_id, room_id=room_id
-        )
+        base, _ = await asyncio.to_thread(ws.base_branch_head, project_id)
+        if base_task_id is not None:
+            parent = await self.require_in_room(room_id, base_task_id)
+            if parent.branch_name is None:
+                raise ValidationError("历史任务没有可依赖的工作分支")
+            if parent.accepted_at is None and parent.delivered_head is None:
+                base = parent.branch_name
         task = await self._repo.add(
             project_id=project_id,
             room_id=room_id,
-            tree_id=tree.id,
             title=title,
             owner_handle=owner_handle,
+            reviewer_handle=reviewer_handle,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
-        # A thread writes to its room's tree, with its siblings. Without this the
-        # workspace layer would fall back to "the tree named by the place's own
-        # id" and hand the thread an empty tree of its own — one worktree per
-        # piece of work, which is exactly what this design removed.
-        ws.bind_tree(task.id, tree.id)
+        await self.set_credits(
+            task,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles or [],
+        )
+        task.branch_name = f"task/{task.id.hex[:8]}"
+        task.workspace_name = f"task_{task.id.hex[:8]}"
+        task.base_branch, task.base_task_id = base, base_task_id
+        await self._session.flush()
+        self._bind_workspace(task)
+        await asyncio.to_thread(ws.topic_worktree, project_id, task.id)
         return task
 
     async def threads_for_room(
@@ -263,129 +294,18 @@ class TaskService:
             out.append((task, blocks[-limit:] if limit is not None else blocks))
         return out
 
+    async def blocks_for_thread(
+        self, task_id: uuid.UUID, *, limit: int | None = None
+    ) -> list[Block]:
+        """One card's conversation, oldest first, newest *limit* blocks.
 
-class ClaimService:
-    """谁在碰哪些路径 —— 声明，以及声明之间的冲突。
-
-    A claim is a path. **A claim ending in `/` is a directory; anything else is
-    a file.** That one rule is what lets the two answers stay far apart:
-
-    - the same FILE claimed twice is refused, because two threads writing one
-      file is the case with no other defence — the second write wins in silence;
-    - overlapping DIRECTORIES are a warning, because two threads working under
-      `backend/app/domain/review/` is ordinary and refusing it would make the
-      rule something people route around.
-
-    Claims are checked against the siblings on the same TREE, not the same room:
-    files are what conflict, and the tree is what holds the files.
-    """
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-        self._repo = TaskRepository(session)
-        self._trees = WorkTreeRepository(session)
-
-    @staticmethod
-    def normalise(paths: Iterable[str]) -> list[str]:
-        """Trim, drop empties, drop duplicates, keep the order given."""
-        seen: dict[str, None] = {}
-        for raw in paths:
-            path = raw.strip().lstrip("./")
-            if path:
-                seen.setdefault(path, None)
-        return list(seen)
-
-    @staticmethod
-    def _is_dir(path: str) -> bool:
-        return path.endswith("/")
-
-    @classmethod
-    def _overlaps(cls, a: str, b: str) -> bool:
-        """Do these two claims cover any of the same ground?"""
-        if a == b:
-            return True
-        if cls._is_dir(a) and b.startswith(a):
-            return True
-        return cls._is_dir(b) and a.startswith(b)
-
-    async def check(
-        self, *, tree_id: uuid.UUID, paths: list[str], exclude_task_id: uuid.UUID | None
-    ) -> tuple[list[str], list[str]]:
-        """(refusals, warnings) for claiming *paths* on *tree_id*.
-
-        A refusal names the other piece of work, because "conflict" without a
-        name leaves the caller nothing to do: the fix is to narrow one of the
-        two claims or to wait for the other, and both need to know which.
+        The single-card counterpart of `threads_for_room`: opening one card
+        must not fan out over every other card's history to reach it, and a
+        long-lived room holds close to two hundred of them.
         """
-        refusals: list[str] = []
-        warnings: list[str] = []
-        for other in await self._trees.list_tasks(tree_id):
-            if other.id == exclude_task_id or other.status is TaskStatus.closed:
-                continue
-            for mine in paths:
-                for theirs in other.claimed_paths or []:
-                    if not self._overlaps(mine, theirs):
-                        continue
-                    if mine == theirs and not self._is_dir(mine):
-                        refusals.append(f"「{other.title}」已经声明了同一个文件 {mine}")
-                    else:
-                        warnings.append(
-                            f"「{other.title}」也在 {theirs} 底下干活"
-                            f"（你声明的是 {mine}）"
-                        )
-        return refusals, warnings
-
-    async def claim(
-        self, task: Task, paths: Iterable[str]
-    ) -> tuple[list[str], list[str]]:
-        """Add *paths* to what this task says it will touch.
-
-        Additive: a claim grows as work reaches files nobody predicted, and
-        replacing it would silently drop the ground already agreed on.
-        Refusals are returned rather than raised — the caller has to show them
-        AND the warnings, and an exception carries only one of the two.
-        """
-        wanted = self.normalise(paths)
-        refusals, warnings = await self.check(
-            tree_id=task.tree_id, paths=wanted, exclude_task_id=task.id
-        )
-        if refusals:
-            return refusals, warnings
-        task.claimed_paths = self.normalise([*(task.claimed_paths or []), *wanted])
-        await self._session.flush()
-        return [], warnings
-
-    async def unclaimed(self, task: Task, touched: Iterable[str]) -> list[str]:
-        """Which of the paths actually touched were never claimed.
-
-        A claim is an intention and a snapshot is a fact; if nothing ever
-        compares them the claim is decoration. This is reported, never blocked —
-        finding out that work went somewhere unexpected is useful, and stopping
-        it after the fact would only lose the work.
-        """
-        claimed = task.claimed_paths or []
-        return [
-            path
-            for path in self.normalise(touched)
-            if not any(self._overlaps(path, c) for c in claimed)
-        ]
-
-    async def unclaimed_by_topic(
-        self, topic_id: uuid.UUID, touched: Iterable[str]
-    ) -> list[str]:
-        """:meth:`unclaimed`, asked by topic id instead of by Task.
-
-        Callers outside this domain hold a topic id and no Task. Without this
-        they reach for `TaskRepository` themselves, which is exactly the
-        cross-domain repository touch the import guard exists to stop.
-
-        A topic that is a room's own line, or work that claimed nothing, has no
-        expectation to have exceeded — both answer with an empty list.
-        """
-        task = await self._repo.get(topic_id)
-        if task is None or not task.claimed_paths:
-            return []
-        return await self.unclaimed(task, touched)
+        conversations = await self._repo.conversations_for_tasks([task_id])
+        blocks = conversations.get(task_id, [])
+        return blocks[-limit:] if limit is not None else blocks
 
 
 class RoomLockService:
@@ -490,7 +410,7 @@ class RoomLockService:
 
     @staticmethod
     def _ttl(kind: LockKind) -> timedelta:
-        return FILE_LOCK_TTL if kind is LockKind.file else HEAVY_LOCK_TTL
+        return HEAVY_LOCK_TTL
 
     async def _who(self, lock: RoomLock) -> str:
         if lock.holder_task_id is None:

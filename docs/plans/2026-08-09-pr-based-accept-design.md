@@ -28,7 +28,7 @@ API. GitHub's machinery (checks, audit, conflict detection) comes for free.
 人采纳 → card has PR?
           ├─ yes: snapshot worktree → re-push branch → merge PR via API
           │        → sync local main DOWN from upstream → archive topic
-          └─ no:  old path unchanged (local merge + push_back)
+          └─ no:  old path unchanged (local merge)
 ```
 
 ### Decisions
@@ -49,9 +49,7 @@ API. GitHub's machinery (checks, audit, conflict detection) comes for free.
   `pull_requests:write` (`GitHubAppTokens.write_token()`, cached in its own slot,
   separate from the full-grant mint an agent gets). This mint never leaves the
   backend process; the git push wires the token through an in-memory credential
-  helper (env var), never argv, never the on-disk credential store. The host
-  credential-store helper is explicitly reset for these pushes so attribution is
-  always the App.
+  helper (env var), never argv, never disk.
 - **Branch on GitHub**: same name as local, `topic/<8hex>`. Re-pushed
   (`--force-with-lease`) at accept time after the pre-merge snapshot, so
   last-minute worktree edits and conflict fixes are what actually merges.
@@ -68,9 +66,8 @@ API. GitHub's machinery (checks, audit, conflict detection) comes for free.
   conflict machinery (`prepare_conflict_resolution` + agent summon) is reused
   unchanged; the fix lands in the worktree, re-accept re-pushes the branch and
   retries the API merge.
-- **After merge**: no `push_back` (nothing to push — upstream main already moved).
-  `sync_upstream` runs to fast-forward the platform's local main to the merge
-  commit. Card note: `已通过 PR #<n> 合并到 <target>`.
+- **After merge**: `sync_upstream` runs to fast-forward the platform's local
+  main to the merge commit. Card note: `已通过 PR #<n> 合并到 <target>`.
 - **Data model**: `accept_cards` gains nullable `pr_number: int`, `pr_url: str`.
   No new statuses.
 - **Surfaces**: `topic_status` card snapshot exposes the PR fields; new

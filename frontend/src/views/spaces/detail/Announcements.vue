@@ -97,7 +97,11 @@
         }}</v-card-title>
         <v-card-text>
           <v-form @submit.prevent="submitAnnouncement">
-            <v-text-field v-model="newAnnouncementTitle" :label="t('spaces.detail.announcementTitle')" />
+            <v-text-field
+              v-model="newAnnouncementTitle"
+              autocomplete="off"
+              :label="t('spaces.detail.announcementTitle')"
+            />
             <tip-tap-editor
               ref="newAnnouncementContentEditor"
               v-model="newAnnouncementContent"

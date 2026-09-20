@@ -1,15 +1,20 @@
 """Topic membership (话题成员名册) CRUD + permissions over HTTP."""
 
-import uuid
-
-from app.domain.identity.handles import topic_agent_handle
+from tests.integration.conftest import session_auth_headers
 
 MISSING_TOPIC = "00000000-0000-0000-0000-000000000000"
 
 
-def _agent(tid: str) -> str:
-    """The handle THIS topic's 分身 sits in the roster under (分身独立身份)."""
-    return topic_agent_handle(uuid.UUID(tid))
+def _agent(client, tid: str) -> str:
+    """The handle the agent seated in this room acts under.
+
+    Read from the roster rather than derived from the room: a room is a
+    collaboration space and does not name an agent, so which agent sits here is
+    a fact to look up.
+    """
+    seats = [m for m in _roster(client, tid) if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]["member_handle"]
 
 
 def _topic(client, created_by: str = "alice") -> str:
@@ -33,9 +38,9 @@ def test_seed_creator_owner_and_cheese_member(client):
     tid = _topic(client, created_by="alice")
     members = {m["member_handle"]: m for m in _roster(client, tid)}
     assert members["alice"]["role"] == "owner"
-    assert members[_agent(tid)]["role"] == "member"
-    assert members[_agent(tid)]["agent"] is True
-    assert members[_agent(tid)]["name"] == "芝士"
+    assert members[_agent(client, tid)]["role"] == "member"
+    assert members[_agent(client, tid)]["agent"] is True
+    assert members[_agent(client, tid)]["name"] == "芝士"
     assert members["alice"]["agent"] is False
 
 
@@ -44,11 +49,12 @@ def test_owner_can_add_member(client):
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["member_handle"] == "bob"
     handles = {m["member_handle"] for m in _roster(client, tid)}
-    assert handles == {"alice", _agent(tid), "bob"}
+    assert handles == {"alice", _agent(client, tid), "bob"}
 
 
 def test_non_manager_cannot_add_member(client):
@@ -56,11 +62,13 @@ def test_non_manager_cannot_add_member(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     # bob is a plain member → may not add anyone.
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "carol", "role": "member", "actor": "bob"},
+        headers=session_auth_headers("bob"),
     )
     assert r.status_code == 403
 
@@ -70,17 +78,20 @@ def test_admin_can_manage_but_stranger_cannot(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "admin", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     # admin bob adds carol
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "carol", "role": "member", "actor": "bob"},
+        headers=session_auth_headers("bob"),
     )
     assert r.status_code == 200
     # a non-member stranger cannot
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "dave", "role": "member", "actor": "stranger"},
+        headers=session_auth_headers("stranger"),
     )
     assert r.status_code == 403
 
@@ -90,10 +101,12 @@ def test_duplicate_member_rejected(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
 
@@ -103,10 +116,12 @@ def test_update_role(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     r = client.put(
         f"/topics/{tid}/members/bob",
         json={"role": "admin", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["role"] == "admin"
@@ -117,17 +132,22 @@ def test_non_manager_cannot_update_role(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     r = client.put(
         f"/topics/{tid}/members/cheese",
         json={"role": "admin", "actor": "bob"},
+        headers=session_auth_headers("bob"),
     )
     assert r.status_code == 403
 
 
 def test_cannot_remove_last_owner(client):
     tid = _topic(client, created_by="alice")
-    r = client.delete(f"/topics/{tid}/members/alice?actor=alice")
+    r = client.delete(
+        f"/topics/{tid}/members/alice?actor=alice",
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 422
 
 
@@ -136,6 +156,7 @@ def test_cannot_demote_last_owner(client):
     r = client.put(
         f"/topics/{tid}/members/alice",
         json={"role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
 
@@ -145,8 +166,11 @@ def test_remove_member(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
-    r = client.delete(f"/topics/{tid}/members/bob?actor=alice")
+    r = client.delete(
+        f"/topics/{tid}/members/bob?actor=alice", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     assert r.json()["data"]["deleted"] is True
     handles = {m["member_handle"] for m in _roster(client, tid)}
@@ -160,8 +184,11 @@ def test_second_owner_lets_first_be_removed(client):
     client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "owner", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
-    r = client.delete(f"/topics/{tid}/members/alice?actor=bob")
+    r = client.delete(
+        f"/topics/{tid}/members/alice?actor=bob", headers=session_auth_headers("bob")
+    )
     assert r.status_code == 200
 
 
@@ -171,5 +198,113 @@ def test_endpoints_require_existing_topic(client):
     r = client.post(
         f"/topics/{MISSING_TOPIC}/members",
         json={"handle": "bob", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 404
+
+
+def test_each_agent_row_is_named_after_the_agent_seated_there(client):
+    """名册上每个 AI 队友一行，各写各的名字。
+
+    界面上「这一行的 AI 队友叫什么」只有这一个来源——对话里它说的每一句话、名册上
+    它那一行、头像上那个字，读的都是这里。座位账号自己的昵称是建号那一刻写死的
+    常量，照原样报出去，两个队友就成了同一个名字。
+    """
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    tid = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "T", "created_by": "alice"},
+    ).json()["data"]["id"]
+
+    seat = _agent(client, tid)
+    assert {m["member_handle"]: m["name"] for m in _roster(client, tid)}[seat] == "芝士"
+
+    reviewer = client.post(
+        f"/projects/{p['id']}/agents",
+        json={"handle": "reviewer", "display_name": "评审"},
+    ).json()["data"]
+    r = client.post(
+        f"/topics/{tid}/members",
+        json={"handle": reviewer["seat_handle"], "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    rows = {m["member_handle"]: m for m in _roster(client, tid) if m["agent"]}
+    assert rows[seat]["name"] == "芝士"
+    assert rows[reviewer["seat_handle"]]["name"] == "评审"
+
+
+def test_roster_reports_the_global_default_avatar_as_no_avatar(client):
+    """名册要区分「挑过头像」和「从来没挑过」，后者报 avatar_id=null。
+
+    注册的每条路径都写死 ``default_avatar_id=1``，所以「档案上有个头像 id」并不
+    意味着这个人挑过头像。照原样报出去，所有没挑过的人在界面上共用同一张脸——比
+    按 handle 哈希、每人一色的彩色首字母更难认出谁是谁，而认人正是头像的全部职责。
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.avatars.models import Avatar
+    from app.domain.user.models import User, UserProfile
+
+    picks = {"dan": "default", "pat": "predefined", "uma": "upload"}
+    avatar_ids: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            now = datetime.now(UTC)
+            for handle, avatar_type in picks.items():
+                avatar = Avatar(
+                    url="",
+                    name=f"{avatar_type}.png",
+                    avatar_type=avatar_type,
+                    created_at=now,
+                    usage_count=0,
+                )
+                s.add(avatar)
+                await s.flush()
+                avatar_ids[handle] = avatar.id
+                u = User(
+                    username=handle,
+                    email=f"{handle}@example.com",
+                    created_at=now,
+                    updated_at=now,
+                )
+                s.add(u)
+                await s.flush()
+                s.add(
+                    UserProfile(
+                        user_id=u.id,
+                        nickname=handle.upper(),
+                        intro="",
+                        avatar_id=avatar.id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await s.commit()
+
+    asyncio.run(_seed())
+
+    tid = _topic(client, created_by="dan")
+    for handle in ("pat", "uma"):
+        assert (
+            client.post(
+                f"/topics/{tid}/members",
+                json={"handle": handle, "role": "member", "actor": "dan"},
+                headers=session_auth_headers("dan"),
+            ).status_code
+            == 200
+        )
+
+    rows = {m["member_handle"]: m for m in _roster(client, tid)}
+    # 没挑过 → null，界面退回彩色首字母。
+    assert rows["dan"]["avatar_id"] is None
+    # 自己挑的 / 自己传的 → 照常给出图片 id。
+    assert rows["pat"]["avatar_id"] == avatar_ids["pat"]
+    assert rows["uma"]["avatar_id"] == avatar_ids["uma"]
+    # 名册上有、但背后没有用户档案的 handle（芝士的座位就是）也是 null。
+    assert rows[_agent(client, tid)]["avatar_id"] is None
+    # 名字不受影响。
+    assert rows["dan"]["name"] == "DAN"

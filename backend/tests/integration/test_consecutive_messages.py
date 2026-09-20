@@ -104,25 +104,30 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(client, tm
     factory = client.test_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
-    runner = AgentWorkRunner(InProcessBroker(), turn_timeout_s=10.0)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    runner.subscribe_messages()
     topic_id = await _a_topic(factory)
 
     # 一轮开起来，并且停在半路（会话还活着）。
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="去查一下这条链路", summon=True
     )
     await asyncio.wait_for(screen.started.wait(), 5)
 
     # 干活途中，有人不带 @ 地说了一句正事。
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="直接说你准备怎么改", summon=False
     )
 
     await _until(lambda: len(screen.delivered) == 1)
-    assert screen.delivered == ["[wangchangxin]: 直接说你准备怎么改"]
+    assert [p.split("\n\n", 1)[0] for p in screen.delivered] == [
+        "[wangchangxin]: 直接说你准备怎么改"
+    ]
 
     screen.release.set()
     await settle_turn(svc, topic_id)
+    await runner.drain()
 
 
 @pytest.mark.anyio
@@ -135,29 +140,32 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(client, tmp_
     factory = client.test_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
-    runner = AgentWorkRunner(InProcessBroker(), turn_timeout_s=10.0)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    runner.subscribe_messages()
     topic_id = await _a_topic(factory)
 
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="去查一下这条链路", summon=True
     )
     await asyncio.wait_for(screen.started.wait(), 5)
 
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="直接说你准备怎么改", summon=False
     )
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="<@cheese>", summon=True
     )
 
     await _until(lambda: len(screen.delivered) == 2)
-    assert screen.delivered == [
+    assert [p.split("\n\n", 1)[0] for p in screen.delivered] == [
         "[wangchangxin]: 直接说你准备怎么改",
         "[wangchangxin]: <@cheese>",
     ]
 
     screen.release.set()
     await settle_turn(svc, topic_id)
+    await runner.drain()
 
 
 @pytest.mark.anyio
@@ -171,16 +179,19 @@ async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(client, tmp
     factory = client.test_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
-    runner = AgentWorkRunner(InProcessBroker(), turn_timeout_s=10.0)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    runner.subscribe_messages()
     topic_id = await _a_topic(factory)
 
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="先记一句", summon=False
     )
     await asyncio.sleep(0.1)
 
     assert screen.prompts == []
     assert screen.delivered == []
+    await runner.drain()
 
 
 @pytest.mark.anyio
@@ -189,13 +200,15 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(client, tmp_p
     factory = client.test_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
     svc = _service(factory, screen, tmp_path)
-    runner = AgentWorkRunner(InProcessBroker(), turn_timeout_s=10.0)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    runner.subscribe_messages()
     topic_id = await _a_topic(factory)
 
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="先记一句", summon=False
     )
-    await runner.submit_message(
+    await broker.receive_message(
         svc, topic_id, author="wangchangxin", content="<@cheese>", summon=True
     )
     await asyncio.wait_for(screen.started.wait(), 5)
@@ -206,3 +219,4 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(client, tmp_p
 
     screen.release.set()
     await settle_turn(svc, topic_id)
+    await runner.drain()

@@ -6,6 +6,18 @@
 
 ---
 
+## Central sessions and private chat execution
+
+All Claude Code and RC sessions run on the central device configured by `AGENT_SESSION_DEVICE_ID`. Ordinary rooms keep their selected machine for project files, shell commands, environment scripts, custom stdio MCP processes and preview. Private chats use a temporary container on the central host. A missing or offline session host produces an explicit setup failure.
+
+Each chat gets a separate execution container with a read-only image and 64 MiB of writable temporary storage. Shell commands, file operations and Cheese CLI run there. The container has no host directory mounts or model credentials. It retains drafts across turns while it lives; releasing the chat removes its scratch files. Published documents remain in platform storage.
+
+Build the executor on the central device with `docker build -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .` from the repository root. `PRIVATE_CHAT_EXECUTOR_IMAGE` selects the installed image. General network access remains available; backend authorization governs platform operations. The configured session host must have this image available before accepting private chats.
+
+The remaining sections describe ordinary work topics and their selected compute providers.
+
+---
+
 ## 一、两条执行路，都是别人的机器
 
 代码里装配了两个（`agent/compute.py` 的 `build_compute_pool`）：
@@ -17,7 +29,98 @@
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装。
 
-**每一台都不是平台的机器。** 平台没有一台自己的机器在跑话题，这是刻意的（#358）：人要选的是「谁的机器来跑」，而一台不在菜单上的机器，只要它还是执行层的兜底，就是所有人不选时的去处。
+These choices select the ordinary room's execution machine. Claude Code and RC run on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
+
+## 这些机器上有什么工具
+
+工具分三层，落点各不相同：
+
+| | 是什么 | 谁放的 |
+|---|---|---|
+| **平台必需** | tmux、git、python3、harness 本身 | 机器接入时检查，缺了当场拒绝（`machine/enrollment.py`）。没有它们平台自己就跑不起来 |
+| **项目依赖** | 这个仓库要什么 | 项目自己的初始化脚本。工具装进项目共用的前缀，包也落在项目共用的 store 里 |
+| **文档工具** | typst、pandoc、uv、一对中文可变字体 | 平台放（`machine/toolchain_dist.py` + `agent/machine_launcher.py`） |
+
+第三层放在机器的 home 下（`$CHEESE_TOOLCHAIN`，即 `~/.cheese/toolchain`），不在房间的
+session home 里：**这些属于机器，那台机器上每个房间共用一份**，而且比任何一个房间活得久。
+路径里带版本号，所以升级是落在旧的旁边，下次启动才取，没有东西需要卸载。
+
+**它们是能力，不是依赖。** 只回答问题的房间一样都不需要，所以放置是脱离启动脚本跑的，
+既不会让一轮失败也不会让它变慢。代价是刚开机的房间可能还取不到——`skills/documents`
+因此要求 agent 先确认工具在不在，不在就如实说这台机器现在做不了。
+
+第二层分两半，因为它们的寿命不同。
+
+**工具:每台机器每个项目装一次。** 初始化脚本唯一能写的地方是 `$HOME`，而房间的
+HOME 必须各自独立（hook 事件要按房间分开落盘）—— 这两件事凑一起，就是每个房间都
+把同一套工具重下一遍的原因。2026-09-17 实测：每房间一份 Node 22 约 254MB、228 个
+房间，三小时里看到 5 个房间各下一遍同一个 54MB 的 tarball。
+
+所以**脚本拿一个自己的 HOME**：`~/.cheese/store/<项目>/env`。这是平台给得起的 ——
+`HOME` 本来就是项目**不许设**的保留变量（`project/environment.py`），而产品里这个
+脚本就叫「安装工具」，写着「工作房间共用这份配置」。
+
+`agent/environment_runner.py` 里那条缝本来就在：`environment` 给 agent、
+`script_environment` 给脚本，今天已经用来区分（给脚本剥掉 HTTPS_PROXY）。现在多一条：
+**脚本的 HOME 是项目前缀，agent 的 HOME 还是房间自己的。**
+
+凭据和锁也跟着上移，所以 setup 每台机器每个项目只跑一次。两个房间同时启动时，**后到的
+那个等**，不是失败 —— 它的 `status.json` 一直是 preparing/setup，界面上就是「正在安装
+工具」，这话是真的，只是干活的不是它。拿到锁之后要**再读一次凭据**：等的那个东西很可能
+正是它想要的，不再读一遍就是两个房间前后各装一遍，锁白拿了。
+
+`startup`（准备任务代码）保持房间的 HOME：它写进检出，而且同一个项目的两个任务会并发，
+共享 HOME 只会让它们在一个谁都没锁的目录里打架。
+
+**包:每个项目一份 store。** uv、pnpm、npm、pip 默认都把自己的 store 放在 HOME 里，所以
+不管的话同一个项目每开一个房间就多一份完整的依赖树。启动脚本因此把它们指向
+`~/.cheese/store/<项目>/`（`agent/machine_launcher.py`，路径来自
+`device_provider.device_store_dir`）——uv 和 pnpm 会从 store 里**硬链接**出来而不是拷贝。
+
+量级不是估的：CI 上实测同一个 venv，从热 store 建出来是 56891 个共享文件加 8MB 独占，
+留着不共享则是 1.3G（#1104）；容器时代同样的问题让一个项目的 220 个 worktree 吃掉
+236GB。
+
+**按项目分，不按机器分。** 同一个项目的房间本来就共用一个仓库、能读彼此的 checkout，
+store 在这条线以内；跨项目则是一条真实存在的线。今天设备房间之间其实毫无隔离
+（`device/supply.py`：每个 screen 都是 `host`），所以这么分眼下不多挡什么——是为 #358
+留的挂载点。但 #358 要自己解决一件事：**硬链接跨不过 bind mount**（`link(2)` → EXDEV，
+同一个文件系统内也一样，dev 上实测过），所以把 store 只读挂进隔离房间会把去重原样还
+回去。隔离和去重不是同一个开关。
+
+**存量房间会在下一次启动时回收掉自己那份死缓存。** 重定向之后，房间 HOME 里原来那几份
+就没有任何东西再读了，而房间是不会自己消失的（今天没有东西回收闲置房间）。所以做重定向
+的那次启动同时把它们删掉，脱离启动脚本跑。回收多少不是一回事（2026-09-17 实测）：
+
+| | 总计 | 真正回收 |
+|---|---|---|
+| `~/.npm/_cacache` | 792MiB | **100%** |
+| `~/.cache/pip` | 240MiB | **100%** |
+| `~/.cache/uv` | 1.5GiB | 12% |
+| pnpm store | 3.0GiB | 2% |
+
+前两个是下载缓存，没有东西链接它们，每个字节都能拿回来。uv 和 pnpm 的是内容寻址 store，
+安装是从里面**硬链接**出去的——98% 的字节同时在留下来的 `.venv`/`node_modules` 里，删了
+只是把 link count 减一，不释放空间。照删，因为剩下那部分是真的、而且没有风险；但也不是
+免费的：那个房间下次安装要把共享 store 里还没有的东西重新解析、重新下载。每个房间一次。
+
+**已经装好的树不会因此变小。** 要让它变共享得删掉重装，而我们不知道某个项目的初始化脚本
+装了什么、装在哪；而且就算删掉 `initialized.json` 让 setup 重跑，`uv sync` 面对一个已经
+满足的 venv 也不会重新链接。所以存量房间的树留到房间退休为止。**也因此，存量房间不会给
+store 播种**——store 是被下一个新房间填起来的。
+
+`store/<项目>/uv-python` 是这里唯一不能当缓存清的东西：它不是缓存，是 venv **指向**的
+解释器。清掉 `uv-cache` 只是下次重下；清掉 `uv-python` 会让这个项目所有 venv 指空，
+直到某次 `uv run` 把它们重建出来。房间 HOME 里的 `.local/share/uv` 同理，所以上面那个
+清理**不碰它**。
+
+二进制按 digest 钉死在 `toolchain_dist` 里，而不是取上游的校验和：typst 和 pandoc
+根本不发校验和（2026-09-16 实测），而钉在仓库里的 digest 还多一道 PR review，
+同一个 tag 被重新打包会验不过。
+
+字体是 `TYPST_FONT_PATHS` 指过去的，没有设 `TYPST_IGNORE_SYSTEM_FONTS`——我们的字体
+本来就排在系统字体前面，屏蔽掉只会白白拿走用户自己装的字。缺中文字体的失败是静默的：
+typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
 ## 二、菜单和执行层现在是同一个答案
 
@@ -96,11 +199,63 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 **芝士自己提交、推送、开 PR。** 平台不再替它写工作树。详见 `docs/plans/2026-08-27-retire-jj-design.md`。
 
+## 八、归档退掉什么
+
+Open rooms retain their agent sessions and environments, including while idle or
+after accepting a delivery. Archival is an authenticated owner/admin action.
+It records a cleanup deadline using `TOPIC_ARCHIVE_CLEANUP_DELAY_S` (default
+300 seconds). Deployment and later configuration changes do not move that deadline.
+
+The host's `cheese-room-cleanup.timer` triggers a check every minute. Startup and
+device reconnect also retry due operations. Each operation records its resource
+generation, directories, progress and failure reason in PostgreSQL. It inventories
+both device storage roots in one visit. Unknown historical directories are retained;
+absence from the database never grants deletion permission.
+
+Cleanup first requests a graceful agent exit and verifies that no process holds the
+resource open. Stop commands share a device lock and durable completion receipt,
+including subprocesses that could outlive a timed-out caller. Unpublished source or
+an unconfirmed transcript keeps cleanup pending. The platform does not create a
+separate backup of dirty working trees or unpushed commits.
+
+Raw `.claude/projects/**/*.jsonl` files, including subagent files, are collected as
+original byte ranges during execution by the hook sender. Hooks wake collection;
+reconciliation every five seconds catches missed hooks and delayed writes. Byte-range
+receipts follow object storage and database commits. Final cleanup reconciles the
+file set, drains outstanding hook events, and has the backend reread and verify the
+complete stored contents one bounded chunk at a time. Verification progress survives
+a worker restart; a new cleanup operation verifies all chunks again. It checks the
+files again immediately before removal.
+`TRANSCRIPT_S3_BUCKET` must name a private bucket; the public uploads bucket is never
+used implicitly. Existing S3 connection credentials are reused. Immutable source
+identity records accompany the raw chunks so their database index can be rebuilt
+after restoring an older database backup.
+
+Authorized room participants can list and download original readable files through
+`GET /topics/{id}/transcripts` and `GET /topics/{id}/transcripts/{file_id}`. This does
+not automatically inject transcript history into later prompts. Existing tar
+archives remain under `TRANSCRIPTS_DIR` and retain their hourly additive R2 mirror.
+The old recurring tar-copy collector is removed.
+
+Before cleanup takes ownership of deletion, unarchive cancels it and reuses retained
+resources. If a stop or worktree move has an unresolved outcome, unarchive reports
+that it must finish confirmation first. Once deletion is claimed, reopening allocates
+a new resource UUID and drops only obsolete session-resume pointers. Published Git
+branches, platform memory, room messages and task records remain. Old cleanup commands
+keep their original UUID and parked backend worktree path; they cannot target the
+replacement. Cloud machines are deleted by their recorded allocation ID.
+
+`GET /topics/{id}/cleanup` reports the deadline, stage, progress and pending reason.
+Installation and storage configuration are described in
+[`deploy/README-room-cleanup.md`](../deploy/README-room-cleanup.md).
+
 ---
 
 ## 相关
 
 - `backend/app/domain/agent/compute.py` — 两条路的装配与默认值
+- `backend/app/domain/machine/toolchain_dist.py` — 文档工具钉在哪个版本、哪个 digest
+- `backend/app/domain/agent/machine_launcher.py` — 把它们放到机器上的那一段
 - `backend/app/domain/agent/preview_tunnel.py` — 运行环境预览：机器那一半（发到机器上跑的那份）
 - `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，两端都在里面
 - `backend/app/domain/agent/market.py` — 菜单，以及默认值这一个答案

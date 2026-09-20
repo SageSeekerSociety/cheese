@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.delivery import delivery_task
+from tests.machine_work import declare_task
 
 
 def _project(client) -> str:
@@ -78,6 +80,7 @@ def test_a_push_reaches_the_files_the_panel_reads(client):
     pid = _project(client)
     topic = uuid.uuid4()
     project = uuid.UUID(pid)
+    declare_task(project, topic)
     worktree = ws.topic_worktree(project, topic)  # the topic is open
     # Reach the repo the way a machine does, so it is configured as one.
     client.get(
@@ -110,6 +113,7 @@ def test_a_push_still_lands_after_the_worktree_directory_is_deleted(client):
 
     pid = _project(client)
     project, topic = uuid.UUID(pid), uuid.uuid4()
+    declare_task(project, topic)
     worktree = ws.topic_worktree(project, topic)
     shutil.rmtree(worktree)
 
@@ -126,10 +130,51 @@ def test_a_push_still_lands_after_the_worktree_directory_is_deleted(client):
             str(ws.ensure_repo(project)),
             "ls-tree",
             "--name-only",
-            ws.branch_for_tree(topic),
+            ws.branch_for_task(topic),
         ],
         capture_output=True,
         text=True,
         check=True,
     ).stdout
     assert "delivered.txt" in listed
+
+
+# --- 「这批活现在写哪条分支」---------------------------------------------
+
+
+def test_task_manifest_names_only_that_tasks_branch_and_target(client):
+    project = client.post("/projects", json={"name": "Task manifest"}).json()["data"]
+    task = delivery_task(client, project["root_topic_id"], commit=False)
+    headers = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project["id"], topic_id=project["root_topic_id"]
+        )
+    }
+    response = client.get(
+        f"/projects/{project['id']}/git/tasks/{task.id}", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["task_id"] == str(task.id)
+    assert data["room_id"] == project["root_topic_id"]
+    assert data["branch"] == task.branch_name
+    assert data["base"] == task.base_branch
+    assert data["closed"] is False
+
+
+def test_manifest_refuses_an_unknown_task(client):
+    pid = _project(client)
+    response = client.get(
+        f"/projects/{pid}/git/tasks/{uuid.uuid4()}",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+    )
+    assert response.status_code == 404
+
+
+def test_room_branch_negotiation_endpoint_is_retired(client):
+    pid = _project(client)
+    response = client.post(
+        f"/projects/{pid}/git/branch/{uuid.uuid4()}",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+    )
+    assert response.status_code == 404

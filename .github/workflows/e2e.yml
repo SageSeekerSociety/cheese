@@ -134,56 +134,64 @@ jobs:
     # slot each — see docs/infrastructure.md), NOT on the dev box: the box is
     # the deploy target and its single slot serialized every heavy job.
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 15
+    # Same reasoning as test.yml's: a successful `e2e` runs 5m41s to 10m26s
+    # (median 7m33s) over the last 40 runs, and 15 minutes has already
+    # cancelled a run at 20m01s that was slow rather than stuck.
+    timeout-minutes: 25
     # Persists backend/srp_rs's Cargo build cache outside the checkout, same
     # as test.yml's migration-heads/test jobs — see the comment on
     # migration-heads there for the full reasoning (why this path survives
     # actions/checkout and is immune to docker prune, and why it's keyed per
     # job rather than shared).
-    services:
-      postgres:
-        image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: cheese
-        # The data directory lives in RAM. The cheese-ci VMs sit on Proxmox
-        # storage shared with every MicroCloud machine, and a Postgres at its
-        # defaults fsyncs every commit onto it: measured 2026-09-02, a 4 KB
-        # sync write cost 3.5 ms on a busy host and the DB-bound two-thirds of
-        # the suite ran 4-5x slower than on a quiet one (#668 needed five
-        # attempts to fit the 20-minute timeout). Nothing in a CI database
-        # outlives the job, so durability buys nothing here. A full run writes
-        # ~1 GB (measured locally, WAL included); 3g leaves room for WAL growth
-        # on an 8 GB runner that otherwise sits at ~4 GB free.
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw,size=3g
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 5432:5432
-
-      redis:
-        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
-        options: >-
-          --health-cmd="valkey-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-        ports:
-          - 6379:6379
-
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Postgres and Valkey are resident on the machine (deploy/ci-runner/
+      # resident-services.sh) rather than service containers of this job: a
+      # job's own bind host 5432/6379 and bring a 3 GB tmpfs each, which is why
+      # a pool machine could only ever run one job at a time.
+      #
+      # Everything this job binds or names therefore has to be its own. The slot
+      # comes from the machine's runner configuration; unset is the only slot.
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          # Playwright starts a backend and a frontend on fixed ports; two runs
+          # on one machine would take the same two.
+          echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
+          echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
+          echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "DATABASE_URL=$root/cheese_e2e_$slot" >> "$GITHUB_ENV"
+          # Redis keys are scoped by user id, and user ids restart from 1 in each
+          # database; each slot takes its own block of 16.
+          echo "REDIS_URL=redis://localhost:6389/$((slot * 16))" >> "$GITHUB_ENV"
+
+      # The resident Postgres outlives the job, so this database has to be made
+      # empty deliberately — a service container used to do it by being new. The
+      # seed step below is not idempotent, and a run that inherited the previous
+      # run's rows would fail somewhere far from the cause.
+      - name: Give this run an empty database
+        run: |
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"$CHEESE_E2E_DB\" WITH (FORCE)"
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"$CHEESE_E2E_DB\""
+
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/e2e" >> "$GITHUB_ENV"
+
+      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
+      # See the note in test.yml's migration-heads job.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
 
       - name: Set up Python
         run: uv python install 3.13
@@ -200,11 +208,21 @@ jobs:
             frontend/pnpm-lock.yaml
             e2e/pnpm-lock.yaml
 
-      # Persistent venv (same trick as test.yml): checkout wipes the workspace
-      # every run; an out-of-workspace venv turns the measured ~93s uv sync
-      # into a no-op re-check.
-      - name: Point uv at a persistent venv
-        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/e2e" >> "$GITHUB_ENV"
+      # The venv is built per job out of uv's cache, which is the thing worth
+      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
+      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
+      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
+      # that cache is already shared by every slot on the machine.
+      #
+      # Keeping the venv between runs instead is what cost the disk: it stops
+      # sharing the moment the cache is rebuilt under it, and never repairs
+      # itself. All eight venvs found on one box had a link count of 1 on every
+      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
+      # supposed to be views of. The seconds this used to save are a COLD cache;
+      # the cache is what makes it fast, and the cache is not in the workspace
+      # checkout wipes.
+      - name: Point uv at a venv built from the shared cache
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
       - name: Install backend deps
         working-directory: backend
@@ -215,8 +233,6 @@ jobs:
 
       - name: Run migrations
         working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
         run: uv run alembic upgrade head
 
       # alice (seeded by the migration above) owns no project until this runs;
@@ -224,8 +240,6 @@ jobs:
       # rail tile. This is the same fusion demo the dev box is seeded with.
       - name: Seed fusion demo data
         working-directory: backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
         run: uv run python -m scripts.seed_fusion_demo
 
       - name: Install frontend deps
@@ -248,10 +262,7 @@ jobs:
       - name: Run E2E tests
         working-directory: e2e
         env:
-          E2E_BACKEND_PORT: '8791'
-          E2E_FRONTEND_PORT: '3100'
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese
-          REDIS_URL: redis://localhost:6379/0
+          # Ports, DATABASE_URL and REDIS_URL come from the slot step above.
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           CI: true
@@ -259,11 +270,25 @@ jobs:
 
       - name: Upload test report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        # Tolerated: this is debug output, and the account's artifact storage
+        # filling up is not this change being broken. On 2026-09-16 it reported
+        # exactly that — E2E, acceptance and harness contracts all red with every
+        # test passing and only the upload step failing.
+        continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
+        # Only a red run's report is ever opened, and the green ones were the
+        # largest tenant of the org's 500MB artifact quota: 454MB of the 945MB
+        # live on 2026-09-18, 78 uploads in a week.
         if: failure()
         with:
           name: playwright-report
-          path: e2e/playwright-report/
-          retention-days: 7
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 3
 
       # Same reclaim test.yml does, and for the same reason: every run's
       # postgres service container leaves an anonymous volume behind. This job

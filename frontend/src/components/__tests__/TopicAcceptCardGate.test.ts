@@ -51,6 +51,28 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     gate_output: '',
     approvals: [],
     approvals_required: 1,
+    pr_number: null,
+    forge: {
+      kind: 'platform',
+      reports_checks: false,
+      hosts_proposals: false,
+      can_write_remote: false,
+      has_external_remote: false,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',
+    },
+    pr_url: null,
+    // 平台 lane 的常态 (#718)：没有信号，who 恒 human，采纳纯是人的判断。
+    merge_state: {
+      state: 'unknown',
+      who: 'human',
+      reasons: [{ kind: 'no_signal', checks: [], detail: '还没有信号' }],
+      head_sha: null,
+      checked_at: null,
+      since: null,
+    },
+    auto_merge: { allowed: false, armed_by: null, armed_at: null },
     ...over,
   } as AcceptCard
 }

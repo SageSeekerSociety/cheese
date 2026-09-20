@@ -1,13 +1,12 @@
 name: Backend Test
 
-# Every job below runs on a self-hosted runner (the cheese-ci pool), not a
-# GitHub-hosted one: this is a private repo, so hosted minutes are billed
-# per-minute, and the org's Actions billing lapsed on 2026-08-13 — every
-# ubuntu-latest job is now refused before it starts ("recent account payments
-# have failed"). The heavy jobs (test, migration-heads) needed the pool anyway
-# for service containers and native amd64 Docker; the cheap coordinator jobs
-# (scope, lint) followed so the whole workflow stops depending on hosted
-# minutes at all.
+# Every job here runs on a GitHub-hosted runner: the repository is public, so
+# hosted minutes are free and unlimited. Postgres and Valkey come as service
+# containers on the same images and host ports the cheese-ci pool's resident
+# pair use (deploy/ci-runner/resident-services.sh), so the test settings do not
+# depend on which kind of runner they land on. Only jobs that need the dev
+# box's own images or a real device stay on the self-hosted pool (e2e,
+# remote-execution, build).
 on:
   push:
     branches: [main]
@@ -21,8 +20,7 @@ on:
       - '.github/workflows/test.yml'
 
 # Least privilege: none of these jobs write anything back to GitHub, so the
-# token they run with should not be able to. Jobs that DO need more (the
-# `scope` gh-api jobs) declare it at job level, which overrides this.
+# token they run with should not be able to.
 permissions:
   contents: read
 
@@ -30,104 +28,104 @@ defaults:
   run:
     working-directory: backend
 
-# Superseded runs must not occupy the finite self-hosted capacity (three
-# cheese-ci slots, one per pool machine), so they are cancelled rather than
-# left to queue ahead of the commit that replaced them.
-#
 # Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
-# each merge in its own group, for exactly the reason build.yml already is (see
-# the long comment there): every main push shares the one ref, so a ref-only
-# key let a second merge cancel the previous commit's still-running suite and
-# left main with no result for that commit. That is worse here than it is for a
-# build, because a cancelled run is not a red run — main can end up carrying
-# code this workflow never finished checking with nothing on the commit to say
-# so. It is also precisely the wrong run to cancel: the scope job below already
-# skips main pushes whose tree passed on the PR, so anything that reaches these
-# jobs is a commit CI has NOT seen. PR refs keep the ref key, so repeated pushes
-# to one PR still supersede each other the way they always did.
+# each merge in its own group (see the long comment in build.yml): every main
+# push shares the one ref, so a ref-only key let a second merge cancel the
+# previous commit's still-running suite and left main with no result for that
+# commit. A cancelled run is not a red run — main would carry code this
+# workflow never finished checking, with nothing on the commit to say so.
+# Every main push runs the full suite: a squash merge lands on a main that has
+# moved since the PR was tested, and two individually green PRs can be red
+# together. Hosted runners make that affordable.
 concurrency:
   group: ci-test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # A squash merge produces a new main commit whose tree was already checked on
-  # the PR. On the box's only runner, repeating the same five-minute suite delays
-  # image publishing and deploy without testing new code. Direct pushes to main
-  # have no merged PR association and therefore still run the full gate.
-  scope:
-    # On the cheese-ci pool, not a hosted runner: the org's Actions billing
-    # lapsed on 2026-08-13, so every ubuntu-latest job is refused before it
-    # starts. This job is only `gh api` calls, so its sole cost on the pool is
-    # the ~1.3m it can queue behind other pool work — an owner-accepted trade
-    # (not depending on billing beats shaving the critical path). The pool has
-    # no `gh`, so a step below installs it into a per-machine dir.
-    runs-on: [self-hosted, cheese-ci]
-    # Measured median 0.2m (a couple of gh api calls); wide margin still small
-    # next to the jobs it gates.
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: read
-    outputs:
-      run_heavy: ${{ steps.decide.outputs.run_heavy }}
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      # The cheese-ci pool machines don't ship `gh` (hosted runners do).
-      # Install it once per machine into a dir that survives actions/checkout's
-      # workspace reset, then prepend it to PATH — the same persistence trick
-      # the heavy jobs use for their Cargo cache. No checkout runs here, so this
-      # step runs from the workspace root, not the `backend` default (which does
-      # not exist without a checkout).
-      - name: Ensure gh CLI
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Persist backend/srp_rs's Cargo build cache and the uv venv outside the
+      # checkout, keyed to this job — same reasoning as migration-heads/test
+      # (checkout wipes an in-workspace target/ and .venv every run). No
+      # setup-uv enable-cache: it helps only ephemeral hosted runners; on a
+      # persistent pool machine these dirs are the cache.
+      - name: Point Cargo at the persistent target dir
+        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/lint" >> "$GITHUB_ENV"
+
+      # The venv is built per job out of uv's cache, which is the thing worth
+      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
+      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
+      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
+      # that cache is already shared by every slot on the machine.
+      #
+      # Keeping the venv between runs instead is what cost the disk: it stops
+      # sharing the moment the cache is rebuilt under it, and never repairs
+      # itself. All eight venvs found on one box had a link count of 1 on every
+      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
+      # supposed to be views of. The seconds this used to save are a COLD cache;
+      # the cache is what makes it fast, and the cache is not in the workspace
+      # checkout wipes.
+      - name: Point uv at a venv built from the shared cache
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
+      # See the note in test.yml's migration-heads job.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      # The same hooks a developer's commit runs, read from
+      # .pre-commit-config.yaml. Before this, CI and the local gate were two
+      # hand-maintained lists that agreed only as long as someone remembered to
+      # update both. Each hook cds into backend/ on its own, so these run from
+      # the workspace root rather than under this job's `defaults`.
+      - name: Lint and type-check (pre-commit hooks)
         working-directory: ${{ github.workspace }}
         run: |
-          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
-          if [ ! -x "$gh_dir/bin/gh" ]; then
-            gh_version=2.63.2
-            mkdir -p "$gh_dir"
-            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
-              | tar -xz -C "$gh_dir" --strip-components=1
-          fi
-          echo "$gh_dir/bin" >> "$GITHUB_PATH"
-          "$gh_dir/bin/gh" --version
+          uvx pre-commit run --all-files --show-diff-on-failure ruff
+          uvx pre-commit run --all-files --show-diff-on-failure ruff-format
+          uvx pre-commit run --all-files pyright
 
-      - name: Decide whether this commit already passed PR CI
-        id: decide
-        working-directory: ${{ github.workspace }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          WORKFLOW_FILE: test.yml
-        run: |
-          run_heavy=true
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            if pr_head="$(gh api \
-              -H 'Accept: application/vnd.github+json' \
-              "/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
-              --jq '.[] | select(.merged_at != null and .merge_commit_sha == env.GITHUB_SHA) | .head.sha')"; then
-              if [ -n "$pr_head" ] && passed="$(gh api --method GET \
-                "/repos/$GITHUB_REPOSITORY/actions/workflows/$WORKFLOW_FILE/runs" \
-                -f head_sha="$pr_head" -f event=pull_request -f status=success \
-                --jq '.workflow_runs | length')"; then
-                if [ "$passed" -gt 0 ]; then
-                  run_heavy=false
-                  echo "::notice::Exact squash-merge tree already passed this PR workflow; skipping duplicate main suite"
-                fi
-              fi
-            else
-              echo "::warning::Could not inspect associated PRs; running the suite (safe fallback)"
-            fi
-          fi
-          echo "run_heavy=$run_heavy" >> "$GITHUB_OUTPUT"
+  # The one piece of backend code that is not Python: the extension a pi room
+  # gives its agent. It runs inside pi on a session machine, so the only thing
+  # it may ever need is what that machine has — and this lane is held to the
+  # same bar. Node strips the types itself; there is no package.json here, no
+  # install step, and nothing to keep in a lockfile. A toolchain here would be
+  # the first place "a session machine needs no toolchain" stopped being true.
+  #
+  # Node 24 rather than the 22 the frontend pins: type stripping is on by
+  # default from 23.6, and the alternative is carrying an experimental flag
+  # that exists only to say so.
+  extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-  # Alembic must always have exactly ONE head. Parallel migrations (采纳 pushes,
-  # upstream syncs) landing side by side fork the chain; `alembic upgrade head`
-  # then refuses, and both the test job and the deploy abort on it — this broke
-  # the dev deploy four times on 2026-08-09/10 alone. Deliberately NOT behind
-  # the scope gate: squash-merge skipping is exactly how the fork slipped past
-  # CI before, so this must run on every push and PR. ~seconds with a warm uv
-  # cache; reads the migration graph only, no database needed.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Run the pi extension's tests
+        run: node --test tests/extension/*.test.ts
+
   migration-heads:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     # Measured median 1.8m (uv sync + a graph read, no DB); generous margin for
     # a cold uv cache without leaving a stuck run to sit for hours.
     timeout-minutes: 10
@@ -168,15 +166,42 @@ jobs:
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/migration-heads" >> "$GITHUB_ENV"
 
-      # Persistent venv, same reasoning as the Cargo dir above (and same
-      # per-job keying): checkout wipes an in-workspace .venv every run.
-      - name: Point uv at a persistent venv
-        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/migration-heads" >> "$GITHUB_ENV"
+      # The venv is built per job out of uv's cache, which is the thing worth
+      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
+      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
+      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
+      # that cache is already shared by every slot on the machine.
+      #
+      # Keeping the venv between runs instead is what cost the disk: it stops
+      # sharing the moment the cache is rebuilt under it, and never repairs
+      # itself. All eight venvs found on one box had a link count of 1 on every
+      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
+      # supposed to be views of. The ~93s this used to save is a COLD cache;
+      # the cache is what makes it fast, and the cache is not in the workspace
+      # checkout wipes.
+      - name: Point uv at a venv built from the shared cache
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      # The cache the venv above is built from has to outlive the job, and it
+      # did not. setup-uv exports UV_CACHE_DIR unconditionally, and with
+      # `cache-local-path` empty it points at $RUNNER_TEMP/setup-uv-cache —
+      # inside the per-job temp the runner wipes. So every job resolved against
+      # an empty cache: 31 wheels, 356 MiB off the network, `Prepared 196
+      # packages in 2m 11s` (runner-2, run 35178186973), where a warm cache
+      # syncs in about a second. Setting UV_CACHE_DIR in GITHUB_ENV cannot fix
+      # it — the action overwrites it — so the input is the way in.
+      #
+      # $HOME rather than a literal path: `cheese-ci-any` also reaches the ARM
+      # runner, where the user is not `ci`. One cache per machine is deliberate;
+      # uv's cache is append-only and file-locked, so both slots can share it.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
 
       - name: Set up Python
         run: uv python install 3.13
@@ -203,135 +228,119 @@ jobs:
   # (2026-08-13); it now runs on the cheese-ci pool like the other jobs, using
   # the persistent Cargo/venv trick below instead of setup-uv's enable-cache
   # (which helps only ephemeral hosted runners — see migration-heads).
-  lint:
-    needs: scope
-    # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
-    # it answers "did this exact commit already pass CI on its PR, so can the
-    # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
-    # `== 'true'` it did: when `scope` failed, its output was empty, the
-    # condition was false, and the heavy jobs were SKIPPED — the workflow
-    # reported nothing ran and looked green-ish, having tested nothing.
-    #
-    # That is not hypothetical. On 2026-08-13 the org's Actions billing lapsed;
-    # every ubuntu-latest job was refused before it started ("The job was not
-    # started because recent account payments have failed"), 0 steps, 2 seconds.
-    # `scope` was hosted at the time, so it died, and with it the self-hosted
-    # `test` job on machines that were sitting idle and perfectly able to run.
-    # That lapse is also why `scope` itself has since moved onto the pool — but
-    # the rule below stays regardless: an optimisation must never veto the tests.
-    #
-    # Now: skip only on an explicit `false` from a `scope` that actually ran.
-    # Any other outcome — failed, cancelled, never started — means we do not
-    # know, and not knowing means run the tests.
-    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
-    runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      # Persist backend/srp_rs's Cargo build cache and the uv venv outside the
-      # checkout, keyed to this job — same reasoning as migration-heads/test
-      # (checkout wipes an in-workspace target/ and .venv every run). No
-      # setup-uv enable-cache: it helps only ephemeral hosted runners; on a
-      # persistent pool machine these dirs are the cache.
-      - name: Point Cargo at the persistent target dir
-        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/lint" >> "$GITHUB_ENV"
-
-      - name: Point uv at a persistent venv
-        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/lint" >> "$GITHUB_ENV"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
-        with:
-          version: "0.12.1"
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install dependencies
-        run: uv sync --all-extras
-
-      # The same hooks a developer's commit runs, read from
-      # .pre-commit-config.yaml. Before this, CI and the local gate were two
-      # hand-maintained lists that agreed only as long as someone remembered to
-      # update both. Each hook cds into backend/ on its own, so these run from
-      # the workspace root rather than under this job's `defaults`.
-      - name: Lint and type-check (pre-commit hooks)
-        working-directory: ${{ github.workspace }}
-        run: |
-          uvx pre-commit run --all-files --show-diff-on-failure ruff
-          uvx pre-commit run --all-files --show-diff-on-failure ruff-format
-          uvx pre-commit run --all-files pyright
-
   test:
-    needs: scope
-    # See the note on the job above: `scope` is an optimisation and must
-    # not veto. Skip only on an explicit `false` from a run that happened.
-    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
-    runs-on: [self-hosted, cheese-ci]
-    # 20m keeps a wedged run off the box's single runner. The margin is
-    # thinner than it looks: the suite now takes ~14m, and three runs have
-    # been killed here. Raising this is the wrong reflex — a run that hits it
-    # reports as a failure with no test results in it at all, so the ceiling
-    # is the last thing standing between a hang and an hour of the shared
-    # runner. The scheduler and per-test timeout above are what buy the
-    # margin back; if it is hit again, the durations report says where to look.
-    timeout-minutes: 20
-    # Persists backend/srp_rs's Cargo build cache outside the checkout — see
-    # the migration-heads job above for the full reasoning (why this path,
-    # why it's immune to docker prune, and why it's job-keyed rather than
-    # shared with migration-heads/e2e).
+    runs-on: ubuntu-latest
+    # Shared by the three layer steps at the bottom of this job. DATABASE_URL
+    # and TEST_PG_BASE are not here: the slot step writes them to $GITHUB_ENV so
+    # two runs on one machine get their own databases.
+    env:
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      # LLM tests mock the completions; the client just needs to construct
+      # (the openai SDK errors without any credentials). Dummy key.
+      OPENAI_API_KEY: test-key
+      # The default AI pool is "available" only when its gateway credential is
+      # present (AgentProfile.available = bool(auth_token)); the market test
+      # asserts availability. Dummy token — no real calls are made.
+      ANTHROPIC_AUTH_TOKEN: test-token
     services:
+      # The same images the cheese-ci pool's resident pair run
+      # (deploy/ci-runner/resident-services.sh), on the same host ports, so the
+      # test settings need no translation between the two kinds of runner.
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.18.8-pg16@sha256:8a14fee5257f554a60d70afc89490a6460a9833c3f7f99f7d88dbbf12e4042a2
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: cheese_test
-        # The data directory lives in RAM. The cheese-ci VMs sit on Proxmox
-        # storage shared with every MicroCloud machine, and a Postgres at its
-        # defaults fsyncs every commit onto it: measured 2026-09-02, a 4 KB
-        # sync write cost 3.5 ms on a busy host and the DB-bound two-thirds of
-        # the suite ran 4-5x slower than on a quiet one (#668 needed five
-        # attempts to fit the 20-minute timeout). Nothing in a CI database
-        # outlives the job, so durability buys nothing here. A full run writes
-        # ~1 GB (measured locally, WAL included); 3g leaves room for WAL growth
-        # on an 8 GB runner that otherwise sits at ~4 GB free.
-        options: >-
-          --tmpfs /var/lib/postgresql/data:rw,size=3g
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
         ports:
-          - 5432:5432
-
-      redis:
+          - 5442:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      valkey:
         image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
-        options: >-
-          --health-cmd="valkey-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
         ports:
-          - 6379:6379
-
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    # A hang detector, not a performance budget, and the outer one: the three
+    # layer steps at the bottom carry their own (5 + 5 + 25 = 35), and a
+    # per-layer ceiling only ever fires if the job can still be alive when it
+    # does — so this is their sum plus 5 minutes for everything above them,
+    # which takes about 1m40s (containers, uv sync, migrations, sandbox image,
+    # the pinned claude build). Set it below that sum and the job kills itself
+    # first, which is the "something hung, no idea where" report the split was
+    # made to stop. A healthy run takes 15-17 minutes. What reaches this ceiling
+    # rather than a layer's is a hang in the setup steps, which have none of
+    # their own; either way the run reports as a failure with no test results.
+    timeout-minutes: 40
+    # Persists backend/srp_rs's Cargo build cache outside the checkout — see
+    # the migration-heads job above for the full reasoning (why this path,
+    # why it's immune to docker prune, and why it's job-keyed rather than
+    # shared with migration-heads/e2e).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Postgres and Valkey are resident on the machine (deploy/ci-runner/
+      # resident-services.sh), not service containers of this job. A job's own
+      # containers bind host 5432/6379 and bring a 3 GB tmpfs each, so two jobs
+      # on one machine collided on the port and did not fit in 8 GB of RAM —
+      # which is why a pool machine could only run one job at a time.
+      #
+      # What keeps two concurrent runs apart is the slot, declared by the
+      # machine's runner configuration. Unset is the only slot, as on a laptop.
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          # Redis keys are scoped by user id and user ids restart from 1 in every
+          # database, so two runs must not share an index: each slot takes its
+          # own block of 16, and the resident Valkey has room for both.
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          # `-n auto` is the whole machine; two slots of it is twice the cores.
+          # A machine with one slot sets nothing and keeps `auto`.
+          echo "CHEESE_CI_TEST_WORKERS=${CHEESE_CI_TEST_WORKERS:-auto}" >> "$GITHUB_ENV"
+          # The database `alembic upgrade head` is proved against below. Its own
+          # per slot: two runs migrating one database race on its version table.
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
       - name: Point Cargo at the persistent target dir
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
 
-      # Same persistence trick as Cargo above, for the venv itself: checkout
-      # wipes the workspace every run, so an in-workspace .venv is rebuilt from
-      # scratch (~90s measured on the pool). A venv parked outside the
-      # workspace makes `uv sync` a no-op re-check (~10s).
-      - name: Point uv at a persistent venv
-        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/test" >> "$GITHUB_ENV"
+      - name: Ensure the worktree retirement dependency
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof
+
+      # The venv is built per job out of uv's cache, which is the thing worth
+      # keeping between runs. uv unpacks every wheel into ~/.cache/uv once and
+      # HARDLINKS out of it, so a venv built from a warm cache holds 8 MB of its
+      # own and takes 0.9s to produce (measured on a CI box, 2026-09-16), and
+      # that cache is already shared by every slot on the machine.
+      #
+      # Keeping the venv between runs instead is what cost the disk: it stops
+      # sharing the moment the cache is rebuilt under it, and never repairs
+      # itself. All eight venvs found on one box had a link count of 1 on every
+      # file — 9.9 GB, none of it shared, against the 1.3 GB cache they were
+      # supposed to be views of. The seconds this used to save are a COLD cache;
+      # the cache is what makes it fast, and the cache is not in the workspace
+      # checkout wipes.
+      - name: Point uv at a venv built from the shared cache
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      # $RUNNER_TEMP/setup-uv-cache, setup-uv's default, dies with the job.
+      # See the note in test.yml's migration-heads job.
+      - name: Point uv's cache outside the per-job temp
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
 
       - name: Set up Python
         run: uv python install 3.13
@@ -342,9 +351,21 @@ jobs:
       - name: Report Cargo target cache size
         run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
 
-      - name: Run database migrations
+      # The resident Postgres outlives the job, and a service container used to
+      # bring this database into being by being new. Empty every run on purpose:
+      # what the step below proves is that the migrations apply from nothing.
+      - name: Give this run an empty database
         env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
+          PGPASSWORD: postgres
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh postgresql-client
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          psql -h localhost -p 5442 -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
+      # DATABASE_URL comes from the slot step above.
+      - name: Run database migrations
         run: uv run alembic upgrade head
 
       # The sandbox test runs `docker run python:3.12-slim`. On the self-hosted
@@ -361,45 +382,140 @@ jobs:
             docker tag mirror.gcr.io/library/python:3.12-slim python:3.12-slim
           fi
 
-      - name: Run tests
-        env:
-          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cheese_test
-          # Per-worker test DBs are provisioned over the network from this server
-          # root (the conftest no longer shells out to `docker exec`).
-          TEST_PG_BASE: postgresql+asyncpg://postgres:postgres@localhost:5432
-          REDIS_URL: redis://localhost:6379/0
-          JWT_SECRET: test-secret
-          ENVIRONMENT: test
-          # LLM tests mock the completions; the client just needs to construct
-          # (the openai SDK errors without any credentials). Dummy key.
-          OPENAI_API_KEY: test-key
-          # The default AI pool is "available" only when its gateway credential is
-          # present (AgentProfile.available = bool(auth_token)); the market test
-          # asserts availability. Dummy token — no real calls are made.
-          ANTHROPIC_AUTH_TOKEN: test-token
-        # `worksteal` rather than the default `load` scheduler: `load` hands a
-        # worker its next batch and cannot take it back, so when the run winds
-        # down one worker ends up holding several slow tests and chews them
-        # serially while the rest idle. That tail is measurable — a single
-        # 72-test chunk has taken over five minutes on a run that passed — and
-        # it is what puts a ~14-minute suite within reach of the 20-minute
-        # ceiling below. `worksteal` lets an idle worker take work back off a
-        # busy one, which is exactly that failure and no other.
-        #
-        # `--durations` because nobody can currently say WHICH tests make this
-        # suite slow: the log is progress dots, and a dot costs the same
-        # whether it took 3ms or 40s. This prints the twenty worst on every
-        # run, so the question stops being re-asked from zero.
-        run: >-
-          uv run pytest tests/ -n auto --dist worksteal
-          --tb=short -k "not kotlin" --durations=20
+      # tests/pinned_claude.py: every command an executor runs goes through the
+      # pinned build's `mcp serve`, so the remote-execution tests need the
+      # binary itself. The pool has it preinstalled; a hosted runner does not.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install the pinned Claude Code build
+        run: |
+          version="$(python3 - <<'PY'
+          import ast, pathlib
+          src = pathlib.Path("app/domain/agent/harness/claude_code/remote_execution/client.py").read_text()
+          print(next(ast.literal_eval(n.value) for n in ast.parse(src).body
+                     if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "PINNED_VERSION" for t in n.targets)))
+          PY
+          )"
+          npm install --prefix "$RUNNER_TEMP/claude-tools" --no-audit --no-fund "@anthropic-ai/claude-code@$version"
+          echo "CHEESE_TEST_CLAUDE=$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" --version
+      # One pytest per layer, in series, instead of one over the whole tree.
+      # `tests/` as a single step reported 6838 tests as one number: nothing in
+      # it said whether the pure tests — which need no Postgres and no app —
+      # were fast or had quietly grown a database, and a wedge anywhere cost the
+      # job's whole ceiling to find. Three steps put a name and a ceiling on
+      # each layer, and the split loses nothing: the markers are derived at
+      # collection (backend/tests/conftest.py), every test carries exactly one
+      # or the collection fails, so the three steps run the same set of tests
+      # the one step ran.
+      #
+      # `timeout-minutes` here are hang detectors per layer, not the budgets the
+      # layers are meant to hit (30s / 3m / 6m). Those need more runners than
+      # this pool has — eight xdist workers means eight pairs of databases and
+      # twice the Postgres connections, which is what the box cannot currently
+      # give — so setting them as ceilings today would turn a healthy run red.
+      # They are sized off what each layer takes on this pool (1m50s / 30s /
+      # 12m) with room for a slow machine, and their sum plus setup is the job's
+      # own `timeout-minutes` above — a detector that cannot fire before the job
+      # dies detects nothing.
+      #
+      # Contract and integration run even after an earlier layer failed
+      # (`if: ${{ !cancelled() }}`; the job is red all the same). One pytest over
+      # the tree listed every failure in one report, and three steps that stop
+      # at the first red would have made that two or three pushes to see. The
+      # count guard between them is the one step that does stop: it reads the
+      # junit the pure step writes, and a pure step that hung wrote none.
+      #
+      # `worksteal` rather than the default `load` scheduler: `load` hands a
+      # worker its next batch and cannot take it back, so when the run winds
+      # down one worker ends up holding several slow tests and chews them
+      # serially while the rest idle. That tail is measurable — a single
+      # 72-test chunk has taken over five minutes on a run that passed — and
+      # it is what puts a ~14-minute suite within reach of the job ceiling.
+      # `worksteal` lets an idle worker take work back off a busy one, which is
+      # exactly that failure and no other.
+      #
+      # `--durations` because nobody can currently say WHICH tests make this
+      # suite slow: the log is progress dots, and a dot costs the same
+      # whether it took 3ms or 40s. This prints the twenty worst on every
+      # run, so the question stops being re-asked from zero.
 
-      # Every run's postgres service container leaves a volume behind, and
-      # nothing ever removed them: 57 had accumulated to 19GB and filled the
-      # box's disk mid-run ("No space left on device" from asyncpg). Only
-      # volumes no container references are touched, so a live deployment's
-      # data is never in scope.
-      - name: Reclaim the service containers' volumes
+      # No database in this step's environment, on purpose. What makes a test
+      # pure is that it reaches for neither Postgres nor the app, and the
+      # collection hook derives that from the fixture closure — a static read,
+      # which cannot see a test that opens a connection by hand. Pointing the
+      # two URLs at a port nothing listens on is the part that does see it:
+      # such a test fails here, in the layer it broke, instead of passing
+      # because the integration step's Postgres happened to be up on the same
+      # machine. Set on the command rather than in `env:` because the slot step
+      # above writes both names to $GITHUB_ENV, and one assignment in front of
+      # the command wins over that without depending on which layer of the
+      # runner's env merge is documented to.
+      - name: Run the pure layer
+        timeout-minutes: 5
+        run: |
+          TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1 \
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here \
+          uv run pytest tests/ -m pure -n "$CHEESE_CI_TEST_WORKERS" \
+            --dist worksteal --tb=short -k "not kotlin" --durations=20 \
+            --junitxml="$RUNNER_TEMP/pure.xml"
+
+      # A green pure step does not say the layer still holds its tests. The
+      # layer is derived from the fixture closure, so the day a unit test grows
+      # a database it is reclassified into the integration step without a word:
+      # this step runs fewer tests and passes. That is the same thing one
+      # number over the whole tree could not tell you, absorbed rather than
+      # merely unreported — so the count is asserted, not admired.
+      #
+      # 4438 today, floor 4000. The gap has to clear the largest thing anyone
+      # deletes in one go, or the guard fires on ordinary work and the fix is to
+      # edit this constant — which teaches everyone to edit it. The largest file
+      # in this layer holds 99 tests (tests/unit/test_user_services.py) and 34
+      # files hold 38 or more, so 438 of headroom covers deleting any of them,
+      # several at once. What it does not cover is a tenth of the layer going
+      # missing, which is the shape of the failure this step is here for: the
+      # collection hook breaking, or a fixture growing a database under it and
+      # taking every test that uses it into the integration step.
+      - name: The pure layer still holds its tests
+        run: |
+          python3 - "$RUNNER_TEMP/pure.xml" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          floor = 4000
+          ran = sum(int(s.get("tests", 0))
+                    for s in ET.parse(sys.argv[1]).getroot().iter("testsuite"))
+          print(f"pure layer: {ran} tests, floor {floor}")
+          if ran < floor:
+              sys.exit(
+                  f"the pure layer ran {ran} tests, under the floor of {floor}"
+                  " — tests have left this layer. If that was deliberate,"
+                  " lower the floor in this step in the same commit."
+              )
+          PY
+
+      - name: Run the contract layer
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: >-
+          uv run pytest tests/ -m contract -n "$CHEESE_CI_TEST_WORKERS"
+          --dist worksteal --tb=short -k "not kotlin" --durations=20
+
+      - name: Run the integration layer
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: >-
+          uv run pytest tests/ -m integration -n "$CHEESE_CI_TEST_WORKERS"
+          --dist worksteal --tb=short -k "not kotlin" --durations=20
+
+      # Volumes nothing references still accumulate here — 57 of them reached
+      # 19GB once and filled the disk mid-run ("No space left on device" from
+      # asyncpg). They used to come from this job's own postgres container,
+      # which no longer exists; what is left over now is whatever a killed job
+      # or a pulled image dropped. Only volumes no container references are
+      # touched, so neither the machine's resident pair nor a live deployment
+      # is ever in scope.
+      - name: Reclaim volumes nothing references
         if: always()
         run: |
           docker volume prune -f >/dev/null 2>&1 || true

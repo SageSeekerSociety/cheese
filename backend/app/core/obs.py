@@ -11,9 +11,13 @@
 
 import logging
 import re
+import traceback
+from pathlib import Path
 from typing import Any
 
 import structlog
+
+from app.core import alerting
 
 # Credential-bearing key names. `token` is the one that actually leaked: browsers
 # cannot set an Authorization header on a WebSocket, so every WS carries
@@ -34,13 +38,22 @@ _SECRET_KEY_TAILS = (
     "apikey",
     "credential",
 )
-_SECRET_KEY_EXACT = ("code",)
-_SECRET_KEY = (
-    r"(?:[A-Za-z0-9]+_)*(?:"
-    + "|".join(_SECRET_KEY_TAILS)
-    + r")|"
-    + "|".join(_SECRET_KEY_EXACT)
-)
+_SECRET_KEY = r"(?:[A-Za-z0-9]+_)*(?:" + "|".join(_SECRET_KEY_TAILS) + r")"
+# `code` is only a credential in the OAuth device flow, where it arrives in a
+# query string. As a bare `key=value` it matched everything else named code as
+# well, and the damage was not limited to redacting a readable value:
+#
+# - an error code was replaced by `***` in the one place it mattered, so the
+#   alert channel carried `{"code":***,"message":"Error: device offline"}` when
+#   the status was the point (2026-09-16)
+# - a log FORMAT STRING is scrubbed before logging formats it, so
+#   `"... code=%s ..."` became `"... code=*** ..."` — one placeholder fewer than
+#   arguments — and the logging call raised TypeError back into whatever was
+#   being logged. Found by a line that logged a WebSocket close code, which took
+#   three connector tests down with it.
+#
+# Anchored to `?`/`&` it still covers the flow it was added for and nothing else.
+_OAUTH_CODE_RE = re.compile(r"([?&]code=)[^\s&#]+", re.IGNORECASE)
 # `key=value`, `key: value`, and the QUOTED forms a repr produces: `token='x'`,
 # `{"token": "x"}`. The original pattern excluded quotes from the value, which
 # meant it matched the query-string form and nothing else — a repr put the quote
@@ -89,6 +102,7 @@ def scrub_secrets(value: Any) -> Any:
         return value
     out = _AUTH_SCHEME_RE.sub(r"\1\2***", value)
     out = _SECRET_KV_RE.sub(r"\1\2\3***\3", out)
+    out = _OAUTH_CODE_RE.sub(r"\1***", out)
     out = _URL_CRED_RE.sub(r"\1***\2", out)
     return _SECRET_VALUE_RE.sub("***", out)
 
@@ -109,6 +123,221 @@ class RedactSecrets(logging.Filter):
             else:
                 record.args = tuple(scrub_secrets(a) for a in record.args)
         return True
+
+
+_ANSWERED_LIMIT = 200
+
+
+def _what_the_server_answered(exc: BaseException | None) -> list[str]:
+    """The status and body behind an HTTP error, which its own message omits.
+
+    `httpx.HTTPStatusError` renders as `Client error '409 Conflict' for url
+    '...'` — the status, and nothing the server actually said. The reason is in
+    the body. On 2026-09-16 fifty of these were the device connection owner
+    answering `device offline`; neither the alert nor the log line carried that
+    word, so an error that named its own cause read as an unexplained one, and
+    finding out took reading the owner's logs and asking it directly.
+
+    Duck-typed on `.response` rather than importing httpx: this module sits
+    below the HTTP client, and any client whose error carries a response gets
+    the same treatment. The body is scrubbed — a 401 or a redirect can answer
+    with the credential it rejected, and an alert reaches a chat group.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return []
+    lines = []
+    status = getattr(response, "status_code", None)
+    if status is not None:
+        lines.append(f"状态：{status}")
+    try:
+        body = response.text
+    except Exception:  # noqa: BLE001 — a body that will not read is not the news
+        return lines
+    if not isinstance(body, str) or not body.strip():
+        return lines
+    # One line: an alert is a list of short lines, and a JSON body arrives with
+    # newlines in it.
+    body = " ".join(body.split())
+    if len(body) > _ANSWERED_LIMIT:
+        body = body[:_ANSWERED_LIMIT] + "…"
+    lines.append(f"对方回答：{scrub_secrets(body)}")
+    return lines
+
+
+_DETAIL_LIMIT = 200
+# What structlog puts in the event dict that is not news: the message itself is
+# the title, and the rest is rendering machinery.
+_NOT_DETAIL = {
+    "event",
+    "timestamp",
+    "level",
+    "logger",
+    # structlog renders the traceback into the event dict under this name. It is
+    # reported below as the exception it is, one line of it, rather than pasted
+    # into a chat message whole.
+    "exception",
+    "exc_info",
+    "stack_info",
+    "stack",
+    "positional_args",
+    "_record",
+    "_from_structlog",
+}
+# An id in a message makes every occurrence unique, which is exactly what a
+# repeat check must not think. Two rooms hitting one broken thing is one broken
+# thing; which rooms is in the alert's body, not in what counts as "the same".
+_AN_ID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{12,}\b",
+    re.IGNORECASE,
+)
+# Written onto an exception once it has been reported. One unhandled exception
+# is logged three times on the way out — the request middleware, the catch-all
+# handler, and uvicorn re-raising past both — and three alerts for one failure
+# is how a channel teaches people that its counts mean nothing.
+#
+# The mark rides on the exception rather than in a table here because that is
+# the thing whose identity decides it, and it then needs no eviction policy and
+# cannot mistake a reused address for a repeat. A table of weak references would
+# say the same and cannot be used: built-in exceptions refuse weak references.
+_REPORTED = "_cheese_alerted"
+
+
+def _first_report_of(exc: BaseException) -> bool:
+    """False when this very exception has already been reported.
+
+    An exception that will not take the mark is reported anyway: a duplicate
+    alert is a nuisance, and a swallowed one is the thing this module exists to
+    prevent.
+    """
+    if getattr(exc, _REPORTED, False):
+        return False
+    try:
+        setattr(exc, _REPORTED, True)
+    except (AttributeError, TypeError):
+        pass
+    return True
+
+
+def _short(value: object) -> str:
+    """One line, short enough to read in a chat message, with no credentials."""
+    text = " ".join(scrub_secrets(str(value)).split())
+    return text if len(text) <= _DETAIL_LIMIT else text[:_DETAIL_LIMIT] + "…"
+
+
+def _where_it_was_raised(exc: BaseException) -> list[str]:
+    """The line that actually raised, which no other field carries.
+
+    An alert saying `异常：RuntimeError` and nothing else is a message whose
+    entire content is that something went wrong — the reader still has to open
+    the logs, and by then the container may have been redeployed out from under
+    them. The deepest frame is the one line that tells them where to look.
+    """
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return []
+    last = frames[-1]
+    where = f"抛出：{Path(last.filename).name}:{last.lineno} in {last.name}"
+    return [where, f"　　{last.line}"] if last.line else [where]
+
+
+class AlertOnError(logging.Handler):
+    """Put what the backend logs as an error where a person will actually see it.
+
+    An error a browser shows is one way this platform fails. The other is
+    background work failing where nobody is looking, and that is the one that
+    went unnoticed: on 2026-09-16 the database refused 83 connections inside a
+    single minute, and exactly ONE of them reached the request error handler.
+    The rest were a harness poller, a hook-subscription recovery and two journal
+    reads — each logged an exception and carried on, and the incident was found
+    hours later by reading the logs. So this listens at the one place all of
+    them already spoke: the root logger.
+
+    `alerting.send` is fire-and-forget and carries its own budget (ten in five
+    minutes, and it says so in the last one it sends), which is what keeps a
+    storm of errors from becoming a storm of messages. With no webhook
+    configured — every developer machine, every test — it is a no-op.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+
+    @staticmethod
+    def _summary(record: logging.LogRecord) -> tuple[str, list[str], str]:
+        """Title, body, and what makes two of these the same problem.
+
+        Everything the record carries goes in, not a list of field names chosen
+        in advance: the fields that matter are bound by whoever logged, this
+        handler cannot know them, and a whitelist silently drops the one that
+        would have explained it. The 2026-09-17 alerts are the demonstration —
+        a whitelist of five keys sent `异常：RuntimeError` with neither the
+        message the device had written nor the request it belonged to, and the
+        room, the correlation id and the raising line were all present and all
+        discarded.
+        """
+        # structlog hands the formatter a dict; uvicorn and friends hand it a
+        # string. Both reach this handler, so both shapes are read here.
+        event = record.msg
+        context: dict = {}
+        if isinstance(event, dict):
+            context = event
+            title = str(event.get("event", ""))
+        else:
+            try:
+                title = record.getMessage()
+            except Exception:  # noqa: BLE001 — a bad format string is not our bug
+                title = str(event)
+        title = title or record.name
+        lines = [
+            f"来源：{record.name}",
+            f"位置：{Path(record.pathname).name}:{record.lineno}",
+        ]
+        for key, value in context.items():
+            if key in _NOT_DETAIL or value in (None, "", (), [], {}):
+                continue
+            lines.append(f"{key}：{_short(value)}")
+        exc = record.exc_info[1] if record.exc_info else None
+        kind = ""
+        if exc is not None:
+            kind = type(exc).__name__
+            said = _short(exc)
+            lines.append(f"异常：{kind}: {said}" if said else f"异常：{kind}")
+            lines.extend(_what_the_server_answered(exc))
+            lines.extend(_where_it_was_raised(exc))
+        elif record.exc_info and record.exc_info[0] is not None:
+            kind = record.exc_info[0].__name__
+            lines.append(f"异常：{kind}")
+        elif isinstance(context.get("exception"), str):
+            # A rendered traceback and no exception object with it. Its last
+            # line is the exception; the rest is the frames, which a chat
+            # message is the wrong place for.
+            rendered = [
+                line for line in context["exception"].splitlines() if line.strip()
+            ]
+            if rendered:
+                lines.append(f"异常：{_short(rendered[-1])}")
+        key = "|".join(
+            [
+                record.name,
+                _AN_ID_RE.sub("<id>", title),
+                kind,
+                _AN_ID_RE.sub("<id>", str(context.get("path", ""))),
+            ]
+        )
+        return title, lines, key
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # The alerter logs its own failures; forwarding those would be a loop.
+        if record.name.startswith("app.core.alerting"):
+            return
+        try:
+            exc = record.exc_info[1] if record.exc_info else None
+            if exc is not None and not _first_report_of(exc):
+                return
+            title, lines, key = self._summary(record)
+            alerting.send(f"后端报错：{title}", lines, key=key, when=record.created)
+        except Exception:  # noqa: BLE001 — logging must never raise into a caller
+            pass
 
 
 def configure_logging() -> None:
@@ -165,6 +394,8 @@ def configure_logging() -> None:
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
+    # Errors also go where a person is looking, not only into the stream.
+    root.addHandler(AlertOnError())
     root.setLevel(logging.INFO)
     # uvicorn installs its own handlers; route them through ours instead so the
     # whole stream is uniform (and timestamped).

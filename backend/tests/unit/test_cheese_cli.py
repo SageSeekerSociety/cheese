@@ -25,6 +25,105 @@ def _load():
     return mod
 
 
+def test_members_reads_the_current_topic_roster(monkeypatch, capsys):
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "members"])
+    calls = []
+
+    def request(method, path):
+        calls.append((method, path))
+        return {
+            "data": {
+                "data": [{"member_handle": "alice", "name": "Alice", "role": "owner"}]
+            }
+        }
+
+    monkeypatch.setattr(cli, "_call", request)
+    cli.main()
+    assert calls == [("GET", "/topics/room/members")]
+    assert "Alice（owner）→ 在消息里写 <@alice>" in capsys.readouterr().out
+
+
+def test_direct_mcp_request_plans_cover_only_http_operations():
+    cli = _load()
+    env = {
+        "CHEESE_TOPIC": "room",
+        "CHEESE_PROJECT": "project",
+        "CHEESE_MEMORY_SCOPE": "project",
+    }
+    arguments = {
+        "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
+        "cheese_bind": {"task_id": "task", "agent_id": "agent"},
+        "cheese_close_task": {"task_id": "task", "conclusion": "done"},
+        "cheese_decision": {"text": "chosen"},
+        "cheese_fetch": {"url": "https://example.test", "prompt": None},
+        "cheese_gh_token": {},
+        "cheese_members": {},
+        "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
+        "cheese_notify": {"title": "notice"},
+        "cheese_recall": {"query": "term"},
+        "cheese_remember": {"fact": "fact", "core": False},
+        "cheese_status": {},
+        "cheese_tell": {"target": "task", "message": "update"},
+        "cheese_title": {"text": "title", "task": None},
+    }
+    assert set(arguments) == cli.DIRECT_MCP_TOOLS
+    plans = {
+        tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
+    }
+    assert all(plan["method"] in {"GET", "POST"} for plan in plans.values())
+    assert plans["cheese_decision"] == {
+        "method": "POST",
+        "path": "/topics/room/decision",
+        "body": {"decision": "chosen"},
+    }
+    assert plans["cheese_milestone"]["body"]["due_date"] == ("2026-09-14T00:00:00Z")
+
+
+def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_path):
+    cli = _load()
+    folder = tmp_path / "site"
+    folder.mkdir()
+    (folder / "report.html").write_text("<h1>Published result</h1>")
+    monkeypatch.chdir(folder)
+    monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "artifact", "report.html"])
+    calls = []
+    monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
+
+    cli.main()
+
+    assert calls == [
+        (
+            "POST",
+            "/topics/room/artifact",
+            {
+                "path": "site/report.html",
+                "as": "html",
+                "content": "<h1>Published result</h1>",
+            },
+        )
+    ]
+
+
+def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
+    cli = _load()
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "serve", "5173", "Vue dev server"])
+    calls = []
+    api_calls = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: calls.append(args) or 0)
+    monkeypatch.setattr(cli, "_call", lambda *args: api_calls.append(args) or {})
+    cli.main()
+    assert calls == [["sh", "/preview-up", "5173"]]
+    assert api_calls == [
+        ("POST", "/topics/room/artifact", {"path": "Vue dev server", "as": "app"})
+    ]
+
+
 @pytest.mark.parametrize(
     "base",
     ("http://host.docker.internal:8099", "https://cheese.example/api"),
@@ -193,157 +292,6 @@ def test_format_status_renders_near_ceiling_state():
     assert "接近硬顶" in out
 
 
-# --- cheese await: 后台跑长任务，跑完平台叫醒本话题 ---------------------------
-
-
-def test_await_registers_then_forks_and_returns_immediately(monkeypatch, tmp_path):
-    """`cheese await` must not block — that's the whole point. It registers the
-    command, hands the wake token to a detached child, and returns."""
-    import subprocess
-
-    cli = _load()
-    monkeypatch.setattr(cli, "TOPIC", "topic-1")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    calls: list[tuple] = []
-    monkeypatch.setattr(
-        cli,
-        "_call",
-        lambda m, p, b=None, **kw: (
-            calls.append((m, p, b)),
-            {
-                "data": {
-                    "task_id": "task-9",
-                    "wake_token": "wake-tok",
-                    "label": "全量检查",
-                }
-            },
-        )[1],
-    )
-    spawned: dict = {}
-
-    def fake_popen(argv, **kw):
-        spawned["argv"] = argv
-        spawned["kw"] = kw
-        return object()
-
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(
-        cli.sys,
-        "argv",
-        ["cheese", "await", "bash check.sh", "--label", "全量检查", "--timeout", "900"],
-    )
-    cli.main()
-
-    method, path, body = calls[0]
-    assert (method, path) == ("POST", "/topics/topic-1/background-task")
-    assert body["command"] == "bash check.sh"
-    assert body["label"] == "全量检查"
-    assert body["timeout_s"] == 900
-
-    assert spawned["argv"][2] == "__await-child"
-    assert spawned["argv"][3] == "task-9"
-    assert spawned["argv"][4] == "bash check.sh"
-    # The wake token rides in the env, never on a world-readable argv.
-    assert spawned["kw"]["env"]["CHEESE_AWAIT_TOKEN"] == "wake-tok"
-    assert "wake-tok" not in " ".join(str(x) for x in spawned["argv"])
-    # Detached, so it outlives the shell AND the turn that spawned it.
-    assert spawned["kw"]["start_new_session"] is True
-
-
-def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
-    """These logs must never be committed with the topic's work."""
-    cli = _load()
-    # An agent sandbox EXPORTS this (the platform points it at the session
-    # mount), and it outranks the HOME-derived path this test is about — so
-    # without clearing it the test passes in CI and fails in every sandbox,
-    # which is exactly where the suite is run from most.
-    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    path = cli._await_log_path("run-1")
-    assert path.startswith(str(tmp_path))
-    assert path.endswith("run-1.log")
-
-
-def test_await_child_reports_exit_code_and_output_tail(monkeypatch, tmp_path):
-    cli = _load()
-    log = str(tmp_path / "run.log")
-    reported: dict = {}
-    monkeypatch.setattr(
-        cli, "_await_report", lambda task_id, **kw: reported.update(id=task_id, **kw)
-    )
-
-    cli._await_child("task-9", "echo 'hello from the build'; exit 7", log, 30)
-
-    assert reported["id"] == "task-9"
-    assert reported["exit_code"] == 7
-    assert "hello from the build" in reported["tail"]
-    assert reported["duration_s"] >= 0
-    # The full output is on disk for the agent to go read.
-    assert "hello from the build" in open(log, encoding="utf-8").read()
-
-
-def test_await_child_kills_and_reports_124_on_timeout(monkeypatch, tmp_path):
-    cli = _load()
-    log = str(tmp_path / "run.log")
-    reported: dict = {}
-    monkeypatch.setattr(
-        cli, "_await_report", lambda task_id, **kw: reported.update(**kw)
-    )
-
-    cli._await_child("task-9", "sleep 30", log, 1)
-
-    assert reported["exit_code"] == 124
-    assert reported["duration_s"] < 15  # killed at the ceiling, not waited out
-
-
-def test_await_child_reports_even_when_the_command_cannot_run(monkeypatch, tmp_path):
-    """A child that dies quietly is a topic that never wakes up — the exact bug
-    this path exists to remove. Report something, always."""
-    cli = _load()
-    log = str(tmp_path / "run.log")
-    reported: dict = {}
-    monkeypatch.setattr(
-        cli, "_await_report", lambda task_id, **kw: reported.update(**kw)
-    )
-
-    cli._await_child("task-9", "definitely-not-a-real-command-xyz", log, 30)
-
-    assert reported["exit_code"] != 0
-    assert reported["tail"]
-
-
-def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
-    cli = _load()
-    monkeypatch.setattr(cli, "_AWAIT_RETRY_DELAYS", (0, 0, 0))
-    attempts = []
-
-    def flaky(req, timeout=None):
-        attempts.append(req)
-        if len(attempts) < 3:
-            raise OSError("backend restarting")
-
-        class _R:
-            def read(self):
-                return b"{}"
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        return _R()
-
-    monkeypatch.setattr(cli.urllib.request, "urlopen", flaky)
-    monkeypatch.setenv("CHEESE_TOPIC", "topic-1")
-    monkeypatch.setenv("CHEESE_AWAIT_TOKEN", "wake-tok")
-
-    cli._await_report("task-9", exit_code=0, tail="ok", duration_s=1.0)
-
-    assert len(attempts) == 3
-    assert attempts[-1].get_header("X-cheese-token") == "wake-tok"
-
-
 # --- the self-describing layer -------------------------------------------
 #
 # CLAUDE.md's rule is "prose documents only what --help cannot tell you". That
@@ -375,10 +323,15 @@ def test_accept_request_without_a_subject_never_reaches_the_backend(
 
 def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     cli = _load()
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: None)
     sent: list[dict] = []
-    monkeypatch.setattr(
-        cli, "_call", lambda m, p, d=None: sent.append({"p": p, "d": d})
-    )
+
+    def _call(m, p, d=None):
+        sent.append({"p": p, "d": d})
+        return {"data": {"reviewer_handle": "alice"}}
+
+    monkeypatch.setattr(cli, "_call", _call)
     monkeypatch.setattr(cli, "TOPIC", "t-1")
     monkeypatch.setattr(
         cli.sys,
@@ -390,14 +343,68 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
             "最懂",
             "--subject",
             "fix(accept): require a commit subject",
+            "--artifact",
+            "结题报告",
         ],
     )
 
     cli.main()
 
     [call] = sent
-    assert call["p"] == "/topics/t-1/accept-card"
+    assert call["p"] == "/topics/t-1/tasks/task-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
+    assert call["d"]["reviewer_handle"] == "alice"
+    # 交付说明本次更新的是哪一项产物 (#1085 结论三)。
+    assert call["d"]["artifact"] == "结题报告"
+
+
+def test_ready_never_syncs_creates_a_card_or_merges(monkeypatch):
+    cli = _load()
+    calls = []
+    monkeypatch.setattr(cli, "TOPIC", "room-1")
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: pytest.fail("ready must not sync"))
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda *args: calls.append(args) or {"data": {"ready": True, "pr_number": 1}},
+    )
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "ready"])
+    cli.main()
+    assert calls == [("POST", "/topics/room-1/tasks/task-1/ready")]
+
+
+def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
+    monkeypatch,
+):
+    """未指定验收人 = 用项目默认验收人 (#718 设置表).
+
+    The CLI must not invent a value for the field — not the empty string
+    either. "Nobody was named" and "somebody typed an empty name" have to stay
+    distinguishable at the backend, because only one of them may fall through
+    to the project default.
+    """
+    cli = _load()
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task-1")
+    monkeypatch.setattr(cli, "_sync_task", lambda _: None)
+    sent: list[dict] = []
+
+    def _call(m, p, d=None):
+        sent.append({"p": p, "d": d})
+        return {"data": {"reviewer_handle": "bob"}}
+
+    monkeypatch.setattr(cli, "_call", _call)
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        ["cheese", "accept-request", "--subject", "fix(x): y", "--artifact", "报告"],
+    )
+
+    cli.main()
+
+    [call] = sent
+    assert "reviewer_handle" not in call["d"]
 
 
 def _subparsers(parser):
@@ -449,36 +456,6 @@ def test_every_argument_says_what_it_takes():
                 if not (action.help or "").strip():
                     undocumented.append(f"{label}:{action.dest}")
     assert not undocumented, f"arguments with no help=: {undocumented}"
-
-
-def test_await_log_goes_where_the_platform_points_it(monkeypatch, tmp_path):
-    """The log of a multi-hour command has to outlive the container that ran it,
-    so the provider hands the CLI a path inside the host-backed session mount."""
-    cli = _load()
-    monkeypatch.setenv("CHEESE_AWAIT_LOGS", str(tmp_path / "cheese-await"))
-    path = Path(cli._await_log_path("1754900000-42"))
-    assert path.parent == tmp_path / "cheese-await"
-    assert path.parent.is_dir()  # created, so the child can open the file
-
-
-def test_await_log_finds_the_session_mount_on_its_own(monkeypatch, tmp_path):
-    """A container from before the env var was added still gets the durable spot:
-    ~/.claude IS the mount."""
-    cli = _load()
-    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / ".claude").mkdir()
-    logs = Path(cli._await_log_path("r")).parent
-    assert logs == tmp_path / ".claude" / "cheese-await"
-
-
-def test_await_log_falls_back_when_there_is_no_session_mount(monkeypatch, tmp_path):
-    """Outside a topic container there is nothing durable to write to — run the
-    command anyway rather than refusing over where its log lands."""
-    cli = _load()
-    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    assert Path(cli._await_log_path("r")).parent == tmp_path / ".cheese" / "await"
 
 
 class _FakeHTTPResponse:
@@ -548,8 +525,10 @@ def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, c
     )
 
     _out, err = capsys.readouterr()
-    assert "git push https://x-access-token:$GH_TOKEN@github.com/acme/widgets" in err
-    assert "gh api repos/acme/widgets/pulls -f head=" in err
+    assert "cheese sync" in err
+    assert "cheese push-fix" in err
+    assert "x-access-token:" not in err
+    assert "gh api repos/acme/widgets/pulls -f head=" not in err
 
 
 def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
@@ -680,3 +659,36 @@ def test_a_won_set_remembers_the_version_it_produced(monkeypatch, tmp_path, caps
     cli.main()
 
     assert [c[2]["expected_version"] for c in calls if c[0] == "PUT"] == [7, 8]
+
+
+def test_feedback_propose_refuses_locally_when_there_is_no_topic():
+    """`cheese feedback propose` posts to `/topics/{topic}/feedback-proposals`.
+
+    With nothing in `CHEESE_TOPIC` that path is `/topics//feedback-proposals`,
+    which the server answers 404 — and the CLI then reports *the command* as
+    having failed, exit code 1, with the server's 「话题不存在」 as the reason
+    (`_call` exits on any non-2xx). The refusal belongs where the missing thing
+    is known: here, before the request, naming the variable that is empty.
+
+    Both halves asserted: the refusal, and the path it guards. A guard that also
+    broke the working case would otherwise read as a passing test.
+    """
+    cli = _load()
+    args = {
+        "title": "沙箱里 make 装不上依赖",
+        "kind": "bug",
+        "visibility": "public",
+        "user_said": "用户没有就这个问题说过话",
+    }
+
+    with pytest.raises(ValueError, match="Missing CHEESE_TOPIC"):
+        cli.request_plan("cheese_feedback_propose", args, {"CHEESE_PROJECT": "p"})
+
+    plan = cli.request_plan(
+        "cheese_feedback_propose",
+        args,
+        {"CHEESE_TOPIC": "room", "CHEESE_PROJECT": "p"},
+    )
+    assert plan["method"] == "POST"
+    assert plan["path"] == "/topics/room/feedback-proposals"
+    assert plan["body"]["title"] == "沙箱里 make 装不上依赖"

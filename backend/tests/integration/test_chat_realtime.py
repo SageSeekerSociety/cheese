@@ -9,14 +9,19 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.claude_code import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
@@ -58,6 +63,389 @@ class InstantScreen(StubChannel):
         del prompt, reply
         self.starts(topic_id, session_id="s-affinity")
         self.stops(topic_id, "done", session_id="s-affinity")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("content", "attachments", "expected_blocks"),
+    [
+        ("do this", [{"path": "room/a.png", "mime": "image/png"}], 2),
+        ("", [{"path": "room/a.png", "mime": "image/png"}], 1),
+    ],
+)
+async def test_retried_client_delivery_is_persisted_and_submitted_once(
+    client, tmp_path, content, attachments, expected_blocks
+):
+    from app.domain.agent.runtime import InProcessBroker
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    broker = InProcessBroker()
+    submitted = []
+    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
+    async with broker.subscribe(str(topic_id)) as browser:
+        first, second = await asyncio.gather(
+            broker.receive_message(
+                svc,
+                topic_id,
+                author="u",
+                content=content,
+                summon=True,
+                attachments=attachments,
+                client_id="same-browser-delivery",
+            ),
+            broker.receive_message(
+                svc,
+                topic_id,
+                author="u",
+                content=content,
+                summon=True,
+                attachments=attachments,
+                client_id="same-browser-delivery",
+            ),
+        )
+        echoes = [browser.get_nowait() for _ in range(expected_blocks * 2)]
+        assert browser.empty()
+
+    assert first == second
+    assert len(submitted) == 1
+    assert {frame["block"]["id"] for frame in echoes} == {
+        frame["block"]["id"] for frame in echoes[:expected_blocks]
+    }
+    async with factory() as session:
+        rows = [
+            block
+            for block in await BlockRepository(session).list_for_topic(topic_id)
+            if not looks_like_agent_handle(block.author)
+        ]
+    assert len(rows) == expected_blocks
+    anchor = next(block for block in rows if block.id == first)
+    assert anchor.meta["client_id"] == "same-browser-delivery"
+
+
+@pytest.mark.anyio
+async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
+    client, tmp_path
+):
+    from app.domain.agent.runtime import InProcessBroker
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+    _payloads, original, original_ids, _ = await svc.post_user_message(
+        topic_id,
+        author="u",
+        content="saved by the old backend",
+        turn_id=None,
+        reply_to=None,
+        attachments=[{"path": "room/a.png", "mime": "image/png"}],
+    )
+    async with factory() as session:
+        anchor = await BlockRepository(session).get(original)
+        assert anchor is not None
+        anchor.meta = {**(anchor.meta or {}), "client_id": "pre-upgrade-delivery"}
+        await session.commit()
+
+    broker = InProcessBroker()
+    submitted = []
+    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
+    retried = await broker.receive_message(
+        svc,
+        topic_id,
+        author="u",
+        content="saved by the old backend",
+        summon=True,
+        attachments=[{"path": "room/a.png", "mime": "image/png"}],
+        client_id="pre-upgrade-delivery",
+    )
+
+    assert retried == original
+    assert submitted == []
+    async with factory() as session:
+        rows = [
+            block
+            for block in await BlockRepository(session).list_for_topic(topic_id)
+            if not looks_like_agent_handle(block.author)
+        ]
+    assert [block.id for block in rows] == original_ids
+
+
+@pytest.mark.anyio
+async def test_receiving_message_does_not_create_default_agent(client, tmp_path):
+    from app.domain.agent_instance.repositories import AgentInstanceRepository
+    from app.domain.project.repositories import ProjectRepository
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        agents = AgentInstanceRepository(session)
+        project.default_agent_instance_id = None
+        await session.flush()
+        for agent in await agents.list_for_project(project.id):
+            await agents.delete(agent)
+        project_id, topic_id = project.id, topic.id
+        await session.commit()
+    payloads, _, _, _ = await svc.post_user_message(
+        topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
+    )
+    assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
+    async with factory() as session:
+        assert await AgentInstanceRepository(session).list_for_project(project_id) == []
+        project = await ProjectRepository(session).get(project_id)
+        assert project.default_agent_instance_id is None
+
+
+class ProcessNotesScreen(StubChannel):
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta="Read workspace files.",
+            _eid="process",
+        )
+        self.hook(
+            topic_id,
+            hook_event_name="MessageDisplay",
+            delta="The plan is ready.",
+            _eid="display",
+        )
+        self.stops(topic_id, "The plan is ready.", session_id="s-notes")
+
+
+@pytest.mark.anyio
+async def test_queued_message_retains_selected_teammate(client, tmp_path):
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        agents = AgentInstanceService(session)
+        first = await agents.create(
+            project_id=project.id,
+            handle="first",
+            type_name=None,
+            display_name="First",
+        )
+        second = await agents.create(
+            project_id=project.id,
+            handle="second",
+            type_name=None,
+            display_name="Second",
+        )
+        members = TopicMemberService(session)
+        for made in (first, second):
+            await members.ensure_agent_seat(topic.id, agent_instance_handle(made.id))
+        topic_id = topic.id
+        await session.commit()
+    _, original, _, _ = await svc.post_user_message(
+        topic_id, author="u", content="@First For first", turn_id=None, reply_to=None
+    )
+    await svc.post_user_message(
+        topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
+    )
+    prepared = await svc._assemble_turn(
+        topic_id=topic_id,
+        content="@First For first",
+        turn_id=original,
+        user_block_id=original,
+        provision_actor=None,
+    )
+    assert prepared.agent.handle == "first"
+    assert prepared.pending_ids == [original]
+    assert "For second" not in prepared.prompt_text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "text,mentioned",
+    [("@芝士 hello", True), ("芝士 hello", False), ("<@all> hello", False)],
+)
+async def test_backend_resolves_room_agent_mention(client, tmp_path, text, mentioned):
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+    payloads, _, _, _ = await svc.post_user_message(
+        topic_id, author="u", content=text, turn_id=None, reply_to=None
+    )
+    assert payloads[0]["meta"]["agent_recipient"]["mentioned"] is mentioned
+
+
+@pytest.mark.anyio
+async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_path):
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+
+    factory = client.test_factory
+    screen = InstantScreen()
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(screen),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    await broker.receive_message(
+        svc, topic_id, author="u", content="@芝士 check this", summon=False
+    )
+    await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
+    await settle_turn(svc, topic_id)
+    assert "check this" in screen.last_prompt
+
+
+@pytest.mark.anyio
+async def test_other_teammate_message_waits_for_live_turn(
+    client, tmp_path, monkeypatch
+):
+    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    factory = client.test_factory
+    screen = SlowScreen()
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(screen),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        second = await AgentInstanceService(session).create(
+            project_id=project.id,
+            handle="second",
+            type_name=None,
+            display_name="Second",
+        )
+        await TopicMemberService(session).ensure_agent_seat(
+            topic.id, agent_instance_handle(second.id)
+        )
+        topic_id = topic.id
+        await session.commit()
+    async for _ in svc.converse(
+        topic_id=topic_id, author="u", content="First task", summon=True
+    ):
+        pass
+    await screen.started.wait()
+    waiting = asyncio.Event()
+    wait = svc.wait_for_recipient
+
+    async def observed_wait(*args):
+        waiting.set()
+        return await wait(*args)
+
+    monkeypatch.setattr(svc, "wait_for_recipient", observed_wait)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    runner.subscribe_messages()
+    await broker.receive_message(
+        svc, topic_id, author="u", content="@Second Second task", summon=False
+    )
+    await asyncio.wait_for(waiting.wait(), 2)
+    assert screen.delivered == []
+    assert screen.runs == 1
+    screen.release.set()
+    await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
+    await settle_turn(svc, topic_id)
+    assert "Second task" in screen.last_prompt
+    assert screen.runs == 2
+
+
+@pytest.mark.anyio
+async def test_execution_notes_are_retained_outside_public_replies(client, tmp_path):
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(ProcessNotesScreen()),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        tid = topic.id
+        await session.commit()
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="Write a plan", summon=True
+    ):
+        pass
+    await settle_turn(svc, tid)
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    replies = [
+        b.content
+        for b in rows
+        if b.kind == BlockKind.message and looks_like_agent_handle(b.author)
+    ]
+    assert replies == []
+    notes = [b for b in rows if (b.meta or {}).get("progress")]
+    assert [b.content for b in notes] == ["Read workspace files.", "The plan is ready."]
+    assert all(b.kind == BlockKind.event and b.meta["in_room"] is False for b in notes)
 
 
 @pytest.mark.anyio
@@ -152,7 +540,7 @@ async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
     await settle_turn(svc, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    assert [b.content for b in rows if b.author_type == AuthorType.ai] == ["done"]
+    assert [b.content for b in rows if looks_like_agent_handle(b.author)] == ["done"]
 
 
 class FailingScreen(StubChannel):
@@ -213,7 +601,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     # 机器的报错不是芝士说的话。
-    assert not [b for b in rows if b.author_type == AuthorType.ai]
+    assert not [b for b in rows if looks_like_agent_handle(b.author)]
     block = next(b for b in rows if b.kind == BlockKind.event)
     assert block.author == "system"
     # 一行，是服务的原话开头，而且整段原话不在正文里。
@@ -224,7 +612,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     meta = block.meta
     assert meta["event_type"] == "turn_failed"
     assert meta["severity"] == "error"
-    # 没有自动续跑，得有人再 @ 它。
+    # 平台不自动重试，得有人再 @ 它。
     assert meta["who"] == "human"
     assert "session limit" in meta["detail"]
     assert meta["detail_label"] == "详细说明"
@@ -347,7 +735,9 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     # Pre-fix this blocked until the active run finished.
     frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
     assert all(frame["type"] != "done" for frame in frames)
-    assert provider.delivered == ["[user-2]: 等一下，先别跑"]
+    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == [
+        "[user-2]: 等一下，先别跑"
+    ]
     # Injected, not queued: still exactly one active run.
     assert provider.runs == 1
 
@@ -448,7 +838,7 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
     await asyncio.wait_for(first, 5)
     second_frames = await asyncio.wait_for(second, 5)
     assert provider.runs == 2
-    assert provider.delivered == ["[user-2]: 第二件事"]
+    assert [p.split("\n\n", 1)[0] for p in provider.delivered] == ["[user-2]: 第二件事"]
 
     fallback_frames = [
         frame
@@ -472,6 +862,58 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
         if (block.meta or {}).get("event_type") == "delivery_fallback"
     ]
     assert len(persisted) == 1
+
+
+@pytest.mark.anyio
+async def test_midturn_delivery_holds_no_topic_lock(client, tmp_path, monkeypatch):
+    """While the message is being handed to the machine, the topic row stays
+    free for other writers (dev outage of 2026-09-18: a row lock held across a
+    device call queued every writer of the row with a pool connection each)."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        compute=stub_compute(InstantScreen()),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id: uuid.UUID = topic.id
+        await session.commit()
+    _payloads, _block_id, block_ids, _ = await svc.post_user_message(
+        topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
+    )
+    in_flight = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_deliver(tid, text, images=None):
+        in_flight.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(svc._compute, "deliver", slow_deliver)
+    svc._active_turn_ids[topic_id] = uuid.uuid4()
+    merge = asyncio.create_task(
+        svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+    )
+    await asyncio.wait_for(in_flight.wait(), timeout=5)
+    async with factory() as session:
+        # NOWAIT fails at once if the delivery were holding the row.
+        locked = await session.scalar(
+            text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+            {"id": topic_id},
+        )
+        await session.rollback()
+    assert locked == topic_id
+    release.set()
+    assert await asyncio.wait_for(merge, timeout=5) is True
 
 
 @pytest.mark.anyio
@@ -499,7 +941,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         topic_id: uuid.UUID = topic.id
         await session.commit()
 
-    _payloads, block_id, block_ids = await svc.post_user_message(
+    _payloads, block_id, block_ids, _ = await svc.post_user_message(
         topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
     )
 

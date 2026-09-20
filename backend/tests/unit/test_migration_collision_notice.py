@@ -86,7 +86,9 @@ def _topic(topic_id: uuid.UUID = MINE) -> SimpleNamespace:
 
 
 def _live_card(topic_id: uuid.UUID) -> SimpleNamespace:
-    return SimpleNamespace(topic_id=topic_id, status=AcceptStatus.pending)
+    return SimpleNamespace(
+        topic_id=topic_id, task_id=topic_id, status=AcceptStatus.pending
+    )
 
 
 @pytest.mark.anyio
@@ -100,7 +102,7 @@ async def test_two_live_cards_each_adding_a_migration_are_flagged(monkeypatch):
         recorder=rec,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert len(rec.messages) == 1
     said = rec.messages[0]
@@ -121,7 +123,7 @@ async def test_one_migration_alone_is_silent(monkeypatch):
         recorder=rec,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert rec.messages == []
 
@@ -137,7 +139,7 @@ async def test_a_card_with_no_migration_is_silent_even_next_to_one(monkeypatch):
         recorder=rec,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert rec.messages == []
 
@@ -155,7 +157,7 @@ async def test_a_topic_does_not_collide_with_its_own_card(monkeypatch):
         recorder=rec,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert rec.messages == []
 
@@ -176,7 +178,7 @@ async def test_it_names_every_colliding_room_not_just_the_first(monkeypatch):
         recorder=rec,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert "第二间" in rec.messages[0]
     assert "第三间" in rec.messages[0]
@@ -195,7 +197,7 @@ async def test_a_broken_git_read_stays_silent_rather_than_failing_the_card(monke
         explode=True,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert rec.messages == []
 
@@ -213,6 +215,6 @@ async def test_a_sibling_whose_topic_row_vanished_still_gets_named(monkeypatch):
         recorder=rec,
     )
 
-    await service._warn_about_a_second_pending_migration(_topic())
+    await service._warn_about_a_second_pending_migration(_topic(), MINE)
 
     assert str(SIBLING) in rec.messages[0]

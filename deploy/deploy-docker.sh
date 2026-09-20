@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Unified Docker deploy for the bare-metal-turned-container boxes (dev / prod RUC).
+# Unified Docker deploy for the dev and prod (RUC) boxes.
 #
-# Selects the per-commit images, migrates, and brings the app tier up — the
-# Docker equivalent of deploy-blue-green.sh. Registry images remain the default;
+# Selects the per-commit images, migrates, and brings the app tier up.
+# Registry images remain the default;
 # an operator may instead use images built locally on the box. The DB/Redis are
 # EXTERNAL (this script never touches them); uploads live on a host path outside
 # the containers. Rollback restores the exact image references captured below.
@@ -18,7 +18,12 @@
 #                      this script if missing; default in compose)
 #   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
 #                      enrolling machines (same treatment; default in compose)
+#   TRANSCRIPTS_HOST_PATH  host dir holding the transcript archives uploaded
+#                      from device homes (same treatment; default in compose)
 #   PROJECT            compose project name              (default cheese)
+#   ACTIVE_FRONTEND_DIR  optional api-front active directory. Enable only after
+#                      ingress targets FRONTEND_PROXY_PORT (default 18080).
+#   FRONTEND_PORT_NEXT  temporary frontend port (default 18084, loopback only)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
 #   DEPLOY_PULL_ATTEMPTS         how many times to try each pull   (default 3)
@@ -91,8 +96,76 @@ dc() {
   docker compose -f "$COMPOSE" ${_overlay_args[@]+"${_overlay_args[@]}"} \
     -p "$PROJECT" "$@"
 }
+
+ensure_device_connection_owner() {
+  local container started=false waited=0
+  container="$(dc ps -q device-connection 2>/dev/null | head -n 1 || true)"
+  if [ -n "$container" ] && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
+    log "leaving device connection owner $container running across this app release"
+  else
+    log "starting the independently released device connection owner"
+    dc up -d --no-deps device-connection \
+      || fail "device connection owner did not start; the running backend was not touched"
+    started=true
+  fi
+  while [ "$waited" -lt 60 ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${DEVICE_CONNECTION_PORT:-18083}/healthz" >/dev/null 2>&1; then
+      [ "$started" = false ] || log "device connection owner is healthy"
+      return
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  fail "device connection owner is not healthy; the running backend was not touched"
+}
+
+reload_api_front_routes() {
+  [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
+  local config backup
+  config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
+  [ -f "$config" ] || fail "api-front config not found: $config"
+  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" && return 0
+  backup="${config}.pre-device-connection"
+  cp "$config" "$backup"
+  cp "$HERE/llm-tunnel/nginx.conf" "$config"
+  if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
+    cp "$backup" "$config"
+    rm -f "$backup"
+    fail "api-front rejected the device connection route; restored its config"
+  fi
+  if ! docker exec "$API_FRONT_CONTAINER" nginx -s reload; then
+    cp "$backup" "$config"
+    docker exec "$API_FRONT_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
+    rm -f "$backup"
+    fail "api-front could not reload the device connection route; restored its config"
+  fi
+  rm -f "$backup"
+  log "api-front now routes device WebSockets to the stable connection owner"
+}
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
+
+if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
+  ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
+}; then
+  log "installing central-session FUSE runtime"
+  (
+    . /etc/os-release
+    [ -n "${VERSION_CODENAME:-}" ] || fail "/etc/os-release has no VERSION_CODENAME"
+    fuse_apt_source="$(mktemp)"
+    trap 'rm -f "$fuse_apt_source"' EXIT
+    chmod 0644 "$fuse_apt_source"
+    printf '%s\n' \
+      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/debian $VERSION_CODENAME main" \
+      > "$fuse_apt_source"
+    fuse_apt_options=(
+      -o "Dir::Etc::sourcelist=$fuse_apt_source"
+      -o "Dir::Etc::sourceparts=-"
+    )
+    sudo apt-get "${fuse_apt_options[@]}" update -qq
+    sudo apt-get "${fuse_apt_options[@]}" install -y -qq fuse libfuse2
+  )
+fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
 
@@ -331,6 +404,18 @@ case "$APP_IMAGE_SOURCE" in
   registry)
     log "pulling app images…"
     retry_pull "image pull" dc pull backend frontend
+    # The browser is an ENHANCEMENT to fetching, not a component of the app, so
+    # its pull is deliberately outside the retry-and-fail path above: without it
+    # fetching falls back a rung (measured: 19 of 20 real sites becomes 17) and
+    # everything else is unaffected, whereas failing the deploy over it would
+    # trade the whole platform for one rung.
+    dc pull browser-render >/dev/null 2>&1 \
+      || log "WARNING: browser-render image unavailable; fetching will fall back a rung"
+    # Same shape, same reason: without the renderer a Word or PowerPoint
+    # deliverable falls back to a download, which the preview panel reports on
+    # screen. Nothing else in the platform is affected.
+    dc pull office-render >/dev/null 2>&1 \
+      || log "WARNING: office-render image unavailable; documents will offer download only"
     ;;
   local)
     [ -n "${BACKEND_IMAGE:-}" ] || \
@@ -405,6 +490,14 @@ mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
 # outlive the container (see the compose file).
 CLAUDE_CACHE_PATH="${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}"
 mkdir -p "$CLAUDE_CACHE_PATH" || fail "cannot create $CLAUDE_CACHE_PATH"
+# And the pi builds, which the backend serves to the same machines.
+PI_CACHE_PATH="${PI_CACHE_HOST_PATH:-/home/nictheboy/cheese-pi-cache}"
+mkdir -p "$PI_CACHE_PATH" || fail "cannot create $PI_CACHE_PATH"
+# And for the transcript archives uploaded from device homes before those are
+# deleted: the backend writes them, they must outlive the container, and once
+# the home is gone nothing else holds them.
+TRANSCRIPTS_PATH="${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}"
+mkdir -p "$TRANSCRIPTS_PATH" || fail "cannot create $TRANSCRIPTS_PATH"
 
 OWNERSHIP_REPORT="$(mktemp)"
 OWNERSHIP_PATHS=(
@@ -413,11 +506,11 @@ OWNERSHIP_PATHS=(
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
   "$VIKING_PATH"
   "$CLAUDE_CACHE_PATH"
+  "$PI_CACHE_PATH"
+  "$TRANSCRIPTS_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
-OWNERSHIP_SECRETS="${GIT_CREDENTIALS_FILE:-/dev/null}"
 log "checking workspace/uploads ownership…"
-SECRET_FILE_PATHS="$OWNERSHIP_SECRETS" \
 OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
 "$HERE/fix-workspace-ownership.sh" \
   "$OWNERSHIP_IMAGE" \
@@ -426,8 +519,237 @@ OWNERSHIP_REPORT_FILE="$OWNERSHIP_REPORT" \
 OWNERSHIP_MIGRATED="$(cat "$OWNERSHIP_REPORT" 2>/dev/null || echo no)"
 rm -f "$OWNERSHIP_REPORT"
 
-log "bringing up backend + frontend…"
-dc up -d backend frontend || fail "compose up failed"
+# ---- Backend rollout without downtime (boxes with an api-front switch) ----
+# ACTIVE_BACKEND_DIR names the directory the box's host nginx (api-front,
+# deploy/llm-tunnel) reads its backend upstream from. When it is set, the
+# backend is not recreated in place: a second container comes up on the new
+# image first, api-front is pointed at it, the compose backend is recreated
+# behind it, api-front is pointed back, and the second container goes away.
+# The box's :8081 — and the frontend's /api, which a rollout box points at it
+# (API_UPSTREAM) — never has a moment without a healthy backend behind it.
+# Measured before this existed: every deploy cut the backend for the ~13 s the
+# new container took to boot (2026-09-04, 01:48:27→01:48:40Z).
+#
+# Unset — prod (RUC), etrip, the test harness — the in-place recreate below
+# runs, gap included.
+ACTIVE_BACKEND_DIR="${ACTIVE_BACKEND_DIR:-}"
+API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
+BACKEND_PORT="${BACKEND_PORT:-8081}"
+BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
+BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
+DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-5}"
+NEXT_BACKEND="${PROJECT}-backend-next"
+# Opt in only after the public ingress uses the standing frontend proxy.
+ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
+FRONTEND_PROXY_PORT="${FRONTEND_PROXY_PORT:-18080}"
+FRONTEND_PORT_NEXT="${FRONTEND_PORT_NEXT:-18084}"
+NEXT_FRONTEND="${PROJECT}-frontend-next"
+
+# The address every live room's agent dials for its own tools, its chat
+# publication and its hooks. It must NOT be a port this deploy takes down: on
+# 2026-09-15 it named the backend container's published port, so an ordinary
+# release left every working room with `[Errno 111] Connection refused` on every
+# tool for as long as the recreate took (four minutes, observed) — the very
+# thing the standing api-front and the separately released owner exist to
+# prevent, defeated by an address that bypasses both.
+#
+# Warned, not failed, and only where a central session exists: refusing to
+# deploy over a configuration preference is the worse outage. The value names no
+# secret, so it is printed.
+check_session_base_survives_release() {
+  local envf base port
+  envf="${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}"
+  [ -r "$envf" ] || return 0
+  base="$(awk -F= '$1 == "AGENT_SESSION_API_BASE" { sub(/^[^=]*=/, ""); gsub(/["'"'"']/, ""); print; exit }' "$envf")"
+  [ -n "$base" ] || return 0
+  port="${base##*:}"; port="${port%%/*}"
+  case "$port" in
+    "$BACKEND_PORT"|"$BACKEND_PORT_NEXT")
+      log "WARNING: AGENT_SESSION_API_BASE=$base names :$port, which this deploy"
+      log "         replaces — every live room will see its tools, its chat and"
+      log "         its hooks refused until the new container answers. Point it"
+      log "         at the standing api-front instead (:8081 by default), which"
+      log "         routes execution to the owner and swaps backends underneath."
+      ;;
+  esac
+}
+
+switch_active_backend() {
+  local target="$1" tmp
+  tmp="$(mktemp "$ACTIVE_BACKEND_DIR/backend.conf.XXXXXX")" \
+    || fail "cannot write into $ACTIVE_BACKEND_DIR"
+  printf 'upstream backend_active { server %s; }\n' "$target" > "$tmp"
+  # Rename, never rewrite in place: nginx re-reads the file on reload and a
+  # half-written one would take the whole server config down with it.
+  mv -f "$tmp" "$ACTIVE_BACKEND_DIR/backend.conf"
+  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
+    || fail "api-front did not reload: $ACTIVE_BACKEND_DIR/backend.conf now names $target but traffic has not moved"
+  log "api-front now sends backend traffic to $target"
+}
+
+# $1 = host port, $2 = what is expected there. Polls the published port from
+# the host, which is what api-front will use, rather than docker's own health
+# state — a one-off container may not carry the service healthcheck.
+wait_for_healthz() {
+  local port="$1" what="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
+  [ "$step" -gt 0 ] 2>/dev/null || step=1
+  while [ "$waited" -lt "$BACKEND_START_TIMEOUT" ]; do
+    if curl -fsS -m 3 "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
+      log "$what answers /healthz on :$port after ${waited}s"
+      return 0
+    fi
+    sleep "$HEALTH_INTERVAL_SECONDS"
+    waited=$((waited + step))
+  done
+  return 1
+}
+
+rollout_backend() {
+  docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
+  log "starting the next backend as $NEXT_BACKEND on :${BACKEND_PORT_NEXT}…"
+  # A one-off from the service definition: same image, env file, mounts and
+  # network as the compose backend, but no published port of its own except
+  # the one given here, so it cannot collide with the running one.
+  dc run -d --no-deps --name "$NEXT_BACKEND" \
+    -p "0.0.0.0:${BACKEND_PORT_NEXT}:8081" backend >/dev/null \
+    || fail "could not start $NEXT_BACKEND; the running backend was not touched"
+  if ! wait_for_healthz "$BACKEND_PORT_NEXT" "$NEXT_BACKEND"; then
+    docker logs --tail 40 "$NEXT_BACKEND" 2>&1 | sed 's/^/  next| /' || true
+    docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
+    fail "$NEXT_BACKEND never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
+  fi
+  switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
+  log "recreating backend on the new image behind ${NEXT_BACKEND}…"
+  dc up -d --no-deps backend \
+    || fail "compose up backend failed; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it"
+  if ! wait_for_healthz "$BACKEND_PORT" "the recreated backend"; then
+    fail "the recreated backend never answered /healthz on :$BACKEND_PORT; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it — repair the backend, then point api-front back by hand"
+  fi
+  switch_active_backend "127.0.0.1:${BACKEND_PORT}"
+  # Requests the old nginx workers were still answering go to the container
+  # that is about to disappear; give them a moment to finish.
+  sleep "$DRAIN_SECONDS"
+  docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
+  log "$NEXT_BACKEND removed; backend rollout complete"
+}
+
+switch_active_frontend() {
+  local port="$1" previous
+  previous="$(cat "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
+  bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" "$port" "$FRONTEND_PROXY_PORT"
+  if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
+    printf '%s\n' "$previous" > "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
+    fail "frontend proxy configuration rejected; running nginx was not reloaded"
+  fi
+  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
+    || fail "frontend proxy reload failed; both frontends remain running"
+  log "frontend proxy now sends traffic to :$port"
+}
+
+wait_for_frontend() {
+  local port="$1" container="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
+  [ "$step" -gt 0 ] 2>/dev/null || step=1
+  while [ "$waited" -lt "$BACKEND_START_TIMEOUT" ]; do
+    if docker exec "$container" /usr/local/bin/check-static-assets /usr/share/nginx/html >/dev/null 2>&1 \
+      && curl -fsS -m 3 "http://127.0.0.1:$port/" >/dev/null 2>&1; then
+      log "$container serves complete frontend assets on :$port after ${waited}s"
+      return 0
+    fi
+    sleep "$HEALTH_INTERVAL_SECONDS"
+    waited=$((waited + step))
+  done
+  return 1
+}
+
+rollout_frontend() {
+  [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
+  # A failed prior switch may still be using this container. Never remove it
+  # automatically while the standing proxy names its port.
+  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT_NEXT;" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"; then
+    fail "frontend proxy is still on :$FRONTEND_PORT_NEXT from a previous rollout; recover it before redeploying"
+  fi
+  docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+  dc run -d --no-deps --name "$NEXT_FRONTEND" -p "127.0.0.1:$FRONTEND_PORT_NEXT:80" frontend >/dev/null \
+    || fail "could not start next frontend; running frontend was not touched"
+  if ! wait_for_frontend "$FRONTEND_PORT_NEXT" "$NEXT_FRONTEND"; then
+    docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+    fail "next frontend is unhealthy; running frontend was not touched"
+  fi
+  switch_active_frontend "$FRONTEND_PORT_NEXT"
+  # Let requests already assigned to the old frontend finish before replacing it.
+  sleep "$DRAIN_SECONDS"
+  dc up -d --no-deps frontend || fail "frontend recreate failed; next frontend remains serving"
+  wait_for_frontend "${FRONTEND_PORT:-8080}" "$(service_container frontend)" \
+    || fail "recreated frontend is unhealthy; next frontend remains serving"
+  switch_active_frontend "${FRONTEND_PORT:-8080}"
+  sleep "$DRAIN_SECONDS"
+  docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
+  log "frontend rollout complete"
+}
+
+# First installation must use the backend image this deploy just pulled or
+# verified. Once running, ensure_device_connection_owner deliberately leaves it
+# untouched until the separate owner release operation.
+export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
+ensure_device_connection_owner
+reload_api_front_routes
+check_session_base_survives_release
+
+if [ -n "$ACTIVE_BACKEND_DIR" ]; then
+  [ -d "$ACTIVE_BACKEND_DIR" ] \
+    || fail "ACTIVE_BACKEND_DIR=$ACTIVE_BACKEND_DIR does not exist — run deploy/llm-tunnel/up.sh first"
+  rollout_backend
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    rollout_frontend
+  else
+    log "bringing up frontend…"
+    dc up -d --no-deps frontend || fail "compose up frontend failed"
+  fi
+else
+  log "bringing up backend + frontend…"
+  dc up -d backend frontend || fail "compose up failed"
+fi
+
+# Same reasoning as the pull: never `fail` on these. A browser that will not
+# start must not hold back a backend that would have served.
+#
+# But say WHY, and say it when it works too. These two lines used to send both
+# streams to /dev/null, which cost real time: `cheese-browser-render` failed
+# every deploy for weeks with nothing but "did not start", and the reason —
+# a container of that name left behind by a manual `docker compose up`, so
+# compose could never create its own — was printed by docker on every attempt
+# and discarded by this script on every attempt.
+#
+# The eviction is what actually unblocks it: these services declare a fixed
+# `container_name`, and while anything else holds that name compose cannot
+# create its own. See deploy/evict-foreign-container.sh.
+start_optional_service() {
+  service="$1"
+  container="$2"
+  consequence="$3"
+  evicted="$("$HERE/evict-foreign-container.sh" "$container" "$PROJECT" 2>&1)" \
+    || log "WARNING: could not free $container; $service cannot start while it is held"
+  # An `[ -n … ] && log` here would be the last command of this branch under
+  # `set -e`, so the common case — nothing to evict, empty string — would end
+  # the deploy.
+  if [ -n "${evicted:-}" ]; then
+    log "$evicted"
+  fi
+  if out="$(dc up -d "$service" 2>&1)"; then
+    log "$service is up"
+    return 0
+  fi
+  log "WARNING: $service did not start; $consequence"
+  printf '%s\n' "$out" | tail -n 5 | while IFS= read -r line; do
+    [ -n "$line" ] && log "  $service: $line"
+  done
+  return 0
+}
+
+start_optional_service browser-render cheese-browser-render \
+  "fetching will fall back a rung"
+start_optional_service office-render cheese-office-render \
+  "documents will offer download only"
 
 log "waiting for health…"
 code=""
@@ -458,10 +780,9 @@ if [ "$code" != ok ]; then
     # once the box is past the migration the previous image shares the current
     # uid and handing anything back would be the thing that breaks it.
     if [ "${OWNERSHIP_MIGRATED:-no}" = yes ]; then
-      log "handing the bind mounts back to ${PREVIOUS_AGENT_UID:-1001} before starting $PREV_SHA…"
+      log "handing the bind mounts back to ${PREVIOUS_AGENT_UID:-1001} before starting ${PREV_SHA}…"
       AGENT_UID="${PREVIOUS_AGENT_UID:-1001}" \
       AGENT_GID="${PREVIOUS_AGENT_GID:-1001}" \
-      SECRET_FILE_PATHS="$OWNERSHIP_SECRETS" \
       FORCE_OWNERSHIP_FIX=1 \
       "$HERE/fix-workspace-ownership.sh" \
         "$OWNERSHIP_IMAGE" \
@@ -478,6 +799,15 @@ if [ "$code" != ok ]; then
     fi
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
+fi
+
+# Host clock survives API rollouts. Non-systemd installations must arrange an
+# external minute trigger; startup/reconnect recovery alone is not a timer.
+if [ -d /run/systemd/system ]; then
+  bash "$HERE/install-room-cleanup-timer.sh" \
+    || fail "backend is healthy, but archived-room cleanup timer installation failed"
+else
+  log "no systemd host: schedule deploy/trigger-room-cleanup.sh externally every minute"
 fi
 
 promote_image_retainer() {
@@ -507,6 +837,24 @@ fi
 # stops the trap from repeating it.
 reclaim_docker_disk "successful deploy" true
 RECLAIM_PENDING=0
+# The other half of what fills this box. Docker images are one; the package
+# caches rooms kept before they shared a project store are the other, and they
+# are the half nothing was reclaiming: the launcher drops a room's copies when
+# that room next starts, but a room only starts when someone uses it, and the
+# rooms holding the most disk are the ones nobody has opened in a month.
+#
+# Here rather than on a timer because a deploy is when someone is watching: the
+# line it prints names the directory it swept, so a box where rooms belong to a
+# different user than the deploy says "0 rooms" next to that path instead of
+# quietly reclaiming nothing forever. Best-effort, exactly like the reclaim
+# above — a box with no rooms on it is the normal case, not a failure.
+bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
+# And the checkouts the old layout left behind. Until #936 a room's working
+# directory was `~/.cheese/work/<project>/<room>`; nothing has written there
+# since, and on dev that was still 107GB. Gated on publication, from the same
+# module archival uses — a checkout holding work that never left the box is the
+# user's only copy of it, and is kept and reported instead.
+python3 "$HERE/reclaim-legacy-room-checkouts.py" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   log "DEPLOY OK: sha=$SHA healthy; agent runtime images verified and retained"

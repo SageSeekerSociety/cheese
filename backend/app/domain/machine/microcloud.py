@@ -11,11 +11,31 @@ and the caller polls. This client therefore never waits — callers own the
 polling, so a slow Proxmox task can't hold an HTTP request open.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
+
+_http_clients: dict[tuple[str, str], httpx.AsyncClient] | None = None
+
+
+@asynccontextmanager
+async def reuse_connections() -> AsyncIterator[None]:
+    """Keep tenant connections open until the application has stopped its jobs."""
+    global _http_clients
+    previous = _http_clients
+    clients: dict[tuple[str, str], httpx.AsyncClient] = {}
+    _http_clients = clients
+    try:
+        yield
+    finally:
+        _http_clients = previous
+        async with AsyncExitStack() as closing:
+            for client in clients.values():
+                closing.push_async_callback(client.aclose)
 
 
 class MicroCloudError(RuntimeError):
@@ -52,8 +72,21 @@ class MicroCloudClient:
         url = f"{self._base}/microcloud{path}"
         headers = {"Authorization": f"Bearer {self._secret}"}
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.request(method, url, json=body, headers=headers)
+            if _http_clients is None:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    response = await client.request(
+                        method, url, json=body, headers=headers
+                    )
+            else:
+                # Cookies and connection state must not cross tenant credentials.
+                key = (self._base, self._secret)
+                client = _http_clients.get(key)
+                if client is None:
+                    client = httpx.AsyncClient(timeout=self._timeout)
+                    _http_clients[key] = client
+                response = await client.request(
+                    method, url, json=body, headers=headers, timeout=self._timeout
+                )
         except httpx.HTTPError as exc:
             raise MicroCloudError(f"MicroCloud unreachable: {exc}") from exc
         if response.status_code >= 400:
@@ -64,6 +97,11 @@ class MicroCloudClient:
         if not response.content:
             return None
         return response.json()
+
+    async def claim_warm_machine(
+        self, machine_id: int, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._call("POST", f"/machine/{machine_id}/claim", body)
 
     # --- offerings -------------------------------------------------------
 
@@ -114,6 +152,18 @@ class MicroCloudClient:
         (the tenant console's →ccproxy button). Asynchronous on MicroCloud's
         side: aiStatus drops back to provisioning and settles on its own."""
         return await self._call("POST", f"/machine/{machine_id}/ai/{mode}")
+
+    async def find_machine(
+        self, customer_id: int, hostname: str
+    ) -> dict[str, Any] | None:
+        """The customer's machine with this hostname, if the provider has one."""
+        data = await self._call(
+            "GET", f"/machine?customerId={customer_id}&page_size=100"
+        )
+        for item in (data or {}).get("items", []):
+            if item.get("hostname") == hostname:
+                return item
+        return None
 
     async def get_machine(self, machine_id: int) -> dict[str, Any] | None:
         """None when MicroCloud no longer knows the machine — a deleted machine

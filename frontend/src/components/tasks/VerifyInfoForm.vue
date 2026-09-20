@@ -29,6 +29,8 @@
           <v-col cols="12" sm="6">
             <v-text-field
               v-model="formData.phone"
+              autocomplete="tel"
+              name="phone"
               label="手机号"
               :hint="!formData.email ? '请至少填写手机号或邮箱中的一项' : undefined"
               :required="!formData.email"
@@ -39,6 +41,8 @@
           <v-col cols="12" sm="6">
             <v-text-field
               v-model="formData.email"
+              autocomplete="email"
+              name="email"
               label="邮箱"
               :hint="!formData.phone ? '请至少填写手机号或邮箱中的一项' : undefined"
               :required="!formData.phone"
@@ -51,6 +55,7 @@
 
       <v-textarea
         v-model="formData.applyReason"
+        autocomplete="off"
         label="申请理由"
         v-bind="applyReasonProps"
         hint="请简要说明参与赛题的目的和期望"

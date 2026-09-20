@@ -23,6 +23,7 @@ import pytest
 
 from app.core.config import settings
 from app.domain.workspace import service as ws
+from tests.machine_work import declare_task
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -37,6 +38,7 @@ def project(tmp_path, monkeypatch) -> uuid.UUID:
 
 def test_mounts_land_where_the_real_pointer_resolves(project, tmp_path):
     topic = uuid.uuid4()
+    declare_task(project, topic)
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001 -- real worktree creation
     pointer = (wt / ".git").read_text().split(":", 1)[1].strip()
 
@@ -56,6 +58,7 @@ def test_worktree_alone_is_unusable_once_relocated(project, tmp_path):
     """Relocating (≈ bind-mounting) only the worktree breaks git, exactly like
     a sandbox container that gets no store mount would."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     isolated = tmp_path / "container-sim" / "work"
@@ -74,6 +77,7 @@ def test_the_mounts_make_the_relocated_worktree_a_working_repo(project, tmp_path
     branch and commit onto it — which is the whole point: the agent's own
     commit is what moves the branch."""
     topic = uuid.uuid4()
+    declare_task(project, topic)
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     container_root = tmp_path / "container-sim"
@@ -92,7 +96,7 @@ def test_the_mounts_make_the_relocated_worktree_a_working_repo(project, tmp_path
 
     status = _git(isolated, "status", "--porcelain", "--branch")
     assert status.returncode == 0, status.stderr
-    assert ws.branch_for_tree(topic) in status.stdout
+    assert ws.branch_for_task(topic) in status.stdout
 
     (isolated / "hello.txt").write_text("hi\n", encoding="utf-8")
     assert _git(isolated, "add", "-A").returncode == 0
@@ -111,6 +115,6 @@ def test_the_mounts_make_the_relocated_worktree_a_working_repo(project, tmp_path
     # The commit landed on the topic's branch in the shared store the mount
     # points at — no export, no push.
     listed = _git(
-        Path(container).parent, "ls-tree", "--name-only", ws.branch_for_tree(topic)
+        Path(container).parent, "ls-tree", "--name-only", ws.branch_for_task(topic)
     )
     assert "hello.txt" in listed.stdout

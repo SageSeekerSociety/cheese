@@ -12,6 +12,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 import Home from './Home.vue'
 
+import { setLocale } from '@/i18n'
+
 const routes = [
   {
     path: '/',
@@ -24,6 +26,7 @@ const routes = [
 ]
 
 beforeAll(() => {
+  setLocale('zh-CN')
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}

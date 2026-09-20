@@ -7,8 +7,16 @@ paths:
 
 Full spec: [`docs/design-system.md`](../../docs/design-system.md). Read it before
 any non-trivial styling work. This file is only the part you will otherwise get
-wrong on turn one: the backlog is down from 524 to 92 gated violations, but 92
-counterexamples are still 92 things to copy from by accident.
+wrong on turn one.
+
+The gates pass on a tree that still holds violations: the existing ones are
+frozen in a baseline and only NEW ones are blocked. So a green gate does not
+mean the file open in front of you is clean — it may well be one of the frozen
+ones. `frontend/stylelint-baseline.json` and `frontend/palette-baseline.json`
+say which files have an allowance; check there before copying a neighbour.
+
+After a change, `frontend-design` (a skill) walks the whole checklist including
+the parts no gate can see.
 
 ## The product has a dark theme. Every colour you write must survive it.
 
@@ -49,6 +57,30 @@ counterexamples are still 92 things to copy from by accident.
 If you find yourself writing `:root[data-theme='dark'] .thing { ... }`, stop:
 nine times out of ten the real fix is that `.thing` picked the wrong token.
 
+## Motion: still is the default
+
+Full rules: [`docs/design-system.md` §9](../../docs/design-system.md#9-动效). The three
+that get written wrong on turn one:
+
+- **`:hover` changes colour, never position.** This side of the product is dense
+  lists — a sidebar of dozens of topics, a chat of dozens of messages, a board
+  column of a dozen cards. Lift each row 2px under the pointer and what a person
+  sees is the column jumping, not which row they are on; the background change
+  already said that. (The community half does lift, in ~33 files. It is the side
+  that has to come off it, not this one.)
+- **Never `transition: all`** — it drags `width`/`height`/`padding` along, so the
+  browser relayouts every frame inside a list, and nobody can tell what the line
+  was meant to animate. Name the properties.
+- **Anything `infinite` needs its own reduced-motion escape.** The global
+  fallback in `style.css` squeezes durations to `0.001ms`, which turns a 1.6s
+  pulse into a strobe — worse than leaving it. Write
+  `@media (prefers-reduced-motion: reduce) { animation: none }` next to it, and
+  make sure the thing still says what it meant with the animation off.
+
+Durations are 0.12s (answering the pointer) / 0.2s (appearing, disappearing) /
+0.3s (a whole panel moving in or out). Easing is `ease`; `ease-in-out` for loops;
+`linear` only for genuinely constant motion.
+
 ## Colours live in two files and must be changed in both
 
 `frontend/src/style.css` (CSS variables, for hand-written CSS) and
@@ -71,11 +103,36 @@ avoid a white flash before first paint. Change the storage key
   10–11px and they are not a precedent to follow.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
-## The Chinese copy is part of the design system, and nothing lints it
+## A field's label sits OUTSIDE its box, and that is what collides
+
+An outlined field's floating label is `translateY(-50%)` on its own top border
+(`VField.sass`), so roughly half of it — ~8px — is above the field's box. Two
+things follow, and both have shipped:
+
+- **A field needs vertical space above it.** `.v-input` carries no margin of its
+  own; every pixel between two stacked fields comes from the `.v-input__details`
+  row under the upper one. Anything that removes that row — `hide-details`, or a
+  `hide-details="auto"` on a field that happens to have no hint — makes the two
+  boxes touch, and the lower label lands on the upper border. Set `hide-details`
+  on a field that stands alone or in a container with its own gap; when you set
+  it on a stacked field, give the stack the spacing yourself.
+- **A scroll container clips it.** In a `scrollable` dialog the scroller is
+  `.v-card-text` (`VDialog.sass`), so `pt-0` there cuts the top half off the
+  first field's label. The card-title above it is not padding — the clip happens
+  at the scroller's own edge.
+
+Neither shows up in vitest (happy-dom has no layout), in `vue-tsc`, or in
+stylelint. `e2e/tests/layout-invariants.spec.ts` measures the rendered boxes and
+is the only thing that catches them — add the screen you are building to it
+rather than eyeballing the form once.
+
+## The Chinese copy is part of the design system
 
 Full rules: [`docs/design-system.md` §8](../../docs/design-system.md#8-文案). Colours
-and radii have stylelint; copy has nothing — a bad string ships silently. So the
-one thing to internalise before you type user-facing Chinese:
+and radii have stylelint; copy has nothing — a badly worded string ships silently.
+(The *structure* around strings — keys, locales, placeholders — is gated; see the
+next section. The words themselves are not.) So the one thing to internalise
+before you type user-facing Chinese:
 
 - **正式、清晰、自然、简明.** Both failure directions are wrong: `平台检查没跑成`
   (too colloquial) and `平台检查未能顺利完成执行` (公文腔) — write
@@ -96,6 +153,27 @@ one thing to internalise before you type user-facing Chinese:
 - **Deleting a UI element is riskier than rewording it.** If you are not certain
   an element is pure meta, keep it and raise it — see the §8.7 counter-example
   where the "废话" was also the only signal of an unavailable state.
+
+## Interface strings live in the catalog, and that part IS gated
+
+Full rules: [`docs/i18n.md`](../../docs/i18n.md). The parts you will otherwise get
+wrong on turn one:
+
+- **Never hardcode a user-visible string** — not in a template, not in a script,
+  not as a `title` / `label` / `placeholder`, not in text the code assembles. Put
+  it in `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`.
+- **Key names are `namespace.component.role`** (`account.signIn.submit`), never an
+  English sentence and never a sentence fragment. A sentence-shaped key means
+  rewording the Chinese forces renaming the key, which throws the translation away.
+- **Never create an empty English namespace to satisfy a check.** That turns
+  "missing" into "present but blank", which is exactly the silent state the gates
+  exist to prevent. Either write the translation, or leave the keys in
+  `frontend/src/i18n/untranslated.json`.
+- **Never edit `untranslated.json` / `unused.json` just to get green.**
+  `catalog.spec.ts` fails on entries that no longer describe reality (already
+  translated, already referenced, or dangling), so the lists can only shrink
+  honestly.
+- `pnpm exec vitest run --dir src/i18n` is the whole i18n gate — seconds, runs anywhere.
 
 ## The two ratchets
 

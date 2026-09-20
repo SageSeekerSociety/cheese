@@ -4,21 +4,34 @@
 // drawer showing every member with their role; an owner/admin can add project
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
-import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { ProjectAgent, ProjectMemberRow, TopicMemberRow } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import { addTopicMember, listProjectAgents, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import { avatarColor, avatarInitial } from '../utils/avatar'
+import { getAvatarUrl } from '../utils/materials'
 
-import TopicAgentPicker from './TopicAgentPicker.vue'
+import LoadingSkeleton from './common/LoadingSkeleton.vue'
 
 const props = defineProps<{
   topicId: string
-  /** 换 AI 队友要从这个项目的队友里挑，见 TopicAgentPicker。 */
   projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
+
+// 这个项目的 AI 队友。请一个进房间和请一个人是同一件事——往名册上加一行——
+// 所以它们和项目成员一起出现在下面那个「添加」列表里。拿不到就只列人。
+const projectAgents = ref<ProjectAgent[]>([])
+async function loadProjectAgents() {
+  try {
+    projectAgents.value = (await listProjectAgents(props.projectId)).data
+  } catch {
+    projectAgents.value = []
+  }
+}
+watch(() => props.projectId, loadProjectAgents, { immediate: true })
 
 const members = ref<TopicMemberRow[]>([])
 const loading = ref(false)
@@ -46,39 +59,60 @@ async function load() {
 
 watch(() => props.topicId, load, { immediate: true })
 
-// 群聊感: humans + whether 芝士 is in the room, shown as "N 人 + 芝士".
-const humans = computed(() => members.value.filter((m) => !m.agent))
-const hasAgent = computed(() => members.value.some((m) => m.agent))
-const countLabel = computed(() => {
-  const n = humans.value.length
-  return hasAgent.value ? `${n} 人 + 芝士` : `${n} 人`
-})
+// 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
+// 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像
+// 「几个人，另外还有个它」。
+// 「位」而不是「人」：同一句话要数得下一个 AI 队友。
+const countLabel = computed(() => `${members.value.length} 位`)
 
 // Compact indicator: the first few human faces as a stack, capped so the
 // stack never grows unbounded — extra people fold into a "+N" tile.
 const MAX_FACES = 3
-const stackFaces = computed(() => humans.value.slice(0, MAX_FACES))
-const overflow = computed(() => Math.max(0, humans.value.length - MAX_FACES))
+const stackFaces = computed(() => members.value.slice(0, MAX_FACES))
+const overflow = computed(() => Math.max(0, members.value.length - MAX_FACES))
 
 // My role in THIS topic decides whether the management controls show at all.
 const myRole = computed(() => members.value.find((m) => m.member_handle === props.me)?.role ?? null)
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
 const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
-// Project members not already in the room — the "add member" dropdown.
+// Project members and AI teammates not already in the room — the "add member"
+// dropdown. 已停用的队友不列：停用就是为了挡住新的邀请。
 const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
-  return props.projectMembers
+  const people = props.projectMembers
     .filter((m) => !inRoom.has(m.user_handle))
     .map((m) => ({
       title: m.name || m.user_handle,
       subtitle: `@${m.user_handle}`,
       value: m.user_handle,
     }))
+  const agents = projectAgents.value
+    .filter((a) => a.seat_handle && a.is_active !== false && !inRoom.has(a.seat_handle))
+    .map((a) => ({
+      title: `${a.display_name}（AI 队友）`,
+      subtitle: `@${a.seat_handle}`,
+      value: a.seat_handle as string,
+    }))
+  return [...people, ...agents]
 })
 
+// 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用
+// handle 而不是昵称 —— 改个昵称不该换一张脸，而重名的两个人得是两种颜色。
+const broken = ref<Set<string>>(new Set())
+function faceSrc(m: TopicMemberRow): string | null {
+  if (m.avatar_id == null || broken.value.has(m.member_handle)) return null
+  return getAvatarUrl(m.avatar_id)
+}
+function onFaceError(handle: string): void {
+  if (broken.value.has(handle)) return
+  broken.value = new Set(broken.value).add(handle)
+}
+function faceColor(m: TopicMemberRow): string {
+  return avatarColor(m.member_handle)
+}
 function initial(name: string): string {
-  return (name || '?').trim().charAt(0).toUpperCase()
+  return avatarInitial(name)
 }
 
 function roleLabel(role: string): string {
@@ -125,25 +159,24 @@ async function onSetRole(handle: string, role: string) {
         :title="`话题成员 · ${countLabel}`"
       >
         <span class="members-mini__stack">
-          <span
-            v-for="(m, i) in stackFaces"
-            :key="m.id"
-            class="members-mini__face"
-            :style="{ zIndex: MAX_FACES - i }"
-            >{{ initial(m.name || m.member_handle) }}</span
-          >
+          <template v-for="(m, i) in stackFaces" :key="m.id">
+            <img
+              v-if="faceSrc(m)"
+              class="members-mini__face members-mini__face--photo"
+              :src="faceSrc(m)!"
+              :alt="m.name || m.member_handle"
+              :style="{ zIndex: MAX_FACES - i }"
+              @error="onFaceError(m.member_handle)"
+            />
+            <span v-else class="members-mini__face" :style="{ zIndex: MAX_FACES - i, backgroundColor: faceColor(m) }">{{
+              initial(m.name || m.member_handle)
+            }}</span>
+          </template>
           <span v-if="overflow" class="members-mini__face members-mini__face--more" :style="{ zIndex: 0 }"
             >+{{ overflow }}</span
           >
-          <span
-            v-if="hasAgent"
-            class="members-mini__face members-mini__face--agent"
-            :style="{ zIndex: MAX_FACES + 1 }"
-            title="芝士在这个话题里"
-            >芝</span
-          >
         </span>
-        <span class="members-mini__count">{{ humans.length }}</span>
+        <span class="members-mini__count">{{ members.length }}</span>
       </button>
     </template>
 
@@ -155,25 +188,33 @@ async function onSetRole(handle: string, role: string) {
 
       <div v-if="error" class="roster__error">{{ error }}</div>
 
-      <div v-if="loading" class="roster__empty">加载中…</div>
+      <LoadingSkeleton v-if="loading" variant="roster" />
       <ul v-else class="roster__list">
         <li v-for="m in members" :key="m.id" class="roster__item">
-          <span class="roster__avatar" :class="{ 'roster__avatar--agent': m.agent }">
-            <template v-if="m.agent">芝</template>
-            <template v-else>{{ initial(m.name || m.member_handle) }}</template>
-          </span>
+          <span v-if="m.agent" class="roster__avatar roster__avatar--agent">{{
+            initial(m.name || m.member_handle)
+          }}</span>
+          <img
+            v-else-if="faceSrc(m)"
+            class="roster__avatar roster__avatar--photo"
+            :src="faceSrc(m)!"
+            :alt="m.name || m.member_handle"
+            @error="onFaceError(m.member_handle)"
+          />
+          <span v-else class="roster__avatar" :style="{ backgroundColor: faceColor(m) }">{{
+            initial(m.name || m.member_handle)
+          }}</span>
           <span class="roster__who">
             <span class="roster__name">{{ m.name || m.member_handle }}</span>
             <span class="roster__handle">@{{ m.member_handle }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">AI 队友</span>
 
-          <!-- 芝士那一行：换一个 AI 队友。和换人的角色同一个位置、同一个样子。 -->
-          <TopicAgentPicker v-if="m.agent && canManage" :topic-id="topicId" :project-id="projectId" />
-
-          <!-- Owner/admin: change role via a small menu; else a static chip. -->
-          <template v-if="canManage && !m.agent">
-            <v-menu location="bottom end">
+          <!-- Owner/admin: change role via a small menu; else a static chip.
+               队友没有角色菜单——它在房间里的身份是「AI 队友」那个标——但和人一样
+               能被移出。 -->
+          <template v-if="canManage">
+            <v-menu v-if="!m.agent" location="bottom end">
               <template #activator="{ props: rp }">
                 <button v-bind="rp" type="button" class="roster__role roster__role--btn" :disabled="busy">
                   {{ roleLabel(m.role) }}
@@ -204,8 +245,7 @@ async function onSetRole(handle: string, role: string) {
               <v-icon size="15">mdi-close</v-icon>
             </button>
           </template>
-          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义，
-               和左边的「换」并排更像是两个能点的东西。 -->
+          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义。 -->
           <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
@@ -214,12 +254,13 @@ async function onSetRole(handle: string, role: string) {
       <div v-if="canManage" class="roster__add">
         <v-select
           v-model="addHandle"
+          autocomplete="off"
           :items="addable"
           density="compact"
           variant="outlined"
           hide-details
           placeholder="添加成员…"
-          no-data-text="项目成员都已在话题中"
+          no-data-text="项目成员和队友都已在话题中"
           class="roster__select"
         />
         <v-btn
@@ -275,17 +316,25 @@ async function onSetRole(handle: string, role: string) {
   font-size: 0.66rem;
   font-weight: 700;
   /* Theme-invariant pair, kept literal on purpose (same call as the default
-     avatar in LeftAppRail): the slate disc is one value in both themes, so the
-     initial on it must be one value too. */
+     avatar in LeftAppRail): the disc under it is the #rrggbb avatarColor()
+     computes at a fixed PERCEPTUAL lightness, one value in both themes, so the
+     initial on it must be one value too.
+     The disc itself is set inline per member — a single shared slate made
+     every face in the stack identical, which is the one thing a row of faces
+     exists not to be. */
   color: #fff;
-  background: #8a94a3;
   border: 1.5px solid var(--surface);
   box-sizing: border-box;
+  overflow: hidden;
+}
+.members-mini__face--photo {
+  object-fit: cover;
 }
 .members-mini__face:first-child {
   margin-left: 0;
 }
 .members-mini__face--more {
+  /* 不是一张脸，是「还有几个人」—— 用界面的填充色，别混进彩色头像里。 */
   background: var(--fill-2);
   color: var(--muted);
   font-size: 0.6rem;
@@ -371,8 +420,11 @@ async function onSetRole(handle: string, role: string) {
   font-size: 0.72rem;
   font-weight: 700;
   color: #fff; /* theme-invariant ground, see .members-mini__face */
-  background: #8a94a3;
   flex: none;
+  overflow: hidden;
+}
+.roster__avatar--photo {
+  object-fit: cover;
 }
 .roster__avatar--agent {
   /* --ink inverts with the theme, so the ink on it has to invert too: --surface

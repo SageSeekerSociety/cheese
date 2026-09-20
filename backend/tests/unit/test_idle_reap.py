@@ -1,5 +1,4 @@
-"""Idle-screen reaper: the screen of a topic with no recent block activity is
-released; an active topic keeps its screen open."""
+"""Quiet and recently active open rooms both retain their device screens."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -18,13 +17,9 @@ from tests.conftest import stub_compute
 
 
 @pytest.mark.anyio
-async def test_reap_releases_idle_device_screens_keeps_active(
-    client, tmp_path, monkeypatch
-):
-    """A screen whose topic went quiet past the cutoff is released, while an
-    active topic's screen stays open."""
+async def test_idle_and_active_rooms_both_keep_screens(client, tmp_path, monkeypatch):
+    """A month without activity does not release an open room's screen."""
     from app.domain.agent import device_hub as dh
-    from app.domain.agent import device_provider as dp
     from app.domain.agent.device_hub import HubScreen
 
     factory = client.test_factory
@@ -83,14 +78,14 @@ async def test_reap_releases_idle_device_screens_keeps_active(
     monkeypatch.setattr(dh.device_hub, "all_online_screens", lambda: list(screens))
     released: list = []
 
-    async def fake_release(project_id, topic_id, **kw):
-        released.append(topic_id)
+    async def fake_release(device_id, sid):
+        released.append(sid)
 
-    monkeypatch.setattr(dp, "release_topic_screen", fake_release)
+    monkeypatch.setattr(dh.device_hub, "close_screen", fake_release)
 
-    freed = await svc.reap_idle_device_screens(idle_hours=3)
-    assert freed == 1
-    assert released == [idle_id]  # only the idle topic's screen is freed
+    freed = await svc.consolidate_idle_device_screens(idle_hours=3)
+    assert freed == 0
+    assert released == []
 
 
 @pytest.mark.anyio
@@ -98,14 +93,16 @@ async def test_reaper_runs_without_heartbeat_scheduler():
     scheduler = type("Scheduler", (), {})()
     screens_called = asyncio.Event()
 
-    async def reap_idle_device_screens(idle_hours):
+    async def consolidate_idle_device_screens(idle_hours):
         assert idle_hours == 7
         screens_called.set()
         return 0
 
-    scheduler.reap_idle_device_screens = reap_idle_device_screens
+    scheduler.consolidate_idle_device_screens = consolidate_idle_device_screens
     runner = PeriodicRunner(
-        "idle screen reap", 0.01, lambda: scheduler.reap_idle_device_screens(7)
+        "idle memory consolidation",
+        0.01,
+        lambda: scheduler.consolidate_idle_device_screens(7),
     )
     runner.start()
     await asyncio.wait_for(screens_called.wait(), timeout=1)

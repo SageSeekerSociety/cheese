@@ -1,17 +1,17 @@
 """Emoji reactions (Slack semantics): the toggle API, the aggregated GET
-payload, the live WS broadcast, and 芝士's deterministic ✅ receipt on the
+payload, the live WS broadcast, and 芝士's deterministic 👀 receipt on the
 message that summoned it (a platform action, never AI-generated text)."""
 
 import asyncio
+import time
 import uuid
 
 import pytest
 
 from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
-from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import stub_compute
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, room_agent_seat
 
 
 def _create_topic(client, owner: str = "alice") -> str:
@@ -49,6 +49,25 @@ def _toggle(client, block_id: str, emoji: str, author: str) -> dict:
 def _block_reactions(client, topic_id: str, block_id: str) -> list[dict]:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return next(b for b in blocks if b["id"] == block_id)["reactions"]
+
+
+def _await_reactions(
+    client, topic_id: str, block_id: str, tries: int = 200
+) -> list[dict]:
+    """The block's reactions once 芝士's 👀 has landed.
+
+    The receipt that places it is reported by the harness on its own task, so it
+    is not ordered against the turn's own frames — asking the durable state is
+    the only way to ask this question without racing. That looseness IS the
+    change: the mark used to be emitted by the platform the instant it accepted
+    the message, which made it perfectly ordered and perfectly untrue.
+    """
+    for _ in range(tries):
+        reactions = _block_reactions(client, topic_id, block_id)
+        if reactions:
+            return reactions
+        time.sleep(0.02)
+    raise AssertionError(f"no reaction ever landed on block {block_id}")
 
 
 def test_toggle_adds_then_removes(client):
@@ -142,8 +161,8 @@ def test_reaction_on_missing_block_is_404(client):
     assert r.status_code == 404
 
 
-def test_summon_gets_cheese_check_receipt(client):
-    """芝士 collega-style ack: the summoning message gets a ✅ by "cheese" the
+def test_summon_gets_cheese_seen_receipt(client):
+    """芝士 collega-style ack: the summoning message gets a 👀 by "cheese" the
     moment the turn starts — broadcast live and persisted on the block."""
     topic_id = _create_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
@@ -155,15 +174,14 @@ def test_summon_gets_cheese_check_receipt(client):
                 break
 
     user_block = next(f for f in frames if f["type"] == "user_block")["block"]
-    ack = next(f for f in frames if f["type"] == "reaction")
-    # The ✅ lands BEFORE any assistant message (it's the receipt, not the reply).
-    assert frames.index(ack) < frames.index(
-        next(f for f in frames if f["type"] == "assistant_block")
-    )
-    assert ack["block_id"] == user_block["id"]
-    agent = topic_agent_handle(uuid.UUID(topic_id))
-    assert ack["reactions"] == [{"emoji": "✅", "count": 1, "authors": [agent]}]
-    assert _block_reactions(client, topic_id, user_block["id"]) == ack["reactions"]
+    agent = room_agent_seat(client, topic_id)
+    expected = [{"emoji": "👀", "count": 1, "authors": [agent]}]
+    assert _await_reactions(client, topic_id, user_block["id"]) == expected
+    # It is broadcast as well as persisted, so a room that is already open sees
+    # it appear. Its POSITION is not asserted: see `_await_reactions`.
+    for ack in (f for f in frames if f["type"] == "reaction"):
+        assert ack["block_id"] == user_block["id"]
+        assert ack["reactions"] == expected
 
 
 def test_unsummoned_message_gets_no_receipt(client):
@@ -174,8 +192,8 @@ def test_unsummoned_message_gets_no_receipt(client):
 
 @pytest.mark.anyio
 async def test_resume_turn_adds_no_receipt(client, tmp_path):
-    """A system-initiated turn (自动续跑 / nudge) has no human summon message —
-    nothing gets ✅-acked and no reaction frame is emitted."""
+    """A system-initiated turn (重发 / nudge) has no human summon message —
+    nothing gets 👀-acked and no reaction frame is emitted."""
     # Use the shared Postgres-backed factory: the merged Base.metadata now carries
     # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
     factory = client.test_factory  # type: ignore[attr-defined]
@@ -202,7 +220,7 @@ async def test_resume_turn_adds_no_receipt(client, tmp_path):
         async for f in svc.converse(
             topic_id=topic_id,
             author="system",
-            content="接着跑",
+            content="重发一次",
             summon=True,
             is_resume=True,
             resume_reason="测试",

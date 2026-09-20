@@ -7,6 +7,7 @@ room stay open for the next piece of work, and for anything delivered into it
 later.
 """
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
 
@@ -30,15 +31,20 @@ def _task(client, project_id: str, room_id: str, title: str) -> dict:
     Through `/split`, because that is the only way to make one: `POST /topics`
     under a room is refused now — a room's inside is work, not another room.
     """
-    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    r = client.post(
+        f"/topics/{room_id}/split",
+        json=dict(reviewer_handle="alice", **{"title": title}),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
 def _accept(client, topic_id: str) -> None:
     card = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -54,6 +60,13 @@ def _accept(client, topic_id: str) -> None:
 
 def _status(client, topic_id: str) -> str:
     return client.get(f"/topics/{topic_id}").json()["data"]["status"]
+
+
+def _card_status(client, room_id: str, task_id: str) -> str:
+    """一张卡的状态 —— 经过它所在的房间读，因为卡不是地点。"""
+    r = client.get(f"/topics/{room_id}/tasks/{task_id}")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["status"]
 
 
 def test_work_inside_a_room_is_a_thread_not_a_nested_room(client):
@@ -92,7 +105,7 @@ def test_accepting_the_batch_leaves_the_room_and_its_work_open(client):
 
     _accept(client, room_id)
 
-    assert _status(client, task["id"]) == "open"
+    assert _card_status(client, room_id, task["id"]) == "open"
     assert _status(client, room_id) == "active"
 
 
@@ -105,10 +118,10 @@ def test_a_room_takes_a_second_task_after_the_first_is_accepted(client):
     first = _task(client, project_id, room_id, "修登录")
     _accept(client, room_id)
     second = _task(client, project_id, room_id, "加导出")
-    assert _status(client, first["id"]) == "open"
+    assert _card_status(client, room_id, first["id"]) == "open"
 
     assert second["room_id"] == room_id
-    assert _status(client, second["id"]) == "open"
+    assert _card_status(client, room_id, second["id"]) == "open"
     assert _status(client, room_id) == "active"
 
 
@@ -123,8 +136,12 @@ def test_archiving_the_room_still_takes_its_tasks(client):
     room_id = _room(client, project_id)
     task = _task(client, project_id, room_id, "修登录")
 
-    r = client.post(f"/topics/{room_id}/archive", json={"by": "alice"})
+    r = client.post(
+        f"/topics/{room_id}/archive",
+        json={"by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 200
 
     assert _status(client, room_id) == "archived"
-    assert _status(client, task["id"]) == "closed"
+    assert _card_status(client, room_id, task["id"]) == "closed"

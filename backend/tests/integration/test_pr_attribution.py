@@ -11,7 +11,11 @@ human as the child's owner — and that is what these read now.
 
 import asyncio
 import uuid
-from pathlib import Path
+from datetime import UTC, datetime
+
+from app.domain.review.github_pr import OpenedPR
+from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.conftest import room_agent_seat
 
 
 class _FakeTokens:
@@ -19,11 +23,132 @@ class _FakeTokens:
         return "ghs_write", "2099-01-01T00:00:00+00:00"
 
 
+def test_delivery_credits_the_agent_actually_seated_in_the_room(client):
+    from app.domain.review.pr_text import pr_trailers
+    from app.domain.topic.models import Topic
+    from app.domain.workspace import identity
+    from tests.integration.conftest import session_auth_headers
+
+    pid, room = _project(client, owner="alice")
+    default_seat = room_agent_seat(client, room)
+    ops = client.post(f"/projects/{pid}/agents", json={"handle": "ops"})
+    assert ops.status_code == 200, ops.text
+    acting = ops.json()["data"]["seat_handle"]
+    added = client.post(
+        f"/topics/{room}/members",
+        json={"handle": acting, "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert added.status_code == 200, added.text
+    removed = client.delete(
+        f"/topics/{room}/members/{default_seat}?actor=alice",
+        headers=session_auth_headers("alice"),
+    )
+    assert removed.status_code == 200, removed.text
+
+    async def read_credit():
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, uuid.UUID(room))
+            who = await identity.attribution(session, topic)
+            return who, pr_trailers(topic, "alice", who)
+
+    who, trailers = asyncio.run(read_credit())
+    assert who.author == identity.agent_identity(acting)
+    assert f"Cheese-Agent: {acting}\n" in trailers + "\n"
+    assert f"Cheese-Agent: {default_seat}" not in trailers
+
+
+def test_reporter_credit_survives_dispatch_and_only_declared_work_is_credited(client):
+    from types import SimpleNamespace
+
+    from app.domain.room_task.place import PlaceResolver
+    from app.domain.user.models import User
+    from app.domain.workspace import identity
+
+    async def seed():
+        async with client.test_factory() as session:
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    User(
+                        username=name,
+                        email=f"{name}@test.invalid",
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    for name in ("reporter", "coder")
+                ]
+            )
+            await session.commit()
+
+    asyncio.run(seed())
+    _, room = _project(client, owner="alice")
+    result = client.post(
+        f"/topics/{room}/split",
+        json=dict(
+            reviewer_handle="alice",
+            **{
+                "title": "Fix reported bug",
+                "reporter_handle": "reporter",
+                "contributor_handles": ["coder", "coder"],
+            },
+        ),
+    )
+    assert result.status_code == 200, result.text
+    task = result.json()["data"]
+    assert task["reporter_handle"] == "reporter"
+    assert task["contributor_handles"] == ["coder"]
+
+    async def read_credit():
+        async with client.test_factory() as session:
+            place = await PlaceResolver(session).resolve(uuid.UUID(room))
+            assert place is not None
+            card = SimpleNamespace(delivered_task_ids=[task["id"]], task_id=None)
+            return await identity.attribution(session, place.room, card=card)
+
+    credited = asyncio.run(read_credit())
+    assert credited.reporters == (identity.platform_identity("reporter"),)
+    assert credited.coauthors == (identity.platform_identity("coder"),)
+    assert credited.author == identity.agent_identity(room_agent_seat(client, room))
+    concluded = client.post(
+        f"/topics/{room}/tasks/{task['id']}/close",
+        json={"contributor_handles": ["reporter"], "reporter_handle": None},
+    )
+    assert concluded.status_code == 200, concluded.text
+    credited = asyncio.run(read_credit())
+    assert credited.reporters == ()
+    assert credited.coauthors == (identity.platform_identity("reporter"),)
+    preserved = client.post(f"/topics/{room}/tasks/{task['id']}/close", json={})
+    assert preserved.status_code == 200, preserved.text
+    assert preserved.json()["data"]["contributor_handles"] == ["reporter"]
+    rejected = client.post(
+        f"/topics/{room}/tasks/{task['id']}/close",
+        json={"contributor_handles": ["nobody-exists"]},
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert asyncio.run(read_credit()).coauthors == credited.coauthors
+    bad = client.post(
+        f"/topics/{room}/split",
+        json=dict(
+            reviewer_handle="alice",
+            **{"title": "bad", "reporter_handle": "nobody-exists"},
+        ),
+    )
+    assert bad.status_code == 422, bad.text
+
+
 class _FakeClient:
     opened: list[dict] = []
+    #: GitHub 拒了交活的人自己的凭据时，`open_pr` 回来的那句话。
+    downgrade: str | None = None
 
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
+
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        # 递卡后 PR 的正文要改成卡的主题（`sync_pr_text`）。少了这个方法，整条
+        # publish 在落完房间那一行之后炸掉并回滚，房间里什么都不剩。
+        return {"number": number, "title": title, "body": body}
 
     async def open_pr(
         self,
@@ -33,9 +158,12 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+    ) -> OpenedPR:
         type(self).opened.append({"body": body, "as_user_token": as_user_token})
-        return {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}
+        return OpenedPR(
+            {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"},
+            type(self).downgrade,
+        )
 
 
 def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
@@ -45,6 +173,7 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
     from app.domain.workspace import service as ws
 
     _FakeClient.opened = []
+    _FakeClient.downgrade = None
 
     async def _fake_tokens_for_project(_project_id, _session):
         return _FakeTokens()
@@ -66,8 +195,7 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _project(client, owner: str) -> tuple[str, str]:
@@ -82,7 +210,9 @@ def _split(client, parent_id: str, *, by: str) -> str:
     exact shape `cheese split` sends from a 分身's sandbox."""
     r = client.post(
         f"/topics/{parent_id}/split",
-        json={"title": "分身拆出的子任务", "created_by": by},
+        json=dict(
+            reviewer_handle="alice", **{"title": "分身拆出的子任务", "created_by": by}
+        ),
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -90,8 +220,10 @@ def _split(client, parent_id: str, *, by: str) -> str:
 
 def _card(client, topic_id: str) -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(accept): credit the human, not the bot",
@@ -174,23 +306,27 @@ def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
     assert agent not in opened["body"]
 
 
-def test_a_thread_cannot_open_a_pr_of_its_own(client, monkeypatch):
-    """上面三条都从房间递卡，是因为支线递不了——这条钉住那个前提。"""
+def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
+    """上面三条都从房间递卡，是因为一张卡递不了——这条钉住那个前提。
+
+    走不通的方式是 404：卡不是地点，那个 id 名下没有话题可以递。
+    """
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     _, root = _project(client, owner="alice")
     tid = _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(accept): credit the human, not the bot",
         },
     )
-    assert r.status_code == 422, r.text
-    assert "cheese conclude" in r.json()["message"]
+    assert r.status_code == 404, r.text
     assert _FakeClient.opened == []
 
 
@@ -212,47 +348,44 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
     assert "Requested-by: alice" in opened["body"]
 
 
-def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_path):
-    """验收 3: the commits themselves. `sync_for_topic` runs once per turn and
-    writes the git identity the snapshot path commits under — fed `created_by`
-    it resolved a `cheese-…` handle to nothing, so every dispatched thread kept
-    committing as `芝士 <cheese@zhishi.local>` and `coauthored_by()` was None.
+def test_a_pr_opened_under_the_apps_name_tells_the_person_it_was_taken_from(
+    client, monkeypatch
+):
+    """降级不是只进 logger，也不是只在房间里留一行 —— 它点名那个人（I26）。
 
-    The sidecar is keyed by the PLACE, which is what the worktree is keyed by:
-    two threads in one room commit as two different people when they belong to
-    two different people."""
-    from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
+    这条路跑的时候当事人往往不在（草稿 PR 扫底在后台跑），等他回来看见的就只是
+    GitHub 把他的活算给了机器人。所以这句话要投到他手上，而不是等他回房间翻。
+    """
+    from tests.conftest import seed_user, wait_work_idle
 
-    monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
+    alice = seed_user(client, "alice")
+    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+    _FakeClient.downgrade = "你的 GitHub 授权被拒了（token 过期），改用芝士的身份开"
 
-    async def _fake_profile(_session, handle: str):
-        return (
-            ("583231", {"login": "alice", "name": "Alice"})
-            if handle == "alice"
-            else None
-        )
+    pid, root = _project(client, owner="alice")
+    _publish(client, pid, root, _card(client, root))
+    wait_work_idle()
 
-    monkeypatch.setattr(
-        "app.domain.oauth.services.get_github_profile_for_handle", _fake_profile
+    blocks = client.get(f"/topics/{root}/blocks").json()["data"]["data"]
+    (line,) = [
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "pr_identity_downgraded"
+    ]
+    assert line["meta"]["who"] == "human"
+    assert "token 过期" in line["meta"]["detail"]
+
+    r = client.get(
+        "/notifications",
+        params={"type": "ROOM_NOTICE"},
+        headers={"Authorization": f"Bearer {alice}"},
     )
-
-    _, root = _project(client, owner="alice")
-    tid = _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
-
-    async def _sync() -> None:
-        async with client.test_factory() as s:
-            place = await PlaceResolver(s).resolve(uuid.UUID(tid))
-            assert place is not None
-            await identity.sync_for_topic(s, place.room, task_id=place.task_id)
-
-    asyncio.run(_sync())
-
-    who = identity.read(
-        uuid.UUID(client.get(f"/topics/{tid}").json()["data"]["project_id"]),
-        uuid.UUID(tid),
-    )
-    assert who == identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")
-    assert identity.coauthored_by(who) == (
-        "Co-authored-by: Alice <583231+alice@users.noreply.github.com>"
-    )
+    assert r.status_code == 200, r.text
+    rows = [
+        n
+        for n in r.json()["data"]["notifications"]
+        if (n.get("contextMetadata") or {}).get("eventType") == "pr_identity_downgraded"
+    ]
+    (row,) = rows
+    # 通知里读到的和回房间看到的是同一句。
+    assert row["contextMetadata"]["content"] == line["content"]

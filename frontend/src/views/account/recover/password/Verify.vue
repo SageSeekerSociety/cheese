@@ -4,9 +4,13 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-key-change</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">设置新密码</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">
+          {{ t('account.setANewPassword') }}
+        </h1>
       </div>
-      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">请设置安全的新登录密码</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
+        {{ t('account.chooseASecurePasswordForYourAccount') }}
+      </p>
     </div>
 
     <!-- 错误/成功提示区域 -->
@@ -24,8 +28,11 @@
             <v-row dense>
               <v-col cols="12" md="6">
                 <v-text-field
+                  id="field-password"
                   v-model="password"
-                  label="新密码"
+                  autocomplete="new-password"
+                  name="password"
+                  :label="t('account.newPassword')"
                   type="password"
                   variant="outlined"
                   :loading="isSubmitting"
@@ -35,8 +42,11 @@
               </v-col>
               <v-col cols="12" md="6">
                 <v-text-field
+                  id="field-confirmPassword"
                   v-model="confirmPassword"
-                  label="确认密码"
+                  autocomplete="new-password"
+                  name="confirmPassword"
+                  :label="t('account.confirmPassword')"
                   type="password"
                   variant="outlined"
                   :loading="isSubmitting"
@@ -55,11 +65,11 @@
               style="text-transform: none; font-weight: 500; height: 48px"
               class="mb-4"
             >
-              确认重置密码
+              {{ t('account.resetPassword') }}
             </v-btn>
 
             <p class="text-body-2" style="color: var(--muted)">
-              想要返回？
+              {{ t('account.wantToGoBack') }}
               <v-btn
                 variant="text"
                 color="primary"
@@ -68,8 +78,7 @@
                 style="text-transform: none; padding: 0; min-width: auto; height: auto; vertical-align: baseline"
                 class="text-decoration-none"
               >
-                <v-icon start size="16">mdi-arrow-left</v-icon>
-                返回登录
+                <v-icon start size="16">mdi-arrow-left</v-icon> {{ t('account.backToSignIn') }}
               </v-btn>
             </p>
           </v-form>
@@ -91,8 +100,9 @@ import * as srp from 'secure-remote-password/client'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
-import { RULE_PASSWORD, vuetifyConfig } from '@/utils/form'
+import { REGEX_PASSWORD, vuetifyConfig } from '@/utils/form'
 
+import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
@@ -120,21 +130,29 @@ const myAlert = ref<{
 })
 
 const { handleSubmit, defineField, isSubmitting } = useForm({
-  validationSchema: toTypedSchema(
-    z
-      .object({
-        password: RULE_PASSWORD,
-        confirmPassword: RULE_PASSWORD,
-      })
-      .superRefine(({ password, confirmPassword }, ctx) => {
-        if (password !== confirmPassword) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['confirmPassword'],
-            message: '两次输入的密码不一致',
-          })
-        }
-      })
+  validationSchema: computed(() =>
+    toTypedSchema(
+      z
+        .object({
+          password: z
+            .string()
+            .min(8)
+            .regex(REGEX_PASSWORD, { message: t('account.yourPasswordMustContainALetterA') }),
+          confirmPassword: z
+            .string()
+            .min(8)
+            .regex(REGEX_PASSWORD, { message: t('account.yourPasswordMustContainALetterA') }),
+        })
+        .superRefine(({ password, confirmPassword }, ctx) => {
+          if (password !== confirmPassword) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['confirmPassword'],
+              message: t('account.passwordsDoNotMatch'),
+            })
+          }
+        })
+    )
   ),
 })
 
@@ -146,7 +164,7 @@ const router = useRouter()
 const submit = handleSubmit(async (value) => {
   try {
     if (!username.value) {
-      throw new Error('无效的重置链接')
+      throw new Error(t('account.invalidPasswordResetLink'))
     }
 
     // 生成 SRP 盐值和验证器
@@ -160,17 +178,17 @@ const submit = handleSubmit(async (value) => {
       srpVerifier,
     })
 
-    toast.success('密码重置成功，请重新登录')
+    toast.success(t('account.passwordResetPleaseSignInAgain'))
     router.replace({
       name: 'SignIn',
       query: {
         username: username.value,
-        message: '密码重置成功，请使用新密码登录',
+        message: t('account.yourPasswordHasBeenResetSignIn'),
       },
     })
   } catch (e) {
     myAlert.value = {
-      message: requestErrorMessage(e, '重置失败，请重试'),
+      message: requestErrorMessage(e, t('account.couldNotResetYourPasswordPleaseTry')),
       type: 'error',
     }
   }

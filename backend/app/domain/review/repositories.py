@@ -3,11 +3,11 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
-from app.domain.room_task.place import room_and_task
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
 
@@ -24,21 +24,22 @@ class AcceptCardRepository:
         status: AcceptStatus = AcceptStatus.pending,
         change_subject: str | None = None,
         change_body: str | None = None,
-        tree_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
+        delivered_task_ids: list[uuid.UUID] | None = None,
+        artifact_id: uuid.UUID | None = None,
     ) -> AcceptCard:
-        # `topic_id` names the PLACE the card was filed from, which is normally
-        # a thread — a card is what a piece of work ends in. Stored as the pair
-        # so the room it is READ in and the work it is ABOUT stay separable.
-        room_id, task_id = await room_and_task(self._session, topic_id)
+        # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
+        # belongs to the room, not to any one card in it.
         card = AcceptCard(
-            topic_id=room_id,
+            topic_id=topic_id,
             task_id=task_id,
-            tree_id=tree_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=status,
             change_subject=change_subject,
             change_body=change_body,
+            delivered_task_ids=[str(t) for t in (delivered_task_ids or [])],
+            artifact_id=artifact_id,
         )
         self._session.add(card)
         await self._session.flush()
@@ -62,10 +63,18 @@ class AcceptCardRepository:
         )
         await self._session.flush()
 
+    async def clear_approvals(self, card_id: uuid.UUID) -> None:
+        """新提交作废已有的采纳 (#718, dismiss_stale): drop every vote this
+        card has collected — they were cast on a head that no longer exists."""
+        await self._session.execute(
+            delete(AcceptApproval).where(AcceptApproval.card_id == card_id)
+        )
+        await self._session.flush()
+
     async def get(self, card_id: uuid.UUID) -> AcceptCard | None:
         return await self._session.get(AcceptCard, card_id)
 
-    async def list_for_tree(self, tree_id: uuid.UUID) -> list[AcceptCard]:
+    async def list_for_task(self, task_id: uuid.UUID) -> list[AcceptCard]:
         """Every card that has ever delivered this tree, newest first.
 
         The scope "one card at a time" is really about: a tree has one branch
@@ -74,44 +83,39 @@ class AcceptCardRepository:
         """
         stmt = (
             select(AcceptCard)
-            .where(AcceptCard.tree_id == tree_id)
-            .order_by(AcceptCard.created_at.desc())
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_treeless_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
-        """This place's cards that belong to no tree, newest first.
-
-        Cards filed before trees existed carry `tree_id IS NULL`, and the
-        backfill (migration `e4c9a2f60b18`) deliberately left it that way for
-        every card whose tree was never created — there was no honest value to
-        invent. They are still real: a `pr_open` one from that era is driving a
-        live PR. Anything scoped to a tree has to ask for them separately or
-        pretend they are not there.
-        """
-        stmt = (
-            select(AcceptCard)
-            .where(AcceptCard.topic_id == topic_id, AcceptCard.tree_id.is_(None))
+            .where(AcceptCard.task_id == task_id)
             .order_by(AcceptCard.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
-        """Cards filed from one PLACE — a room's own, or one thread's.
+        """The cards this room filed.
 
-        Not the room's whole set: a thread asking "do I have a card" must not
-        see another thread's, which is the difference between a card that
-        belongs to this work and one that merely happens nearby.
+        `task_id IS NULL` is not redundant: cards filed back when a piece of
+        work was a place of its own sit under the same room, and a room asking
+        "do I have a card" must not be answered with one of those.
         """
-        room_id, task_id = await room_and_task(self._session, topic_id)
         stmt = (
             select(AcceptCard)
             .where(
-                AcceptCard.topic_id == room_id,
-                AcceptCard.task_id.is_(None)
-                if task_id is None
-                else AcceptCard.task_id == task_id,
+                AcceptCard.topic_id == topic_id,
             )
+            .order_by(AcceptCard.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_everywhere_in_room(self, topic_id: uuid.UUID) -> list[AcceptCard]:
+        """Every card filed anywhere in this room — its own and its cards'.
+
+        The room's own set (`list_for_topic`) is the answer to "do I have a
+        card". This is the answer to "what is still open in here", which is a
+        different question and has to include what a piece of work filed back
+        when work was a place: an unsettled row riding a PR is one the poller
+        keeps following, and archiving the room is exactly when that must stop.
+        """
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.topic_id == topic_id)
             .order_by(AcceptCard.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
@@ -139,30 +143,6 @@ class AcceptCardRepository:
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
                 latest[card.task_id] = card
-        return latest
-
-    async def latest_by_tree(
-        self, tree_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, AcceptCard]:
-        """The newest card on each of these trees, in ONE query.
-
-        A tree is a batch and a batch opens one PR, so this is how a room says
-        which PR its sealed batch is riding — the question 「这一批封口了，在哪儿
-        跑着」 has no other answer: the card belongs to the tree, not to any one
-        of the threads that wrote it.
-        """
-        if not tree_ids:
-            return {}
-        stmt = (
-            select(AcceptCard)
-            .where(AcceptCard.tree_id.in_(tree_ids))
-            .order_by(AcceptCard.created_at, AcceptCard.id)
-        )
-        latest: dict[uuid.UUID, AcceptCard] = {}
-        for card in (await self._session.scalars(stmt)).all():
-            # Ordered oldest-first, so the last write per key is the newest.
-            if card.tree_id is not None:
-                latest[card.tree_id] = card
         return latest
 
     async def list_live_for_places(
@@ -203,7 +183,7 @@ class AcceptCardRepository:
         with the topic (it stays yours after you accept it), while *pending* is
         the transient "this is on your desk right now". `pending` alone is the
         waiting state — a card in `pending_gate`/`gate_failed`/`conflict` is
-        with 芝士, and one in `pr_open`/`accepted` has already been decided.
+        with 芝士, and an `accepted` one has already been decided.
         """
         if not topic_ids:
             return {}
@@ -290,23 +270,46 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_pr_open_on_active_topics(self) -> list[AcceptCard]:
-        """两阶段采纳 (PR迭代式): every card the PR/deploy poller may advance.
+    async def list_awaiting_merge_on_active_topics(self) -> list[AcceptCard]:
+        """Pending PRs and returned batches that can still merge externally.
 
         孤儿卡修复 (2026-08-10): the topic's status is part of the predicate, not
         just the card's. Without the join this returned cards on ARCHIVED topics
-        too, and the poller kept driving them every 60s with the approver's
-        GitHub token — pushing branches and merging PRs for work nobody is
-        tracking any more. `TopicService._archive_one` now closes those cards at
-        archive time; this join is the second lock, covering rows that predate
-        the fix or arrive by some future archive path.
+        too, and the poller kept driving them every 60s with GitHub credentials
+        — for work nobody is tracking any more. `TopicService._archive_one`
+        closes those cards at archive time; this join is the second lock,
+        covering rows that predate the fix or arrive by some future archive
+        path.
         """
         stmt = (
             select(AcceptCard)
             .join(Topic, Topic.id == AcceptCard.topic_id)
+            .outerjoin(Task, Task.id == AcceptCard.task_id)
             .where(
-                AcceptCard.status == AcceptStatus.pr_open,
+                or_(
+                    AcceptCard.status == AcceptStatus.pending,
+                    and_(
+                        AcceptCard.status == AcceptStatus.rejected,
+                        AcceptCard.pr_merged_at.is_(None),
+                        Task.status == TaskStatus.open,
+                    ),
+                ),
+                AcceptCard.pr_number.is_not(None),
                 Topic.status != TopicStatus.archived,
             )
+            .order_by(
+                (AcceptCard.status == AcceptStatus.pending).desc(),
+                AcceptCard.created_at.desc(),
+            )
         )
-        return list((await self._session.scalars(stmt)).all())
+        cards = []
+        seen_trees: set[uuid.UUID] = set()
+        for card in (await self._session.scalars(stmt)).all():
+            # A resubmitted batch belongs to its pending card; otherwise use
+            # its latest return instead of polling every historical review.
+            if card.task_id is not None:
+                if card.task_id in seen_trees:
+                    continue
+                seen_trees.add(card.task_id)
+            cards.append(card)
+        return cards

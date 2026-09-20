@@ -26,6 +26,7 @@ from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
     TOPIC_AGENT_PREFIX,
+    agent_instance_handle,
     looks_like_agent_handle,
     topic_agent_handle,
 )
@@ -91,6 +92,21 @@ class IdentityService:
         """
         return await self.ensure_agent_user(
             handle=topic_agent_handle(topic_id), name=CHEESE_NAME
+        )
+
+    async def ensure_instance_agent_user(
+        self, instance_id: uuid.UUID, display_name: str
+    ) -> User:
+        """Ensure the agent-user row for a project's agent (identity, display).
+
+        The handle is derived from the agent, not from a room: an agent that
+        joins three rooms is one collaborator with one identity, and two agents
+        in one room are two. Idempotent, so an agent created before this existed
+        gets its identity the next time anything asks for it.
+        """
+        return await self.ensure_agent_user(
+            handle=agent_instance_handle(instance_id),
+            name=display_name.strip() or CHEESE_NAME,
         )
 
     async def is_agent(self, handle: str) -> bool:

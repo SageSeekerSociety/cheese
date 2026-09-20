@@ -59,7 +59,9 @@ class MeilisearchClient:
         try:
             await self._client.index(uid).delete_document(str(doc_id))
         except Exception:
-            _logger.debug(
+            # The row is gone from the database and still in the index, so it
+            # keeps coming back in search results. Nothing retries this.
+            _logger.warning(
                 "Failed to delete document %s from index %s",
                 doc_id,
                 uid,

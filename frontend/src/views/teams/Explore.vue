@@ -18,6 +18,7 @@
             <v-form class="mb-4" @submit.prevent="fetchSearchResults(searchQuery)">
               <v-text-field
                 v-model="searchQuery"
+                autocomplete="off"
                 density="comfortable"
                 placeholder="搜索小队 ID 或名称..."
                 prepend-inner-icon="mdi-magnify"
@@ -142,6 +143,7 @@
           <p class="text-body-2 text-medium-emphasis mb-4">请输入申请理由，帮助管理员了解你加入小队的目的</p>
           <v-textarea
             v-model="joinRequestMessage"
+            autocomplete="off"
             label="申请理由"
             variant="outlined"
             color="primary"

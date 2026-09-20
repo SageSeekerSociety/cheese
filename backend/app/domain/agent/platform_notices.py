@@ -60,10 +60,16 @@ EVENT_GATE_ABANDONED: Final = "gate_abandoned"
 EVENT_MERGE_REFUSED: Final = "merge_refused"
 #: 采纳时合并冲突。
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
+#: 验收卡递上来了 —— 从这一刻起验收人手上多了一件事。
+EVENT_CARD_FILED: Final = "card_filed"
+#: 这次交付在产物清单上新建了一项 —— 名字此前没出现过，看一眼是不是要的那个。
+EVENT_ARTIFACT_DECLARED: Final = "artifact_declared"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
 EVENT_CARD_VOIDED: Final = "card_voided"
+#: 验收卡的描述被更正了 —— 这次改动会在 main 的历史里说什么，变了。
+EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 #: 同步上游时合并冲突。
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 #: A message expected to enter the live session had to return to the queue.
@@ -76,6 +82,8 @@ EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
 #: 项目并发已满，这轮在排队。
 EVENT_TURN_QUEUED: Final = "turn_queued"
+#: 房间的平台工具通道断了，回复没能发进来 —— 平台接回来并重发了那条消息。
+EVENT_TOOLS_RECOVERED: Final = "tools_recovered"
 #: 话题的运行环境被重建 —— 会话和后台任务都断了，项目文件没事。
 EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
 #: 采纳后触发的部署，跑完了。
@@ -92,13 +100,16 @@ EVENT_MACHINE_PROVISIONING: Final = "machine_provisioning"
 EVENT_HOST_FAILURE: Final = "host_failure"
 #: 结论结算了，但这个话题的归档欠着 —— 它还挂着一张没决议的验收卡。
 EVENT_ARCHIVE_DEFERRED: Final = "archive_deferred"
-#: 人点了采纳，改动交给了 CI（或 PR 已开），等检查。
-EVENT_ACCEPT_AUTHORIZED: Final = "accept_authorized"
 #: 这次交付完成了。
 EVENT_ACCEPT_DONE: Final = "accept_done"
 #: 采纳没走完，停在半路 —— 开不出 PR、PR 合不上、工作区合并出错。
 EVENT_ACCEPT_STOPPED: Final = "accept_stopped"
-#: 检查全绿，但改动超出了人当初授权的范围，平台扣住不合。
+#: PR 满足项目的合并规则了（CLEAN）——通知验收人来采纳。
+EVENT_ACCEPT_READY: Final = "accept_ready"
+#: 新提交作废了已有的采纳批准（分支保护的 dismiss_stale，默认开）。
+EVENT_ACCEPT_DISMISSED: Final = "accept_dismissed"
+#: 机器在这张卡上没有可走的下一步（必跑检查迟迟没报到、反复换基追不上 main、
+#: 布防了自动合但票数不够），扣住不动，等人来定。
 EVENT_MERGE_WITHHELD: Final = "merge_withheld"
 #: PR 在 GitHub 上被关掉且没合并。
 EVENT_PR_CLOSED: Final = "pr_closed"
@@ -112,6 +123,12 @@ EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
 EVENT_PR_REVIEW: Final = "pr_review"
 #: PR 和它的 base 分支冲突了，GitHub 合不了。
 EVENT_PR_CONFLICT: Final = "pr_conflict"
+#: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
+#: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
+EVENT_PR_IDENTITY_DOWNGRADED: Final = "pr_identity_downgraded"
+#: 采纳合完了，改动已经在平台仓库的 main 上，但推回项目自己的远端（gitee、校内
+#: GitLab、自建）没成功 —— 采纳本身是成的，所以这不是 `accept_stopped`。
+EVENT_REMOTE_PUSH_FAILED: Final = "remote_push_failed"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -122,8 +139,11 @@ EVENT_TYPES: Final = frozenset(
         EVENT_GATE_ABANDONED,
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
+        EVENT_CARD_FILED,
+        EVENT_ARTIFACT_DECLARED,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
+        EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
@@ -138,9 +158,10 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CONCLUSION_SETTLED,
         EVENT_MACHINE_PROVISIONING,
         EVENT_HOST_FAILURE,
-        EVENT_ACCEPT_AUTHORIZED,
         EVENT_ACCEPT_DONE,
         EVENT_ACCEPT_STOPPED,
+        EVENT_ACCEPT_READY,
+        EVENT_ACCEPT_DISMISSED,
         EVENT_MERGE_WITHHELD,
         EVENT_PR_CLOSED,
         EVENT_FORCE_MERGED,
@@ -148,6 +169,8 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PROMPT_REPLAYED,
         EVENT_PR_REVIEW,
         EVENT_PR_CONFLICT,
+        EVENT_PR_IDENTITY_DOWNGRADED,
+        EVENT_REMOTE_PUSH_FAILED,
     }
 )
 

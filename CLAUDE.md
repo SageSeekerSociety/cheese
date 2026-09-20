@@ -14,11 +14,48 @@ A fact about the present is a trap on a delay: the moment someone fixes what you
 
 ## This repo does not adapt to the platform
 
-Cheese hosts other people's repositories, and **a repository must never have to change in order to be hosted** — no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. Every line a repo is asked to add is a reason not to adopt us, and for the repos we do not control, asking is not on the table.
+Cheese hosts other people's repositories, and **a repository must never have to change in order to be hosted** — no config file, no wrapper script, no paragraph in its CLAUDE.md explaining our sandbox. The rule governs a repository's contents, never a machine's: one enrolled to run agents was enrolled for exactly that. Every line a repo is asked to add is a reason not to adopt us, and for the repos we do not control, asking is not on the table.
 
 So this file describes **this project** and nothing else. Anything equally true of a hosted repo goes in `backend/sandbox/skills/cheese/SKILL.md`, which reaches all of them at once; the same words here would fix it for us alone, and demonstrate the very adaptation we promise nobody has to make.
 
 We are the easiest repo in the world to get this wrong in, being both the platform and one of the repos it hosts — so `check-repo-rules.sh` guards it. The tell, when you are unsure: **a rule that is false when you are NOT in a sandbox is leaked platform knowledge.**
+
+## Production changes to this codebase go through CI/CD
+
+dev and production are separate deployments of this codebase: a change reaching
+one does not reach the other, and neither inherits the other's state. What is
+particular about dev is that it is continuously deployed — merging to main ships
+it — so a merge there is a release, and a failure someone is hitting right now is
+fixed by merging the fix, with no release window to wait for. Which is also why an
+unconsidered merge is on other people's work just as fast.
+
+Apply this rule to the Cheese codebase in this repository. Treat its shared live
+deployment as production even when it is named dev.
+Changes to this repository's code, deployment configuration and database schema
+there must go through normal CI/CD: merge through the required checks, then
+deploy the resulting main commit or approved release with its pipeline-built or
+pinned images. Passing feature-branch CI does not authorize deploying that branch
+to production, even by manually triggering a GitHub workflow.
+
+Normal CI/CD means this project's established production delivery pipeline,
+including its release gates, deployment procedure and health verification.
+Building an artifact in CI and handing it to a person or agent for manual
+installation is not that pipeline; neither is an ad hoc deployment script or
+workflow created to bypass it.
+
+For this codebase's production deployment, do not substitute custom Docker images,
+local builds or retagged candidates, hot-edit containers, mount candidate source
+over deployed code, or run deployments or database migrations by hand to bypass
+CI/CD. Image recipes and dependency changes follow the same release path.
+Recovery also uses normal CI/CD with database-compatible artifacts.
+
+SSH diagnosis is allowed. For independently maintained projects and services
+outside this repository (including MicroCloud and the metering proxy), follow
+their own deployment procedures and authorization rules; do not require them to
+adopt Cheese's CI/CD or ask for an exception to this Cheese-only rule. Separate
+test environments are also outside this restriction. Existing safety and
+authorization rules still apply. Run pre-merge
+experiments there without changing this codebase's production deployment or data.
 
 ## Read the issues before the docs, and clean the docs when a design lands
 
@@ -55,6 +92,8 @@ before deciding it is worth keeping.
 Not hypothetically — concurrently, in this repo, on adjacent files. Before starting a fix, look for someone already fixing it in an open PR. Before handing work off, review **every path your change touches**; a cache directory in that list is a stop sign.
 
 So never `git stash`. The stash is one stack for the whole repository, shared by every worktree, and nothing marks which worktree an entry came from — a pop in yours applies somebody else's uncommitted work and drops it from under them, silently, with no error on either side. Commit instead — the worktree you are in is already the second checkout a stash would have bought you, and `git reset --soft HEAD~1` hands the staged state back when you want it.
+
+Not stashing by hand is not enough: with `autoStash` on, a plain `git pull` is a stash push and pop, and many people carry it in their global config. `task setup` turns it off for this repository; run `task git:config` if you cloned before that existed.
 
 ## Test behaviour, never the implementation
 

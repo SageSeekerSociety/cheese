@@ -12,6 +12,7 @@
             <v-form @submit.prevent="submitDiscussion">
               <v-text-field
                 v-model="discussionTitle"
+                autocomplete="off"
                 :label="t('spaces.discussions.discussionTitle')"
                 variant="outlined"
                 class="mb-4"

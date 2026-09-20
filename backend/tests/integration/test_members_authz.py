@@ -21,8 +21,14 @@ def _add(client, pid: str, handle: str, role: str = "member", **kw):
 
 
 def _handles(client, pid: str) -> list[str]:
+    """被**写进**名册的那些人。
+
+    名册上还有靠别的方式进来的行（项目所有者、小队带进来的人，都带 ``source``，
+    见 test_new_project_roster.py）。这一组测的是「谁能写这张表」，那些行不是任何
+    一次写的结果，所以不看它们。
+    """
     body = client.get(f"/projects/{pid}/members").json()
-    return [m["user_handle"] for m in body["data"]["data"]]
+    return [m["user_handle"] for m in body["data"]["data"] if "source" not in m]
 
 
 def test_owner_can_add_member(client, bearer):
@@ -57,8 +63,11 @@ def test_plain_member_cannot_add_or_promote(client, bearer):
     )
     assert r.status_code == 403
     # 自我提权 must not have happened.
-    members = client.get(f"/projects/{pid}/members").json()["data"]["data"]
-    assert members[0]["role"] == "member"
+    rows = {
+        m["user_handle"]: m
+        for m in client.get(f"/projects/{pid}/members").json()["data"]["data"]
+    }
+    assert rows["bob"]["role"] == "member"
 
 
 def test_lead_can_manage_the_roster(client, bearer):
@@ -108,7 +117,11 @@ def test_agent_scoped_token_cannot_write_the_roster(client):
     the missing check."""
     pid = _project(client)
     _seed_member(client, pid, "bob", "member")
-    scoped = {"X-Cheese-Token": mint_scoped_token(project_id=pid)}
+    scoped = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=pid, agent_handle="unprivileged-agent"
+        )
+    }
 
     assert _add(client, pid, "carol", headers=scoped).status_code == 403
     r = client.put(

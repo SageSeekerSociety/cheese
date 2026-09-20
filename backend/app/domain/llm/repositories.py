@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,7 @@ class AIUserQuotaRepository:
 
     async def consume(
         self, user_id: int, amount: float, daily_total: float
-    ) -> tuple[float, datetime]:
+    ) -> tuple[float, datetime, float]:
         entity = await self.get_or_create(user_id, daily_total)
         remaining = entity.remaining_seu or 0.0
         if remaining < amount:
@@ -52,16 +52,20 @@ class AIUserQuotaRepository:
         entity.total_seu_consumed = (entity.total_seu_consumed or 0.0) + amount
         entity.updated_at = datetime.now(UTC)
         await self._session.flush()
-        reset_at = entity.last_reset_time or datetime.now(UTC)
-        return new_remaining, reset_at
+        reset_at = (datetime.now(UTC) + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return new_remaining, reset_at, entity.daily_seu_quota or daily_total
 
     async def get_quota(
         self, user_id: int, daily_total: float
-    ) -> tuple[float, datetime]:
+    ) -> tuple[float, datetime, float]:
         entity = await self.get_or_create(user_id, daily_total)
         remaining = max(0.0, entity.remaining_seu or 0.0)
-        reset_at = entity.last_reset_time or datetime.now(UTC)
-        return remaining, reset_at
+        reset_at = (datetime.now(UTC) + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return remaining, reset_at, entity.daily_seu_quota or daily_total
 
 
 class AIConversationRepository:

@@ -19,16 +19,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.user.repositories import UserRepository
 
 router = APIRouter(prefix="/projects", tags=["agent-credential"])
 
@@ -43,27 +41,23 @@ _STEWARD_ROLES = frozenset({ProjectRole.lead})
 async def require_project_steward(
     project_id: uuid.UUID,
     db: DbSession,
-    auth_user: Annotated[AuthUserInfo, Depends(require_auth_user)],
+    resolver: ActorResolverDep,
 ) -> None:
-    """Only the project's owner or a project lead, authenticated as a real
-    logged-in human.
+    """Only a verified project owner/lead may manage credentials.
 
-    ``require_auth_user`` is what makes the second half true: it reads a session
-    login and nothing else, so a project agent credential structurally cannot
-    reach this endpoint — an agent cannot issue itself a fresh credential, and
-    therefore revoking one actually ends the access instead of being the
-    previous key on a keyring the agent still holds.
+    An agent needs the same role. Revocation invalidates every credential in
+    the project generation, including any issued by an authorized agent.
     """
-    user = await UserRepository(db).get_by_id(auth_user.user_id)
-    if user is None:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    if not actor.authenticated:
         raise ForbiddenError("只有项目的 owner / lead 能管理项目凭证")
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if project.owner_handle == user.username:
+    if project.owner_handle == actor.handle:
         return
     member = await MemberRepository(db).get(
-        project_id=project_id, user_handle=user.username
+        project_id=project_id, user_handle=actor.handle
     )
     if member is not None and member.role in _STEWARD_ROLES:
         return
@@ -91,6 +85,9 @@ async def issue_agent_credential(
         {
             "token": issued.token,
             "project_id": str(issued.project_id),
+            "agent_handle": await ProjectAgentCredentialService(db).agent_handle(
+                project_id
+            ),
             "epoch": issued.epoch,
             "expires_at": issued.expires_at.isoformat(),
         }

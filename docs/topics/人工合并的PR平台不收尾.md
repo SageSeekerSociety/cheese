@@ -64,7 +64,7 @@ stage 2 会拿一个任何分支上都不存在的 sha 去找 deploy run，卡�
   未合并时一律置 None。时间戳统一解析成 aware UTC。
 - `backend/app/domain/review/services.py`：`_advance_pr_checks` 开头前置读 PR 状态 →
   已合并走新的 `_settle_external_merge`（记 `pr_merged_at`、`pr_head_sha` 换成合并提交、进 stage 2、回房间一条消息）；
-  closed-unmerged 走 `_note_pr_closed_unmerged`（只写 note + 回房间一次，不自动合、不归档）。
+  closed-unmerged 走 `_note_pr_closed_unmerged`（写 note、回房间一次、通知验收人，不自动合、不归档）。
   `_repush_if_local_head_moved` 改为返回「这轮是否真推了」，没推就复用前置那次读到的 head。
 - 测试：`tests/integration/test_accept_pr.py` +6、`tests/unit/test_github_pr_httpx_client.py` +5。
 

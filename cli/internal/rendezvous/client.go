@@ -89,6 +89,9 @@ var ErrRejected = errors.New("rendezvous: frame rejected by session")
 
 // Options configure a Client. Zero values are sensible.
 type Options struct {
+	// InitialPrompt follows authentication on the same ordered connection.
+	// Dial waits for either frame to be refused before returning the client.
+	InitialPrompt string
 	// WaitForSocket bounds how long Dial waits for the socket file to appear.
 	// A freshly launched claude needs seconds (image pull, node boot, TUI
 	// mount) before it binds, and treating that startup as a failure is what
@@ -147,10 +150,12 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	if wait <= 0 {
 		wait = 90 * time.Second
 	}
+	dialStarted := time.Now()
 	conn, err := dialWhenReady(ctx, path, wait)
 	if err != nil {
 		return nil, err
 	}
+	connectedAt := time.Now()
 
 	c := &Client{
 		path:    path,
@@ -161,18 +166,26 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	}
 	c.lastBeat.set(time.Now())
 	go c.readLoop(conn)
+	c.logf("socket_connected at=%s wait_ms=%.3f", connectedAt.UTC().Format(time.RFC3339Nano), float64(connectedAt.Sub(dialStarted))/float64(time.Millisecond))
 
 	if token != "" {
 		if err := c.write(Frame{Role: "attacher", Auth: token}); err != nil {
 			conn.Close()
 			return nil, fmt.Errorf("rendezvous: handshake: %w", err)
 		}
+	}
+	if opts.InitialPrompt != "" {
+		if err := c.write(Frame{Type: TypeReply, Text: opts.InitialPrompt}); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		c.logf("initial_prompt_written at=%s", time.Now().UTC().Format(time.RFC3339Nano))
+	}
+	if token != "" || opts.InitialPrompt != "" {
 		select {
 		case kind := <-c.rejects:
-			if kind == TypeAuthRejected {
-				conn.Close()
-				return nil, fmt.Errorf("%w: %s", ErrRejected, kind)
-			}
+			conn.Close()
+			return nil, fmt.Errorf("%w: %s", ErrRejected, kind)
 		case <-time.After(rejectWindow):
 		case <-ctx.Done():
 			conn.Close()
@@ -189,11 +202,19 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 // turns a healthy late-starting session into a connection-refused failure.
 func dialWhenReady(ctx context.Context, path string, within time.Duration) (net.Conn, error) {
 	deadline := time.Now().Add(within)
-	poll := time.NewTicker(100 * time.Millisecond)
+	// Warm launches should not wait a full 100 ms after their socket appears.
+	// Return to the ordinary cadence for longer cold starts.
+	fastUntil := time.Now().Add(2 * time.Second)
+	fast := true
+	poll := time.NewTicker(20 * time.Millisecond)
 	defer poll.Stop()
 	seenSocket := false
 	var lastDialErr error
 	for {
+		if fast && time.Now().After(fastUntil) {
+			poll.Reset(100 * time.Millisecond)
+			fast = false
+		}
 		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 {
 			seenSocket = true
 			remaining := time.Until(deadline)
@@ -274,6 +295,7 @@ func (c *Client) Reply(text string) error {
 	if err := c.write(Frame{Type: TypeReply, Text: text}); err != nil {
 		return err
 	}
+	c.logf("prompt_written at=%s", time.Now().UTC().Format(time.RFC3339Nano))
 	select {
 	case kind := <-c.rejects:
 		return fmt.Errorf("%w: %s", ErrRejected, kind)

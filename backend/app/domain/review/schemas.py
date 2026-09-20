@@ -9,7 +9,12 @@ from app.domain.review.models import AcceptStatus
 
 
 class AcceptCardCreate(BaseModel):
-    reviewer_handle: str = Field(min_length=1, max_length=64)
+    # 未指定就用项目默认验收人 (#718 设置表「任务默认 reviewer」). Optional here
+    # and resolved in the service — same reason `change_subject` is: the thing
+    # that has to reach the filer when nobody is named AND the project has no
+    # default is a sentence telling them how to fix it, not pydantic's
+    # `Field required`.
+    reviewer_handle: str | None = Field(default=None, max_length=64)
     routing_reason: str = ""
     # What the change IS, in Conventional Commits form — becomes the PR title
     # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
@@ -19,10 +24,45 @@ class AcceptCardCreate(BaseModel):
     # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
+    # 这次交付动的是清单上哪一项产物 (#1085 结论三): `artifact` 沿用一项，by id —
+    # a name would let one typo grow a near-duplicate silently; `new_artifact`
+    # declares one the list does not have yet, and that is the call that hands
+    # back the new id. Exactly
+    # one of them, enforced in review/services.py rather than here for the same
+    # reason `change_subject` is: the answer to "you named neither" has to be
+    # the sentence that teaches the two actions apart, not pydantic's
+    # `Field required`.
+    artifact: str | None = None
+    new_artifact: str | None = None
+
+
+class AcceptCardDescribe(BaseModel):
+    """更正一张待处理验收卡的描述（追加 D）。
+
+    没有 `task_ids`，而且不该有：署名是对事实的断言，改它等于往别人头上安署名；
+    描述是对这次改动的说明，评审本来就是要求改它的。理由写在
+    `AcceptService.redescribe` 里。
+    """
+
+    change_subject: str | None = Field(default=None, max_length=255)
+    #: None = 不动正文（只改标题）；空串 = 把正文清空。这两件事不一样，所以
+    #: 「没传」和「传了空的」必须能区分，默认值才是 None 而不是 ""。
+    change_body: str | None = None
+
+
+#: 合的是**人看到的**那个 commit：每个会触发合并的写入口都带上前端渲染这张卡
+#: 时卡面显示的 head sha（`merge_state.head_sha`）。它不是给服务端「用哪个 sha
+#: 合并」的建议，而是给它「我看的是哪一版」的声明——服务端拿它和卡当前的
+#: `pr_head_sha` 对；不一致就是「你看的那版已经不在了」，请求被拒、人重新看过
+#: 再点。没有它的话，轮询器在渲染和点击之间把卡刷到新 head，点下去合的就是一
+#: 段没有人看过的代码。None 是合法值：卡还没被轮询器镜像过 head（刚递的卡）、
+#: 或者根本不骑 PR（平台 lane）时，卡面显示的就是「没有 sha」。
+_SEEN_HEAD_FIELD = Field(default=None, max_length=64)
 
 
 class AcceptDecision(BaseModel):
     decided_by: str = Field(min_length=1, max_length=64)
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class RejectDecision(BaseModel):
@@ -40,12 +80,21 @@ class VoidDecision(BaseModel):
 
 
 class ForceMergeDecision(BaseModel):
-    """人工放行 (App 采纳等 CI 再合)。No `decided_by`, same reason as 作废: this
-    is an authorization action and the signature is the entire point — the
-    actor comes from the session token only, never from the body, or "谁明知红
-    仍合并" would be whatever the caller typed."""
+    """人工放行。No `decided_by`, same reason as 作废: this is an authorization
+    action and the signature is the entire point — the actor comes from the
+    session token only, never from the body, or "谁明知红仍合并" would be
+    whatever the caller typed."""
 
     reason: str = Field(default="", max_length=2000)
+    head_sha: str | None = _SEEN_HEAD_FIELD
+
+
+class AutoMergeDecision(BaseModel):
+    """绿了自动合 (#718) 的开关。Actor 同样只来自 session token：布防等于提前
+    采纳，布防人是谁必须由平台认定。"""
+
+    enabled: bool
+    head_sha: str | None = _SEEN_HEAD_FIELD
 
 
 class ApprovalCreate(BaseModel):
@@ -57,6 +106,7 @@ class AcceptCardOut(BaseModel):
 
     id: uuid.UUID
     topic_id: uuid.UUID
+    task_id: uuid.UUID | None = None
     reviewer_handle: str
     routing_reason: str
     # The commit this card will become, as filed — so the reviewer can see the
@@ -78,9 +128,9 @@ class AcceptCardOut(BaseModel):
     gate_started_at: datetime | None = None
     gate_passed_at: datetime | None = None
     gate_output: str = ""
-    # PR-based accept (#188 §5.1): the real GitHub PR this card rides on.
-    # pr_repo/pr_head_sha/pr_merged_at are 两阶段采纳 (PR迭代式) only, populated
-    # while status == pr_open — see models.AcceptCard for the full story.
+    # PR-based accept (#188 §5.1 → #718): the real GitHub PR this card rides
+    # on. pr_head_sha is the head the card shows — the commit an accept click
+    # will merge; see models.AcceptCard.
     pr_number: int | None = None
     pr_url: str | None = None
     pr_repo: str | None = None

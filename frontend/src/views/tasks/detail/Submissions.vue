@@ -13,6 +13,7 @@
             <v-select
               v-if="showIdentitySelect && identityOptions.length > 1"
               v-model="selectedIdentity"
+              autocomplete="off"
               :items="identityOptions"
               label="查看身份"
               hide-details
@@ -72,7 +73,7 @@
             <v-btn
               color="primary"
               rounded="pill"
-              :to="{ name: 'TasksSubmit', params: { taskId: taskData.id } }"
+              :to="{ name: 'TasksSubmit', params: { spaceId: taskData.space?.id, taskId: taskData.id } }"
               class="px-8"
             >
               前往提交

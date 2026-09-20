@@ -34,7 +34,7 @@ ZHIPU_API_KEY=...                # the same upstream keys already in use
 DEEPSEEK_API_KEY=...
 EOF
 chmod 600 .env
-docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d
+docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d --build
 ```
 
 Then, in the box's `backend/.env`:
@@ -46,6 +46,45 @@ LLM_GATEWAY_ADMIN_KEY=<the master key above>
 
 and recreate the backend — `docker restart` will not do, since environment is
 fixed when a container is created, not when its process starts.
+
+The `deepseek-flash` entry declares its thinking and effort capabilities. Without
+them, the pinned gateway removes the thinking settings sent by Claude Code.
+Agent settings offer DeepSeek V4.1 Flash and GLM-5.2 alongside enabled Claude
+models. Saving a different model refreshes the native session at the next task
+boundary; the scoped session credential carries the selected model's route.
+Auxiliary and subagent model aliases follow the selected API model. API-backed
+Remote Control sessions receive Cheese project identity and control policy from
+the metering proxy; these queries do not require an Anthropic login. Claude
+subscription sessions retain their provider account route.
+
+The central session's `AGENT_SESSION_API_BASE` must also be reachable from its
+private execution containers. A host loopback URL makes platform tools inside
+those containers fail with connection refused; use the deployment's reachable
+backend address.
+
+The gateway Dockerfile derives from the upstream image pinned by digest and checks the
+streaming logger's file hash before applying a timing correction. The upstream
+logger starts its clock when the stream wrapper is created, omitting earlier
+request time. The patch retains the logging object's original request start.
+An isolated test runs during the image build without calling a model provider.
+These timestamps cover the gateway request; they do not separately measure
+provider processing and gateway overhead. Application deployments still leave
+this independent gateway stack running.
+
+The derived image also emits `provider_http_timing` records for model HTTP calls,
+correlated by LiteLLM call ID. They mark entry into the HTTP request, response
+headers (or a buffered response), and stream completion, interruption, or early
+closure. Logs contain timestamps, duration, status, and outcome; they omit URLs,
+headers, credentials, and bodies. The interval includes connection setup, HTTP
+retries, network transfer, and stream-consumer delays. It is an upstream HTTP
+interval, not a measurement of provider compute alone. Offline build tests verify
+body delivery, close propagation, cancellation, failures, and log redaction.
+
+Check the loaded configuration's request transformation and nonzero token prices:
+
+```sh
+docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gateway/check_config.py
+```
 
 ## Two things that will bite
 

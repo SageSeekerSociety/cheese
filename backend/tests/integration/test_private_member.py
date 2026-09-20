@@ -1,6 +1,5 @@
 """私聊 (spec §1) + 成员页 (spec §7.2)."""
 
-from app.domain.identity.handles import topic_agent_handle
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
@@ -20,20 +19,26 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     r2 = client.get(f"/projects/{pid}/private-chat?user_handle=user-1")
     assert r2.json()["data"]["id"] == private["id"]
 
+    # Two members, like any 1:1: the person, and the project's default
+    # teammate under its own seat.
+    default = next(
+        a
+        for a in client.get(f"/projects/{pid}/agents").json()["data"]["data"]
+        if a["is_default"]
+    )
     members = client.get(
         f"/topics/{private['id']}/members",
         headers=session_auth_headers("user-1"),
     ).json()["data"]["data"]
-    assert {m["member_handle"] for m in members} == {
-        "user-1",
-        topic_agent_handle(private["id"]),
-    }
+    assert {m["member_handle"] for m in members} == {"user-1", default["seat_handle"]}
 
     # Private chat is NOT part of the topic tree.
     tree = client.get(f"/topics?project_id={pid}").json()["data"]["data"]
     assert all(t["id"] != private["id"] for t in tree)
 
-    # It still works as a chat (stub agent replies when summoned).
+    # It still works as a chat (stub agent answers when summoned). What reaches
+    # the room is chat_send's alone, here as in any other room — that contract
+    # is pinned in test_chat_publication.py.
     with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
         ws.send_json({"type": "message", "content": "设个偏好", "summon": True})
         frames = []
@@ -42,7 +47,7 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
             frames.append(f["type"])
             if f["type"] in ("done", "error"):
                 break
-    assert "assistant_block" in frames
+    assert "event_block" in frames and "error" not in frames
 
 
 def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(

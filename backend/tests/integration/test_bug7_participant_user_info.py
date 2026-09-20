@@ -106,6 +106,7 @@ class TestBug7ParticipantUserInfo:
         assert "nickname" in pi, "Missing nickname in participant info"
         assert "avatarId" in pi, "Missing avatarId in participant info"
         assert pi["username"] == setup["participant"].username
+        assert p["member"]["name"] == pi["nickname"]
 
     def test_single_participant_has_full_user_info(
         self, api_client: TestClient, setup: dict

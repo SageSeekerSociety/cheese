@@ -3,6 +3,7 @@ import re
 from collections.abc import Sequence
 
 import bcrypt
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
@@ -19,6 +20,10 @@ NICKNAME_MAX_LENGTH = 50
 # A nickname must carry at least one letter, digit or CJK ideograph, so that a
 # name made only of punctuation or invisible characters cannot be saved.
 _NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
+
+
+async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
+    return await UserRepository(session).get_by_username(handle)
 
 
 def normalize_nickname(raw: str) -> str:

@@ -117,9 +117,10 @@ command, a failing command, the pane-death case where tmux reports success into
 a dead pane, `%output` reaching a subscriber, and a socket with no server
 surfacing as a typed error rather than a client that looks connected.
 
-The delivery window is covered in the shared turn loop: nothing arriving ends
-the turn with the undelivered message, a receipt opens the full turn budget, and
-ordinary agent activity counts as delivery for sessions without the hook. The
+The initial silence window is covered in the shared turn loop: an accepted
+write without a hook triggers a process probe, a live process can still deliver
+a late receipt, and a confirmed dead process ends the turn. Ordinary agent
+activity also ends the initial silence window for sessions without the hook. The
 env stamp is covered as a pure function — stable across turns, changing when the
 model route changes, and never containing the credential it digests.
 

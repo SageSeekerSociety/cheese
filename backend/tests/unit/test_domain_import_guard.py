@@ -46,12 +46,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # without dragging their full DI graph into credential minting)
         ("app.domain.agent_credential.services", "app.domain.project.repositories"),
         ("app.domain.agent_credential.services", "app.domain.topic.repositories"),
-        # --- agent ---
+        # --- agent --- (announce writes the room line itself: 平台说的每一句
+        # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
+        ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.milestone.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
         ("app.domain.agent.chat", "app.domain.review.repositories"),
-        ("app.domain.agent.chat", "app.domain.team.repositories"),
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
@@ -61,12 +62,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.comments.services", "app.domain.user.repositories"),
         ("app.domain.discussion.services", "app.domain.user.repositories"),
         ("app.domain.groups.services", "app.domain.user.repositories"),
-        # --- conclusion ---
-        # 这个领域在本工作区的 base 里还不存在（沙箱同步不了上游），两条是照 CI 在
-        # 更新的 main 上报的原样入账的存量债，不是本轮新欠的。副作用：在缺 conclusion
-        # 的旧 base 上跑，棘轮会把这两行报成"陈行"——那是 checkout 落后，不是债还完了。
-        ("app.domain.conclusion.services", "app.domain.block.repositories"),
-        ("app.domain.conclusion.services", "app.domain.topic.repositories"),
         # --- alert ---
         ("app.domain.alert.services", "app.domain.block.repositories"),
         ("app.domain.alert.services", "app.domain.project.repositories"),
@@ -133,9 +128,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.topic_membership.services", "app.domain.user.repositories"),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
-        ("app.domain.webhook.service", "app.domain.block.repositories"),
-        ("app.domain.workspace.dogfood_notices", "app.domain.block.repositories"),
-        ("app.domain.workspace.dogfood_notices", "app.domain.topic.repositories"),
     }
 )
 

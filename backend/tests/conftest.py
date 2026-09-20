@@ -20,10 +20,11 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -45,11 +46,14 @@ os.environ.setdefault("ANTHROPIC_AUTH_TOKEN", "test-anthropic-token")
 # it) to THIS worker's integration DB — must happen before any app import (the
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
+from tests import isolation  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
-_DB_SUFFIX = f"_{_XDIST_WORKER}" if _XDIST_WORKER else ""
-_INTG_DB_NAME = f"cheesex_test{_DB_SUFFIX}"
-_CLIENT_DB_NAME = f"cheesex_test{_DB_SUFFIX}_c"
+# The runner slot this run is on, empty everywhere but a pool machine with more
+# than one. Two runs sharing a machine otherwise share every name below, and the
+# harness drops its databases WITH (FORCE) — see tests/isolation.py.
+_SLOT = os.environ.get("CHEESE_CI_SLOT", "")
+_INTG_DB_NAME, _CLIENT_DB_NAME = isolation.database_names(_XDIST_WORKER, _SLOT)
 # Postgres server root (no database). Defaults to the TEST server the repo-root
 # docker-compose.yml publishes on :5433 (separate from the dev database on
 # :5432, so a test run never touches what you were developing against). CI (and
@@ -65,11 +69,12 @@ settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # user 5 and gw1's user 5 are the same account. A 15-minute lockout earned by
 # one worker would then land on an unrelated test in another, at whatever rate
 # the two id sequences happen to align: the flakiest possible failure. Redis
-# ships 16 numbered databases; one per worker keeps them apart.
+# ships numbered databases; one per worker keeps them apart, and a slot takes a
+# block of them so two runs sharing a machine cannot land on the same index.
 _REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
-# Redis ships 16 numbered databases, so the modulo only bites past -n 16, where
-# it degrades to the shared-Redis behaviour this replaces rather than erroring.
-_REDIS_DB = (int(_XDIST_WORKER[2:]) + 1) % 16 if _XDIST_WORKER.startswith("gw") else 0
+_REDIS_DB = isolation.redis_database(
+    _XDIST_WORKER, int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0"))
+)
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
@@ -84,8 +89,8 @@ from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness.channel import Channel  # noqa: E402
 from app.domain.agent.harness.claude_code import (  # noqa: E402
-    Channel,
     ClaudeCodeRuntime,
     HookRouter,
 )
@@ -495,12 +500,50 @@ def client(_pg_schema, stub_hooks: StubChannel, tmp_path) -> Iterator[TestClient
 
 
 async def _truncate_all(engine) -> None:
-    """Wipe every table for a clean per-test slate (fast; keeps the schema)."""
+    """Wipe every table for a clean per-test slate (fast; keeps the schema).
+
+    TRUNCATE takes an exclusive lock on every table, so a session some earlier
+    test left ``idle in transaction`` — holding no more than a share lock on one
+    of them — makes it wait, and the server's ``lock_timeout`` is 0, so it waits
+    forever. That used to surface as a 300 s pytest-timeout on the NEXT test's
+    setup, then on the one after that, and the report named the victims and
+    never the session holding the lock (see #693's sibling: the hang on
+    ``test_runtime``/``test_work_continuation`` in CI, 2026-09-05). So the wait
+    is bounded here, and when it runs out the error says who is in the way.
+    """
     tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
     if not tables:
         return
-    async with engine.begin() as conn:
-        await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+    try:
+        async with engine.begin() as conn:
+            await conn.exec_driver_sql("SET LOCAL lock_timeout = '20s'")
+            await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+    except DBAPIError as exc:
+        if "lock timeout" not in str(exc).lower():
+            raise
+        # The connection that timed out is done for (aborted transaction), so
+        # the look-around runs on a fresh one.
+        async with engine.connect() as probe:
+            rows = await probe.exec_driver_sql(
+                "select pid, state, now()-xact_start as xact_age,"
+                " now()-state_change as since_change, left(query, 200) as query"
+                " from pg_stat_activity"
+                " where datname = current_database() and pid <> pg_backend_pid()"
+                "   and state <> 'idle'"
+                " order by xact_start"
+            )
+            others = [dict(r._mapping) for r in rows]
+        lines = "\n".join(
+            f"  pid={r['pid']} state={r['state']!r} xact_age={r['xact_age']}"
+            f" since_change={r['since_change']}\n    query: {r['query']}"
+            for r in others
+        )
+        raise RuntimeError(
+            "TRUNCATE waited 20 s for a table lock. Another session on this"
+            " worker's client database still holds one — most likely a test that"
+            " left a transaction open. Sessions on the database right now:\n"
+            + (lines or "  (none — the blocker went away as this was raised)")
+        ) from exc
 
 
 async def _admin_recreate_db(db_name: str) -> None:
@@ -562,6 +605,31 @@ async def _clone_db(db_name: str, template: str) -> None:
         await conn.close()
 
 
+async def _drop_superseded_templates() -> None:
+    """Remove every `cheesex_tpl_*` but this migration history's own.
+
+    Never raises: a template that cannot be dropped (another run is cloning from
+    it this second) is not this run's problem, and the next build tries again.
+    """
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn)
+    try:
+        stale = await conn.fetch(
+            "SELECT datname FROM pg_database"
+            " WHERE datname LIKE 'cheesex_tpl_%' AND datname <> $1",
+            _TEMPLATE_DB,
+        )
+        for row in stale:
+            try:
+                await conn.execute(f'DROP DATABASE IF EXISTS "{row["datname"]}"')
+            except Exception:  # noqa: BLE001, PERF203 — in use is not an error here
+                continue
+    finally:
+        await conn.close()
+
+
 async def _rename_db(old: str, new: str) -> None:
     import asyncpg
 
@@ -590,6 +658,11 @@ def _ensure_template() -> bool:
     The template is built under a temporary name and renamed on success, so its
     existence means "complete" — a run killed mid-migration leaves the failed
     build behind, not a half-migrated template that later runs would trust.
+
+    Building a new one also drops the templates of migration histories that are
+    no longer current. That used to take care of itself, because the server was a
+    container thrown away with the job; on a CI machine's resident Postgres they
+    would accumulate instead, and its data directory is a 3 GB tmpfs.
     """
     import fcntl
     import tempfile
@@ -604,6 +677,7 @@ def _ensure_template() -> bool:
             building = f"{_TEMPLATE_DB}_building"
             _migrate_fresh_db(building, f"{_PG_BASE}/{building}")
             asyncio.run(_rename_db(building, _TEMPLATE_DB))
+            asyncio.run(_drop_superseded_templates())
             return True
     except Exception:  # noqa: BLE001 — fall back to the slow path, never block
         return False
@@ -655,25 +729,178 @@ _TEMPLATE_READY = False
 # tests/unit/ is the only tree allowed to run without a Postgres; everything
 # else is DB-backed by construction. Trailing sep so a sibling like
 # "tests/unittools/" can't match by prefix.
-_UNIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unit") + os.sep
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_UNIT_DIR = os.path.join(_TESTS_DIR, "unit") + os.sep
+_CONTRACT_DIR = os.path.join(_TESTS_DIR, "contract") + os.sep
 
 
-def _needs_db(request: pytest.FixtureRequest) -> bool:
-    """Whether this test requires the Postgres schema to be provisioned.
+def _reaches_for_db(path: str, fixturenames: Iterable[str]) -> bool:
+    """Whether a test at ``path`` with this fixture closure needs Postgres.
 
     Two independent reasons, because fixture names alone aren't enough: the
     integration harness binds ``settings.database_url`` directly (module import
     time), so a test there can touch the DB without naming a DB fixture. Hence
     anything outside ``tests/unit/`` is assumed DB-backed. Inside ``tests/unit/``
-    we go by the fixture closure — ``request.fixturenames`` is transitive, and
-    every DB-bound fixture (``client``, ``python_client``, integration's
+    we go by the fixture closure — a closure is transitive, and every DB-bound
+    fixture (``client``, ``python_client``, integration's
     ``db_connection``/``db_session``…) chains to ``_pg_schema``, so requesting any
     of them shows up here.
+
+    One function because the answer has two readers who must agree: the gate
+    below, which provisions a database for the tests that need one, and
+    ``_layer_of``, which sends the tests that don't into a CI step that has none.
+    Written twice they would drift, and the drift lands as a test asking a
+    database that was never built for it.
     """
-    return (
-        not str(request.path).startswith(_UNIT_DIR)
-        or "_pg_schema" in request.fixturenames
-    )
+    return not path.startswith(_UNIT_DIR) or "_pg_schema" in fixturenames
+
+
+def _needs_db(request: pytest.FixtureRequest) -> bool:
+    """Whether this test requires the Postgres schema to be provisioned."""
+    return _reaches_for_db(str(request.path), request.fixturenames)
+
+
+# The three layers the suite runs as. CI runs one pytest per layer, in series,
+# each with its own ceiling, so a wedge or a slowdown names the layer it is in
+# instead of arriving as one number for 6800 tests.
+_LAYERS = frozenset({"pure", "contract", "integration"})
+
+
+def _layer_of(item: pytest.Item) -> str:
+    """Which layer ``item`` runs in.
+
+    ``pure`` is the layer that runs on a machine with no Postgres, so what
+    decides it is ``_reaches_for_db`` — the same question the gate asks before
+    building a database, asked of the same fixture closure. A file under
+    ``tests/unit/`` that does reach for one — the turn log lives in Postgres, so
+    the runner's tests do — is a database test wherever it sits, and runs in the
+    integration step with a database under it.
+    """
+    path = os.fspath(item.path) if item.path is not None else ""
+    if path.startswith(_CONTRACT_DIR):
+        return "contract"
+    # getattr: only a Function has a fixture closure, and a collected node that
+    # has none has not asked for a database either.
+    closure = getattr(item, "fixturenames", ())
+    # One call decides both halves of "pure": outside ``tests/unit/`` this is
+    # true whatever the closure holds, so the tree is checked by the same
+    # predicate that checks the fixtures.
+    if not _reaches_for_db(path, closure):
+        return "pure"
+    return "integration"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give every collected test exactly one layer marker.
+
+    The three CI steps are the whole suite only if every test carries one and
+    only one of the three markers: a test carrying none runs in no step and is
+    reported nowhere — green CI over code nothing checked — and one carrying two
+    is counted, and timed, twice. Neither can be seen in a passing run.
+
+    So a test that declares a layer of its own aborts the collection here
+    rather than being warned about, and a test that declares none has one
+    added. There is no third branch: ``_layer_of`` is total — contract, pure,
+    or integration as the fallback — so "nothing to add" cannot arise.
+
+    Derived here rather than written on each test: a marker on the test is a
+    second declaration of what its fixture list already says, and the two drift
+    the moment a test grows a database and nobody moves its marker.
+    """
+    misfiled = []
+    for item in items:
+        declared = {m.name for m in item.iter_markers()} & _LAYERS
+        if declared:
+            misfiled.append(
+                f"  {item.nodeid}\n"
+                f"    carries {sorted(declared)} already — the layer is derived"
+                f" from the fixture closure, so remove the marker"
+            )
+            continue
+        item.add_marker(_layer_of(item))
+    if misfiled:
+        raise pytest.UsageError(
+            "These tests declare their own layer:\n" + "\n".join(misfiled)
+        )
+
+
+async def _terminate_open_transactions(db_name: str) -> list[dict]:
+    """Sessions left ``idle in transaction`` on ``db_name``, each terminated
+    after being recorded. Runs on the maintenance database so it can see and
+    end them regardless of which loop created them."""
+    import asyncpg
+
+    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
+    conn = await asyncpg.connect(dsn, timeout=10)
+    try:
+        rows = await conn.fetch(
+            "select pid, now()-xact_start as xact_age, left(query, 200) as query"
+            " from pg_stat_activity"
+            " where datname = $1 and backend_type = 'client backend'"
+            "   and state = 'idle in transaction'",
+            db_name,
+        )
+        found = [dict(r) for r in rows]
+        for r in found:
+            await conn.execute("select pg_terminate_backend($1)", r["pid"])
+        return found
+    finally:
+        await conn.close()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item: pytest.Item):
+    """After a client-DB test has torn down, no session of ours may still be
+    inside a transaction on that database.
+
+    One left open holds locks the next test's TRUNCATE needs (see
+    ``_truncate_all``), and it is invisible from there: the report names the
+    test that waited, never the one that leaked. Checking at the leaker's own
+    teardown is what pins it, so a leak fails HERE, on the test that made it,
+    with the statement it was running. The session is terminated too, so the
+    rest of the run is not held hostage to a bug already reported.
+
+    Only the client database (``_c``): it is truncate-isolated, so any open
+    transaction there once the test is over is a leak by definition. The
+    integration database uses a session-long connection with per-test rollback,
+    where a transaction between tests can be the harness itself. ``client``,
+    ``python_client`` and ``db_factory`` all sit on this same database (all
+    three build their engine on ``TEST_DATABASE_URL``), so all three name it
+    here — ``db_factory``'s own teardown check (see the fixture) is meant to
+    catch a leak first, by cancelling the task that holds it; this is the
+    backstop for whatever gets past that.
+
+    Cost: one connection to the maintenance DB per client-DB test, a few ms.
+    """
+    yield
+    names = getattr(item, "fixturenames", ())
+    # A pure test has no database behind it, so it cannot have leaked a
+    # transaction on one — and the name check below cannot tell that on its own:
+    # three files define their own local ``client``, a fake HTTP client or a
+    # four-route FastAPI app, which shadows the fixture this hook is named after
+    # and matches here all the same. That cost every one of them a connection to
+    # the maintenance database per test, and in the pure CI step, which runs with
+    # no database reachable at all, it was an error at teardown on a test that
+    # had passed.
+    if item.get_closest_marker("pure") is not None:
+        return
+    if not ({"client", "python_client", "db_factory"} & set(names)):
+        return
+    leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+    if leaked:
+        details = "\n".join(
+            f"  pid={r['pid']} open for {r['xact_age']}\n"
+            f"    last statement: {r['query']}"
+            for r in leaked
+        )
+        pytest.fail(
+            f"{item.nodeid} left {len(leaked)} transaction(s) open on"
+            f" {_CLIENT_DB_NAME} after its fixtures tore down (terminated now)."
+            " Whatever opened them never committed, rolled back, or closed —"
+            " usually a session held by a task that outlived the test's event"
+            " loop:\n" + details,
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -711,6 +938,69 @@ def _pg_schema():
     yield
 
 
+def _is_anyio_runner_plumbing(task: asyncio.Task) -> bool:
+    """Whether ``task`` is anyio's own pytest-runner machinery, not test work.
+
+    Every async fixture step (this teardown included) is driven through
+    ``anyio.pytest_plugin``'s ``TestRunner._call_in_runner_task``: the caller
+    wraps itself in a task via ``run_until_complete`` and suspends on
+    ``await future``, and that future only resolves once THIS very coroutine
+    returns — so that caller task is always still "pending" by construction
+    at the exact moment this check runs, for every fixture and test, leak or
+    not. It is identified by where its code lives (anyio's own package),
+    not by name, since it is the same bound method regardless of which
+    fixture or test it is currently ferrying.
+    """
+    code = getattr(task.get_coro(), "cr_code", None)
+    filename = getattr(code, "co_filename", "") or ""
+    return f"{os.sep}anyio{os.sep}" in filename
+
+
+async def _fail_on_background_work(label: str) -> None:
+    """Refuse to let a test return while something it started is still running.
+
+    A test that submits work onto a runner (``AgentWorkRunner.submit``) and
+    returns without waiting for it races the per-test event loop's own
+    teardown: whatever task is still going gets frozen mid-await the moment
+    the loop closes under it — mid a DB transaction, most dangerously, holding
+    a lock the next test's ``TRUNCATE`` then waits on (see
+    ``pytest_runtest_teardown`` above, which is the backstop for whatever gets
+    past this).
+
+    So: wait briefly (a turn's tail is milliseconds), and if anything is still
+    pending, cancel it — cancelling on the still-live loop is what makes the
+    leak impossible, since an ``async with session_factory()`` that gets
+    cancelled rolls back and closes right here rather than freezing — then
+    fail loudly naming every offending coroutine, instead of letting the next
+    test silently inherit the lock.
+    """
+    current = asyncio.current_task()
+    pending = {
+        t
+        for t in asyncio.all_tasks()
+        if t is not current and not t.done() and not _is_anyio_runner_plumbing(t)
+    }
+    if not pending:
+        return
+    _, still_pending = await asyncio.wait(pending, timeout=2.0)
+    if not still_pending:
+        return
+    offenders = sorted(t.get_coro().__qualname__ for t in still_pending)
+    for t in still_pending:
+        t.cancel()
+    # Give the cancellation itself a moment to actually unwind (rollback +
+    # close) before the caller's next teardown step (disposing the engine
+    # these tasks' sessions borrow connections from).
+    await asyncio.wait(still_pending, timeout=2.0)
+    pytest.fail(
+        f"{label} returned with background work still running: "
+        + ", ".join(offenders)
+        + ". A test must not return while a runner's turn task is still"
+        " going — await `runner.drain()` before returning.",
+        pytrace=False,
+    )
+
+
 @pytest.fixture
 async def db_factory(_pg_schema):
     """A truncated database and a session factory over it — no app around it.
@@ -723,6 +1013,7 @@ async def db_factory(_pg_schema):
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     await _truncate_all(engine)
     yield async_sessionmaker(engine, expire_on_commit=False)
+    await _fail_on_background_work("db_factory")
     await engine.dispose()
 
 
@@ -788,6 +1079,7 @@ async def python_client(
         yield c
 
     app.dependency_overrides.clear()
+    await _fail_on_background_work("python_client")
     await engine.dispose()
 
 

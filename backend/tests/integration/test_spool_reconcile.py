@@ -12,10 +12,11 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
+from app.domain.agent import event_spool
 from app.domain.agent.chat import _SPOOL_PARTIAL_GRACE_S, ChatService
-from app.domain.agent.harness.claude_code import event_spool
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -131,8 +132,7 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
 
 @pytest.mark.anyio
 async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch):
-    """A 芝士 chat message whose live delivery was lost lands as history on the
-    next turn — as a message block (backfilled), deduped by eid."""
+    """Lost execution text is backfilled into activity history, deduped by eid."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     factory = client.test_factory
     svc = ChatService(
@@ -162,13 +162,15 @@ async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch)
     backfilled = [
         b
         for b in rows
-        if b.kind == BlockKind.message
+        if b.kind == BlockKind.event
         and isinstance(b.meta, dict)
         and b.meta.get("eid") == "msg-1"
     ]
     assert len(backfilled) == 1
     assert backfilled[0].content == "宕机期间说的话"
     assert backfilled[0].meta.get("backfilled") is True
+    assert backfilled[0].meta.get("in_room") is False
+    assert backfilled[0].meta.get("progress") is True
 
     # Same eid re-spooled → not duplicated (dedup spans message blocks too).
     _spool_event(
@@ -252,7 +254,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
     message_frames = [
         f
         for f in frames
-        if f["type"] == "assistant_block" and f["block"]["content"] == "宕机期间说的话"
+        if f["type"] == "event_block" and f["block"]["content"] == "宕机期间说的话"
     ]
     assert len(message_frames) == 1
 
@@ -326,7 +328,7 @@ async def test_fallback_reply_does_not_duplicate_a_late_spooled_message(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    matches = [b for b in rows if b.kind == BlockKind.message and b.content == text]
+    matches = [b for b in _progress(rows) if b.content == text]
     assert len(matches) == 1  # not duplicated
 
 
@@ -391,8 +393,9 @@ async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
     matches = [
         b
         for b in rows
-        if b.kind == BlockKind.message
-        and b.author_type == AuthorType.ai
+        if b.kind == BlockKind.event
+        and (b.meta or {}).get("progress")
+        and looks_like_agent_handle(b.author)
         and "交给你了" in (b.content or "")
     ]
     assert len(matches) == 1  # one copy, whichever path landed it
@@ -459,8 +462,18 @@ def _ai_messages(rows, *, exclude: tuple[str, ...] = ("ok",)) -> list:
         b
         for b in rows
         if b.kind == BlockKind.message
-        and b.author_type == AuthorType.ai
+        and looks_like_agent_handle(b.author)
         and b.content not in exclude
+    ]
+
+
+def _progress(rows) -> list:
+    return [
+        b
+        for b in rows
+        if b.kind == BlockKind.event
+        and (b.meta or {}).get("progress")
+        and b.meta.get("in_room") is False
     ]
 
 
@@ -497,10 +510,12 @@ async def test_spooled_message_flushes_land_as_one_block(client, tmp_path, monke
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    messages = _ai_messages(rows)
+    assert _ai_messages(rows) == []
+    messages = [b for b in _progress(rows) if b.content == "第一行\n第二行"]
     assert [b.content for b in messages] == ["第一行\n第二行"]
     assert messages[0].meta.get("backfilled") is True
-    assert messages[0].meta.get("eids") == ["f0", "f1"]
+    assert messages[0].meta.get("eid") == "f0"
+    assert _progress(rows)[0].meta.get("eids") == ["f0", "f1"]
     assert _unread(spool) == []
 
 
@@ -533,7 +548,8 @@ async def test_incomplete_flushes_wait_for_the_missing_one(
     await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
+    assert _ai_messages(rows) == []
+    assert "第一行\n第二行" in [b.content for b in _progress(rows)]
     assert _unread(spool) == []
 
 
@@ -597,7 +613,10 @@ async def test_live_coalesced_message_is_not_backfilled_again(
         pass
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
+    assert _ai_messages(rows) == []
+    assert [b.content for b in _progress(rows) if b.content != "ok"] == [
+        "第一行\n第二行"
+    ]
 
 
 @pytest.mark.anyio
@@ -621,7 +640,8 @@ async def test_abandoned_partial_lands_joined_after_grace(
     await settle_turn(svc, tid)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    assert [b.content for b in _ai_messages(rows)] == ["只说到一半\n然后就断了"]
+    assert _ai_messages(rows) == []
+    assert "只说到一半\n然后就断了" in [b.content for b in _progress(rows)]
     assert _unread(spool) == []
 
 
@@ -693,4 +713,5 @@ async def test_stop_does_not_duplicate_a_message_that_landed_live(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-    assert len(_ai_messages(rows)) == 1
+    assert _ai_messages(rows) == []
+    assert len([b for b in _progress(rows) if b.content != "ok"]) == 1

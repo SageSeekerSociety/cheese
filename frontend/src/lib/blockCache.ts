@@ -60,7 +60,21 @@ function releaseLane(): void {
   else prefetchRunning -= 1
 }
 
-export async function refreshBlockCache(topicId: string): Promise<Block[] | null> {
+// 同一个话题最多一条请求在飞。未读轮询、hover 预取、切回话题这几条路会在同一秒
+// 里指向同一个话题，而它们要的是同一样东西——最新那一页。第二条排上去只会多占一
+// 条闸道、把别的话题挤到后面，取回来的还是同一页。在飞的那条已经在办这件事了，
+// 后来的直接跟着它的结果走。
+const inFlight = new Map<string, Promise<Block[] | null>>()
+
+export function refreshBlockCache(topicId: string): Promise<Block[] | null> {
+  const running = inFlight.get(topicId)
+  if (running) return running
+  const started = fetchNewestPage(topicId).finally(() => inFlight.delete(topicId))
+  inFlight.set(topicId, started)
+  return started
+}
+
+async function fetchNewestPage(topicId: string): Promise<Block[] | null> {
   await acquireLane()
   try {
     // Only the newest page — this runs for every topic whose unread count grew,

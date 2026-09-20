@@ -10,8 +10,8 @@
 # this maintenance exists to eliminate — and a maintenance job that dies of
 # the disease it treats cannot cure anyone.
 #
-# The matrix runs one job per fleet slot with a hold step, so three distinct
-# runners each pick one up. If a runner was busy, rerun until the summary has
+# The matrix runs one job per fleet slot with a hold step, so distinct runners
+# each pick one up — one job per SLOT, and a machine carries two of them. If a runner was busy, rerun until the summary has
 # shown every runner's name once — the change is idempotent.
 name: Runner maintenance
 
@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slot: [1, 2, 3]
+        slot: [1, 2, 3, 4, 5, 6]
     runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 5
     steps:

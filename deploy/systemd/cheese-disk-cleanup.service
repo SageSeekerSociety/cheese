@@ -1,0 +1,19 @@
+[Unit]
+Description=Reclaim regenerable caches on a dev/agent box
+After=docker.service
+
+[Service]
+Type=oneshot
+# The caches this reclaims live under one person's HOME (~/.cache/go-build,
+# ~/.vscode-server, ~/.cache/pip), so running as root would clean root's empty
+# ones and report success. The installer writes the real user in.
+User=@CLEANUP_USER@
+Environment=HOME=@CLEANUP_HOME@
+# Skip the run entirely below this mark rather than reclaim on a healthy box:
+# every entry deleted is one the next build pays to recreate, and a box at 40%
+# has nothing to buy with that. 75 sits under `cheesex-disk-pressure-guard`'s
+# 85% emergency brake, so the caches go before the guard has to start removing
+# sandbox containers. ExecCondition failing is a clean skip, not a failed unit.
+ExecCondition=/bin/bash -c '[ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 75 ]'
+ExecStart=/bin/bash /usr/local/lib/cheese/dev-box-disk-cleanup.sh --apply
+TimeoutStartSec=900

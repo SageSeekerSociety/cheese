@@ -78,6 +78,78 @@ def memories_uri(
     return f"viking://user/{scope_user_id(scope, scope_id, layer)}/memories"
 
 
+# Where the model keys come from when the openviking-specific settings are left
+# unset. The gateway token speaks the Anthropic protocol to OUR gateway, while
+# the two endpoints below point straight at the model vendor — so this fallback
+# hands over a key that will be rejected, without anyone having configured
+# anything wrong. Naming it is what lets a failed probe say "and this is where
+# the key came from" instead of just "401".
+FALLBACK_KEY_SETTING = "anthropic_auth_token"
+
+
+@dataclass(frozen=True)
+class ModelEndpoint:
+    """One OpenAI-protocol endpoint ov.conf points OpenViking at.
+
+    Anything that wants to *check* these endpoints has to describe them exactly
+    as ov.conf does — same URL, same key, same model — or it checks something
+    else and then reports on it confidently. So ``_write_conf`` and the probe
+    in ``endpoint_probe`` both build from :func:`model_endpoints`, and neither
+    can drift away from the other on its own.
+    """
+
+    role: str  # "embedding" | "chat"
+    api_base: str
+    api_key: str | None
+    # Which setting supplied ``api_key`` — a real name, ``FALLBACK_KEY_SETTING``
+    # or "unset". The probe reports it, because "which key did you use" is the
+    # first question a 401 raises and the answer is not otherwise recoverable.
+    key_setting: str
+    model: str
+    extra_body: dict[str, Any]
+    dimension: int | None = None
+    encoding_format: str | None = None
+
+
+def _resolve_key(configured: str | None, setting: str) -> tuple[str | None, str]:
+    if configured:
+        return configured, setting
+    if settings.anthropic_auth_token:
+        return settings.anthropic_auth_token, FALLBACK_KEY_SETTING
+    return None, "unset"
+
+
+def model_endpoints() -> list[ModelEndpoint]:
+    """The two endpoints the openviking backend calls, as configured right now."""
+    emb_key, emb_setting = _resolve_key(
+        settings.openviking_embedding_api_key, "openviking_embedding_api_key"
+    )
+    llm_key, llm_setting = _resolve_key(
+        settings.openviking_llm_api_key, "openviking_llm_api_key"
+    )
+    return [
+        ModelEndpoint(
+            role="embedding",
+            api_base=settings.openviking_embedding_api_base,
+            api_key=emb_key,
+            key_setting=emb_setting,
+            model=settings.openviking_embedding_model,
+            extra_body={},
+            dimension=settings.openviking_embedding_dimension,
+            encoding_format="float",
+        ),
+        ModelEndpoint(
+            role="chat",
+            api_base=settings.openviking_llm_api_base,
+            api_key=llm_key,
+            key_setting=llm_setting,
+            model=settings.openviking_llm_model,
+            # Zhipu GLM: don't burn tokens on thinking for extraction calls.
+            extra_body={"thinking": {"type": "disabled"}},
+        ),
+    ]
+
+
 @dataclass
 class MemoryHit:
     """One search hit: L0 abstract + address for on-demand L2 read."""
@@ -110,8 +182,7 @@ class _OpenVikingRuntime:
 
         data_dir = Path(settings.openviking_data_dir).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
-        llm_key = settings.openviking_llm_api_key or settings.anthropic_auth_token
-        emb_key = settings.openviking_embedding_api_key or settings.anthropic_auth_token
+        embedding, chat = model_endpoints()
         conf = {
             "default_account": _ACCOUNT,
             "default_user": "platform",
@@ -119,21 +190,20 @@ class _OpenVikingRuntime:
             "embedding": {
                 "dense": {
                     "provider": "openai",
-                    "api_base": settings.openviking_embedding_api_base,
-                    "api_key": emb_key,
-                    "model": settings.openviking_embedding_model,
-                    "dimension": settings.openviking_embedding_dimension,
+                    "api_base": embedding.api_base,
+                    "api_key": embedding.api_key,
+                    "model": embedding.model,
+                    "dimension": embedding.dimension,
                     "input": "text",
-                    "encoding_format": "float",
+                    "encoding_format": embedding.encoding_format,
                 }
             },
             "vlm": {
                 "provider": "openai",
-                "api_base": settings.openviking_llm_api_base,
-                "api_key": llm_key,
-                "model": settings.openviking_llm_model,
-                # Zhipu GLM: don't burn tokens on thinking for extraction calls.
-                "extra_request_body": {"thinking": {"type": "disabled"}},
+                "api_base": chat.api_base,
+                "api_key": chat.api_key,
+                "model": chat.model,
+                "extra_request_body": chat.extra_body,
             },
         }
         conf_path = data_dir / "ov.conf"
@@ -196,10 +266,34 @@ class _OpenVikingRuntime:
         return client._service  # noqa: SLF001
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
-            self._known_users.clear()
+        """Undo `client()` completely, not only the object it returned.
+
+        `client()` leaves three process-wide marks besides `self._client`: the
+        `AsyncOpenViking` class singleton, the module global
+        `openviking.storage.viking_fs._instance` (holding the embedder), and the
+        config singleton's cached VLM (`VLMConfig._vlm_instance`). openviking's
+        own `close()`/`reset()` clear only the first. The other two keep the
+        `openai.AsyncOpenAI` clients that were built on the queue worker's loop
+        alive after that loop is gone, and whoever later drops them — a re-init
+        or cyclic GC — lands their `__del__`'s `aclose()` on some unrelated
+        loop as `Event loop is closed` (#693). A close that leaves them is a
+        close that has not happened; the next `client()` re-creates all three
+        anyway.
+        """
+        if self._client is None:
+            return
+        from openviking import AsyncOpenViking
+        from openviking.storage import viking_fs
+        from openviking_cli.utils.config.open_viking_config import (
+            OpenVikingConfigSingleton,
+        )
+
+        await self._client.close()
+        self._client = None
+        self._known_users.clear()
+        await AsyncOpenViking.reset()
+        viking_fs._instance = None  # private: the package offers no reset for it
+        OpenVikingConfigSingleton.reset_instance()
 
 
 _runtime = _OpenVikingRuntime()
@@ -248,28 +342,6 @@ class OpenVikingMemoryStore:
         """The whole core layer of a scope, oldest first — its own space, so
         this is a full listing rather than a search."""
         return await self._cards(scope, scope_id, MemoryLayer.core)
-
-    async def rank_facts(
-        self,
-        scope: MemoryScope,
-        scope_id: str,
-        query: str,
-        limit: int = 500,
-    ) -> list[tuple[float, str]]:
-        """Non-core facts scored against the turn's context.
-
-        This is the one place the two backends genuinely differ in kind: here
-        the ranking is OpenViking's semantic search, so a fact can be retrieved
-        for meaning something related rather than for sharing a word. An empty
-        query has nothing to search with, so it degrades to newest-first at
-        score 0.0 — the same floor the flat backend has.
-        """
-        if not query.strip():
-            return [
-                (0.0, line) for line in reversed(await self.recall(scope, scope_id))
-            ]
-        hits = await self.search(scope, scope_id, query, limit=limit)
-        return [(h.score, h.abstract) for h in hits if h.abstract]
 
     async def count(self, scope: MemoryScope, scope_id: str) -> int:
         """Memory cards in the scope, both layers, including the ones a turn
@@ -421,6 +493,8 @@ class OpenVikingMemoryStore:
         layer: MemoryLayer = MemoryLayer.fact,
     ) -> list[dict[str, Any]]:
         """Memory card files of one scope layer (structural filter, no NL parsing)."""
+        from openviking_cli.exceptions import NotFoundError
+
         service = await self._rt.service()
         ctx = await self._rt.ctx_for(scope, scope_id, layer)
         try:
@@ -432,7 +506,20 @@ class OpenVikingMemoryStore:
                 node_limit=1000,
                 level_limit=6,
             )
-        except Exception:  # noqa: BLE001 - missing tree == no memories yet
+        except NotFoundError:
+            return []  # nothing written for this scope yet
+        except Exception:  # noqa: BLE001 - recall degrades, it never kills a turn
+            # Still an empty list: a turn that cannot reach the memory service
+            # should go on without memories rather than fail. But the agent is
+            # now answering as if it had none, and with nothing logged an outage
+            # looked exactly like a scope nobody has written to.
+            logger.warning(
+                "memory tree unreadable for %s/%s layer=%s; recalling nothing",
+                scope,
+                scope_id,
+                layer.value,
+                exc_info=True,
+            )
             return []
         files: list[dict[str, Any]] = []
         for e in entries:
@@ -446,9 +533,14 @@ class OpenVikingMemoryStore:
 
     async def _read_card(self, service: Any, ctx: Any, uri: str) -> str:
         """Whitespace-condensed card content, capped at the per-card budget."""
+        from openviking_cli.exceptions import NotFoundError
+
         try:
             text = await service.fs.read(uri, ctx=ctx)
-        except Exception:  # noqa: BLE001 - a racing prune must not kill recall
+        except NotFoundError:
+            return ""  # a racing prune took the card between the tree and the read
+        except Exception:  # noqa: BLE001 - recall degrades, it never kills a turn
+            logger.warning("memory card unreadable: %s", uri, exc_info=True)
             return ""
         # Strip OpenViking's structured metadata trailer (its own machine
         # token, not natural language) — prompts get the human part only.

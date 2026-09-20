@@ -1,0 +1,22 @@
+version: '3'
+
+tasks:
+  install:
+    desc: Install the docs site's dependencies
+    cmds:
+      - pnpm install --frozen-lockfile
+    sources:
+      - pnpm-lock.yaml
+
+  dev:
+    desc: Serve the manual with live reload (content is this directory)
+    deps: [install]
+    cmds:
+      - pnpm exec vitepress dev .
+
+  build:
+    desc: Build the manual, then emit llms.txt and the per-page .md twins
+    deps: [install]
+    cmds:
+      - pnpm exec vitepress build .
+      - python3 ../../scripts/emit_llms.py ../../frontend/public/docs

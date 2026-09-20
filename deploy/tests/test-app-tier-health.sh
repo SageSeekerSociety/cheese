@@ -11,11 +11,15 @@ FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
 # reason nor permission to create — so every deploy in this file gets one
 # inside the test tree. Exported once rather than per case: a future test that
 # forgets it would not fail here, it would fail on someone's machine.
-export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
+export VIKING_HOST_PATH="$ROOT/.tmp/viking-$$"
 # The claude binary cache is the same shape: created by the deploy so the
 # backend can write it, defaulting to a dev-box path CI cannot create.
-export CLAUDE_CACHE_HOST_PATH="$ROOT/tmp/claude-cache-$$"
-trap 'rm -rf "$ROOT/tmp/viking-$$" "$ROOT/tmp/claude-cache-$$"' EXIT
+export CLAUDE_CACHE_HOST_PATH="$ROOT/.tmp/claude-cache-$$"
+# And the pi build cache beside it.
+export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
+# And the transcript archives, once more the same shape.
+export TRANSCRIPTS_HOST_PATH="$ROOT/.tmp/transcripts-$$"
+trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -23,8 +27,8 @@ fail() {
 }
 
 test_deploy_rejects_absent_frontend() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/app-tier-deploy.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=frontend_absent \
     APP_TIER_MAIN_SHA=testsha \
@@ -41,8 +45,8 @@ test_deploy_rejects_absent_frontend() {
 }
 
 test_deploy_accepts_healthy_pair() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/app-tier-deploy.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
   if ! PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -58,9 +62,337 @@ test_deploy_accepts_healthy_pair() {
   echo "PASS: deploy accepts one healthy current backend/frontend pair"
 }
 
+test_deploy_keeps_connection_owner_running() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+
+  if grep -F 'up -d --no-deps device-connection' "$docker_log" >/dev/null; then
+    rm -rf "$run_dir"
+    fail "business deploy recreated the running device connection owner"
+  fi
+  grep -F 'up -d backend frontend' "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "business deploy did not update the app tier"
+  }
+  rm -rf "$run_dir"
+  echo "PASS: business deploy leaves the device connection owner running"
+}
+
+test_local_deploy_installs_owner_from_verified_backend_image() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner-local.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    DEPLOY_APP_IMAGE_SOURCE=local BACKEND_IMAGE=repo/backend:local \
+    FRONTEND_IMAGE=repo/frontend:local DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  grep -F 'owner-up-env DEVICE_CONNECTION_IMAGE=repo/backend:local' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "local first install did not use the verified backend image for owner"; }
+  rm -rf "$run_dir"
+  echo "PASS: local first install starts owner from the verified backend image"
+}
+
+test_owner_release_reuses_box_config_and_stops_when_busy() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner-release.XXXXXX")"
+  mkdir -p "$run_dir/ops"
+  docker_log="$run_dir/docker.log"
+  cat > "$run_dir/ops/deploy.env" <<EOF
+COMPOSE_OVERLAYS=docker-compose.subscription.yml
+BACKEND_ENV_FILE=$run_dir/backend.env
+BACKEND_IMAGE=repo/backend:box-pinned
+DEVICE_CONNECTION_SECRET=test-owner-secret
+DEPLOY_APP_IMAGE_SOURCE=local
+EOF
+  : > "$run_dir/backend.env"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  grep -F -- '-f '"$ROOT"'/deploy/compose/docker-compose.subscription.yml' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release ignored the box compose overlay"; }
+  grep -F 'image inspect repo/backend:box-pinned' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release ignored the pinned local backend image"; }
+  grep -F 'up -d --no-deps --force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release did not isolate its recreate"; }
+  ! grep -F 'test-owner-secret' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release logged its internal secret"; }
+
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-count" \
+    HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "owner release proceeded while executor calls were active"
+  fi
+  ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "busy owner was recreated"; }
+
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409,409,200 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-success-count" \
+    HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  [ "$(cat "$run_dir/drain-success-count")" = 3 ] \
+    || { rm -rf "$run_dir"; fail "owner release did not retry busy drain"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner release did not recreate after drain became idle"; }
+
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=500 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-error-count" \
+    HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "owner release retried a non-busy drain failure"
+  fi
+  [ "$(cat "$run_dir/drain-error-count")" = 1 ] \
+    || { rm -rf "$run_dir"; fail "owner release retried non-409 drain response"; }
+  ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "owner was recreated after non-409 drain response"; }
+
+  # DEVICE_CONNECTION_INTERRUPT=1 waives the wait, and only the wait: it takes
+  # one look at the drain, and a busy answer no longer stops the release.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-interrupt-count" \
+    DEVICE_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting release did not recreate a busy owner"; }
+  [ "$(cat "$run_dir/drain-interrupt-count")" = 1 ] \
+    || { rm -rf "$run_dir"; fail "interrupting release polled a busy drain more than once"; }
+
+  # Waiving the wait is not waiving the error handling: a drain that answers
+  # something other than 200/409 still stops the release.
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=500 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-interrupt-error" \
+    DEVICE_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "interrupting release ignored a broken drain endpoint"
+  fi
+  ! grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting release recreated after a broken drain endpoint"; }
+
+  : > "$docker_log"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_DOCKER_FAIL_MATCH=force-recreate HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "owner release succeeded after its recreate failed"
+  fi
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "failed owner release left the old owner draining"; }
+  rm -rf "$run_dir"
+  echo "PASS: owner release waits for atomic idle drain and stops safely on failure"
+}
+
+test_cloud_control_has_an_independent_drained_release() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/cloud-control-release.XXXXXX")"
+  mkdir -p "$run_dir/ops" "$run_dir/bin"
+  docker_log="$run_dir/docker.log"
+  cat > "$run_dir/ops/deploy.env" <<EOF
+BACKEND_ENV_FILE=$run_dir/backend.env
+DEVICE_CONNECTION_SECRET=test-owner-secret
+EOF
+  : > "$run_dir/backend.env"
+  cat > "$run_dir/bin/loginctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'yes\n'
+EOF
+  cat > "$run_dir/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >> "${APP_TIER_DOCKER_LOG:?}"
+if [ -n "${APP_TIER_SYSTEMCTL_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_SYSTEMCTL_FAIL_MATCH"* ]]; then exit 1; fi
+EOF
+  chmod +x "$run_dir/bin/loginctl" "$run_dir/bin/systemctl"
+
+  PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CLOUD_DEVICES=cloud-device \
+    APP_TIER_SNAPSHOT_ONLINE_SEQUENCE=old-online,old-online,offline,new-online \
+    APP_TIER_SNAPSHOT_COUNT_FILE="$run_dir/snapshot-count" HOME="$run_dir" \
+    "$ROOT/deploy/release-cloud-control.sh" >/dev/null
+  grep -F 'release-drain' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control release did not drain owner"; }
+  grep -F 'systemctl --user restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control was not restarted by its release"; }
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control release did not resume owner"; }
+  [ "$(cat "$run_dir/snapshot-count")" = 4 ] \
+    || { rm -rf "$run_dir"; fail "cloud control release did not wait for forwards to reconnect"; }
+  ! grep -F 'test-owner-secret' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "cloud control release logged its internal secret"; }
+
+  : > "$docker_log"
+  if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/busy-count" \
+    HOME="$run_dir" "$ROOT/deploy/release-cloud-control.sh" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "cloud control release proceeded while owner remained busy"
+  fi
+  ! grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "busy cloud control release restarted its service"; }
+
+  # DEVICE_CONNECTION_INTERRUPT=1 waives the wait, and only the wait: one look
+  # at the drain, and a busy answer no longer stops the release. Without it the
+  # forwards cannot be released at all while anyone is using the platform.
+  : > "$docker_log"
+  PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 \
+    APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/interrupt-count" \
+    APP_TIER_CLOUD_DEVICES=cloud-device \
+    APP_TIER_SNAPSHOT_ONLINE_SEQUENCE=old-online,old-online,offline,new-online \
+    APP_TIER_SNAPSHOT_COUNT_FILE="$run_dir/interrupt-snapshots" \
+    DEVICE_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-cloud-control.sh" >/dev/null
+  grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting cloud control release did not restart it"; }
+  [ "$(cat "$run_dir/interrupt-count")" = 1 ] \
+    || { rm -rf "$run_dir"; fail "interrupting release polled a busy drain more than once"; }
+
+  # Waiving the wait is not waiving the error handling.
+  : > "$docker_log"
+  if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=500 DEVICE_CONNECTION_INTERRUPT=1 \
+    HOME="$run_dir" "$ROOT/deploy/release-cloud-control.sh" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "interrupting cloud control release ignored a broken drain endpoint"
+  fi
+  ! grep -F 'restart cheese-cloud-control.service' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "interrupting release restarted after a broken drain"; }
+
+  : > "$docker_log"
+  if PATH="$run_dir/bin:$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_SYSTEMCTL_FAIL_MATCH=restart HOME="$run_dir" \
+    "$ROOT/deploy/release-cloud-control.sh" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "cloud control release succeeded after restart failed"
+  fi
+  grep -F 'release-resume' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "failed cloud control release left owner draining"; }
+
+  ! grep -Fq 'install-cloud-control.sh' "$ROOT/.github/workflows/deploy-dev.yml" \
+    || { rm -rf "$run_dir"; fail "ordinary app deploy still restarts cloud control"; }
+  rm -rf "$run_dir"
+  echo "PASS: cloud control releases separately after atomic owner drain"
+}
+
+test_deploy_warns_when_the_session_base_will_not_survive() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/session-base.XXXXXX")"
+  envf="$run_dir/backend.env"
+  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:18081\n' > "$envf"
+  out="$(PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    BACKEND_ENV_FILE="$envf" \
+    BACKEND_PORT=18081 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" 2>&1)"
+  case "$out" in
+    *"AGENT_SESSION_API_BASE=http://172.17.0.1:18081 names :18081"*) ;;
+    *)
+      rm -rf "$run_dir"
+      fail "deploy said nothing about a session address it is about to take down"
+      ;;
+  esac
+  # And it must stay quiet for an address the deploy leaves alone — a warning
+  # on every deploy is a warning nobody reads.
+  printf 'AGENT_SESSION_API_BASE=http://172.17.0.1:8081\n' > "$envf"
+  out="$(PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    BACKEND_ENV_FILE="$envf" \
+    BACKEND_PORT=18081 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" 2>&1)"
+  case "$out" in
+    *AGENT_SESSION_API_BASE*)
+      rm -rf "$run_dir"
+      fail "deploy warned about a session address that survives it"
+      ;;
+  esac
+  rm -rf "$run_dir"
+  echo "PASS: deploy names a session address its own release would cut off"
+}
+
+test_rollout_installs_connection_route_without_recreating_api_front() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  printf '%s\n' 'events {}' 'http { include /etc/nginx/active/backend.conf; }' \
+    > "$run_dir/nginx.conf"
+  rollout_run "$run_dir" env >/dev/null 2>&1 || {
+    rm -rf "$run_dir"
+    fail "rollout could not install the connection-owner route"
+  }
+  grep -Fq 'location = /connector/agent' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "api-front config still routes device sockets through the backend"
+  }
+  grep -Fq 'location = /api/connector/agent' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "public device sockets still fall through the stable API ingress"
+  }
+  grep -Fq 'location ~ ^/api/topics/[^/]+/execution/[^/]+$' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "public execution requests still fall through the stable API ingress"
+  }
+  grep -Fq 'location ~ ^/topics/[^/]+/execution/[^/]+$' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "api-front config still routes execution requests through the backend"
+  }
+  awk '
+    /location ~ \^\/topics\/\[\^\/\]\+\/execution\/\[\^\/\]\+\$/ { in_execution=1 }
+    in_execution && /client_max_body_size 100m;/ { large_body=1 }
+    in_execution && /^    }/ { exit !large_body }
+    END { if (!in_execution || !large_body) exit 1 }
+  ' "$run_dir/nginx.conf" || {
+    rm -rf "$run_dir"
+    fail "stable execution route rejects request bodies that the former backend route accepted"
+  }
+  grep -F 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null || {
+    rm -rf "$run_dir"
+    fail "api-front did not gracefully reload the connection-owner route"
+  }
+  if grep -Eq '(rm|stop|up).*cheese-api-front' "$docker_log"; then
+    rm -rf "$run_dir"
+    fail "business rollout recreated api-front while installing the route"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: rollout installs the owner route with a graceful api-front reload"
+}
+
 test_deploy_keeps_agent_runtime_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/runtime-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/runtime-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -92,8 +424,8 @@ test_deploy_keeps_agent_runtime_images() {
 }
 
 test_deploy_retains_ci_service_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/ci-service-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/ci-service-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -126,8 +458,8 @@ test_deploy_retains_ci_service_images() {
 }
 
 test_app_only_deploy_does_not_require_agent_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/app-only-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-only-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -148,8 +480,8 @@ test_app_only_deploy_does_not_require_agent_images() {
 }
 
 test_local_app_images_skip_registry_pull() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/local-app-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/local-app-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -176,8 +508,8 @@ test_local_app_images_skip_registry_pull() {
 }
 
 test_local_app_images_must_exist() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/local-app-missing.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/local-app-missing.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=local_image_missing \
@@ -201,8 +533,8 @@ test_local_app_images_must_exist() {
 }
 
 test_pull_retries_transient_failure() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/pull-retry.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-retry.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if ! PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -236,8 +568,8 @@ test_pull_retries_transient_failure() {
 }
 
 test_exhausted_pull_retries_still_fail_the_deploy() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/pull-exhausted.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-exhausted.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -269,8 +601,8 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
 }
 
 test_failed_deploy_reclaims_disk() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/failed-reclaim.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/failed-reclaim.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=frontend_absent \
@@ -293,8 +625,8 @@ test_failed_deploy_reclaims_disk() {
 }
 
 test_deploy_logs_disk_watermarks() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/disk-watermark.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/disk-watermark.XXXXXX")"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -313,8 +645,8 @@ test_deploy_logs_disk_watermarks() {
 }
 
 test_rollback_restores_exact_previous_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/exact-rollback.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/exact-rollback.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=rollback \
@@ -336,6 +668,133 @@ test_rollback_restores_exact_previous_images() {
     "$docker_log" || fail "rollback did not restore the exact previous images"
   rm -rf "$run_dir"
   echo "PASS: rollback restores exact previous image references"
+}
+
+# A box with an api-front switch (ACTIVE_BACKEND_DIR) deploys the backend by
+# rollout: the next container comes up and answers /healthz, api-front is
+# pointed at it, the compose backend is recreated behind it, api-front is
+# pointed back, the next container is removed. Every deploy used to cut the
+# backend for the ~13 s a fresh container takes to boot; these two tests pin
+# the order that removes that gap, and the one failure that must leave the
+# running backend alone.
+rollout_run() {
+  local run_dir="$1"
+  shift
+  PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=healthy \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+    ACTIVE_BACKEND_DIR="$run_dir/active" \
+    API_FRONT_CONF="$run_dir/nginx.conf" \
+    BACKEND_PORT=18081 \
+    BACKEND_PORT_NEXT=18082 \
+    DEPLOY_DRAIN_SECONDS=0 \
+    DEPLOY_BACKEND_START_TIMEOUT=3 \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$@" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml"
+}
+
+new_rollout_run_dir() {
+  mkdir -p "$ROOT/.tmp"
+  local dir
+  dir="$(mktemp -d "$ROOT/.tmp/rollout.XXXXXX")"
+  mkdir -p "$dir/active"
+  printf 'upstream backend_active { server 127.0.0.1:18081; }\n' > "$dir/active/backend.conf"
+  cp "$ROOT/deploy/llm-tunnel/nginx.conf" "$dir/nginx.conf"
+  : > "$dir/docker.log"
+  printf '%s' "$dir"
+}
+
+# Nth log line matching a pattern (1-based), or "" if there is no Nth match.
+nth_log_line() { grep -n -- "$2" "$1" 2>/dev/null | sed -n "${3}p" | cut -d: -f1 || true; }
+last_log_line() { grep -n -- "$2" "$1" 2>/dev/null | tail -n 1 | cut -d: -f1 || true; }
+
+test_rollout_keeps_a_backend_serving() {
+  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
+  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 1)"
+  blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 2)"
+  next_gone="$(last_log_line "$docker_log" 'rm -f cheese-backend-next')"
+  frontend_up="$(log_line "$docker_log" 'up -d --no-deps frontend')"
+  [ -n "$next_up" ] || fail "rollout never started cheese-backend-next"
+  [ -n "$flip_to_next" ] && [ -n "$flip_back" ] || fail "rollout did not reload api-front twice"
+  [ -n "$blue_up" ] || fail "rollout never recreated the compose backend"
+  [ -n "$frontend_up" ] || fail "rollout never brought the frontend up"
+  [ "$next_up" -lt "$flip_to_next" ] || fail "api-front was reloaded before the next backend existed"
+  [ "$flip_to_next" -lt "$blue_up" ] || fail "the compose backend was recreated before traffic had moved off it"
+  [ "$blue_up" -lt "$flip_back" ] || fail "api-front was pointed back before the compose backend was recreated"
+  [ "$flip_back" -lt "$next_gone" ] || fail "cheese-backend-next was removed while api-front still pointed at it"
+  [ "$next_gone" -lt "$frontend_up" ] || fail "the frontend came up before the backend rollout finished"
+  grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
+    || fail "api-front was left pointing away from the compose backend: $(cat "$run_dir/active/backend.conf")"
+  [ "$(ls "$run_dir/active" | wc -l | tr -d ' ')" = 1 ] \
+    || fail "the switch directory holds leftovers: $(ls "$run_dir/active")"
+  rm -rf "$run_dir"
+  echo "PASS: rollout keeps a healthy backend behind api-front throughout"
+}
+
+test_frontend_rollout_keeps_serving() {
+  local run_dir docker_log next_up flip recreate flip_back gone
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
+  grep -Fq 'location = /api/connector/agent' "$run_dir/active/sites-frontend.conf" \
+    || fail "stable frontend ingress still sends public device sockets through the rolling frontend"
+  grep -Fq 'location ~ ^/api/topics/[^/]+/execution/[^/]+$' "$run_dir/active/sites-frontend.conf" \
+    || fail "stable frontend ingress still sends public execution through the rolling frontend"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
+  next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-frontend-next')"
+  flip="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 3)"
+  recreate="$(log_line "$docker_log" 'up -d --no-deps frontend')"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 4)"
+  gone="$(last_log_line "$docker_log" 'rm -f cheese-frontend-next')"
+  [ -n "$next_up" ] && [ -n "$flip" ] && [ -n "$flip_back" ] || fail "missing frontend switches"
+  [ "$next_up" -lt "$flip" ] && [ "$flip" -lt "$recreate" ] && [ "$recreate" -lt "$flip_back" ] && [ "$flip_back" -lt "$gone" ] || fail "frontend replaced before traffic moved"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy did not return to compose"
+  rm -rf "$run_dir"
+  echo "PASS: frontend stays behind a healthy proxy target across recreate"
+}
+
+test_frontend_rollout_rejects_unhealthy_next() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 8080
+  if rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" APP_TIER_CURL_FAIL_MATCH=:18084/ >/dev/null 2>&1; then
+    fail "unhealthy frontend was accepted"
+  fi
+  ! grep -q 'up -d --no-deps frontend' "$run_dir/docker.log" || fail "old frontend was replaced without a healthy successor"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy moved to unhealthy successor"
+  rm -rf "$run_dir"
+  echo "PASS: failed frontend startup leaves the old frontend serving"
+}
+
+test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  if rollout_run "$run_dir" env APP_TIER_CURL_FAIL_MATCH=:18082/ >/dev/null 2>&1; then
+    fail "rollout succeeded although the next backend never answered /healthz"
+  fi
+  grep -q 'run -d --no-deps --name cheese-backend-next' "$docker_log" \
+    || fail "the next backend was never started"
+  ! grep -q 'up -d --no-deps backend' "$docker_log" \
+    || fail "the running backend was recreated although nothing healthy could replace it"
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || fail "api-front was reloaded although the next backend was unhealthy"
+  grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
+    || fail "api-front was moved off the running backend"
+  [ "$(last_log_line "$docker_log" 'rm -f cheese-backend-next')" -gt "$(log_line "$docker_log" 'run -d --no-deps')" ] \
+    || fail "the failed next backend was not cleaned up"
+  rm -rf "$run_dir"
+  echo "PASS: an unhealthy next backend leaves the running one untouched"
 }
 
 # Handing the bind mounts to another uid is the one step of a deploy that
@@ -361,6 +820,8 @@ ownership_run() {
     APPHOME_HOST_PATH="$run_dir/apphome" \
     VIKING_HOST_PATH="$run_dir/viking" \
     CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
+    PI_CACHE_HOST_PATH="$run_dir/pi-cache" \
+    TRANSCRIPTS_HOST_PATH="$run_dir/transcripts" \
     HOME="$run_dir" \
     "$@"
 }
@@ -372,9 +833,9 @@ ownership_run() {
 log_line() { grep -n -- "$2" "$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true; }
 
 new_ownership_run_dir() {
-  mkdir -p "$ROOT/tmp"
+  mkdir -p "$ROOT/.tmp"
   local dir
-  dir="$(mktemp -d "$ROOT/tmp/ownership-order.XXXXXX")"
+  dir="$(mktemp -d "$ROOT/.tmp/ownership-order.XXXXXX")"
   # viking is deliberately NOT created: the deploy script makes it, and these
   # tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
@@ -434,6 +895,8 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # unmarked path would make this "nothing moved" scenario move something.
   mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
   mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
+  mkdir -p "$run_dir/pi-cache"; : > "$run_dir/pi-cache/.cheese-uid-1000"
+  mkdir -p "$run_dir/transcripts"; : > "$run_dir/transcripts/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \
     "$ROOT/deploy/deploy-docker.sh" testsha \
@@ -480,8 +943,8 @@ test_operator_uses_registry_sha_width() {
 # job that gates deploy/ changes.
 workflow_script() {
   local parser
-  mkdir -p "$ROOT/tmp"
-  parser="$(mktemp "$ROOT/tmp/drift-step.XXXXXX.py")"
+  mkdir -p "$ROOT/.tmp"
+  parser="$(mktemp "$ROOT/.tmp/drift-step.XXXXXX.py")"
   cat > "$parser" <<'PY'
 import sys
 from pathlib import Path
@@ -533,6 +996,10 @@ test_healthy_current_pair_passes() {
 case "$CASE" in
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
+  connection-owner) test_deploy_keeps_connection_owner_running ;;
+  connection-owner-local) test_local_deploy_installs_owner_from_verified_backend_image ;;
+  connection-route) test_rollout_installs_connection_route_without_recreating_api_front ;;
+  cloud-control-release) test_cloud_control_has_an_independent_drained_release ;;
   runtime-images) test_deploy_keeps_agent_runtime_images ;;
   ci-service-images) test_deploy_retains_ci_service_images ;;
   app-only) test_app_only_deploy_does_not_require_agent_images ;;
@@ -549,10 +1016,21 @@ case "$CASE" in
   operator) test_operator_rejects_stale_frontend ;;
   operator-sha-width) test_operator_uses_registry_sha_width ;;
   workflow) test_workflow_rejects_stale_frontend ;;
+  session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
+  rollout) test_rollout_keeps_a_backend_serving ;;
+  frontend-rollout) test_frontend_rollout_keeps_serving ;;
+  frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
+  rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   all)
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
+    test_deploy_keeps_connection_owner_running
+    test_local_deploy_installs_owner_from_verified_backend_image
+    test_owner_release_reuses_box_config_and_stops_when_busy
+    test_cloud_control_has_an_independent_drained_release
+    test_rollout_installs_connection_route_without_recreating_api_front
+    test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images
     test_app_only_deploy_does_not_require_agent_images
@@ -570,6 +1048,10 @@ case "$CASE" in
     test_operator_uses_registry_sha_width
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
+    test_rollout_keeps_a_backend_serving
+    test_frontend_rollout_keeps_serving
+    test_frontend_rollout_rejects_unhealthy_next
+    test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up
     ;;
   *) fail "unknown case: $CASE" ;;
 esac

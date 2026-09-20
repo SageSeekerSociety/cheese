@@ -56,12 +56,34 @@ class BlockKind(enum.StrEnum):
 
 
 class AuthorType(enum.StrEnum):
-    human = "human"
-    ai = "ai"  # 芝士 (本体 or 分身)
+    """谁写下了这条事件：一个参与者，还是平台自己。
+
+    人和 agent 是同一种参与者（结论 1），所以这一列不再回答「是人还是 AI」——
+    那个问题由署名（``Block.author``，一个 handle）回答，而且只有它回答得了：
+    一个房间里坐着好几个人和好几个 agent，三档里的一档说不出是哪一个。
+
+    读这一列的唯一落点是 ``app.domain.block.authorship``。
+    """
+
+    participant = "participant"
+    # 平台自己产的事件：部署提醒、闸门结论、自动重发。这一档改叫 platform 要连着
+    # 一次存量行改写（SQLAlchemy 的 Enum 存的是成员名），所以和旧值的删除一起在
+    # P8b 做，这里先留着它今天的名字。**改名的那一次，存量行改写除了 human/ai
+    # 还得把 system 一并改成 platform**：库里存的是 "system" 这个成员名，枚举里
+    # 没有它之后，旧行一读就是 LookupError。
     system = "system"
 
+    # —— P8 之前写下的存量行的两个旧值，都是参与者 ——
+    # 没有一处代码再写它们；读它们的只有 block/authorship.py。P8b 把这些行改写成
+    # participant，然后把这两档删掉。分两次发布是因为 Enum(native_enum=False) 绑的
+    # 是 Python 枚举：上一版镜像读到 participant 会抛 LookupError，所以「加值」和
+    # 「改数据」不能同一次上线。
+    human = "human"
+    ai = "ai"
 
-# `meta` key carried by every new human message/attachment. Its value is null
+
+# `meta` key carried by every new message/attachment that arrives as an input.
+# Its value is null
 # while the input is pending, then the id of the agent turn that actually read
 # it (BlockRepository.mark_consumed). Presence of the null key distinguishes a
 # tracked pending input from a legacy block created before turn accounting.
@@ -87,10 +109,29 @@ CONSUMED_TURN_META_KEY = "consumed_turn"
 # 而那正是原注释在防的事。
 PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
 
+# What this block has to say to 芝士, written by whoever created it — and absent
+# on the blocks that have nothing to say to it, which is most of them.
+#
+# 一个话题的事件流是给人看的时间线：预览更新了、同步完成了、话题改了名。芝士需要
+# 知道的只是其中很少的一部分，而「是哪一部分」只有**写下那条事件的代码**知道 ——
+# 它就是造成这件事的那段代码。反过来按 kind / author_type 去猜，等于把一份为人做
+# 的展示日志当成给模型的指令队列用。
+#
+# 措辞和 `content` 分开也是同一个理由：界面上要读到的是「张三 编辑了文档」，而芝士
+# 要听的是它手上那份已经旧了、以及现在该做什么。同一件事，两个读者，两句话。
+#
+# 与 `consumed_turn` 成对：一个说「这是说给芝士的」，一个说「哪一轮已经读过了」。
+AGENT_NOTICE_META_KEY = "agent_notice"
+
 
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""
     return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
+def agent_notice(block: "Block") -> str | None:
+    """What this block says to 芝士, or None when it says nothing to it."""
+    return (block.meta or {}).get(AGENT_NOTICE_META_KEY) or None
 
 
 def prompt_attempts(block: "Block") -> int:
@@ -115,13 +156,51 @@ class Block(UuidPk, Timestamps, Base):
             "created_at",
             postgresql_where=text("task_id IS NOT NULL"),
         ),
+        # 话题级未读: count, per topic, the messages on a room's own line that
+        # someone else wrote after the reader's cursor. Its only selective
+        # predicate lives on `topics`, so without this the planner read the
+        # whole table — every 30 seconds, for every open tab, at a cost that
+        # grew with the size of the entire platform rather than the project
+        # being looked at. INCLUDE(author) rather than a fifth key column
+        # because `author <> me` is only ever tested for inequality; carrying
+        # it in the leaf is what makes the scan index-ONLY (Heap Fetches: 0),
+        # and the heap reads are where the buffer-pool churn came from.
+        # `created_at` IS a key column: the cursor comparison ranges on it.
+        Index(
+            "ix_blocks_topic_kind_task_created",
+            "topic_id",
+            "kind",
+            "task_id",
+            "created_at",
+            postgresql_include=["author"],
+        ),
+        # 「这个房间最近一次开机事件是哪条」—— asked once at the top of every
+        # turn (`turn_history`), and answerable only by a predicate no other
+        # index leads with, so the planner read every block the room has ever
+        # had to find the newest of a handful. A room accumulates blocks
+        # forever, so that scan got slower every day the room was used.
+        # Partial on the predicate itself: these events are a handful per room
+        # against a table of every message and every line of agent output, so
+        # the index stays tiny and the write path barely notices it.
+        Index(
+            "ix_blocks_cloud_provisioning",
+            "topic_id",
+            "created_at",
+            "id",
+            postgresql_where=text("(meta ->> 'event_type') = 'cloud_provisioning'"),
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # No single-column index of its own: `ix_blocks_topic_kind_task_created`
+    # and `ix_blocks_topic_id_created_at` both lead with topic_id, so either
+    # serves a topic_id-only lookup (including the ON DELETE CASCADE sweep when
+    # a topic or project goes away). A third copy would only be one more index
+    # for every insert to maintain.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+        ForeignKey("topics.id", ondelete="CASCADE")
     )
     # WHICH thread this block is in. NULL = the room's own line; set = the
     # conversation of that one piece of work. This is the key that makes a task
@@ -165,7 +244,12 @@ class Block(UuidPk, Timestamps, Base):
     # Render-by-type (spec §9.1): the mimeType of an artifact block — the host
     # picks a renderer from this, never from parsing the AI's text. Only set on
     # kind=artifact blocks (e.g. text/html, image/svg+xml).
-    mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 255, not 64: an Office MIME type runs 65-73 characters
+    # (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+    # is 71), and 64 rejected every .docx/.xlsx/.pptx attachment — rolling back
+    # the whole message after the upload had already returned 200. RFC 6838 caps
+    # the type and subtype names at 127 each.
+    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # How many times the living doc has been written (kind=doc only; every other
     # block sits at 1 and never moves). A writer sends the version it read and
@@ -215,7 +299,7 @@ class BlockReaction(UuidPk, Base):
 
     One row per (block, emoji, author); reacting again with the same emoji
     removes the row (toggle). Both humans and 芝士 react through this table —
-    e.g. the platform's deterministic ✅ receipt on a summoning message."""
+    e.g. the platform's deterministic 👀 receipt on a summoning message."""
 
     __tablename__ = "block_reactions"
     __table_args__ = (

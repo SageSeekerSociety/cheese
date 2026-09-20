@@ -9,7 +9,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
-from app.domain.room_task.place import room_and_task
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,23 +56,22 @@ class AgentTurnRepository:
         is_resume: bool,
         resendable: bool,
         started_at: datetime,
+        delivered_at: datetime | None = None,
     ) -> None:
-        # `topic_id` is the id of the PLACE this turn runs in, which may be a
-        # thread. Resolved here rather than by every caller: the runtime addresses
-        # a place by one id everywhere else, and this is one of the few tables
-        # that has to store both halves.
-        room_id, task_id = await room_and_task(self._session, topic_id)
+        # `delivered_at` is for a turn that has no 投喂 phase to stamp later — it
+        # is born delivered or it is born unclosable. Everything the platform
+        # feeds leaves it None and stamps it when the transport accepts.
         self._session.add(
             AgentTurn(
                 id=turn_id,
-                topic_id=room_id,
-                task_id=task_id,
+                topic_id=topic_id,
                 continuation_id=continuation_id,
                 author=author,
                 content=content,
                 is_resume=is_resume,
                 resendable=resendable,
                 started_at=started_at,
+                delivered_at=delivered_at,
             )
         )
 
@@ -88,6 +86,103 @@ class AgentTurnRepository:
             .where(AgentTurn.id == turn_id, AgentTurn.delivered_at.is_(None))
             .values(delivered_at=at)
         )
+
+    async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
+        """Stamp that admission refused this turn for spent credits (#715).
+
+        First-writer-wins: admission is asked again for the SAME refusal (the
+        proxy caches a verdict for 30s, Claude Code retries ten times), and only
+        the call that actually flips the column should trigger the one-time room
+        notice — which is exactly what the returned bool tells the caller. A
+        second call for an already-stamped turn returns False and changes
+        nothing.
+        """
+        result = await self._session.execute(
+            update(AgentTurn)
+            .where(AgentTurn.id == turn_id, AgentTurn.credits_refused_at.is_(None))
+            .values(credits_refused_at=at)
+        )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+
+    async def credits_refused(self, turn_id: uuid.UUID) -> bool:
+        """Was this turn ever stamped refused-for-credits? What the turn's own
+        end (`StopFailure`) reads to decide whose wording the room gets."""
+        value = (
+            await self._session.execute(
+                select(AgentTurn.credits_refused_at).where(AgentTurn.id == turn_id)
+            )
+        ).scalar_one_or_none()
+        return value is not None
+
+    async def open_turn_id_for_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The still-running turn at this PLACE, if there is one.
+
+        Admission only ever has the place a caller claims to run in, never a
+        turn id (a scoped token carries `t`, never `turn_id`) — this is how it
+        finds the interval that place names, so a credits refusal can be
+        stamped on the turn it actually refused.
+
+        The room's OWN line, which is where every turn now runs; the rows a
+        thread left behind before work stopped being a place are excluded by
+        the same clause that used to select them.
+        """
+        stmt = (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.task_id.is_(None),
+                AgentTurn.stopped_at.is_(None),
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def open_turn_author_for_topic(self, topic_id: uuid.UUID) -> str | None:
+        """这一轮由谁的消息发起 —— 也就是「这一轮的结果由谁在等」。
+
+        芝士在轮次中途提出待确认问题，本轮就停在那里等回答。等的不是房间里任意一个
+        人，而是把这件事交给它的那个人，而那条消息的作者正是 `AgentTurn.author`。
+
+        平台发起的轮次（resume、各类提醒）作者是 `system`，那种轮次里的提问指不到
+        具体的人 —— 这里照样把 `system` 返回，由调用点决定它意味着什么，和
+        `open_turn_id_for_topic` 一样只回答被问到的那件事。
+        """
+        stmt = (
+            select(AgentTurn.author)
+            .where(
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.task_id.is_(None),
+                AgentTurn.stopped_at.is_(None),
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def open_turn_authors_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """{房间: 这一轮由谁发起}，一次查完 —— 跨项目的「待我处理」用。
+
+        和 `open_turn_author_for_topic` 同一个判据，只是批量：那个列表要对几十个
+        房间问同一件事，逐个问就是一个列表一次请求变成几十次。
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(AgentTurn.topic_id, AgentTurn.author)
+            .where(
+                AgentTurn.topic_id.in_(topic_ids),
+                AgentTurn.task_id.is_(None),
+                AgentTurn.stopped_at.is_(None),
+            )
+            .order_by(AgentTurn.topic_id, AgentTurn.started_at.desc())
+            .distinct(AgentTurn.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: author for topic_id, author in rows}
 
     async def close(self, turn_ids: Iterable[uuid.UUID], at: datetime) -> None:
         """End these intervals. Closing is not deleting — the ids stay readable
@@ -116,18 +211,14 @@ class AgentTurnRepository:
         invisible to every future sweep — the silent death this table exists to
         end. Its own coroutine closes it by id, delivered or not.
         """
-        room_id, task_id = await room_and_task(self._session, topic_id)
         result = await self._session.execute(
             update(AgentTurn)
             .where(
-                AgentTurn.topic_id == room_id,
-                # Scoped to the THREAD when there is one. A room and each of its
-                # threads run their own sessions, so a Stop from one of them must
-                # not close the intervals of the others — which is exactly what
-                # matching on the room alone would do.
-                AgentTurn.task_id.is_(None)
-                if task_id is None
-                else AgentTurn.task_id == task_id,
+                AgentTurn.topic_id == topic_id,
+                # The room's own line. A Stop is the room's session finishing,
+                # and the intervals a thread left behind when work was still a
+                # place are not this session's to close.
+                AgentTurn.task_id.is_(None),
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )

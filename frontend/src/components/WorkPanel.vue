@@ -21,7 +21,7 @@ import type { TopicPhase } from '../lib/topicState'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
-import { isThread, roomIdOf } from '../lib/place'
+import { previewCanShow } from '../lib/fileKind'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelOverview from './panels/PanelOverview.vue'
@@ -31,13 +31,12 @@ import PanelSite from './panels/PanelSite.vue'
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    // Bumped by the parent on AI activity (turn-done / update_doc tool) so 文档
-    // reloads the doc 芝士 just wrote. See TopicView activityTick.
+    // Bumped by the parent on AI activity (turn-done / a platform resource the
+    // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
+    // activityTick.
     activityTick: number
-    // 施工现场 inputs. Only 现场 reads them; they are passed straight through.
-    worklog?: { label: string; text: string; platform?: boolean }[]
+    // 芝士 正在这个话题里干活 —— tab 栏据此给「现场」加一个跳动的点。
     working?: boolean
-    workingSince?: number | null
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
     // Which tab the URL asks for (`?tab=`). The address is the page's business,
@@ -51,12 +50,17 @@ const props = withDefaults(
     // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
     // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
     withChat?: boolean
+    // 地址里的 `?card=` —— 非空就是总览那一格正看着一张卡。
+    openCardId?: string | null
+    // 房间名册 handle → 名字。现场那一格用它给每一行署名。一路透传：漏掉它不
+    // 报错，只是那一格里写的是 handle。
+    memberNames?: Record<string, string>
   }>(),
   {
-    worklog: () => [],
     working: false,
-    workingSince: null,
     topicList: () => [],
+    openCardId: null,
+    memberNames: () => ({}),
     tab: undefined,
     phase: undefined,
     withChat: false,
@@ -65,8 +69,13 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
+  (e: 'open-card', taskId: string | null): void
+  /** 卡片面板里的「去验收」——同 `chatEvents.review`，切到「改动」那一格。 */
+  (e: 'review'): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
+  // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层。
+  (e: 'locate', message: string): void
 }>()
 
 type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
@@ -92,9 +101,6 @@ const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview')
 // 总览。链接不该因为我们合并了界面而失效。
 const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
 const active = ref<TabKey>(defaultTab.value)
-/** 打开的是房间里的一条支线，还是房间本身。 */
-const onThread = computed(() => !!props.topic && isThread(props.topic))
-
 /** The URL's answer, if it names a tab that exists (or one that used to). */
 function tabFromUrl(): TabKey | null {
   const asked = props.tab
@@ -140,7 +146,7 @@ const settled = ref(false)
 // reviewing/delivering 时留在默认格；「现场」是支线自己的，照常可以选。
 function tabForPhase(phase: TopicPhase): TabKey {
   if (phase === 'working') return 'site'
-  if (!onThread.value && (phase === 'reviewing' || phase === 'delivering')) return 'changes'
+  if (phase === 'reviewing' || phase === 'delivering') return 'changes'
   return defaultTab.value
 }
 
@@ -158,12 +164,14 @@ watch(
 // the transcript all survived a close/open). 文档 is mounted from the start
 // because it is the default tab and its editor is expensive to rebuild.
 const mounted = ref<Set<TabKey>>(new Set<TabKey>([active.value]))
-watch(active, (k) => {
+function show(k: TabKey) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
-})
+}
+watch(active, show)
 
 const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
+const previewRef = ref<InstanceType<typeof PanelPreview> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
 const projectId = computed(() => props.topic?.project_id ?? null)
@@ -262,20 +270,18 @@ function markChangesSeen() {
 }
 
 // ---- 这个房间派出去了几件活 ----
-// A signal, so 任务 can carry its count while closed and can stay out of the way
-// of a room that never dispatched anything. Threads are counted for the ROOM: a
-// thread's siblings are the same list, and `/tasks` only answers for a room.
+// A signal, so 总览 can carry its count while closed and can stay out of the way
+// of a room that never dispatched anything.
 const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
 
 async function pollThreads() {
-  const place = props.topic
-  if (!place) return
-  const roomId = roomIdOf(place)
+  const roomId = props.topic?.id
+  if (!roomId) return
   try {
-    // limit: 1 — see TaskProgress. Without it this asks for every thread's whole
+    // limit: 1 — see TaskProgress. Without it this asks for every card's whole
     // history just to count them.
     const rows = (await listRoomTasks(roomId, { limit: 1 })).data
-    if (!props.topic || roomIdOf(props.topic) !== roomId) return
+    if (props.topic?.id !== roomId) return
     threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
   } catch {
     // A failed poll is not a state — same rule as the two polls above.
@@ -289,22 +295,13 @@ function tabIsOffered(key: TabKey): boolean {
   if (key === active.value) return true
   if (key === 'chat') return props.withChat
   if (key === 'overview') return true
-  // 「改动」和「现场」在一条支线上不是同一回事，因为它们各自属于不同的东西：
-  //
-  // 改动属于**树**。一棵树 = 一个分支 = 一个 PR = 一批活，一条支线和它的同伴写
-  // 的是同一条分支，所以那份 diff 诚实地说就是他们一起做的。在支线上摆出「改动」
-  // 就是把一批人的活挂到一条活名下，看的人会以为屏幕上那些改动是这条活做的——所
-  // 以支线上不给这一格，改动只在房间那一层看。
-  //
-  // 现场属于**地点**。一条支线跑的是它自己的 agent、自己的会话、自己那块屏幕，
-  // 所以它的现场就是它自己的，不是它房间的、也不是同伴的。支线上给这一格。
-  if (key === 'changes') return !onThread.value && summary.value.changedFiles.length > 0
-  // 现场 is where 芝士 works: it is there once the place has run, and from the
+  // 改动属于**树**：一棵树 = 一个分支 = 一个 PR = 一批活，所以这份 diff 是这个
+  // 房间当前这一批一起写出来的。
+  if (key === 'changes') return summary.value.changedFiles.length > 0
+  // 现场 is where 芝士 works: it is there once the room has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
-  // 预览 is the room's: what 芝士 put on show is looked up and retracted per
-  // room, so a thread has none of its own to offer.
-  return !onThread.value && !!previewLatest.value
+  return !!previewLatest.value
 }
 
 const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
@@ -314,7 +311,7 @@ function tabTitle(t: TabDef): string {
   if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
   if (t.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
-    return open ? `${t.label}（${total} 件活，${open} 件进行中）` : `${t.label}（${total} 件活）`
+    return open ? `${t.label}（${total} 件任务，${open} 件进行中）` : `${t.label}（${total} 件任务）`
   }
   if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
   if (t.key === 'changes' && summary.value.changedFiles.length) {
@@ -376,12 +373,30 @@ function highlightTurn(turnId: string) {
   setTab('overview')
   void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
-async function openFile(path: string) {
+// A chip is a path with no store, and a room has three: its own files (what 芝士
+// delivered and what people uploaded — no branch, no history), a task's worktree,
+// and the project's current code. So find the file FIRST and pick the tab from
+// where it turned out to be. Done the other way round, a reader who clicks a file
+// 芝士 just made gets the 改动 tab appearing out of nowhere, a listing that does
+// not contain it, and then a read error on top — the file was never in a tree.
+async function openFile(path: string, taskId?: string | null) {
+  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
+  // names a place inside the file, not a file, and neither store knows it.
+  const want = path.replace(/:\d+(?:-\d+)?$/, '')
+  if (previewCanShow(want)) {
+    show('preview')
+    await nextTick()
+    if (await previewRef.value?.openFile(want)) {
+      setTab('preview')
+      return
+    }
+  }
   setTab('changes')
   await nextTick()
-  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
-  // names a place inside the file, not a file, and the tree only knows paths.
-  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''))
+  // `undefined`, not `null`: a message under no card says nothing about which
+  // source holds the file, while `null` means 「项目当前代码」 — and a file this
+  // room is still working on is not on main yet.
+  await changesRef.value?.openFile(want, taskId ?? undefined)
 }
 defineExpose({ pulse, highlightTurn, openFile })
 </script>
@@ -447,7 +462,10 @@ defineExpose({ pulse, highlightTurn, openFile })
           :topic-list="topicList"
           :active="active === 'overview'"
           :refresh-tick="refreshTick"
+          :open-card-id="openCardId"
           @open-topic="emit('open-topic', $event)"
+          @open-card="emit('open-card', $event)"
+          @review="emit('review')"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
         />
@@ -455,16 +473,17 @@ defineExpose({ pulse, highlightTurn, openFile })
           v-if="mounted.has('site')"
           v-show="active === 'site'"
           :topic="topic"
-          :worklog="worklog"
-          :working="working"
-          :working-since="workingSince"
           :active="active === 'site'"
+          :member-names="memberNames"
+          :working="working"
         />
         <PanelChanges
           v-if="mounted.has('changes')"
           v-show="active === 'changes'"
           ref="changesRef"
           :topic-id="topicId"
+          :task-id="openCardId"
+          :read-only="topic?.status === 'archived'"
           :project-id="projectId"
           :active="active === 'changes'"
           :refresh-tick="refreshTick"
@@ -472,11 +491,13 @@ defineExpose({ pulse, highlightTurn, openFile })
         <PanelPreview
           v-if="mounted.has('preview')"
           v-show="active === 'preview'"
+          ref="previewRef"
           :topic-id="topicId"
           :project-id="projectId"
           :active="active === 'preview'"
           :refresh-tick="refreshTick"
           @loaded="markPreviewSeen"
+          @locate="emit('locate', $event)"
         />
       </div>
     </template>

@@ -6,8 +6,7 @@
  *   1. 平台的一条提示，默认占不到三行；
  *   2. 收起来的东西一个字都不能丢，点开就在。
  *
- * 外加一条硬要求：库里存量的老事件（meta=null、meta.action、backend_error）渲染
- * 必须和改动前一模一样 —— 这张卡先于后端那张合，合的时候房间里还全是老数据。
+ * 老事件的正文、操作和日志仍可读；agent 的状态外观不改变这些内容。
  */
 import type { Block, Topic } from '../../cx_types'
 
@@ -18,13 +17,16 @@ import { render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
+const listTopicMembers = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     listBlocks: (...a: unknown[]) => listBlocks(...a),
+    listTopicMembers: (...a: unknown[]) => listTopicMembers(...a),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
+    listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
     answerOptions: vi.fn(),
@@ -167,6 +169,97 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  listTopicMembers.mockResolvedValue({ data: [] })
+})
+
+describe('agent status messages', () => {
+  it.each([
+    'turn_queued',
+    'turn_failed',
+    'turn_timeout',
+    'sandbox_rebuilt',
+    'ci_failed',
+    'pr_conflict',
+    'pr_identity_downgraded',
+    'remote_push_failed',
+    'card_filed',
+    'accept_done',
+    'deploy_failed',
+  ])('shows %s with the agent identity while preserving the next responder and full detail', async (eventType) => {
+    listTopicMembers.mockResolvedValue({
+      data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }],
+    })
+    const { container } = mountRoom([
+      event('', '需要处理这次运行', { event_type: eventType, who: 'human', detail: '完整的处理说明' }),
+    ])
+    await flush()
+    const frame = container.querySelector('.agent-status')!
+    expect(frame.querySelector('.im-name')?.textContent).toBe('测试助手')
+    expect(visibleText(frame)).toContain('运行状态')
+    expect(visibleText(frame)).toContain('待人工处理')
+    expect(visibleText(frame)).not.toContain('完整的处理说明')
+    expand(frame.querySelector('details')!)
+    expect(visibleText(frame)).toContain('完整的处理说明')
+  })
+
+  it('keeps a human document edit separate from an agent edit and preserves the document action', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'agent-test', name: '测试助手', agent: true },
+        { member_handle: 'editor-test', name: '编辑者', agent: false },
+      ],
+    })
+    const ai = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const human = {
+      ...event('', '编辑者 编辑了文档', { action: 'doc' }),
+      author: 'editor-test',
+    }
+    const { container, emitted } = mountRoom([ai, human])
+    await flush()
+    expect(container.querySelectorAll('.agent-status')).toHaveLength(1)
+    expect(container.querySelector('.agent-status')?.textContent).toContain('测试助手')
+    const cards = container.querySelectorAll('.action-card')
+    expect(cards).toHaveLength(2)
+    expect(cards[1].closest('.agent-status')).toBeNull()
+    ;(cards[0].querySelector('button') as HTMLButtonElement).click()
+    expect(emitted()['open-resource']).toEqual([['doc', undefined]])
+  })
+
+  it('does not give member events or backend logs an agent avatar', async () => {
+    const { container } = mountRoom([
+      event('', '编辑者加入了话题', null),
+      event('', '后端日志', { event_type: 'backend_error', stack: 'Traceback: sample' }),
+    ])
+    await flush()
+    expect(container.querySelector('.agent-status')).toBeNull()
+  })
+
+  it("does not label a worker's actual result as a status update", async () => {
+    const { container } = mountRoom([
+      { ...event('', '这是分身交回的完整结果', { event_type: 'subagent_stop' }), author_type: 'ai' },
+    ])
+    await flush()
+    expect(container.querySelector('.agent-status')).toBeNull()
+    expect(visibleText(container)).toContain('这是分身交回的完整结果')
+  })
+
+  it('keeps consecutive notices from different agents separate', async () => {
+    const { container } = mountRoom([
+      { ...ciFailed(), author: 'cheese-agentone', author_type: 'participant' },
+      { ...ciFailed(), author: 'cheese-agenttwo', author_type: 'participant' },
+    ])
+    await flush()
+    expect(container.querySelectorAll('.agent-status')).toHaveLength(2)
+  })
+
+  it('keeps two workers starting under the same room author separate', async () => {
+    const { container } = mountRoom([
+      event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-one' }),
+      event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-two' }),
+    ])
+    await flush()
+    expect(container.querySelectorAll('.agent-status')).toHaveLength(2)
+  })
 })
 
 describe('平台提示：一行 + 可展开', () => {
@@ -225,6 +318,51 @@ describe('平台提示：一行 + 可展开', () => {
 })
 
 describe('平台提示：连着来的同类事件折成一条', () => {
+  it('shows the latest cloud state and keeps preparation history behind one expansion', async () => {
+    const { container } = mountRoom([
+      event('', 'Cloud 机器正在创建并接入', {
+        event_type: 'cloud_provisioning',
+        state: 'waiting',
+        who: 'platform',
+        detail: '本话题会保留这条消息，机器就绪后自动继续。',
+      }),
+      event('', 'Cloud 机器已接入，正在继续刚才的消息', {
+        event_type: 'cloud_provisioning',
+        state: 'ready',
+        who: 'platform',
+      }),
+    ])
+    await flush()
+
+    const rows = container.querySelectorAll('[data-testid="platform-notice"]')
+    expect(rows).toHaveLength(1)
+    expect(visibleText(rows[0])).toContain('运行环境已就绪')
+    expect(rows[0].closest('.agent-status')?.querySelector('.im-name')?.textContent).toBe('芝士')
+    expect(rows[0].closest('.agent-status')?.textContent).toContain('运行状态')
+    expect(visibleText(rows[0])).not.toContain('正在创建')
+    expect(visibleText(rows[0])).not.toContain('平台已处理')
+    expect(visibleText(rows[0])).not.toContain('×2')
+    expect(container.querySelector('.im-event')).toBeNull()
+    expand(rows[0])
+    expect(visibleText(rows[0])).toContain('Cloud 机器正在创建并接入')
+    expect(visibleText(rows[0])).toContain('本话题会保留这条消息')
+  })
+
+  it('does not claim that waiting for a cloud machine is already handled', async () => {
+    const { container } = mountRoom([
+      event('', 'Cloud 机器正在创建并接入', {
+        event_type: 'cloud_provisioning',
+        state: 'waiting',
+        who: 'platform',
+        detail: '机器就绪后自动继续。',
+      }),
+    ])
+    await flush()
+    const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
+    expect(shown).toContain('正在准备运行环境')
+    expect(shown).not.toContain('已处理')
+  })
+
   it('三条 ci_failed 折成一行，带 ×3', async () => {
     const { container } = mountRoom([
       ciFailed(),
@@ -337,6 +475,43 @@ describe('平台提示：事故卡的正文压成一行', () => {
 })
 
 describe('向后兼容：库里存量的老事件一个都不能变样', () => {
+  it('shows the document edit diff even beside another action in the same AI turn', async () => {
+    const doc = event('', '芝士 编辑了文档', {
+      action: 'doc',
+      detail_label: '查看本次修改',
+      detail: '--- 修改前\n+++ 修改后\n-旧方案\n+实地调研方案',
+    })
+    const task = event('', '芝士 拆分了任务', { action: 'tasks' })
+    doc.turn_id = 'same-turn'
+    task.turn_id = 'same-turn'
+    const { container } = mountRoom([doc, task])
+    await flush()
+    const details = container.querySelector('.action-card details')!
+    expect(details.querySelector('summary')!.textContent).toBe('查看本次修改')
+    expect(details.querySelector('.doc-edit-line--del')!.textContent).toContain('旧方案')
+    expect(details.querySelector('.doc-edit-line--add')!.textContent).toContain('实地调研方案')
+    expect(details.textContent).not.toContain('--- 修改前')
+    expect(container.querySelectorAll('.action-card')).toHaveLength(2)
+  })
+
+  it('omits empty lines and their encoding from an old document change', async () => {
+    const { container } = mountRoom([
+      event('', '芝士 编辑了文档', {
+        action: 'doc',
+        detail: '--- 修改前\n+++ 修改后\n@@ -1 +1 @@\n <!-- PLAN -->\n 未修改的说明\n-&nbsp;\n+调查安排',
+      }),
+    ])
+    await flush()
+    const diff = container.querySelector('.doc-edit-diff')!
+    expect(diff.textContent).not.toContain('空行')
+    expect(diff.querySelectorAll('.doc-edit-line')).toHaveLength(1)
+    expect(diff.textContent).toContain('调查安排')
+    expect(diff.textContent).not.toContain('&nbsp;')
+    expect(diff.textContent).not.toContain('PLAN')
+    expect(diff.textContent).not.toContain('未修改的说明')
+    expect(diff.textContent).not.toContain('@@')
+  })
+
   it('meta=null 的老事件还是那条居中灰字', async () => {
     const { container } = mountRoom([event('', '话题已归档', null)])
     await flush()

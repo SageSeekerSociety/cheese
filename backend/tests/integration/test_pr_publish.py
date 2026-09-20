@@ -7,7 +7,9 @@ card; any failure leaves the card PR-less (the accept path then falls back).
 
 import asyncio
 import uuid
-from pathlib import Path
+
+from app.domain.review.github_pr import OpenedPR
+from tests.delivery import delivery_headers, delivery_task_id
 
 
 def _make_project(client) -> str:
@@ -24,8 +26,10 @@ def _make_topic(client, project_id: str) -> str:
 
 def _make_card(client, topic_id: str, **extra) -> str:
     r = client.post(
-        f"/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -42,7 +46,20 @@ class _FakeTokens:
 
 
 class _FakeClient:
+    """The App-token PR client, as much of GitHub as this file needs.
+
+    It answers `open_pr` with the PR it just made — title, body, `draft` and
+    `node_id` included — because the publisher reads those back: it rewrites the
+    text of a PR it merely ADOPTED, and it takes an adopted draft out of draft.
+    A stub that returned only `{number, html_url}` would make both of those
+    invisible here.
+    """
+
     opened: list[dict] = []
+    patched: list[dict] = []
+    readied: list[str] = []
+    #: 已经开着的 PR，按 head 分支索引 —— GitHub 一条 head 上只有一个开着的 PR。
+    existing: dict[str, dict] = {}
 
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
@@ -55,16 +72,44 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+        draft: bool = False,
+    ) -> OpenedPR:
         record = {
             "head": head,
             "base": base,
             "title": title,
             "body": body,
             "as_user_token": as_user_token,
+            "draft": draft,
         }
         type(self).opened.append(record)
-        return {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}
+        if head in type(self).existing:
+            # GitHub's "a pull request already exists" → the caller adopts it.
+            return OpenedPR(type(self).existing[head], None)
+        pr = {
+            "number": 42,
+            "html_url": "https://github.com/acme/widgets/pull/42",
+            "title": title,
+            "body": body,
+            "draft": draft,
+            "node_id": f"PR_node_{head}",
+        }
+        type(self).existing[head] = pr
+        return OpenedPR(pr, None)
+
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        type(self).patched.append({"number": number, "title": title, "body": body})
+        for pr in type(self).existing.values():
+            if pr["number"] == number:
+                pr.update(title=title, body=body)
+                return pr
+        return {"number": number, "title": title, "body": body}
+
+    async def mark_ready_for_review(self, node_id: str) -> None:
+        type(self).readied.append(node_id)
+        for pr in type(self).existing.values():
+            if pr.get("node_id") == node_id:
+                pr["draft"] = False
 
 
 def _github_world(monkeypatch) -> None:
@@ -72,6 +117,9 @@ def _github_world(monkeypatch) -> None:
     from app.domain.workspace import service as ws
 
     _FakeClient.opened = []
+    _FakeClient.patched = []
+    _FakeClient.readied = []
+    _FakeClient.existing = {}
 
     # #192: the installation is resolved per-project, not from a global.
     async def _fake_tokens_for_project(_project_id, _session):
@@ -89,8 +137,7 @@ def _github_world(monkeypatch) -> None:
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def test_publication_records_the_pr_on_the_card(client, monkeypatch):
@@ -116,7 +163,7 @@ def test_publication_records_the_pr_on_the_card(client, monkeypatch):
     # Routing bookkeeping is gone from the body — a GitHub reviewer needs the
     # change, not the platform's internal handoff.
     assert "验收人" not in opened["body"]
-    assert f"Cheese-Topic: {tid}" in opened["body"]
+    assert f"/topics/{tid}" in opened["body"]
 
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["pr_number"] == 42
@@ -208,9 +255,9 @@ def test_submit_route_dispatches_when_enabled(client, monkeypatch):
     from app.domain.review import pr_publish
 
     dispatched: list[dict] = []
-    monkeypatch.setattr(settings, "accept_via_pr", True)
     # enabled() gates on the App being configured (per-project resolution happens
-    # in the task); #192 dropped the global github_app_tokens() probe.
+    # in the task); #192 dropped the global github_app_tokens() probe, and #718
+    # dropped the accept_via_pr flag — the App configured IS the switch.
     monkeypatch.setattr(settings, "github_app_id", 12345)
     monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
     monkeypatch.setattr(
@@ -224,27 +271,6 @@ def test_submit_route_dispatches_when_enabled(client, monkeypatch):
     [kw] = dispatched
     assert str(kw["topic_id"]) == tid
     assert str(kw["project_id"]) == pid
-
-
-def test_submit_route_stays_quiet_when_flag_off(client, monkeypatch):
-    from app.core.config import settings
-    from app.domain.review import pr_publish
-
-    dispatched: list[dict] = []
-    # 采纳即合并 (#296) 把 accept_via_pr 默认翻成了 True，所以「关」这条现在要显式
-    # 关掉 flag（.env 覆盖仍然能关），并且证明即便 App 配好了，flag 一关就不开 PR。
-    monkeypatch.setattr(settings, "accept_via_pr", False)
-    monkeypatch.setattr(settings, "github_app_id", 12345)
-    monkeypatch.setattr(settings, "github_app_private_key_path", "/tmp/fake-app.pem")
-    monkeypatch.setattr(
-        pr_publish, "dispatch", lambda factory, **kw: dispatched.append(kw)
-    )
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    _make_card(client, tid)
-
-    assert dispatched == []
 
 
 def test_submit_route_stays_quiet_when_app_not_configured(client, monkeypatch):
@@ -318,7 +344,7 @@ def test_the_pr_body_claims_no_review_that_has_not_happened(client, monkeypatch)
     opened = _publish(client, pid, tid, cid)
 
     assert "Reviewed-by:" not in opened["body"]
-    assert f"Cheese-Topic: {tid}" in opened["body"]
+    assert f"/topics/{tid}" in opened["body"]
 
 
 def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
@@ -329,7 +355,8 @@ def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice", "change_subject": "做完了分页"},
     )
 
@@ -392,7 +419,11 @@ def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
-    r = client.post(f"/topics/{tid}/accept-card", json={"reviewer_handle": "alice"})
+    r = client.post(
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
+        json={"reviewer_handle": "alice"},
+    )
 
     assert r.status_code == 422
     # The refusal has to teach, not just refuse: the reader is an agent one
@@ -411,7 +442,8 @@ def test_a_blank_subject_is_refused_like_a_missing_one(client, monkeypatch):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={"reviewer_handle": "alice", "change_subject": "   "},
     )
 

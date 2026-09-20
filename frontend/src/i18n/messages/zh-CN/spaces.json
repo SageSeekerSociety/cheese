@@ -215,7 +215,8 @@
     "beFirstToReply": "成为第一个回复的人",
     "reply": "回复",
     "replyToUserPlaceholder": "回复 {user}...",
-    "deleteReplyConfirm": "确定要删除这条回复吗？"
+    "deleteReplyConfirm": "确定要删除这条回复吗？",
+    "untitled": "未命名讨论"
   },
   "domainGroups": {
     "title": "域名组管理",

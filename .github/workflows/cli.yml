@@ -16,16 +16,22 @@ name: CLI Test (Go)
 # separate capacity from the dev box's single deploy slot, so this never queues
 # behind a deploy; Go comes from setup-go below, and `go test -race` finds the
 # gcc it needs in the pool's build-essential (installed there for srp_rs).
+# backend/tests/fixtures/wire is in the path filters because the Go side reads
+# it: cli/internal/link/frames_test.go is held to the same committed frames the
+# backend is, and a fixture edited to suit one language has to face the other in
+# the same run or it is not a shared fixture.
 on:
   push:
     branches: [main]
     paths:
       - 'cli/**'
+      - 'backend/tests/fixtures/wire/**'
       - '.github/workflows/cli.yml'
   pull_request:
     branches: [main]
     paths:
       - 'cli/**'
+      - 'backend/tests/fixtures/wire/**'
       - '.github/workflows/cli.yml'
 
 permissions:
@@ -44,7 +50,7 @@ defaults:
 
 jobs:
   go:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -118,10 +124,31 @@ jobs:
         working-directory: .
         run: |
           export NPM_CONFIG_PREFIX="$GITHUB_WORKSPACE/.npm-e2e"
-          npm install -g --silent @anthropic-ai/claude-code@2.1.224
+          npm install -g --silent @anthropic-ai/claude-code@2.1.277
           "$NPM_CONFIG_PREFIX/bin/claude" --version
 
+      # The mock API's image, fetched before the suite so a registry hiccup is
+      # this step's failure and not a skipped test. Through mirror.gcr.io, as
+      # every other pull on the pool: Docker Hub's anonymous token endpoint is
+      # what refused the canary on 2026-09-17 and -18. Tagged under the name
+      # the harness runs, which then resolves locally.
+      - name: Pull the mock API image
+        run: |
+          image=mockserver/mockserver:mockserver-7.5.0
+          for attempt in 1 2 3 4 5; do
+            if docker pull -q "mirror.gcr.io/$image"; then
+              docker tag "mirror.gcr.io/$image" "$image"
+              exit 0
+            fi
+            echo "pull attempt $attempt failed; retrying in $((attempt * 15))s" >&2
+            sleep $((attempt * 15))
+          done
+          echo "could not pull $image through the mirror" >&2
+          exit 1
+
       - name: Delivery e2e
+        env:
+          CHEESE_E2E_REQUIRE_DOCKER: "1"
         run: |
           export PATH="$GITHUB_WORKSPACE/.npm-e2e/bin:$PATH"
           go test -tags claudee2e -v -timeout 35m ./e2e/

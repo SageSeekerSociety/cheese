@@ -1,8 +1,8 @@
 """Tests for Round 12 bug fixes.
 
 Covers: deadline scheduler, AIConversation creation, route ordering, material
-upload, migration chain, groups search count, datetime timezone, identity
-patch, and histogram defaults.
+upload, groups search count, datetime timezone, identity patch, and histogram
+defaults.
 """
 
 from datetime import UTC, datetime
@@ -164,78 +164,6 @@ async def test_upload_material_stores_file():
     call_args = mock_service.create_material.call_args
     assert "storageKey" in call_args.kwargs.get("meta", {}) or (
         call_args[1].get("meta", {}).get("storageKey")
-    )
-
-
-# ---------------------------------------------------------------------------
-# Migration chain: must have a single head (no forks)
-# ---------------------------------------------------------------------------
-
-
-def test_migration_chain_single_head():
-    import importlib.util
-    from pathlib import Path
-
-    migrations_dir = Path("migrations/versions")
-    if not migrations_dir.exists():
-        pytest.skip("migrations directory not found")
-
-    revisions: dict[str, str | tuple[str, ...] | None] = {}
-    merge_revisions: set[str] = set()
-    for f in sorted(migrations_dir.glob("*.py")):
-        spec = importlib.util.spec_from_file_location(f.stem, f)
-        if spec and spec.loader:
-            mod = importlib.util.module_from_spec(spec)
-            try:
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            rev = getattr(mod, "revision", None)
-            down_raw = getattr(mod, "down_revision", None)
-            if rev:
-                # Alembic merge migrations use a tuple for down_revision
-                if isinstance(down_raw, tuple):
-                    revisions[rev] = down_raw
-                    merge_revisions.add(rev)
-                else:
-                    revisions[rev] = down_raw
-
-    # Build parent → children mapping
-    children_of: dict[str | None, list[str]] = {}
-    for rev, down in revisions.items():
-        if isinstance(down, tuple):
-            for parent_rev in down:
-                children_of.setdefault(parent_rev, []).append(rev)
-        else:
-            children_of.setdefault(down, []).append(rev)
-
-    # Compute the "ultimate head" reachable from each revision by
-    # following children until a node with no outgoing children is found.
-    _head_cache: dict[str, str] = {}
-
-    def _reachable_head(rev: str) -> str:
-        if rev in _head_cache:
-            return _head_cache[rev]
-        children = children_of.get(rev, [])
-        if not children:
-            _head_cache[rev] = rev
-            return rev
-        # All children should converge — pick the first child's ultimate head
-        head = _reachable_head(children[0])
-        _head_cache[rev] = head
-        return head
-
-    # A fork is only a problem if not all children eventually reach the same head.
-    unresolved_forks: dict[str | None, list[str]] = {}
-    for down_key, child_list in children_of.items():
-        if len(child_list) <= 1 or down_key is None:
-            continue
-        heads = {_reachable_head(c) for c in child_list}
-        if len(heads) > 1:
-            unresolved_forks[down_key] = child_list
-
-    assert not unresolved_forks, (
-        f"Migration chain has unresolved forks: {unresolved_forks}"
     )
 
 

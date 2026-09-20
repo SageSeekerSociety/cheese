@@ -1,0 +1,14 @@
+[Unit]
+Description=Cheese transcript archives incremental mirror to Cloudflare R2 (off-site backup)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=nictheboy
+# Preserve earlier `<project>/<place>/<ts>.tar.gz` session archives. This
+# additive mirror never removes remote objects. New raw transcript collection
+# writes directly to private object storage and does not depend on this timer.
+Environment=UPLOADS_PREFIX=transcripts
+ExecStart=/home/nictheboy/cheese-backend-py/backend/.venv/bin/python /home/nictheboy/ops/r2-sync-uploads.py /home/nictheboy/cheese-transcripts
+Nice=10

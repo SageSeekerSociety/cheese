@@ -37,6 +37,7 @@
       <v-col cols="12" md="3">
         <v-select
           v-model="model.categoryId"
+          autocomplete="off"
           :items="categoryItems"
           label="分类"
           density="comfortable"
@@ -47,6 +48,7 @@
       <v-col cols="12" md="3">
         <v-select
           v-model="model.taskApproved"
+          autocomplete="off"
           :items="approvalItems"
           label="题目审批状态"
           density="comfortable"

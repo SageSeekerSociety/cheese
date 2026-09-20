@@ -14,7 +14,10 @@ import uuid
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.workspace import service as ws
+from tests.delivery import delivery_task, delivery_task_id
 from tests.machine_work import machine_commits
+
+_MSG = "chore: land the branch under test\n\nRequested-by: alice"
 
 
 def _mkproject(client) -> uuid.UUID:
@@ -28,20 +31,30 @@ def _owner(client) -> dict[str, str]:
     return {"Authorization": f"Bearer {_login(client, 'alice')}"}
 
 
-def _turn(pid: uuid.UUID, tid: uuid.UUID, path: str, content: str, msg: str) -> None:
+def _turn(
+    client, pid: uuid.UUID, tid: uuid.UUID, path: str, content: str, msg: str
+) -> None:
     """A turn's edits, committed and pushed by the machine that made them."""
-    machine_commits(pid, tid, {path: content}, msg)
+    machine_commits(pid, delivery_task_id(client, tid), {path: content}, msg)
 
 
 def _log(client, pid, topic=None) -> list[dict]:
-    params = {"topic": str(topic)} if topic else {}
+    params = (
+        {"topic": str(topic), "task": str(delivery_task_id(client, topic))}
+        if topic
+        else {}
+    )
     return client.get(
         f"/projects/{pid}/git/log", params=params, headers=_owner(client)
     ).json()["data"]["data"]
 
 
 def _diff(client, pid, topic=None) -> str:
-    params = {"topic": str(topic)} if topic else {}
+    params = (
+        {"topic": str(topic), "task": str(delivery_task_id(client, topic))}
+        if topic
+        else {}
+    )
     return client.get(
         f"/projects/{pid}/git/diff", params=params, headers=_owner(client)
     ).json()["data"]["diff"]
@@ -50,7 +63,9 @@ def _diff(client, pid, topic=None) -> str:
 def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
     r = client.post("/topics", json={"project_id": str(pid), "title": "做一个东西"})
     assert r.status_code == 200
-    return uuid.UUID(r.json()["data"]["id"])
+    room_id = uuid.UUID(r.json()["data"]["id"])
+    delivery_task(client, room_id, commit=False)
+    return room_id
 
 
 def _seed_session(client, topic_id: uuid.UUID, session_id: str) -> None:
@@ -62,6 +77,7 @@ def _seed_session(client, topic_id: uuid.UUID, session_id: str) -> None:
                 topic_id=topic_id,
                 agent_handle=CHEESE_HANDLE,
                 resume_token=session_id,
+                harness="claude-code",
             )
             await s.commit()
 
@@ -77,8 +93,8 @@ def _summary(client, pid, topic) -> dict:
 def test_topic_commits_visible_before_accept(client):
     """The panel's main complaint: 采纳 前一条提交都不显示。"""
     pid = _mkproject(client)
-    tid = uuid.uuid4()
-    _turn(pid, tid, "a.py", "print(1)\n", "加了 a.py")
+    tid = _mktopic(client, pid)
+    _turn(client, pid, tid, "a.py", "print(1)\n", "加了 a.py")
 
     messages = [c["message"] for c in _log(client, pid, topic=tid)]
     assert "加了 a.py" in messages
@@ -89,10 +105,13 @@ def test_topic_log_excludes_other_topics_commits(client):
     """After one topic is 采纳'd, its commits are on the base — and must not
     show up as another topic's work."""
     pid = _mkproject(client)
-    mine, theirs = uuid.uuid4(), uuid.uuid4()
-    _turn(pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
-    assert ws.merge_topic(pid, theirs)["merged"] is True
-    _turn(pid, mine, "mine.py", "y = 2\n", "我的提交")
+    mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
+    _turn(client, pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
+    assert (
+        ws.merge_topic(pid, delivery_task_id(client, theirs), message=_MSG)["merged"]
+        is True
+    )
+    _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
     messages = [c["message"] for c in _log(client, pid, topic=mine)]
     assert "我的提交" in messages
@@ -103,9 +122,12 @@ def test_topic_with_no_commits_shows_none_not_the_projects(client):
     """An untouched topic has no history of its own — and must not borrow the
     project's, which is what made the panel look busy on a fresh topic."""
     pid = _mkproject(client)
-    busy, fresh = uuid.uuid4(), uuid.uuid4()
-    _turn(pid, busy, "busy.py", "z = 3\n", "主干上的提交")
-    assert ws.merge_topic(pid, busy)["merged"] is True
+    busy, fresh = _mktopic(client, pid), _mktopic(client, pid)
+    _turn(client, pid, busy, "busy.py", "z = 3\n", "主干上的提交")
+    assert (
+        ws.merge_topic(pid, delivery_task_id(client, busy), message=_MSG)["merged"]
+        is True
+    )
 
     assert _log(client, pid, topic=fresh) == []
     assert _diff(client, pid, topic=fresh) == ""
@@ -116,8 +138,8 @@ def test_work_summary_lists_the_same_range_the_diff_renders(client):
     it, from this list — so it has to answer about the same range as the diff."""
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
-    _turn(pid, tid, "src/a.py", "print(1)\n", "加了 a.py")
-    _turn(pid, tid, "src/b.py", "print(2)\n", "加了 b.py")
+    _turn(client, pid, tid, "src/a.py", "print(1)\n", "加了 a.py")
+    _turn(client, pid, tid, "src/b.py", "print(2)\n", "加了 b.py")
 
     assert sorted(_summary(client, pid, tid)["changed_files"]) == [
         "src/a.py",
@@ -130,9 +152,12 @@ def test_work_summary_excludes_other_topics_work(client):
     on the base, and counting them here would put a badge on an idle topic."""
     pid = _mkproject(client)
     mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
-    _turn(pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
-    assert ws.merge_topic(pid, theirs)["merged"] is True
-    _turn(pid, mine, "mine.py", "y = 2\n", "我的提交")
+    _turn(client, pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
+    assert (
+        ws.merge_topic(pid, delivery_task_id(client, theirs), message=_MSG)["merged"]
+        is True
+    )
+    _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
     assert _summary(client, pid, mine)["changed_files"] == ["mine.py"]
 
@@ -161,8 +186,11 @@ def test_project_log_still_available_without_a_topic(client):
     """The project-level view is unchanged — it is simply not what a topic
     panel asks for."""
     pid = _mkproject(client)
-    tid = uuid.uuid4()
-    _turn(pid, tid, "c.py", "w = 4\n", "会被采纳的提交")
-    assert ws.merge_topic(pid, tid)["merged"] is True
+    tid = _mktopic(client, pid)
+    _turn(client, pid, tid, "c.py", "w = 4\n", "会被采纳的提交")
+    assert (
+        ws.merge_topic(pid, delivery_task_id(client, tid), message=_MSG)["merged"]
+        is True
+    )
 
     assert len(_log(client, pid)) >= 1

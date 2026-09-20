@@ -19,12 +19,14 @@ class AgentInstanceRepository:
         handle: str,
         type_name: str | None,
         display_name: str,
+        configuration: dict,
     ) -> AgentInstance:
         instance = AgentInstance(
             project_id=project_id,
             handle=handle,
             type_name=type_name,
             display_name=display_name,
+            configuration=configuration,
         )
         self._session.add(instance)
         await self._session.flush()
@@ -43,6 +45,10 @@ class AgentInstanceRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_all(self) -> list[AgentInstance]:
+        """Every agent in every project. For the boot-time identity backfill."""
+        return list((await self._session.scalars(select(AgentInstance))).all())
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[AgentInstance]:
         result = await self._session.execute(

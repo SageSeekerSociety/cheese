@@ -16,8 +16,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.core.config import settings
-from app.domain.agent import connector_build
-from app.domain.machine import claude_dist
+from app.domain.agent import connector_build, toolchain
+from app.domain.machine import claude_dist, pi_dist, toolchain_dist
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
@@ -160,6 +160,58 @@ async def download_claude(version: str, platform: str) -> Response:
         )
     return FileResponse(
         binary, media_type="application/octet-stream", filename="claude"
+    )
+
+
+# pi, served for the same reason and in the same shape. The artifact is a
+# tarball rather than a bare binary because that is how the vendor ships it: the
+# compiled agent plus the assets it reads beside itself. The machine unpacks it
+# into a version-named directory, which is what makes the pin a fact about what
+# we handed over rather than about what a registry resolved.
+@router.get("/pi/{version}/{platform}/pi.tar.gz")
+async def download_pi(version: str, platform: str) -> Response:
+    if not pi_dist.VERSION_RE.match(version):
+        return PlainTextResponse("bad version", status_code=400)
+    if not pi_dist.PLATFORM_RE.match(platform):
+        return PlainTextResponse("unknown platform", status_code=400)
+    try:
+        archive = await pi_dist.ensure_cached(_dist_dir(), version, platform)
+    except pi_dist.PiDistError as exc:
+        # 503 for the reason the claude route answers 503: the build may well
+        # exist and be fetchable later, and a 404 tells a machine to give up.
+        return PlainTextResponse(f"pi {version} unavailable: {exc}", status_code=503)
+    return FileResponse(
+        archive, media_type="application/gzip", filename=pi_dist.archive_name(platform)
+    )
+
+
+# The document toolchain, served for the reason the two above are and pinned in
+# a way they are not: neither typst nor pandoc publishes a checksum, so the
+# digest lives in `agent/toolchain` and a release re-cut under the same tag fails
+# to verify rather than being handed to a machine.
+#
+# No version in the path. claude and pi are version-addressed because a machine
+# can be running under a pin older than the deployment's; these are placed by
+# the launcher on every start, so the only version anyone can ask for is the one
+# this deployment pins — and putting it in the URL would only invite a machine
+# to ask for another.
+@router.get("/toolchain/{tool}/{platform}/artifact")
+async def download_toolchain(tool: str, platform: str) -> Response:
+    resolved = toolchain.resolve(tool, platform)
+    if resolved is None:
+        return PlainTextResponse("unknown tool or platform", status_code=404)
+    platform_key, artifact = resolved
+    try:
+        path = await toolchain_dist.ensure_cached(_dist_dir(), tool, platform_key)
+    except toolchain_dist.ToolchainDistError as exc:
+        # 503 for the reason the two routes above answer 503: upstream may well
+        # serve it later, and a 404 tells a machine to give up on something
+        # transient.
+        return PlainTextResponse(f"{tool} unavailable: {exc}", status_code=503)
+    return FileResponse(
+        path,
+        media_type="application/octet-stream",
+        filename=f"{tool}{artifact.suffix}",
     )
 
 

@@ -2,87 +2,16 @@
 those threads work on."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Residency, Task, TreeStatus, WorkTree
-
-
-class WorkTreeRepository:
-    """一棵树 = 一个分支 = 一个 PR = 一批活."""
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
-        return await self._session.get(WorkTree, tree_id)
-
-    async def open_tree_for_room(self, room_id: uuid.UUID) -> WorkTree | None:
-        """The tree this room is currently taking work into, if any.
-
-        None means the room is sealed — its tree's PR is in flight and the next
-        batch has not been started yet. That is a real state, not a missing row:
-        it is what stops a task from writing into a PR that CI is checking.
-        """
-        stmt = select(WorkTree).where(
-            WorkTree.room_id == room_id, WorkTree.status == TreeStatus.open
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def list_for_room(self, room_id: uuid.UUID) -> list[WorkTree]:
-        """Every tree this room has had, oldest first."""
-        stmt = (
-            select(WorkTree)
-            .where(WorkTree.room_id == room_id)
-            .order_by(WorkTree.created_at, WorkTree.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def add(
-        self,
-        *,
-        project_id: uuid.UUID,
-        room_id: uuid.UUID,
-        tree_id: uuid.UUID | None = None,
-    ) -> WorkTree:
-        """Start a batch.
-
-        `tree_id` exists for the room's FIRST tree, which carries the room's own
-        id so that every branch, worktree directory, container
-        workdir and tmux session keeps the name it already had. Every later tree
-        gets a fresh id and therefore a fresh branch.
-        """
-        tree = WorkTree(project_id=project_id, room_id=room_id, status=TreeStatus.open)
-        if tree_id is not None:
-            tree.id = tree_id
-        self._session.add(tree)
-        await self._session.flush()
-        return tree
-
-    async def seal(self, tree: WorkTree) -> WorkTree:
-        """封口: its PR is in flight, so nothing new may be written here."""
-        tree.status = TreeStatus.sealed
-        tree.sealed_at = datetime.now(UTC)
-        await self._session.flush()
-        return tree
-
-    async def mark_merged(self, tree: WorkTree) -> WorkTree:
-        tree.status = TreeStatus.merged
-        tree.merged_at = datetime.now(UTC)
-        await self._session.flush()
-        return tree
-
-    async def list_tasks(self, tree_id: uuid.UUID) -> list[Task]:
-        """The batch: every task working on this tree, oldest first."""
-        stmt = (
-            select(Task)
-            .where(Task.tree_id == tree_id)
-            .order_by(Task.created_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
+from app.domain.room_task.models import (
+    Task,
+    TaskStatus,
+)
 
 
 class TaskRepository:
@@ -96,85 +25,76 @@ class TaskRepository:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._session.get(Task, task_id)
 
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Record that the thread's raw session files reached the platform.
+        False when no thread has this id."""
+        stamped = await self._session.execute(
+            update(Task)
+            .where(Task.id == task_id)
+            .values(transcripts_archived_at=at)
+            .returning(Task.id)
+        )
+        return stamped.scalar() is not None
+
     async def add(
         self,
         *,
         project_id: uuid.UUID,
         room_id: uuid.UUID,
-        tree_id: uuid.UUID,
         title: str,
         owner_handle: str | None,
         created_by: str | None,
-        agent_instance_id: uuid.UUID | None,
+        reviewer_handle: str | None = None,
+        reporter_handle: str | None = None,
+        contributor_handles: list[str] | None = None,
     ) -> Task:
-        """A new thread in *room_id*, working on *tree_id*.
-
-        The tree is passed in rather than looked up here: which tree a task
-        joins is a decision (the room's currently open one, and a sealed room
-        has none), and a repository that made it would be making it silently at
-        the moment of writing rather than where it can be explained.
-        """
+        """Create a task; its service assigns the branch before checkout."""
         task = Task(
             project_id=project_id,
             room_id=room_id,
-            tree_id=tree_id,
             title=title,
             owner_handle=owner_handle,
+            reviewer_handle=reviewer_handle,
+            reporter_handle=reporter_handle,
+            contributor_handles=contributor_handles or [],
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         self._session.add(task)
         await self._session.flush()
         return task
 
-    async def count_resident(self, room_id: uuid.UUID) -> int:
-        """How many of this room's slots are in use right now."""
-        stmt = (
-            select(func.count())
-            .select_from(Task)
-            .where(Task.room_id == room_id, Task.residency == Residency.running)
-        )
-        return int((await self._session.scalar(stmt)) or 0)
+    async def open_by_subagent(
+        self, room_id: uuid.UUID, subagent_id: str
+    ) -> Task | None:
+        """The open thread in *room_id* this worker is doing, if any.
 
-    async def next_queued(self, room_id: uuid.UUID) -> Task | None:
-        """The queued task that has been waiting longest, if any."""
+        `open` is part of the question, not a filter on the answer: a worker id
+        is only meaningful while the work is live, and a finished thread that
+        kept its id would silently swallow the events of whatever came after it.
+
+        Newest first so that even if a stale binding somehow survived, the
+        events land on the work that is actually going on.
+        """
         stmt = (
             select(Task)
-            .where(Task.room_id == room_id, Task.queued_at.is_not(None))
-            .order_by(Task.queued_at, Task.id)
+            .where(
+                Task.room_id == room_id,
+                Task.subagent_id == subagent_id,
+                Task.status == TaskStatus.open,
+            )
+            .order_by(Task.created_at.desc(), Task.id)
             .limit(1)
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def list_queued(self, room_id: uuid.UUID) -> list[Task]:
-        """Everything waiting for a slot in this room, longest wait first."""
+    async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
+        """These threads, oldest first. Ids that name nothing are simply absent
+        — the caller (`Cheese-Task:`) has a list somebody wrote down, and a row
+        that has since been deleted is a line it cannot write, not an error."""
+        if not task_ids:
+            return []
         stmt = (
-            select(Task)
-            .where(Task.room_id == room_id, Task.queued_at.is_not(None))
-            .order_by(Task.queued_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_resident(self, room_id: uuid.UUID) -> list[Task]:
-        """Who is holding this room's slots — so a full room can say WHO."""
-        stmt = (
-            select(Task)
-            .where(Task.room_id == room_id, Task.residency == Residency.running)
-            .order_by(Task.last_turn_at, Task.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def list_stale_resident(self, older_than: datetime) -> list[Task]:
-        """Tasks marked running whose last turn is too old to still be going.
-
-        A backend that dies mid-turn leaves the row saying `running` forever,
-        and that row holds a slot nobody can see or free. Materialised residency
-        is the price of surviving a restart; this is the other half of it.
-        """
-        stmt = select(Task).where(
-            Task.residency == Residency.running,
-            Task.last_turn_at.is_not(None),
-            Task.last_turn_at < older_than,
+            select(Task).where(Task.id.in_(task_ids)).order_by(Task.created_at, Task.id)
         )
         return list((await self._session.scalars(stmt)).all())
 
@@ -204,6 +124,21 @@ class TaskRepository:
         stmt = (
             select(Task)
             .where(Task.project_id == project_id)
+            .order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_for_projects(self, project_ids: list[uuid.UUID]) -> list[Task]:
+        """同一个列表，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目。
+
+        逐个项目问一遍是一个人几个项目就几次往返；而这个列表是一个页面打开就要的
+        东西，所以它一次问完。
+        """
+        if not project_ids:
+            return []
+        stmt = (
+            select(Task)
+            .where(Task.project_id.in_(project_ids))
             .order_by(Task.created_at, Task.id)
         )
         return list((await self._session.scalars(stmt)).all())

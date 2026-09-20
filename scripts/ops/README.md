@@ -11,9 +11,12 @@
   VSTECS 控制台 (ecs4service.console.aliyun.com) 安全组放行 8080 入方向——届时
   该入口可作为 Funnel 的备份。
 - tailnet 内: http://100.110.174.48:8080 （挂 Tailscale 的设备直连）。
-- 80/443 被 Cheese 1.0 老栈 `cheese_prod_*` 占用，绝对不动；Caddyfile 全局
-  `auto_https disable_redirects` 防止 Caddy 抢绑 80（教训: 2026-07-10 一次 :443
-  探针块让 Caddy 连带绑 80 → 整个服务挂了几分钟）。
+- 80/443 都归 Caddy（`bind 172.26.10.144`），按 Host 分流：okcheese.com 三个名字和
+  ruc-etrip.cn 的 http 一律 301 到 https，其余 Host 反代回 etrip 部署的前端
+  `cheese_prod_frontend`，它只发布 127.0.0.1:80。Caddyfile 全局
+  `auto_https disable_redirects` 保留：跳转全部写在配置里，不让 Caddy 为了合成
+  跳转自己去绑端口（教训: 2026-07-10 一次 :443 探针块让 Caddy 连带绑 80 →
+  整个服务挂了几分钟）。
 - 功能旗: 入口后拼 `?exp=true` 进入内测态（应用内导航保持粘性），内测面（我的设备等）
   只在内测态可见。
 
@@ -95,8 +98,6 @@ ssh etrip 'cd /opt/cheesex/backend/sandbox && docker build -t cheesex-agent-sand
 
 ## 已知事项
 
-- **域名**: okcheese.com 到手后，80/443 需要一个前置反代统一路由两个栈
-  （老栈 cheese_prod_frontend 现占 80）——单独规划，别直接改 Caddyfile 抢 80。
 - **安全组**: 8080 入方向须在阿里云控制台放行（服务器侧 ufw inactive、iptables 全开）。
 - **apt 源**: 原内网源 mirrors.cloud.aliyuncs.com 失效，已切 mirrors.aliyun.com
   （原文件备份 /etc/apt/sources.list.bak-cheesex）。

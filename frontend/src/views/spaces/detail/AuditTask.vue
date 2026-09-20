@@ -64,7 +64,7 @@
               </div>
               <div class="d-flex align-center text-caption">
                 <v-icon size="small" color="primary" class="me-1">mdi-alarm</v-icon>
-                <span>{{ dayjs(task.deadline).format('MM-DD HH:mm') }}</span>
+                <span>{{ task.deadline == null ? '未设置截止时间' : dayjs(task.deadline).format('MM-DD HH:mm') }}</span>
               </div>
             </div>
           </div>

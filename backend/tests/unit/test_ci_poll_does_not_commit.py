@@ -41,9 +41,15 @@ def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     project: uuid.UUID,
 ) -> None:
     topic_id = uuid.uuid4()
+    ws.bind_task(
+        topic_id,
+        branch=f"task/{topic_id.hex[:8]}",
+        directory=f"task_{topic_id.hex[:8]}",
+        base="main",
+    )
     worktree = ws._ensure_worktree(project, topic_id)
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_tree(topic_id)
+    branch = ws.branch_for_task(topic_id)
     before = _git(repo, "rev-parse", branch)
 
     # Somebody is working: a file changed, but nobody said "this is a fix".
@@ -60,9 +66,15 @@ def test_the_machine_s_own_push_is_what_moves_the_branch(project: uuid.UUID) -> 
     """The other half of the contract: the head still moves — by the agent
     committing and pushing. That is what `cheese push-fix` then puts on the PR."""
     topic_id = uuid.uuid4()
+    ws.bind_task(
+        topic_id,
+        branch=f"task/{topic_id.hex[:8]}",
+        directory=f"task_{topic_id.hex[:8]}",
+        base="main",
+    )
     ws._ensure_worktree(project, topic_id)
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_tree(topic_id)
+    branch = ws.branch_for_task(topic_id)
     before = _git(repo, "rev-parse", branch)
 
     machine_commits(project, topic_id, {"fix.md": "the actual fix\n"})
@@ -75,5 +87,12 @@ def test_the_machine_s_own_push_is_what_moves_the_branch(project: uuid.UUID) -> 
 def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
     project: uuid.UUID,
 ) -> None:
-    head = AcceptService(None)._local_topic_branch_head(project, uuid.uuid4())  # type: ignore[arg-type]
+    task_id = uuid.uuid4()
+    ws.bind_task(
+        task_id,
+        branch=f"task/{task_id.hex[:8]}",
+        directory=f"task_{task_id.hex[:8]}",
+        base="main",
+    )
+    head = AcceptService(None)._local_topic_branch_head(project, task_id)  # type: ignore[arg-type]
     assert head is None

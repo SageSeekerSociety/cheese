@@ -1,10 +1,34 @@
 """ComputePool: which machine a turn lands on (design §3 / review R2)."""
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import SessionRef
+
+
+@pytest.mark.anyio
+async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
+    native = _FakeBackend("device")
+    codex = _FakeBackend("device", "codex")
+    calls = []
+    native.holds = lambda topic_id: True
+    codex.holds = lambda topic_id: True
+    native.interrupt = AsyncMock(side_effect=lambda ref: calls.append("interrupt"))
+    native.close = AsyncMock(side_effect=lambda ref: calls.append("close"))
+    native.deliver = AsyncMock(return_value=True)
+    codex.deliver = AsyncMock(return_value=True)
+    pool = ComputePool([native, codex], "device")
+    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    with pytest.raises(RuntimeError, match="multiple live harnesses"):
+        await pool.deliver(session.topic_id, "ambiguous")
+    await pool.activate(session, codex)
+    assert calls == ["interrupt", "close"]
+    assert await pool.deliver(session.topic_id, "follow up")
+    native.deliver.assert_not_awaited()
+    codex.deliver.assert_awaited_once_with(session.topic_id, "follow up")
 
 
 class _EmptyBacklog:
@@ -77,6 +101,9 @@ class _FakeBackend:
 
     def bind_receipts(self, consumer) -> None:
         return None
+
+    def bind_unread_probe(self, probe) -> None:
+        self.unread_probe = probe
 
     def holds(self, topic_id: uuid.UUID) -> bool:
         return False
@@ -236,25 +263,20 @@ def test_build_pool_registers_the_concrete_cloud_channel():
 
     backend = pool.select(provider_id="cloud")
     assert pool.has("cloud")
-    assert backend.channel is cloud
+    assert backend.channel.executor is cloud
     # Unconfigured Cloud is registered but not runnable, and it is the one
     # backend the turn path must wait for a machine on.
     assert backend.available() is False
     assert backend.provisions_machine is True
 
 
-def test_resolve_compute_id_topic_then_project_then_team_default():
+def test_resolve_compute_id_uses_room_then_explicit_project_default():
     from app.domain.agent.chat import _resolve_compute_id
+    from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs
 
-    # Topic's own选择 wins over the project sticky.
-    assert (
-        _resolve_compute_id({"compute_profile": "cloud"}, "device", "cloud") == "device"
+    configs = ProjectComputeConfigs(
+        default=ComputeChoice(name="Lab", profile="device", device_id="lab")
     )
-    # No topic选择 → project sticky, before the team's default.
-    assert _resolve_compute_id({"compute_profile": "device"}, None, "cloud") == "device"
-    # A fresh project starts from the team's default.
-    assert _resolve_compute_id({}, None, "device") == "device"
-    assert _resolve_compute_id(None, None, "device") == "device"
-    # No choice at any layer → None (pool default).
-    assert _resolve_compute_id({}, None, None) is None
-    assert _resolve_compute_id(None, None, None) is None
+    values = {"compute_configs": configs.model_dump()}
+    assert _resolve_compute_id(values, "cloud") == "cloud"
+    assert _resolve_compute_id(values) == "device"

@@ -37,11 +37,6 @@ class Team(Base):
     personal_owner_user_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, index=True
     )
-    # execution-architecture v4: the team owns the compute pool and its default.
-    # Projects only remember the last topic choice in Project.settings; they do not
-    # expose a separate compute configuration page.
-    compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
-
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

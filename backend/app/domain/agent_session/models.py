@@ -7,7 +7,7 @@ learned there, and a **session** is one conversation that may be thrown away.
 Until now the third layer was a single ``topics.session_id`` column, which said —
 structurally, not by policy — that a place hosts at most one agent.
 
-Keyed by ``(where, agent_handle)`` — where being a room's main line
+Keyed by ``(where, agent_handle, harness)`` — where being a room's main line
 (``task_id IS NULL``) or one thread in it — so a room can host several agents at
 once, each keeps its own conversation, and a piece of work gets a fresh one
 rather than inheriting whatever the room was in the middle of. ``agent_handle`` is
@@ -19,9 +19,10 @@ equal to NULL in a unique index. It is also not the authorship handle
 "whose conversation is this".
 
 One consequence worth stating: the implicit default and a later-configured
-instance that happens to be called ``cheese`` share a key, so configuring one
-inherits the conversation the project's 芝士 already had. That is the same
-continuity-over-purity call ``ResolvedAgent`` already makes for the memory pool.
+instance that uses the same harness and is called ``cheese`` share a key,
+so configuring one inherits the conversation the project's 芝士 already had.
+That is the same continuity-over-purity call ``ResolvedAgent`` already makes
+for the memory pool.
 
 Handing a topic to a different agent therefore destroys nothing — the new agent
 looks up a key that has no row and starts fresh, and handing it back finds the
@@ -50,6 +51,7 @@ class AgentSession(UuidPk, Timestamps, Base):
             "uq_agent_sessions_room",
             "topic_id",
             "agent_handle",
+            "harness",
             unique=True,
             postgresql_where=text("task_id IS NULL"),
         ),
@@ -57,6 +59,7 @@ class AgentSession(UuidPk, Timestamps, Base):
             "uq_agent_sessions_thread",
             "task_id",
             "agent_handle",
+            "harness",
             unique=True,
             postgresql_where=text("task_id IS NOT NULL"),
         ),
@@ -75,6 +78,9 @@ class AgentSession(UuidPk, Timestamps, Base):
     )
     # ResolvedAgent.handle — the agent's key inside its project.
     agent_handle: Mapped[str] = mapped_column(String(64))
+    harness: Mapped[str] = mapped_column(
+        String(64), default="claude-code", server_default="claude-code"
+    )
     # What the harness resumes this conversation by. Opaque to the platform: it
     # is Claude Code's session id today and whatever the next harness hands back
     # tomorrow, so nothing here may parse it.

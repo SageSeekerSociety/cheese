@@ -160,3 +160,9 @@ def test_an_oversized_file_is_never_read_into_the_response(tree):
 def test_version_identifies_content_not_the_moment_it_was_written():
     assert content_version(b"abc") == content_version(b"abc")
     assert content_version(b"abc") != content_version(b"abd")
+
+
+def test_linked_worktree_git_pointer_is_not_a_user_file(tree):
+    (tree / ".git").write_text("gitdir: ../../repo/.git/worktrees/task_123\n")
+    (tree / "note.txt").write_text("visible\n")
+    assert [file["path"] for file in ws.list_files(PID)] == ["note.txt"]

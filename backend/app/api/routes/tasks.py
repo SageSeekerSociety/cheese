@@ -692,16 +692,20 @@ def _build_participant_user_info(
     *,
     user_map: dict | None = None,
     profile_map: dict | None = None,
+    team_map: dict | None = None,
 ) -> dict:
-    """Build a full User-shaped dict for the participant field.
-
-    For USER-type memberships, returns the complete user payload
-    (id, username, nickname, avatarId, intro, etc.) so the frontend
-    can render participant names/avatars. For TEAM-type, returns id only
-    (team info is enriched separately).
-    """
+    """Build the user or team identity displayed on a registration."""
     user_map = user_map or {}
     profile_map = profile_map or {}
+    team_map = team_map or {}
+    if membership.is_team and membership.member_id in team_map:
+        team = team_map[membership.member_id]
+        return {
+            "id": team.id,
+            "name": team.name,
+            "avatarId": team.avatar_id,
+            "intro": team.intro,
+        }
     if not membership.is_team and membership.member_id in user_map:
         user = user_map[membership.member_id]
         profile = profile_map.get(membership.member_id)
@@ -714,6 +718,7 @@ def _build_participant_user_info(
             "id": user.id,
             "username": user.username,
             "nickname": nickname,
+            "name": nickname,
             "avatarId": profile.avatar_id if profile else None,
             "intro": profile.intro if profile else "",
         }
@@ -742,7 +747,7 @@ def _membership_to_api_model(
     )
 
     participant = participant_info or {"id": membership.member_id}
-    member = {"id": membership.member_id}
+    member = participant
 
     approved_map = {0: "APPROVED", 1: "DISAPPROVED", 2: "NONE"}
     approved_str = approved_map.get(membership.approved, "NONE")
@@ -1240,6 +1245,46 @@ async def confirm_publish_task_from_pdf(
     }
 
 
+async def _participation_response(db, task, membership, auth_user) -> dict:
+    from app.domain.project.services import ProjectService
+
+    owner_id = auth_user.user_id if membership.is_team else membership.member_id
+    if membership.is_team:
+        from app.domain.team.models import TeamMemberRole
+
+        members = await TeamRepository(db).list_members_of_team(membership.member_id)
+        if not any(member.user_id == owner_id for member in members):
+            owner_id = next(
+                (
+                    member.user_id
+                    for member in members
+                    if member.role == TeamMemberRole.OWNER
+                ),
+                None,
+            )
+            if owner_id is None:
+                raise NotFoundError("Team owner not found")
+    owner = await UserRepository(session=db).get_by_id(owner_id)
+    if owner is None:
+        raise NotFoundError("Participant user not found")
+    project = await ProjectService(db).for_participation(
+        task=task, membership=membership, owner_handle=owner.username
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "participant": _membership_to_api_model(membership),
+            "project": {
+                "id": str(project.id),
+                "name": project.name,
+                "root_topic_id": str(project.root_topic_id),
+                "team_id": project.team_id,
+            },
+        },
+    }
+
+
 @router.post(
     "/{taskId}/participants",
     summary="Apply for Task (create participant)",
@@ -1329,13 +1374,7 @@ async def create_task_participant(
         remark=payload.remark,
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "participant": _membership_to_api_model(membership),
-        },
-    }
+    return await _participation_response(db, task, membership, auth_user)
 
 
 @router.post(
@@ -1399,13 +1438,7 @@ async def join_task_as_user(
         remark=payload.remark,
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "participant": _membership_to_api_model(membership),
-        },
-    }
+    return await _participation_response(db, task, membership, auth_user)
 
 
 @router.post(
@@ -1474,13 +1507,7 @@ async def join_task_as_team(
         remark=payload.remark,
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "participant": _membership_to_api_model(membership),
-        },
-    }
+    return await _participation_response(db, task, membership, auth_user)
 
 
 @router.patch(
@@ -1533,6 +1560,10 @@ async def patch_task_participant(
         email=payload.email,
         phone=payload.phone,
     )
+
+    from app.domain.project.services import ProjectService
+
+    await ProjectService(db).activate_participation(task=task, membership=updated)
 
     return {
         "code": 200,
@@ -1618,6 +1649,9 @@ async def get_task(
                     "id": user_membership.id,
                     "type": "USER",
                     "memberId": auth_user.user_id,
+                    "deadline": int(user_membership.deadline.timestamp() * 1000)
+                    if user_membership.deadline
+                    else None,
                     "canSubmit": approved_label == "APPROVED",
                     "approved": approved_label,
                 }
@@ -1628,6 +1662,9 @@ async def get_task(
             task_id=task_id,
             user_id=auth_user.user_id,
         )
+        identity_teams = await TeamRepository(session=db).get_by_ids(
+            [membership.member_id for membership in team_memberships]
+        )
         for membership in team_memberships:
             approved_label = approved_rev_map.get(membership.approved, "NONE")
             identities.append(
@@ -1635,8 +1672,12 @@ async def get_task(
                     "id": membership.id,
                     "type": "TEAM",
                     "memberId": membership.member_id,
-                    # teamName 与 canSubmit 的精细逻辑后续接入 TeamService / role 判定
-                    "teamName": None,
+                    "teamName": identity_teams[membership.member_id].name
+                    if membership.member_id in identity_teams
+                    else None,
+                    "deadline": int(membership.deadline.timestamp() * 1000)
+                    if membership.deadline
+                    else None,
                     "canSubmit": approved_label == "APPROVED",
                     "approved": approved_label,
                 }
@@ -2349,6 +2390,10 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
+    from app.domain.project.services import ProjectService
+
+    await ProjectService(db).activate_participation(task=task, membership=membership)
+
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(
         task_id=task_id, approved=None
@@ -2453,6 +2498,8 @@ async def get_task_participants(
     )
 
     user_ids = [m.member_id for m in memberships if not m.is_team]
+    team_ids = [m.member_id for m in memberships if m.is_team]
+    team_map = await TeamRepository(session=db).get_by_ids(team_ids)
     user_map: dict = {}
     profile_map: dict = {}
     if user_ids:
@@ -2464,7 +2511,7 @@ async def get_task_participants(
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
-            m, user_map=user_map, profile_map=profile_map
+            m, user_map=user_map, profile_map=profile_map, team_map=team_map
         )
         participants.append(
             _membership_to_api_model(m, participant_info=participant_info)
@@ -2494,6 +2541,9 @@ async def get_task_participant(
         raise NotFoundError("Participant not found")
     user_map: dict = {}
     profile_map: dict = {}
+    team_map = {}
+    if membership.is_team:
+        team_map = await TeamRepository(session=db).get_by_ids([membership.member_id])
     if not membership.is_team:
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
@@ -2502,7 +2552,7 @@ async def get_task_participant(
             [membership.member_id]
         )
     participant_info = _build_participant_user_info(
-        membership, user_map=user_map, profile_map=profile_map
+        membership, user_map=user_map, profile_map=profile_map, team_map=team_map
     )
     return {
         "code": 200,

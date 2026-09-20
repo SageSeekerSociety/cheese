@@ -392,6 +392,9 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
         def __init__(self, _session):
             pass
 
+        async def settle_reservations(self):
+            return 0
+
         async def refresh_unsettled(self):
             return None
 
@@ -511,20 +514,57 @@ async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):
     assert "did not stay up" in machine.enroll_error
 
 
-def test_bootstrap_ensures_both_tools_the_image_may_not_have():
-    """A machine missing either tool enrolls "successfully" and then fails
-    silently — tmux makes the connector die while systemctl still returns 0, and
-    without git the agent's turn runs in an empty dir and its work is never seen.
-
-    Neither is guaranteed by the image: MicroCloud's LXC template lists git but
-    not tmux, and the VM template installs neither.
-    """
+def _tool_check_block() -> str:
+    """The generated script's tool loop, ready to run on its own."""
     script = enrollment.bootstrap_script(
         origin="http://cheese.test", token="tok", device_id="dev"
     )
-    assert "for tool in tmux git; do" in script
-    # Missing tools must abort enrollment rather than produce a broken machine.
-    assert "exit 1" in script.split("for tool in")[1].split("done")[0]
+    start = script.index("for tool in")
+    return script[start : script.index("\ndone", start) + len("\ndone")]
+
+
+@pytest.mark.parametrize("missing", ["tmux", "git", "python3"])
+def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
+    """Each of these fails SILENTLY when discovered later, which is the whole
+    reason the check is here rather than in whatever breaks first.
+
+    Without tmux the connector dies while systemctl still returns 0. Without git
+    the agent's turn runs in an empty dir and its work is never seen. Without
+    python3 the connector (Go) comes up fine and every room on the machine dies
+    at environment preparation instead, because the platform's own programs on a
+    machine — `cheese` and the environment helper — are python3.
+
+    None is guaranteed by the image: MicroCloud's LXC template lists git but not
+    tmux, and the VM template installs neither.
+    """
+    import subprocess
+
+    harness = f"""
+command() {{ [ "$2" = "{missing}" ] && return 1; return 0; }}
+sudo() {{ return 1; }}
+{_tool_check_block()}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 1, "a machine without it must not become a host"
+    assert missing in done.stderr, "the operator has to be told which tool"
+
+
+def test_the_check_installs_nothing_on_a_machine_that_already_has_them(tmp_path):
+    """An image that carries all three must not pay for an apt transaction — and
+    must not need passwordless sudo at all to enrol."""
+    import subprocess
+
+    calls = tmp_path / "sudo-calls"
+    harness = f"""
+command() {{ return 0; }}
+sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
+{_tool_check_block()}
+"""
+    done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+
+    assert done.returncode == 0, done.stderr
+    assert not calls.exists(), "nothing should have been installed"
 
 
 def test_bootstrap_is_valid_shell():
@@ -539,6 +579,80 @@ def test_bootstrap_is_valid_shell():
         ["bash", "-n"], input=script, text=True, capture_output=True, timeout=30
     )
     assert checked.returncode == 0, checked.stderr
+
+
+@pytest.mark.parametrize("already_running", [False, True])
+def test_enrollment_runs_with_the_identity_it_just_wrote(tmp_path, already_running):
+    import json
+    import shlex
+    import subprocess
+
+    config = tmp_path / ".config/cheese/config.json"
+    config.parent.mkdir(parents=True)
+    active_config = tmp_path / "active-config.json"
+    if already_running:
+        active_config.write_text(json.dumps({"device_id": "old", "token": "old"}))
+    connector = tmp_path / ".local/bin/cheesehost"
+    connector.parent.mkdir(parents=True)
+    config_path = shlex.quote(str(config))
+    active_path = shlex.quote(str(active_config))
+    # Starting an active systemd service leaves its process and credentials intact.
+    connector.write_text(
+        f"#!/bin/sh\n[ -f {active_path} ] || cp {config_path} {active_path}\n"
+    )
+    connector.chmod(0o755)
+    script = enrollment.bootstrap_script(
+        origin="https://cheese.test", token="new-token", device_id="new-device"
+    )
+    start = script.index('cat > "$HOME/.config/cheese/config.json"')
+    end = script.index('echo "cheese.service active"')
+    harness = f"""
+set -eu
+sleep() {{ :; }}
+loginctl() {{ echo Linger=yes; }}
+systemctl() {{
+    case "$2" in
+        restart) cp {config_path} {active_path} ;;
+        is-active) test -f {active_path} ;;
+        *) return 1 ;;
+    esac
+}}
+{script[start:end].replace("$HOME", str(tmp_path))}
+"""
+    result = subprocess.run(
+        ["bash"], input=harness, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(active_config.read_text())["device_id"] == "new-device"
+    assert json.loads(active_config.read_text())["token"] == "new-token"
+
+
+@pytest.mark.parametrize("direct", [False, True])
+def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
+    monkeypatch, direct
+):
+    import json
+
+    monkeypatch.setattr(enrollment.settings, "microcloud_direct_control", direct)
+    script = enrollment.bootstrap_script(
+        origin="https://cheese.test/api", token="test-token", device_id="test-device"
+    )
+    config = json.loads(script.split("<<'CHEESE_CONFIG_EOF'\n", 1)[1].split("\n", 1)[0])
+    assert config["base"] == "https://cheese.test/api/connector"
+    assert config["token"] == "test-token"
+    assert config["device_id"] == "test-device"
+    if direct:
+        # The control channel lands on the connection owner's forward, not on
+        # the one that carries the HTTP API. api-front is reloaded by every
+        # release and a reload retires the worker holding this link; the owner
+        # is the process a release deliberately leaves alone.
+        assert config["ws"] == "ws://127.0.0.1:18083/connector/agent"
+        assert "18080" not in config["ws"], "the device link must not share the proxy"
+    else:
+        assert "ws" not in config
+
+    # The HTTP identity is unchanged either way — only the control channel moved.
+    assert config["base"] == "https://cheese.test/api/connector"
 
 
 # --- the machine's ccproxy identity ----------------------------------------
@@ -610,6 +724,9 @@ async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch
 
         def __init__(self, _session):
             pass
+
+        async def settle_reservations(self):
+            return 0
 
         async def refresh_unsettled(self):
             return None

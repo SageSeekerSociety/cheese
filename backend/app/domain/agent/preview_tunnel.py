@@ -310,7 +310,9 @@ class PortSource:
     def get(self) -> int:
         try:
             with open(self._path) as handle:
-                raw = handle.read().strip()
+                # Older helpers stored a mount on line two; only the port
+                # survives an upgrade because content hosts preserve app paths.
+                raw = handle.readline().strip()
         except OSError as exc:
             raise PreviewError(f"no preview port declared: {exc}") from exc
         if not raw.isdigit() or not (1 <= int(raw) <= 65535):

@@ -10,10 +10,11 @@
 import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
+import { useWebSocket } from '@vueuse/core'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
-import { ApiError, getDoc, putDoc } from '../api'
+import { ApiError, chatWsUrl, getDoc, putDoc } from '../api'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { myHandle } from '../me'
 
@@ -180,7 +181,7 @@ async function adoptServerVersion(topicId: string) {
 }
 
 function onBlur() {
-  if (dirty.value && !lossy.value) void save()
+  if (dirty.value && props.editable && !lossy.value && !conflict.value) void save()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -237,23 +238,42 @@ watch(
   () => props.editable,
   (v) => {
     editor.value?.setEditable(v, false)
-    if (!v && dirty.value) void save()
+    if (!v && dirty.value && !lossy.value && !conflict.value) void save()
   }
 )
 
 // Reload from the server (e.g. AI activity). Respects unsaved local edits.
 async function reload() {
   const id = props.topicId
-  if (!id || dirty.value) return
+  if (!id || dirty.value || saving.value || loading.value) return
+  const version = docVersion.value
   try {
     const block = await getDoc(id)
-    if (props.topicId !== id) return
+    // Typing or a save may have started while the request was in flight.
+    if (props.topicId !== id || dirty.value || saving.value || docVersion.value !== version) return
     const full = block?.content ?? ''
     if (full !== rawDoc.value) installDoc(full)
+    docVersion.value = block?.doc_version ?? 0
   } catch {
     // best-effort
   }
 }
+
+// The charter has no chat panel to relay document notifications. Subscribe to
+// the same room channel; reconnect also catches edits made while disconnected.
+useWebSocket(() => (props.topicId ? chatWsUrl(props.topicId) : undefined), {
+  autoReconnect: { delay: 2000 },
+  onConnected: () => void reload(),
+  onMessage: (_socket, event) => {
+    let frame
+    try {
+      frame = JSON.parse(event.data)
+    } catch {
+      return
+    }
+    if (frame.type === 'state' && frame.resource === 'doc') void reload()
+  },
+})
 
 defineExpose({ save, reload })
 

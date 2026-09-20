@@ -11,14 +11,10 @@ from app.domain.topic.models import TopicRole
 class TopicMemberCreate(BaseModel):
     handle: str = Field(min_length=1, max_length=64)
     role: TopicRole = TopicRole.member
-    # No auth layer yet (fusion-design §4 agent-as-user is P1): the acting user's
-    # handle is passed explicitly and the service authorizes against their role.
-    actor: str = Field(min_length=1, max_length=64)
 
 
 class TopicMemberRoleUpdate(BaseModel):
     role: TopicRole
-    actor: str = Field(min_length=1, max_length=64)
 
 
 class TopicMemberOut(BaseModel):

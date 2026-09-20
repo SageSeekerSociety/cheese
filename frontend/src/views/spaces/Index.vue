@@ -9,6 +9,18 @@
     </div>
   </div>
   <v-container fluid>
+    <!-- 登录后落地的就是这一页（见 router/home.ts：`/` 把已登录的人送去
+         HomeSpaces），而这一页通篇是**别人**的空间——没有一个字说他自己的东西
+         从哪儿开。这一格只给一个项目都没有的人看；有项目的人看到的是和以前一模
+         一样的页面。 -->
+    <v-sheet v-if="firstRun" border rounded="lg" class="pa-4 mb-4">
+      <h2 class="text-h6 font-weight-medium mb-1">从这里开始</h2>
+      <p class="text-body-2 text-medium-emphasis mb-3">
+        建一个项目，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。
+      </p>
+      <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="startProject">新建项目</v-btn>
+      <p class="text-caption text-medium-emphasis mt-3 mb-0">或者先逛逛下面的空间，看看别人在做什么。</p>
+    </v-sheet>
     <v-row no-gutters>
       <v-col cols="12">
         <v-card class="search-card elevation-0">
@@ -88,12 +100,16 @@ import { useDisplay } from 'vuetify'
 import { getAvatarUrl } from '@/utils/materials'
 import { usePaging } from '@/utils/paging'
 
+import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
+
+import { listProjects } from '@/api'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
 const { mdAndUp } = useDisplay()
+const { show: showNewProjectDialog } = useNewProjectDialog()
 
 const selectedSort = ref('newest')
 const sortOptions = [
@@ -123,7 +139,34 @@ const sortSpaces = (value: string) => {
   console.log(value)
 }
 
+// 「他一个项目都没有」——`listProjects()` 不带 team_id 时，后端返回的就是调用者
+// 自己的项目（backend/app/api/routes/projects.py:182 把这个语义写死在那儿了），
+// 所以一问即知：不新增字段、不加迁移，跟 #946 验收里「老用户可跳过引导」用的是
+// 同一条判据。
+//
+// 不拿 `useWorkspaceStore().projects` 或 sessionStorage 里那份缓存当依据：前者
+// 只在 openProject 时才填，冷启动到这一页必然为空；后者分不出「真的没有」和
+// 「缓存没命中」。宁可多问一次接口。
+//
+// 拿不到清单就不显示——宁可少给一次提示，也不要在项目早就存在时对他说「从这
+// 里开始」。
+const firstRun = ref(false)
+async function detectFirstRun() {
+  try {
+    firstRun.value = (await listProjects()).data.length === 0
+  } catch {
+    firstRun.value = false
+  }
+}
+
+// 不传 team：对话框自己挑我的小队，没建过队的人落到个人小队（见
+// `defaultTeamFor`），和桌面 rail 那个 ＋ 的行为一致。
+function startProject() {
+  showNewProjectDialog()
+}
+
 onMounted(async () => {
+  void detectFirstRun()
   await refresh()
 })
 </script>

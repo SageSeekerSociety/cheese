@@ -34,8 +34,31 @@ class Settings(BaseSettings):
     # single page load fans out dozens of them, and a request that cannot get a
     # connection within `db_pool_timeout_s` raises TimeoutError — a 500 on a
     # perfectly healthy database.
+    #
+    # The number below the pool must also fit is the SERVER's, which nothing in
+    # this process can see. THREE pools share it during an ordinary release: the
+    # outgoing backend, the incoming one the rollout brings up beside it, and the
+    # separately released connection owner. At 20+30 each that is 150 against a
+    # `max_connections` of 100, and on 2026-09-16 it landed exactly as the
+    # arithmetic predicts — 19 seconds after a new backend answered /healthz,
+    # PostgreSQL refused 83 connections in one minute with `sorry, too many
+    # clients already`, and every request in flight failed with it. Users read
+    # that as the rooms mysteriously 401-ing and recovering, several times a day,
+    # once per deploy.
+    #
+    # So the ceiling is per-process but the budget is shared: the two backends
+    # at (size + overflow) each, plus the connection owner's own pool, have to
+    # leave room for the migration the deploy runs and for anyone holding a
+    # psql. The owner registers devices and answers bindings; it never fans out
+    # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
+    # DB_MAX_OVERFLOW=5 and the backends take the rest: 2 x 35 + 10 + 10 = 90
+    # of the 97 a default PostgreSQL offers once its superuser reserve is taken
+    # out (tests/unit/test_db_pool_fits_the_server.py holds this arithmetic). A
+    # box whose server is configured larger can raise these; a box that adds a
+    # fourth pool has to lower them. dev's server was raised to 200 on
+    # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
     db_pool_size: int = 20
-    db_max_overflow: int = 30
+    db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
@@ -72,6 +95,23 @@ class Settings(BaseSettings):
     # main's auth (real SRP/JWT login — A3): the merged app uses this as the
     # canonical identity. jwt_secret signs/verifies the product's access tokens.
     redis_url: str = "redis://localhost:6379/0"
+    # The process that owns device WebSockets is released independently from the
+    # business backend. Empty keeps the in-process hub for local development and
+    # tests; deployed business backends point at the stable compose service.
+    # Where an alert goes when something breaks that nobody is watching. A
+    # Feishu group's custom-bot webhook URL; empty disables alerting entirely,
+    # which is what a developer's machine and every test wants.
+    feishu_alert_webhook: str = ""
+
+    device_connection_url: str = ""
+    device_connection_secret: str = ""
+    device_connection_owner: bool = False
+
+    @property
+    def device_connection_auth_secret(self) -> str:
+        """Stable internal credential without adding a second deploy secret."""
+        return self.device_connection_secret or self.jwt_secret
+
     environment: str = "development"
     # "This process was started by the deploy compose file" — a fact that does NOT
     # travel through the box's env file (#439). It is a literal in the compose
@@ -82,6 +122,11 @@ class Settings(BaseSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    # Dedicated content domain, outside the platform's registrable domain.
+    # Empty until its wildcard DNS/TLS and host-preserving gateway are ready.
+    sites_domain: str = ""
+    sites_scheme: str = "https"
+    sites_port: int | None = None
     # OAuth browser-flow landing pages (must match the frontend router).
     frontend_oauth_success_path: str = "/account/oauth/success"
     frontend_oauth_error_path: str = "/account/oauth/error"
@@ -98,6 +143,15 @@ class Settings(BaseSettings):
     # GLM: base_url=https://open.bigmodel.cn/api/anthropic, token=ZHIPU_API_KEY.
     # Swapping to LiteLLM / Anthropic later is just env, no code change.
     agent_model: str = "glm-5.2"
+    # Which models each harness that does NOT speak the platform gateway may
+    # be pointed at ({"codex": ["gpt-5.2"]}). A harness that speaks the gateway
+    # needs no entry: everything the project can use is something it can drive,
+    # and listing those again would be a second copy to fall out of date.
+    agent_harness_models: dict[str, list[str]] = {}
+    # Shared central session host; private scratch runs in isolated containers.
+    agent_session_device_id: str | None = None
+    agent_session_api_base: str | None = None
+    private_chat_executor_image: str = "cheese-private-executor:2.1.277"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.
@@ -106,6 +160,30 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
+    # --- Platform-side fetch service (app.domain.fetch) ---
+    # Reading the web for an agent happens HERE, not in the sandbox: the sandbox
+    # has a datacentre egress that several sites refuse outright, one browser per
+    # topic would mean one 185 MB Chrome per topic, and nothing cached would be
+    # shared. Both endpoints are optional and both default to off.
+    #
+    # The reader is a THIRD PARTY: enabling it hands every fetched URL to someone
+    # else, so it is an operator's decision rather than a default. Measured, it
+    # earns its place — it returned a Cloudflare-challenged page and a host this
+    # network cannot reach at all — but that is a trade to make deliberately.
+    fetch_reader_endpoint: str | None = None
+    # A shared browser, reached over HTTP rather than supervised in-process:
+    # it needs Chrome and pooling, and an API worker cannot restart a headless
+    # browser process tree cleanly. Measured, one shared instance served six
+    # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
+    fetch_browser_endpoint: str | None = None
+
+    # LibreOffice, reached over HTTP for the same reasons as the browser above:
+    # it is ~800MB and wants a writable profile directory, which rules it out of
+    # both the backend image and the sandbox image. It converts a Word or
+    # PowerPoint deliverable to PDF so the room can show it instead of offering a
+    # download. Unset, the preview panel says so and still hands the file over.
+    office_render_endpoint: str | None = None
+
     # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
@@ -141,6 +219,18 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
+    # Handles allowed to read and route the whole feedback queue
+    # (`/admin/feedback`). Comma-separated in env. A settings list rather than a
+    # role because no production path assigns `SystemRole.SUPER_ADMIN` today —
+    # a role check would evaluate to "nobody" and lock the surface for everyone.
+    feedback_admin_handles: list[str] = []
+    # How many feedback PROPOSAL cards one topic may see per day. The cap exists
+    # for the agent path (`cheese feedback propose`): a misfiring loop proposes
+    # once per turn, and a number in settings is the difference between a bad
+    # afternoon and a topic nobody can read. Proposal cards are the one kind of
+    # "the next step is on a person" that nobody is waiting on, so unlike a
+    # decision request it is safe to drop — and this is what drops it.
+    feedback_proposals_per_topic_per_day: int = 2
     # Which registered profile is the platform default ("our AI pool"). Normally
     # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
     # whole platform on the subscription seat — e.g. a demo where the GLM pool is
@@ -148,8 +238,9 @@ class Settings(BaseSettings):
     agent_default_profile: str = "default"
     agent_system_prompt: str = (
         "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
-        "了解项目的话题、决策和进展。回答要说人话，让零基础的同学也能看懂，"
-        "少说废话。当你引用项目记忆里的事实时，自然地点明依据。"
+        "了解项目的话题、决策和进展。用自然清楚的语言交流，"
+        "根据读者补齐必要背景和陌生术语，少说废话。"
+        "当你引用项目记忆里的事实时，自然地点明依据。"
     )
     # Working directory for the agent's git-backed workspace (one repo per project).
     workspace_root: str = "./.workspaces"
@@ -162,9 +253,10 @@ class Settings(BaseSettings):
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends no longer use this for their
-    # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
-    # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
-    # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
+    # effective timeout: they run the liveness loop the settings below describe
+    # (idle-suspect then a process probe, no-progress, unread grace; the ceiling
+    # only records) and hand the outer wrap their own ceiling through the
+    # `turn_ceiling` frame.
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
@@ -183,10 +275,36 @@ class Settings(BaseSettings):
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for both hooks backends regardless of activity — guards
-    # against a pathological "looks active but never converges" turn (a tool
-    # retrying forever, a genuine infinite loop that keeps printing).
+    # The wall-clock mark past which a turn is recorded as long. A metric, not
+    # a gate: crossing it is logged once by the harness monitor and written to
+    # the turn record (`ceiling_crossed_s`), and nothing ends. With the three
+    # gates in place (the process probe past idle-suspect, output with no
+    # progress, an unread injection), what a wall clock alone could still end
+    # is a turn that is working and has not finished, which is not a fault. One
+    # number for both layers: the monitor reads it directly and the outer wrap
+    # in runtime.py receives it via the `turn_ceiling` frame.
     agent_turn_hard_ceiling_s: float = 10800.0
+    # How long a message we injected may sit unconsumed before the session is
+    # called unable to read. On a different axis from the two above: those watch
+    # what a session PRODUCES, and a session that has stopped reading goes on
+    # producing, so neither of them ever fires for it. This one only exists
+    # while something is actually waiting, which makes it the narrower check and
+    # the one with a person behind it.
+    #
+    # Sized against the longest legitimate reason a message goes unread, which
+    # is a single long tool call: input is taken at tool boundaries, so a
+    # 20-minute command legitimately holds a message that long. This is not a
+    # responsiveness target. Ending the turn on this verdict replays the pending
+    # message into the next one, so the cost of firing is a restart, not a loss.
+    agent_unread_grace_s: float = 1800.0
+    # How long a session may keep producing output with no tool call and no
+    # ending before it is called stuck. This is the gate for a loop: a session
+    # that talks and never acts keeps every other signal healthy, because the
+    # idle check sees hooks arriving and the process probe sees a live process.
+    # A long foreground command does not trip it, since it emits no output
+    # while it runs. Sized for the longest honest stretch of pure writing, a
+    # document drafted with no tool call in between.
+    agent_no_progress_s: float = 1800.0
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
@@ -300,6 +418,14 @@ class Settings(BaseSettings):
     # channel — MicroCloud's default without the field is newapi, whose default
     # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
     microcloud_ai_mode: str = "ccproxy"
+
+    @property
+    def cloud_executor_ai_mode(self) -> str:
+        """Central sessions supply models; their Cloud guests only execute tools."""
+        if self.agent_session_device_id:
+            return "none"
+        return self.microcloud_ai_mode.strip().lower()
+
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
     microcloud_offering_id: int = 0
@@ -308,6 +434,11 @@ class Settings(BaseSettings):
     microcloud_default_cores: int = 2
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
+    # Prepare the default CPU offering; zero disables replenishment.
+    microcloud_warm_pool_size: int = Field(default=0, ge=0, le=5)
+    # Requires deploy/cloud-control.py on the backend host before enrollment.
+    microcloud_direct_control: bool = False
+    microcloud_warm_max_age_seconds: int = Field(default=3600, ge=300, le=86400)
     microcloud_login_user: str = "cheese"
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
@@ -320,9 +451,6 @@ class Settings(BaseSettings):
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
     microcloud_initial_funds: float = 1000.0
-    # A ceiling per project: provisioning is one API call, and nothing else here
-    # stops a loop from filling a Proxmox node.
-    microcloud_max_machines_per_project: int = 2
     # How long a SETTLED machine may go without being re-checked against
     # MicroCloud. Zero would put a provider round-trip on every read; never
     # would let a machine destroyed upstream sit here as `running` forever
@@ -350,14 +478,6 @@ class Settings(BaseSettings):
     ccproxy_tenant_timeout_s: float = 30.0
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    sandbox_image: str = "cheesex-agent-sandbox:latest"
-    # Machine quality gates use a disposable sibling container and never the
-    # backend process. Keep this explicit so operators can ship a test-toolchain
-    # image without granting the gate Docker socket or backend credentials.
-    quality_gate_image: str = "cheesex-agent-sandbox:latest"
-    quality_gate_memory_mb: int = 2048
-    quality_gate_cpus: float = 2.0
-    quality_gate_pids_limit: int = 512
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
     # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
     # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
@@ -439,32 +559,47 @@ class Settings(BaseSettings):
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].
-    max_concurrent_turns: int = 2
+    #
+    # The number comes from the room side. A room runs up to
+    # `MAX_RESIDENT_TASKS_PER_ROOM` threads and its own line is not one of them,
+    # so a saturated room is five turns, and a project normally has more than
+    # one room working. At 2, a single busy room queued three of its own threads
+    # behind itself while the rest of the project waited on top of that.
+    #
+    # This is the ONLY concurrency gate in the system: nothing limits how many
+    # turns land on ONE machine. So this number also decides what a single
+    # self-hosted laptop can be asked to run at once, which is not what it is
+    # named for and not a limit anybody chose. Raise this and that exposure
+    # rises with it, until a per-machine gate exists.
+    max_concurrent_turns: int = 16
 
     # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
-    # Container lifecycle is deterministic maintenance and must keep running
-    # even when model-consuming automatic heartbeats are disabled.
-    # A room now outlives the work done in it, so boxes accumulate per ROOM
-    # rather than draining as topics close. Hours, not days: container count
-    # should track work in flight, and a box whose room nobody has touched
-    # since yesterday is paying rent for a conversation that will resume from
-    # its transcript anyway.
-    #
-    # 8 hours holds for a whole room (2026-08-17 decision), because what
-    # "idle" MEASURES is the room's last activity AND its tasks'. Judging the
-    # room alone would tear down live work the moment the room's own timeline
-    # went quiet — and a room whose work has been split out is quiet by design,
-    # so that is the normal case.
+    # Idle rooms consolidate memory but keep their running environment.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
+    # Snapshotted into each archival operation, never restarted by deployment.
+    topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
+    # Where the platform keeps the raw Claude session files of every place that
+    # ran on a device — `.claude/projects/**/*.jsonl` and `.claude/todos` from
+    # the device home, as `<project>/<place>/<utc timestamp>.tar.gz`, one file
+    # per upload and never overwritten. The room's conversation is in the
+    # `blocks` table; these are the agent's own transcripts, and this is their
+    # only copy once the home is gone. On a deployment it must be a persistent
+    # mount (compose: /data/transcripts), like the memory tree.
+    transcripts_dir: str = "./.transcripts"
+    # The most one upload may carry. A device that sends more gets 413 and
+    # keeps its home; the sweep says so every tick until somebody looks.
+    transcripts_max_bytes: int = 512 * 1024 * 1024
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    chat_progress_check_interval_s: int = 15
+    chat_progress_reminder_after_s: int = Field(default=600, gt=0)
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
     # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
@@ -483,6 +618,30 @@ class Settings(BaseSettings):
     # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
     # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
     memory_backend: str = "db"
+
+    # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
+    # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
+    # topic and organize what it learned into the project's memory pools.
+    #
+    # OFF by default, and the default is the honest one. This spends model
+    # budget on a background trigger, which is the exact shape of the thing this
+    # repo parked once already (SchedulerService.tick): a clock cannot tell
+    # "there is something worth saying" from "say something". What makes this
+    # different is that the trigger is a real event — the screen is about to be
+    # closed, so this is the last moment anything CAN be checked against the
+    # workspace — not that the cost went away. Turning it on costs roughly one
+    # agent turn per organized topic, and no more than
+    # `dream_max_per_sweep` of them per sweep.
+    dream_enabled: bool = False
+    # How many topics one sweep may organize. A sweep that finds thirty idle
+    # screens must not start thirty turns at once; the rest are picked up an
+    # hour later, and nothing is lost because those screens were not closed
+    # either.
+    dream_max_per_sweep: int = 1
+    # Below this many blocks a topic is not worth a turn — a three-message
+    # topic has nothing in it that reading the transcript later would not give.
+    dream_min_blocks: int = 20
+
     # Local storage root for the embedded OpenViking instance (AGFS + vectors).
     openviking_data_dir: str = "./.viking"
     # OpenAI-compatible endpoints OpenViking uses internally. These are separate
@@ -527,36 +686,6 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
-    # 采纳即合并 (docs/accept-is-merge.md #296, staged rollout): submitting an
-    # accept card opens a real PR with the App's installation token; 采纳 merges
-    # that PR via the API. On by default as of stage 1 — the App owns PR
-    # creation, so the accept path never opens a competing PR while this is on
-    # (see AcceptService.accept). Submission-side only — accept dispatches on the
-    # card's stored pr_number, so flipping this never strands a card, and a
-    # deployment can still switch it off via .env (dev override) if needed.
-    accept_via_pr: bool = True
-    # Tier-2 semantics for the accept poller (#468): check names that must have
-    # APPEARED (and be green) before the poller may merge. Absence is pending,
-    # never pass — #465 merged on a run where `test` was never triggered and
-    # everything visible was skipped/green. Comma-separated; empty disables.
-    #
-    # Each entry may carry the diff scope that makes it required:
-    # `name:glob;glob` (globs are GitHub's path-filter syntax — `**` crosses
-    # directories, `*` does not). A bare name is required unconditionally.
-    # **Mirror the workflow's own `paths:` filter here.** `test` lives in
-    # .github/workflows/test.yml, which only triggers on `backend/**` — so on a
-    # frontend-only PR that check never appears, and demanding it unconditionally
-    # is an infinite wait, not a safety valve (2026-08-16: #483/#485/#486 sat
-    # fully green until a human merged them by hand). Getting the scope too
-    # NARROW is the mild failure: a check that does run still has to go green,
-    # because `check_state` sees it — only the not-yet-created window reopens.
-    accept_required_check_names: str = "test:backend/**;.github/workflows/test.yml"
-    # Backstop for the roster above: how long a required check may stay MISSING
-    # before the card stops waiting and asks a human. Waiting with no timeout is
-    # how a renamed/disabled workflow — or an Actions billing lapse, which this
-    # org had on 2026-08-13 — turns into a card that hangs forever with nobody
-    # told. The exit is 交给人, never an auto-merge. 0 disables (wait forever).
-    accept_required_check_grace_minutes: int = 30
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -587,12 +716,10 @@ class Settings(BaseSettings):
     # silent, which is why the intervals are on by default. 0 disables one.
     notification_finalize_interval_s: int = 60
     notification_email_drain_interval_s: int = 60
+    #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
+    #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
+    notification_push_drain_interval_s: int = 15
     task_deadline_sweep_interval_s: int = 900
-    # --- 结论卡 (2026-08-11) ---
-    # How often open conclusion cards past their absolute deadline are swept and
-    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
-    # the parent's digest turn ever running. 0 disables the loop (tests).
-    conclusion_sweep_interval_s: int = 60
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -636,6 +763,8 @@ class Settings(BaseSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
+    # Explicit private bucket; public upload bucket is never used for transcripts.
+    transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
@@ -710,6 +839,37 @@ class Settings(BaseSettings):
     notification_email_max_retries: int = Field(
         default=3, alias="NOTIFICATION_EMAIL_MAX_RETRIES"
     )
+
+    # --- 浏览器推送（#1084 第 5 步）---
+    #
+    # 一对 VAPID（Voluntary Application Server Identification）密钥：推送服务商
+    # （Chrome 的 FCM、Firefox 的 autopush）用公钥认出推送是谁发的，浏览器订阅时
+    # 也要拿着同一个公钥。没有配就整条链路关掉 —— 不是报错，是这个部署没开这个
+    # 渠道，订阅接口会如实说不可用。
+    #
+    # 私钥不能进仓库也不能进镜像：它是「以这个站的身份发推送」的凭据。
+    vapid_public_key: str = Field(default="", alias="VAPID_PUBLIC_KEY")
+    vapid_private_key: str = Field(default="", alias="VAPID_PRIVATE_KEY")
+    #: VAPID 要求一个联系方式，推送服务商用它在出问题时找到运营者。
+    vapid_subject: str = Field(default="mailto:ops@okcheese.com", alias="VAPID_SUBJECT")
+    notification_push_queue_key: str = Field(
+        default="cheese:notifications:push", alias="NOTIFICATION_PUSH_QUEUE_KEY"
+    )
+    notification_push_batch_size: int = Field(
+        default=100, alias="NOTIFICATION_PUSH_BATCH_SIZE"
+    )
+    notification_push_max_retries: int = Field(
+        default=3, alias="NOTIFICATION_PUSH_MAX_RETRIES"
+    )
+
+    @property
+    def web_push_configured(self) -> bool:
+        """这个部署能不能发浏览器推送。
+
+        两把钥匙缺一个就不能：只有公钥订阅得成但发不出去，只有私钥连订阅都换不到
+        凭据。所以这两个字段一起判断，调用点不各自数一遍。
+        """
+        return bool(self.vapid_public_key and self.vapid_private_key)
 
     meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")
     meilisearch_api_key: str = Field(default="", alias="MEILISEARCH_API_KEY")

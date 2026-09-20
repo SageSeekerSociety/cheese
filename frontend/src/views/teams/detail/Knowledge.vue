@@ -9,6 +9,7 @@
       <div class="mb-4 d-flex align-center flex-wrap gap-4">
         <v-text-field
           v-model="searchQuery"
+          autocomplete="off"
           label="搜索知识库"
           prepend-inner-icon="mdi-magnify"
           density="compact"
@@ -22,6 +23,7 @@
 
         <v-select
           v-model="filter.type"
+          autocomplete="off"
           label="资料类型"
           density="compact"
           variant="solo"
@@ -36,6 +38,7 @@
 
         <v-select
           v-model="filter.tag"
+          autocomplete="off"
           label="标签"
           density="compact"
           variant="solo"
@@ -492,6 +495,7 @@
             <!-- 资料名称 -->
             <v-text-field
               v-model="uploadData.name"
+              autocomplete="off"
               label="资料名称"
               variant="outlined"
               hide-details="auto"
@@ -570,6 +574,7 @@
               <div v-else-if="uploadData.type === 'LINK'" class="upload-content">
                 <v-text-field
                   v-model="uploadData.url"
+                  autocomplete="off"
                   label="链接地址"
                   variant="outlined"
                   density="comfortable"
@@ -581,6 +586,7 @@
                 ></v-text-field>
                 <v-text-field
                   v-model="uploadData.title"
+                  autocomplete="off"
                   label="链接标题（可选）"
                   variant="outlined"
                   density="comfortable"
@@ -593,6 +599,7 @@
               <div v-else-if="uploadData.type === 'CODE'" class="upload-content">
                 <v-select
                   v-model="uploadData.language"
+                  autocomplete="off"
                   label="编程语言"
                   :items="languageOptions"
                   item-title="text"
@@ -605,6 +612,7 @@
                 ></v-select>
                 <v-textarea
                   v-model="uploadData.code"
+                  autocomplete="off"
                   label="代码内容"
                   variant="outlined"
                   density="comfortable"
@@ -631,6 +639,7 @@
                   <v-expansion-panel-text>
                     <v-textarea
                       v-model="uploadData.description"
+                      autocomplete="off"
                       label="资料描述"
                       variant="outlined"
                       density="comfortable"
@@ -642,6 +651,7 @@
 
                     <v-combobox
                       v-model="uploadData.labels"
+                      autocomplete="off"
                       label="标签"
                       variant="outlined"
                       density="comfortable"

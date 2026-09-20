@@ -18,12 +18,12 @@ from app.domain.agent.platform_notices import (
 
 # Posted into the topic 现场 when a turn is refused for lack of credits. The
 # room draws the severity from `meta`; the line itself just says what happened.
-CREDITS_EXHAUSTED_EVENT = "项目的算力额度已用完，这轮没有执行"
+CREDITS_EXHAUSTED_EVENT = "可用的 tokens 额度已用完，这轮没有执行"
 CREDITS_EXHAUSTED_META = notice(
     EVENT_TURN_FAILED,
     severity=SEVERITY_ERROR,
     who=WHO_HUMAN,
-    detail="请联系发放额度的机构续充，或解绑机构任务后自治运行。",
+    detail="请联系团队管理员或额度发放方补充额度。",
     detail_label="怎么恢复",
 )
 

@@ -40,10 +40,12 @@ def periodic_jobs(
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     from app.domain import backend_log
+    from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
         finalize_expired_aggregations,
     )
+    from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
 
@@ -53,14 +55,27 @@ def periodic_jobs(
             "scheduler tick", settings.scheduler_interval_seconds, scheduler.tick
         ),
         PeriodicRunner(
-            "idle screen reap",
+            "idle memory consolidation",
             settings.sandbox_reap_interval_seconds,
-            lambda: scheduler.reap_idle_device_screens(settings.sandbox_idle_hours),
+            lambda: scheduler.consolidate_idle_device_screens(
+                settings.sandbox_idle_hours
+            ),
         ),
-        # 两阶段采纳 (PR迭代式, 2026-08-09): advances pr_open accept cards — PR CI
+        # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.
         PeriodicRunner(
             "pr poll", settings.accept_pr_poll_interval_s, scheduler.poll_open_prs
+        ),
+        # 有东西就有 PR (#718 拍板①): a batch's draft PR opens at its first
+        # commit, and the platform can only OBSERVE that commit (a 分身 commits
+        # in the shared worktree — no push, no webhook, nothing to intercept).
+        # Same clock as the poller above on purpose: this is the other half of
+        # "watch the PRs", and a second interval setting would be one more knob
+        # to get wrong.
+        PeriodicRunner(
+            "draft pr sweep",
+            settings.accept_pr_poll_interval_s,
+            scheduler.open_draft_prs,
         ),
         # 自动同步上游: keeps each linked project's base current so accepting can
         # actually push. Conflicts hand off to 芝士 the same way the manual button
@@ -78,6 +93,11 @@ def periodic_jobs(
             settings.orphan_sweep_interval_s,
             scheduler.sweep_orphan_turns,
         ),
+        PeriodicRunner(
+            "chat progress reminder",
+            settings.chat_progress_check_interval_s,
+            scheduler.remind_silent_turns,
+        ),
         # 闸门孤儿卡扫底: the same blind spot one layer down — a gate task can die
         # under a process that keeps running, and then the card waits forever
         # (see review/gate_sweep.py's module docstring).
@@ -86,20 +106,17 @@ def periodic_jobs(
             settings.gate_sweep_interval_s,
             scheduler.sweep_abandoned_gates,
         ),
-        # 结论卡·阶段一: 默认采信 must happen even when the parent's digest turn
-        # never runs (queued behind a wedged turn, refused on credits, killed by
-        # a deploy). This sweeps cards past their 30-minute absolute deadline.
-        PeriodicRunner(
-            "conclusion sweep",
-            settings.conclusion_sweep_interval_s,
-            scheduler.sweep_conclusion_cards,
-        ),
         # Enrolling provisioned machines is platform plumbing, so it runs on its
         # own interval rather than the AI scheduler's — see machine/runner.py.
         PeriodicRunner(
             "machine enrollment sweep",
             settings.machine_enroll_interval_seconds,
             machines.sweep,
+        ),
+        PeriodicRunner(
+            "cloud warm pool",
+            settings.machine_enroll_interval_seconds,
+            lambda: sweep_warm_pool(sessions),
         ),
         # Subscription turns are metered at the proxy; this tails its log into
         # resource_usage + credits (issue #218). Off unless the log path is set.
@@ -130,6 +147,13 @@ def periodic_jobs(
             "notification email drain",
             settings.notification_email_drain_interval_s,
             lambda: drain_email_queue(sessions),
+        ),
+        # 同一个形状，同一个理由：那条 Redis 队列没有第二个消费者，不跑就是一条
+        # 推送都发不出去。没配 VAPID 密钥时它自己空转（`web_push_configured`）。
+        PeriodicRunner(
+            "notification push drain",
+            settings.notification_push_drain_interval_s,
+            lambda: drain_push_queue(sessions),
         ),
         # A deadline nobody sweeps is a promise the platform made and quietly did
         # not keep: the moment it matters is the moment nobody is looking.

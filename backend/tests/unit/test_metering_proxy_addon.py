@@ -191,7 +191,7 @@ def _with_admission(mod, monkeypatch, upstream: str | None):
     )
     monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
     monkeypatch.setattr(
-        mod, "ADMISSION", SimpleNamespace(check=lambda project, bearer: verdict)
+        mod, "ADMISSION", SimpleNamespace(check=lambda project, topic, bearer: verdict)
     )
     return verdict
 
@@ -299,11 +299,20 @@ def test_the_compose_no_longer_stamps_one_identity_on_every_connection():
 # widening the bind cannot silently produce an open relay.
 
 
-def _scoped_token(secret: str, *, project: str = "p1", ttl_s: float = 3600.0) -> str:
+def _scoped_token(
+    secret: str,
+    *,
+    project: str = "p1",
+    ttl_s: float = 3600.0,
+    rc: bool = False,
+    model: str | None = None,
+) -> str:
     """A token shaped exactly like the backend's mint_scoped_token. Signed for
     real: the addon verifies the HMAC, so a hand-written string would only ever
     exercise the reject path."""
-    raw = json.dumps({"p": project, "t": "t1", "exp": time.time() + ttl_s})
+    raw = json.dumps(
+        {"p": project, "t": "t1", "exp": time.time() + ttl_s, "rc": int(rc), "m": model}
+    )
     body = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return f"{body}.{base64.urlsafe_b64encode(digest).decode().rstrip('=')}"
@@ -311,6 +320,118 @@ def _scoped_token(secret: str, *, project: str = "p1", ttl_s: float = 3600.0) ->
 
 def _basic(password: str) -> str:
     return "Basic " + base64.b64encode(f"cheese:{password}".encode()).decode()
+
+
+def test_rc_bootstrap_routes_to_cheese_before_credential_injection(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    mod.RC_BASE = "https://backend.example/api"
+    token = _scoped_token("test-secret", rc=True)
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    flow = _make_flow(path="/v1/code/sessions", caller_bearer="machine-ticket")
+    flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
+    flow.request.headers["x-api-key"] = "stale-provider-key"
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.request.host == "backend.example"
+    assert flow.request.path == "/api/v1/code/sessions"
+    assert flow.request.headers["x-cheese-token"] == token
+    assert "authorization" not in flow.request.headers
+    assert "x-api-key" not in flow.request.headers
+    assert "x-cheese-attr" not in flow.request.headers
+    assert flow.server_conn.via is None
+    assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
+
+
+def test_api_rc_profile_and_policy_are_owned_by_the_signed_place(monkeypatch, tmp_path):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True, model="glm-5.2")
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    for path in (
+        "/api/oauth/profile",
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+    ):
+        flow = _make_flow(path=path, caller_bearer="machine-ticket")
+        flow.request.headers["x-cheese-attr"] = "other-project/other-topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response.status_code == (204 if path.endswith("settings") else 200)
+        assert flow.request.stream is False
+        assert flow.server_conn.via is None
+        if path.endswith("profile"):
+            data = json.loads(flow.response.content)
+            assert data["organization"]["uuid"] == "p1"
+            assert data["account"]["uuid"] == "t1"
+        elif path.endswith("settings"):
+            assert flow.response.content == b""
+        else:
+            assert (
+                json.loads(flow.response.content)["restrictions"][
+                    "allow_remote_control"
+                ]["allowed"]
+                is True
+            )
+
+
+def test_subscription_rc_profile_retains_its_provider_identity(monkeypatch, tmp_path):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True, model="claude-sonnet-5")
+    flow = _make_flow(path="/api/oauth/profile", caller_bearer=token)
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response is None
+    assert flow.request.headers["authorization"] == "Bearer provider-secret"
+
+
+def test_rc_without_backend_never_falls_through_to_official_service(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True)
+    flow = _make_flow(path="/v1/code/sessions", caller_bearer=token)
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response.status_code == 503
+    assert flow.request.headers["authorization"] != "Bearer provider-secret"
+
+
+def test_rc_telemetry_is_consumed_without_attaching_provider_credential(
+    monkeypatch, tmp_path
+):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    token = _scoped_token("test-secret", rc=True)
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    flow = _make_flow(path="/api/event_logging/v2/batch", caller_bearer="")
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response.status_code == 200
+    assert flow.request.stream is False
+    assert flow.request.headers["authorization"] != "Bearer provider-secret"
+
+
+def test_rc_flags_preserve_other_feature_values(monkeypatch, tmp_path):
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    flow = _make_flow(
+        path="/api/eval/test", caller_bearer=_scoped_token("test-secret", rc=True)
+    )
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = mod.http.Response.make(
+        200, json.dumps({"features": {"unrelated": {"defaultValue": 7}}}).encode()
+    )
+    mod.responseheaders(flow)
+    mod.response(flow)
+    features = json.loads(flow.response.content)["features"]
+    assert features["unrelated"] == {"defaultValue": 7}
+    assert features["tengu_ccr_bridge"] == {"defaultValue": True}
 
 
 def _make_connect_flow(proxy_auth: str | None = None, *, conn: str = "client-1"):
@@ -687,3 +808,340 @@ def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
 
     assert flow.response.stream is True
     assert mod.METER.used() == 0
+
+
+def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(
+        allow=True, pool="gateway", key="project-key"
+    )
+    for content_type in ("application/json", "text/event-stream"):
+        flow = _make_flow()
+        flow.request.headers["x-cheese-attr"] = "project/topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        assert flow.request.host == "gateway"
+        flow.response = _make_response(content_type=content_type)
+        flow.response.raw_content = json.dumps(
+            {"model": "glm-5.2", "usage": {"input_tokens": 10, "output_tokens": 20}}
+        ).encode()
+        mod.responseheaders(flow)
+        assert flow.response.stream is True
+        mod.response(flow)
+    assert mod.METER.used() == 0
+    assert not mod.USAGE_LOG.exists()
+
+
+def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: clock[0])
+
+    def admit(*args):
+        clock[0] = 0.035
+        return SimpleNamespace(allow=True, pool="gateway", key="private-provider-key")
+
+    mod.ADMISSION.check = admit
+    flow = _make_flow(caller_bearer="private-caller-token")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    flow.request.timestamp_start = 100.0
+    flow.request.timestamp_end = 100.02
+    flow.client_conn.timestamp_start = 99.0
+    flow.client_conn.timestamp_tls_setup = 99.4
+    flow.server_conn.id = "server-connection"
+    flow.server_conn.timestamp_start = 100.04
+    flow.server_conn.timestamp_tcp_setup = 100.05
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+    flow.response.headers["x-litellm-call-id"] = "gateway-call"
+    flow.response.headers["private-header"] = "private-value"
+    flow.response.timestamp_start = 102.0
+    flow.response.timestamp_end = 103.0
+    flow.response.raw_content = b"private-response-body"
+    with caplog.at_level("INFO", logger="cheese.metering"):
+        mod.responseheaders(flow)
+        mod.response(flow)
+    assert flow.response.stream is True
+    assert mod.METER.used() == 0
+    messages = [
+        r.message
+        for r in caplog.records
+        if r.message.startswith("gateway_request_timing ")
+    ]
+    assert len(messages) == 1
+    event = json.loads(messages[0].split(" ", 1)[1])
+    assert event["gateway_request_id"] == "gateway-call"
+    assert event["request_start"] == 100.0
+    assert event["request_end"] == 100.02
+    assert event["client_connection"] == {
+        "id": flow.client_conn.id,
+        "start": 99.0,
+        "tls_setup": 99.4,
+    }
+    assert event["server_connection"] == {
+        "id": "server-connection",
+        "start": 100.04,
+        "tcp_setup": 100.05,
+        "tls_setup": None,
+    }
+    assert event["response_start"] == 102.0
+    assert event["response_end"] == 103.0
+    assert round(event["admission_ms"]) == 35
+    assert event["admission_phases_ms"] == {
+        "thread_queue": 0,
+        "check": 35,
+        "loop_resume": 0,
+    }
+    assert event["route_ready"] is not None
+    assert event["status"] == 200 and event["failed"] is False
+    assert "private-" not in messages[0]
+
+
+def test_admission_timing_separates_executor_queue_from_check(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: clock[0])
+
+    def admit(*args):
+        clock[0] += 0.035
+        return SimpleNamespace(allow=True, pool="gateway", key="private-key")
+
+    async def queued_thread(function, *args, **kwargs):
+        clock[0] += 1.8
+        result = function(*args, **kwargs)
+        clock[0] += 0.004
+        return result
+
+    mod.ADMISSION.check = admit
+    monkeypatch.setattr(mod.asyncio, "to_thread", queued_thread)
+    flow = _make_flow(caller_bearer="private-token")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+    with caplog.at_level("INFO", logger="cheese.metering"):
+        mod.response(flow)
+    event = json.loads(caplog.records[-1].message.split(" ", 1)[1])
+    assert round(event["admission_ms"]) == 1839
+    assert {
+        key: round(value) for key, value in event["admission_phases_ms"].items()
+    } == {
+        "thread_queue": 1800,
+        "check": 35,
+        "loop_resume": 4,
+    }
+    assert "private-" not in caplog.records[-1].message
+
+
+def test_failed_gateway_request_keeps_timing_without_error_details(
+    monkeypatch, tmp_path, caplog
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None)
+    flow = _make_flow()
+    flow.metadata["cheese_pool"] = "gateway"
+    flow.request.timestamp_start = 100.0
+    flow.error = SimpleNamespace(msg="private-upstream-details")
+    with caplog.at_level("INFO", logger="cheese.metering"):
+        mod.error(flow)
+    event = json.loads(caplog.records[-1].message.split(" ", 1)[1])
+    assert event["request_start"] == 100.0
+    assert event["failed"] is True and event["status"] is None
+    assert event["response_start"] is None and event["response_end"] is None
+    assert "private-" not in caplog.records[-1].message
+
+
+def test_gateway_account_requests_retain_the_credential_route(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.UPSTREAM_VIA = "subscription-proxy:3128"
+    mod.ADMISSION.check = lambda *args: SimpleNamespace(
+        allow=True, pool="gateway", upstream=None
+    )
+    for path in (
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+        "/api/oauth/profile",
+    ):
+        flow = _make_flow(path=path)
+        flow.request.headers["x-cheese-attr"] = "project/topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is None
+        assert flow.request.stream is True
+        assert flow.server_conn.via is not None
+        assert flow.request.headers["authorization"] == "Bearer subscription-secret"
+
+    flow = _make_flow(path="/api/eval/sdk-client")
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    flow.metadata["cheese_rc_flags"] = True
+    asyncio.run(mod.requestheaders(flow))
+    mod.responseheaders(flow)
+    mod.response(flow)
+    assert flow.response.status_code == 200
+    assert flow.server_conn.via is None
+    assert json.loads(flow.response.content)["features"]["tengu_ccr_bridge"] == {
+        "defaultValue": True
+    }
+
+
+# --- a refusal has to REACH the caller --------------------------------------
+# The proxy streams the request body straight through (#654: buffering a long
+# turn's grown conversation is what OOM-killed it). Streaming and answering
+# locally are mutually exclusive in mitmproxy, and a refusal that forgets to
+# take the streaming decision back does not degrade — it kills the connection,
+# so the caller waits out its own timeout and never learns why it was refused.
+# Measured on the dev box over 48h: 68 refused message turns, zero refusals
+# delivered, 350 crashes, and a client that retried into the same wall forever.
+
+
+def _mitmproxy_takes_over(flow, *, request_has_body: bool = True) -> None:
+    """What mitmproxy does with the flow once `requestheaders` returns.
+
+    Transcribed from mitmproxy 12.1.2 (`HttpStream.state_wait_for_request_headers`
+    → `start_request_stream`): a request that still has a body to come is handed
+    to the streaming path whenever `flow.request.stream` is set, and that path
+    raises outright if a response has already been produced.
+
+    The body condition is the whole reason this hid for so long — `stream and
+    not event.end_stream` — so a refused GET was always delivered and a refused
+    `POST /v1/messages` never was.
+    """
+    if getattr(flow.request, "stream", False) and request_has_body:
+        if flow.response is not None:
+            raise NotImplementedError(
+                "Can't set a response and enable streaming at the same time."
+            )
+
+
+def _refusals_of_a_message_turn(monkeypatch, tmp_path):
+    """Every way `requestheaders` refuses a POST /v1/messages, each built the way
+    a box actually produces it. Yields (what it is, addon module, flow)."""
+    secret = "s3cr3t"
+
+    # The one seen in production: a machine carrying its own ccproxy ticket that
+    # the control plane could not place on an identity.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    yield "a machine with no identity to send it as", mod, _machine_flow(conn="c1")
+
+    # The same caller, refused by its project's balance instead.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.allow = False
+    verdict.reason = "budget spent: 10.0000 of 10.0000"
+    mod.http_connect(
+        _connect_flow_on("c2", _basic(_scoped_token(secret, project="p9")))
+    )
+    yield "an exhausted project budget", mod, _machine_flow(conn="c2")
+
+    # A caller that cannot prove which project to bill.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    yield "an unattributable caller", mod, _make_flow(caller_bearer="not-a-token")
+
+    # A box whose own subscription credential is missing. Its own directory:
+    # `inject=None` means "write nothing", so sharing one with the cases above
+    # would leave THEIR token file sitting there and this box would be fine.
+    mod = _load_addon(
+        monkeypatch, tmp_path / "bare-box", inject=None, scoped_secret=secret
+    )
+    yield (
+        "no platform credential on the box",
+        mod,
+        _make_flow(caller_bearer=_scoped_token(secret)),
+    )
+
+    # A gateway project on a deployment with no pool to send it to.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.pool = "gateway"
+    verdict.key = None
+    yield (
+        "a gateway project with no route",
+        mod,
+        _make_flow(caller_bearer=_scoped_token(secret)),
+    )
+
+
+def test_every_refusal_of_a_message_turn_reaches_the_caller(monkeypatch, tmp_path):
+    """The refusal is the product here: each of these exists to tell somebody
+    exactly what went wrong (which budget, which missing credential, which piece
+    of the box is unconfigured). A refusal that kills the connection instead
+    reports none of it — the caller sees a hung platform, and the operator sees
+    a crash log naming mitmproxy rather than the cause."""
+    for what, mod, flow in _refusals_of_a_message_turn(monkeypatch, tmp_path):
+        asyncio.run(mod.requestheaders(flow))
+
+        assert flow.response is not None, f"{what}: nothing refused it"
+        try:
+            _mitmproxy_takes_over(flow)
+        except NotImplementedError as exc:
+            raise AssertionError(
+                f"{what}: refused with {flow.response.status_code}, but the "
+                f"refusal never reaches the caller — {exc}"
+            ) from exc
+
+
+def _forwards_of_a_message_turn(monkeypatch, tmp_path):
+    """Every way `requestheaders` lets a POST /v1/messages through.
+    Yields (what it is, addon module, flow)."""
+    secret = "s3cr3t"
+
+    # SWAP: a scoped caller gets the platform's credential.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    yield "the swap path", mod, _make_flow(caller_bearer=_scoped_token(secret))
+
+    # PASS THROUGH: an enrolled machine keeps its own ticket.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    _with_admission(mod, monkeypatch, "m516:pw516")
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    yield "the pass-through path", mod, _machine_flow(conn="c1")
+
+    # GATEWAY: the request is re-aimed at the API-key pool and forwarded there.
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.pool = "gateway"
+    verdict.key = "sk-virtual-key"
+    monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
+    yield "the gateway path", mod, _make_flow(caller_bearer=_scoped_token(secret))
+
+
+def test_every_forwarded_message_turn_still_streams_its_body(monkeypatch, tmp_path):
+    """The other half of the same decision, and the reason the refusal fix must
+    not be "stop streaming". A long agent turn re-POSTs its entire grown
+    conversation every turn; buffering that whole is what OOM-kills this proxy
+    (#654), and it comes back the moment ONE forwarding path stops streaming."""
+    for what, mod, flow in _forwards_of_a_message_turn(monkeypatch, tmp_path):
+        asyncio.run(mod.requestheaders(flow))
+
+        assert flow.response is None, f"{what}: was refused, not forwarded"
+        assert flow.request.stream is True, f"{what}: forwards a buffered body"

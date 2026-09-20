@@ -22,9 +22,8 @@ import type { RouteRecordRaw } from 'vue-router'
 // full page. One address per document now; the old links still resolve.
 const DOC_KINDS = ['charter', 'decisions', 'weeklies'] as const
 
-// 手机上这整棵子树是一条页面栈：话题列表是唯一的一级目的地（底栏「工作区」那一格
-// 的落点），其余每一层都收起底栏并说明 ← 回哪儿去。桌面上这些 meta 全都不生效——
-// 那儿话题列表是常驻侧栏，没有"上一层"可回。
+// The topic list is the mobile workspace destination. Child pages declare their
+// parent through backTo, which is used by both desktop and mobile navigation.
 export const workspaceRoutes: RouteRecordRaw = {
   path: '/projects/:projectId',
   components: {
@@ -32,7 +31,11 @@ export const workspaceRoutes: RouteRecordRaw = {
     sidebar: () => import('@/views/workspace/ProjectSidebar.vue'),
   },
   props: { default: true, sidebar: true },
-  meta: { title: '项目工作台', isFullPage: true },
+  // `projectFrame` 标出「项目这个框」。顶栏那颗 ← 靠它回答两个问题：这一跳是不是
+  // 从项目外面走进来的（是才记入口），以及现在还在不在同一个框里（在就别覆盖）。
+  // 用标记而不是比对 URL 前缀：`/project/<id>` 的旧链接会先经过一次重定向，比
+  // 前缀会把重定向前后判成两个不同的地方。
+  meta: { title: '项目工作台', isFullPage: true, projectFrame: true },
   children: [
     {
       name: 'workspace-project',
@@ -50,7 +53,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       props: true,
       // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
       // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
-      // 画一条横条；← 由顶栏按 backTo 出。桌面上三者都不生效。
+      // 画一条横条；← 由顶栏按 backTo 出。
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
@@ -72,7 +75,9 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'dm/:peer',
       component: () => import('@/views/workspace/DmView.vue'),
       props: true,
-      meta: { title: '私聊', hideTabs: true, backTo: 'workspace-project' },
+      // ← 回成员页，不回话题列表：私聊只有一个入口，就是名册。手机顶栏那颗 ←
+      // 读的是这里，桌面上私聊头里那颗读的是 DmView，两颗指同一个地方。
+      meta: { title: '私聊', hideTabs: true, backTo: 'project-members' },
     },
     {
       name: 'project-docs',
@@ -96,11 +101,20 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '日历', hideTabs: true, backTo: 'workspace-project' },
     },
     {
+      // 资料库：用户给这个项目的文件。项目级，所以它在项目这个框里，不在某个话题
+      // 下面——引用它的那条消息可能来自任何一个房间。
+      name: 'project-library',
+      path: 'library',
+      component: () => import('@/views/ProjectLibraryView.vue'),
+      props: true,
+      meta: { title: '资料库', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       name: 'project-agents',
       path: 'agents',
       component: () => import('@/views/ProjectAgentsView.vue'),
       props: true,
-      meta: { title: 'AI 队友' },
+      meta: { title: 'AI 队友', backTo: 'workspace-project' },
     },
     {
       name: 'project-settings',
@@ -108,6 +122,22 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
       meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
+      name: 'project-delivery',
+      path: 'delivery',
+      component: () => import('@/views/ProjectDeliveryView.vue'),
+      props: true,
+      meta: { title: '导出与发布', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
+      // 名册页和单人主页共用 `members` 这一段路径，父子关系就是它们的关系：
+      // /members 是「有谁」，/members/:handle 是「他是谁」。
+      name: 'project-members',
+      path: 'members',
+      component: () => import('@/views/workspace/ProjectMembersView.vue'),
+      props: true,
+      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'member',

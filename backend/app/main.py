@@ -9,8 +9,6 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
-# dogfood loop: accepted on cheesex, deployed to dev (2026-07-18)
-
 import importlib
 import logging
 import pkgutil
@@ -19,15 +17,17 @@ import re
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
+from app.api.auth import ActorResolver
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import register_exception_handlers
+from app.core.errors import BaseError, register_exception_handlers
 from app.core.obs import (
     ResponseIntegrityAudit,
     bind_context,
@@ -36,8 +36,10 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.sandbox_auth import (
+    is_global_sandbox_token,
     is_valid_cheese_token,
     looks_like_project_agent_credential,
+    scoped_token_claims,
 )
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
@@ -64,6 +66,19 @@ async def lifespan(_: FastAPI):
     # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
+    from app.domain.agent.device_hub import (
+        DeviceOffline,
+        configure_subscription_cleanup,
+        device_hub,
+    )
+
+    hub_runtime: Any = device_hub
+    if hasattr(hub_runtime, "start"):
+        from app.api.routes.connector import recover_business_state
+
+        await hub_runtime.start()
+        hub_runtime.set_online_callback(recover_business_state)
+        configure_subscription_cleanup(hub_runtime)
     from app.domain.scheduler.service import SchedulerService
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
@@ -79,6 +94,26 @@ async def lifespan(_: FastAPI):
     except Exception as exc:  # noqa: BLE001 — a missing table (pre-migration) must not crash boot
         get_logger("cheesex.runtime").warning(
             "agent-user seed skipped", reason=str(exc)[:120]
+        )
+
+    # Every project agent is a collaborator with an identity of its own — a user
+    # row under `agent_instance_handle(id)`, which is what its roster seats name.
+    # `ensure_identity` runs on create, so this only reaches agents created before
+    # it existed; and the migration that seated each room's former agent wrote
+    # the seat's handle without the user row behind it, which this supplies.
+    # Idempotent, and never blocks boot for the same reason as the seed above.
+    try:
+        from app.domain.agent_instance.repositories import AgentInstanceRepository
+        from app.domain.agent_instance.services import AgentInstanceService
+
+        async with async_session_factory() as session:
+            service = AgentInstanceService(session)
+            for instance in await AgentInstanceRepository(session).list_all():
+                await service.ensure_identity(instance)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "agent identity backfill skipped", reason=str(exc)[:120]
         )
 
     # The backend and the in-container agent share one git store and must run as
@@ -131,6 +166,14 @@ async def lifespan(_: FastAPI):
             get_logger("cheesex.runtime").info(
                 "hook_subscriptions_recovered", topics=recovered
             )
+    except DeviceOffline as exc:
+        # Nothing to recover on a machine that is not there, and nothing to fix
+        # either: it comes back and reconnects, and `recover_business_state`
+        # runs this again for it. Reported as an error it was 9 alerts on the
+        # channel's first day, every one of them a laptop that was closed.
+        get_logger("cheesex.runtime").warning(
+            "hook subscriptions not recovered: device offline", device=exc.device_id
+        )
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("hook subscription recovery failed")
 
@@ -177,23 +220,49 @@ async def lifespan(_: FastAPI):
     )
     for job in jobs:
         job.start()
-    try:
-        yield
-    finally:
-        for job in reversed(jobs):
-            await job.stop()
-        # The openviking backend keeps the whole memory tree in one embedded
-        # instance (AGFS + vector index) under openviking_data_dir. Nothing
-        # else owns its lifecycle, so a redeploy would tear the process down
-        # mid-write; closing it here is what makes the data on that volume a
-        # consistent thing to come back to. No-op on the db backend.
-        if settings.memory_backend == "openviking":
-            try:
-                from app.domain.memory.openviking_store import get_runtime
+    from app.core.background import spawn
+    from app.core.loop_lag import watch_loop_lag
+    from app.domain.topic.retire import sweep_retired_storage
 
-                await get_runtime().close()
-            except Exception:  # noqa: BLE001 — shutdown must still finish
-                get_logger("cheesex.runtime").exception("openviking shutdown failed")
+    spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
+    spawn(watch_loop_lag(), name="event loop lag")
+
+    # The openviking backend's whole failure mode is silence: a rejected key
+    # leaves extraction writing nothing, recall answering empty, and no other
+    # symptom anywhere — indistinguishable from the db backend, which also
+    # never learns on its own. So somebody has to actually call the endpoints,
+    # and boot is when: whoever just flipped MEMORY_BACKEND is reading this log
+    # right now. No-op on the db backend, and it never raises — a model vendor
+    # outage must not keep the rest of the platform from starting.
+    from app.domain.memory import endpoint_probe as memory_endpoint_probe
+
+    await memory_endpoint_probe.check_on_startup()
+
+    from app.core.storage import reuse_s3_connections
+    from app.domain.machine.microcloud import reuse_connections
+
+    async with reuse_connections(), reuse_s3_connections():
+        try:
+            yield
+        finally:
+            for job in reversed(jobs):
+                await job.stop()
+            if hasattr(hub_runtime, "close"):
+                await hub_runtime.close()
+            # The openviking backend keeps the whole memory tree in one embedded
+            # instance (AGFS + vector index) under openviking_data_dir. Nothing
+            # else owns its lifecycle, so a redeploy would tear the process down
+            # mid-write; closing it here is what makes the data on that volume a
+            # consistent thing to come back to. No-op on the db backend.
+            if settings.memory_backend == "openviking":
+                try:
+                    from app.domain.memory.openviking_store import get_runtime
+
+                    await get_runtime().close()
+                except Exception:  # noqa: BLE001 — shutdown must still finish
+                    get_logger("cheesex.runtime").exception(
+                        "openviking shutdown failed"
+                    )
 
 
 # Route modules that failed to import this boot. Read by /healthz so a partially
@@ -319,46 +388,27 @@ register_all_permissions()
 # not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
 # one of them stopped matching, which does not fail: it silently opens the
 # cheese write-surface to anyone who can reach the port. The suite caught it
-# (test_project_agent_credential, test_ask_options, test_await_wake,
-# test_memory_search all went from "refused" to "allowed"), which is the only
+# (test_project_agent_credential, test_ask_options and test_memory_search all
+# went from "refused" to "allowed"), which is the only
 # reason to say it out loud here: a gate defined by strings has to be moved by
 # hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/background-task$")),
-    (
-        "POST",
-        re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
-    ),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/return-conclusion$")),
-    # 母子传话: the scoping id is the SENDER (whose turn is talking); the receiver
-    # is in the body and is checked against the parent/child edge by
-    # `TopicRelayService.direction` — this gate can only prove "some agent of this
-    # project", because a project-scoped credential reaches every topic of it.
+    # 留话给一条活: the scoping id is the SENDER (the room whose turn is talking);
+    # the receiver is in the body and is checked against the threads that room
+    # dispatched — this gate can only prove "some agent of this project", because
+    # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
-    # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
-    # is how an agent says "the tree is worth showing now".
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/push-fix$")),
-    # 路径声明与两把锁: who is touching what, and who is overwriting a whole
-    # file or holding the room's heavy lane right now.
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/claim$")),
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/check-result$")),
+    # Task bind/title/close/readiness/delivery routes are shared by human and
+    # agent executors. They authorize the room and task in the route itself;
+    # adding them here would incorrectly restrict them to agent credentials.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
-    # 结论卡: settled by the PARENT during its own turn, so the scoping id in
-    # the URL is the receiver, not the sub-topic that produced the card.
-    (
-        "POST",
-        re.compile(
-            r"^/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
-            r"(accept|need-evidence|escalate)$"
-        ),
-    ),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
+    # 记忆整理: the topic is the turn that is SPEAKING; which pools it may
+    # reorganize is derived from it server-side (memory/dream.py::dream_pools).
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/memory/dream$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
@@ -429,12 +479,15 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
 
 
 async def _credential_opens_gate(
-    token: str, *, project_id: str | None, topic_id: str | None
+    token: str,
+    *,
+    project_id: str | None,
+    topic_id: str | None,
+    screen_token: str = "",
 ) -> bool:
-    """Whether a project agent credential opens the cheese write-surface here.
+    """Whether the credential's participant may access this write-surface.
 
-    The gate is the ONLY authorization several of these routes have (``decision``
-    writes a block with no resolver behind it), so the project match and the
+    Some execution endpoints rely on this gate, so the project match and the
     revocation check have to happen here — which means a database read, before
     the router and therefore before ``Depends(get_db)`` exists. Going through
     ``dependency_overrides`` instead of importing the session factory keeps ONE
@@ -446,9 +499,31 @@ async def _credential_opens_gate(
     sessions = provider()
     session = await anext(sessions)
     try:
-        return await ProjectAgentCredentialService(session).opens_gate(
-            token, project_id=project_id, topic_id=topic_id
+        target = await ProjectAgentCredentialService(session).project_of_request(
+            project_id=project_id, topic_id=topic_id
         )
+        if target is None:
+            return False
+        import uuid
+
+        claims = scoped_token_claims(token)
+        origin = claims.get("t") if claims else None
+        topic = uuid.UUID(topic_id or origin) if topic_id or origin else None
+        resolver = ActorResolver(
+            session=session, bearer=None, cheese_token=token, screen_token=screen_token
+        )
+        actor = await resolver.resolve(
+            fallback_handle=None, project_id=target, topic_id=topic
+        )
+        if not actor.authenticated:
+            return False
+        if topic is not None:
+            await resolver.authorize_topic(actor, project_id=target, topic_id=topic)
+        else:
+            await resolver.authorize_project(actor, project_id=target)
+        return True
+    except (BaseError, ValueError):
+        return False
     finally:
         # Read-only: closing without draining skips the provider's commit, which
         # is what we want — the gate must not commit anything on the way past.
@@ -469,12 +544,17 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
         opened = is_valid_cheese_token(
             token, project_id=ids.get("project"), topic_id=ids.get("topic")
         )
-        # A project agent credential reaches every topic of its project, so it
+        # A project agent credential can address topics in its project, so it
         # can't be matched against the URL by string compare the way a per-turn
         # token is — a topic path names its project only through the topic.
-        if not opened and looks_like_project_agent_credential(token):
+        if not is_global_sandbox_token(token) and (
+            opened or looks_like_project_agent_credential(token)
+        ):
             opened = await _credential_opens_gate(
-                token, project_id=ids.get("project"), topic_id=ids.get("topic")
+                token,
+                project_id=ids.get("project"),
+                topic_id=ids.get("topic"),
+                screen_token=request.headers.get("x-cheese-screen") or "",
             )
         if not opened:
             return JSONResponse(
@@ -529,6 +609,15 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
 # a response is truncated. It logs nothing on a healthy response — only when the
 # body we declared and the body we sent differ.
 app.add_middleware(ResponseIntegrityAudit)
+
+# Content hosts must never reach platform APIs, including authentication routes.
+from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
+
+app.add_middleware(SiteHostMiddleware, platform=app)
+
+from app.api.preview_host import PreviewHostMiddleware  # noqa: E402
+
+app.add_middleware(PreviewHostMiddleware, platform=app)
 
 
 loaded_routers = _discover_routers(app)

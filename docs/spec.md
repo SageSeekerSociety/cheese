@@ -48,7 +48,7 @@
 **话题之外的对话**
 | 组成部分 | 对标产品 | AI 带来什么变化 |
 |---|---|---|
-| 私聊 | 飞书私聊 | 每个成员和芝士的一对一对话。用来设偏好（"设计的先给我看"）、问项目状态、调个人设置。不是讨论具体工作的地方——聊到具体事情时芝士会建议开话题，避免重要信息沉在私聊里 |
+| 私聊 | 飞书私聊 | One conversation per AI teammate, or a human-to-human conversation, for preferences, questions, document drafts and small tasks. Shell tools run in isolated temporary storage; saved documents live on Cheese. Repository work and team collaboration move to a work topic with the member's consent. |
 
 **三个全局页面（分属不同层级）**
 | 组成部分 | 层级 | 对标产品 | AI 带来什么变化 |
@@ -211,7 +211,7 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 - 这两棵树加上时间和引用，驱动四种查看方式：按时间看是消息流；按文档树看是结构化的文档；按对话树看是 Slack 式的 thread；按引用点击就能跳到来源（哪个决策、哪个 PR、哪段施工记录）。
 - AI 回复自动带上"回复谁"的关系（它是被哪条消息触发的就回复谁）。人发的消息默认不带回复关系（像群聊一样随便说），想回复特定消息时手动选。结构不是一开始就强制的——先随便聊，需要整理的时候再整理。
 - 回复的显示学 Slack 的 thread：主流里只看到顶层消息 + "N 条回复"，点进去打开 thread 侧栏看完整讨论。主流保持干净，细节按需展开。thread 讨论太长太复杂了，可以升级成独立话题（见 §6）。
-- @ 和回复是两回事：@ 是叫人过来看（通知），回复是说明这条消息针对哪条。发消息时默认不带 @（群聊本来就是大家都能看到的），想叫 AI 的时候点 @芝士 按钮。
+- @ 和回复是两回事：@ 是叫人过来看（通知），回复是说明这条消息针对哪条。发消息时默认不带 @（群聊本来就是大家都能看到的）；叫 AI 就是在正文里 @ 它，和 @ 一个人写法一样，区别只在于 @ 人是通知、@ 它是真开一轮。
 - 整个系统只有两种东西：块，和话题（块升级后的形态）。升级是全有或全无——升级了就同时获得独立的侧栏入口、文档树、AI 会话；不升级就还是普通的块。
 
 ---
@@ -254,8 +254,8 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 
 - 一件事 = 一件活。它背后自动关联一些技术资源（AI 会话、代码分支、开发环境），用户不用管这些，它们自动跟着这件活走。一个项目对应一个代码仓库。一件活的分支从它所在房间的分支切出来，做完合回去，最终合到主分支。
 - 项目也可以**关联一个已有的 git 仓库**（上游）：把外部 repo 的历史拉进项目，之后随时"同步上游"合入新提交。这让"接手一个已有项目/代码库"成为一等公民——不是导入一次性快照，而是保持一条可持续同步的通道。冲突时同步原样中止（不合一半），交由芝士/人在话题里解决。
-- 【预留概念：**发布**】采纳是话题级的完成，"发布"是项目级的交付：打一个版本 tag，并触发一组发布动作（push GitHub 镜像、部署 demo 网站、导出 PDF 报告……）。这是 CD 在知是里的对应物——学生项目的"上线/给评委演示/报告定稿 v2"都是发布。暂不实现：目前唯一需要它的场景是平台自举（dogfooding 的 redeploy，用仓库工具顶着），等真实用户需求出现再设计，避免拍脑袋发明概念。
-- 话题的核心生命周期事件是"采纳"（Accept）：话题的主要成果被验收通过 = 这件事完成 = 话题归档。因为所有产出底层都是 git repo 里的文件，采纳在实现上就是 merge——不管产出是代码、报告还是设计稿。归档后工作面冻结（分支合入、开发环境回收、文档定格），但对话永远可以追加评论（和 GitHub 里 merge 后的 PR 一样）。新的工作永远开新话题：归档后出现的后续，从结论处升级成新话题继续做。一件活 = 一件事 = 一次交付；想分批做 = 在同一个房间里再派一件活。没做完的房间也可以归档（打个"草稿"标签）。
+- **Project delivery:** topic acceptance merges reviewed work into the project's accepted branch. The project-level delivery page publishes a private static Site from a specific accepted revision. Each project owns one Site; its URL stays fixed, and accepted changes reach the live Site only after an explicit publish. Files are copied into persistent release storage, so the Site does not depend on the development machine. Topic previews link to project delivery without publishing their working branches. Automatic builds, backend application hosting, public sharing, PDF export and GitHub mirroring are outside this initial release.
+- 话题的核心生命周期事件是"采纳"（Accept）：话题的主要成果被验收通过 = 这件事完成。因为所有产出底层都是 git repo 里的文件，采纳在实现上就是**当场 merge**（#718：点一下就是合并，合的是人看到的那个 commit；"只在绿的时候合"由项目的分支保护规则执行）——不管产出是代码、报告还是设计稿。采纳**不归档**（#442 决定 1）：话题保持活跃，归档是人单独做的动作；归档后工作面冻结，但对话永远可以追加评论（和 GitHub 里 merge 后的 PR 一样）。一件活 = 一件事 = 一次交付；想分批做 = 在同一个房间里再派一件活。没做完的房间也可以归档（打个"草稿"标签）。
 - 谁来验收：在项目设定的权限策略范围内（见 §4.4），芝士根据判断把验收卡递给一个具体的人（谁最懂这块/谁没参与过/谁有空），卡上写"等 XX 验收"。组长可以通过私聊告诉芝士偏好（见 §1 私聊）。验收记名、可撤回。
 - 冲突处理：芝士先尝试解决（它能看到两边话题的完整上下文）；解决不了就把两边放在一起，@ 相关人来拍板，结论写回文档。总览的定期巡检也会预警"两个话题改了同一个文件"。
 - 讨论串里谁先发谁先说，AI 不自动开场；但从讨论升级出来的新话题，第一条必须是芝士的开场白——复述任务、确认理解（和 Claude Code 的 plan 确认一样）。
@@ -284,7 +284,7 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 ```
 
 - 三种用户看到的是同一个产品，只是复杂度不同：文科生/零基础 = 就是"聊天 + 一页文档"（技术工具图标可以按场景隐藏，但点开执行卡还是能瞄一眼施工现场，能力没阉割）；创研课 = 多个文献入口；工程团队 = 工具全开，默认钉住施工现场。
-- 输入栏在对话栏底部，发的就是这个话题的聊天消息——不做发送目标切换。"插入正在运行的 AI 会话"是平台自己判断的（消息落进正在跑的会话，人不用选），文档评论在文档那边写（§14.3）。默认不 @（人与人对话为主），想叫 AI 点 @芝士 按钮。
+- 输入栏在对话栏底部，发的就是这个话题的聊天消息——不做发送目标切换。"插入正在运行的 AI 会话"是平台自己判断的（消息落进正在跑的会话，人不用选），文档评论在文档那边写（§14.3）。默认不 @（人与人对话为主）；叫 AI 就是正文里 @ 它，输入栏的「交给芝士」按钮和 ⌘/Ctrl+Enter 只是替你把那个 @ 写进正文——召唤与否的唯一依据是正文，不是另一个自己存着状态的开关。房间里最后一句没 @ 它时，那条消息下面给一次「让它现在就看」：没 @ 的消息本来就会被下一轮捎上，这一下只是不必等到下一轮。
 - 打开工具的入口有三个：点消息流里的卡片（执行卡→施工现场，验收卡→成果/diff）、点文档右上角的工具图标、点验收卡上的"看成果"。临时打开用完关掉，钉住才常驻。
 - 各工具的内容：施工现场 = 这个地点 AI 会话的完整记录（只读，房间里能看到它每条支线的，根话题的施工现场就是 AI 的定期巡检日志）；预览 = 芝士**显式指定为当前预览**的那个 artifact 的实时展示（AI 用工具调用点名要展示哪个，平台不去猜哪个文件），可能是网页、运行结果、或数据可视化（可以分享链接，AI 和人看到同一个画面，点选批注对零基础用户特别好用）；Git = 提交历史和完整 diff，可以行级评论；文件 = 文件树浏览器；资源 = 容器和 token 用量，可以重建环境/调配置/看排队情况。任何一列都可以最大化。
 - 项目级文档（章程、决策记录、周报集）独立打开成全宽页面，不挂在某个话题下面。章程 = 项目的根文档（建项目时通过访谈生成，改了就等于改指令）；决策记录可以编辑纠错，每条来源可以跳回原始话题。
@@ -333,23 +333,17 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 | Skills（灵魂） | 见 §8.2 | 教 Claude Code 变成"芝士"。产品的核心知识，用自然语言写，迭代快、谁都能改 |
 | 工具（外接能力） | 记忆存储 / 开发环境 / 语音转文字 / GitHub / 机构汇总 | 给芝士接上外部能力 |
 
-### 8.2 agent 类型与实例
+### 8.2 Project agents and starting configurations
 
-芝士不是只有一种人格——不同项目可以用不同类型的芝士。历史学项目的芝士懂学术规范和文献检索，计算机项目的芝士懂代码架构和测试，设计项目的芝士懂用户体验和视觉语言。
+Each project agent owns its name, role instructions, explicit model and memory. A room selects an agent; the project selects the default agent for new rooms. There is no project default model.
 
-分成三层，寿命各不相同：
+Built-in presets provide starting values when an agent is created. A preset can supply role instructions, a model and existing tool settings. Missing model values are filled from the available supply's creation default and saved on the new agent. Subsequent preset changes do not affect existing agents. There is no editable team or global role catalog.
 
-| 层 | 是什么 | 范围 |
-|---|---|---|
-| **类型**（出厂设置） | 名字、系统提示、skills、MCP、model、effort、harness | **可跨项目共享**（平台预设 + 自定义） |
-| **实例 + 记忆** | 这个 agent 在这个项目里学到的东西 | **项目内**，跟身份走、不跟话题走 |
-| **会话** | 它在某个话题里聊到哪了 | 一个话题一个，可丢、可重建 |
+Users edit an individual agent in AI 队友. Edits take effect from its next turn in every room using that agent. The current turn uses one configuration snapshot. Existing agent IDs, handles and memory remain unchanged, and other agents keep their own configuration. New rooms require an active agent, so the last active agent cannot be retired.
 
-类型直接对应 Claude Code 的 agent type 定义，用带 frontmatter 的 markdown 描述：正文是系统提示，frontmatter 说它能够到什么（skills / mcp_servers）和怎么跑（model / effort / harness）。平台预设以文件形式随代码发布，人自己定义的存在 `agent_types` 表里；同名的自定义类型会盖掉预设，所以改一个预设不必 fork 它的文件。项目集协议可以指定默认类型（比如"创研课"默认用学术研究类型）。
+Model choices come from the project's connected supply. An unavailable saved model produces an error requiring a new selection. Device and Cloud execution pass the saved model explicitly. A reused process is refreshed between turns when the agent configuration changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
 
-**记忆归实例，不归话题。** 一个芝士在项目的五个房间里干活，学到的是同一份记忆——这才是"同一个芝士跨房间"的实际含义。换掉一个话题的 agent 会重开会话：会话是某一个 agent 对这段对话的记忆，交给另一个 agent 续用，等于让它笃定地"记得"自己没说过的话。
-
-**运行时可变**：类型是起点，不是终点。运行中芝士可以动态加载额外的 skills；协作中学到的领域知识沉淀进实例的记忆（§8.4），越用越懂。类型本身不会运行时改变，但记忆的积累让同一个类型在不同项目里表现不同。
+Migration copies existing role instructions and the effective model onto each agent. Projects with an implicit default receive a saved agent under the same cheese handle, preserving their memory keys. Original custom roles and project settings remain in archive tables for inspection and rollback.
 
 ### 8.3 Skills：产品的配方
 
@@ -403,7 +397,7 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 两种典型通知：
 
-- **变更提醒**：AI 干完活后发一条——一句话总结 + 改了哪些文件 + 需要注意的点 + 一个"看改动"入口。想看更多细节点进去看完整 diff 或施工现场。大部分时候看摘要就够了。这条通知上**没有采纳**：采纳是话题级的一次性动作（§6.3、§14.6 采纳 = merge = 归档，一个话题一次交付），每轮一个 Accept 和那条规则直接冲突。要说"这不对，重做"，回一句话就是原语（§14.2 的参照系是同事，同事不会给你一排 approve/reject 按钮）。
+- **变更提醒**：AI 干完活后发一条——一句话总结 + 改了哪些文件 + 需要注意的点 + 一个"看改动"入口。想看更多细节点进去看完整 diff 或施工现场。大部分时候看摘要就够了。这条通知上**没有采纳**：采纳是话题级的一次性动作（§6.3、§14.6 采纳 = 当场 merge，一次交付一次采纳），每轮一个 Accept 和那条规则直接冲突。要说"这不对，重做"，回一句话就是原语（§14.2 的参照系是同事，同事不会给你一排 approve/reject 按钮）。
 - **决策请求**：AI 遇到需要人拍板的事，发一条带选项的通知——"方案 A 还是 B？"，人选一个，AI 继续。这是平台提供的工具，不依赖特定 AI 框架。
 
 ### 8.6 AI 什么时候主动说话
@@ -422,7 +416,7 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 芝士 = 一个 coding agent + 知是专属的 skills/tools + 一层我们写的多会话调度。
 
-当前实现用 Python Agent SDK（`claude-agent-sdk`，Claude Code CLI 的 Python 封装）。底层模型不绑定——SDK 通过 `ANTHROPIC_BASE_URL` 环境变量支持 LiteLLM 等网关代理，可以把请求路由到 Claude、GPT、Gemini 或开源模型，代码不用改。按场景和成本选模型：旗舰任务用强模型，巡检和摘要用便宜模型。
+当前实现直接驱动 Claude Code CLI（骨架之一，`harness/claude_code/`）。底层模型不绑定——请求经平台的计量代理或网关出去，可以路由到 Claude、GLM、DeepSeek 等，代码不用改。按场景和成本选模型：旗舰任务用强模型，巡检和摘要用便宜模型。
 
 下面的映射以 Claude Code 为例，换成其他框架只需适配这张表，skills 和平台代码不用动：
 
@@ -447,13 +441,14 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 ### 9.1 运行时细节
 
 - 事件循环：事件（消息/文档变更/webhook/定期巡检/活的结果回传）→ 每个地点维护一个串行队列 → 恢复会话（注入发言者标签 + 记忆）→ AI 调用工具（回复/编辑块/记忆/派出一件活/GitHub/搜索）→ 会话结束时自动提取记忆。
-- 开发环境（项目级 config，不是话题内容）：环境是**算力池的一层**——池提供基础机器和镜像（市场里选），项目在上面叠一段 setup 脚本装依赖。它和"选哪个模型""跑在哪台机器"同层，是项目级元信息，配在项目设置里、全项目所有话题/分身共用一份——**不写进**某个话题的文档或 git 分支（那是会话级内容、会跟着 merge 走，语义会糊：哪个分支的环境算数、分身改了算谁的）。setup 脚本的内容哈希即快照 key：没变就复用已 `docker commit` 的 per-project 镜像（跳过安装），改了自动重建——对齐 Codex / Claude Code web 的「Environment + 文件系统快照」模型。密钥走平台密钥管理不进数据库；出网默认收敛、按域名 allowlist 放行（phase 2）；场景包 / Task Template 带默认环境模板。改环境是罕见、全项目、偏 owner 的动作：人在项目设置里改，芝士要动走 `cheese env propose` 提案给 owner 批，不静默 mutate 全项目基建。容器承载、预装常用工具；网页预览走反向代理；空闲挂起、归档回收；用户可直接进终端/文件浏览器操作同一个环境。
+- Project environment: project settings hold an initialization script, a workspace startup script, and ordinary variables visible to project members and the agent. Cloud and Hosted Machine use the same runner; Hosted Sandbox remains unavailable. Work rooms pin configuration at creation. Saving affects new rooms; applying to an idle room stops its agent, preserves its task checkouts, and prepares tools on its next start. Initialization runs in the room directory once per successful revision in that environment. Each `cheese split` or `cheese worktree` prepares a task checkout, then runs startup in that checkout before returning its path. Reopening a task reruns startup against its current files. Both scripts run in Bash with the room's HOME and execution identity. Task installation failures return a nonzero exit code and a log location while retaining the checkout and the running room agent. Overview uses the base environment without project scripts or variables so it can diagnose setup failures. A failed work room sends a recovery event to overview, whose scoped API can inspect logs, repair that room's configuration, and restart once while retaining pending messages. A second failure or unavailable repair requires assistance; project defaults and other rooms remain unchanged. Room preparation status and logs appear in the room and settings; task startup logs are stored under `$HOME/.cheese-environment/tasks/<task-id>`. The implementation retains initialization receipts and package caches, without filesystem snapshots or secret storage.
 - 算力调度（平台代码，不是 AI 决定的）：资源池 = 自有 PVE 节点 + 机构/实验室自带的节点；根据环境配置匹配节点，按项目额度限制并发，超额排队。三级可见性：话题里看这个话题的用量 → 项目总览里看整个项目的用量 → 机构看板里看所有项目的用量和节点状态。
 - 中途介入：所有入口（@ 某人、改文档、在施工现场插话、给文档段落评论）= 往这个话题的 AI 会话里注入一条消息。现阶段在会话间歇注入，未来用 Agent SDK 的 streaming input 实时注入。
 - 调度分两层：确定性的（消息路由/定时任务/生命周期管理）= 平台代码做，不让 AI 当消息总线；需要判断的（该催谁/该拆什么/有什么风险）= 根话题的芝士来判断。
 - 平台感知 AI 行为的唯一方式是结构化的工具调用——AI 要创建话题、编辑文档、分配任务、发通知，都必须调用平台提供的工具（内置工具、Agent SDK 自定义工具、MCP server 都行）。平台通过工具的输入输出来记录、控制、审计。绝不靠 regex 解析 AI 的自然语言输出——太脆弱，模型换一个版本就可能全坏。
-- 渲染由 AI 显式指定、平台按 type 渲染（不猜）：芝士要"给人看一个东西"——网页 / 图表 / SVG / 幻灯——通过结构化工具调用 `cheese artifact <文件> --as html|svg|slides` 建一个带 mimeType 的 artifact 块，指向工作区文件；平台按 type 选渲染器（html→sandboxed iframe、svg→内联…）。这和 Claude Artifacts（带 type 的保留标签）、MCP-UI（`ui://` resource + mimeType）是同一条机制：模型发结构化载荷、宿主按 type 渲染，绝不从话术里解析"它想展示什么"。artifact 是"渲染什么"的唯一原语，摆放位有两个——无锚点 = 设为项目当前预览（进预览窗口这个主 / 放大位，替代原先"抓工作区第一个 `*.html`"的隐式猜法）；带 `--anchor <节点>` = 挂在文档该节点旁的内联卡片。内联卡片可"在预览窗口打开"提升到主位；html 渲染器只写一份，两处共用。
-- 运行环境预览（已实现）：artifact 的延伸——预览的不是文件而是**跑起来的应用**。分工恪守同一哲学：**怎么跑这个项目是 AI 的现场判断**（读 README / package.json / pyproject，起在那台机器的 `127.0.0.1` 上，然后 `cheese serve <端口> "说明"`）——平台不为任何项目预置启动命令，因此机制天然全项目通用。跑一轮活的机器没有一台是平台的，都在 NAT 后、零入站端口，所以传输是那台机器**再拨出一条 WebSocket**，浏览器的请求在这条连接上分流回去，经后端反向代理（`/api/topics/{id}/app/`）嵌 iframe。它**不走连接器那条链路**：那条是一轮活的命脉，静态资源和热更新排在 prompt 前面会把一轮活拖死。**端口只从那台机器的磁盘上读**（`cheese serve` 写的），线上没有主机字段，所以平台没法让一台笔记本去连别的端口；能看的人跟现场同一道门槛，而现场本来就是可写的。机器没拨出通道、和通道在但端口上没服务应答，是分开报的两句话（白框的主要来源）。当前边界：应用挂在子路径下，发根绝对资源 URL 的 dev server 要按 `$CHEESE_APP_BASE` 起（`vite --base=$CHEESE_APP_BASE`）。
+- 渲染由 AI 显式指定、平台按 type 渲染（不猜）：芝士要"给人看一个东西"——网页 / 图表 / SVG / 幻灯——通过结构化工具调用 `cheese artifact <文件> --as html|svg|slides` 建一个带 mimeType 的 artifact 块，指向工作区文件；平台按 type 选渲染器（html/svg→独立内容域名的 sandboxed iframe）。这和 Claude Artifacts（带 type 的保留标签）、MCP-UI（`ui://` resource + mimeType）是同一条机制：模型发结构化载荷、宿主按 type 渲染，绝不从话术里解析"它想展示什么"。artifact 是"渲染什么"的唯一原语，摆放位有两个——无锚点 = 设为项目当前预览（进预览窗口这个主 / 放大位，替代原先"抓工作区第一个 `*.html`"的隐式猜法）；带 `--anchor <节点>` = 挂在文档该节点旁的内联卡片。内联卡片可"在预览窗口打开"提升到主位；html 渲染器只写一份，两处共用。
+- 运行环境预览（已实现）：artifact 的延伸——预览的不是文件而是**跑起来的应用**。分工恪守同一哲学：**怎么跑这个项目是 AI 的现场判断**（读 README / package.json / pyproject，起在那台机器的 `127.0.0.1` 上，然后 `cheese serve <端口> "说明"`）——平台不为任何项目预置启动命令，因此机制天然全项目通用。跑一轮活的机器没有一台是平台的，都在 NAT 后、零入站端口，所以传输是那台机器**再拨出一条 WebSocket**，浏览器的请求在这条连接上分流回去，经话题独立内容域名 `preview-<topic UUID hex>.<SITES_DOMAIN>` 的根路径代理，嵌入 iframe。它**不走连接器那条链路**：那条是一轮活的命脉，静态资源和热更新排在 prompt 前面会把一轮活拖死。**端口只从那台机器的磁盘上读**（`cheese serve` 写的），线上没有主机字段，所以平台没法让一台笔记本去连别的端口；能看的人跟现场同一道门槛，而现场本来就是可写的。机器没拨出通道、和通道在但端口上没服务应答，是分开报的两句话（白框的主要来源）。HTTP、资源与 HMR 保持应用原路径，无需项目适配。预览的授权和文件范围见下。
+- 预览授权：平台 `POST /topics/{id}/preview-session` 签发 30 秒、仅该话题可用的授权，通过表单 POST 在内容域名换取 8 小时 HttpOnly、Secure、SameSite=None、Partitioned cookie。登录令牌不进入预览地址或应用；每次 HTTP 请求与 WebSocket 建连都检查当前话题权限，私聊访问者必须在房间名册中。已建立的 WebSocket 最长保留到授权到期。应用 Authorization 和非保留请求 Cookie 转发；响应 Set-Cookie 改为 host-only、Secure、SameSite=None、Partitioned，并保留 HttpOnly、Path 和有效期。平台预览 cookie 与 `X-Cheese-*` 不传给应用，上游不能覆盖预览 cookie。静态文件只开放指定产物所在目录，拒绝隐藏文件、遍历与越界符号链接；工作线程禁用。全屏保留同一个 iframe，新窗口经主站重新授权；浏览器自行管理不同显示上下文的存储分区，不承诺面板和新窗口共享登录状态。部署需要为 `SITES_DOMAIN` 配好通配 TLS 与内容网关。
 - 预览 roadmap（对标调研 2026-07：Claude Artifacts / Cursor 2.0 内置浏览器 / Windsurf Previews）：
   1. **元素选取回传**（Windsurf 的核心回路）：在预览里点选一个元素，直接作为结构化上下文发给芝士（"改这个的颜色"）——把"用嘴描述 UI 位置"变成"用手指"。需在代理层注入选取脚本 + 消息回传。
   2. **console / 报错回传**（Cursor 的路子）：预览页的 JS 报错与 console 自动进入芝士上下文，修前端问题不再盲猜浏览器状态。搭在 1 的注入层上。
@@ -527,9 +522,13 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 ### 14.2 协作软件，而非 AI 软件
 
-- 聊天的参照系是飞书/Slack 里的**同事**，不是 AI 产品的流式气泡：
+- 聊天的参照系是飞书/Slack 里的**同事**，不是 AI 产品的**流式输出**：
   - **不实时吐字**。芝士有话说时发一条**完整消息**，一轮可以连发多条（消息边界 = SDK 的
     AssistantMessage 结构化事件，绝不是解析文本）。
+  - **排版是飞书群聊那一路**（2026-09-09 <@符露夀> 定）：一条消息一个气泡，我说的靠右、
+    别人和芝士靠左。侧只回答「这条是不是我说的」，「谁在说」由头像和名字承担，两侧都保留 ——
+    房间里是「多个人 + 一个芝士」，左边同时坐着好几个人。芝士也在左边：它是队友里的一个，
+    不是对话的另一极。
   - **收到请求先 ✅**：被 @ 的瞬间，平台自动给触发消息贴 ✅ 表情（结构化动作）；
     禁止用一条"收到/已记录"的文本来代替。
   - **先回应，再干活**：接到任务先给出简短回应/任务清单，让人知道它接住了。
@@ -557,11 +556,9 @@ Ground truth 永远在文档里。对话中的通知只是文档变更的实时�
 
 ### 14.6 采纳语义
 
-- **采纳 = merge**，采纳即归档、可撤销（原有 §6.3）。
+- **采纳 = 当场 merge**（#718），可撤销；不归档（#442 决定 1，归档是人的另一个动作）。
 - **冲突是状态，不是失败**：merge 冲突时话题不归档、卡片进入"冲突"态，芝士被自动派去
   resolve，人再重试采纳。绝不静默归档而工作滞留分支。
-- **采纳即上线**（dogfooding 自举）：采纳 → push-back → 全量检查 → 红灯回滚 → 部署 → 上游同步。
-  依赖变更须同步处理运行中的 dev server（缓存重启）。
 
 ### 14.7 面向用户的语言是产品语言
 
@@ -592,8 +589,11 @@ merge to main。判据是这个词有没有在教用户平台的内部机制。
   坏不坏」：接线收账和原样重发都不出声（订阅跟着屏幕活，房间里本来就没出现断裂）。
   只有 prompt 确实丢了、而且平台不会再重发时才发事件，标 `severity=error` +
   `who=human`——那时房间里没有任何别的东西会显示这件事。
-- 供应商错误结构化呈现（限额恢复时间用北京时间），可重试的自动重试，中断的自动续跑
-  （resume 不 replay，已产出的进度不丢）。
+- 供应商错误结构化呈现（限额恢复时间用北京时间）。平台**不自动重试**：认不出来的
+  失败、超时、卡死各发一次事件（`who=human`），交给人看一眼、修好后重新 @——不自己
+  连着重跑（重跑要么把同一个缺陷再触发一遍，要么再撞上同一台刚死的机器）。跨部署
+  存活是另一回事，照旧靠 recover/replay/adopt 把还活着的那一轮认回来。什么会结束一轮、
+  之后房间看到什么，见 `docs/agent-liveness.md`。
 - 错误提示永不被裁切/遮挡；前置条件不用错误横幅表达。
 
 ### 14.10 切换与导航体验
@@ -617,7 +617,6 @@ merge to main。判据是这个词有没有在教用户平台的内部机制。
 7. agent 类型的预设怎么做？平台提供哪些、每个包含哪些 skills？需要和实际场景对齐
 
 **实现**
-8. Agent SDK 接入方式：CLI stream-json（进程级）还是 Python SDK（`claude-agent-sdk`）？两者的多 session 并发性能差异？
 9. OpenViking 的 L0/L1/L2 分层加载策略——每层装什么、加载阈值怎么定？
 10. 块表双树结构的工程量评估——比单独的聊天表+文档表重多少？迁移路径？
 11. LiteLLM 网关的稳定性和安全性（已知 PyPI 投毒事件），是否需要自建网关？

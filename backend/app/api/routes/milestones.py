@@ -27,7 +27,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def create_milestone(
     project_id: uuid.UUID, body: MilestoneCreate, db: DbSession
 ) -> dict:
-    # 自动续跑幂等 (④). A milestone is project-scoped but `cheese milestone` is
+    # 重发幂等 (④). A milestone is project-scoped but `cheese milestone` is
     # always run from inside a topic's turn, and that topic is what the body
     # carries as `source_topic_id` — so it is also what names the continuation
     # to dedup against. No source topic (a human pinning one in the UI) → no

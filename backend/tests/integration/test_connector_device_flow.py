@@ -187,6 +187,57 @@ def test_a_device_attaching_wakes_the_cloud_topic_waiting_on_it(client, monkeypa
     assert woken == [device_id]
 
 
+def test_a_closed_device_link_records_who_hung_up(client, monkeypatch, caplog):
+    """The link is meant to last the machine's uptime; when it ends, say so.
+
+    On dev the whole fleet is replaced about once a minute and neither end
+    recorded it: the close code was discarded here and the device's cli logs
+    nothing (#1140). Without the code there is no way to tell a peer closing on
+    purpose from the connection dropping under it.
+    """
+    import logging
+
+    owner = _login(client, "quinn")
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "quinns-box"}
+    ).json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(owner)
+    )
+    assert connect.status_code == 200, connect.text
+    approved = client.post(
+        "/connector/auth/device/poll", json={"device_code": code}
+    ).json()
+    device_token, device_id = approved["token"], approved["device_id"]
+
+    class Chat:
+        async def recover_sessions(self, connected_device_id: str) -> int:
+            return 0
+
+    class Wakeup:
+        async def wake_device(self, connected_device_id: str) -> None:
+            return None
+
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
+    monkeypatch.setattr("app.api.deps.get_cloud_wakeup", lambda: Wakeup())
+
+    with caplog.at_level(logging.INFO, logger="app.api.routes.connector"):
+        with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
+            ws.close()
+
+    closed = [
+        record.getMessage()
+        for record in caplog.records
+        if "device link closed" in record.getMessage()
+    ]
+    assert len(closed) == 1, [r.getMessage() for r in caplog.records]
+    assert device_id in closed[0]
+    # The code is what names the initiator, and the age is what tells a link
+    # that died young from one that lasted.
+    assert "code=" in closed[0]
+    assert "after=" in closed[0]
+
+
 def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatch):
     """#356 regression, against a real Postgres.
 

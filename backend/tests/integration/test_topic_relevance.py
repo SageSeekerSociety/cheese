@@ -19,6 +19,7 @@ trips" are separate claims and only one of them is visible in the JSON.
 
 import pytest
 
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
@@ -65,8 +66,10 @@ def _seen_by(client, pid: str, handle: str) -> dict[str, dict]:
 
 def _card(client, tid: str, reviewer: str) -> str:
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
         },
@@ -95,6 +98,7 @@ def test_a_roster_member_participates(client):
     r = client.post(
         f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
@@ -282,9 +286,13 @@ def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log
     assert len(_seen_by(client, big, "alice")) == 13
     big_log = list(sql_log)
 
-    for table in ("topic_memberships", "alerts"):
+    for table in ("alerts",):
         assert _reads(small_log, table) == 1, table
         assert _reads(big_log, table) == 1, table
+    # Archive permission is a separate owner/admin-filtered roster query.
+    # Both lookups are batched; adding rooms must not add round trips.
+    assert _reads(small_log, "topic_memberships") == 2
+    assert _reads(big_log, "topic_memberships") == 2
     # `accept_cards` is read TWICE, and the two reads ask different questions
     # that no single scan answers:
     #   - relevance wants "any card here that ever named this viewer" —

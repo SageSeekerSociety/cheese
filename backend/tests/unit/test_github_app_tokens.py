@@ -299,3 +299,92 @@ async def test_a_blip_reading_grants_does_not_shrink_the_token(
 
     outage["on"] = True
     assert await minter.granted_permissions() == before
+
+
+@pytest.mark.anyio
+async def test_project_minter_limits_both_tokens_to_bound_repository(rsa_key_pem):
+    key_path, public = rsa_key_pem
+    mints: list[dict] = []
+    minter = GitHubAppTokens(
+        app_id=1,
+        private_key_path=key_path,
+        installation_id=2,
+        repository="widgets",
+        transport=_github(mints, public),
+    )
+    await minter.installation_token()
+    await minter.write_token()
+    assert len(mints) == 2
+    assert all(mint["body"]["repositories"] == ["widgets"] for mint in mints)
+    assert mints[0]["body"]["permissions"] == _CHEESEX_APP_GRANTS
+
+
+@pytest.mark.anyio
+async def test_project_factory_mints_only_its_repository_and_isolates_cache(
+    monkeypatch, rsa_key_pem
+):
+    import uuid
+    from types import SimpleNamespace
+
+    key_path, public = rsa_key_pem
+    mints: list[dict] = []
+    real_client = httpx.AsyncClient
+    transport = _github(mints, public)
+    monkeypatch.setattr(
+        github_app_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(**(kwargs | {"transport": transport})),
+    )
+    monkeypatch.setattr(github_app_module.settings, "github_app_id", 1)
+    monkeypatch.setattr(
+        github_app_module.settings, "github_app_private_key_path", key_path
+    )
+    monkeypatch.setattr(github_app_module, "_instances", {})
+    repo_name = "acme/widgets"
+
+    async def binding(self, project_id):
+        return SimpleNamespace(repo=repo_name, installation_id=2)
+
+    monkeypatch.setattr(
+        github_app_module.ProjectGitInstallationRepository, "get_by_project", binding
+    )
+    first = await github_app_module.github_app_tokens_for_project(uuid.uuid4(), None)
+    assert first is not None
+    await first.installation_token()
+    repo_name = "acme/second"
+    second = await github_app_module.github_app_tokens_for_project(uuid.uuid4(), None)
+    assert second is not None
+    await second.installation_token()
+    assert [m["body"]["repositories"] for m in mints] == [["widgets"], ["second"]]
+
+
+@pytest.mark.anyio
+async def test_user_installation_lookup_uses_user_authority_and_all_pages(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        assert request.headers["authorization"] == "Bearer user-test-token"
+        if request.url.path == "/user/installations":
+            return httpx.Response(200, json={"installations": [{"id": 7}]})
+        assert request.url.path == "/user/installations/7/repositories"
+        repos = (
+            [{"full_name": "acme/first"}] * 100
+            if request.url.params["page"] == "1"
+            else [{"full_name": "acme/last"}]
+        )
+        return httpx.Response(200, json={"repositories": repos})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        github_app_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(**kwargs, transport=httpx.MockTransport(handler)),
+    )
+    assert await github_app_module.list_user_installations("user-test-token") == [
+        {"id": 7}
+    ]
+    repos = await github_app_module.fetch_user_installation_repos("user-test-token", 7)
+    assert len(repos) == 101
+    assert repos[-1]["full_name"] == "acme/last"
+    assert len(seen) == 3

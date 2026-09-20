@@ -6,9 +6,9 @@ import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import ChatPanel from '@/components/ChatPanel.vue'
+import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
-import { isThread } from '@/lib/place'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -24,16 +24,17 @@ const props = defineProps<{
   // 开这个话题的那一刻还有多少条没读——对话栏用它画「以下是新消息」那条线。
   // 必须一路透传：漏掉它不会报错，只是那条线再也不出现。
   unreadOnOpen?: number
+  // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
+  // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
 
 const emit = defineEmits<{
   (e: 'turn-done'): void
   // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
   (e: 'working', working: boolean): void
-  (e: 'tool-used', payload: unknown): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string): void
+  (e: 'open-file', path: string, taskId?: string | null): void
   // 两个参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，
   // 只转第一个的话那个功能会静默降级成「整篇闪一下」。
   (e: 'open-resource', resource: string, turnId?: string): void
@@ -47,8 +48,10 @@ const emit = defineEmits<{
 
 const { mdAndUp } = useDisplay()
 // 算力是**房间**的选择，首轮就锁死；一条支线既改不了它，问它也 404。
-const isThreadPlace = computed(() => isThread(props.topic))
-const chatRef = ref<{ connected: boolean } | null>(null)
+const chatRef = ref<{
+  connected: boolean
+  send: (content: string, summon: boolean) => boolean
+} | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 
 const connected = computed(() => !!chatRef.value?.connected)
@@ -56,6 +59,9 @@ const connected = computed(() => !!chatRef.value?.connected)
 defineExpose({
   connected,
   reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
+  // 预览面板里「指出位置」发出来的那一句。带 summon：读者指着文档说了一处要改，
+  // 等下一轮顺路捎上等于没说。
+  say: (content: string) => chatRef.value?.send(content, true) ?? false,
 })
 </script>
 
@@ -71,10 +77,9 @@ defineExpose({
       :unread-on-open="unreadOnOpen"
       @turn-done="emit('turn-done')"
       @working="emit('working', $event)"
-      @tool-used="emit('tool-used', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
-      @open-file="emit('open-file', $event)"
+      @open-file="(path, taskId) => emit('open-file', path, taskId)"
       @open-resource="(resource: string, turnId?: string) => emit('open-resource', resource, turnId)"
       @upgrade-message="emit('upgrade-message', $event)"
       @open-topic="emit('open-topic', $event)"
@@ -88,6 +93,13 @@ defineExpose({
           @phase="emit('phase', $event)"
           @review="emit('review')"
         />
+        <!-- Agent 反馈卡。和采纳框同一个位置：都是「这一轮结束时，平台要人做的
+             一个决定」。
+             什么时候出现由**服务端**说了算：它列出这个话题里还活着的提案卡
+             （`GET /topics/{id}/feedback-proposals`），一张都没有就什么都不画。
+             「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
+             换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
+        <AgentFeedbackCard :topic-id="topic.id" />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（算力）都是话题级的设置，发第一条消息之后就不再变，
@@ -103,7 +115,7 @@ defineExpose({
     <!-- 手机上算力浮在对话上方：它是"这个话题在哪跑"，要一直看得见（整机权限
          尤其不能藏），但一行的高度在 390px 上太贵，所以它不占布局的高度。
          桌面上这块地方够宽，它长在话题头那一行里（TopicHeader）。 -->
-    <div v-if="!mdAndUp && !isThreadPlace" class="compute-float">
+    <div v-if="!mdAndUp" class="compute-float">
       <TopicComputePicker :key="topic.id" :topic-id="topic.id" />
     </div>
   </div>

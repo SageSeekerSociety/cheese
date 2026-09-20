@@ -1,6 +1,9 @@
+import re
 from pathlib import Path
 
 import yaml
+
+from tests import isolation
 
 ROOT = Path(__file__).resolve().parents[3]
 MIRROR = "mirror.gcr.io/"
@@ -14,59 +17,29 @@ def step_named(job: dict, name: str) -> dict:
     return next(step for step in job["steps"] if step.get("name") == name)
 
 
-def test_squash_merge_does_not_repeat_pr_backend_and_e2e_suites():
-    for filename, heavy_job_name in (("test.yml", "test"), ("e2e.yml", "e2e")):
-        workflow = load_workflow(filename)
-        scope = workflow["jobs"]["scope"]
-        heavy = workflow["jobs"][heavy_job_name]
-        decision = step_named(scope, "Decide whether this commit already passed PR CI")
-
-        assert "run_heavy" in scope["outputs"]
-        assert "commits/$GITHUB_SHA/pulls" in decision["run"]
-        assert "actions/workflows/$WORKFLOW_FILE/runs" in decision["run"]
-        assert "| jq" not in decision["run"]
-        assert "--jq" in decision["run"]
-        assert scope["permissions"]["actions"] == "read"
-        assert heavy["needs"] == "scope"
-        # The saving this test exists for: a commit that already passed CI on
-        # its PR must not re-run the suites after the squash merge. That is the
-        # `!= 'false'` — an explicit `false` from scope still skips.
-        assert "needs.scope.outputs.run_heavy != 'false'" in heavy["if"]
-        # …but the gate must not be the veto form it used to be. Written as
-        # `== 'true'`, an EMPTY output (scope failed, was cancelled, or never
-        # started) also skipped the heavy job, so "we could not decide" and "we
-        # decided to skip" were the same condition. On 2026-08-13 the org's
-        # Actions billing lapsed, every hosted job was refused before its first
-        # step, and `scope` — hosted on purpose, it is two `gh api` calls — took
-        # the self-hosted test suite down with it on machines that were idle.
-        # The workflow then reported nothing failed, having tested nothing.
-        assert "run_heavy == 'true'" not in heavy["if"], (
-            "the gate is back to its veto form: an optimisation that cannot "
-            "decide must run the tests, not skip them"
-        )
-        # And it must still stop for a superseding push — `always()` here would
-        # trade one wasted-CI bug for another, since PRs use cancel-in-progress.
-        assert "cancelled()" in heavy["if"]
+def test_every_main_push_runs_the_backend_suite():
+    """A squash merge lands on a main that has moved since the PR was tested, so
+    two individually green PRs can be red together. The `scope` job that once
+    skipped `test` on main when the squash tree had passed on its PR is gone:
+    its premise only held when the PR was up to date with main, which at thirty
+    merges a day it rarely was, and main's green was the scope job succeeding,
+    not the suite. Hosted runners make the full run affordable."""
+    workflow = load_workflow("test.yml")
+    assert "scope" not in workflow["jobs"]
+    for name, job in workflow["jobs"].items():
+        assert "needs" not in job, f"{name} waits on another job"
+        assert "scope" not in job.get("if", ""), name
 
 
 def test_backend_lint_is_a_separate_hosted_job():
     """Lint is its own job, kept out of `test` (which must not re-run
-    ruff/pyright). It used to run on GitHub-hosted `ubuntu-latest` (#166) to
-    stay fast and off the self-hosted pool — until 2026-08-13, when the org's
-    Actions billing lapsed and every hosted job was refused before its first
-    step. The whole merge gate now runs on the self-hosted `cheese-ci` pool
-    (#383) so CI no longer depends on GitHub's paid minutes; the ~1min
-    pool-queue latency is the deliberate price. What this test still guards is
-    the split itself — a separate lint job, never duplicated inside `test`."""
+    ruff/pyright), and it runs on a GitHub-hosted runner: the repository is
+    public, hosted minutes are free, and nothing in lint needs the pool. What
+    this test guards is the split itself — a separate lint job, never
+    duplicated inside `test`."""
     workflow = load_workflow("test.yml")
     lint = workflow["jobs"]["lint"]
-    assert lint["runs-on"] == ["self-hosted", "cheese-ci"]
-    # Gated by `scope` like the heavy job, and by the same non-veto rule: a
-    # scope that could not decide must let lint run, not silently skip it. The
-    # test above pins this for `test`; without it here, lint could be reverted
-    # to the veto form on its own and nothing would say so.
-    assert "run_heavy == 'true'" not in lint["if"]
-    assert "needs.scope.outputs.run_heavy != 'false'" in lint["if"]
+    assert lint["runs-on"] == "ubuntu-latest"
 
     # The commands themselves moved into .pre-commit-config.yaml, so what is
     # pinned here is that CI goes THROUGH that file rather than restating them —
@@ -89,11 +62,40 @@ def test_backend_lint_is_a_separate_hosted_job():
 
 
 def test_ci_service_images_do_not_depend_on_docker_hub():
+    """The pool cannot reach Docker Hub — auth.docker.io closes the connection —
+    so every image a CI machine pulls comes from the mirror, pinned by digest.
+
+    On the pool they live in `resident-services.sh`: one Postgres and one Valkey
+    per MACHINE, because a job's own would bind host 5432/6379 and bring a 3 GB
+    tmpfs each, which is what kept a machine to one job.
+    """
+    script = (ROOT / "deploy/ci-runner/resident-services.sh").read_text()
+    images = re.findall(r'^[A-Z_]*IMAGE="([^"]+)"', script, re.MULTILINE)
+    assert len(images) == 2, images
+    for image in images:
+        assert image.startswith(MIRROR), image
+        assert "@sha256:" in image, image
+
+    # A hosted job brings its own pair as service containers; they must be the
+    # same mirror-hosted, digest-pinned images the pool runs, so the test
+    # settings do not depend on which kind of runner they land on.
     for filename, job_name in (("test.yml", "test"), ("e2e.yml", "e2e")):
-        services = load_workflow(filename)["jobs"][job_name]["services"]
-        for service in services.values():
-            assert service["image"].startswith(MIRROR)
-            assert "@sha256:" in service["image"]
+        job = load_workflow(filename)["jobs"][job_name]
+        for service in job.get("services", {}).values():
+            assert service["image"].startswith(MIRROR), service["image"]
+            assert "@sha256:" in service["image"], service["image"]
+            assert service["image"] in images, service["image"]
+
+
+def test_the_resident_valkey_has_room_for_every_slot():
+    """Each runner slot takes its own block of Redis databases so two runs on one
+    machine cannot share an index. Valkey ships 16; one block is all of them."""
+    script = (ROOT / "deploy/ci-runner/resident-services.sh").read_text()
+    default = re.search(
+        r'VALKEY_DATABASES="\$\{CHEESE_CI_VALKEY_DATABASES:-(\d+)\}"', script
+    )
+    assert default, script
+    assert int(default[1]) >= 2 * isolation.REDIS_DATABASES_PER_SLOT, default[1]
 
 
 def test_buildkit_uses_the_mirror_and_keeps_cache_on_the_persistent_runner():
@@ -187,3 +189,25 @@ def test_deploy_bounds_cache_without_making_every_build_cold():
     assert "--max-used-space 6GB" in prune
     assert "--min-free-space 10GB" in deploy
     assert "docker builder prune -af >/dev/null" not in deploy
+
+
+def test_a_layer_can_hit_its_own_ceiling_before_the_job_hits_its_own():
+    """The three layer steps exist so a wedge names the layer it is in. A
+    per-step ceiling only ever fires if the job can still be alive when it does:
+    ceilings adding up past the job's own leave the last layer — integration,
+    the likeliest place to wedge — killed by the job instead, which reports as
+    "something hung somewhere in the suite" and is the failure the split was
+    made to stop. So the job's budget has to hold all three plus the setup steps
+    above them, which carry no ceiling of their own.
+    """
+    test_job = load_workflow("test.yml")["jobs"]["test"]
+    layers = [
+        step_named(test_job, f"Run the {layer} layer")["timeout-minutes"]
+        for layer in ("pure", "contract", "integration")
+    ]
+
+    assert sum(layers) < test_job["timeout-minutes"], (
+        f"the layer steps can take {sum(layers)} minutes between them and the"
+        f" job dies at {test_job['timeout-minutes']} — the last layer's ceiling"
+        " can never fire, and setup still has to fit as well"
+    )

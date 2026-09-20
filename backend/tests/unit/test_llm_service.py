@@ -86,7 +86,7 @@ class TestGetQuota:
     @pytest.mark.anyio
     async def test_get_quota_returns_quota_info(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (7.5, NOW)
+        repo.get_quota.return_value = (7.5, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.get_quota(user_id=1)
@@ -102,7 +102,7 @@ class TestCheckQuota:
     @pytest.mark.anyio
     async def test_check_quota_sufficient(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (5.0, NOW)
+        repo.get_quota.return_value = (5.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.check_quota(user_id=1, amount=3.0)
@@ -111,7 +111,7 @@ class TestCheckQuota:
     @pytest.mark.anyio
     async def test_check_quota_exact_boundary(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (3.0, NOW)
+        repo.get_quota.return_value = (3.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.check_quota(user_id=1, amount=3.0)
@@ -120,7 +120,7 @@ class TestCheckQuota:
     @pytest.mark.anyio
     async def test_check_quota_insufficient(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (2.0, NOW)
+        repo.get_quota.return_value = (2.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.check_quota(user_id=1, amount=3.0)
@@ -129,7 +129,7 @@ class TestCheckQuota:
     @pytest.mark.anyio
     async def test_check_quota_default_amount(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (1.0, NOW)
+        repo.get_quota.return_value = (1.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.check_quota(user_id=1)
@@ -140,7 +140,7 @@ class TestConsumeQuota:
     @pytest.mark.anyio
     async def test_consume_quota_success(self):
         repo = AsyncMock()
-        repo.consume.return_value = (7.0, NOW)
+        repo.consume.return_value = (7.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.consume_quota(user_id=1, amount=3.0)
@@ -154,7 +154,7 @@ class TestConsumeQuota:
     @pytest.mark.anyio
     async def test_consume_quota_negative_remaining_raises(self):
         repo = AsyncMock()
-        repo.consume.return_value = (-1.0, NOW)
+        repo.consume.return_value = (-1.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         with pytest.raises(QuotaExceededError, match="AI quota exhausted"):
@@ -172,7 +172,7 @@ class TestConsumeQuota:
     @pytest.mark.anyio
     async def test_consume_quota_default_amount(self):
         repo = AsyncMock()
-        repo.consume.return_value = (9.0, NOW)
+        repo.consume.return_value = (9.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.consume_quota(user_id=1)
@@ -185,7 +185,7 @@ class TestConsumeTokens:
     @pytest.mark.anyio
     async def test_consume_tokens_converts_to_seu(self):
         repo = AsyncMock()
-        repo.consume.return_value = (8.0, NOW)
+        repo.consume.return_value = (8.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.consume_tokens(user_id=1, tokens=2000)
@@ -196,7 +196,7 @@ class TestConsumeTokens:
     @pytest.mark.anyio
     async def test_consume_tokens_fractional(self):
         repo = AsyncMock()
-        repo.consume.return_value = (9.5, NOW)
+        repo.consume.return_value = (9.5, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.consume_tokens(user_id=1, tokens=500)
@@ -209,7 +209,7 @@ class TestPreCheckAndReserve:
     @pytest.mark.anyio
     async def test_pre_check_available(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (5.0, NOW)
+        repo.get_quota.return_value = (5.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.pre_check_and_reserve(user_id=1, estimated_tokens=2000)
@@ -219,7 +219,7 @@ class TestPreCheckAndReserve:
     @pytest.mark.anyio
     async def test_pre_check_not_available(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (0.5, NOW)
+        repo.get_quota.return_value = (0.5, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.pre_check_and_reserve(user_id=1, estimated_tokens=2000)
@@ -229,7 +229,7 @@ class TestPreCheckAndReserve:
     @pytest.mark.anyio
     async def test_pre_check_default_tokens(self):
         repo = AsyncMock()
-        repo.get_quota.return_value = (1.0, NOW)
+        repo.get_quota.return_value = (1.0, NOW, 10.0)
         svc = _build_advice_service(repo=repo, daily_quota=10.0)
 
         result = await svc.pre_check_and_reserve(user_id=1)
@@ -477,7 +477,7 @@ class TestChat:
         quota_repo = AsyncMock()
 
         # quota pre-check passes
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         # new conversation created
         new_conv = _make_conversation(id=10, owner_id=42)
@@ -499,7 +499,7 @@ class TestChat:
         )
 
         # quota consume after response
-        quota_repo.consume.return_value = (4.85, NOW)
+        quota_repo.consume.return_value = (4.85, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
@@ -521,7 +521,7 @@ class TestChat:
         msg_repo = AsyncMock()
         quota_repo = AsyncMock()
 
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         existing_conv = _make_conversation(id=5, owner_id=42)
         conv_repo.get_by_id.return_value = existing_conv
@@ -536,7 +536,7 @@ class TestChat:
             usage=SimpleNamespace(total_tokens=100),
         )
 
-        quota_repo.consume.return_value = (4.9, NOW)
+        quota_repo.consume.return_value = (4.9, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
@@ -553,7 +553,7 @@ class TestChat:
     @pytest.mark.anyio
     async def test_chat_quota_exhausted(self):
         quota_repo = AsyncMock()
-        quota_repo.get_quota.return_value = (0.0, NOW)
+        quota_repo.get_quota.return_value = (0.0, NOW, 10.0)
 
         svc = _build_chat_service(quota_repo=quota_repo)
 
@@ -564,7 +564,7 @@ class TestChat:
     async def test_chat_existing_conversation_not_found(self):
         conv_repo = AsyncMock()
         quota_repo = AsyncMock()
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
         conv_repo.get_by_id.return_value = None
 
         svc = _build_chat_service(conv_repo=conv_repo, quota_repo=quota_repo)
@@ -576,7 +576,7 @@ class TestChat:
     async def test_chat_existing_conversation_wrong_owner(self):
         conv_repo = AsyncMock()
         quota_repo = AsyncMock()
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
         conv = _make_conversation(id=5, owner_id=42)
         conv_repo.get_by_id.return_value = conv
 
@@ -592,7 +592,7 @@ class TestChat:
         msg_repo = AsyncMock()
         quota_repo = AsyncMock()
 
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         long_msg = "A" * 100
         new_conv = _make_conversation(id=10, owner_id=42, title=long_msg[:50])
@@ -608,7 +608,7 @@ class TestChat:
             usage=SimpleNamespace(total_tokens=200),
         )
 
-        quota_repo.consume.return_value = (4.8, NOW)
+        quota_repo.consume.return_value = (4.8, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
@@ -629,7 +629,7 @@ class TestChat:
         msg_repo = AsyncMock()
         quota_repo = AsyncMock()
 
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         short_msg = "Short message"
         new_conv = _make_conversation(id=10, owner_id=42, title=short_msg)
@@ -645,7 +645,7 @@ class TestChat:
             usage=SimpleNamespace(total_tokens=50),
         )
 
-        quota_repo.consume.return_value = (4.95, NOW)
+        quota_repo.consume.return_value = (4.95, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
@@ -665,7 +665,7 @@ class TestChat:
         msg_repo = AsyncMock()
         quota_repo = AsyncMock()
 
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         new_conv = _make_conversation(id=10, owner_id=42)
         conv_repo.create.return_value = new_conv
@@ -680,7 +680,7 @@ class TestChat:
             usage=None,
         )
 
-        quota_repo.consume.return_value = (5.0, NOW)
+        quota_repo.consume.return_value = (5.0, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
@@ -700,7 +700,7 @@ class TestChat:
         msg_repo = AsyncMock()
         quota_repo = AsyncMock()
 
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         new_conv = _make_conversation(id=10, owner_id=42)
         conv_repo.create.return_value = new_conv
@@ -715,7 +715,7 @@ class TestChat:
             usage=SimpleNamespace(total_tokens=10),
         )
 
-        quota_repo.consume.return_value = (4.99, NOW)
+        quota_repo.consume.return_value = (4.99, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo
@@ -735,7 +735,7 @@ class TestChat:
         msg_repo = AsyncMock()
         quota_repo = AsyncMock()
 
-        quota_repo.get_quota.return_value = (5.0, NOW)
+        quota_repo.get_quota.return_value = (5.0, NOW, 10.0)
 
         new_conv = _make_conversation(id=10, owner_id=42)
         conv_repo.create.return_value = new_conv
@@ -750,7 +750,7 @@ class TestChat:
             usage=SimpleNamespace(total_tokens=50),
         )
 
-        quota_repo.consume.return_value = (4.95, NOW)
+        quota_repo.consume.return_value = (4.95, NOW, 10.0)
 
         svc = _build_chat_service(
             conv_repo=conv_repo, msg_repo=msg_repo, quota_repo=quota_repo

@@ -16,9 +16,10 @@ commit's own author, and a room has one git identity.
 
 import asyncio
 import uuid
-from pathlib import Path
 
 from app.api.deps import get_work_runner
+from app.domain.review.github_pr import OpenedPR
+from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_token
 
 
@@ -41,9 +42,11 @@ class _FakeClient:
         title: str,
         body: str,
         as_user_token: str | None = None,
-    ) -> dict:
+    ) -> OpenedPR:
         type(self).opened.append({"body": body, "as_user_token": as_user_token})
-        return {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}
+        return OpenedPR(
+            {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}, None
+        )
 
 
 def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None:
@@ -85,8 +88,7 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
+    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _driving(monkeypatch, handle: str | None):
@@ -137,7 +139,9 @@ def _split(client, parent_id: str, *, by: str) -> dict:
     token, the acting handle only in the body."""
     r = client.post(
         f"/topics/{parent_id}/split",
-        json={"title": "分身拆出的子任务", "created_by": by},
+        json=dict(
+            reviewer_handle="alice", **{"title": "分身拆出的子任务", "created_by": by}
+        ),
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -157,8 +161,10 @@ def _pr_body(client, pid: str, tid: str) -> str:
     from app.domain.review import pr_publish
 
     card = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(split): follow the driver, not the room",
@@ -210,7 +216,7 @@ def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
 
     r = client.post(
         f"/topics/{root}/split",
-        json={"title": "我自己拆的"},
+        json=dict(reviewer_handle="alice", **{"title": "我自己拆的"}),
         headers={"Authorization": f"Bearer {session_token('carol')}"},
     )
     assert r.status_code == 200
@@ -240,7 +246,7 @@ def test_the_agent_handle_never_reaches_the_pr_however_the_work_was_split(
     _split(client, root, by=agent)
 
     body = _pr_body(client, pid, root)
-    assert "Requested-by: alice" in body
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
     assert agent not in body
 
 
@@ -257,14 +263,15 @@ def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     _split(client, root, by=_agent())
 
     body = _pr_body(client, pid, root)
-    assert "Requested-by: alice" in body
+    assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
     assert "Co-authored-by" not in body
 
 
-def test_a_thread_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatch):
-    """支线自己递卡会被拒——这正是上面两条为什么都从房间递。
+def test_a_card_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatch):
+    """一件活自己递不出卡——这正是上面两条为什么都从房间递。
 
-    放它过去的话，它会把兄弟们还在写的那条分支封口开 PR。
+    放它过去的话，它会把兄弟们还在写的那条分支封口开 PR。走不通的方式是 404：
+    卡不是地点。
     """
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, "bob")
@@ -272,12 +279,13 @@ def test_a_thread_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypa
     thread = _split(client, root, by=_agent())["id"]
 
     r = client.post(
-        f"/topics/{thread}/accept-card",
+        f"/topics/{thread}/tasks/{delivery_task_id(client, thread)}/accept-card",
+        headers=delivery_headers(client, thread),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(split): follow the driver, not the room",
         },
     )
-    assert r.status_code == 422, r.text
-    assert "cheese conclude" in r.json()["message"]
+    assert r.status_code == 404, r.text

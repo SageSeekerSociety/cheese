@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import TopicSidebar from '@/components/TopicSidebar.vue'
-import { myHandle } from '@/me'
+import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
@@ -26,21 +26,27 @@ const store = useWorkspaceStore()
 
 // Active state is read off the URL, never off a local flag.
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
-const activeDmPeer = computed(() => (route.name === 'workspace-dm' ? String(route.params.peer) : null))
 const activeDocs = computed(() => (route.name === 'project-docs' ? String(route.params.kind) : null))
 
 function openTopic(topicId: string) {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
 }
-function openDm(peer: string) {
-  void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer } })
-}
 function openDocs(kind: string) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind } })
 }
 
-async function onCreateTopic(title: string, agentInstanceId?: string | null) {
-  const topic = await store.create(title, agentInstanceId)
+// 指针停在一行上时，把点下去之后要等的两段先走掉：这个页面的代码，和这个话题最新
+// 那一页消息。走的是同一个 openTopic 的落点，所以预热的和点开的永远是同一个东西。
+function onHoverTopic(topicId: string) {
+  prefetchOnHover({
+    router,
+    to: { name: 'workspace-topic', params: { projectId: props.projectId, topicId } },
+    topicId,
+  })
+}
+
+async function onCreateTopic(title: string) {
+  const topic = await store.create(title)
   if (topic) openTopic(topic.id)
 }
 
@@ -55,28 +61,28 @@ async function onArchiveTopic(topicId: string) {
 </script>
 
 <template>
-  <!-- `store.tree` 而不是 `store.topics`：侧栏画的是房间**加上**房间里派出去的
-       活，而 topics 只有房间（@话题 补全和文档里的 <#id> 解析读的是那一份）。 -->
+  <!-- 私聊不在这里了：名册和它的未读都归成员页，侧栏只在「成员」那一行上挂一个
+       未读总数（privateUnreadMap 传的就是给它算总数用的）。 -->
+  <!-- 进不来的时候侧栏整个不渲染。留着它，非成员看到的是一份点得动的目录——包括
+       一颗「＋新建话题」，按下去只会撞一个 403。说明那一屏已经说了他该干什么，
+       旁边不该再摆一排他做不到的事。左边那条项目 rail 不在这个组件里，所以「离开
+       这里」的路还在。 -->
   <TopicSidebar
-    v-if="page || mdAndUp"
+    v-if="!store.accessDenied && (page || mdAndUp)"
     :page="page"
     :width="store.railWidth"
     :projects="store.projects"
     :selected-project-id="store.projectId"
-    :topics="store.tree"
+    :topics="store.topics"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
-    :private-active="activeDmPeer === 'cheese'"
-    :members="store.members"
-    :me-handle="myHandle()"
-    :active-peer="activeDmPeer === 'cheese' ? null : activeDmPeer"
     :active-docs="activeDocs"
     :unread-map="store.unreadMap"
     :private-unread-map="store.privateUnreadMap"
     @update:width="store.setRailWidth"
     @select-topic="openTopic"
-    @select-private="openDm('cheese')"
-    @select-peer-dm="openDm"
+    @hover-topic="onHoverTopic"
+    @leave-topic="cancelPrefetch"
     @select-docs="openDocs"
     @archive-topic="onArchiveTopic"
     @unarchive-topic="store.unarchive"

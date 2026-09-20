@@ -117,7 +117,11 @@ def send_frame(sock: socket.socket, payload: bytes, opcode: int = _OP_BIN) -> No
         header.extend(struct.pack("!Q", length))
     mask = secrets.token_bytes(4)
     header.extend(mask)
-    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    # The pipe sends up to 64 KiB per frame; keep masking out of a Python byte loop.
+    repeated_mask = (mask * ((length + 3) // 4))[:length]
+    masked = (
+        int.from_bytes(payload, "big") ^ int.from_bytes(repeated_mask, "big")
+    ).to_bytes(length, "big")
     sock.sendall(bytes(header) + masked)
 
 
@@ -173,6 +177,8 @@ def open_tunnel(
         query = f"{parsed.query}&{query}"
 
     raw = socket.create_connection((host, port), timeout=_HANDSHAKE_TIMEOUT_S)
+    # Separate TLS records must not wait for the preceding packet's delayed ACK.
+    raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     if secure:
         if insecure:
             context = ssl._create_unverified_context()  # noqa: S323 — opt-in only
@@ -425,6 +431,7 @@ def serve(
     logger.info("tunnel listening on %s:%s → %s", listen_host, listen_port, url)
     while True:
         client, _ = server.accept()
+        client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         threading.Thread(
             target=handle_connection,
             args=(client, url, token),

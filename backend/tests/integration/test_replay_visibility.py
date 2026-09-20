@@ -14,7 +14,6 @@ import uuid
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import AgentWorkRunner
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
@@ -32,33 +31,23 @@ class SilentScreen(StubChannel):
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         del topic_id, prompt, reply
 
+    async def confirm_alive(self, screen: object) -> bool:
+        # Silence alone is not failure; this fixture models a confirmed dead
+        # process so each replay attempt reaches a terminal result.
+        return False
+
 
 def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     """A topic whose every turn dies, with nothing else re-prompting it.
 
-    The auto-resume chain is turned off for the same reason the watchdog's
-    timeouts are turned down: these tests count how many times ONE batch is
-    sent, and a turn that dies to the substrate schedules a system turn ten
-    seconds later that sends it again. That extra send is correct in
-    production — the batch really did go in a third time — but whether it
-    lands inside a test's few seconds is wall-clock luck, so the assertions
-    below would be counting the machine's speed.
+    A turn that dies to the substrate is not re-run by the platform — it fails
+    loud once and waits for a person — so nothing schedules a second send of the
+    batch behind these tests' backs. That is what makes it safe to count how
+    many times ONE batch is sent, which is the whole assertion here.
     """
-    monkeypatch.setattr(AgentWorkRunner, "MAX_RESUME_CHAIN", 0)
-    # `hard_ceiling_s` is NOT squeezed, and must not be: it is a wall clock that
-    # starts before the screen is even reached, so squeezing it races the setup
-    # it is supposed to outlive. Lose that race — and a loaded CI box loses it
-    # roughly two runs in five — and the monitor finds the ceiling already
-    # expired on its first pass, takes the branch for a session that never
-    # delivered anything, and the verdict lands with nobody subscribed to hear
-    # it: no `done` is ever published and `_say` blocks until pytest-timeout
-    # kills the run 300 seconds later.
-    #
-    # This screen ends its turns through `delivery_timeout_s` — it emits no
-    # hooks at all, so the prompt is never acknowledged — and THAT is the knob
-    # worth squeezing. The ceiling only has to stay far enough above the setup
-    # path that it cannot fire during it; it is never reached, so its size
-    # costs nothing.
+    # The first silence check asks the channel whether the process is alive.
+    # Keep that check short; the fake then confirms death. The wall-clock
+    # ceiling only records elapsed time and does not terminate the turn.
     screen = SilentScreen(
         idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
     )

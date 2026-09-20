@@ -107,11 +107,6 @@ _BIGRAM_WEIGHT = 1.0
 _PHRASE_MAX = 8
 # Bounds the OR-clause a query can turn into.
 _MAX_TERMS = 24
-# A turn's context is not a question — it is a title plus a few messages plus a
-# doc excerpt, and cutting it to 24 keywords would keep only the longest CJK
-# phrases and throw away every identifier in it. Injection ranks in Python
-# (no OR-clause to bound), so it can afford a wider term set.
-INJECTION_MAX_TERMS = 96
 # Below this a match is a coincidence, not an answer — see `is_relevant`.
 _MIN_COVERAGE = 0.15
 

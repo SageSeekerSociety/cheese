@@ -68,7 +68,12 @@ def _cloud_lease(machine: ProjectMachine) -> CloudLease:
         project_id=machine.project_id,
         device_id=machine.device_id,
         machine_ready=machine.status == MachineStatus.running,
-        ai_ready=machine.ai_status == AiStatus.ready,
+        # `disabled` is a settled channel too: the built-in AI access is off
+        # because the machine reaches the model through the gateway. Enrolment
+        # and the wake-up sweep already count it as ready; reading it as "not
+        # yet" here made every such room wake, find itself unready, and wait
+        # again, once every sweep, forever.
+        ai_ready=machine.ai_status in (AiStatus.ready, AiStatus.disabled),
         error=error,
     )
 
@@ -200,9 +205,11 @@ def get_work_runner() -> AgentWorkRunner:
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
     from app.domain.agent.device_provider import topic_credential_expiry
 
-    return AgentWorkRunner(
+    runner = AgentWorkRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
     )
+    runner.subscribe_messages()
+    return runner

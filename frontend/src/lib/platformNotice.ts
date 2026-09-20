@@ -3,8 +3,8 @@
  *
  * 房间是个对话，不是监控面板。平台自己的提示（CI 没过、闸门红了、轮次失败、
  * 合并冲突…）过去和真人发言一样平铺、一样字号、想多长就多长，一条能占五六行。
- * 这个模块是**唯一**决定「这条事件长什么样」的地方：给一个 event block，返回
- * 一份渲染指令，ChatPanel 只负责照着画。
+ * 这个模块决定事件的正文、详情和操作。ChatPanel 根据作者与事件归属，给 agent
+ * 相关通知加上统一的状态消息外观。
  *
  * 硬约束是「信息不能丢，只能收起来」—— 所以没有任何一档会把原文扔掉：长文进
  * `<details>` 的展开区，连续同类事件折成一行时，每一次的原文都还在展开区里。
@@ -25,9 +25,7 @@
  *
  * **文案在前端，后端只发码** —— 和 platform_failures.py 的 code + copy contract 同一条规矩。
  *
- * 向后兼容是硬要求：库里存量事件绝大多数 `meta` 是 null 或只有 `action`，它们
- * 必须继续按老样子渲染（居中灰字一行）。所以每一档新行为都以「新字段存在」为
- * 前提，没有新字段就落回 `plain`。
+ * 缺少结构化字段的事件仍保留原文；没有作者或类别依据时，不猜它属于哪个 agent。
  */
 import type { Block } from '../cx_types'
 import type { BackendErrorPresentation } from './backendErrorEvent'
@@ -42,7 +40,10 @@ import { platformErrorPresentation } from './platformEvents'
  * 「露不露面」和「谁写的」是两件事，过去挤在 `author_type` 一个字段里：
  * system 出现、ai 不出现。于是一条确实由芝士产生、又该让人看见的事件无法表达，
  * 而任何想知道作者的人读到的是一个在回答别的问题的字段。现在它自己有一格；没有
- * 这一格的事件都露面 —— 平台其它所有写入方都是往房间里说话。
+ * 这一格的都露面 —— 平台其它所有写入方都是往房间里说话。
+ *
+ * 对**消息**同样生效：一条通篇没有中文的 AI 消息不占聊天区（后端在落库时就打上
+ * 这一格）。它照常存着、照常在历史里，只是聊天区不显示 —— 藏起来，不是删掉。
  */
 function showsInRoom(block: Block): boolean {
   return meta(block)?.in_room !== false
@@ -82,6 +83,55 @@ const WHO_LABEL: Record<WhoTag, string> = {
   human: '待人工处理',
 }
 
+// These events describe the room agent's work or execution environment. `who`
+// instead names the next responder, so it cannot decide the message's identity.
+export const AGENT_STATUS_EVENTS = new Set([
+  'cloud_provisioning',
+  'machine_provisioning',
+  'turn_queued',
+  'turn_failed',
+  'turn_timeout',
+  'deploy_interrupted',
+  'delivery_fallback',
+  'tools_recovered',
+  'sandbox_rebuilt',
+  'host_failure',
+  'platform_error',
+  'environment_recovery',
+  'environment_recovery_request',
+  'subagent_start',
+  'prompt_replayed',
+  'ci_failed',
+  'gate_failed',
+  'gate_blocked',
+  'gate_abandoned',
+  'accept_conflict',
+  'upstream_conflict',
+  'pr_conflict',
+  'pr_review',
+  'pr_identity_downgraded',
+  'remote_push_failed',
+  'merge_refused',
+  'card_filed',
+  'artifact_declared',
+  'card_rejected',
+  'card_voided',
+  'card_redescribed',
+  'deploy_done',
+  'deploy_failed',
+  'room_merge',
+  'conclusion_settled',
+  'archive_deferred',
+  'accept_done',
+  'accept_stopped',
+  'accept_ready',
+  'accept_dismissed',
+  'merge_withheld',
+  'pr_closed',
+  'force_merged',
+  'migration_collision',
+])
+
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
 export interface NoticeOccurrence {
   /** 这一次的那行人话。 */
@@ -108,7 +158,7 @@ export type PlatformNotice =
   /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
   | { mode: 'backend-error'; error: BackendErrorPresentation }
   /** 芝士这轮干的活（更新了文档 / 提交了验收卡…）。 */
-  | { mode: 'action'; resource: string; text: string }
+  | { mode: 'action'; resource: string; text: string; detail?: string; detailLabel?: string }
   /**
    * 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么，外加它顺带动过的平台资源。
    *
@@ -135,6 +185,7 @@ export type PlatformNotice =
       count: number
       occurrences: NoticeOccurrence[]
     }
+  | { mode: 'agent-status'; line: string; updatedAt: string; occurrences: NoticeOccurrence[] }
   /** 老样子：居中、灰、12px、一行。 */
   | { mode: 'plain' }
 
@@ -240,10 +291,32 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   }
 
   const resource = actionResource(block)
-  if (resource) return { mode: 'action', resource, text: actionText(block) }
+  if (resource)
+    return {
+      mode: 'action',
+      resource,
+      text: actionText(block),
+      detail: str(m?.detail),
+      detailLabel: str(m?.detail_label),
+    }
 
   const error = backendErrorPresentation(block)
   if (error) return { mode: 'backend-error', error }
+
+  if (str(m?.event_type) === 'cloud_provisioning') {
+    const latest = run[run.length - 1] ?? block
+    const state = str(meta(latest)?.state)
+    return {
+      mode: 'agent-status',
+      line: state === 'ready' ? '运行环境已就绪' : state === 'waiting' ? '正在准备运行环境' : latest.content,
+      updatedAt: latest.created_at,
+      occurrences: run.map((item) => ({
+        line: item.content,
+        label: item.content,
+        detail: str(meta(item)?.detail),
+      })),
+    }
+  }
 
   if (str(m?.detail)) {
     return {
@@ -262,6 +335,8 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */
 function foldKey(block: Block): string | null {
   const m = meta(block)
+  // Cloud lifecycle updates share one row even when the final event has no detail.
+  if (str(m?.event_type) === 'cloud_provisioning') return 'cloud_provisioning'
   // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
   // 摆出来。事故卡和后端报错各自只有一份正文/traceback，折进去就真丢了；而老事件
   // 压根没有 event_type，误折会把两件不同的事说成一件。
@@ -293,13 +368,16 @@ export interface NoticeRow {
 export function collapseNotices(blocks: Block[]): NoticeRow[] {
   const rows: NoticeRow[] = []
   for (const block of blocks) {
+    // 露不露面先问，再问它是什么 —— 这一格从来就不是事件专有的（见 showsInRoom
+    // 的注释：它单独立一格，正是因为「谁写的」和「露不露面」是两个问题）。放在
+    // 分支外面，芝士自己写的、但不该占住聊天区的那种消息才藏得住。
+    if (!showsInRoom(block)) continue
     if (block.kind !== 'event') {
       if (block.kind === 'message' || block.kind === 'attachment') {
         rows.push({ block, run: [block], notice: null })
       }
       continue
     }
-    if (!showsInRoom(block)) continue
     if (str(meta(block)?.event_type) === 'frontend_error') continue
 
     const prev = rows[rows.length - 1]
@@ -308,7 +386,11 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
-      if (sameType || (bothPlain && prevBlock.content === block.content)) {
+      const sameAuthor =
+        prevBlock.author === block.author &&
+        prevBlock.author_type === block.author_type &&
+        str(meta(prevBlock)?.agent_id) === str(meta(block)?.agent_id)
+      if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
         prev.run.push(block)
         continue
       }
@@ -322,6 +404,7 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
 
 /** 这一行是不是「本轮里平台顺手做的事」——够格被折进本轮摘要。 */
 function summaryPart(row: NoticeRow): boolean {
+  if (row.notice?.mode === 'action' && row.notice.detail) return false
   return row.notice?.mode === 'action' || changeSummary(row.block) !== null
 }
 
@@ -341,7 +424,13 @@ function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
       continue
     }
     let end = i
-    while (end + 1 < rows.length && rows[end + 1].block.turn_id === turnId && summaryPart(rows[end + 1])) {
+    while (
+      end + 1 < rows.length &&
+      rows[end + 1].block.turn_id === turnId &&
+      rows[end + 1].block.author === row.block.author &&
+      str(meta(rows[end + 1].block)?.agent_id) === str(meta(row.block)?.agent_id) &&
+      summaryPart(rows[end + 1])
+    ) {
       end += 1
     }
     const run = rows.slice(i, end + 1)

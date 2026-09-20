@@ -6,6 +6,7 @@ package terminal
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -144,7 +146,7 @@ func (m *Manager) KillServer() { _ = m.tmux("kill-server").Run() }
 // private server — used to re-adopt a surviving session after the cheese process
 // re-execs itself (e.g. `cheese update`) without ever tearing down tmux.
 func (m *Manager) HasSession(name string) bool {
-	return m.tmux("has-session", "-t", name).Run() == nil
+	return m.tmux("has-session", "-t", "="+name).Run() == nil
 }
 
 // Adopt wraps an already-existing tmux session (one that survived a process
@@ -153,6 +155,35 @@ func (m *Manager) HasSession(name string) bool {
 // polling/relay is (re)established around it.
 func (m *Manager) Adopt(name string) *Session {
 	return &Session{m: m, name: name, stop: make(chan struct{})}
+}
+
+// SaveIdentity keeps recovery data with the session that owns the process.
+func (m *Manager) SaveIdentity(name, owner, data string) error {
+	if out, err := m.tmux("set-option", "-t", name, "@cheese-owner", owner).CombinedOutput(); err != nil {
+		return fmt.Errorf("terminal: save owner: %w: %s", err, out)
+	}
+	if out, err := m.tmux("set-option", "-t", name, "@cheese-screen", data).CombinedOutput(); err != nil {
+		return fmt.Errorf("terminal: save identity: %w: %s", err, out)
+	}
+	return nil
+}
+
+func (m *Manager) Identities(owner string) (map[string]string, error) {
+	out, err := m.tmux("list-sessions", "-F", "#{session_name}\t#{@cheese-owner}\t#{@cheese-screen}").CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "no server running") || strings.Contains(string(out), "No such file or directory") {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("terminal: list sessions: %w: %s", err, out)
+	}
+	identities := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) == 3 && parts[1] == owner && parts[2] != "" {
+			identities[parts[0]] = parts[2]
+		}
+	}
+	return identities, nil
 }
 
 // Session is one hosted program: a tmux session polled for screen changes.
@@ -165,6 +196,36 @@ type Session struct {
 	cbs   []func()
 	stop  chan struct{}
 	start sync.Once
+}
+
+// The smallest terminal a viewer may impose on a screen. tmux sizes a window to
+// its most recently attached client (window-size latest), so one client's size
+// is every client's size — a screen is shared, and a size is not private to the
+// client that sent it. A browser terminal routinely reports something like 10x1
+// in the moment before its container has been laid out, and that one frame
+// repaints the program for everyone else attached, into a strip nothing can be
+// read from. Measured on the dev box 2026-09-09: 125 of 181 live screens sat at
+// a height below 10, one of them with a real viewer attached at 92x49 looking at
+// a 10x1 window.
+//
+// Clamped up rather than refused: a size this small is never a real viewer, and
+// dropping the frame would leave the previous size in place — the same failure
+// whenever the previous size was the bad one.
+const (
+	minCols = 40
+	minRows = 10
+)
+
+// atLeastUsable floors a terminal size to one a program can render into. It only
+// raises: a caller that already passes a sane size gets it back unchanged.
+func atLeastUsable(cols, rows int) (int, int) {
+	if cols < minCols {
+		cols = minCols
+	}
+	if rows < minRows {
+		rows = minRows
+	}
+	return cols, rows
 }
 
 // Spawn launches argv in a fresh tmux session sized cols x rows, with env (a
@@ -181,6 +242,7 @@ func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Sessi
 	if rows <= 0 {
 		rows = 50
 	}
+	cols, rows = atLeastUsable(cols, rows)
 	launch := argv
 	if len(env) > 0 {
 		launch = append(append([]string{"env"}, env...), argv...)
@@ -228,6 +290,7 @@ func (s *Session) Attach(cols, rows int, onData func([]byte)) (*Client, error) {
 	if rows <= 0 {
 		rows = 24
 	}
+	cols, rows = atLeastUsable(cols, rows)
 	cmd := exec.Command(s.m.bin, "-S", s.m.sock, "-f", s.m.conf, "attach-session", "-t", s.name)
 	cmd.Env = append(os.Environ(), "LC_ALL=C.UTF-8", "LANG=C.UTF-8", "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
@@ -271,6 +334,7 @@ func (c *Client) Resize(cols, rows int) error {
 	if cols <= 0 || rows <= 0 {
 		return nil
 	}
+	cols, rows = atLeastUsable(cols, rows)
 	return pty.Setsize(c.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 }
 
@@ -380,10 +444,69 @@ func (s *Session) poll() {
 
 // Close kills the session and stops its poller.
 func (s *Session) Close() error {
+	// kill-session closes the PTY before the pane's supervisor has reaped its
+	// children. Wait for that supervisor so a replacement cannot connect to
+	// the retiring agent's still-live prompt socket.
+	killAndWait := func(socket, session string) error {
+		args := []string{"-S", socket}
+		out, err := exec.Command(s.m.bin, append(args, "list-panes", "-t", "="+session, "-F", "#{pane_pid}")...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("terminal: list pane processes: %w: %s", err, out)
+		}
+		var processes []*os.Process
+		for _, value := range strings.Fields(string(out)) {
+			pid, err := strconv.Atoi(value)
+			if err != nil {
+				return err
+			}
+			process, err := os.FindProcess(pid)
+			if err != nil {
+				return err
+			}
+			processes = append(processes, process)
+		}
+		if err := exec.Command(s.m.bin, append(args, "kill-session", "-t", "="+session)...).Run(); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(10 * time.Second)
+		for _, process := range processes {
+			for process.Signal(syscall.Signal(0)) == nil {
+				if time.Now().After(deadline) {
+					return fmt.Errorf("terminal: pane process %d did not stop", process.Pid)
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+		return nil
+	}
+	// A claimed warm process keeps its original PTY. Its launcher records that
+	// terminal here, transferring ownership to this screen before attaching.
+	data, err := s.m.tmux("show-option", "-qv", "-t", s.name, "@cheese-terminal").Output()
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(data)) != 0 {
+		var target struct {
+			Socket  string `json:"socket"`
+			Session string `json:"session"`
+		}
+		if err := json.Unmarshal(data, &target); err != nil {
+			return err
+		}
+		if target.Socket == "" || target.Session == "" {
+			return fmt.Errorf("terminal: incomplete owned terminal")
+		}
+		if err := killAndWait(target.Socket, target.Session); err != nil &&
+			!strings.Contains(err.Error(), "can't find session") &&
+			!strings.Contains(err.Error(), "no server running") &&
+			!strings.Contains(err.Error(), "No such file or directory") {
+			return fmt.Errorf("terminal: close owned terminal: %w", err)
+		}
+	}
 	select {
 	case <-s.stop:
 	default:
 		close(s.stop)
 	}
-	return s.m.tmux("kill-session", "-t", s.name).Run()
+	return killAndWait(s.m.sock, s.name)
 }

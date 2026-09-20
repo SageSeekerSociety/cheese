@@ -1,0 +1,105 @@
+{
+  "common": {
+    "justNow": "Just now",
+    "markAsRead": "Mark as read",
+    "delete": "Delete",
+    "noNotifications": "No notifications",
+    "markAllAsRead": "Mark all as read",
+    "loadMore": "Load more",
+    "notificationCenter": "Notification center",
+    "unknownTeam": "Unknown team",
+    "unknownDiscussion": "Unknown discussion",
+    "teamAdmin": "Team admin",
+    "reason": "Reason",
+    "member": "Member",
+    "unknownProject": "Unknown project"
+  },
+  "default": {
+    "title": "Unknown notification type: {type}",
+    "body": "This notification can't be displayed"
+  },
+  "MENTION": {
+    "title": "{mentioner} mentioned you in a discussion",
+    "title_anonymous": "Someone mentioned you in a discussion",
+    "body": "In \"{discussionTitle}\""
+  },
+  "REPLY": {
+    "title": "{replier} replied to your comment",
+    "title_anonymous": "Someone replied to your comment",
+    "body": "In \"{discussionTitle}\"",
+    "action": {
+      "reply": "Reply"
+    }
+  },
+  "REACTION": {
+    "title": "{reactor} reacted to your content",
+    "title_anonymous": "Someone reacted to your content",
+    "body": "Reacted with {reactionEmoji} to your comment"
+  },
+  "PROJECT_INVITE": {
+    "title": "{inviter} invited you to a project",
+    "title_anonymous": "You've been invited to a project",
+    "body": "Join \"{projectName}\"",
+    "action": {
+      "accept": "Accept",
+      "decline": "Decline"
+    }
+  },
+  "DEADLINE_REMIND": {
+    "title": "Deadline reminder",
+    "body": "Project \"{projectName}\" is due in {daysLeft} days"
+  },
+  "TEAM_JOIN_REQUEST": {
+    "title": "{requester} asked to join your team",
+    "title_anonymous": "Someone asked to join your team",
+    "body": "Join \"{team}\"",
+    "action": {
+      "approve": "Approve",
+      "reject": "Reject"
+    }
+  },
+  "TEAM_INVITATION": {
+    "title": "{inviter} invited you to a team",
+    "title_anonymous": "You've been invited to a team",
+    "body": "Join \"{team}\" as {role}",
+    "action": {
+      "accept": "Accept",
+      "decline": "Decline"
+    }
+  },
+  "TEAM_REQUEST_APPROVED": {
+    "title": "Your request to join was approved",
+    "body": "{approver} approved your request to join \"{team}\""
+  },
+  "TEAM_REQUEST_REJECTED": {
+    "title": "Your request to join was rejected",
+    "body": "{rejector} rejected your request to join \"{team}\""
+  },
+  "TEAM_INVITATION_ACCEPTED": {
+    "title": "{accepter} accepted your invitation",
+    "title_anonymous": "Your team invitation was accepted",
+    "body": "Accepted the invitation to join \"{team}\""
+  },
+  "TEAM_INVITATION_DECLINED": {
+    "title": "{decliner} declined your invitation",
+    "title_anonymous": "Your team invitation was declined",
+    "body": "Declined the invitation to join \"{team}\""
+  },
+  "TEAM_INVITATION_CANCELED": {
+    "title": "Team invitation canceled",
+    "body": "{canceler} canceled the invitation to join \"{team}\""
+  },
+  "TEAM_REQUEST_CANCELED": {
+    "title": "{canceler} canceled the join request",
+    "title_anonymous": "Join request canceled",
+    "body": "Canceled the request to join \"{team}\""
+  },
+  "ROOM_NOTICE": {
+    "body": "In \"{topicTitle}\"",
+    "untitled": "A notice from the platform"
+  },
+  "CHEESE_QUESTION": {
+    "body": "In \"{topicTitle}\" — paused, waiting for your answer",
+    "untitled": "Cheese has a question for you"
+  }
+}

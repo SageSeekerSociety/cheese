@@ -15,6 +15,7 @@
           <!-- 颜色代码输入框 -->
           <div class="d-flex align-center mb-3">
             <v-text-field
+              autocomplete="off"
               :model-value="modelValue"
               label="十六进制颜色码"
               hide-details

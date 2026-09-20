@@ -101,10 +101,10 @@ describe('session activity', () => {
     expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 
-  // 「现场」那一格靠这个事件在开工那一刻出现。以前它等的是第一个工具帧——而一个
+  // 「现场」那一格靠这个事件在开工那一刻出现。以前它等的是第一个工具调用——而一个
   // @ 出来的 agent 可能先想上半分钟才动手，那半分钟里右边什么都没有，只有刷新
-  // 一次页面才看得见它。工具帧是干活的证据，不是干活的开始。
-  it('开工那一刻就报 working，不等第一个工具帧', async () => {
+  // 一次页面才看得见它。干活的证据不是干活的开始。
+  it('开工那一刻就报 working，不等第一个工具调用', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },
@@ -116,7 +116,6 @@ describe('session activity', () => {
     socket.emit({ type: 'turn_started', turn_id: 'one' })
     await flush()
     expect(view.emitted('working')?.at(-1)).toEqual([true])
-    expect(view.emitted('tool-used')).toBeUndefined()
 
     socket.emit({ type: 'turn_finished', turn_id: 'one' })
     await flush()

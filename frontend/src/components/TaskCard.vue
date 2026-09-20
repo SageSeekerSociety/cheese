@@ -101,7 +101,8 @@ const isSelfTask = computed(() => {
   return task.value.creator.id === AccountService.user?.id
 })
 
-const formatDeadline = (deadline: number) => {
+const formatDeadline = (deadline: number | null) => {
+  if (deadline == null) return '未设置截止时间'
   const now = dayjs()
   const deadlineDay = dayjs(deadline)
   const diffDays = deadlineDay.diff(now, 'day')

@@ -45,7 +45,7 @@ GitHub 返回 422「A pull request already exists」时不再降级——去把�
 
 ## 通知不再自相矛盾（验收 3）
 
-原来的矛盾是这么来的：PR 开出去了（GitHub 侧 422 之前已经真的建过 PR），但异常被 `except Exception` 接住 → 降级 → 本地 merge + 直推 main → 发第二条「已采纳并归档」。现在这一路根本不抛异常，`_open_pr_for_accept` 直接 `return card`，`accept()` 在第 446 行原地返回，降级分支下面那一整段（本地 merge / `push_back()` / 归档通知）一行都不会执行。
+原来的矛盾是这么来的：PR 开出去了（GitHub 侧 422 之前已经真的建过 PR），但异常被 `except Exception` 接住 → 降级 → 本地 merge + 直推 main → 发第二条「已采纳并归档」。现在这一路根本不抛异常，`_open_pr_for_accept` 直接 `return card`，`accept()` 在第 446 行原地返回，降级分支下面那一整段（本地 merge / 归档通知）一行都不会执行。
 
 措辞也跟着分了岔：`already_existed` 为真时卡片 note 和通知都说「已认领该分支上已存在的 PR #N」，不说「已开 PR #N」——时间线记录的就是这件事，说反了等于记假账。
 
@@ -91,4 +91,4 @@ ORDER BY decided_at DESC;
 
 ## 明确没做
 
-不动 `push_back()`/本地 merge 那条降级路径本身（只是让它不再被这一种 422 触发）、不动归档门禁、不动重推逻辑、不去关闭或合并 #234、不改前端、不动 `.github/workflows/`。
+不动本地 merge 那条降级路径本身（只是让它不再被这一种 422 触发）、不动归档门禁、不动重推逻辑、不去关闭或合并 #234、不改前端、不动 `.github/workflows/`。

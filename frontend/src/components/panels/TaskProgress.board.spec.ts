@@ -5,7 +5,7 @@
  * 理由。
  */
 import type { Component } from 'vue'
-import type { RoomTask, RoomTree, Topic } from '@/cx_types'
+import type { RoomTask, Topic } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -14,14 +14,12 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listRoomTasks = vi.fn()
-const listRoomTrees = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
-    listRoomTrees: (...a: unknown[]) => listRoomTrees(...a),
   }
 })
 
@@ -48,17 +46,11 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     room_id: 'room-1',
     title: '查一下分页接口',
     status: 'open',
-    residency: 'idle',
-    tree_id: 't1',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
     presentation: { column: 'building', display_status: '运行中' },
     ...over,
   }
-}
-
-function tree(over: Partial<RoomTree> = {}): RoomTree {
-  return { id: 't1', status: 'open', created_at: '2026-08-23T00:00:00Z', ...over }
 }
 
 let vuetify: ReturnType<typeof createVuetify>
@@ -69,7 +61,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   listRoomTasks.mockResolvedValue({ data: [task()], total: 1 })
-  listRoomTrees.mockResolvedValue({ data: [tree()], total: 1 })
 })
 
 function mount() {
@@ -159,7 +150,7 @@ describe('标题旁边那个数', () => {
     })
     const { container } = mount()
     await waitFor(() =>
-      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe('3件，2件等你')
+      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe('3件，2件待处理')
     )
   })
 })

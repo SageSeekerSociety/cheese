@@ -3,6 +3,7 @@ key (minted once, persisted), and a turn that ends with usage=0 (the hooks
 backends) gets its REAL usage drained from the gateway spend log into the
 usage table."""
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock
 
@@ -157,7 +158,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path)
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
     assert route == "native"
-    assert "env" not in kwargs
+    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
 
 
 @pytest.mark.anyio
@@ -241,6 +242,38 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
 
 
 @pytest.mark.anyio
+async def test_settling_usage_allows_key_lookup_and_keeps_checkpoint_current(
+    client, tmp_path, monkeypatch
+):
+    fake = FakeGateway()
+    fake.days[gw.utc_today()] = (120, 30, 0.02)
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    key = await svc.project_gateway_key(pid)
+    fake.lag_calls = 1
+    settling = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def wait_for_rows(_seconds):
+        settling.set()
+        await resume.wait()
+
+    monkeypatch.setattr("app.domain.agent.chat.asyncio.sleep", wait_for_rows)
+    pending = asyncio.create_task(svc._drain_gateway_usage(pid))
+    try:
+        await asyncio.wait_for(settling.wait(), timeout=2)
+        # New inference must proceed while an earlier turn waits for spend rows.
+        assert await asyncio.wait_for(svc.project_gateway_key(pid), timeout=1) == key
+        other = await asyncio.wait_for(svc._drain_gateway_usage(pid), timeout=1)
+        assert other is not None
+        assert (other.input_tokens, other.output_tokens) == (120, 30)
+    finally:
+        resume.set()
+        retried = await pending
+    # The paused drain must read the checkpoint advanced by the other drain.
+    assert retried is None
+
+
+@pytest.mark.anyio
 async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monkeypatch):
     """Gateway-routed turns consume credits from the REAL spend (cache discounts
     included), not the flat token rate — so 120+30 tokens at ¥0.02 with a
@@ -308,12 +341,13 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path):
-    """A device turn's model env belongs to the backend that reaches the machine
-    — the profile env (box-local gateway URL + a real key) must never reach the
-    machine. The ROUTE follows where its traffic actually goes (#325 G2): the
-    /llm gateway without a subscription, the metering proxy with one, so moving
-    a topic between machines never swaps its model."""
+async def test_device_turn_keeps_its_saved_gateway_model_when_subscription_is_enabled(
+    client, tmp_path
+):
+    """Adding subscription supply preserves the saved API model and gateway route.
+
+    Provider URLs and keys remain on the backend, away from the machine.
+    """
     from app.core.config import settings as app_settings
 
     pool_url = "http://pool.example"
@@ -333,17 +367,21 @@ async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path)
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
     assert route == "gateway"
-    assert "env" not in kwargs  # no profile env, no virtual key on the machine
+    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
     assert app_settings.subscription_enabled is False  # and with the flag on:
 
     import unittest.mock
 
     with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
-        kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
-    assert route == "subscription"
-    assert "env" not in kwargs  # the backend builds the proxy env itself
-    assert kwargs["model"] == ""  # the subscription's default, no --model flag
+        subscription_kwargs, subscription_route = await svc._model_kwargs(
+            pid, _on_a_machine()
+        )
+
+    assert subscription_route == route == "gateway"
+    assert subscription_kwargs == kwargs
+    assert fake.minted == []
 
 
 @pytest.mark.anyio
@@ -363,7 +401,8 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
-    assert "env" not in kwargs  # the backend builds the proxy env itself
+    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert kwargs["model"] == "claude-sonnet-5"
 
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
     assert route == "gateway"  # profile/gateway logic, not the subscription
@@ -392,15 +431,94 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     async with factory() as session:
         project = await ProjectRepository(session).get(pid)
         assert project is not None
-        project.settings = {"subscription_model": "opus"}
+        from app.domain.agent_instance.configuration import AgentConfiguration
+        from app.domain.agent_instance.services import AgentInstanceService
+
+        agents = AgentInstanceService(session)
+        agent = await agents.materialize_default(project)
+        await agents.configure(
+            agent, AgentConfiguration(**{**agent.configuration, "model": "opus"})
+        )
         await session.commit()
 
     device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
     cloud_kwargs, cloud_route = await svc._model_kwargs(pid, _leases_a_machine())
 
     assert cloud_route == device_route == "subscription"
-    assert cloud_kwargs == device_kwargs == {"model": "claude-opus-5"}
+    assert cloud_kwargs == device_kwargs
+    assert cloud_kwargs["model"] == "claude-opus-5"
+    assert set(cloud_kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
     assert fake.minted == []  # no gateway key is minted for either
+
+
+@pytest.mark.anyio
+async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
+    client, tmp_path, monkeypatch
+):
+    from app.core.config import settings
+    from app.domain.agent_instance.configuration import AgentConfiguration
+    from app.domain.agent_instance.services import AgentInstanceService
+
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    svc, factory, pid, tid = await _mk_service(
+        client.test_factory, tmp_path, FakeGateway()
+    )
+    async with factory() as session:
+        agents = AgentInstanceService(session)
+        agent = await agents.create(
+            project_id=pid,
+            handle="reviewer",
+            type_name=None,
+            display_name="Reviewer",
+            configuration=AgentConfiguration(model="opus", body="Original role"),
+        )
+        snapshot = agents.resolved(agent)
+        await agents.configure(
+            agent, AgentConfiguration(model="fable", body="Edited role")
+        )
+        await session.commit()
+        assert await agents.system_prompt(snapshot) == "Original role"
+        # A later turn addressed to the same teammate resolves it afresh.
+        edited = agents.resolved(agent)
+
+    # A room does not have an agent: which one a turn runs as comes with the
+    # turn. An ongoing turn keeps the snapshot it started with; the next one
+    # sees the edit; a turn nobody addressed runs as the project's default.
+    current, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=snapshot, acting_agent="reviewer"
+    )
+    following, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
+    )
+    default, _ = await svc._model_kwargs(pid, _on_a_machine())
+    assert current["model"] == "claude-opus-5"
+    assert following["model"] == "claude-fable-5"
+    assert default["model"] == "claude-sonnet-5"
+    assert (
+        current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]
+    )
+    repeated, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
+    )
+    assert (
+        repeated["env"]["CHEESE_AGENT_CONFIG"]
+        == following["env"]["CHEESE_AGENT_CONFIG"]
+    )
+    monkeypatch.setattr(svc, "_agent_handle", AsyncMock(return_value="ops"))
+    same_turn, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=snapshot, acting_agent="reviewer"
+    )
+    assert same_turn == current
+    assert same_turn["agent_handle"] == "reviewer"
+    different_author, _ = await svc._model_kwargs(
+        pid, _on_a_machine(), tid, agent=edited
+    )
+    assert different_author["agent_handle"] == "ops"
+    assert different_author["model"] == following["model"]
+    assert (
+        different_author["env"]["CHEESE_AGENT_CONFIG"]
+        != following["env"]["CHEESE_AGENT_CONFIG"]
+    )
 
 
 @pytest.mark.anyio

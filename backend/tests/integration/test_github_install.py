@@ -1,13 +1,18 @@
 """GitHub App install flow (#192): connect a project to a repo.
 
-fetch_installation_repos (a real GitHub API call) is monkeypatched — these
+fetch_user_installation_repos (a real GitHub API call) is monkeypatched — these
 tests exercise the state verification, upsert/conflict, and redirect shape,
 not GitHub's API itself.
 """
 
 import uuid
+from urllib.parse import parse_qs, urlparse
 
-from app.core.github_install_state import mint_install_state
+import pytest
+
+from tests.integration.conftest import session_auth_headers
+
+pytestmark = pytest.mark.usefixtures("github_binding_user")
 
 
 def _project(client, name: str = "P") -> str:
@@ -17,25 +22,37 @@ def _project(client, name: str = "P") -> str:
 
 
 def _stub_repos(monkeypatch, repos: list[dict]) -> None:
-    async def _fake(_installation_id: int) -> list[dict]:
+    async def _fake(_token, _installation_id: int) -> list[dict]:
         return repos
 
-    monkeypatch.setattr("app.api.routes.github_install.fetch_installation_repos", _fake)
+    monkeypatch.setattr(
+        "app.api.routes.github_install.fetch_user_installation_repos", _fake
+    )
 
 
-_ONE_REPO = [{"full_name": "acme/widgets", "owner": {"login": "acme"}}]
+_ONE_REPO = [
+    {
+        "full_name": "acme/widgets",
+        "owner": {"login": "acme"},
+        "permissions": {"push": True},
+    }
+]
 
 
 def test_connection_unset_by_default(client):
     pid = _project(client)
-    r = client.get(f"/projects/{pid}/github/connection")
+    r = client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     assert r.json()["data"] == {"connected": False}
 
 
 def test_install_url_carries_a_state_for_this_project(client):
     pid = _project(client)
-    r = client.get(f"/projects/{pid}/github/install-url")
+    r = client.get(
+        f"/projects/{pid}/github/install-url", headers=session_auth_headers("alice")
+    )
     assert r.status_code == 200
     url = r.json()["data"]["url"]
     assert url.startswith("https://github.com/apps/")
@@ -43,7 +60,10 @@ def test_install_url_carries_a_state_for_this_project(client):
 
 
 def test_install_url_404s_for_unknown_project(client):
-    r = client.get(f"/projects/{uuid.uuid4()}/github/install-url")
+    r = client.get(
+        f"/projects/{uuid.uuid4()}/github/install-url",
+        headers=session_auth_headers("alice"),
+    )
     assert r.status_code == 404
 
 
@@ -70,7 +90,7 @@ def test_callback_missing_state_rejected(client):
 
 def test_callback_setup_action_request_is_pending_not_an_error(client):
     pid = _project(client)
-    state = mint_install_state(uuid.UUID(pid))
+    state = _state(client, pid)
     r = client.get(
         "/github/app/callback",
         params={"setup_action": "request", "state": state},
@@ -80,14 +100,14 @@ def test_callback_setup_action_request_is_pending_not_an_error(client):
     assert f"/projects/{pid}/settings" in r.headers["location"]
     assert "github_install=pending" in r.headers["location"]
     # Nothing got connected — this is just "an admin still has to approve".
-    assert not client.get(f"/projects/{pid}/github/connection").json()["data"][
-        "connected"
-    ]
+    assert not client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]["connected"]
 
 
 def test_callback_missing_installation_id_rejected(client):
     pid = _project(client)
-    state = mint_install_state(uuid.UUID(pid))
+    state = _state(client, pid)
     r = client.get(
         "/github/app/callback",
         params={"setup_action": "install", "state": state},
@@ -100,7 +120,7 @@ def test_callback_missing_installation_id_rejected(client):
 def test_callback_success_connects_the_repo(client, monkeypatch):
     _stub_repos(monkeypatch, _ONE_REPO)
     pid = _project(client)
-    state = mint_install_state(uuid.UUID(pid))
+    state = _state(client, pid)
     r = client.get(
         "/github/app/callback",
         params={"installation_id": 999, "setup_action": "install", "state": state},
@@ -111,30 +131,32 @@ def test_callback_success_connects_the_repo(client, monkeypatch):
     assert f"/projects/{pid}/settings" in location
     assert "github_install=success" in location
 
-    conn = client.get(f"/projects/{pid}/github/connection").json()["data"]
+    conn = client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]
     assert conn == {"connected": True, "repo": "acme/widgets", "account": "acme"}
 
 
 def test_callback_no_accessible_repos_rejected(client, monkeypatch):
     _stub_repos(monkeypatch, [])
     pid = _project(client)
-    state = mint_install_state(uuid.UUID(pid))
+    state = _state(client, pid)
     r = client.get(
         "/github/app/callback",
         params={"installation_id": 999, "setup_action": "install", "state": state},
         follow_redirects=False,
     )
     assert "reason=no_accessible_repos" in r.headers["location"]
-    assert not client.get(f"/projects/{pid}/github/connection").json()["data"][
-        "connected"
-    ]
+    assert not client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]["connected"]
 
 
 def test_callback_reconnect_same_project_updates_in_place(client, monkeypatch):
     """Installing again for the same project (a different repo picked this
     time) replaces the old connection rather than conflicting with itself."""
     pid = _project(client)
-    state = mint_install_state(uuid.UUID(pid))
+    state = _state(client, pid)
 
     _stub_repos(monkeypatch, _ONE_REPO)
     client.get(
@@ -143,14 +165,26 @@ def test_callback_reconnect_same_project_updates_in_place(client, monkeypatch):
         follow_redirects=False,
     )
 
-    _stub_repos(monkeypatch, [{"full_name": "acme/other", "owner": {"login": "acme"}}])
+    state = _state(client, pid)
+    _stub_repos(
+        monkeypatch,
+        [
+            {
+                "full_name": "acme/other",
+                "owner": {"login": "acme"},
+                "permissions": {"push": True},
+            }
+        ],
+    )
     r = client.get(
         "/github/app/callback",
         params={"installation_id": 999, "setup_action": "install", "state": state},
         follow_redirects=False,
     )
     assert "github_install=success" in r.headers["location"]
-    conn = client.get(f"/projects/{pid}/github/connection").json()["data"]
+    conn = client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]
     assert conn["repo"] == "acme/other"
 
 
@@ -167,7 +201,7 @@ def test_callback_installation_conflict_with_another_project(client, monkeypatch
         params={
             "installation_id": 555,
             "setup_action": "install",
-            "state": mint_install_state(uuid.UUID(pid_a)),
+            "state": _state(client, pid_a),
         },
         follow_redirects=False,
     )
@@ -178,7 +212,7 @@ def test_callback_installation_conflict_with_another_project(client, monkeypatch
         params={
             "installation_id": 555,
             "setup_action": "install",
-            "state": mint_install_state(uuid.UUID(pid_b)),
+            "state": _state(client, pid_b),
         },
         follow_redirects=False,
     )
@@ -186,27 +220,40 @@ def test_callback_installation_conflict_with_another_project(client, monkeypatch
     assert "reason=installation_conflict" in r_b.headers["location"]
 
     # Project A's connection is untouched by B's rejected attempt.
-    conn_a = client.get(f"/projects/{pid_a}/github/connection").json()["data"]
+    conn_a = client.get(
+        f"/projects/{pid_a}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]
     assert conn_a == {"connected": True, "repo": "acme/widgets", "account": "acme"}
-    conn_b = client.get(f"/projects/{pid_b}/github/connection").json()["data"]
+    conn_b = client.get(
+        f"/projects/{pid_b}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]
     assert conn_b == {"connected": False}
 
 
 def test_callback_github_error_does_not_connect(client, monkeypatch):
     from app.domain.agent.github_app import GitHubAppError
 
-    async def _boom(_installation_id: int) -> list[dict]:
+    async def _boom(_token, _installation_id: int) -> list[dict]:
         raise GitHubAppError("GitHub said no")
 
-    monkeypatch.setattr("app.api.routes.github_install.fetch_installation_repos", _boom)
+    monkeypatch.setattr(
+        "app.api.routes.github_install.fetch_user_installation_repos", _boom
+    )
     pid = _project(client)
-    state = mint_install_state(uuid.UUID(pid))
+    state = _state(client, pid)
     r = client.get(
         "/github/app/callback",
         params={"installation_id": 999, "setup_action": "install", "state": state},
         follow_redirects=False,
     )
     assert "reason=github_error" in r.headers["location"]
-    assert not client.get(f"/projects/{pid}/github/connection").json()["data"][
-        "connected"
-    ]
+    assert not client.get(
+        f"/projects/{pid}/github/connection", headers=session_auth_headers("alice")
+    ).json()["data"]["connected"]
+
+
+def _state(client, pid):
+    url = client.get(
+        f"/projects/{pid}/github/install-url", headers=session_auth_headers("alice")
+    ).json()["data"]["url"]
+    return parse_qs(urlparse(url).query)["state"][0]

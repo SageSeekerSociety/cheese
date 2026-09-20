@@ -3,11 +3,27 @@
        Material palette name like grey-lighten-5 would pin it to #FAFAFA in dark
        theme while the text inside follows --v-theme-on-surface → unreadable. -->
   <v-system-bar window color="background" absolute class="app-system-bar">
-    <div class="position-absolute text-caption font-weight-bold title-bar w-100">
+    <ParentBackButton />
+    <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
+    <!-- 反馈入口（原型）。它是一条**路由**不是一个弹窗：反馈中心是一个完整的页面
+         （有搜索、Tab、详情页、可以分享出去的链接），塞进浮层里这四件事一件都做
+         不了。登录与否都显示——没登录的人遇到的问题同样值得记下来。 -->
+    <v-btn
+      class="feedback-entry"
+      variant="text"
+      color="on-surface-variant"
+      :size="28"
+      to="/feedback"
+      title="反馈"
+      aria-label="反馈"
+    >
+      反馈
+    </v-btn>
     <div class="position-relative d-flex align-center justify-center">
       <v-spacer></v-spacer>
+      <LanguageToggle />
       <v-menu
         v-if="loggedIn"
         v-model="notificationMenuOpen"
@@ -17,8 +33,17 @@
         transition="scale-transition"
       >
         <template #activator="{ props }">
-          <v-btn icon position="relative" v-bind="props" color="text" size="x-small" variant="plain">
-            <v-icon size="20">mdi-bell</v-icon>
+          <v-btn
+            icon
+            position="relative"
+            v-bind="props"
+            color="on-surface-variant"
+            :size="28"
+            variant="text"
+            aria-label="通知"
+            title="通知"
+          >
+            <v-icon size="18">mdi-bell</v-icon>
             <v-badge
               v-if="unreadNotificationsCount > 0"
               color="error"
@@ -31,8 +56,8 @@
         </template>
         <notification-panel @update-count="updateUnreadCount" />
       </v-menu>
-      <v-btn v-else icon class="me-4" disabled>
-        <v-icon>mdi-bell</v-icon>
+      <v-btn v-else icon :size="28" variant="text" color="on-surface-variant" aria-label="通知" disabled>
+        <v-icon size="18">mdi-bell</v-icon>
       </v-btn>
     </div>
   </v-system-bar>
@@ -46,6 +71,10 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import NotificationPanel from '../Notification/NotificationPanel.vue'
 
+import ParentBackButton from './ParentBackButton.vue'
+
+import LanguageToggle from '@/components/common/LanguageToggle.vue'
+import { t } from '@/i18n'
 import { NotificationsApi } from '@/network/api/notifications'
 import AccountService from '@/services/account'
 import { usePageTitleStore } from '@/stores/title'
@@ -57,7 +86,7 @@ const { getRouteHierarchy } = usePageTitle()
 const notificationMenuOpen = ref(false)
 const unreadNotificationsCount = ref(0)
 
-const currentTitle = ref('知是社区')
+const currentTitle = ref(t('global.cheese2'))
 
 const updateTitle = () => {
   const hierarchy = getRouteHierarchy.value
@@ -67,7 +96,7 @@ const updateTitle = () => {
       return
     }
   }
-  currentTitle.value = '知是社区'
+  currentTitle.value = t('global.cheese2')
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
@@ -136,6 +165,19 @@ onMounted(() => {
 .app-system-bar.app-system-bar {
   opacity: 1;
   color: rgb(var(--v-theme-on-surface-variant));
+}
+
+.app-system-bar .language-toggle {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* 和语言开关同一档尺寸：这条系统栏里的东西高度必须一致，否则整条会看起来参差。 */
+.app-system-bar .feedback-entry {
+  min-height: 24px;
+  padding: 2px 10px;
+  font-size: 12px;
 }
 
 .floating-search-container {

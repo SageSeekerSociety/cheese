@@ -280,36 +280,23 @@ async def test_delivered_and_undelivered_split_gets_both_remedies(
 
 
 @pytest.mark.anyio
-async def test_a_wedged_resume_spends_from_the_same_budget(db_factory, monkeypatch):
-    """卡死清扫排的那次续跑，算进同一份预算里 (#574).
+async def test_a_wedged_turn_is_cancelled_and_never_re_run(db_factory, monkeypatch):
+    """A wedged turn is torn down and handed to a person — never re-run.
 
-    The sweep's remedy for a wedged turn IS an automatic continuation, so it has
-    to count as one. Counting it as zero hands the chain a fresh budget: the
-    platform can announce 「不再自动重试」 and then, because the next failure
-    entered through the sweep instead of the crash handler, quietly start
-    retrying again — taking its own handover back.
-
-    Driven end to end rather than by inspecting the counter: what a person in
-    the room sees is how many times 芝士 restarted, and that is what is asserted.
+    Re-running it only re-enters the machine that just died under it, so the
+    sweep cancels the corpse (to free the topic lock) and says so once. Driven
+    end to end: what a person in the room sees is that 芝士 did NOT silently
+    restart, and that the notice tells them it is now on them.
     """
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
     turn = await open_turn(db_factory, topic, age_s=90)
 
-    class _BrokenChat(_Chat):
-        """Every turn after the sweep's fails the way dev's 257 did: an
-        exception no classifier recognises."""
-
-        async def converse(self, **kw):
-            self.converse_calls.append(kw)
-            raise RuntimeError("boom")
-            yield  # pragma: no cover — makes this an async generator
-
-    chat = _BrokenChat(db_factory)
+    chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
 
     # A turn whose task is alive but silent on both signals — what the sweep
-    # calls wedged, and the only path that reaches the resume under test.
+    # calls wedged.
     async def _never():
         await asyncio.Event().wait()
 
@@ -321,11 +308,18 @@ async def test_a_wedged_resume_spends_from_the_same_budget(db_factory, monkeypat
     async def _last_activity(_topics):
         return {topic: datetime.now(UTC) - timedelta(seconds=4000)}
 
-    assert await runner.sweep_orphans(chat, last_activity=_last_activity) == 1
+    # Zero remedial re-sends: a wedged turn is cancelled and announced, never re-run.
+    assert await runner.sweep_orphans(chat, last_activity=_last_activity) == 0
     for _ in range(400):
         await asyncio.sleep(0)
 
-    assert len(chat.converse_calls) <= AgentWorkRunner.MAX_RESUME_CHAIN, (
-        f"卡死续跑后又跑了 {len(chat.converse_calls)} 轮 —— "
-        f"清扫排的那次没算进预算，等于多给了一轮重试"
+    assert task.cancelled() or task.cancelling(), "the wedged turn was not torn down"
+    assert chat.converse_calls == [], (
+        f"卡死的轮次被又跑了 {len(chat.converse_calls)} 次 —— 平台不该自动重跑"
     )
+    # Exactly one notice, and it hands the topic to a person rather than
+    # promising the platform will pick it back up.
+    assert len(chat.events) == 1
+    _, notice_text = chat.notices[0]
+    assert "@ 芝士" in notice_text
+    assert "不会自动重跑" in notice_text or "不会自动重试" in notice_text

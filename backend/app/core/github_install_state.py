@@ -25,28 +25,53 @@ _TYPE = "github_install"
 _TTL_S = 600
 
 
-def mint_install_state(project_id: uuid.UUID, *, ttl_s: int = _TTL_S) -> str:
+INSTALL_TTL_S = _TTL_S
+
+
+class InstallClaims(NamedTuple):
+    project_id: uuid.UUID
+    user_id: int
+    handle: str
+    jti: str
+
+
+def mint_install_state(
+    project_id: uuid.UUID, *, user_id: int, handle: str, ttl_s: int = _TTL_S
+) -> str:
     now = int(time.time())
-    payload = {
-        "pid": str(project_id),
-        "type": _TYPE,
-        "iat": now,
-        "exp": now + ttl_s,
-    }
-    return jwt.encode(payload, _SECRET, algorithm=_ALG)
+    return jwt.encode(
+        {
+            "pid": str(project_id),
+            "uid": user_id,
+            "handle": handle,
+            "jti": uuid.uuid4().hex,
+            "type": _TYPE,
+            "iat": now,
+            "exp": now + ttl_s,
+        },
+        _SECRET,
+        algorithm=_ALG,
+    )
 
 
-def verify_install_state(state: str) -> uuid.UUID | None:
-    """The project_id a valid, unexpired state was minted for, else None."""
+def verify_install_state(state: str) -> InstallClaims | None:
+    """Verify the initiating identity and one-use state; legacy states expire closed."""
     try:
         decoded = jwt.decode(state, _SECRET, algorithms=[_ALG])
-    except jwt.PyJWTError:
-        return None
-    if decoded.get("type") != _TYPE or not decoded.get("pid"):
-        return None
-    try:
-        return uuid.UUID(str(decoded["pid"]))
-    except ValueError:
+        if decoded.get("type") != _TYPE:
+            return None
+        handle, jti = decoded.get("handle"), decoded.get("jti")
+        if (
+            not isinstance(handle, str)
+            or not handle
+            or not isinstance(jti, str)
+            or not jti
+        ):
+            return None
+        return InstallClaims(
+            uuid.UUID(decoded["pid"]), int(decoded["uid"]), handle, jti
+        )
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError):
         return None
 
 

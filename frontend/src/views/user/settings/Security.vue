@@ -162,7 +162,10 @@
 
           <v-form ref="passwordForm" @submit.prevent="handleChangePassword">
             <v-text-field
+              id="field-newPassword"
               v-model="newPassword"
+              autocomplete="new-password"
+              name="newPassword"
               label="新密码"
               type="password"
               variant="outlined"
@@ -175,7 +178,10 @@
             </v-text-field>
 
             <v-text-field
+              id="field-confirmPassword"
               v-model="confirmPassword"
+              autocomplete="new-password"
+              name="confirmPassword"
               label="确认新密码"
               type="password"
               variant="outlined"

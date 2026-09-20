@@ -21,6 +21,18 @@
       "Bash(curl -sf http://localhost:8081 *)",
       "Bash(ls *)",
       "Bash(mkdir *)"
+    ],
+    "deny": [
+      "Bash(git stash *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git checkout -- .)",
+      "Bash(git checkout .)",
+      "Bash(git restore .)",
+      "Bash(git restore -- .)",
+      "Bash(git clean *)"
     ]
   }
 }

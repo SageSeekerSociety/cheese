@@ -98,6 +98,26 @@ def test_it_fetches_from_the_declared_port(port_file):
         app.shutdown()
 
 
+@pytest.mark.parametrize("legacy_base", ["", "/api/topics/old-topic/app/\n"])
+def test_app_receives_original_html_asset_and_api_paths(port_file, legacy_base):
+    app = _server(b"app")
+    port_file.write_text(f"{app.server_address[1]}\n{legacy_base}")
+    peer = _Peer(str(port_file))
+    try:
+        for stream, path in enumerate(
+            ["/", "/src/main.js?import", "/api/items?a=1&a=2"], start=1
+        ):
+            peer.send(wire.OP_REQ, stream, wire.encode_meta({"path": path}))
+            op, _, payload = peer.recv()
+            assert op == wire.OP_RESP, payload
+            while peer.recv()[0] != wire.OP_END:
+                pass
+        assert app.seen == ["/", "/src/main.js?import", "/api/items?a=1&a=2"]
+    finally:
+        peer.close()
+        app.shutdown()
+
+
 def test_the_port_comes_from_the_machine_not_the_wire(port_file):
     """Re-read per stream, so an agent restarting its server on another port is
     followed — and, the half that matters, so nothing the backend sends can
@@ -212,13 +232,16 @@ def test_it_relays_a_websocket_to_the_declared_port(port_file):
     wrong, and the symptom is a page that reloads forever."""
     from websockets.sync.server import serve
 
+    seen = []
+
     def echo(connection):
+        seen.append(connection.request.path)
         for message in connection:
             connection.send(message)
 
     server = serve(echo, "127.0.0.1", 0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    port_file.write_text(str(server.socket.getsockname()[1]))
+    port_file.write_text(f"{server.socket.getsockname()[1]}\n")
     peer = _Peer(str(port_file))
     try:
         peer.send(wire.OP_WS_OPEN, 8, wire.encode_meta({"path": "/hmr", "headers": []}))
@@ -229,6 +252,9 @@ def test_it_relays_a_websocket_to_the_declared_port(port_file):
         op, stream, payload = peer.recv()
         assert (op, stream) == (wire.OP_WS_MSG, 8)
         assert payload == bytes([wire.WS_TEXT]) + b"reload", payload
+        # The handshake can finish before the server handler runs. Its echo
+        # proves it has recorded the path; WS_OK alone does not.
+        assert seen == ["/hmr"]
 
         peer.send(wire.OP_WS_MSG, 8, bytes([wire.WS_BINARY]) + b"\x00\xff")
         _op, _stream, payload = peer.recv()

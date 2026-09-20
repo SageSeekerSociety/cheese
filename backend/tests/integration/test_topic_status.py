@@ -2,6 +2,8 @@
 
 import uuid
 
+from tests.delivery import delivery_headers, delivery_task_id
+
 
 def _make_project(client) -> str:
     r = client.post("/projects", json={"name": "P"})
@@ -38,8 +40,10 @@ def test_status_includes_cards_with_gate_tail(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     r = client.post(
-        f"/topics/{tid}/accept-card",
+        f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",

@@ -6,12 +6,10 @@ through. It has to decide, per request, where that request actually goes:
   subscription  the Claude subscription, reached through ccproxy's egress
   gateway       an API-key pool (Zhipu / DeepSeek), reached through LiteLLM
 
-Deciding this in the BACKEND rather than in the proxy is the whole point of the
-split: the proxy is the data plane, the backend is the control plane. The proxy
-asks once per project (cached), and a project's supply can then change without
-touching the proxy, its config, or the sandbox's environment — the previous
-design pinned the pool into the sandbox's env at launch, so switching meant
-restarting the agent.
+The backend chooses the route from the agent model signed into its session
+credential. A project supply setting chooses the default model and remains the
+route for older credentials without a model claim. Admission also supplies the
+central account identity for profile queries, independently of inference supply.
 
 Kept pure (no DB, no HTTP) so both the endpoint and its tests can call it with a
 plain settings dict.

@@ -28,7 +28,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # 自动续跑 (④) re-runs a turn whose side effects may already have landed.
+    # 重发 (④) re-runs a turn whose side effects may already have landed.
     # This table is the durable "already done" marker: the guard row and the
     # effect commit in ONE transaction, so a process death can never leave the
     # effect done and the marker missing.

@@ -24,8 +24,9 @@ if TYPE_CHECKING:
         EventConsumer,
         ReceiptConsumer,
         SessionRef,
+        UnreadProbe,
     )
-    from app.domain.agent.harness.claude_code import Channel
+    from app.domain.agent.harness.channel import Channel
 
 
 class ComputeProvider(Protocol):
@@ -49,7 +50,7 @@ class ComputeProvider(Protocol):
 
     # 图片输入: whether the turn's user message actually carries `images=`. It is
     # a capability, not a preference — the prompt wording branches on it
-    # (chat._prompt_line). Before this existed, `images=` was accepted by every
+    # (chat.prompt_line). Before this existed, `images=` was accepted by every
     # provider and silently dropped by some, while the prompt kept telling 芝士
     # "图片内容已附在本条消息里" on all of them. An agent that reads that promise
     # and sees nothing does not error — it invents what the image said, which is
@@ -127,6 +128,15 @@ class ComputePool:
         self._default = (default_name, DEFAULT_HARNESS)
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
+        self._owners: dict[uuid.UUID, AgentRuntime] = {}
+
+    async def activate(self, session: "SessionRef", runtime: AgentRuntime) -> None:
+        """Park other harnesses before giving the room to the selected one."""
+        for previous in self._runtimes():
+            if previous is not runtime and previous.holds(session.topic_id):
+                await previous.interrupt(session)
+                await previous.close(session)
+        self._owners[session.topic_id] = runtime
 
     def default(self) -> ComputeProvider:
         return self._backends[self._default]
@@ -148,17 +158,16 @@ class ComputePool:
     async def deliver(
         self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
     ) -> bool:
-        """Inject text into whichever session is currently running on this
-        topic. Asks every backend rather than resolving the topic's configured
-        one: only one that HAS a live session for this exact topic can answer
-        True, so the first True is the right one — and it needs no DB read on
-        the hot path where a human is waiting.
-
-        Every backend is asked rather than only the ones that keep a session:
-        answering False is cheap, and a pool that decided in advance who COULD
-        answer would be deciding it from the class rather than from whether
-        there is a live session — which is the thing actually being asked."""
-        for backend in self._backends.values():
+        """Deliver to the owner selected when starting or recovering the work."""
+        owner = self._owners.get(topic_id)
+        candidates = (
+            [owner]
+            if owner
+            else [runtime for runtime in self._runtimes() if runtime.holds(topic_id)]
+        )
+        if len(candidates) > 1:
+            raise RuntimeError("Room has multiple live harnesses without a work owner")
+        for backend in candidates:
             delivered = (
                 await backend.deliver(topic_id, text, images=images)
                 if images
@@ -166,6 +175,24 @@ class ComputePool:
             )
             if delivered:
                 return True
+        return False
+
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
+        """Ask the machine that owns this room to put this agent's platform
+        tools back; without an agent, the one that answers for the room.
+
+        Only a backend that can lose them answers; everything else says no, so
+        the caller needs no test for which machine a room is on.
+        """
+        for backend in self._backends.values():
+            recover = getattr(backend, "recover_native_tools", None)
+            if recover is None:
+                continue
+            runtime = runtime_for(backend)
+            if self._owners.get(topic_id) is runtime or runtime.holds(topic_id):
+                return await recover(topic_id, agent_handle)
         return False
 
     def bind_events(
@@ -185,6 +212,12 @@ class ComputePool:
         for runtime in self._runtimes():
             runtime.bind_receipts(consumer)
 
+    def bind_unread_probe(self, probe: "UnreadProbe") -> None:
+        """Give every runtime a way to ask whether anything it was handed is
+        still unread — the other half of the same bookkeeping."""
+        for runtime in self._runtimes():
+            runtime.bind_unread_probe(probe)
+
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Does any backend still hold a live session for this topic?"""
         return any(runtime.holds(topic_id) for runtime in self._runtimes())
@@ -195,25 +228,19 @@ class ComputePool:
         """Listen again to sessions that survived this process."""
         recovered: list[SessionRef] = []
         for runtime in self._runtimes():
-            recovered.extend(await runtime.recover(device_id))
+            sessions = await runtime.recover(device_id)
+            for session in sessions:
+                self._owners[session.topic_id] = runtime
+            recovered.extend(sessions)
         return recovered
 
     def backlog(self, session: "SessionRef") -> "Backlog":
-        """The unread tail for this session, from whichever backend kept it.
+        """Retained events from all harnesses, each with its own landing cursor."""
+        from app.domain.agent.harness.backlog import CombinedBacklog
 
-        A session's records live with the HARNESS that made them, and this call
-        does not know which one ran the topic — resolving that means a DB read
-        the reconcile path does not have in hand. Asking is cheap and
-        unambiguous instead: at most one harness has anything to hand over for a
-        given session, so the first non-empty answer is the right one. When
-        nobody has anything the reader is empty either way, and the caller still
-        gets one to close the pass with.
-        """
-        readers = [runtime.backlog(session) for runtime in self._runtimes()]
-        for reader in readers:
-            if reader.unread():
-                return reader
-        return readers[0]
+        return CombinedBacklog(
+            [runtime.backlog(session) for runtime in self._runtimes()]
+        )
 
     async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
         """Land what a recovered session produced while nobody listened."""
@@ -279,22 +306,29 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     executor falls back to. The default now comes from `compute_default_name`,
     the same answer the catalogue marks 默认.
     """
+    from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.harness.claude_code import Channel, ClaudeCodeRuntime
+    from app.domain.agent.harness.channel import Channel
+    from app.domain.agent.harness.claude_code import ClaudeCodeRuntime, executor_launch
+    from app.domain.agent.harness.codex import CodexChannel, CodexRuntime
+    from app.domain.agent.harness.pi.channel import PiChannel
+    from app.domain.agent.harness.pi.runtime import PiRuntime
     from app.domain.agent.market import compute_default_name
 
     def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
         # One timeout policy, applied where the watching happens. The two-layer
         # shape (turn 活跃度检测) is `idle_suspect_s` of no hook and no liveness
         # evidence → only SUSPECTED wedged, then a `confirm_alive` probe until it
-        # says dead, with `hard_ceiling_s` as the unconditional backstop. It used
-        # to be a constructor argument on every transport, which is how a single
-        # 900s deadline could kill a long-but-silent turn on one of them and not
-        # the others.
+        # says dead, with `hard_ceiling_s` recorded when crossed and ending
+        # nothing. It used to be a constructor argument on every transport, which
+        # is how a single 900s deadline could kill a long-but-silent turn on one
+        # of them and not the others.
         return ClaudeCodeRuntime(
             channel,
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+            unread_grace_s=settings.agent_unread_grace_s,
+            no_progress_s=settings.agent_no_progress_s,
         )
 
     channels: list[Channel] = [DeviceChannel()]
@@ -308,5 +342,25 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     preferred = compute_default_name(settings)
     names = {channel.name for channel in channels}
     default_name = preferred if preferred in names else DeviceChannel.name
-    backends: list[ComputeProvider] = [runs_claude_code(c) for c in channels]
+    backends: list[ComputeProvider] = [
+        runs_claude_code(CentralChannel(c)) for c in channels
+    ]
+    backends.extend(
+        CodexRuntime(
+            CodexChannel(CentralChannel(c), executor_launch),
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+        )
+        for c in channels
+    )
+    # pi is the one backend NOT wrapped in CentralChannel: it runs on the
+    # machine that holds the workspace, so there is no second machine to assign
+    # and no executor to route its tools through. See pi/channel.py.
+    backends.extend(
+        PiRuntime(
+            PiChannel(c),
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+        )
+        for c in channels
+        if isinstance(c, DeviceChannel)
+    )
     return ComputePool(backends, default_name)

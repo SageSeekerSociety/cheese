@@ -8,6 +8,8 @@ is still ``IdentityService.is_agent`` (the ``AgentBinding``).
 
 import uuid
 
+from sqlalchemy import ColumnElement, SQLColumnExpression, or_
+
 # 芝士's platform-wide handle — a real user row, seeded once, and the handle a
 # project's default agent keys its memory under.
 #
@@ -44,6 +46,40 @@ def topic_agent_handle(topic_id: uuid.UUID | str) -> str:
     return f"{TOPIC_AGENT_PREFIX}{hexed[:_TOPIC_AGENT_HEX]}"
 
 
+def agent_instance_handle(instance_id: uuid.UUID | str) -> str:
+    """The handle THIS agent acts under, anywhere it is a member. Pure.
+
+    A room is a collaboration space and may seat several agents, so an agent's
+    identity cannot be derived from a room — the same derivation would give two
+    agents in one room the same name, and the same agent two names in two rooms.
+    It is derived from the agent instead, which is the thing being attributed to
+    and the thing a seat grants.
+
+    Opaque on purpose, exactly like every other agent handle here: the name a
+    person reads lives on the display profile, so renaming an agent never
+    rewrites what it already signed.
+    """
+    hexed = (
+        instance_id.hex
+        if isinstance(instance_id, uuid.UUID)
+        else str(instance_id).replace("-", "")
+    )
+    return f"{TOPIC_AGENT_PREFIX}{hexed[:_TOPIC_AGENT_HEX]}"
+
+
+# How a 私聊 with an AI teammate is addressed — in the URL the browser shows and
+# in the unread map keyed by "who am I talking to". Prefixed rather than bare,
+# because a teammate's handle is chosen per project (``AgentInstance.handle``)
+# and nothing stops someone naming one after a person on the roster; without the
+# prefix, that person's DM and that teammate's DM would be the same string.
+DM_AGENT_PREFIX = "agent:"
+
+
+def agent_dm_key(agent_handle: str) -> str:
+    """How the UI addresses the 私聊 with this teammate. Pure."""
+    return f"{DM_AGENT_PREFIX}{agent_handle}"
+
+
 def looks_like_agent_handle(handle: str) -> bool:
     """Whether ``handle`` belongs to 芝士 (the platform row or any topic 分身).
 
@@ -52,6 +88,22 @@ def looks_like_agent_handle(handle: str) -> bool:
     NEVER use it: ``IdentityService.is_agent`` (the binding) is the truth.
     """
     return handle == CHEESE_HANDLE or handle.startswith(TOPIC_AGENT_PREFIX)
+
+
+def agent_handle_column(column: SQLColumnExpression[str]) -> ColumnElement[bool]:
+    """``looks_like_agent_handle`` 的 SQL 孪生，判据逐字相同。
+
+    「这句是不是芝士说的」以前问的是事件行的档位（``author_type == ai``）。档位
+    合并之后答案只剩署名一处，而问这句话的有一半是查询 —— 与其让每条查询各自拼
+    一遍前缀，不如把判据留在定义前缀的地方：改了命名规则，两边一起改。
+
+    入参写 ``SQLColumnExpression``：调用点传进来的是 ``Block.author`` 这样的 ORM
+    映射属性，它在类型上不是 ``ColumnElement`` 的子类，两者共同的列表达式基类才是。
+    """
+    return or_(
+        column == CHEESE_HANDLE,
+        column.startswith(TOPIC_AGENT_PREFIX, autoescape=True),
+    )
 
 
 # What a caller with NO credential resolves to (``app.api.auth``). A literal, not
@@ -101,7 +153,7 @@ def names_a_person(handle: str | None) -> bool:
 
     Attribution needs this: a handle that reaches it may be a real person, the
     ``anonymous`` sentinel, ``system`` (every platform-initiated turn — gate
-    verdicts, scheduled wake-ups, ``cheese await`` reports), or 芝士 / one of her
+    verdicts, scheduled wake-ups), or 芝士 / one of her
     per-topic 分身. Only the first may become a topic's owner or be credited on
     a commit; the rest must fall through to whatever the caller's fallback is.
 
