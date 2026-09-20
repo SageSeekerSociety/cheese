@@ -81,7 +81,7 @@ def _turn(client, topic_id: str, content: str = "hi") -> list[dict]:
 
 def _ai_authors(client, topic_id: str) -> set[str]:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    return {b["author"] for b in blocks if b["author_type"] == "ai"}
+    return {b["author"] for b in blocks if b["author"].startswith("cheese")}
 
 
 def test_default_room_attributes_ai_blocks_to_the_seated_agent(client):

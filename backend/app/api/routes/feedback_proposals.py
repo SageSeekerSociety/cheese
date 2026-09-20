@@ -112,14 +112,14 @@ async def propose_feedback(
     412 而不是 429：客户端的正确反应是**别做这件事**，不是等一会儿再做。
     """
     place, actor = await _actor_in_topic(db, resolver, topic_id)
-    handle, is_agent = actor.handle, actor.is_agent
+    handle = actor.handle
     service = proposal_rules.ProposalService(db)
     fingerprint = await service.check(topic_id, body)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,
         author=handle,
-        author_type=AuthorType.ai if is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=body.title,
         kind=BlockKind.message,
         meta={"feedback_proposal": proposal_rules.proposal_meta(body, fingerprint)},

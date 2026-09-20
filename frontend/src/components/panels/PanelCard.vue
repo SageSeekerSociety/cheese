@@ -12,6 +12,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 
 import { getRoomTask, sayOnRoomTask } from '../../api'
+import { isAgentBlock } from '../../lib/authorship'
 import { columnDotStyle } from '../../lib/board'
 import { markdown } from '../../lib/markdown'
 import { relTime } from '../../lib/relTime'
@@ -170,7 +171,7 @@ async function send() {
         <div v-for="b in said" :key="b.id" class="card-msg">
           <span class="card-msg__who t-meta">{{ b.author }}</span>
           <div
-            v-if="b.author_type === 'ai'"
+            v-if="isAgentBlock(b)"
             class="card-msg__text card-markdown t-body"
             v-html="renderMarkdown(b.content)"
           />

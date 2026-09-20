@@ -8,6 +8,8 @@ is still ``IdentityService.is_agent`` (the ``AgentBinding``).
 
 import uuid
 
+from sqlalchemy import ColumnElement, or_
+
 # 芝士's platform-wide handle — a real user row, seeded once, and the handle a
 # project's default agent keys its memory under.
 #
@@ -86,6 +88,19 @@ def looks_like_agent_handle(handle: str) -> bool:
     NEVER use it: ``IdentityService.is_agent`` (the binding) is the truth.
     """
     return handle == CHEESE_HANDLE or handle.startswith(TOPIC_AGENT_PREFIX)
+
+
+def agent_handle_column(column: ColumnElement[str]) -> ColumnElement[bool]:
+    """``looks_like_agent_handle`` 的 SQL 孪生，判据逐字相同。
+
+    「这句是不是芝士说的」以前问的是事件行的档位（``author_type == ai``）。档位
+    合并之后答案只剩署名一处，而问这句话的有一半是查询 —— 与其让每条查询各自拼
+    一遍前缀，不如把判据留在定义前缀的地方：改了命名规则，两边一起改。
+    """
+    return or_(
+        column == CHEESE_HANDLE,
+        column.startswith(TOPIC_AGENT_PREFIX, autoescape=True),
+    )
 
 
 # What a caller with NO credential resolves to (``app.api.auth``). A literal, not

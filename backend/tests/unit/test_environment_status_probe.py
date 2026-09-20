@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import machine_launcher
+from app.domain.agent import environment_runner, machine_launcher, resource_cleanup
 from app.domain.agent.device_provider import (
     ENVIRONMENT_RUNNER_PATHS,
     environment_status,
@@ -205,3 +205,32 @@ def test_every_launcher_writes_the_runner_where_the_probe_looks():
     assert {f"$HOME/{directory}/cheese-environment.py" for directory in written} <= set(
         ENVIRONMENT_RUNNER_PATHS
     )
+
+
+def test_every_reader_of_the_platform_root_accepts_every_root_written():
+    """One fact, spelled in four places that cannot import each other.
+
+    Three of these ship to a machine as standalone programs — the environment
+    runner, the cleanup script, the executor bootstrap — so the roots are copied
+    rather than shared, and a copy that drifts gives a silent wrong answer
+    rather than crashing. The probe drifting stalls a room at `pending`. The
+    cleanup script drifting is worse: a room installed under a root it does not
+    read is torn down as though it never had an executor, so the detached daemon
+    is left running under a home that is then deleted, the private seat it holds
+    is never released, and publication is checked on the wrong branch.
+    """
+    written = {bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR}
+    assert machine_launcher.PLATFORM_DIR in written
+
+    readers = {
+        "environment_status probe": [
+            path.split("/")[1] for path in ENVIRONMENT_RUNNER_PATHS
+        ],
+        "environment runner reset": list(environment_runner.PLATFORM_DIRS),
+        "resource cleanup": list(resource_cleanup.PLATFORM_DIRS),
+    }
+    for name, accepted in readers.items():
+        assert written <= set(accepted), name
+        # In precedence order: a room migrated mid-life has leftovers under
+        # both, and must be read as the root it is actually installed in.
+        assert accepted[0] == machine_launcher.PLATFORM_DIR, name

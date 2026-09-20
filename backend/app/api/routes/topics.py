@@ -698,7 +698,7 @@ async def say_on_task(
         topic_id=place.room_id,
         task_id=task.id,
         author=actor.handle,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=content,
         kind=BlockKind.message,
     )
@@ -1106,7 +1106,7 @@ async def add_comment(
         # would post a thread's comment onto the room for everyone to read.
         topic_id=topic_id,
         author=author,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
@@ -1221,7 +1221,7 @@ async def edit_topic_doc(
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
     )
     # Publish only committed edits: connected teammates can immediately read
     # the new document and the same persisted contribution record.
@@ -1523,11 +1523,7 @@ async def ask_options(
                 topic_id, room_id=place.room_id
             )
         ),
-        author_type=(
-            AuthorType.human
-            if actor.authenticated and not actor.is_agent
-            else AuthorType.ai
-        ),
+        author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
@@ -1711,11 +1707,7 @@ async def record_decision(
                 topic_id, room_id=place.room_id
             )
         ),
-        author_type=(
-            AuthorType.human
-            if actor.authenticated and not actor.is_agent
-            else AuthorType.ai
-        ),
+        author_type=AuthorType.participant,
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
@@ -2280,7 +2272,7 @@ async def set_artifact(
         author=await TopicMemberService(db).resolve_agent_handle(
             topic_id, room_id=place.room_id
         ),
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content=path,
         kind=BlockKind.artifact,
         mime_type=mime,

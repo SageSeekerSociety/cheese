@@ -123,6 +123,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
+from app.domain.block.authorship import is_participant
 from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
@@ -995,8 +996,8 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
-def _pending_human_blocks(history: list[Block]) -> list[Block]:
-    """The human messages/attachments no agent turn has read into a prompt yet.
+def _pending_input_blocks(history: list[Block]) -> list[Block]:
+    """The messages/attachments no turn has read into a prompt yet.
 
     轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
     排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
@@ -1013,12 +1014,12 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
     """
     legacy_watermark = -1
     for i, b in enumerate(history):
-        if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+        if looks_like_agent_handle(b.author) and b.kind == BlockKind.message:
             legacy_watermark = i
     return [
         b
         for i, b in enumerate(history)
-        if _is_human_input(b)
+        if _is_pending_input(b)
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
@@ -1080,9 +1081,14 @@ def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
     )
 
 
-def _is_human_input(b: Block) -> bool:
-    """A block that carries something a person said to 芝士 this turn."""
-    return b.author_type == AuthorType.human and b.kind in (
+def _is_pending_input(b: Block) -> bool:
+    """A block carrying something a participant said into the room.
+
+    「参与者」而不是「人」：一个 AI 队友在房间里说的一句话，对坐在同一个房间里
+    的另一个参与者同样是这一轮要读的输入（结论 1）。挡住「芝士自己这一轮的产
+    出」的不是这里，而是写入端 —— 带着轮次 id 落库的块根本不盖 pending 标记。
+    """
+    return is_participant(b.author_type) and b.kind in (
         BlockKind.message,
         BlockKind.attachment,
     )
@@ -1725,7 +1731,7 @@ class ChatService:
         """Whether anything a person said is still waiting to reach 芝士.
 
         「忘了 @」的补救按钮问的就是这一句，所以它必须和真正组装 prompt 时问的
-        是同一个问题 —— 同一个 `_pending_human_blocks`，不是一份近似的复制品。
+        是同一个问题 —— 同一个 `_pending_input_blocks`，不是一份近似的复制品。
         一份复制品会在窗口语义改动时悄悄和它分叉，而分叉的表现是按钮说「它还没
         看到」、点下去却什么也没有可读，白烧一轮。
         """
@@ -1733,7 +1739,7 @@ class ChatService:
             history = await BlockRepository(session).list_for_topic(
                 topic_id, task_id=None
             )
-            return bool(_pending_human_blocks(history))
+            return bool(_pending_input_blocks(history))
 
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
@@ -2047,7 +2053,7 @@ class ChatService:
         return {
             (block.content or "").strip()
             for block in blocks
-            if block.author_type == AuthorType.ai
+            if looks_like_agent_handle(block.author)
             and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         }
 
@@ -2800,7 +2806,7 @@ class ChatService:
                     project_id=topic.project_id,
                     topic_id=place.room_id,
                     author=author,
-                    author_type=AuthorType.human,
+                    author_type=AuthorType.participant,
                     content=content,
                     kind=BlockKind.message,
                     turn_id=turn_id,
@@ -2835,7 +2841,7 @@ class ChatService:
                     project_id=topic.project_id,
                     topic_id=place.room_id,
                     author=author,
-                    author_type=AuthorType.human,
+                    author_type=AuthorType.participant,
                     content=str(att.get("path") or ""),
                     kind=BlockKind.attachment,
                     mime_type=str(att.get("mime") or "") or None,
@@ -3192,7 +3198,7 @@ class ChatService:
                 topic_id=topic_id,
                 task_id=task_id,
                 author=author,
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 content=text,
                 kind=BlockKind.event if as_progress else BlockKind.message,
                 reply_to=reply_to,
@@ -3219,7 +3225,7 @@ class ChatService:
                         # message did not go to.
                         task_id=task_id,
                         author=author,
-                        author_type=AuthorType.ai,
+                        author_type=AuthorType.participant,
                         content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
@@ -3329,7 +3335,7 @@ class ChatService:
         backfilled: bool = False,
         platform_unsolicited: bool = False,
         in_room: bool = False,
-        author_type: AuthorType = AuthorType.ai,
+        author_type: AuthorType = AuthorType.participant,
         task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """One event block, committed NOW and deduped by event-id.
@@ -3341,16 +3347,15 @@ class ChatService:
 
         ``in_room`` decides whether the conversation shows it at all, and it
         travels as ``meta.in_room`` — its own field, because visibility is not
-        authorship. It used to ride on ``author_type`` (system = the room, ai =
-        现场 only), which meant an event genuinely written by 芝士 could not be
-        shown in the room without lying about who wrote it, and anything that
-        later wanted to know the author was reading a field answering a
-        different question. Absent means shown: every other writer in the
-        codebase posts to the room.
+        authorship. It used to ride on ``author_type``, which meant an event
+        genuinely written by 芝士 could not be shown in the room without lying
+        about who wrote it, and anything that later wanted to know the author
+        was reading a field answering a different question. Absent means shown:
+        every other writer in the codebase posts to the room.
 
         ``author_type`` is then free to answer its own question, and does: 芝士
-        wrote the tool calls and the subagent conclusions, the platform wrote
-        the change summary."""
+        is a participant and wrote the tool calls and the subagent conclusions,
+        while the change summary is the platform's own line."""
         meta = {**meta, "in_room": in_room}
         if eid:
             meta = {**meta, "eid": eid}
@@ -3441,7 +3446,7 @@ class ChatService:
             # reaches the platform exactly once, here — the room's transcript
             # does not contain it and the worker's dies with its container.
             content = event.text.strip() or "分身交回了一次结果（没有留话）"
-            author_type = AuthorType.ai
+            author_type = AuthorType.participant
             meta = {"event_type": "subagent_stop"}
             if event.transcript_path:
                 meta["transcript_path"] = event.transcript_path
@@ -3657,7 +3662,7 @@ class ChatService:
             known_texts = {
                 (b.content or "").strip()
                 for b in blocks
-                if b.author_type == AuthorType.ai
+                if looks_like_agent_handle(b.author)
                 and (b.kind == BlockKind.message or (b.meta or {}).get("progress"))
             }
             recovered = 0
@@ -4252,7 +4257,7 @@ class ChatService:
             # messages actually addressed to it.
             history = await blocks.turn_history(place.room_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
-            pending = _pending_human_blocks(history)
+            pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
             # 「谁说话了」 for the recipient routing, the replay counter and
             # the 「没人在等」 bail, and a platform notice is an answer to
@@ -4995,7 +5000,7 @@ class ChatService:
                 project_id=project_id,
                 topic_id=topic.id,
                 author=author,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content=text,
                 kind=BlockKind.event,
                 # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
@@ -5155,7 +5160,7 @@ class ChatService:
                 project_id=project_id,
                 topic_id=root_topic_id,
                 author=await self._agent_handle(session, root_topic_id),
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
                 meta={"in_room": False},

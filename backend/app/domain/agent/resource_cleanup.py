@@ -13,24 +13,8 @@ import time
 import uuid
 from pathlib import Path
 
-# The one directory the platform writes under the machine's own `$HOME`. A copy
-# of `place.footprint_root()`, not a second answer: this file is piped to the
-# machine on stdin and runs there with no `__file__` and nothing of ours
-# importable, so it carries the name; the copy is held to the original by
-# test_footprint_root.py.
-#
-# This is the deleting side of what `device_provider.DEVICE_ROOT` builds, which
-# is why it is spelled once here and read below rather than typed at each use:
-# a name that drifts from the building side makes every room's home and work
-# tree unreachable to the teardown, and the teardown reports success on paths
-# that never existed while the real hundreds of gigabytes stay on the machine.
-FOOTPRINT_ROOT = ".cheese"
-
-# The platform's directories INSIDE a room's home, the current one first — the
-# pair is `place.session_platform_dirs()`, and it is a pair only in there. The
-# machine's own `$HOME` has never held more than FOOTPRINT_ROOT.
-#
-# Tearing a room down reads what preparing it wrote, and a
+# Every directory the platform has installed a room's own files into, the
+# current one first. Tearing a room down reads what preparing it wrote, and a
 # room prepared under an earlier root still has all of it where that launcher
 # put it — it does not move until something prepares the room again, and a room
 # being deleted never will. Reading only where we would install today answers
@@ -38,7 +22,7 @@ FOOTPRINT_ROOT = ".cheese"
 # answer is acted on: the detached daemon is left alive under a home that is
 # then removed from under it, the private seat it holds is never released, and
 # publication is checked on a branch meant for rooms without an executor.
-PLATFORM_DIRS = (FOOTPRINT_ROOT, ".claude")
+PLATFORM_DIRS = (".cheese", ".claude")
 
 # How long an archived room's processes get to leave on their own before the
 # cleanup ends them. The graceful path below — `/exit` typed into the agent's
@@ -307,7 +291,7 @@ def resource_paths(
 ) -> tuple[Path, Path]:
     project, resource = str(uuid.UUID(project)), str(uuid.UUID(resource))
     paths = tuple(
-        machine_home / FOOTPRINT_ROOT / kind / project / resource
+        machine_home / ".cheese" / kind / project / resource
         for kind in ("home", "work")
     )
     for path in paths:
@@ -412,7 +396,7 @@ def main() -> None:
     if action == "prepare":
         # A timed-out command may arrive after reopening. Once this operation
         # confirmed quiescence, all its delayed retries become read-only.
-        directory = Path.home() / FOOTPRINT_ROOT / "cleanup" / str(uuid.UUID(cleanup))
+        directory = Path.home() / ".cheese/cleanup" / str(uuid.UUID(cleanup))
         directory.mkdir(parents=True, exist_ok=True)
         receipt = directory / (str(uuid.UUID(resource)) + ".ready")
         with receipt.with_suffix(".lock").open("a") as lock:

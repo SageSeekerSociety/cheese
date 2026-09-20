@@ -75,19 +75,12 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-# The platform's directories inside this room's home, the current one first. A
-# copy of `place.session_platform_dirs()`, not a second answer:
-# this file is shipped to the machine as a standalone stdlib-only program, with
-# nothing of ours importable beside it, so it carries the names; the copy is
-# held to the original by test_footprint_root.py.
-#
-# Read rather than assumed, and not read off our own path either: a relaunch
-# writes this file under the current root at the top of the launch, while the
-# executor it is about to replace goes on running under the previous one until
-# the bootstrap stops it. A reset in that window has to stop the executor that
-# is actually running — looking only where this copy happens to sit finds
-# nothing, skips the stop, and then kills the terminal out from under a daemon
-# that goes on writing the status file this reset is about to read.
+# Every directory the platform has installed this room's own files into, the
+# current one first. A reset has to stop the executor that is actually running,
+# and a room prepared before the last move has it where that launcher put it —
+# looking only where we would install today finds nothing, skips the stop, and
+# then kills the terminal out from under a daemon that goes on writing the
+# status file this reset is about to read.
 PLATFORM_DIRS = (".cheese", ".claude")
 
 

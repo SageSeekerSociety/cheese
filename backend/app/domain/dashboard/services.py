@@ -16,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.domain.alert.repositories import AlertRepository
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.authorship import is_participant, participant_blocks
+from app.domain.block.models import Block
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
@@ -155,7 +157,8 @@ class DashboardService:
             for t in topics
             if t.status == TopicStatus.active and t.id in worked_topic_ids
         ]
-        # 本周贡献 (spec §7.2/§10.1): human-authored blocks in the last 7 days.
+        # 本周贡献 (spec §7.2/§10.1): 这个人自己写下的块，最近 7 天。
+        # `author` 已经把人挑出来了，这一条挡的是顶着他 handle 的平台事件。
         week_ago = datetime.now(UTC) - timedelta(days=7)
         weekly = (
             await self._s.scalar(
@@ -164,7 +167,7 @@ class DashboardService:
                 .where(
                     Block.project_id == project_id,
                     Block.author == user_handle,
-                    Block.author_type == AuthorType.human,
+                    participant_blocks(),
                     Block.created_at >= week_ago,
                 )
             )
@@ -224,7 +227,7 @@ class DashboardService:
                     )
                 )
             ) or 0
-            # Contributions = the member's own (human) blocks — not the system
+            # Contributions = the member's own blocks — not the platform's
             # lifecycle/event blocks that happen to carry their handle.
             blocks = (
                 await self._s.scalar(
@@ -233,7 +236,7 @@ class DashboardService:
                     .where(
                         Block.project_id == project.id,
                         Block.author == handle,
-                        Block.author_type == AuthorType.human,
+                        participant_blocks(),
                     )
                 )
             ) or 0
@@ -272,13 +275,17 @@ class DashboardService:
                 .group_by(Block.author_type, Block.author)
             )
         ).all()
+        # 「人写了多少、AI 写了多少」读署名，不读事件行的档位：档位只分得出参与者
+        # 和平台，而这张图问的正是参与者里的哪一种。
         by_type: dict[str, int] = {"human": 0, "ai": 0, "system": 0}
         by_author: dict[str, int] = {}
         for author_type, author, count in rows:
-            by_type[author_type.value] = by_type.get(author_type.value, 0) + count
-            # by_author = real contributors; system lifecycle blocks don't count.
-            if author_type != AuthorType.system:
-                by_author[author] = by_author.get(author, 0) + count
+            # by_author = real contributors; platform lifecycle blocks don't count.
+            if not is_participant(author_type):
+                by_type["system"] += count
+                continue
+            by_type["ai" if looks_like_agent_handle(author) else "human"] += count
+            by_author[author] = by_author.get(author, 0) + count
         return {"by_author_type": by_type, "by_author": by_author}
 
     async def space_board(self, space_id: int) -> dict:

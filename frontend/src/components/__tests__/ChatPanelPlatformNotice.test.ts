@@ -243,8 +243,8 @@ describe('agent status messages', () => {
 
   it('keeps consecutive notices from different agents separate', async () => {
     const { container } = mountRoom([
-      { ...ciFailed(), author: 'agent-one', author_type: 'ai' },
-      { ...ciFailed(), author: 'agent-two', author_type: 'ai' },
+      { ...ciFailed(), author: 'cheese-agentone', author_type: 'participant' },
+      { ...ciFailed(), author: 'cheese-agenttwo', author_type: 'participant' },
     ])
     await flush()
     expect(container.querySelectorAll('.agent-status')).toHaveLength(2)

@@ -6,8 +6,9 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
@@ -75,13 +76,13 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
     assert any(
-        b.author_type == AuthorType.ai
+        looks_like_agent_handle(b.author)
         and b.kind == BlockKind.event
         and b.content == "Draft saved."
         for b in blocks
     )
     assert not any(
-        b.author_type == AuthorType.ai and b.kind == BlockKind.message for b in blocks
+        looks_like_agent_handle(b.author) and b.kind == BlockKind.message for b in blocks
     )
     if private:
         # Exercise the same scoped credential given to Cheese CLI, against the

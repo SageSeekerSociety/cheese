@@ -6,6 +6,7 @@
 // handle→name and id→title maps are provided by the caller (roster / topics).
 import type { Block } from '../cx_types'
 
+import { isAgentBlock } from './authorship'
 import { markdown, sanitizeRendered } from './markdown'
 
 export interface RefMaps {
@@ -103,8 +104,8 @@ function sameLegacyMessageRun(a: Block, b: Block): boolean {
   if (
     a.kind !== 'message' ||
     b.kind !== 'message' ||
-    a.author_type !== 'ai' ||
-    b.author_type !== 'ai' ||
+    !isAgentBlock(a) ||
+    !isAgentBlock(b) ||
     a.author !== b.author
   ) {
     return false
@@ -126,7 +127,7 @@ export function coalesceSplitFencedCodeBlocks(blocks: Block[]): Block[] {
   for (let i = 0; i < blocks.length; i += 1) {
     const first = blocks[i]
     let state = scanFenceState(first.content, null)
-    if (state === null || first.kind !== 'message' || first.author_type !== 'ai') {
+    if (state === null || first.kind !== 'message' || !isAgentBlock(first)) {
       out.push(first)
       continue
     }

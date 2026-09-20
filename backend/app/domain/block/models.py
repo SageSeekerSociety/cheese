@@ -56,12 +56,32 @@ class BlockKind(enum.StrEnum):
 
 
 class AuthorType(enum.StrEnum):
-    human = "human"
-    ai = "ai"  # 芝士 (本体 or 分身)
+    """谁写下了这条事件：一个参与者，还是平台自己。
+
+    人和 agent 是同一种参与者（结论 1），所以这一列不再回答「是人还是 AI」——
+    那个问题由署名（``Block.author``，一个 handle）回答，而且只有它回答得了：
+    一个房间里坐着好几个人和好几个 agent，三档里的一档说不出是哪一个。
+
+    读这一列的唯一落点是 ``app.domain.block.authorship``。
+    """
+
+    participant = "participant"
+    # 平台自己产的事件：部署提醒、闸门结论、自动重发。这一档改叫 platform 要连着
+    # 一次存量行改写（SQLAlchemy 的 Enum 存的是成员名），所以和旧值的删除一起在
+    # P8b 做，这里先留着它今天的名字。
     system = "system"
 
+    # —— P8 之前写下的存量行的两个旧值，都是参与者 ——
+    # 没有一处代码再写它们；读它们的只有 block/authorship.py。P8b 把这些行改写成
+    # participant，然后把这两档删掉。分两次发布是因为 Enum(native_enum=False) 绑的
+    # 是 Python 枚举：上一版镜像读到 participant 会抛 LookupError，所以「加值」和
+    # 「改数据」不能同一次上线。
+    human = "human"
+    ai = "ai"
 
-# `meta` key carried by every new human message/attachment. Its value is null
+
+# `meta` key carried by every new message/attachment that arrives as an input.
+# Its value is null
 # while the input is pending, then the id of the agent turn that actually read
 # it (BlockRepository.mark_consumed). Presence of the null key distinguishes a
 # tracked pending input from a legacy block created before turn accounting.
