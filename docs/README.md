@@ -26,6 +26,7 @@
 | [`microcloud.md`](microcloud.md) | Cloud 机器从哪来、`aiStatus` 各值对芝士意味着什么、ccproxy 在其中的位置，以及改 MicroCloud 的代码怎么合并、交给运维 agent 部署、发版 |
 | [`what-the-agent-perceives.md`](what-the-agent-perceives.md) | 芝士收得到什么、收不到什么：平台的三十种事件里有多少回流给它（答案是零） |
 | [`accept-is-merge.md`](accept-is-merge.md) | 采纳=当场合并那个 PR；「只在绿的时候合」靠项目配置的分支保护规则 |
+| [`forge-contract.md`](forge-contract.md) | 换一个代码托管要填哪六个槽；面板始终是人面对的界面，forge 只是存储、执行与记录；agent 手里拿到的是「递卡」这类产品动词，而不是被包起来的 forge |
 | [`spec.md`](spec.md) | Cheese 2.0 产品与实现 Spec |
 | [`evals.md`](evals.md) | 评测配套 |
 | [`feishu-lark.md`](feishu-lark.md) | lark-cli 团队配置：飞书操作走 `--profile cheese`，含踩坑速查 |
