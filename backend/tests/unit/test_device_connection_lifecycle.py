@@ -575,7 +575,9 @@ async def test_a_call_nobody_came_back_for_does_not_report_a_lost_exception(
 
     await device_hub.on_device_message(
         "machine",
-        wire.execution_result(call.id, "lstat /room/.cheese: no such file or directory"),
+        wire.execution_result(
+            call.id, "lstat /room/.cheese: no such file or directory"
+        ),
     )
     pending = device_connection_app._executor_calls[call.id]
     for _ in range(100):
