@@ -264,6 +264,7 @@ class SchedulerService:
         from app.api.deps import get_work_runner
         from app.domain.agent.platform_notices import (
             EVENT_DEPENDENCY_CLOSED,
+            EVENT_DEPENDENCY_REJECTED,
             SEVERITY_INFO,
             WHO_CHEESE,
             notice,
@@ -282,7 +283,9 @@ class SchedulerService:
                     .join(Topic, Block.topic_id == Topic.id)
                     .where(
                         Topic.status != TopicStatus.archived,
-                        Block.meta["event_type"].as_string() == EVENT_DEPENDENCY_CLOSED,
+                        Block.meta["event_type"]
+                        .as_string()
+                        .in_((EVENT_DEPENDENCY_CLOSED, EVENT_DEPENDENCY_REJECTED)),
                         Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
                         Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
                     )

@@ -106,13 +106,18 @@ async def test_failed_retarget_retries_before_announcing(db_factory, monkeypatch
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("parent_open", [True, False])
 @pytest.mark.parametrize("latest_status", [AcceptStatus.rejected, AcceptStatus.pending])
 @pytest.mark.parametrize("reason", ["", "保留原接口。\n不要引入新的外部依赖。"])
 async def test_dependency_notice_preserves_only_current_rejection(
-    db_factory, latest_status, reason
+    db_factory, latest_status, reason, parent_open
 ):
     parent, _ = await seed(db_factory, delivered=False)
     async with db_factory() as session:
+        if parent_open:
+            saved_parent = await session.get(Task, parent.id)
+            saved_parent.status = TaskStatus.open
+            saved_parent.closed_at = None
         session.add(
             AcceptCard(
                 topic_id=parent.room_id,
@@ -137,8 +142,14 @@ async def test_dependency_notice_preserves_only_current_rejection(
     await retarget_completed_dependencies(db_factory)
     async with db_factory() as session:
         blocks = list(await session.scalars(select(Block)))
+        if parent_open and latest_status == AcceptStatus.pending:
+            assert blocks == []
+            return
         assert len(blocks) == 1
         meta = blocks[0].meta
+        assert meta["event_type"] == (
+            "dependency_rejected" if parent_open else "dependency_closed"
+        )
         assert "Superseded review" not in meta["agent_notice"]
         if latest_status == AcceptStatus.rejected:
             assert meta["dependency_rejection"] == {
@@ -149,6 +160,63 @@ async def test_dependency_notice_preserves_only_current_rejection(
             assert (reason or "没有填写驳回理由") in meta["agent_notice"]
         else:
             assert meta["dependency_rejection"] is None
+
+
+@pytest.mark.anyio
+async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
+    parent, child = await seed(db_factory, delivered=False)
+    async with db_factory() as session:
+        saved_parent = await session.get(Task, parent.id)
+        saved_parent.status = TaskStatus.open
+        saved_parent.closed_at = None
+        session.add(
+            AcceptCard(
+                topic_id=parent.room_id,
+                task_id=parent.id,
+                reviewer_handle="reviewer",
+                status=AcceptStatus.rejected,
+                note="Keep the existing interface",
+            )
+        )
+        child_card = AcceptCard(
+            topic_id=child.room_id,
+            task_id=child.id,
+            reviewer_handle="reviewer",
+            auto_merge_armed_by="reviewer",
+            auto_merge_armed_at=datetime.now(UTC),
+        )
+        session.add(child_card)
+        await session.flush()
+        session.add(AcceptApproval(card_id=child_card.id, approver_handle="reviewer"))
+        await session.commit()
+    forge = AsyncMock()
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
+    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(db_factory)
+    forge.update_pr.assert_not_awaited()
+    async with db_factory() as session:
+        saved_child = await session.get(Task, child.id)
+        assert saved_child.status == TaskStatus.open
+        assert saved_child.base_branch == "parent"
+        assert list(await session.scalars(select(AcceptApproval))) == []
+        assert (
+            await session.get(AcceptCard, child_card.id)
+        ).auto_merge_armed_by is None
+        saved_parent = await session.get(Task, parent.id)
+        saved_parent.status = TaskStatus.closed
+        saved_parent.closed_at = datetime.now(UTC)
+        saved_parent.delivered_head = "a" * 40
+        await session.commit()
+    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(db_factory)
+    forge.update_pr.assert_awaited_once_with(2, base="main")
+    async with db_factory() as session:
+        blocks = list(await session.scalars(select(Block).order_by(Block.created_at)))
+        assert [block.meta["event_type"] for block in blocks] == [
+            "dependency_rejected",
+            "dependency_closed",
+        ]
+        assert blocks[1].meta["dependency_rejection"] is None
 
 
 @pytest.mark.anyio
@@ -179,10 +247,25 @@ async def test_concurrent_scans_persist_one_notice(db_factory):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("rejected", [True, False])
 async def test_pending_notice_wakes_again_after_restart_until_receipted(
-    db_factory, monkeypatch
+    db_factory, monkeypatch, rejected
 ):
-    _, child = await seed(db_factory, delivered=False)
+    parent, child = await seed(db_factory, delivered=False)
+    if rejected:
+        async with db_factory() as session:
+            saved_parent = await session.get(Task, parent.id)
+            saved_parent.status = TaskStatus.open
+            saved_parent.closed_at = None
+            session.add(
+                AcceptCard(
+                    topic_id=parent.room_id,
+                    task_id=parent.id,
+                    reviewer_handle="reviewer",
+                    status=AcceptStatus.rejected,
+                )
+            )
+            await session.commit()
     await retarget_completed_dependencies(db_factory)
     chat = SimpleNamespace(
         session_factory=db_factory,

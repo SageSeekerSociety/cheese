@@ -24,7 +24,7 @@ import asyncio
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -239,6 +239,7 @@ async def retarget_completed_dependencies(
     from app.domain.agent.announce import announce
     from app.domain.agent.platform_notices import (
         EVENT_DEPENDENCY_CLOSED,
+        EVENT_DEPENDENCY_REJECTED,
         SEVERITY_INFO,
         WHO_CHEESE,
         notice,
@@ -246,7 +247,7 @@ async def retarget_completed_dependencies(
     from app.domain.block.models import AGENT_NOTICE_META_KEY
     from app.domain.idempotency import store as idem
     from app.domain.idempotency.keys import action_key
-    from app.domain.review.models import AcceptStatus
+    from app.domain.review.models import AcceptCard, AcceptStatus
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.room_task.services import TaskService
@@ -255,7 +256,18 @@ async def retarget_completed_dependencies(
     query = (
         select(Task.id)
         .join(parent, Task.base_task_id == parent.id)
-        .where(Task.status == TaskStatus.open, parent.status == TaskStatus.closed)
+        .where(
+            Task.status == TaskStatus.open,
+            or_(
+                parent.status == TaskStatus.closed,
+                select(AcceptCard.id)
+                .where(
+                    AcceptCard.task_id == parent.id,
+                    AcceptCard.status == AcceptStatus.rejected,
+                )
+                .exists(),
+            ),
+        )
     )
     if project_id is not None:
         query = query.where(Task.project_id == project_id)
@@ -276,21 +288,37 @@ async def retarget_completed_dependencies(
                 ):
                     continue
                 ancestor = await TaskService(session).get(task.base_task_id)
-                if ancestor is None or ancestor.status != TaskStatus.closed:
+                if ancestor is None:
                     continue
+                parent_card = (
+                    await AcceptCardRepository(session).latest_by_task([ancestor.id])
+                ).get(ancestor.id)
+                rejected_id = (
+                    parent_card.id
+                    if parent_card is not None
+                    and parent_card.status == AcceptStatus.rejected
+                    else None
+                )
+                if ancestor.status != TaskStatus.closed and rejected_id is None:
+                    continue
+                event_type = (
+                    EVENT_DEPENDENCY_CLOSED
+                    if ancestor.status == TaskStatus.closed
+                    else EVENT_DEPENDENCY_REJECTED
+                )
                 delivered = bool(ancestor.accepted_at or ancestor.delivered_head)
                 base = ancestor.base_branch
                 if delivered and base is None:
                     raise ValueError("Parent task has no target branch")
                 seen = (task.base_task_id, task.base_branch, task.pr_number)
                 parent_state = (
+                    ancestor.status,
                     ancestor.closed_at,
                     ancestor.accepted_at,
                     ancestor.delivered_head,
+                    rejected_id,
                 )
-                key = action_key(
-                    task.id, "dependency_closed", ancestor.id, *parent_state
-                )
+                key = action_key(task.id, event_type, ancestor.id, *parent_state)
                 if await idem.stored_result(session, key) is not None:
                     continue
                 retarget = delivered and task.base_branch == ancestor.branch_name
@@ -320,29 +348,41 @@ async def retarget_completed_dependencies(
                 ):
                     continue
                 ancestor = await session.get(Task, task.base_task_id)
+                cards = AcceptCardRepository(session)
+                parent_card = (
+                    (await cards.latest_by_task([ancestor.id])).get(ancestor.id)
+                    if ancestor is not None
+                    else None
+                )
                 if (
                     ancestor is None
-                    or ancestor.status != TaskStatus.closed
                     or (
+                        ancestor.status,
                         ancestor.closed_at,
                         ancestor.accepted_at,
                         ancestor.delivered_head,
+                        parent_card.id
+                        if parent_card is not None
+                        and parent_card.status == AcceptStatus.rejected
+                        else None,
                     )
                     != parent_state
                 ):
                     continue
                 if not await idem.claim(
-                    session, key, action="dependency_closed", scope_id=str(task.id)
+                    session, key, action=event_type, scope_id=str(task.id)
                 ):
                     continue
                 if retarget:
                     task.base_branch = base
-                outcome = "已合并" if delivered else "已关闭，未交付"
-                headline = f"父任务{outcome}，子任务需要重新检查依赖"
-                cards = AcceptCardRepository(session)
-                parent_card = (await cards.latest_by_task([ancestor.id])).get(
-                    ancestor.id
+                outcome = (
+                    "已合并"
+                    if delivered
+                    else "已关闭，未交付"
+                    if ancestor.status == TaskStatus.closed
+                    else "验收卡被驳回，任务仍在进行"
                 )
+                headline = f"父任务{outcome}，子任务需要重新检查依赖"
                 rejection = (
                     parent_card
                     if not delivered
@@ -361,7 +401,7 @@ async def retarget_completed_dependencies(
                         if delivered
                         else "保留现有工作，检查本任务依赖了哪些尚未交付的修改。"
                         "根据任务要求决定移除依赖、独立实现或报告无法继续的原因；"
-                        "不要把父任务关闭当作其代码已经合并，也不要自动关闭子任务。"
+                        "不要把驳回或关闭当作代码已经合并，也不要自动关闭子任务。"
                     )
                     + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
                 )
@@ -383,7 +423,7 @@ async def retarget_completed_dependencies(
                     content=headline,
                     meta={
                         **notice(
-                            EVENT_DEPENDENCY_CLOSED,
+                            event_type,
                             severity=SEVERITY_INFO,
                             who=WHO_CHEESE,
                             detail=instruction,
