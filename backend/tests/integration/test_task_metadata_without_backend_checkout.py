@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
+from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.workspace import service as ws
 from tests.integration.conftest import session_auth_headers
 
 
@@ -16,7 +16,7 @@ def test_task_metadata_does_not_create_a_backend_workspace_descriptor(client):
     task = client.post(
         f"/topics/{room}/split", json={"title": "work", "reviewer_handle": "alice"}
     ).json()["data"]
-    descriptors = Path(ws.settings.workspace_root) / ".task-workspaces"
+    descriptors = Path(settings.workspace_root) / ".task-workspaces"
     assert not descriptors.exists()
     response = client.get(
         f"/projects/{project}/git/tasks/{task['id']}",

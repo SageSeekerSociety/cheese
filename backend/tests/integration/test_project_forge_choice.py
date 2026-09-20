@@ -1,10 +1,12 @@
 """A new project may wait for GitHub without creating another authority."""
 
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import GatewayUnavailableError
 from app.domain.project import forge
 from app.domain.project.models import Project, ProjectForge
@@ -184,16 +186,9 @@ def test_requester_credit_setting_can_override_and_restore_deployment_default(
     assert client.get(route, headers=headers).json()["data"]["effective"] is True
 
 
-def test_github_repository_selection_uses_project_settings_without_local_git(
-    client, monkeypatch
-):
+def test_github_repository_selection_uses_project_settings_without_local_git(client):
     from app.api.routes.github_install import _upstream_repo
-    from app.domain.workspace import service as ws
 
-    def forbidden(*args, **kwargs):
-        raise AssertionError("repository selection must not create a local git store")
-
-    monkeypatch.setattr(ws, "ensure_repo", forbidden)
     response = client.post(
         "/projects",
         json={
@@ -224,3 +219,4 @@ def test_github_repository_selection_uses_project_settings_without_local_git(
     cleared = client.put(route, headers=headers, json={"url": ""})
     assert cleared.status_code == 200
     assert client.portal.call(selected) is None
+    assert not (Path(settings.workspace_root) / project_id).exists()

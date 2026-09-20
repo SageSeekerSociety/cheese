@@ -428,9 +428,8 @@ class _FakeTokens:
 def app_world(client, monkeypatch):
     """一个接了平台 GitHub App、有 GitHub upstream 的项目 —— `ForgeKind.github_app`。
 
-    返回一个 dict：`fake` 是假 GitHub，其余键记录本该产生副作用的调用，好让测试
-    断言「本地合并一次都没发生」这类性质。GitHub 自己没开保护（`_github_enforces`
-    → False）：平台按项目配置补位，正是本仓库这类 free 计划私有仓的现实。
+    The fake records proposal edits and remote merges. Repository protection is
+    disabled so the project approval policy is exercised by these tests.
     """
     from app.domain.agent import github_app
     from app.domain.project import forge as project_forge
@@ -438,12 +437,10 @@ def app_world(client, monkeypatch):
     from app.domain.review import pr_publish
     from app.domain.review import services as review_services
     from app.domain.workspace import forge_files
-    from app.domain.workspace import service as ws
 
     fake = FakeGitHubPrClient()
     recorded: dict = {
         "fake": fake,
-        "local_merges": [],
         "opened": [],
         "patched": [],
         "readied": [],
@@ -610,20 +607,6 @@ def app_world(client, monkeypatch):
     # 本测试的库，房间文本才断言得到。
     monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
 
-    monkeypatch.setattr(ws, "get_upstream", lambda pid: f"https://github.com/{REPO}")
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
-    monkeypatch.setattr(ws, "pr_base_branch", lambda pid: "main")
-    monkeypatch.setattr(
-        ws, "sync_upstream", lambda pid, token=None: {"synced": True, "commits": 1}
-    )
-
-    def _local_merge(pid, tid, **_kwargs):
-        recorded["local_merges"].append(tid)
-        return {"merged": True, "commit": "local-merge-sha"}
-
-    monkeypatch.setattr(ws, "merge_topic", _local_merge)
-
     github_pr.set_default_client(fake)
     try:
         yield recorded
@@ -730,7 +713,6 @@ def test_accept_merges_the_pr_on_the_spot_when_clean(client, app_world):
         is not None
     )
     assert delivered["accepted_at"] is None
-    assert app_world["local_merges"] == []
 
 
 @pytest.mark.parametrize("merged_remotely", [False, True])
@@ -762,7 +744,6 @@ def test_merge_connection_failure_keeps_card_retryable_and_reconciles_remote_res
     assert retried.json()["data"]["status"] == "accepted"
     assert len(fake.merge_calls) == 1
     assert _topic(client, tid)["status"] == "active"
-    assert app_world["local_merges"] == []
 
 
 def test_accept_is_refused_while_a_required_check_is_red(client, app_world):
@@ -1107,7 +1088,6 @@ def test_a_pr_opened_at_accept_time_is_kept_but_not_merged_this_click(
     assert r.status_code == 422, r.text
     assert "重新看过" in r.json()["message"]
     assert fake.merge_calls == []  # GitHub 上一次都没合
-    assert app_world["local_merges"] == []  # 也没有绕开 PR 本地合
     assert len(app_world["opened"]) == 1  # PR 开出来了，而且留着
     number = app_world["opened"][0]["number"]
     card = _cards(client, tid)[0]
@@ -1218,18 +1198,6 @@ def _strip_delivery_claim(client, card_id: str) -> None:
     asyncio.run(_do())
 
 
-def _branchless_noop_merge(app_world, monkeypatch) -> None:
-    """树的分支不存在时 `ws.merge_topic` 真实的返回值——旧路径正是把这个 no-op
-    当成功吞掉的（2026-09-07 卡 40be3e1a）。"""
-    from app.domain.workspace import service as ws
-
-    def _noop(pid, tid, **_kwargs):
-        app_world["local_merges"].append(tid)
-        return {"merged": False, "noop": True, "reason": "no topic branch"}
-
-    monkeypatch.setattr(ws, "merge_topic", _noop)
-
-
 def test_a_delivery_claim_on_a_branchless_tree_stops_the_accept(
     client, app_world, monkeypatch
 ):
@@ -1247,7 +1215,6 @@ def test_a_delivery_claim_on_a_branchless_tree_stops_the_accept(
         return None
 
     monkeypatch.setattr(pr_publish, "branch_head", missing_head)
-    _branchless_noop_merge(app_world, monkeypatch)
 
     r = _accept(client, cid)
     assert r.status_code == 422, r.text
@@ -1259,7 +1226,6 @@ def test_a_delivery_claim_on_a_branchless_tree_stops_the_accept(
     assert card["note_level"] == "error"
     assert app_world["opened"] == []  # 没开 PR
     assert app_world["fake"].merge_calls == []  # 没合 PR
-    assert app_world["local_merges"] == []  # 本地合并一次都没发生
     assert _topic(client, tid)["accepted_at"] is None
 
 
@@ -1278,14 +1244,12 @@ def test_a_legacy_discussion_card_cannot_accept_without_a_remote_branch(
         return None
 
     monkeypatch.setattr(pr_publish, "branch_head", missing_head)
-    _branchless_noop_merge(app_world, monkeypatch)
 
     r = _accept(client, cid)
     assert r.status_code == 422, r.text
     assert _cards(client, tid)[0]["status"] == "pending"
     assert app_world["fake"].merge_calls == []
     assert app_world["opened"] == []
-    assert app_world["local_merges"] == []
 
 
 def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkeypatch):
@@ -1343,16 +1307,6 @@ def _branch_of_record(client, topic_id: str) -> str:
     return git_store.branch_for_task(delivery_task_id(client, topic_id))
 
 
-def _only_these_branches_exist(monkeypatch, pushed: set[str]) -> None:
-    """「分支存在」= 有人往它上面推过东西。芝士推一条就往 `pushed` 里加一条。"""
-    from app.domain.workspace import service as ws
-
-    def _exists(_project_id, topic_id) -> bool:
-        return git_store.branch_for_task(topic_id) in pushed
-
-    monkeypatch.setattr(ws, "topic_branch_exists", _exists)
-
-
 def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
     client, app_world
 ):
@@ -1366,7 +1320,6 @@ def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
     assert card["pr_number"] == number  # PR 还挂在卡上，处理后可重试
-    assert app_world["local_merges"] == []  # 绑定项目绝不落本地合并
 
 
 def test_a_closed_unmerged_pr_stops_the_accept(client, app_world):
@@ -1378,7 +1331,6 @@ def test_a_closed_unmerged_pr_stops_the_accept(client, app_world):
     assert r.status_code == 422, r.text
     assert "关闭" in r.json()["message"]
     assert fake.merge_calls == []
-    assert app_world["local_merges"] == []
 
 
 def test_a_pr_already_merged_on_github_is_taken_as_the_accept(client, app_world):
@@ -1416,7 +1368,6 @@ def test_accept_without_forge_binding_refuses_delivery(client, app_world, monkey
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
     assert card["pr_number"] is None
-    assert app_world["local_merges"] == []
     assert app_world["fake"].merge_calls == []
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
@@ -1442,7 +1393,6 @@ def test_existing_pr_cannot_fall_back_to_local_merge_when_binding_disappears(
     monkeypatch.setattr(project_forge, "github_app_tokens_for_project", unavailable)
     response = _accept(client, cid)
     assert response.status_code == 422, response.text
-    assert app_world["local_merges"] == []
     assert app_world["fake"].merge_calls == []
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
@@ -1456,7 +1406,6 @@ def test_another_forge_owns_its_checks_and_accept_operation(
     from app.core.errors import ValidationError
     from app.domain.review import forge as forge_mod
     from app.domain.review.models import AcceptStatus
-    from app.domain.workspace import service as ws
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -1488,13 +1437,7 @@ def test_another_forge_owns_its_checks_and_accept_operation(
     async def resolve(**_):
         return provider
 
-    def unexpected_local_merge(*_, **__):
-        raise AssertionError(
-            "A different forge was silently merged in the platform repo"
-        )
-
     monkeypatch.setattr(forge_mod, "resolve", resolve)
-    monkeypatch.setattr(ws, "merge_topic", unexpected_local_merge)
     card = _cards(client, tid)[0]
     assert card["forge"]["reports_checks"] is True
     assert card["merge_state"]["state"] == "unknown"
@@ -1846,19 +1789,9 @@ def test_poll_settles_an_externally_merged_pr(client, app_world):
     assert delivered["accepted_at"] is None
 
 
-@pytest.mark.parametrize("sync_fails", [False, True])
 def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
-    client, app_world, monkeypatch, sync_fails
+    client, app_world
 ):
-    from app.domain.workspace import service as ws
-
-    sync_calls = []
-
-    def sync(project_id, **kwargs):
-        sync_calls.append(project_id)
-        return {"synced": not sync_fails, "reason": "read failed"}
-
-    monkeypatch.setattr(ws, "sync_upstream", sync)
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     branch = _room_open_tree_branch(client, tid)
@@ -1887,7 +1820,6 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert fake.merge_calls == []
     room = _room_settled(client, tid, "原退回记录保留")
     assert "原退回记录保留" in room
-    assert sync_calls == []
     assert "本地同步待补" not in room
 
     async def check_delivery_boundary():
@@ -2236,18 +2168,11 @@ def test_an_unreadable_verdict_stops_the_accept_instead_of_guessing(client, app_
     assert r.status_code == 422, r.text
     assert "采纳未完成" in r.json()["message"]
     assert fake.merge_calls == []
-    assert app_world["local_merges"] == []
     assert _cards(client, tid)[0]["status"] == "pending"
 
 
-def test_remote_merge_needs_no_backend_repository_sync(client, app_world, monkeypatch):
-    """Delivery completes without reading or updating a backend checkout."""
-    from app.domain.workspace import service as ws
-
-    def _sync_fails(_pid, token=None):
-        raise AssertionError("Backend checkout must not participate in delivery")
-
-    monkeypatch.setattr(ws, "sync_upstream", _sync_fails)
+def test_remote_merge_records_acceptance(client, app_world):
+    """A successful forge merge records the card as accepted."""
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
@@ -2472,7 +2397,6 @@ def test_ready_flips_the_draft_and_changes_nothing_else(client, sweeping):
     assert pr["draft"] is False
     # 不合并、不改文案、不动别的字段。
     assert sweeping["fake"].merge_calls == []
-    assert sweeping["local_merges"] == []
     assert (pr["title"], pr["body"]) == (title_before, body_before)
     assert sweeping["patched"] == []
     assert _cards(client, tid) == []  # 也没有顺手递一张卡

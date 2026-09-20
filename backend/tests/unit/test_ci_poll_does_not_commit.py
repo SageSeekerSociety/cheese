@@ -18,9 +18,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import settings
 from app.domain.project import forge
-from app.domain.workspace import service as ws
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -32,9 +33,9 @@ def _git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> uuid.UUID:
-    monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path))
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
     project_id = uuid.uuid4()
-    ws.ensure_repo(project_id)
+    git_store.ensure_repo(project_id)
     return project_id
 
 
@@ -44,16 +45,19 @@ async def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     monkeypatch,
 ) -> None:
     topic_id = uuid.uuid4()
-    ws.bind_task(
+    git_store.bind_task(
         topic_id,
         branch=f"task/{topic_id.hex[:8]}",
         directory=f"task_{topic_id.hex[:8]}",
         base="main",
     )
-    worktree = ws._ensure_worktree(project, topic_id)
-    repo = ws.ensure_repo(project)
-    branch = ws.branch_for_task(topic_id)
+    repo = git_store.ensure_repo(project)
+    branch = git_store.branch_for_task(topic_id)
+    _git(repo, "branch", branch, "main")
     before = _git(repo, "rev-parse", branch)
+
+    worktree = repo.parent / "executor"
+    _git(repo.parent, "clone", "-q", "--branch", branch, str(repo), str(worktree))
 
     # Somebody is working: a file changed, but nobody said "this is a fix".
     (worktree / "scratch.md").write_text("half a thought\n")
@@ -79,15 +83,15 @@ def test_the_machine_s_own_push_is_what_moves_the_branch(project: uuid.UUID) -> 
     """The other half of the contract: the head still moves — by the agent
     committing and pushing. That is what `cheese push-fix` then puts on the PR."""
     topic_id = uuid.uuid4()
-    ws.bind_task(
+    git_store.bind_task(
         topic_id,
         branch=f"task/{topic_id.hex[:8]}",
         directory=f"task_{topic_id.hex[:8]}",
         base="main",
     )
-    ws._ensure_worktree(project, topic_id)
-    repo = ws.ensure_repo(project)
-    branch = ws.branch_for_task(topic_id)
+    repo = git_store.ensure_repo(project)
+    branch = git_store.branch_for_task(topic_id)
+    _git(repo, "branch", branch, "main")
     before = _git(repo, "rev-parse", branch)
 
     machine_commits(project, topic_id, {"fix.md": "the actual fix\n"})
@@ -103,7 +107,7 @@ async def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
     monkeypatch,
 ) -> None:
     task_id = uuid.uuid4()
-    ws.bind_task(
+    git_store.bind_task(
         task_id,
         branch=f"task/{task_id.hex[:8]}",
         directory=f"task_{task_id.hex[:8]}",
@@ -114,5 +118,5 @@ async def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
         return None
 
     monkeypatch.setattr(forge, "repository_data", absent)
-    head = await forge.branch_head(project, None, ws.branch_for_task(task_id))
+    head = await forge.branch_head(project, None, git_store.branch_for_task(task_id))
     assert head is None
