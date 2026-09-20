@@ -48,7 +48,8 @@ func TestRestartRestoresIdentityAndCanCloseWithoutReopening(t *testing.T) {
 	h.createSession(link.Msg{T: "session.create", Sid: "recover-me", Screen: "original-token",
 		Command: []string{"sh", "-c", "sleep 60"},
 		Env: map[string]string{"CHEESE_PROJECT": "project", "CHEESE_TOPIC": "topic",
-			"CHEESE_TOKEN_EXPIRES": "1234567890", envRvSock: "/tmp/example.sock"}})
+			"CHEESE_TOKEN_EXPIRES": "1234567890", envRvSock: "/tmp/example.sock",
+			envRvTokenFile: "/tmp/example.token", "CHEESE_WORK": "/original/work"}})
 	if h.session("recover-me") == nil {
 		t.Fatal("screen creation failed")
 	}
@@ -57,6 +58,15 @@ func TestRestartRestoresIdentityAndCanCloseWithoutReopening(t *testing.T) {
 		t.Fatalf("saved identity: %v, %v", identities, identityErr)
 	}
 	h.releaseAll()
+	reasserted := newHost(h.base)
+	reasserted.createSession(link.Msg{T: "session.create", Sid: "recover-me", Screen: "replacement-token",
+		Command: []string{"false"},
+		Env:     map[string]string{envRvSock: "/tmp/new.sock", envRvTokenFile: "/tmp/new.token", "CHEESE_WORK": "/new/work"}})
+	adopted := reasserted.session("recover-me")
+	if adopted == nil || adopted.rvPath != "/tmp/example.sock" || adopted.rvTokenFile != "/tmp/example.token" || adopted.workDir != "/original/work" {
+		t.Fatal("reassertion replaced the running model's input paths or work directory")
+	}
+	reasserted.releaseAll()
 	restarted := newHost(h.base)
 	screens, err := restarted.restoreSessions()
 	if err != nil || len(screens) != 1 {
@@ -69,6 +79,10 @@ func TestRestartRestoresIdentityAndCanCloseWithoutReopening(t *testing.T) {
 		t.Fatal("restarted host cannot deliver to the original session")
 	}
 	other := newHost("https://other.test")
+	other.createSession(link.Msg{T: "session.create", Sid: "recover-me"})
+	if other.session("recover-me") != nil {
+		t.Fatal("a different backend adopted this backend's session")
+	}
 	if err := other.closeSession("recover-me"); err != nil || !m.HasSession("recover-me") {
 		t.Fatal("a different backend closed this backend's session")
 	}
