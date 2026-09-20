@@ -20,7 +20,7 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -734,22 +734,30 @@ _UNIT_DIR = os.path.join(_TESTS_DIR, "unit") + os.sep
 _CONTRACT_DIR = os.path.join(_TESTS_DIR, "contract") + os.sep
 
 
-def _needs_db(request: pytest.FixtureRequest) -> bool:
-    """Whether this test requires the Postgres schema to be provisioned.
+def _reaches_for_db(path: str, fixturenames: Iterable[str]) -> bool:
+    """Whether a test at ``path`` with this fixture closure needs Postgres.
 
     Two independent reasons, because fixture names alone aren't enough: the
     integration harness binds ``settings.database_url`` directly (module import
     time), so a test there can touch the DB without naming a DB fixture. Hence
     anything outside ``tests/unit/`` is assumed DB-backed. Inside ``tests/unit/``
-    we go by the fixture closure — ``request.fixturenames`` is transitive, and
-    every DB-bound fixture (``client``, ``python_client``, integration's
+    we go by the fixture closure — a closure is transitive, and every DB-bound
+    fixture (``client``, ``python_client``, integration's
     ``db_connection``/``db_session``…) chains to ``_pg_schema``, so requesting any
     of them shows up here.
+
+    One function because the answer has two readers who must agree: the gate
+    below, which provisions a database for the tests that need one, and
+    ``_layer_of``, which sends the tests that don't into a CI step that has none.
+    Written twice they would drift, and the drift lands as a test asking a
+    database that was never built for it.
     """
-    return (
-        not str(request.path).startswith(_UNIT_DIR)
-        or "_pg_schema" in request.fixturenames
-    )
+    return not path.startswith(_UNIT_DIR) or "_pg_schema" in fixturenames
+
+
+def _needs_db(request: pytest.FixtureRequest) -> bool:
+    """Whether this test requires the Postgres schema to be provisioned."""
+    return _reaches_for_db(str(request.path), request.fixturenames)
 
 
 # The three layers the suite runs as. CI runs one pytest per layer, in series,
@@ -762,12 +770,11 @@ def _layer_of(item: pytest.Item) -> str:
     """Which layer ``item`` runs in.
 
     ``pure`` is the layer that runs on a machine with no Postgres, so what
-    decides it is the fixture closure and not the directory: every DB-bound
-    fixture chains to ``_pg_schema`` (see ``_needs_db`` above), and
-    ``fixturenames`` is that closure, autouse and transitive included. A file
-    under ``tests/unit/`` that does name one — the turn log lives in Postgres,
-    so the runner's tests do — is a database test wherever it sits, and runs in
-    the integration step with a database under it.
+    decides it is ``_reaches_for_db`` — the same question the gate asks before
+    building a database, asked of the same fixture closure. A file under
+    ``tests/unit/`` that does reach for one — the turn log lives in Postgres, so
+    the runner's tests do — is a database test wherever it sits, and runs in the
+    integration step with a database under it.
     """
     path = os.fspath(item.path) if item.path is not None else ""
     if path.startswith(_CONTRACT_DIR):
@@ -775,7 +782,10 @@ def _layer_of(item: pytest.Item) -> str:
     # getattr: only a Function has a fixture closure, and a collected node that
     # has none has not asked for a database either.
     closure = getattr(item, "fixturenames", ())
-    if path.startswith(_UNIT_DIR) and "_pg_schema" not in closure:
+    # One call decides both halves of "pure": outside ``tests/unit/`` this is
+    # true whatever the closure holds, so the tree is checked by the same
+    # predicate that checks the fixtures.
+    if not _reaches_for_db(path, closure):
         return "pure"
     return "integration"
 

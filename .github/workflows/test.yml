@@ -265,10 +265,17 @@ jobs:
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
-    # A hang detector, not a performance budget: a healthy run takes 13-17
-    # minutes, and a run that hits this ceiling reports as a failure with no
-    # test results in it at all.
-    timeout-minutes: 35
+    # A hang detector, not a performance budget, and the outer one: the three
+    # layer steps at the bottom carry their own (5 + 5 + 25 = 35), and a
+    # per-layer ceiling only ever fires if the job can still be alive when it
+    # does — so this is their sum plus 5 minutes for everything above them,
+    # which takes about 1m40s (containers, uv sync, migrations, sandbox image,
+    # the pinned claude build). Set it below that sum and the job kills itself
+    # first, which is the "something hung, no idea where" report the split was
+    # made to stop. A healthy run takes 15-17 minutes. What reaches this ceiling
+    # rather than a layer's is a hang in the setup steps, which have none of
+    # their own; either way the run reports as a failure with no test results.
+    timeout-minutes: 40
     # Persists backend/srp_rs's Cargo build cache outside the checkout — see
     # the migration-heads job above for the full reasoning (why this path,
     # why it's immune to docker prune, and why it's job-keyed rather than
@@ -408,6 +415,17 @@ jobs:
       # this pool has — eight xdist workers means eight pairs of databases and
       # twice the Postgres connections, which is what the box cannot currently
       # give — so setting them as ceilings today would turn a healthy run red.
+      # They are sized off what each layer takes on this pool (1m50s / 30s /
+      # 12m) with room for a slow machine, and their sum plus setup is the job's
+      # own `timeout-minutes` above — a detector that cannot fire before the job
+      # dies detects nothing.
+      #
+      # Contract and integration run even after an earlier layer failed
+      # (`if: ${{ !cancelled() }}`; the job is red all the same). One pytest over
+      # the tree listed every failure in one report, and three steps that stop
+      # at the first red would have made that two or three pushes to see. The
+      # count guard between them is the one step that does stop: it reads the
+      # junit the pure step writes, and a pure step that hung wrote none.
       #
       # `worksteal` rather than the default `load` scheduler: `load` hands a
       # worker its next batch and cannot take it back, so when the run winds
@@ -435,7 +453,7 @@ jobs:
       # the command wins over that without depending on which layer of the
       # runner's env merge is documented to.
       - name: Run the pure layer
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: |
           TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1 \
           DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here \
@@ -477,12 +495,14 @@ jobs:
           PY
 
       - name: Run the contract layer
-        timeout-minutes: 10
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
         run: >-
           uv run pytest tests/ -m contract -n "$CHEESE_CI_TEST_WORKERS"
           --dist worksteal --tb=short -k "not kotlin" --durations=20
 
       - name: Run the integration layer
+        if: ${{ !cancelled() }}
         timeout-minutes: 25
         run: >-
           uv run pytest tests/ -m integration -n "$CHEESE_CI_TEST_WORKERS"
