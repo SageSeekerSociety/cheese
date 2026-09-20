@@ -1682,11 +1682,12 @@ def merge_topic(
     return result
 
 
-def _known_upstream_tip(repo: Path) -> str | None:
-    """The last-fetched upstream tip's sha, or None when the project has no
-    upstream (or it was never fetched). Non-raising counterpart of
-    `_upstream_ref`, for callers that only need to know whether a branch
-    carries the upstream history."""
+def _known_upstream_branch(repo: Path) -> str | None:
+    """上游默认分支的**名字**，按上次 fetch 留下的远端跟踪分支读：`main`，没有
+    就 `master`。从没 fetch 过（或根本没有上游）时是 None。
+
+    这是 `_upstream_ref` 与 `synced_upstream_branch` 共同的那一问，分别以「同步
+    从哪条拉」和「采纳推回哪条」的身份被问到——必须是同一条。"""
     for name in (DEFAULT_BRANCH, "master"):
         probe = subprocess.run(
             ["git", "rev-parse", "--verify", "-q", f"{UPSTREAM_REMOTE}/{name}"],
@@ -1695,8 +1696,25 @@ def _known_upstream_tip(repo: Path) -> str | None:
             text=True,
         )
         if probe.returncode == 0:
-            return probe.stdout.strip()
+            return name
     return None
+
+
+def _known_upstream_tip(repo: Path) -> str | None:
+    """The last-fetched upstream tip's sha, or None when the project has no
+    upstream (or it was never fetched). Non-raising counterpart of
+    `_upstream_ref`, for callers that only need to know whether a branch
+    carries the upstream history."""
+    name = _known_upstream_branch(repo)
+    if name is None:
+        return None
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"{UPSTREAM_REMOTE}/{name}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return probe.stdout.strip() if probe.returncode == 0 else None
 
 
 def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
@@ -1759,17 +1777,24 @@ def set_upstream(project_id: uuid.UUID, url: str) -> str | None:
 
 def _upstream_ref(repo: Path) -> str:
     """The upstream branch to sync from: main, falling back to master."""
-    for name in (DEFAULT_BRANCH, "master"):
-        ref = f"{UPSTREAM_REMOTE}/{name}"
-        probe = subprocess.run(
-            ["git", "rev-parse", "--verify", "-q", ref],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-        )
-        if probe.returncode == 0:
-            return ref
-    raise ValidationError("上游仓库没有 main/master 分支")
+    name = _known_upstream_branch(repo)
+    if name is None:
+        raise ValidationError("上游仓库没有 main/master 分支")
+    return f"{UPSTREAM_REMOTE}/{name}"
+
+
+def synced_upstream_branch(project_id: uuid.UUID) -> str | None:
+    """项目**自己的远端**上，被平台基线分支镜像的那条分支叫什么。
+
+    同步从哪条拉，采纳就推回哪条。平台侧的基线恒为 `main`（`ensure_repo` 用
+    `git init -b main` 建仓），而上游的默认分支可以是 `master`——同步做的正是把
+    `upstream/master` 拉进本地的 `main`。两侧按同名推，老师那个 `master` 仓库就会
+    凭空多出一条谁也不看的 `main`，他的 `master` 一个 commit 都收不到，而且没有
+    任何一句话告诉他：本来要消灭的那次沉默，换了个分支名活下来。
+
+    从没 fetch 过时是 None——一个刚填上地址、还没同步过的空仓库上没有哪条分支可
+    以对上，这时候推本地这条名字是唯一能做的事，也正是对的事。"""
+    return _known_upstream_branch(ensure_repo(project_id))
 
 
 def _base_adds_nothing(repo: Path, ref: str, base: str) -> bool:
@@ -2057,11 +2082,27 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     return push_branch(project_id, branch_for_task(topic_id), token)
 
 
-def push_branch(project_id: uuid.UUID, branch: str, token: str) -> str:
+def push_branch(
+    project_id: uuid.UUID,
+    branch: str,
+    token: str | None,
+    *,
+    remote_branch: str | None = None,
+) -> str:
     """:func:`push_topic_branch`, named by BRANCH instead of by place.
 
     The draft-PR sweep reads the branch from its owning task. A normal push
     refuses divergence so another executor's remote commits remain intact.
+
+    ``token`` is the GitHub App's installation token, and ``None`` is an
+    ordinary case rather than a missing argument: an ssh / git@ remote — a
+    campus GitLab, a self-hosted box — authenticates with the backend's own
+    key, and handing git an inline token helper for it would only shadow that.
+
+    ``remote_branch`` 是远端那一侧的分支名，默认与本地同名。同名对话题分支是对的
+    （推上去开提案页的就是这条分支本身），对基线分支不是：平台的基线恒为 `main`，
+    而上游的默认分支可以是 `master`，所以推基线的调用方要自己说清推到哪条
+    （`synced_upstream_branch`）。
     """
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
@@ -2072,11 +2113,97 @@ def push_branch(project_id: uuid.UUID, branch: str, token: str) -> str:
         repo,
         "push",
         UPSTREAM_REMOTE,
-        f"{branch}:{branch}",
+        f"{branch}:refs/heads/{remote_branch or branch}",
         timeout=120,
-        env=_token_git_env(token),
+        env=_token_git_env(token) if token else None,
     )
     return branch
+
+
+#: `can_push_upstream` 推给远端看的那个 ref 名。`--dry-run` 不发送任何更新，所以
+#: 远端上不会真的多出它；起个带前缀的名字只是为了万一谁在日志里看见能认出来。
+_WRITE_PROBE_REF = "refs/heads/cheese-write-probe"
+
+#: 探测要连一次网络，而它坐在卡片渲染这条读路径上，所以比 `push_branch` 的 120s
+#: 短得多：连不上就是写不动，等两分钟不会让答案更准。
+_WRITE_PROBE_TIMEOUT_S = 15
+
+
+#: 探测结果的进程级缓存：`(项目, 上游地址) -> (读到的时刻, 写得动吗)`。键里带地址，
+#: 所以换了上游地址就是另一个键，上一个地址的答案自动作废。
+_write_probe_cache: dict[tuple[uuid.UUID, str], tuple[float, bool]] = {}
+
+#: 一个答案活多久。它只在两件事发生时会变：换了上游地址（那是换了键），或者对方
+#: 服务器那边的授权被人改了——后者分钟级的滞后没有代价，而每次请求都重问一遍的
+#: 代价是实打实的，见 `can_push_upstream` 的 docstring。
+_WRITE_PROBE_TTL_S = 600.0
+
+
+def can_push_upstream(project_id: uuid.UUID) -> bool:
+    """写得动这个项目的上游吗 —— 问远端，不看地址长什么样。
+
+    「地址以 `git@` 开头所以我们有 key」是一次猜测，两个方向猜错都有人受伤：猜成
+    写得动，卡在人点采纳**之前**就写着「采纳即合并并推回该远端」，而每一次采纳都
+    以推送失败收场；猜成写不动，填了校内 GitLab 地址的老师一个 commit 都收不到。
+    `https://` 的地址两边都可能 —— 配过凭据助手就写得动，没配就写不动 —— 地址本身
+    分不出来，本机绝对路径更是根本不需要凭据。
+
+    所以跑一次真的：`git push --dry-run` 到一个我们自己命名的 ref。push 必须连上
+    远端的 receive-pack 并通过授权（https 没凭据是 401，ssh 没 key 是 publickey
+    失败），而 `--dry-run` 不发送任何更新，远端上什么都不会变。推一个**新** ref
+    而不是 base 分支本身，是因为 base 可能落后于远端，那种拒绝说的是「这次更新不
+    能快进」，不是「我们没有凭据」。
+
+    答不出来就答写不动。这不是拿默认值把失败盖住（I19）：卡落到 `PlatformForge`，
+    上面写着「远端在，平台没有写它的凭据」，那句话在人点采纳之前就在他眼前，比一个
+    推不上去的承诺诚实。
+
+    **答案按 `(项目, 上游地址)` 在进程里记 `_WRITE_PROBE_TTL_S` 秒。** 这一位坐在
+    卡片渲染的读路径上：`describe()` 每张卡问一次，而 `describe()` 挂在十来个端点
+    上。不记的代价两条都是真的——远端不可达时每一次刷新卡列表都要等满 15s，这段
+    时间本次请求的 DB 会话一直开着；以及推不动的项目每被打开一次，就对老师那台
+    GitLab 发一次失败鉴权，自建 GitLab 的 fail2ban 会因此锁账号或封 IP。
+
+    读路径自己在缓存过期时补一次探测，而不是只读一份别处写好的缓存：冷缓存答
+    「写不动」就是把一个填了地址、我们也推得动的项目一路写成 `PlatformForge`，采纳
+    于是只落在平台仓库里——正是这一档存在要消灭的那次沉默。
+    """
+    try:
+        upstream = get_upstream(project_id)
+        if upstream is None:
+            return False
+        key = (project_id, upstream)
+        cached = _write_probe_cache.get(key)
+        asked_at = time.monotonic()
+        if cached is not None and asked_at - cached[0] < _WRITE_PROBE_TTL_S:
+            return cached[1]
+        repo = ensure_repo(project_id)
+        _ensure_base_commit(repo)
+        branch = _base_branch(repo)
+        result = _run_subprocess(
+            [
+                "git",
+                "push",
+                "--dry-run",
+                UPSTREAM_REMOTE,
+                f"{branch}:{_WRITE_PROBE_REF}",
+            ],
+            repo,
+            _WRITE_PROBE_TIMEOUT_S,
+            {
+                **os.environ,
+                # 没凭据就当场失败，别停在提示符上等到超时。
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_SSH_COMMAND": os.environ.get(
+                    "GIT_SSH_COMMAND", "ssh -oBatchMode=yes"
+                ),
+            },
+        )
+    except Exception:  # noqa: BLE001 — 读不出来就是写不动，见 docstring
+        return False
+    answer = result.returncode == 0
+    _write_probe_cache[key] = (asked_at, answer)
+    return answer
 
 
 def branch_has_commits(

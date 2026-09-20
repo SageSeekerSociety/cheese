@@ -116,7 +116,7 @@ def test_relayed_block_is_authored_by_the_receiving_room(client):
     relayed = [b for b in on_card if "顺带看下 B 方案" in b["content"]]
     assert len(relayed) == 1
     block = relayed[0]
-    assert block["author_type"] == "ai"
+    assert block["author"].startswith("cheese")
     # refs points back at the sender, so the chip links home.
     assert parent["id"] in (block.get("refs") or [])
     # The room is named in the block so the thread can see where it came from.

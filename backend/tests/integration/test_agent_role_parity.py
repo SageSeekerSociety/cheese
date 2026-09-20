@@ -379,9 +379,9 @@ def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(
             )
             assert response.status_code == 200, response.text
             assert response.json()["data"]["author"] == handle
-            assert response.json()["data"]["author_type"] == (
-                "human" if handle == "alice" else "ai"
-            )
+            # 同一个动作，人做和分身做写下的是同一种事件：区别在署名那一行，
+            # 不在档位。
+            assert response.json()["data"]["author_type"] == "participant"
 
 
 def test_review_actions_check_the_credentials_project_and_room(client):
@@ -391,6 +391,7 @@ def test_review_actions_check_the_credentials_project_and_room(client):
         f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
+            "new_artifact": "报告",
             "change_subject": "test: scoped review",
             "reviewer_handle": "alice",
             "routing_reason": "Review",

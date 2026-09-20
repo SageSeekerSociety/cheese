@@ -1,0 +1,58 @@
+{
+  "verb": "backlog",
+  "why": "The other side of the same rule. A tool that worked produces no event at all: its return is already visible through its effect, and a Read's return is the whole file. Surfacing every return would double the timeline to say what the effect already said.",
+  "readers": ["python", "extension"],
+  "harnesses": {
+    "claude-code": {
+      "records": [
+        {
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Bash",
+          "tool_use_id": "toolu_1",
+          "tool_input": { "command": "pytest -q" },
+          "tool_response": "42 passed"
+        }
+      ]
+    },
+    "pi": {
+      "records": [
+        {
+          "type": "message",
+          "id": "e1",
+          "message": {
+            "role": "toolResult",
+            "toolCallId": "toolu_1",
+            "toolName": "bash",
+            "content": [{ "type": "text", "text": "42 passed" }],
+            "isError": false,
+            "timestamp": 1789326099229
+          }
+        }
+      ]
+    },
+    "codex": {
+      "records": [
+        {
+          "method": "item/completed",
+          "params": {
+            "threadId": "session-1",
+            "item": {
+              "type": "dynamicToolCall",
+              "id": "toolu_1",
+              "tool": "bash",
+              "arguments": { "command": "pytest -q" }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "events": [],
+  "extension": {
+    "why": "A platform tool that exited 0 is not an error, and a publish that landed is what resets the quiet counter — that is the whole of what the room can see.",
+    "tool": "chat_send",
+    "status": 0,
+    "is_error": false,
+    "resets_silence": true
+  }
+}

@@ -39,7 +39,7 @@ MARKER = f"device-smoke {uuid.uuid4().hex[:8]}"
 
 _CARD_CMD = (
     f'cheese accept-request {USER_HANDLE} "设备自托管冒烟 {MARKER}" '
-    '--subject "test: verify device task delivery"'
+    '--subject "test: verify device task delivery" --artifact "冒烟"'
 )
 # An override lets CI drive a REAL dogfood round (any task), not just the marker
 # check; the built-in prompt stays the default so the assertions still apply.

@@ -343,6 +343,8 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
             "最懂",
             "--subject",
             "fix(accept): require a commit subject",
+            "--artifact",
+            "结题报告",
         ],
     )
 
@@ -352,6 +354,8 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     assert call["p"] == "/topics/t-1/tasks/task-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
     assert call["d"]["reviewer_handle"] == "alice"
+    # 交付说明本次更新的是哪一项产物 (#1085 结论三)。
+    assert call["d"]["artifact"] == "结题报告"
 
 
 def test_ready_never_syncs_creates_a_card_or_merges(monkeypatch):
@@ -394,7 +398,7 @@ def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
     monkeypatch.setattr(
         cli.sys,
         "argv",
-        ["cheese", "accept-request", "--subject", "fix(x): y"],
+        ["cheese", "accept-request", "--subject", "fix(x): y", "--artifact", "报告"],
     )
 
     cli.main()

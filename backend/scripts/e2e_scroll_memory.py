@@ -55,7 +55,7 @@ async def seed() -> tuple[str, str, str]:
                 project_id=uuid.UUID(pid),
                 topic_id=uuid.UUID(a["id"]),
                 author="user-1",
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content=f"历史消息 #{i:02d} —— 用来把对话撑高，方便测试滚动位置记忆。",
                 kind=BlockKind.message,
             )

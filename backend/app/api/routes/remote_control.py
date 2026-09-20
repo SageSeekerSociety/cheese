@@ -103,6 +103,13 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
             publish=True,
             author=session.get("agent_handle") or topic_agent_handle(topic_id),
             publication_id=f"rc-ask-{request_id}",
+            # 这句是芝士自己问出口的，不是谁交给它去读的一句话：它在等**人**按
+            # 下那个按钮。不说明的话轮次输入账目会把它记成一条待读输入 —— 「忘
+            # 了 @」的补救按钮于是不再答「没有待读的东西」，白开一轮，而那一轮
+            # 的 prompt 里躺着芝士刚问出口的那句话，它对着自己的问题再答一遍。
+            # 轮次号在这里填不出：问话的那一轮跑在机器上，这个进程只是替它把话
+            # 写进房间。
+            own_output=True,
         )
         if payload is not None:
             await get_broker().publish(

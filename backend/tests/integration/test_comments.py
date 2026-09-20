@@ -123,5 +123,4 @@ def test_agent_comment_is_attributed_but_does_not_wake_itself(client, runner):
     assert r.status_code == 200
     comment = r.json()["data"]
     assert comment["author"] == room_agent_seat(client, tid)
-    assert comment["author_type"] == "ai"
     assert runner.submitted == []
