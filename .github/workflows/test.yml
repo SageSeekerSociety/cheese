@@ -448,15 +448,23 @@ jobs:
       # a database it is reclassified into the integration step without a word:
       # this step runs fewer tests and passes. That is the same thing one
       # number over the whole tree could not tell you, absorbed rather than
-      # merely unreported — so the count is asserted, not admired. 4438 today;
-      # the floor is under it by enough that deleting a test file is not an
-      # incident, and far enough above zero that a layer quietly draining is.
+      # merely unreported — so the count is asserted, not admired.
+      #
+      # 4438 today, floor 4000. The gap has to clear the largest thing anyone
+      # deletes in one go, or the guard fires on ordinary work and the fix is to
+      # edit this constant — which teaches everyone to edit it. The largest file
+      # in this layer holds 99 tests (tests/unit/test_user_services.py) and 34
+      # files hold 38 or more, so 438 of headroom covers deleting any of them,
+      # several at once. What it does not cover is a tenth of the layer going
+      # missing, which is the shape of the failure this step is here for: the
+      # collection hook breaking, or a fixture growing a database under it and
+      # taking every test that uses it into the integration step.
       - name: The pure layer still holds its tests
         run: |
           python3 - "$RUNNER_TEMP/pure.xml" <<'PY'
           import sys, xml.etree.ElementTree as ET
 
-          floor = 4400
+          floor = 4000
           ran = sum(int(s.get("tests", 0))
                     for s in ET.parse(sys.argv[1]).getroot().iter("testsuite"))
           print(f"pure layer: {ran} tests, floor {floor}")
