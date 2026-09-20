@@ -11,6 +11,15 @@ on:
       sha:
         description: Full commit SHA already merged into main
         required: true
+      operation:
+        description: Release tunnel service or migrate existing device routes
+        type: choice
+        options: [release, migrate-one, migrate-all]
+        default: release
+      legacy_manifest:
+        description: Optional legacy machine JSON manifest with provider-verified SSH host keys
+        required: false
+        default: ''
       interrupt:
         description: >-
           Recreate even while device calls are in flight. Each interrupted
@@ -45,6 +54,19 @@ jobs:
           git fetch origin main
           git merge-base --is-ancestor HEAD origin/main
       - name: Drain execution and release cloud control
+        if: inputs.operation == 'release' || inputs.operation == ''
         run: bash deploy/release-cloud-control.sh
         env:
           DEVICE_CONNECTION_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
+      - name: Migrate device routes without restarting tunnels
+        if: inputs.operation == 'migrate-one' || inputs.operation == 'migrate-all'
+        env:
+          ROUTE_LIMIT: ${{ inputs.operation == 'migrate-one' && '1' || '0' }}
+          LEGACY_DEVICE_MANIFEST: ${{ inputs.legacy_manifest }}
+        run: |
+          # System-service runners do not inherit the operator's user bus.
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          args=(--limit "$ROUTE_LIMIT")
+          if [ -n "$LEGACY_DEVICE_MANIFEST" ]; then args+=(--legacy); fi
+          python3 deploy/migrate-device-routes.py "${args[@]}"

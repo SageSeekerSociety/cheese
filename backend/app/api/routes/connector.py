@@ -57,16 +57,14 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
+from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.membership.repositories import MemberRepository
-from app.domain.project.repositories import ProjectRepository
-from app.domain.room_task.services import TaskService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic import transcripts
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -385,17 +383,15 @@ async def store_transcripts(
     )
     if device is None:
         raise UnauthorizedError("unknown or missing device token")
-    if await ProjectRepository(db).get(project_id) is None:
+    if not await owner_reads.project_exists(db, project_id):
         raise NotFoundError("no such project")
     # The place may be a room or a thread, or already deleted; what it must not
     # be is a place of some other project wearing this project's path.
-    place = await TopicRepository(db).get(place_id) or await TaskService(db).get(
-        place_id
-    )
+    place = await owner_reads.place(db, place_id)
     if place is not None and place.project_id != project_id:
         raise NotFoundError("no such place in this project")
     allowed = await _device_ran_place(service, device, project_id, place_id)
-    placement = getattr(place, "session_placement", None)
+    placement = place.session_placement if place is not None else None
     if placement and placement["device_id"] == device.device_id:
         allowed = True
     # Every read is done. Release the transaction before the body streams in:
@@ -459,8 +455,7 @@ async def _may_view_screen(
             project_id=screen.project_id, user_handle=handle
         ):
             return True
-        project = await ProjectRepository(session).get(screen.project_id)
-        if project is not None and project.owner_handle == handle:
+        if await owner_reads.project_owner(session, screen.project_id) == handle:
             return True
     if screen.topic_id is not None:
         if await TopicMembershipRepository(session).get(

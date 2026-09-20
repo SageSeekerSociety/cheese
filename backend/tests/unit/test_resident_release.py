@@ -3,6 +3,8 @@ import hashlib
 import json
 import subprocess
 import sys
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,8 @@ from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import release
+from app.domain.identity.handles import topic_agent_handle
+from app.domain.topic_membership.services import TopicMemberService
 
 
 def test_staged_release_preserves_context_and_waits_for_reload(tmp_path):
@@ -314,8 +318,9 @@ def test_active_turn_blocks_changes_until_completion(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("connected", [False, True])
+@pytest.mark.parametrize("stand_in", [False, True])
 async def test_release_acknowledgement_requires_connection(
-    tmp_path, monkeypatch, connected
+    tmp_path, monkeypatch, connected, stand_in
 ):
     config = tmp_path / ".claude"
     config.mkdir(exist_ok=True)
@@ -336,9 +341,30 @@ async def test_release_acknowledgement_requires_connection(
     )
 
     commands = []
+    topic_id = uuid.uuid4()
+    reading_identity = False
+
+    @asynccontextmanager
+    async def session_factory():
+        nonlocal reading_identity
+        reading_identity = True
+        try:
+            yield object()
+        finally:
+            reading_identity = False
+
+    async def seated_agent(self, topic):
+        assert reading_identity
+        assert topic == topic_id
+        return "agent"
+
+    monkeypatch.setattr(TopicMemberService, "resolve_agent_handle", seated_agent)
 
     class Control:
         async def current(self, topic, agent_handle=None):
+            assert topic == str(topic_id)
+            assert agent_handle == "agent"
+            assert not reading_identity
             return {"id": "session", "status": "active"}
 
         async def enqueue(self, sid, payload, actor):
@@ -394,8 +420,18 @@ async def test_release_acknowledgement_requires_connection(
     monkeypatch.setattr(remote_control, "store", Control)
     channel = object.__new__(DeviceChannel)
     channel._hub = Hub()
+    if stand_in:
+        channel._session_factory = session_factory
     monkeypatch.setattr(channel, "send_prompt", reload)
-    screen = HubScreen("screen", "device", [], "token", 1, "agent")
+    screen = HubScreen(
+        "screen",
+        "device",
+        [],
+        "token",
+        1,
+        topic_agent_handle(topic_id) if stand_in else "agent",
+        topic_id=topic_id,
+    )
     if connected:
         assert await channel._refresh_resident(screen, str(tmp_path), {}) is True
         assert (

@@ -62,6 +62,7 @@ from app.domain.device.supply import (
     has_runnable_transport,
 )
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -1016,8 +1017,22 @@ class DeviceChannel(Channel):
             return False
         from app.domain.agent.remote_control import store
 
+        agent_handle = screen.agent_handle
+        if screen.topic_id is not None and agent_handle == topic_agent_handle(
+            screen.topic_id
+        ):
+            # RC launch credentials resolve a room stand-in to its seated agent.
+            # A surviving screen still records the stand-in it was born with.
+            from app.core.db import async_session_factory
+            from app.domain.topic_membership.services import TopicMemberService
+
+            factory = self._session_factory or async_session_factory
+            async with factory() as db:
+                agent_handle = await TopicMemberService(db).resolve_agent_handle(
+                    screen.topic_id
+                )
         control = store()
-        session = await control.current(str(screen.topic_id), screen.agent_handle)
+        session = await control.current(str(screen.topic_id), agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"

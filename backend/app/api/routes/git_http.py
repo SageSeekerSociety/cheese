@@ -14,6 +14,7 @@ history, deletes and conflict handling badly; with this the agent uses plain
 `git push`.
 """
 
+import asyncio
 import os
 import subprocess
 import uuid
@@ -69,6 +70,9 @@ def _configure_for_push(repo: Path) -> None:
 
     ``http.receivepack``: http-backend refuses to serve receive-pack otherwise.
 
+    ``uploadpack.allowFilter``: what lets a machine fetch the history without
+    every file version in it.
+
     ``receive.denyCurrentBranch=updateInstead``: git rejects a push to a branch
     that is checked out, and every open topic is checked out here (its worktree
     sits on its branch, which is how the agent's own commit moves it). The
@@ -83,6 +87,14 @@ def _configure_for_push(repo: Path) -> None:
     for key, value in (
         ("http.receivepack", "true"),
         ("receive.denyCurrentBranch", "updateInstead"),
+        # A machine asks for the commits without the file contents of every
+        # version that ever existed (`--filter=blob:none`), and git refuses that
+        # unless the served repo opts in. A project repo here is mostly old
+        # blobs: measured on this repository, a full clone is 195 MB and the
+        # same clone without them is 9.6 MB, with the whole history still
+        # present. The contents the checkout actually needs are fetched as it
+        # writes them out.
+        ("uploadpack.allowFilter", "true"),
     ):
         subprocess.run(
             ["git", "config", key, value], cwd=repo, capture_output=True, check=False
@@ -105,6 +117,16 @@ async def _cgi(
     The body is read whole rather than streamed: a project repo here is small,
     and streaming both ways through a subprocess is a lot of machinery to get
     subtly wrong. If repos grow, this is the place to revisit.
+
+    It runs in a worker thread because `subprocess.run` does not yield: it waits
+    for the child and reads its output with the event loop held, and this
+    process runs everything else on that one loop. A clone of a project that had
+    grown to 169 MB took 3.7 s, and for those 3.7 s every other request in the
+    backend was frozen — measured on dev at 02:10:22 UTC on 2026-09-20, where
+    the loop-lag watchdog logged a 3.6 s stall in the same second the request
+    log recorded that clone. What the stall surfaced as elsewhere was
+    `Timeout reading from …:6379`: a Redis read whose answer had arrived and
+    which nobody was free to take, at a 5 s client timeout.
     """
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -125,7 +147,8 @@ async def _cgi(
     if encoding:
         env["HTTP_CONTENT_ENCODING"] = encoding
 
-    process = subprocess.run(
+    process = await asyncio.to_thread(
+        subprocess.run,
         [_backend_path()],
         input=body or b"",
         capture_output=True,

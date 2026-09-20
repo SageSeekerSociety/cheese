@@ -6,7 +6,6 @@ and a Python connector harness relays frames in place of the packaged Go binary.
 """
 
 import asyncio
-import base64
 import json
 import multiprocessing
 import os
@@ -23,6 +22,11 @@ import uvicorn
 import websockets
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# The connector half below speaks the same executor frames the doubles under
+# tests/ speak, and they are declared in one place so a wire change reaches
+# all of them (backend/tests/fixtures/wire pins that place against the Go side).
+from tests.support import wire  # noqa: E402
 
 PORT = 18783
 SECRET = "lifecycle-acceptance-secret"
@@ -73,29 +77,19 @@ async def connector(events: multiprocessing.Queue, task_root: str) -> None:
         welcome = json.loads(await socket.recv())
         events.put({"event": "connected", "welcome": welcome})
         await socket.send(json.dumps({"t": "hello", "v": 3, "executor": True}))
-        message = json.loads(await socket.recv())
-        events.put({"event": "execution_received", "id": message["id"]})
-        request = json.loads(message["stdin"])
+        call = wire.ExecutionCall.parse(json.loads(await socket.recv()))
+        events.put({"event": "execution_received", "id": call.id})
+        request = call.request
         result = await asyncio.to_thread(
             runtime.request, state, request["method"], request["params"]
         )
         encoded = json.dumps({"result": result}).encode()
-        await socket.send(
-            json.dumps(
-                {
-                    "t": "execution.data",
-                    "id": message["id"],
-                    "data": base64.b64encode(encoded).decode(),
-                }
-            )
-        )
-        await socket.send(
-            json.dumps({"t": "execution.result", "id": message["id"], "error": ""})
-        )
+        await socket.send(json.dumps(wire.execution_data(call.id, encoded)))
+        await socket.send(json.dumps(wire.execution_result(call.id)))
         events.put(
             {
                 "event": "execution_completed",
-                "id": message["id"],
+                "id": call.id,
                 "executor_result": result,
             }
         )
