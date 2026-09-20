@@ -88,6 +88,36 @@ test_deploy_keeps_connection_owner_running() {
   echo "PASS: business deploy leaves the device connection owner running"
 }
 
+test_deploy_stops_when_the_owner_reads_an_older_shape() {
+  # The owner is deliberately left running across an app release, so a release
+  # that moves one of ITS reads onto a new shape must not go out until the
+  # owner has been released too — otherwise it admits every tool call against a
+  # column nothing writes any more. Stopping here is the safe end: the running
+  # backend and the running owner both keep serving.
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner-reads.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_OWNER_READS=session-place-on-topics \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy went out over an owner still reading the previous shape"
+  fi
+  if grep -F 'up -d backend frontend' "$docker_log" >/dev/null; then
+    rm -rf "$run_dir"
+    fail "deploy switched the app tier before the owner could read the new shape"
+  fi
+  rm -rf "$run_dir"
+  echo "PASS: deploy stops when the owner still reads the previous shape"
+}
+
 test_local_deploy_installs_owner_from_verified_backend_image() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/connection-owner-local.XXXXXX")"
@@ -997,6 +1027,7 @@ case "$CASE" in
   deploy) test_deploy_rejects_absent_frontend ;;
   deploy-healthy) test_deploy_accepts_healthy_pair ;;
   connection-owner) test_deploy_keeps_connection_owner_running ;;
+  connection-owner-reads) test_deploy_stops_when_the_owner_reads_an_older_shape ;;
   connection-owner-local) test_local_deploy_installs_owner_from_verified_backend_image ;;
   connection-route) test_rollout_installs_connection_route_without_recreating_api_front ;;
   cloud-control-release) test_cloud_control_has_an_independent_drained_release ;;
@@ -1026,6 +1057,7 @@ case "$CASE" in
     test_deploy_rejects_absent_frontend
     test_deploy_accepts_healthy_pair
     test_deploy_keeps_connection_owner_running
+    test_deploy_stops_when_the_owner_reads_an_older_shape
     test_local_deploy_installs_owner_from_verified_backend_image
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release

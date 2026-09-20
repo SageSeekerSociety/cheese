@@ -8,6 +8,7 @@ import pytest
 
 from app.api.deps import _cloud_lease
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
@@ -103,6 +104,51 @@ async def test_cloud_resolution_rejects_another_topics_endpoint(monkeypatch):
 
     with pytest.raises(ScreenSetupError, match="拒绝借用"):
         await provider._resolve_device_agent(project_id, topic_id)
+
+
+async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
+    """机器接上了就要真的走完 precheck——那是每一轮 cloud 对话的第一步。
+
+    `prepare_topic` 在「机器还在创建」就停了，从没走到这里；而这里是
+    `CentralChannel` 与 `PiChannel` 每一轮都要调的那一个入口。签名对不上就是每
+    一轮都在第一步炸掉，而且因为没有一条用例等到机器 ready，CI 会全绿地放它出去。
+    """
+    topic_id, project_id = uuid.uuid4(), uuid.uuid4()
+
+    devices = SimpleNamespace(
+        get_device=AsyncMock(
+            return_value=SimpleNamespace(device_id="own-cloud", supply=Supply.cloud)
+        ),
+        topic_binding=AsyncMock(return_value=None),
+        bind_topic_device=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.domain.agent.cloud_provider.sql_device_service", lambda _session: devices
+    )
+    monkeypatch.setattr(
+        "app.domain.agent.cloud_provider.IdentityService",
+        lambda _session: SimpleNamespace(
+            ensure_topic_agent_user=AsyncMock(
+                return_value=SimpleNamespace(id=7, username="cheese-room")
+            )
+        ),
+    )
+    provider = CloudChannel(
+        session_factory=_Session,
+        hub=_Hub({"own-cloud"}),
+        configured=True,
+        ensure_topic_cloud=AsyncMock(),
+        read_topic_cloud=AsyncMock(
+            return_value=CloudLease(project_id, "own-cloud", True, True)
+        ),
+    )
+
+    resolved = await provider.precheck(
+        SessionRef(project_id, topic_id, "ada", "claude-code")
+    )
+
+    assert resolved == ("own-cloud", 7, "cheese-room")
+    devices.bind_topic_device.assert_awaited_once()
 
 
 async def test_cloud_resolution_never_accepts_a_hosted_endpoint(monkeypatch):

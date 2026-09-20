@@ -41,5 +41,12 @@ if [ -n "${APP_TIER_SNAPSHOT_ONLINE_SEQUENCE:-}" ] && [[ "$config" == *"/snapsho
   fi
   exit 0
 fi
+if [[ "$*" == *"/healthz"* ]]; then
+  # The owner's health answer carries what shape of the database it reads.
+  # APP_TIER_OWNER_READS drives the case where the running owner predates the
+  # release that moved one of those reads.
+  printf '{"ok":true,"reads":"%s"}' "${APP_TIER_OWNER_READS-session-place-on-agent-sessions}"
+  exit 0
+fi
 if [[ "$config" == *"write-out = %{http_code}"* ]]; then printf '200'; fi
 exit 0

@@ -93,6 +93,14 @@ ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
 
+# The harnesses this deployment can run, by name. Declared here rather than
+# beside ``HARNESSES`` below because ``SessionRef`` defaults to one of them, and
+# a default spelled as a literal is the same fact written down twice. What each
+# of them can be pointed at is further down, under 「which harness」.
+CLAUDE_CODE = "claude-code"
+CODEX = "codex"
+PI = "pi"
+
 
 @dataclass(frozen=True, slots=True)
 class SessionRef:
@@ -118,7 +126,7 @@ class SessionRef:
     project_id: uuid.UUID
     topic_id: uuid.UUID
     agent_handle: str = ""
-    harness: str = "claude-code"
+    harness: str = CLAUDE_CODE
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,10 +430,10 @@ def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
 # have must be refused when it is WRITTEN rather than quietly running Claude
 # Code — a stored value nothing honours is how the column got here in the first
 # place.
-
-CLAUDE_CODE = "claude-code"
-CODEX = "codex"
-PI = "pi"
+#
+# The names themselves are declared at the top of this module, because
+# ``SessionRef`` defaults to one and a default written as a literal is a second
+# declaration of the same fact.
 
 
 @dataclass(frozen=True, slots=True)

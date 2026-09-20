@@ -20,7 +20,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import execution
-from app.domain.agent_session.models import AgentSession
+from app.domain.device import owner_reads
 from app.domain.topic.models import Topic
 
 router = APIRouter(tags=["execution"])
@@ -64,27 +64,18 @@ async def execute(
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(room.project_id):
         raise ForbiddenError("Execution belongs to another project")
-    # The hands are the session's, so the lease is read off `agent_sessions` —
-    # one room can hold several. The credential names a room and a generation
-    # and not a session, which is enough because the executor is still pinned
-    # per room (`resolve_pinned_device`): every session here leases the same
-    # hands. The day that stops being true, the credential has to say which
-    # session it belongs to.
-    held = (
-        await db.execute(
-            select(AgentSession.runtime_location, AgentSession.work_lease).where(
-                AgentSession.topic_id == topic_id,
-                AgentSession.task_id.is_(None),
-                AgentSession.work_lease.is_not(None),
-            )
-        )
-    ).all()
+    # The hands are the session's, so the lease is read per session — one room
+    # can hold several. The credential names a room and a generation and not a
+    # session, which is enough because the executor is still pinned per room
+    # (`resolve_pinned_device`): every session here leases the same hands. The
+    # day that stops being true, the credential has to say which session it
+    # belongs to.
     lease = next(
         (
-            row.work_lease
-            for row in held
-            if (row.runtime_location or {}).get("resource_id") == str(resource_id)
-            and row.work_lease.get("kind") == "device"
+            hands
+            for where, hands in await owner_reads.session_places(db, topic_id)
+            if where.get("resource_id") == str(resource_id)
+            and (hands or {}).get("kind") == "device"
         ),
         None,
     )

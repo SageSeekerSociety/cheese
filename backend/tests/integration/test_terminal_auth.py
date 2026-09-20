@@ -130,6 +130,10 @@ async def test_a_room_that_has_since_switched_harness_keeps_the_timeline(
     会话行按 (房间, agent, 骨架) 各占一行，所以先跑 claude-code 后换 pi 的房间
     同时带着两行。屏是 pi 开的，里面什么都没有；照着「这里有过一条 claude-code
     会话」回答可看，就是把那块黑屏摆到人脸前，还把 施工记录 收走。
+
+    pi 开屏之后那条 claude-code 会话又跑完一轮、存了一次续接凭证——这是房间里
+    天天发生的事，而且它写的是同一行。屏归谁要按落位的先后算：按「最后写过任何
+    一列」算，这一步就把屏判回给 claude-code。
     """
     from app.domain.agent_session.services import AgentSessionService
     from tests.integration.test_connector_viewer import _login
@@ -153,6 +157,15 @@ async def test_a_room_that_has_since_switched_harness_keeps_the_timeline(
                 },
             )
             await session.commit()
+
+    async with client.test_factory() as session:
+        await AgentSessionService(session).remember(
+            topic_id=uuid.UUID(topic["id"]),
+            agent_handle="agent",
+            resume_token="conversation-1",
+            harness="claude-code",
+        )
+        await session.commit()
 
     data = client.get(
         f"/topics/{topic['id']}/terminal",

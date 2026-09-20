@@ -105,6 +105,44 @@ async def test_execution_survives_an_unrelated_room_column_rename(
             await db.commit()
 
 
+@pytest.mark.anyio
+async def test_a_screen_opened_before_this_release_still_admits_its_tools(
+    client, room, monkeypatch
+):
+    """屏是上一版镜像开的，位置只写在房间那一列上——工具调用照样得放行。
+
+    这条路由跑在 device connection owner 里，而常规发布**故意不换它**：应用切到
+    只写会话行之后，owner 还要带着上一版的数据继续服务一段时间，而那段时间里
+    房间里已经开着的屏只有房间那一列这一份记录。判不出来就是每一次工具调用
+    409，整间房停摆。P19 DROP 掉那一列时，这条用例跟那个分支一起删。
+    """
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        stored.session_placement = {
+            "device_id": "center",
+            "resource_id": str(resource),
+            "channel": "device",
+            "execution": {"kind": "device", "device_id": "executor"},
+        }
+        await db.commit()
+
+    call = AsyncMock(return_value={"content": "still running"})
+    monkeypatch.setattr(execution, "call", call)
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    response = client.post(
+        f"/topics/{topic}/execution/{resource}",
+        headers={"X-Cheese-Token": token},
+        json={"method": "ping"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert call.await_args.args[0] == {"kind": "device", "device_id": "executor"}
+
+
 @pytest.fixture
 def room(client):
     project = client.post(

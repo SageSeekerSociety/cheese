@@ -338,15 +338,28 @@ class ProjectMachineRepository:
         A placed room never borrows its executor's model identity. An empty
         central identity selects the platform credential. Unmigrated sessions
         still finish on their original pinned device.
+
+        A room can seat several sessions and they can sit on different session
+        machines, so this asks for the room and gets back rows, not a row. The
+        one taken is the room's most recently placed session — the same session
+        `harness_in_room` calls the room's, so the identity and the pane agree
+        about which conversation the room is showing. It is the right answer
+        only while a room's sessions share a ccproxy identity: the credential
+        that arrives here names a place and a seat, and the seat is not the
+        session key, so nothing in it can pick out one of two conversations.
+        Making it exact means the credential naming its session, which is the
+        same thing `api/routes/execution.py` says it will need.
         """
         from app.domain.agent_session.models import AgentSession
 
         located = await self._session.scalar(
-            select(AgentSession.runtime_location).where(
+            select(AgentSession.runtime_location)
+            .where(
                 AgentSession.topic_id == place_id,
                 AgentSession.task_id.is_(None),
                 AgentSession.runtime_location.is_not(None),
             )
+            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
         if located:
             return await self._session.scalar(

@@ -85,12 +85,21 @@ class AgentSessionRepository:
         The same upsert as ``save`` and for the same reason: setup can reach
         here while a sweep is writing the resume token, and each write must
         leave the other's column alone rather than raise or clobber it.
+
+        ``placed_at`` is stamped from here and from nowhere else — it is the
+        moment this session took a machine, which is what orders the sessions
+        of one room (``placed_in_room``). Stamping it in ``_upsert`` would make
+        it「最后写过任何一列」, and every turn's resume token writes a column.
         """
         await self._upsert(
             topic_id=topic_id,
             agent_handle=agent_handle,
             harness=harness,
-            values={"work_lease": work_lease, "runtime_location": runtime_location},
+            values={
+                "work_lease": work_lease,
+                "runtime_location": runtime_location,
+                "placed_at": datetime.now(UTC),
+            },
         )
 
     async def _upsert(
@@ -99,7 +108,8 @@ class AgentSessionRepository:
         # `updated_at` is stamped here by hand: ON CONFLICT DO UPDATE writes
         # exactly the columns named in `set_`, so the mapper's `onupdate` never
         # fires and the row would go on saying it was last touched when it was
-        # created. Which session opened the room's one pane is read off this.
+        # created. It says exactly that and nothing more — which session opened
+        # the room's pane is `placed_at`, written only by `save_place`.
         values = {**values, "updated_at": datetime.now(UTC)}
         stmt = insert(AgentSession).values(
             topic_id=topic_id,
@@ -140,12 +150,13 @@ class AgentSessionRepository:
         room id — the transcript upload, the cleanup inventory, the executor
         admission check — ask this and then match on what they do know. The
         ordering is for the one caller that has nothing to match on: a room has
-        a single pane, and it belongs to whichever session last opened one.
+        a single pane, and it belongs to whichever session last opened one —
+        `placed_at`, which only taking a machine writes.
         """
         result = await self._session.execute(
             select(AgentSession)
             .where(*self._at(room_id), AgentSession.runtime_location.is_not(None))
-            .order_by(AgentSession.updated_at.desc(), AgentSession.id)
+            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
         return list(result.scalars())
 

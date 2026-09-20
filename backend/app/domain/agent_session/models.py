@@ -36,8 +36,9 @@ sessions that can sit on different machines and migrate without each other.
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, Index, String, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -128,6 +129,13 @@ class AgentSession(UuidPk, Timestamps, Base):
     # 这条会话的进程在哪台会话机上，连同开它的通道与骨架的运行状态。
     runtime_location: Mapped[dict | None] = mapped_column(
         JSON(none_as_null=True), nullable=True
+    )
+    # 这条会话上一次落位是什么时候。房间只有一块屏，归最后开屏的那条会话——
+    # 排这个先后要的就是落位的时刻，不是这一行上任何一列的写入时刻。
+    # ``updated_at`` 排不了：每轮跑完存 ``resume_token`` 也在动同一行，于是「最后
+    # 开屏的」会变成「最后说过话的」，屏就归错了会话。
+    placed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     def place(self) -> SessionPlace | None:
