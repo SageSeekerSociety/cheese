@@ -1,14 +1,15 @@
 // 一份文档拿去给查看器画之前，先要有它的字节。
 //
-// 两条路：浏览器画不出来的（.docx / .pptx / …）先由平台转成 PDF，其余（PDF、表格、
-// 图片）直接读原始字节。两个面板都要做这件事——预览看的是芝士交付的那一份，改动看
-// 的是某个任务分支上的那一份——所以取字节这件事在这里一次写完，而不是各写一遍：
-// 各写一遍的表现是同一份文档在两处显示得不一样。
+// 三条路：浏览器画不出来的（.docx / .pptx / …）先由平台转成 PDF；表格里连原始字节
+// 都读不出单元格的那一种（.xls）转成 xlsx；其余（PDF、.xlsx、图片、csv、md）直接读
+// 原始字节。哪一条由 `previewSource` 说了算。两个面板都要做这件事——预览看的是芝士
+// 交付的那一份，改动看的是某个任务分支上的那一份——所以取字节这件事在这里一次写完，
+// 而不是各写一遍：各写一遍的表现是同一份文档在两处显示得不一样。
 import { ref, watch } from 'vue'
 
-import { previewDocumentPdf, previewFileBytes, PreviewRendererUnavailable } from '../api'
+import { previewDocumentPdf, previewDocumentXlsx, previewFileBytes, PreviewRendererUnavailable } from '../api'
 
-import { NEEDS_CONVERSION, suffixOf } from './fileKind'
+import { previewSource } from './fileKind'
 
 export interface DocumentSource {
   /** 房间。 */
@@ -47,9 +48,13 @@ export function useDocumentBytes(source: DocumentSource) {
     error.value = ''
     rendererMissing.value = false
     try {
-      const got = NEEDS_CONVERSION.has(suffixOf(path))
-        ? await previewDocumentPdf(tid, path, task)
-        : await previewFileBytes(tid, path, task)
+      const from = previewSource(path)
+      const got =
+        from === 'pdf'
+          ? await previewDocumentPdf(tid, path, task)
+          : from === 'xlsx'
+            ? await previewDocumentXlsx(tid, path, task)
+            : await previewFileBytes(tid, path, task)
       if (mine !== generation) return
       bytes.value = got
       loadedKey = key
