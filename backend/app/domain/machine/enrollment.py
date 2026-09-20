@@ -263,6 +263,9 @@ CHEESE_CONFIG_EOF
 # stdin is closed: this script arrives ON stdin, and anything the command reads
 # from it would eat the rest of the script.
 "$HOME/.local/bin/cheesehost" link connect < /dev/null
+# A retried enrollment writes a new device identity. Starting an active service
+# leaves the old token in memory, so the room waits for a device that never joins.
+systemctl --user restart cheese
 # `link connect` succeeds as soon as systemd accepts the start, which is BEFORE
 # the process can fail. Enrollment must not report success for a service that is
 # already dead, so ask systemd what actually happened. It is a --user unit, and
