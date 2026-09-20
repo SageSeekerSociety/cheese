@@ -29,14 +29,22 @@
 :root {
   color-scheme: light;
 
-  /* ---- Neutral ramp (warm-cool gray) ---- */
+  /* ---- Neutral ramp (warm-cool gray) ----
+     Measure each rung against the DEEPEST ground it is actually painted on, not
+     against --surface. `--line-2` counts: it is not only a divider, it is the
+     selected sidebar row's background, and it is the worst case for dark-on-
+     light text. The old values were only ever measured on --surface, so on that
+     row `--faint` sat at 2.05:1 and `--muted` at 3.99:1 — neither meta text (3)
+     nor secondary text (4.5) cleared its floor, and `--muted` also missed AA on
+     `--fill-2` (4.45). Both rungs moved on 2026-09-20: secondary 5.07 here
+     (6.51 on --surface), meta 3.37 here (4.33 on --surface). */
   --ink: #191a1c; /* titles */
   --text: #36383c; /* body */
-  --muted: #6a6e76; /* secondary */
-  --faint: #9aa0a8; /* meta */
+  --muted: #5a5e66; /* secondary */
+  --faint: #747a82; /* meta */
 
   --line: #ecedef; /* hairlines */
-  --line-2: #e2e3e6;
+  --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
   --fill: #f4f5f7; /* hover / inset */
   --fill-2: #eeeff1;
 
@@ -187,23 +195,33 @@
    above it, so a card still reads as lifted rather than punched out).
 
    Amber is lightened to #FFA733: the light-theme #F57F17 measures 3.1:1 on
-   --surface here, which is unreadable for a button label. Every value below
-   was checked — body text 11.6:1, secondary 6.6:1, accent 8.7:1 against
-   --surface (WCAG AA needs 4.5:1). --canvas is #141517, not #000: pure black
-   maximises halation against light text and leaves no room for a surface ramp.
+   --surface here, which is unreadable for a button label. Body text 11.6:1,
+   accent 8.7:1 against --surface (WCAG AA needs 4.5:1). --canvas is #141517,
+   not #000: pure black maximises halation against light text and leaves no room
+   for a surface ramp.
+
+   Secondary and meta were re-measured on 2026-09-20 against the LIGHTEST ground
+   they sit on, which is the dark theme's mirror of the light theme's problem:
+   `--line-2` (#3a3e45) is a selected row's fill, not just a divider, and light-
+   on-dark text is worst there. On it the old `--faint` was 2.70:1 — below the
+   3:1 floor for meta text, which the --surface figure of 4.25 had hidden — and
+   `--muted` was 4.18:1. Now secondary 5.15 there (8.09 on --surface), meta 3.29
+   (5.17 on --surface).
    --------------------------------------------------------------------------- */
 
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  /* ---- Neutral ramp (inverted) ---- */
+  /* ---- Neutral ramp (inverted) ----
+     Same grounds as the light block, measured the same way; see the note above
+     for why `--line-2` and not `--surface` is the ground that decides these. */
   --ink: #f3f4f6;
   --text: #d3d6db;
-  --muted: #9ca2ab;
-  --faint: #7a808a;
+  --muted: #aeb4bd;
+  --faint: #888ea0;
 
   --line: #2b2e33;
-  --line-2: #3a3e45;
+  --line-2: #3a3e45; /* dividers AND the selected row's fill */
   --fill: #212429;
   --fill-2: #282c31;
 
