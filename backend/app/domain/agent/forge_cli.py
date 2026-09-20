@@ -11,7 +11,9 @@ import http.client
 import json
 import os
 import platform
+import runpy
 import shutil
+import socketserver
 import subprocess
 import sys
 import tarfile
@@ -102,6 +104,53 @@ def credentials():
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)["data"]
+
+
+@contextlib.contextmanager
+def github_transport(data, env):
+    """Choose a route before invoking the CLI, never replay a native mutation."""
+    try:
+        with urllib.request.urlopen(data["api_url"], timeout=5):
+            pass
+    except (OSError, urllib.error.URLError):
+        helper = runpy.run_path(str(Path.home() / ".cheese/cheese-tunnel.py"))
+        api = urllib.parse.urlsplit(os.environ["CHEESE_API"].rstrip("/"))
+        tunnel = urllib.parse.urlunsplit(
+            (
+                "wss" if api.scheme == "https" else "ws",
+                api.netloc,
+                api.path + "/sandbox/forge-tunnel/" + data["project_id"],
+                "",
+                "",
+            )
+        )
+        secret = os.environ["CHEESE_TOKEN"]
+
+        class Connection(socketserver.BaseRequestHandler):
+            def handle(self):
+                helper["handle_connection"](self.request, tunnel, secret)
+
+        class Proxy(socketserver.ThreadingTCPServer):
+            daemon_threads = True
+
+        with Proxy(("127.0.0.1", 0), Connection) as proxy:
+            thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+            thread.start()
+            destination = f"http://127.0.0.1:{proxy.server_address[1]}"
+            env.update(
+                HTTPS_PROXY=destination,
+                https_proxy=destination,
+                NO_PROXY="",
+                no_proxy="",
+            )
+            print("[cheese] 仓库无法直连，本次通过平台访问", file=sys.stderr)
+            try:
+                yield
+            finally:
+                proxy.shutdown()
+                thread.join()
+    else:
+        yield
 
 
 def fj_destination(data, arguments):
@@ -282,7 +331,8 @@ def run(name, arguments):
         env["GH_TOKEN" if host == "github.com" else "GH_ENTERPRISE_TOKEN"] = data[
             "token"
         ]
-        return subprocess.call([binary, *arguments], env=env)
+        with github_transport(data, env):
+            return subprocess.call([binary, *arguments], env=env)
 
     destination, arguments, host_index = fj_destination(data, arguments)
     # fj 0.6 reads keys.json, not a token environment variable.

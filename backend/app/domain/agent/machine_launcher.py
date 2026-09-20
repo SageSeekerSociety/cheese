@@ -575,6 +575,8 @@ cat > "$HOME/.cheese/gh" <<'CHEESE_FORGE_CLI'
 {forge_source}CHEESE_FORGE_CLI
 cp "$HOME/.cheese/gh" "$HOME/.cheese/fj"
 chmod +x "$HOME/.cheese/gh" "$HOME/.cheese/fj"
+cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
+{tunnel_helper}TUNNELPY
 export PATH="$HOME/.cheese:$PATH"
 {toolchain}cheese_launch_phase files_written
 {credentials}\
@@ -605,8 +607,6 @@ mv "$HOME/.cheese/cheese-drain.env.tmp" "$HOME/.cheese/cheese-drain.env"
 # token per connection, so replacing this file is how a refreshed credential
 # reaches a still-running helper (#385's shape, one layer down).
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
-{tunnel_helper}TUNNELPY
   # Use the place-scoped CONNECT credential, including its RC claim. The hook
   # token can have project scope; the machine OAuth ticket is never a tunnel
   # credential. A missing CONNECT token must not fall back to either one.

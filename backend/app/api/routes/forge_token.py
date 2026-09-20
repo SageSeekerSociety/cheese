@@ -8,15 +8,23 @@ The response carries the project's forge, repository, expiry, and actual grants.
 The provider's administrative credentials never leave the backend.
 """
 
+import asyncio
 import base64
 import binascii
 import hmac
 import uuid
 from datetime import UTC, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +40,88 @@ from app.domain.agent.forgejo_tokens import ForgejoTokenError
 from app.domain.agent.github_app import GitHubAppError
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
+
+
+@router.websocket("/forge-tunnel/{project_id}")
+async def forge_tunnel(
+    project_id: uuid.UUID,
+    websocket: WebSocket,
+    token: str = "",
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Carry native GitHub HTTPS through the deployment without terminating TLS."""
+    from app.api.routes.llm_tunnel import _pump_tcp_to_ws, _pump_ws_to_tcp
+    from app.domain.project.forge import binding_for_project
+
+    claims = scoped_token_claims(token)
+    if not claims or claims.get("p") != str(project_id):
+        await websocket.close(code=1008)
+        return
+    binding = await binding_for_project(project_id, db)
+    if binding is None or binding.kind != "github_app":
+        await websocket.close(code=1008)
+        return
+    hosts = {urlsplit(binding.url).hostname, urlsplit(binding.api_url).hostname}
+    public_github = "github.com" in hosts
+    await db.rollback()
+    await websocket.accept()
+    writer = None
+    tasks = []
+    try:
+        async with asyncio.timeout(15):
+            head = bytearray()
+            while b"\r\n\r\n" not in head:
+                head.extend(await websocket.receive_bytes())
+                if len(head) > 16384:
+                    raise ValueError("CONNECT header too large")
+            header, _, remainder = bytes(head).partition(b"\r\n\r\n")
+            method, destination, version = header.split(b"\r\n", 1)[0].decode().split()
+            target = urlsplit("//" + destination)
+            host = target.hostname or ""
+            # GitHub serves release assets and Actions logs on these origins.
+            # https://docs.github.com/en/actions/reference/runners/self-hosted-runners
+            download_host = public_github and host.endswith(
+                (".github.com", ".githubusercontent.com", ".blob.core.windows.net")
+            )
+            if (
+                method != "CONNECT"
+                or version != "HTTP/1.1"
+                or target.port != 443
+                or target.username is not None
+                or target.path
+                or target.query
+                or target.fragment
+                or not (host in hosts or download_host)
+            ):
+                await websocket.send_bytes(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                return
+            reader, writer = await asyncio.open_connection(host, 443)
+        await websocket.send_bytes(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        if remainder:
+            writer.write(remainder)
+            await writer.drain()
+        tasks = [
+            asyncio.create_task(_pump_ws_to_tcp(websocket, writer)),
+            asyncio.create_task(_pump_tcp_to_ws(reader, websocket)),
+        ]
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except (OSError, TimeoutError, ValueError, WebSocketDisconnect):
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+        try:
+            await websocket.close()
+        except (RuntimeError, OSError):
+            pass
 
 
 def _forge_credential(authorization: str) -> str:

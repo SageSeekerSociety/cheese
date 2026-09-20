@@ -25,7 +25,9 @@ def invocation(monkeypatch, tmp_path):
         "import json, os, sys\n"
         "from pathlib import Path\n"
         "data = {'args': sys.argv[1:], 'token': os.environ.get('GH_TOKEN'), "
-        "'repo': os.environ.get('GH_REPO'), 'stdin': sys.stdin.read()}\n"
+        "'repo': os.environ.get('GH_REPO'), 'stdin': sys.stdin.read(), "
+        "'proxy': os.environ.get('HTTPS_PROXY'), "
+        "'no_proxy': os.environ.get('NO_PROXY')}\n"
         "if 'XDG_DATA_HOME' in os.environ:\n"
         "    path = Path(os.environ['XDG_DATA_HOME']) / 'forgejo-cli/keys.json'\n"
         "    if os.environ.get('CHEESE_TEST_NATIVE_KEYS_FILE'):\n"
@@ -113,6 +115,32 @@ def test_fj_uses_private_temporary_native_config_and_removes_it(
 def test_wrong_provider_cannot_receive_the_other_providers_token(invocation):
     with pytest.raises(RuntimeError, match="uses gh"):
         forge_cli.run("fj", ["pr", "list"])
+
+
+def test_gh_offline_keeps_native_arguments_and_uses_tunnel(invocation, monkeypatch):
+    _, captured = invocation
+    monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    monkeypatch.setenv("CHEESE_TOKEN", "scoped-test-token")
+    monkeypatch.setenv("HTTPS_PROXY", "http://unreachable.invalid")
+
+    def offline(*args, **kwargs):
+        raise forge_cli.urllib.error.URLError("unreachable")
+
+    monkeypatch.setattr(forge_cli.urllib.request, "urlopen", offline)
+    monkeypatch.setattr(
+        forge_cli.runpy,
+        "run_path",
+        lambda *_: {
+            "handle_connection": lambda *_: None,
+        },
+    )
+    assert forge_cli.run("gh", ["run", "rerun", "123"]) == 7
+    data = json.loads(captured.read_text())
+    assert data["args"] == ["run", "rerun", "123"]
+    assert data["repo"] == "github.com/team/project"
+    assert data["proxy"].startswith("http://127.0.0.1:")
+    assert data["no_proxy"] == ""
+    assert os.environ["HTTPS_PROXY"] == "http://unreachable.invalid"
 
 
 @pytest.mark.parametrize(
