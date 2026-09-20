@@ -11,6 +11,8 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:$port/api/v1/version"
+curl -fsS --retry 30 --retry-connrefused --retry-delay 1 \
+  "http://127.0.0.1:${FORGEJO_TEST_S3_PORT:-33286}/minio/health/live"
 if [ ! -s "$token_file" ]; then
   test_password="$(openssl rand -hex 32)Aa1!"
   dc exec -T forgejo forgejo --config /var/lib/gitea/custom/conf/app.ini admin user create \
@@ -26,5 +28,9 @@ if [ -n "${GITHUB_ENV:-}" ]; then
     echo "FORGEJO_URL=http://127.0.0.1:$port"
     echo "FORGEJO_API_URL=http://127.0.0.1:$port/api/v1"
     echo "FORGEJO_ADMIN_TOKEN=$token"
+    echo "S3_ENDPOINT_URL=http://127.0.0.1:${FORGEJO_TEST_S3_PORT:-33286}"
+    echo "S3_ACCESS_KEY=e2e-snapshots"
+    echo "S3_SECRET_KEY=e2e-snapshots-secret"
+    echo "TRANSCRIPT_S3_BUCKET=e2e-snapshots"
   } >> "$GITHUB_ENV"
 fi

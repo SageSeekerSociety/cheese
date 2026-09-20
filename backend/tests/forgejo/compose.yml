@@ -1,4 +1,12 @@
 services:
+  snapshots:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data
+    ports:
+      - "127.0.0.1:${FORGEJO_TEST_S3_PORT:-33286}:9000"
+    environment:
+      MINIO_ROOT_USER: e2e-snapshots
+      MINIO_ROOT_PASSWORD: e2e-snapshots-secret
   forgejo:
     image: codeberg.org/forgejo/forgejo:15.0.9-rootless
     ports:

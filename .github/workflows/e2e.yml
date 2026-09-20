@@ -167,6 +167,7 @@ jobs:
           echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
           echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
           echo "FORGEJO_TEST_PORT=$((33100 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_S3_PORT=$((33200 + slot))" >> "$GITHUB_ENV"
           echo "FORGEJO_TEST_PROJECT=cheese-e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
           echo "FORGEJO_TEST_TOKEN_FILE=$RUNNER_TEMP/e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-token" >> "$GITHUB_ENV"
           root="postgresql+asyncpg://postgres:postgres@localhost:5442"
