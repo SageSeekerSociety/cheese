@@ -17,6 +17,7 @@ from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRunti
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
+    AgentSessionInfo,
     AgentResult,
     AgentSubagentStart,
     AgentSubagentStop,
@@ -1014,6 +1015,9 @@ async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     async def deliver(event: object) -> None:
         await consumer(project_id, topic_id, uuid.uuid4(), event, None, False, False)
 
+    # 屏幕起来了，平台记下它跑在哪个会话上（分身的声明都是对这块屏幕说的）。
+    await deliver(AgentSessionInfo(session_id="session-1"))
+
     # 没听见过这个分身：没有谁在替它说话。
     assert chat.worker_live(topic_id, "worker-1") is None
 
@@ -1024,6 +1028,14 @@ async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     assert chat.worker_live(topic_id, "worker-1") is None
 
     # 被再叫起来干活，它就又是在做。
+    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    # 换了一块屏幕：新会话没听说过旧会话的孩子，所以旧声明作废 —— 不然后面那块
+    # 屏幕会替一个它从没跑过的分身说「还活着」。
+    await deliver(AgentSessionInfo(session_id="session-2"))
+    assert chat.worker_live(topic_id, "worker-1") is None
+
     await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
     assert chat.worker_live(topic_id, "worker-1") is True
 
