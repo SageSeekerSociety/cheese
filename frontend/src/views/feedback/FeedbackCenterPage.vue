@@ -70,7 +70,12 @@ function clearFilters() {
 </script>
 
 <template>
-  <div class="fb-page">
+  <!-- `fill-height overflow-y-auto` 不是装饰，是这一页能不能滚的全部。common.scss
+       把 html/body/#app 定成固定高度 + `overflow: hidden`，滚动由每一页自己领
+       （CalendarView / MemberView / MarketView 都是这么写的）。少了这两个类，内容
+       一旦比窗口高，下半截就被外面那层 `overflow-hidden` 裁掉，而且**没有任何元素
+       可滚** —— 1280×600 的窗口里反馈中心少 117px，列表最后几条再也够不着。 -->
+  <div class="fb-page fill-height overflow-y-auto">
     <div class="fb-page__inner page-container">
       <header class="fb-head">
         <h1 class="t-page-title">反馈中心</h1>
@@ -120,6 +125,22 @@ function clearFilters() {
       <!-- 骨架**不放进 .fb-list**：那一层是 gap 8 的 flex 列，而骨架的行自带 8px
            下边距（它得能单独用在任何地方），两处一叠就是 16px，到货那一刻列表会
            往上收一截 —— 骨架存在的意义正是不让这件事发生。 -->
+      <!-- 列表**非空**时的失败也要画出来。以前 error 只在下面那块「一条也没有」里
+           渲染，于是从卡片上点「支持」失败（已解决的条目回 412）时页面上什么都不动：
+           按钮按得下去、数字不变、一句话也没有 —— 和「这个按钮坏了」长得一模一样。
+           列表为空时下面那块画同一句话（并且带重试），这里不重复画。 -->
+      <v-alert
+        v-if="store.error && store.items.length"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        closable
+        class="mb-3"
+        @click:close="store.clearError()"
+      >
+        {{ store.error }}
+      </v-alert>
+
       <LoadingSkeleton v-if="store.loading" variant="feedback" :rows="6" />
 
       <div v-else class="fb-list">

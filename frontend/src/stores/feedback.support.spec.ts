@@ -16,12 +16,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const getFeedback = vi.fn()
 const supportFeedback = vi.fn()
 const unsupportFeedback = vi.fn()
+const getFeedbackCounts = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     getFeedback: (...a: unknown[]) => getFeedback(...a),
+    getFeedbackCounts: (...a: unknown[]) => getFeedbackCounts(...a),
     supportFeedback: (...a: unknown[]) => supportFeedback(...a),
     unsupportFeedback: (...a: unknown[]) => unsupportFeedback(...a),
   }
@@ -43,8 +45,10 @@ function detail(supports: number, supported: boolean): FeedbackDetail {
 beforeEach(() => {
   setActivePinia(createPinia())
   getFeedback.mockReset()
+  getFeedbackCounts.mockReset()
   supportFeedback.mockReset()
   unsupportFeedback.mockReset()
+  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
 })
 
 describe('冷启动进详情页', () => {
@@ -67,7 +71,9 @@ describe('冷启动进详情页', () => {
 
   it('已经支持过的那条走取消，且用服务端回的计数', async () => {
     getFeedback.mockResolvedValue(detail(8, true))
-    unsupportFeedback.mockResolvedValue({ count: 7, supported: false })
+    // **和本地算出来的差得远**是故意的：8-1 也是 7，用 7 就分辨不出「用了服务端
+    // 回的计数」和「本地自己减了个 1」。别人也在点的时候，本地那个数从来没存在过。
+    unsupportFeedback.mockResolvedValue({ count: 3, supported: false })
 
     const store = useFeedbackStore()
     await store.loadDetail('fb-1')
@@ -75,7 +81,9 @@ describe('冷启动进详情页', () => {
 
     expect(unsupportFeedback).toHaveBeenCalledWith('fb-1')
     expect(supportFeedback).not.toHaveBeenCalled()
-    // 不是本地 ±1：两个人同时点，各自算出来的数字谁都没见过。
-    expect(store.detail?.supports).toBe(7)
+    expect(store.detail?.supports).toBe(3)
+    // 支持数一变，「热门」那栏的门槛可能就被跨过了 —— 计数也得重新问服务端，
+    // 不然列表里 6 条、Tab 上还写着 5。
+    expect(getFeedbackCounts).toHaveBeenCalled()
   })
 })

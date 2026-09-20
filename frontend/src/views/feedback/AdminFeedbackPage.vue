@@ -63,8 +63,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="fb-admin">
-    <div v-if="!store.isAdmin" class="fb-admin__gate page-container">
+  <!-- 滚动归这一页自己领，理由见 FeedbackCenterPage 顶部那段注释。 -->
+  <div class="fb-admin fill-height overflow-y-auto">
+    <!-- 这里要**三段**，不是两段。「我是不是管理员」在服务端，meta 没到之前
+         `isAdmin` 是 false —— 两段的话，直接打开/刷新这一页时先画出来的就是「你的
+         账号不在管理员名单里」，一个真管理员看到的第一句话是假的，然后它才变成
+         表格。await 只解决了「拉不拉列表」，解决不了这一帧画什么。 -->
+    <div v-if="!store.metaChecked" class="fb-admin__gate page-container">
+      <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
+      <div class="t-body mb-1">正在确认权限…</div>
+    </div>
+
+    <div v-else-if="!store.isAdmin" class="fb-admin__gate page-container">
       <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
       <div class="t-body mb-1">这一页是管理员后台</div>
       <div class="t-meta mb-3">你的账号不在管理员名单里，看不到这里的反馈 —— 私密反馈和安全问题对非管理员不存在</div>

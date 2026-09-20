@@ -61,7 +61,8 @@ const DECIDED = [
 </script>
 
 <template>
-  <div class="fd-page">
+  <!-- 滚动归这一页自己领，理由见 FeedbackCenterPage 顶部那段注释。 -->
+  <div class="fd-page fill-height overflow-y-auto">
     <div class="fd-page__inner page-container page-container--wide">
       <header class="fd-head">
         <h1 class="t-page-title">数据与架构</h1>

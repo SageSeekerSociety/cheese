@@ -45,6 +45,7 @@ import {
   dismissFeedbackProposal,
   getAdminFeedback as getAdminFeedbackDetail,
   getFeedback,
+  getFeedbackCounts,
   getFeedbackMeta,
   listAdminFeedback,
   listFeedback,
@@ -72,6 +73,7 @@ const PAGE_SIZE = 50
  *  都不是界面状态，放进 state 只会让 Vue 去追踪一个没人渲染的值。 */
 let listSeq = 0
 let adminSeq = 0
+let countsSeq = 0
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 }
@@ -142,6 +144,10 @@ export const useFeedbackStore = defineStore('feedback', {
   state: () => ({
     /* ---- 词表 ---- */
     meta: null as FeedbackMeta | null,
+    /** 「问过服务端了」—— 成功也好失败也好，问过就是问过。页面用它区分「还不知道
+     *  我是不是管理员」和「确定不是」：少了它，meta 还在飞的那一帧画出来的是
+     *  「你的账号不在管理员名单里」，一个真管理员先看到的是一句假话。 */
+    metaChecked: false,
     /* ---- 公开列表 ---- */
     items: [] as FeedbackCard[],
     total: 0,
@@ -204,6 +210,10 @@ export const useFeedbackStore = defineStore('feedback', {
         this.meta = await getFeedbackMeta()
       } catch {
         // 见上：词表拿不到不该让整页空白。
+      } finally {
+        // 失败也算「问过」：否则页面会永远停在「正在确认权限」，比看到一句
+        // 「你的账号不在管理员名单里」更难查。
+        this.metaChecked = true
       }
     },
 
@@ -287,11 +297,33 @@ export const useFeedbackStore = defineStore('feedback', {
       try {
         const result = card.supported ? await unsupportFeedback(id) : await supportFeedback(id)
         this._patch(id, { supports: result.count, supported: result.supported })
+        // 栏位上的数字也要跟着动：「热门」是服务端按「支持数 ≥ 门槛且未解决」现算的，
+        // 就在这一下跨过门槛的条目，本地那份计数当场就对不上了（列表 6 条、Tab 上写着
+        // 5）。计数只能问服务端，前端再算一遍就是第二份实现。
+        void this.refreshCounts()
       } catch (error) {
         // 已解决的反馈会被拒（412）。那不是故障，是「别再点了」—— 如实显示服务端
         // 那句话，比一个静默失败好。
         this.error = message(error, '操作失败')
       }
+    },
+
+    /** 重新问一次计数。失败不报错：Tab 上的数字晚一拍更新，不值得打断人。 */
+    async refreshCounts(): Promise<void> {
+      const seq = ++countsSeq
+      try {
+        const counts = await getFeedbackCounts()
+        if (seq !== countsSeq) return
+        this.counts = counts
+      } catch {
+        // 见上。
+      }
+    },
+
+    /** 清掉上一次失败的原话。页面上的错误条靠它自己的关闭按钮调 —— 不这么做的话，
+     *  一次失败会一直挂在页面上，直到下一个动作顺手把它覆盖。 */
+    clearError(): void {
+      this.error = null
     },
 
     /* ---- 评论 ---- */
@@ -424,17 +456,17 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 推一个状态。服务端把状态和它那条时间线写在同一个事务里，所以这里回的是
      *  **刷新之后的整条详情**，不是「我把状态改成了什么」的本地推断。 */
     async setStatus(id: string, status: FeedbackStatus): Promise<void> {
-      await this._adminWrite(() => setAdminFeedbackStatus(id, status))
+      await this._adminWrite(id, () => setAdminFeedbackStatus(id, status))
     },
 
     async setPriority(id: string, priority: FeedbackPriority): Promise<void> {
-      await this._adminWrite(() => patchAdminFeedback(id, { priority } satisfies FeedbackAdminPatch))
+      await this._adminWrite(id, () => patchAdminFeedback(id, { priority } satisfies FeedbackAdminPatch))
     },
 
     /** 指派 / 取消指派。空串是「清掉」—— 服务端把 `''` 和 `null` 分开读，
      *  后者是「这次别动它」。 */
     async assign(id: string, handle: string | null): Promise<void> {
-      await this._adminWrite(() =>
+      await this._adminWrite(id, () =>
         patchAdminFeedback(id, { assignee_handle: handle ?? '' } satisfies FeedbackAdminPatch)
       )
     },
@@ -442,26 +474,33 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 标 / 取消标「安全问题」。标上之后这条对同事就不见了 —— 所以服务端顺手写一条
      *  时间线，这里回的是刷新后的详情。 */
     async setSecurity(id: string, security: boolean): Promise<void> {
-      await this._adminWrite(() => patchAdminFeedback(id, { security } satisfies FeedbackAdminPatch))
+      await this._adminWrite(id, () => patchAdminFeedback(id, { security } satisfies FeedbackAdminPatch))
     },
 
     /** 加一条内部备注。**只增不改**：回的是整条详情，`notes` 里就有新的那条。 */
     async addNote(id: string, body: string): Promise<void> {
       const text = body.trim()
       if (!text) return
-      await this._adminWrite(() => createAdminFeedbackNote(id, text))
+      await this._adminWrite(id, () => createAdminFeedbackNote(id, text))
     },
 
-    /** 管理端写操作共用的外壳：一次请求、一次刷新、一处错误处理。 */
-    async _adminWrite(call: () => Promise<FeedbackDetail>): Promise<void> {
+    /** 管理端写操作共用的外壳：一次请求、一次刷新、一处错误处理。
+     *
+     *  `id` 是**这次写的是哪一条**，两个地方要用它：回填详情时对一下「抽屉里现在还
+     *  是它吗」，以及列表刷新后的口径。 */
+    async _adminWrite(id: string, call: () => Promise<FeedbackDetail>): Promise<void> {
       this.error = null
       try {
         const detail = await call()
-        this.detail = detail
-        this.detailId = detail.id
-        // 列表里那一行也跟着变了，但它可能在**别的一栏**里（改了安全问题就从公开
-        // 栏挪进安全栏）。清掉让它下次挂载重拉，不在这里就地改一个可能已经过期的数组。
-        this.adminItems = []
+        // 只在**还是这一条**时回填：写请求在飞的时候人可能已经点开了另一条，慢响应
+        // 回来会把 `detailId` 拉回旧的那条 —— 新条目的抽屉要么显示「这条反馈打不开」，
+        // 要么因为 `detailLoading` 永远不再复位而卡在「加载中…」。
+        if (this.detailId === id) this.detail = detail
+        // 那一行也变了，而且可能在**别的一栏**里（改了安全问题就从公开栏挪进安全栏），
+        // 所以整页重新拉一次。以前这里只是把数组清空、指望「下次挂载重拉」，可管理端
+        // 这一页在抽屉关掉时既不重新挂载也不重新拉取 —— 于是表格画出来的是「这一栏
+        // 没有反馈」这个假状态，不切栏位、不刷新页面就回不来。
+        await this.loadAdmin()
       } catch (error) {
         this.error = message(error, '操作失败')
       }

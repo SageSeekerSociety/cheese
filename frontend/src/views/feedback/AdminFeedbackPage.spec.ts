@@ -91,4 +91,20 @@ describe('冷启动打开管理端', () => {
     expect(await findByText('这一页是管理员后台')).toBeTruthy()
     expect(listAdminFeedback).not.toHaveBeenCalled()
   })
+
+  it('meta 还在飞的时候，不画「你不在名单里」这句假话', async () => {
+    // await 只解决了「拉不拉列表」，解决不了这一帧画什么：这段时间里 isAdmin 是
+    // false，两段式的模板会先给一个真管理员看「你的账号不在管理员名单里」。
+    getFeedbackMeta.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ is_admin: true, hot_supports: 5 }), 20))
+    )
+    listAdminFeedback.mockResolvedValue({ data: [ROW], total: 1, counts: {} })
+
+    const { findByText, queryByText } = mountPage()
+
+    expect(await findByText('正在确认权限…')).toBeTruthy()
+    expect(queryByText('这一页是管理员后台')).toBeNull()
+    // 结论到了之后，画的是表格。
+    expect(await findByText('导出报表偶发 502')).toBeTruthy()
+  })
 })

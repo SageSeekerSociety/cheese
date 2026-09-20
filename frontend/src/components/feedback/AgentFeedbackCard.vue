@@ -56,7 +56,14 @@ const expanded = ref<Set<string>>(new Set())
 const pending = ref<string | null>(null)
 
 async function load() {
-  proposals.value = await store.loadProposals(props.topicId)
+  const asked = props.topicId
+  const list = await store.loadProposals(asked)
+  // 换话题时这个组件被复用（同一个路由、只换参数），两次请求可能交叉：先发出的那次
+  // 后到，就会把**上一个话题**的提案画在当前话题的会话栏里。而在这张卡上按「提交
+  // 反馈」，递出去的是 `props.topicId` + 那个 block_id —— 服务端按话题校验 block，
+  // 这条请求必回 404。所以回来时对一下这次问的是不是现在这个话题。
+  if (props.topicId !== asked) return
+  proposals.value = list
 }
 
 onMounted(load)

@@ -72,7 +72,8 @@ async function share() {
 </script>
 
 <template>
-  <div class="fb-page">
+  <!-- 滚动归这一页自己领，理由见 FeedbackCenterPage 顶部那段注释。 -->
+  <div class="fb-page fill-height overflow-y-auto">
     <!-- 还没问出结果之前也画骨架：先画「暂无这条反馈」再换成内容，等于先说错一句
          话再收回去，而这两帧之间在读的人眼里是有先后的。
          容器宽度也要跟到底下那一版（--wide）：骨架是两栏，内容是一栏的话，两块
