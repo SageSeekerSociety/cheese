@@ -14,7 +14,6 @@ of containment that the SQL path does not share.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 
 from app.domain.local_fs.records import (
     AccessRecord,
@@ -26,18 +25,11 @@ __all__ = ["InMemoryLocalFsRepository"]
 
 
 class InMemoryLocalFsRepository(LocalFsRepository):
-    """Grants and access records in two lists."""
+    """Grants in a dict, access records in a list."""
 
     def __init__(self) -> None:
         self._grants: dict[uuid.UUID, DirectoryGrant] = {}
         self._access: list[AccessRecord] = []
-        # Device ids the fake knows about, for ``device_ids_for_owner``. The
-        # in-memory repo has no device table to join, so the owner's devices are
-        # declared rather than derived.
-        self.owned_devices: dict[int, list[str]] = {}
-
-    def register_device(self, owner_user_id: int, device_id: str) -> None:
-        self.owned_devices.setdefault(owner_user_id, []).append(device_id)
 
     async def add_grant(self, grant: DirectoryGrant) -> None:
         self._grants[grant.id] = grant
@@ -70,9 +62,6 @@ class InMemoryLocalFsRepository(LocalFsRepository):
     async def add_access(self, record: AccessRecord) -> None:
         self._access.append(record)
 
-    def _newest_first(self, records: list[AccessRecord]) -> list[AccessRecord]:
-        return sorted(records, key=lambda r: r.created_at, reverse=True)
-
     async def list_access(
         self,
         owner_user_id: int,
@@ -80,24 +69,22 @@ class InMemoryLocalFsRepository(LocalFsRepository):
         device_id: str | None = None,
         limit: int = 100,
     ) -> list[AccessRecord]:
-        owned = set(self.owned_devices.get(owner_user_id, []))
-        owned.update(
-            g.device_id
-            for g in self._grants.values()
-            if g.owner_user_id == owner_user_id
-        )
+        # By the owner on the row, not by the devices they currently hold grants
+        # for: after a device is forgotten there are no grants left to derive it
+        # from, and that is when the question gets asked.
         rows = [
             r
             for r in self._access
-            if r.device_id in owned and (device_id is None or r.device_id == device_id)
+            if r.owner_user_id == owner_user_id
+            and (device_id is None or r.device_id == device_id)
         ]
-        return self._newest_first(rows)[:limit]
+        rows.sort(key=lambda r: r.created_at, reverse=True)
+        return rows[:limit]
 
-    async def list_access_for_device(
-        self, device_id: str, *, limit: int = 100
-    ) -> list[AccessRecord]:
-        rows = [r for r in self._access if r.device_id == device_id]
-        return self._newest_first(rows)[:limit]
-
-    async def device_ids_for_owner(self, owner_user_id: int) -> Sequence[str]:
-        return tuple(self.owned_devices.get(owner_user_id, []))
+    async def delete_grants_for_device(self, device_id: str) -> None:
+        """Drop every grant for a device — what the ``device`` cascade does in
+        production, in the explicit form a test can call."""
+        for grant_id in [
+            g.id for g in self._grants.values() if g.device_id == device_id
+        ]:
+            del self._grants[grant_id]

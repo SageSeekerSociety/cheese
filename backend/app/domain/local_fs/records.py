@@ -9,7 +9,6 @@ can then be exercised with the in-memory repo — no database, no app, no HTTP.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -113,6 +112,10 @@ class AccessRecord:
 
     id: uuid.UUID
     device_id: str
+    # The owner this row belongs to. Stored on the row rather than reached
+    # through the device or the grant, because the audit gets read precisely when
+    # those are gone.
+    owner_user_id: int
     path: str
     key: str
     mode: GrantMode
@@ -166,8 +169,3 @@ class LocalFsRepository(Protocol):
     async def list_access(
         self, owner_user_id: int, *, device_id: str | None = None, limit: int = 100
     ) -> list[AccessRecord]: ...
-    async def list_access_for_device(
-        self, device_id: str, *, limit: int = 100
-    ) -> list[AccessRecord]: ...
-
-    async def device_ids_for_owner(self, owner_user_id: int) -> Sequence[str]: ...

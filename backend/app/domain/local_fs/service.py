@@ -76,6 +76,10 @@ class AuthorizeRequest:
     path: str
     platform: Platform
     needed: GrantMode
+    # Whose disk this is. Required, and not derived from the grant that covers
+    # the path: a refusal has no covering grant, and the refusal is the record
+    # that most needs an owner on it.
+    owner_user_id: int
     project_id: uuid.UUID | None = None
     actor_handle: str | None = None
     topic_id: uuid.UUID | None = None
@@ -335,6 +339,7 @@ class LocalDirectoryService:
         record = AccessRecord(
             id=uuid.uuid4(),
             device_id=request.device_id,
+            owner_user_id=request.owner_user_id,
             path=request.path,
             key=key,
             mode=request.needed,

@@ -10,9 +10,11 @@ owner does, revoked by setting ``revoked_at`` (the row is kept — the audit ref
 to it). ``local_fs_access`` is the audit: every decision, allowed or denied.
 
 The anchoring differs on purpose. A grant cascades from ``device``; the audit
-does not, because its ``device_id`` and ``grant_id`` are bare with no foreign
-key. The audit has to survive the revocation and the disconnection it describes —
-which is exactly when somebody asks it a question.
+does not, because its ``device_id``, ``grant_id`` and ``owner_user_id`` are bare
+with no foreign key. The audit has to survive the revocation and the
+disconnection it describes — which is exactly when somebody asks it a question,
+and a log you can only read while everything still exists is a log that answers
+the uninteresting case.
 """
 
 from collections.abc import Sequence
@@ -91,6 +93,7 @@ def upgrade() -> None:
         "local_fs_access",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("device_id", sa.String(length=64), nullable=False),
+        sa.Column("owner_user_id", sa.Integer(), nullable=False),
         sa.Column("grant_id", sa.Uuid(), nullable=True),
         sa.Column("path", sa.Text(), nullable=False),
         sa.Column("key", sa.Text(), nullable=False),
@@ -112,6 +115,12 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
+        op.f("ix_local_fs_access_owner_user_id"),
+        "local_fs_access",
+        ["owner_user_id"],
+        unique=False,
+    )
+    op.create_index(
         op.f("ix_local_fs_access_created_at"),
         "local_fs_access",
         ["created_at"],
@@ -128,6 +137,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_local_fs_access_device_time", table_name="local_fs_access")
     op.drop_index(op.f("ix_local_fs_access_created_at"), table_name="local_fs_access")
+    op.drop_index(
+        op.f("ix_local_fs_access_owner_user_id"), table_name="local_fs_access"
+    )
     op.drop_index(op.f("ix_local_fs_access_device_id"), table_name="local_fs_access")
     op.drop_table("local_fs_access")
 

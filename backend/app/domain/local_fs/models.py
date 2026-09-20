@@ -11,6 +11,9 @@ outlive the things it describes: a person asking 哪台电脑、哪个目录、�
 asking precisely at the moments when the device was removed, the grant was
 revoked, or the machine never came back. An audit row that a cascade can delete
 is an audit that answers the question only while the answer is uninteresting.
+Its ``owner_user_id`` is bare for the same reason: reaching the owner through the
+device or the grant would make the log unreadable at exactly the moment it is
+most worth reading.
 """
 
 import uuid
@@ -97,6 +100,11 @@ class LocalFsAccessRow(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     # Bare, un-FK'd: see the module docstring.
     device_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # The owner is stored on the row rather than reached through the device or
+    # the grant. Both of those can be gone, and the row that records what
+    # happened has to be readable exactly then. It is also what makes the audit
+    # screen one indexed lookup instead of a join that can come back empty.
+    owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     grant_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     path: Mapped[str] = mapped_column(Text, nullable=False)

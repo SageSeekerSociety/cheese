@@ -11,7 +11,6 @@ implementation of containment, the one in ``paths.contains``.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +46,7 @@ def _to_record(row: LocalFsAccessRow) -> AccessRecord:
     return AccessRecord(
         id=row.id,
         device_id=row.device_id,
+        owner_user_id=row.owner_user_id,
         grant_id=row.grant_id,
         path=row.path,
         key=row.key,
@@ -136,6 +136,7 @@ class SqlLocalFsRepository(LocalFsRepository):
             LocalFsAccessRow(
                 id=record.id,
                 device_id=record.device_id,
+                owner_user_id=record.owner_user_id,
                 grant_id=record.grant_id,
                 path=record.path,
                 key=record.key,
@@ -159,40 +160,14 @@ class SqlLocalFsRepository(LocalFsRepository):
         device_id: str | None = None,
         limit: int = 100,
     ) -> list[AccessRecord]:
-        # The owner's devices, from the grants they hold. A device with no grants
-        # has no audit worth showing, and this avoids reaching into the device
-        # domain from here (see the domain import guard).
-        owned = (
-            select(LocalDirectoryGrantRow.device_id)
-            .where(LocalDirectoryGrantRow.owner_user_id == owner_user_id)
-            .distinct()
+        query = select(LocalFsAccessRow).where(
+            LocalFsAccessRow.owner_user_id == owner_user_id
         )
-        query = select(LocalFsAccessRow).where(LocalFsAccessRow.device_id.in_(owned))
         if device_id is not None:
             query = query.where(LocalFsAccessRow.device_id == device_id)
         query = query.order_by(LocalFsAccessRow.created_at.desc()).limit(limit)
         rows = (await self._session.execute(query)).scalars()
         return [_to_record(row) for row in rows]
-
-    async def list_access_for_device(
-        self, device_id: str, *, limit: int = 100
-    ) -> list[AccessRecord]:
-        query = (
-            select(LocalFsAccessRow)
-            .where(LocalFsAccessRow.device_id == device_id)
-            .order_by(LocalFsAccessRow.created_at.desc())
-            .limit(limit)
-        )
-        rows = (await self._session.execute(query)).scalars()
-        return [_to_record(row) for row in rows]
-
-    async def device_ids_for_owner(self, owner_user_id: int) -> Sequence[str]:
-        query = (
-            select(LocalDirectoryGrantRow.device_id)
-            .where(LocalDirectoryGrantRow.owner_user_id == owner_user_id)
-            .distinct()
-        )
-        return list((await self._session.execute(query)).scalars())
 
     async def delete_grants_for_device(self, device_id: str) -> None:
         """Drop every grant for a device. Present because the device cascade is
