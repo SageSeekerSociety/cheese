@@ -15,7 +15,7 @@ def _message(number=1, **extra):
         "topic_id": "room-1",
         "kind": "message",
         "author": "alice",
-        "author_type": "human",
+        "author_type": "participant",
         "created_at": "2026-09-08T00:00:00Z",
         "content": "Use the revised dataset",
         "reply_to": None,

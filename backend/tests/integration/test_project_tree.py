@@ -81,10 +81,10 @@ def test_upgrade_block_to_topic(client):
     msgs = _card_messages(client, topic["id"], new_topic["id"])
     assert not msgs, f"这条活自己跑了一轮——它没有会话，这是在起容器：{msgs}"
     room_msgs = _messages(client, topic["id"])
-    assert room_msgs and all(b["author_type"] == "human" for b in room_msgs)
+    assert room_msgs and all(not b["author"].startswith("cheese") for b in room_msgs)
     activity = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
     assert any(
-        b["author_type"] == "ai" and (b.get("meta") or {}).get("progress")
+        b["author"].startswith("cheese") and (b.get("meta") or {}).get("progress")
         for b in activity
     )
 

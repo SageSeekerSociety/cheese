@@ -175,10 +175,13 @@ def _is_mid_turn_block(block: Block) -> bool:
     this asks what the block IS rather than parsing its text. Nothing healthy
     leaves one as a topic's last word: the turn either keeps working (another
     action, a message) or fails into a system event.
+
+    「是不是芝士的」按署名判：事件行的档位只说得出「参与者还是平台」，而一个房间
+    里的参与者有好几个。
     """
     return (
         block.kind == BlockKind.event
-        and block.author_type == AuthorType.ai
+        and looks_like_agent_handle(block.author)
         and bool((block.meta or {}).get("tool"))
     )
 
@@ -1112,7 +1115,7 @@ class TopicService:
         content: str,
         author: str,
         expected_version: int,
-        author_type: AuthorType = AuthorType.human,
+        author_type: AuthorType = AuthorType.participant,
     ) -> tuple[Block, Block | None]:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
@@ -1171,7 +1174,8 @@ class TopicService:
         # product copy: every topic's 分身 authors under its own
         # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
         # should see — one familiar name, whichever 分身 wrote it.
-        actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
+        by_agent = looks_like_agent_handle(author)
+        actor = "芝士" if by_agent else f"<@{author}>"
         # What the same event says to 芝士, written here because this is the code
         # that moved the document. It locates the change and does NOT carry it:
         # a document pushed into a running turn displaces the work instead of
@@ -1180,7 +1184,7 @@ class TopicService:
         # 芝士's own edit is not news to 芝士 — it wrote the version it is holding.
         for_agent = (
             None
-            if author_type is AuthorType.ai
+            if by_agent
             else (
                 f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
                 f"{summarize_doc_change(previous_content, content)}。"
@@ -1202,7 +1206,6 @@ class TopicService:
                 "platform": True,
                 "action": "doc",
                 "doc_version": doc.doc_version,
-                "editor_type": author_type.value,
                 AGENT_NOTICE_META_KEY: for_agent,
                 "detail_label": "查看本次修改",
                 "detail": "\n".join(
@@ -1277,7 +1280,7 @@ class TopicService:
             topic_id=target.room_id,
             task_id=target.id,
             author=author,
-            author_type=AuthorType.ai,
+            author_type=AuthorType.participant,
             content=f"【{label}｜{sender.title}】\n{text}",
             kind=BlockKind.message,
             refs=[str(sender.room_id)],

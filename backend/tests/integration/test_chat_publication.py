@@ -62,8 +62,7 @@ def test_publication_is_durable_live_and_does_not_wake_model(
         frame = ws.receive_json()
     assert frame == {"type": "assistant_block", "block": block}
     assert block["kind"] == "message"
-    assert block["author_type"] == "ai"
-    assert block["author"] != "alice"
+    assert block["author"].startswith("cheese") and block["author"] != "alice"
     assert block["content"] == content
     assert (block.get("meta") or {}).get("in_room") is not False
     assert stub_hooks.last_prompt is None
@@ -207,7 +206,7 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
         return [
             block["content"]
             for block in blocks
-            if block["kind"] == "message" and block["author_type"] == "ai"
+            if block["kind"] == "message" and block["author"].startswith("cheese")
         ]
 
     # Nothing published, nothing in the room — and the reply is not lost, it is

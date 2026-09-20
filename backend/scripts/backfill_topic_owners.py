@@ -25,7 +25,7 @@ only makes sense for existing data:
 Every candidate must survive :class:`PersonCheck`: an owner who cannot act is no
 owner at all. Two kinds of junk fail it, both seen in live data:
 
-  - ``"system"``, which authors ``author_type=human`` blocks but is nobody
+  - ``"system"``, which authors blocks as a participant but is nobody
   - a numeric handle (``"470"``), the degraded-token artifact where the int user
     PK was used as the handle. It is resolved back to the real username first
     (same repair as ``ActorResolver._recover_numeric_handle``) and only kept if
@@ -50,7 +50,9 @@ from collections import Counter
 from sqlalchemy import select
 
 from app.core.db import async_session_factory
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.authorship import participant_blocks
+from app.domain.block.models import Block
+from app.domain.identity.handles import agent_handle_column
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic, TopicKind, TopicMembership, TopicRole
@@ -121,14 +123,21 @@ async def _current_owners(session, people: PersonCheck, topics: list[Topic]) -> 
 
 
 async def _first_human_author(session, topic_id: uuid.UUID) -> list[str]:
-    """Human block authors in the topic, oldest first (deduped, order kept)."""
+    """Human block authors in the topic, oldest first (deduped, order kept).
+
+    「是人说的」问的是署名，不是事件行的档位：档位只分参与者和平台，而人和 agent
+    都是参与者。所以这里取的是「参与者写的，且署名不是一个 agent 的」——档位问不
+    出这件事，问了也只会安静地返回空清单，而空清单在这里的意思是「这个话题找不到
+    owner」，一条也不会报错。
+    """
     rows = (
         (
             await session.execute(
                 select(Block.author)
                 .where(
                     Block.topic_id == topic_id,
-                    Block.author_type == AuthorType.human,
+                    participant_blocks(),
+                    ~agent_handle_column(Block.author),
                 )
                 .order_by(Block.created_at)
             )

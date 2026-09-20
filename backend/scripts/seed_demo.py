@@ -213,7 +213,7 @@ async def seed() -> None:
             project_id=project.id,
             topic_id=topic.id,
             kind=BlockKind.message,
-            author_type=AuthorType.ai,
+            author_type=AuthorType.participant,
             author="cheese",
             content=(
                 "收到。这个话题我来搭一个 item-based 协同过滤的推荐原型，"
@@ -226,7 +226,7 @@ async def seed() -> None:
             project_id=project.id,
             topic_id=topic.id,
             kind=BlockKind.message,
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             author="user-1",
             content="先用最简单的协同过滤，别上深度模型。评测指标用 Recall@10。",
         )
@@ -237,7 +237,7 @@ async def seed() -> None:
                 project_id=project.id,
                 topic_id=topic.id,
                 kind=BlockKind.message,
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 author="cheese",
                 content="明白，按 item-based CF + Recall@10 来做。",
                 reply_to=q.id,
@@ -249,7 +249,7 @@ async def seed() -> None:
                 project_id=project.id,
                 topic_id=topic.id,
                 kind=BlockKind.doc,
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 author="cheese",
                 content=(
                     "## 目标\n搭建课程推荐原型。\n\n## 约束\n"
