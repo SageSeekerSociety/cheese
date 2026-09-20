@@ -97,7 +97,8 @@ async def effective_shells(
             categories = {c.id: c for c in cats}
     out: dict[uuid.UUID, Shell] = {}
     for project in rows:
-        task = tasks.get(getattr(project, "external_task_id", None))
+        external_task_id = getattr(project, "external_task_id", None)
+        task = tasks.get(external_task_id) if external_task_id else None
         category = categories.get(task.category_id) if task is not None else None
         out[project.id] = resolve_shell(project=project, task=task, category=category)
     return out
