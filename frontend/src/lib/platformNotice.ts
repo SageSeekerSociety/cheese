@@ -111,6 +111,7 @@ export const AGENT_STATUS_EVENTS = new Set([
   'pr_review',
   'merge_refused',
   'card_filed',
+  'artifact_declared',
   'card_rejected',
   'card_voided',
   'card_redescribed',

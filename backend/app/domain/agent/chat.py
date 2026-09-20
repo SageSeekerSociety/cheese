@@ -131,6 +131,7 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
@@ -259,6 +260,8 @@ class _TurnContext:
     topic_stage: TopicStage | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
+    # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。
+    artifacts: list[dict]
 
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
@@ -4341,6 +4344,16 @@ class ChatService:
                     await topics.list_for_project(topic.project_id),
                     exclude_id=topic.id,
                 )
+            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。
+            artifact_rows = (
+                []
+                if is_private
+                else await project_artifacts.list_for_project(session, topic.project_id)
+            )
+            artifact_refs = [
+                {"id": str(a.id), "name": a.name, "version": a.version}
+                for a in artifact_rows
+            ]
             project_id = topic.project_id
             # This agent's conversation here, not just any: a room may host
             # several agents and each resumes its own (agent_session/models.py).
@@ -4575,6 +4588,7 @@ class ChatService:
             roster=roster,
             topic_refs=topic_refs,
             topic_refs_for_prompt=topic_refs_for_prompt,
+            artifacts=artifact_refs,
             topic_stage=topic_stage,
             turn_images=turn_images,
             untitled=untitled,
@@ -4641,6 +4655,7 @@ class ChatService:
         roster = prepared.roster
         topic_refs = prepared.topic_refs
         topic_refs_for_prompt = prepared.topic_refs_for_prompt
+        artifact_refs = prepared.artifacts
         topic_stage = prepared.topic_stage
         turn_images = prepared.turn_images
         untitled = prepared.untitled
@@ -4669,6 +4684,7 @@ class ChatService:
             roster,
             topic_refs_for_prompt,
             untitled,
+            artifacts=artifact_refs,
             memories_omitted=memories.omitted,
             memories_core_omitted=memories.core_omitted,
             session_opening=_session_opening_lines(

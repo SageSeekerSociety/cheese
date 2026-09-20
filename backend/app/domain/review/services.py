@@ -25,6 +25,7 @@ from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_DONE,
     EVENT_ACCEPT_READY,
     EVENT_ACCEPT_STOPPED,
+    EVENT_ARTIFACT_DECLARED,
     EVENT_CARD_FILED,
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -48,6 +49,7 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
+from app.domain.project import artifacts
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import (
@@ -344,6 +346,33 @@ def approvals_required_of(project: Project | None) -> int:
     return branch_protection_of(project).approvals_required
 
 
+#: 递卡时说清这次交付动的是清单上哪一项 —— 沿用一项，或者声明一项新的
+#: (#1085 结论三)。两个参数而不是一个，是因为「沿用」和「新建」是两个不同的动作：
+#: 合成一个参数的话，写错的名字会被当成新建，而那是错得最安静的一种 ——
+#: `报告` 和 `结题报告` 都是合法名字，清单于是多出一项看着像重复的东西，并且从此
+#: 每一轮的开场都带着它。
+_ARTIFACT_ACTION_MISSING = (
+    "没说这次交付动的是哪一项产物。两种说法选一种：\n"
+    "  --artifact <清单上那一项的 id>    这次交付是那一项的新一版\n"
+    "  --new-artifact '<新的真名>'       这次交付做出了一样清单上还没有的东西\n"
+    "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
+    "新建的那一次会把新的 id 返回来。"
+)
+
+_ARTIFACT_ACTION_BOTH = (
+    "--artifact 和 --new-artifact 只能给一个：这次交付要么是清单上某一项的新一版，"
+    "要么做出了一样清单上还没有的东西。"
+)
+
+
+def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None:
+    reuse, claim = (artifact or "").strip(), (new_artifact or "").strip()
+    if reuse and claim:
+        raise ValidationError(_ARTIFACT_ACTION_BOTH)
+    if not reuse and not claim:
+        raise ValidationError(_ARTIFACT_ACTION_MISSING)
+
+
 class AcceptService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -456,6 +485,8 @@ class AcceptService:
         routing_reason: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
+        artifact: str | None = None,
+        new_artifact: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
         task = await TaskService(self._session).require_in_room(topic_id, task_id)
@@ -470,6 +501,9 @@ class AcceptService:
             subject = commit_message.check_subject(subject)
         except commit_message.InvalidSubject as exc:
             raise ValidationError(str(exc)) from exc
+        # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
+        # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
+        _one_artifact_action(artifact, new_artifact)
         existing = await self._repo.list_for_task(task.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
@@ -490,6 +524,16 @@ class AcceptService:
             reviewer_handle,
             from_work=[task],
         )
+        is_new = bool((new_artifact or "").strip())
+        declared = (
+            await artifacts.claim(
+                self._session, project_id=topic.project_id, name=new_artifact or ""
+            )
+            if is_new
+            else await artifacts.reuse(
+                self._session, project_id=topic.project_id, artifact_id=artifact or ""
+            )
+        )
         card = await self._repo.add(
             topic_id=topic_id,
             task_id=task.id,
@@ -499,13 +543,18 @@ class AcceptService:
             change_subject=subject,
             change_body=change_body or None,
             delivered_task_ids=[task.id],
+            artifact_id=declared.id,
         )
         card.pr_number, card.pr_url = task.pr_number, task.pr_url
-        await self._announce_filed(topic, card, task)
+        await self._announce_filed(topic, card, task, artifact=declared.name)
+        if is_new:
+            await self._announce_new_artifact(topic, declared.name)
         await self._warn_about_a_second_pending_migration(topic, task.id)
         return card
 
-    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
+    async def _announce_filed(
+        self, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
+    ) -> None:
         """递卡说一声，并通知等着这件事的两个人。
 
         卡的每一种结局在房间里都有一行 —— 驳回、作废、改描述、合了、卡住了 ——
@@ -528,7 +577,7 @@ class AcceptService:
         await announce(
             self._session,
             place_id=topic.id,
-            content=f"验收卡已提交，待 {card.reviewer_handle} 验收",
+            content=(f"《{artifact}》的这次更新已提交，待 {card.reviewer_handle} 验收"),
             meta=notice(
                 EVENT_CARD_FILED,
                 severity=SEVERITY_INFO,
@@ -537,6 +586,36 @@ class AcceptService:
                 detail_label="这次改动",
             ),
             recipients=(card.reviewer_handle, task.reporter_handle or ""),
+        )
+
+    async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
+        """清单上多出一项 —— 在房间里说一声 (#1085 结论三)。
+
+        新建产物是少见动作：一个项目交出去的东西就那么几样，往后每一次交付都沿用
+        同一个名字。而它错起来是无声的 —— 把《报告》写成《结题报告》不会报错，只
+        会在清单上多一项看着像重复的东西，然后这份清单进了每个新房间的开场，错的
+        那一项从此在每一轮里重复一遍。所以这一下当场说出来，就在声明它的那一轮
+        里，那时人还认得出这是不是他要的名字。
+
+        展开区里摆的是清单现在的全部内容 —— 判断「这是不是刚才那一项换了个说法」
+        要的正是把两个名字放在一起看，而这一行本身只说得出新的那一个。
+        """
+        listed = await artifacts.list_for_project(self._session, topic.project_id)
+        await announce(
+            self._session,
+            place_id=topic.id,
+            content=f"这次交付新建了产物《{name}》，此前项目里没有这一项",
+            meta=notice(
+                EVENT_ARTIFACT_DECLARED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail="\n".join(
+                    f"《{a.name}》"
+                    + (f" 第 {a.version} 版" if a.version else " 尚未交付")
+                    for a in listed
+                ),
+                detail_label="项目现在的产物清单",
+            ),
         )
 
     async def _warn_about_a_second_pending_migration(
@@ -708,6 +787,22 @@ class AcceptService:
         # 的 `🌿` 和 `🚪`——两条都是「停住了」，却和「还在等」画成同一个颜色。
         level = notes.note_level(card.note_code, card.note)
         data["note_level"] = level.value if level else None
+        # 这次交付更新的是哪一项产物。卡面上要有它：验收的人正在决定这一版要不要
+        # 成为《报告》的当前版本，而卡上别的字段一个都没说出这件事。
+        declared = (
+            await artifacts.summary(self._session, card.artifact_id)
+            if card.artifact_id is not None
+            else None
+        )
+        data["artifact"] = (
+            None
+            if declared is None
+            else {
+                "id": str(declared.id),
+                "name": declared.name,
+                "version": declared.version,
+            }
+        )
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topic_or_404(card.topic_id)
         project = await self._projects.get(topic.project_id)

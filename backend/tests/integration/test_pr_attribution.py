@@ -211,6 +211,7 @@ def _card(client, topic_id: str) -> str:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(accept): credit the human, not the bot",
@@ -307,6 +308,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
+            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(accept): credit the human, not the bot",

@@ -23,6 +23,7 @@ def build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    artifacts: list[dict] | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
@@ -67,6 +68,24 @@ def build_system_prompt(
             'path="/topics?project_id=<本项目 id>")`\n'
             "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
             + lines
+        )
+    if artifacts:
+        # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
+        # 名字：清单由交付长出来，所以一个写错的名字不会撞出错误，只会在清单上多
+        # 出一项看着像重复的东西。照着这几行沿用，就不会多出来。
+        lines = "\n".join(
+            f"- 《{a['name']}》"
+            + (f"　第 {a['version']} 版" if a["version"] else "　还没交付过")
+            + f"　id={a['id']}"
+            for a in artifacts
+        )
+        parts.append(
+            "## 这个项目的产物清单（交出去的东西，一项一行）\n"
+            "递验收卡时说清这次交付动的是哪一项：交付下面某一项的新一版，用 "
+            "`artifact=<id>` 点名它（**照抄下面那一行的 id，不要写名字**——名字写错"
+            "不会报错，只会在清单上多一项看着像重复的东西）；确实做出了一样下面没有"
+            "的东西，用 `new_artifact=<真名>` 给它起个名字，返回里带着新的 id。两个"
+            "都不给、或者两个都给，递卡会被打回。\n" + lines
         )
     if roster:
         lines = "\n".join(

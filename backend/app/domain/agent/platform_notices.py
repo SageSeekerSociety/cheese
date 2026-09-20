@@ -62,6 +62,8 @@ EVENT_MERGE_REFUSED: Final = "merge_refused"
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 #: 验收卡递上来了 —— 从这一刻起验收人手上多了一件事。
 EVENT_CARD_FILED: Final = "card_filed"
+#: 这次交付在产物清单上新建了一项 —— 名字此前没出现过，看一眼是不是要的那个。
+EVENT_ARTIFACT_DECLARED: Final = "artifact_declared"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
@@ -132,6 +134,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_FILED,
+        EVENT_ARTIFACT_DECLARED,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
