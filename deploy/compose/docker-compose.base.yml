@@ -101,10 +101,8 @@ services:
       - QUALITY_GATE_IMAGE=${QUALITY_GATE_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
     volumes:
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
-      # Platform workspaces (project git repos / topic worktrees / sessions)
-      # must OUTLIVE container recreations — without this bind every deploy
-      # erased them (they lived in the container FS). Required for the fused
-      # platform features (topics/芝士).
+      # Session files, attachments, and migration source repositories survive
+      # container replacement. Active code repositories live on the forge.
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:/app/.workspaces
       - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
       # Everything the openviking memory backend remembers. Mounted

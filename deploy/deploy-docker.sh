@@ -559,13 +559,10 @@ log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
 
-# The backend now runs as the same uid as the sandbox's `node` (1000) so the two
-# stop locking each other out of the shared git store — see
-# fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
-# hands once, BEFORE the new backend starts and finds it cannot read them.
-# Idempotent: a marker in each path makes later deploys a no-op.
-# APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
-# and git reads its global config out of there.
+# Persistent files must be readable by the backend's uid (1000), including
+# legacy repository files that the migration archives. Ownership repair uses
+# a marker in each path so later releases leave existing ownership alone.
+# APPHOME contains the backend's persistent configuration and migration receipts.
 #
 # Schema and credential checks precede ownership repair. Repository migration
 # follows it because the new backend uid must read the old workspace files;
