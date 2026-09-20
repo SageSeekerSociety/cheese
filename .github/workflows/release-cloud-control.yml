@@ -16,6 +16,10 @@ on:
         type: choice
         options: [release, migrate-one, migrate-all]
         default: release
+      legacy_manifest:
+        description: Optional legacy machine JSON manifest with provider-verified SSH host keys
+        required: false
+        default: ''
       interrupt:
         description: >-
           Recreate even while device calls are in flight. Each interrupted
@@ -58,4 +62,8 @@ jobs:
         if: inputs.operation == 'migrate-one' || inputs.operation == 'migrate-all'
         env:
           ROUTE_LIMIT: ${{ inputs.operation == 'migrate-one' && '1' || '0' }}
-        run: python3 deploy/migrate-device-routes.py --limit "$ROUTE_LIMIT"
+          LEGACY_DEVICE_MANIFEST: ${{ inputs.legacy_manifest }}
+        run: |
+          args=(--limit "$ROUTE_LIMIT")
+          if [ -n "$LEGACY_DEVICE_MANIFEST" ]; then args+=(--legacy); fi
+          python3 deploy/migrate-device-routes.py "${args[@]}"
