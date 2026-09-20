@@ -767,12 +767,13 @@ def test_a_branch_name_that_cannot_be_read_is_reported_the_same_way(
     def _cannot_read(pid):
         raise ws.WorkspacePermissionError("git rev-parse: Permission denied")
 
-    monkeypatch.setattr(ws, "base_branch_head", _cannot_read)
     monkeypatch.setattr(review_services, "async_session_factory", client.test_factory)
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
+    # 递卡也读这个分支；要坏的是采纳那一次，所以卡先立住再坏。
+    monkeypatch.setattr(ws, "base_branch_head", _cannot_read)
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
