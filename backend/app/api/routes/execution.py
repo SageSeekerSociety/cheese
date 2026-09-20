@@ -70,21 +70,21 @@ async def execute(
     # per room (`resolve_pinned_device`): every session here leases the same
     # hands. The day that stops being true, the credential has to say which
     # session it belongs to.
-    leases = (
+    held = (
         await db.execute(
-            select(AgentSession.work_lease).where(
+            select(AgentSession.runtime_location, AgentSession.work_lease).where(
                 AgentSession.topic_id == topic_id,
                 AgentSession.task_id.is_(None),
                 AgentSession.work_lease.is_not(None),
             )
         )
-    ).scalars()
+    ).all()
     lease = next(
         (
-            held
-            for held in leases
-            if held.get("resource_id") == str(resource_id)
-            and held.get("kind") == "device"
+            row.work_lease
+            for row in held
+            if (row.runtime_location or {}).get("resource_id") == str(resource_id)
+            and row.work_lease.get("kind") == "device"
         ),
         None,
     )

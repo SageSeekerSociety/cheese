@@ -64,9 +64,9 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
     )
 
 
-async def session_place(factory, topic, agent=AGENT):
+async def session_place(factory, topic, agent=AGENT, harness="claude-code"):
     async with factory() as db:
-        return await AgentSessionService(db).place(topic, agent)
+        return await AgentSessionService(db).place(topic, agent, harness=harness)
 
 
 @pytest.mark.anyio
@@ -183,12 +183,12 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
     ]
     codex = CodexChannel(central, ClaudeLaunch("system").execution)
-    ref = SessionRef(project, topic)
+    session = SessionRef(project, topic, AGENT, "codex")
     handle = await codex.ensure(
-        ref, Opening("shared system", model="fixture", agent_handle="agent")
+        session, Opening("shared system", model="fixture", agent_handle="agent")
     )
     assert handle.thread_id == "codex-thread"
-    place = await session_place(client.test_factory, topic, ref.agent_handle)
+    place = await session_place(client.test_factory, topic, AGENT, "codex")
     assert place is not None
     assert place.runtime == {
         "harness": "codex",
