@@ -75,7 +75,9 @@ async def place(session: AsyncSession, place_id: uuid.UUID) -> Place | None:
         ).scalars()
         return Place(
             project_id=room.project_id,
-            session_machines=frozenset(where["device_id"] for where in located),
+            session_machines=frozenset(
+                where["device_id"] for where in located if where
+            ),
         )
     task = (
         await session.execute(select(Task.project_id).where(Task.id == place_id))
