@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 
-from app.domain.agent import cli_worker, environment_runner, preview_tunnel
+from app.domain.agent import cli_worker, environment_runner, preview_tunnel, toolchain
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import CHEESE_SYNC_SCRIPT
 from app.domain.agent.harness.claude_code.remote_execution import (
@@ -18,7 +18,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP
+from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
 
 
 def can_prepare(info):
@@ -41,6 +41,7 @@ def file_sources():
         "remote-execution/cli_worker.py": Path(cli_worker.__file__).read_text(),
         "remote-execution/bin/cheese": Path(cli_client.__file__).read_text(),
         "cheese-environment.py": Path(environment_runner.__file__).read_text(),
+        "cheese-toolchain": toolchain_fetcher(),
         "cheese-preview.py": Path(preview_tunnel.__file__).read_text(),
         "cheese-preview-up": CHEESE_PREVIEW_UP,
         "cheese-sync": CHEESE_SYNC_SCRIPT,
@@ -63,6 +64,7 @@ def payload_for(project_id, resource_id, env, known_files=None):
     )
     return {
         "protocol_version": runtime.PROTOCOL_VERSION,
+        "toolchain_fonts": toolchain.fonts_pin(),
         "project": str(project_id),
         "resource": str(resource_id),
         "env": values,

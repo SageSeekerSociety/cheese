@@ -195,7 +195,7 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 """
 
 
-def toolchain_block() -> str:
+def toolchain_fetcher() -> str:
     """Place the room's document toolchain on this machine, once per machine.
 
     These are capabilities, not dependencies — a room that never writes a
@@ -282,6 +282,12 @@ def toolchain_block() -> str:
 
 {places}
 """
+    return fetcher
+
+
+def toolchain_block() -> str:
+    fonts_pin = toolchain.fonts_pin()
+    fetcher = toolchain_fetcher()
     return f"""CHEESE_TOOLCHAIN="$REAL_HOME/.cheese/toolchain"
 export CHEESE_TOOLCHAIN
 export PATH="$CHEESE_TOOLCHAIN/bin:$PATH"

@@ -277,7 +277,10 @@ def test_executor_rooms_share_installed_tools(
 ):
     from app.domain.agent.harness.claude_code.remote_execution import bootstrap
     from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+    from tests.unit.test_machine_launcher import _fake_upstream
 
+    bin_dir, downloads = _fake_upstream(tmp_path)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("CHEESE_STORE", raising=False)
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "inherited-cache"))
@@ -318,6 +321,16 @@ def test_executor_rooms_share_installed_tools(
             )
             bootstrap.configure(payload)
             capsys.readouterr()
+            font = (
+                tmp_path
+                / ".cheese/toolchain/fonts"
+                / payload["toolchain_fonts"]
+                / "NotoSerifSC-VF.otf"
+            )
+            deadline = time.monotonic() + 10
+            while not font.exists():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
             bootstrap.configure(payload)
             capsys.readouterr()
             result = runtime.request(
@@ -329,7 +342,8 @@ def test_executor_rooms_share_installed_tools(
                     "args": {
                         "command": 'shared-test-tool; printf "%s\\n" "$HOME" '
                         '"$UV_CACHE_DIR" "$UV_PYTHON_INSTALL_DIR" '
-                        '"$npm_config_store_dir" "$npm_config_cache" "$PIP_CACHE_DIR"'
+                        '"$npm_config_store_dir" "$npm_config_cache" "$PIP_CACHE_DIR"; '
+                        'typst; pandoc; cat "$TYPST_FONT_PATHS/NotoSerifSC-VF.otf"'
                     },
                 },
             )
@@ -343,10 +357,14 @@ def test_executor_rooms_share_installed_tools(
                 str(store / "pnpm-store"),
                 str(store / "npm-cache"),
                 str(store / "pip-cache"),
+                "typst",
+                "pandoc",
+                "OTTO serif",
             ]
             assert (cache / "setup-marker").read_text() == "cached"
             assert not (home / ".local/bin/shared-test-tool").exists()
             assert tally.read_text() == ("x" if room_project == project else "xx")
+        assert len(downloads.read_text().splitlines()) == 5
     finally:
         for state in states:
             subprocess.run(

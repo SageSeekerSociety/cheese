@@ -197,6 +197,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     )
     home = owner / ".cheese/home" / project / resource
     store = owner / ".cheese/store" / project
+    toolchain = owner / ".cheese/toolchain"
     package_env = {
         "UV_CACHE_DIR": str(store / "uv-cache"),
         "UV_PYTHON_INSTALL_DIR": str(store / "uv-python"),
@@ -230,12 +231,18 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
             CLAUDE_CONFIG_DIR=str(config_dir),
             CHEESE_WORK=str(work),
             CHEESE_STORE=str(store),
+            CHEESE_TOOLCHAIN=str(toolchain),
+            TYPST_FONT_PATHS=variables.get(
+                "TYPST_FONT_PATHS",
+                str(toolchain / "fonts" / payload["toolchain_fonts"]),
+            ),
             CHEESE_WORKTREE_ROOT=str(work),
             CHEESE_PREVIEW_UP=str(release / "cheese-preview-up"),
             PATH=os.pathsep.join(
                 (
                     str(release / "remote-execution/bin"),
                     str(release),
+                    str(toolchain / "bin"),
                     env.get("PATH", ""),
                 )
             ),
@@ -251,6 +258,8 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                 "CLAUDE_CONFIG_DIR",
                 "CHEESE_WORK",
                 "CHEESE_STORE",
+                "CHEESE_TOOLCHAIN",
+                "TYPST_FONT_PATHS",
                 "CHEESE_WORKTREE_ROOT",
                 "CHEESE_PREVIEW_UP",
             }
@@ -351,6 +360,14 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
                         timeout=30,
                     )
         activate_release(platform_dir, release, contents)
+        subprocess.Popen(
+            ["sh", str(release / "cheese-toolchain")],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         if payload.get("environment"):
             directory = home / ".cheese-environment"
             directory.mkdir(exist_ok=True, mode=0o700)

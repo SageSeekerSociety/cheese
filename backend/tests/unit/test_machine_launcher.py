@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 
 import pytest
@@ -700,7 +701,11 @@ def test_a_store_that_cannot_be_created_does_not_fail_the_launch(tmp_path):
 
 
 # The room-local copies the tools used to keep, and the one that must survive.
-_DEAD_CACHES = (".cache/uv/w", ".cache/pip/w", ".npm/_cacache/w")
+_DEAD_CACHES = (
+    ("Library/Caches/uv/w", "Library/Caches/pip/w", ".npm/_cacache/w")
+    if sys.platform == "darwin"
+    else (".cache/uv/w", ".cache/pip/w", ".npm/_cacache/w")
+)
 _LIVE_INTERPRETER = ".local/share/uv/python/cpython-3.13/bin/python"
 
 
