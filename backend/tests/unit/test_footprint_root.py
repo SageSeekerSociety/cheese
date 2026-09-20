@@ -4,14 +4,15 @@ Two things have to hold for `cheese uninstall` to mean what it says. Everything
 the platform puts on the machine has to be under one directory, and everything
 that names that directory has to name the same one.
 
-Neither is free here. Several programs run ON the borrowed machine with nothing
-of ours importable — one arrives on stdin and has no `__file__`, one is exec'd
-out of a string, one is Go — so they carry copies of the name rather than asking
-for it. A copy that drifts does not crash: the room prepares and the probe reads
-`pending` until the deadline runs out, or the teardown decides a room with a live
-executor never had one and deletes the home out from under the daemon. These
-tests keep the copies honest, and keep the paths the backend hands a machine
-inside the one root the connector knows how to remove.
+Neither is free here. Four programs run ON the borrowed machine with nothing of
+ours importable — one arrives on stdin and has no `__file__`, one is exec'd out
+of a string, one is the CLI the agent runs inside the sandbox, one is Go — so
+they carry copies of the name rather than asking for it. A copy that drifts does
+not crash: the room prepares and the probe reads `pending` until the deadline
+runs out, or the teardown decides a room with a live executor never had one and
+deletes the home out from under the daemon. These tests keep the copies honest,
+and keep the paths the backend hands a machine inside the one root the connector
+knows how to remove.
 """
 
 import re
@@ -24,6 +25,7 @@ from app.domain.agent.place import footprint_dirs, footprint_root
 from app.domain.agent.resource_cleanup import PLATFORM_DIRS
 
 REPOSITORY = Path(__file__).resolve().parents[3]
+SANDBOX_CLI = REPOSITORY / "backend/sandbox/cheese"
 
 
 def test_the_shipped_programs_carry_the_root_that_place_chose():
@@ -48,6 +50,40 @@ def test_the_connector_uninstalls_the_root_the_platform_writes():
     assert declared.group(1) == footprint_root()
 
 
+# What the sandbox CLI hangs off its own home: `Path.home() / "x"` and
+# `os.path.join(home, "x")`.
+SANDBOX_HOME_DIR = re.compile(r'(?:Path\.home\(\) /|os\.path\.join\(home,)\s*"([^"]+)"')
+
+# The environment runner's own state directory, which the CLI reads for the
+# room's configuration. It sits in the room's home rather than beside the root,
+# and `place.py` does not choose its name, so this module does not hold it.
+RUNNER_STATE_DIR = ".cheese-environment"
+
+
+def test_the_sandbox_cli_carries_the_root_that_place_chose():
+    """The copy inside the container, which is read as text and not imported.
+
+    `backend/sandbox/cheese` is the CLI the agent calls from inside the sandbox.
+    It is shipped into the container as a standalone stdlib-only script with
+    nothing of ours importable beside it, so it spells the root the same way the
+    other three do — and it is the copy whose drift is loudest: the runner it
+    goes looking for is written under whichever root prepared the room, so a
+    name that has moved means the agent cannot open a task at all.
+    """
+    source = SANDBOX_CLI.read_text()
+    declared = re.search(r"ENVIRONMENT_RUNNER_PATHS = \(([^)]*)\)", source)
+    assert declared, "the sandbox CLI stopped declaring where the runner may be"
+    assert tuple(re.findall(r'"([^"]+)"', declared.group(1))) == footprint_dirs()
+    for spelled in sorted(
+        {name.split("/")[0] for name in SANDBOX_HOME_DIR.findall(source)}
+        - {RUNNER_STATE_DIR}
+    ):
+        assert spelled in footprint_dirs(), (
+            f"the sandbox CLI writes into ~/{spelled}, which is not a root "
+            "`place.py` chose"
+        )
+
+
 class RecordingHub:
     """A device that answers the probe and remembers what it was asked to run."""
 
@@ -60,13 +96,15 @@ class RecordingHub:
 
 
 def inside_the_footprint(text: str) -> None:
-    """Every `$HOME`-relative path in `text` hangs off a footprint directory."""
-    roots = tuple(f"$HOME/{root}" for root in footprint_dirs())
+    """Every `$HOME`-relative path in `text` hangs off the footprint root.
+
+    The root, not the roots: what `cheese uninstall` removes is one directory,
+    so the earlier root is somewhere a path may still be *found* and never
+    somewhere a new one may be *written*.
+    """
+    root = f"$HOME/{footprint_root()}"
     for reference in re.findall(r"\$HOME/[A-Za-z0-9._/-]+", text):
-        inside = reference in roots or reference.startswith(
-            tuple(f"{root}/" for root in roots)
-        )
-        assert inside, (
+        assert reference == root or reference.startswith(f"{root}/"), (
             f"{reference} is outside the footprint root, so `cheese uninstall` "
             "walks past it"
         )
@@ -121,6 +159,26 @@ def test_the_launcher_installs_only_inside_the_footprint():
         )
 
 
+EXPORTED_HOME = re.compile(r'export HOME="([^"]+)"')
+
+
+def as_the_machine_reads_it(command: str) -> str:
+    """The command with the `$HOME` its own shell will see already filled in.
+
+    A command that opens with `export HOME="<the room's home>"` spells two
+    different directories `$HOME`: the machine owner's, once, inside that
+    assignment, and the room's home in everything after it. Reading them as one
+    is how `$HOME/.claude/cheese-environment.py` looks like a path outside the
+    root — it is a file in the room's home, which is itself inside the root, and
+    resolving the assignment is what says so.
+    """
+    exported = EXPORTED_HOME.search(command)
+    if not exported:
+        return command
+    head, tail = command[: exported.end()], command[exported.end() :]
+    return head + tail.replace("$HOME", exported.group(1))
+
+
 async def test_what_the_backend_asks_a_machine_to_run_stays_inside_the_footprint():
     """The same, for the commands rather than the paths.
 
@@ -135,4 +193,4 @@ async def test_what_the_backend_asks_a_machine_to_run_stays_inside_the_footprint
     )
     assert hub.commands, "the probe stopped asking the machine anything"
     for command in hub.commands:
-        inside_the_footprint(" ".join(command))
+        inside_the_footprint(as_the_machine_reads_it(" ".join(command)))

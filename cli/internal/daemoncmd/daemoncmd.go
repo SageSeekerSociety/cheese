@@ -370,7 +370,8 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 }
 
 func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
-	return withConfig(&cobra.Command{
+	var force bool
+	uninstall := withConfig(&cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove cheese from this machine (service, config, everything it wrote, binary)",
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -381,19 +382,38 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err != nil {
 				return fmt.Errorf("locate home directory: %w", err)
 			}
+			footprint := filepath.Join(home, footprintRoot)
 			warnScreens(*cfgPath)
 			// Said before it happens, because it is the part nobody expects. The
 			// service and the binary are ours and nobody misses them; the
 			// footprint root is where every room's session home and worktree
 			// live, so on a machine that is mid-task this line is the only
-			// warning that unpushed work is about to go. The command asks
-			// nothing and waits for nothing — it is run over ssh as often as at
-			// a keyboard — so naming what goes is what it owes its owner.
+			// warning that unpushed work is about to go.
 			fmt.Printf(
 				"This also deletes %s and everything in it: the session home and "+
 					"worktree of every room that ran here, and the package caches "+
 					"they share.\n",
-				filepath.Join(home, footprintRoot))
+				footprint)
+			// And then waited on, for as long as there is something to lose:
+			// rooms' files on disk, or sessions running right now. A stat that
+			// fails for any other reason counts as something — the answer to
+			// "cannot tell" is to ask. A machine with neither has nothing to
+			// lose, and those runs go through untouched.
+			//
+			// The rooms are stopped a few lines down, so this is the owner's
+			// last chance to push what one of them has not, and `link
+			// disconnect` already asks before doing the much smaller thing of
+			// stopping them. A terminal is where the question can be answered,
+			// so over ssh without one `confirm` declines, and --force is how an
+			// unattended uninstall says it meant it.
+			_, footprintErr := os.Stat(footprint)
+			atStake := !errors.Is(footprintErr, os.ErrNotExist) || state.Screens(*cfgPath) > 0
+			if atStake && !force {
+				if !confirm("Uninstall anyway?") {
+					fmt.Println("Aborted. (Use --force to skip this prompt.)")
+					return nil
+				}
+			}
 			// Capture the live connector's pid (recorded by `cheese run`) BEFORE anything,
 			// so we can guarantee it is actually stopped.
 			pid := state.RawPID(*cfgPath)
@@ -425,6 +445,8 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			return nil
 		},
 	})
+	uninstall.Flags().BoolVar(&force, "force", false, "uninstall without asking, even with sessions running or rooms' work on disk")
+	return uninstall
 }
 
 // footprintRoot is the directory under the user's home that the platform writes

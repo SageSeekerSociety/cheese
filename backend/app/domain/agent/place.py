@@ -13,14 +13,14 @@ only the current root answers "this room never had an executor" for a room that
 has one running. So the current root is what we write, and both are what we
 read — in this order, most recent first.
 
-Three programs cannot ask this module and carry the name themselves: the
-environment runner, the cleanup script and the executor bootstrap all run ON the
-borrowed machine, where nothing of ours is importable — one is written out
-beside the room's own files and run as a script, one is piped in on stdin and
-has no `__file__` to look at, one is exec'd out of a string. Their
-copies are checked against this module by
-`backend/tests/unit/test_footprint_root.py`, and so is the connector's, which is
-Go. The value is chosen here and nowhere else.
+Four programs cannot ask this module and carry the name themselves: the
+environment runner, the cleanup script, the executor bootstrap and the sandbox
+CLI (`backend/sandbox/cheese`) all run where nothing of ours is importable — one
+is written out beside the room's own files and run as a script, one is piped in
+on stdin and has no `__file__` to look at, one is exec'd out of a string, one is
+shipped into the agent's container as a standalone program. Their copies are
+checked against this module by `backend/tests/unit/test_footprint_root.py`, and
+so is the connector's, which is Go. The value is chosen here and nowhere else.
 """
 
 _FOOTPRINT_DIRS = (".cheese", ".claude")
