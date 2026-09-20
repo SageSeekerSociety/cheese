@@ -538,6 +538,28 @@ class SpaceService:
             raise NotFoundError("You are not a member of this space")
         await member_repo.remove_member(member)
 
+    async def add_member(
+        self,
+        *,
+        space_id: int,
+        target_user_id: int,
+        actor_user_id: int | None,
+    ) -> SpaceMember:
+        """Put someone in the space directly.
+
+        This is the only way into a 私人 space — a code is not a door there,
+        and 私人 means「只有被加进来的人可见」, so without this the tier would
+        be a room nobody can be invited into.
+        """
+        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
+        await self._get_space_or_error(space_id)
+        member_repo = self._require_member_repo()
+
+        existing = await member_repo.get_member(space_id, target_user_id)
+        if existing is not None:
+            return existing
+        return await member_repo.add_member(space_id=space_id, user_id=target_user_id)
+
     async def remove_member(
         self,
         *,

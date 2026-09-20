@@ -164,6 +164,12 @@ class JoinSpaceRequest(BaseModel):
     code: str = Field(..., min_length=1)
 
 
+class AddSpaceMemberRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    user_id: int = Field(..., alias="userId", gt=0)
+
+
 class CreateSpaceInviteCodeRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -776,6 +782,36 @@ async def list_space_members(
         profile_repo=UserProfileRepository(session=db),
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
+
+
+@router.post(
+    "/{spaceId}/members",
+    summary="Add Space Member",
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_space_member(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: AddSpaceMemberRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    user_repo = UserRepository(session=db)
+    if await user_repo.get_by_id(payload.user_id) is None:
+        raise NotFoundError(
+            "User not found", data={"type": "user", "id": payload.user_id}
+        )
+    member = await service.add_member(
+        space_id=space_id,
+        target_user_id=payload.user_id,
+        actor_user_id=auth_user.user_id,
+    )
+    items = await _hydrate_members(
+        [member],
+        user_repo=user_repo,
+        profile_repo=UserProfileRepository(session=db),
+    )
+    return {"code": 201, "message": "Created", "data": {"member": items[0]}}
 
 
 @router.delete(
