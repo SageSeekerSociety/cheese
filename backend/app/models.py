@@ -21,6 +21,7 @@ from app.domain.idempotency import models as idempotency  # noqa: F401
 from app.domain.identity import models as identity  # noqa: F401
 from app.domain.knowledge import models as knowledge  # noqa: F401
 from app.domain.llm import models as llm  # noqa: F401
+from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
 from app.domain.machine.limits import MachineLimit, TeamMachineLimit  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
