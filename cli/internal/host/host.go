@@ -306,6 +306,20 @@ func (h *Host) createSession(m link.Msg) {
 	// path; HasSession is the ground truth we act on.
 	var term *terminal.Session
 	if h.tm.HasSession(m.Sid) {
+		identities, err := h.tm.Identities(h.base)
+		if err != nil {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: err.Error()})
+			return
+		}
+		var birth link.Msg
+		data, exists := identities[m.Sid]
+		if !exists || json.Unmarshal([]byte(data), &birth) != nil || birth.Sid != m.Sid {
+			_ = h.conn.Send(link.Msg{T: "session.error", Sid: m.Sid, Error: "Cannot adopt session without its saved launch identity"})
+			return
+		}
+		// The running model still listens at its original socket. A reassertion
+		// can carry a fresh launch environment, which no process has consumed.
+		m = birth
 		term = h.tm.Adopt(m.Sid)
 	} else {
 		var err error

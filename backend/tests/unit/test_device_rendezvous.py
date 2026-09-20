@@ -2,7 +2,7 @@
 binary, and a version floor that refuses to degrade quietly.
 
 What these guard, in one line each: a socket path short enough to bind, an
-adopted screen and a fresh one agreeing on the same token, and an old `claude`
+separate launches using separate sockets, and an old `claude`
 failing the launch instead of falling back to typing into a terminal.
 """
 
@@ -17,7 +17,7 @@ TOPIC = "c43d2e12-6d4f-436d-b436-05278a879f81"
 
 
 def test_socket_path_fits_the_kernel_limit():
-    sock, token_file = device_launch.rendezvous_paths(TOPIC)
+    sock, token_file = device_launch.rendezvous_paths()
     # sockaddr_un.sun_path is 104 bytes on macOS / 108 on Linux, and bind fails
     # with a bare EINVAL that reads like a bug in our code. The isolated home
     # alone spends ~105, which is exactly why these live in /tmp.
@@ -26,13 +26,14 @@ def test_socket_path_fits_the_kernel_limit():
     assert sock.endswith(".sock") and token_file.endswith(".token")
 
 
-def test_socket_path_is_per_topic_and_stable():
-    a, _ = device_launch.rendezvous_paths(TOPIC)
-    b, _ = device_launch.rendezvous_paths("73ac850d-3759-415c-b112-c8e06b20aefd")
-    assert a != b
-    # Stable across calls: the connector dials the path the launcher bound, and
-    # an adopted screen must resolve to the same one a fresh launch would.
-    assert device_launch.rendezvous_paths(TOPIC)[0] == a
+def test_separate_launches_of_the_same_topic_have_independent_input_paths():
+    first = _env(TOPIC)
+    second = _env(TOPIC)
+    assert first[device_launch.ENV_RV_SOCK] != second[device_launch.ENV_RV_SOCK]
+    assert (
+        first[device_launch.ENV_RV_TOKEN_FILE]
+        != second[device_launch.ENV_RV_TOKEN_FILE]
+    )
 
 
 def _env(topic: str) -> dict[str, str]:
@@ -51,7 +52,7 @@ def _env(topic: str) -> dict[str, str]:
 
 def test_screen_env_carries_the_socket_only_with_a_topic():
     env = _env(TOPIC)
-    assert env[device_launch.ENV_RV_SOCK] == device_launch.rendezvous_paths(TOPIC)[0]
+    assert env[device_launch.ENV_RV_SOCK].endswith(".sock")
     assert env[device_launch.ENV_RV_TOKEN_FILE].endswith(".token")
 
     # No topic (a probe / bare screen) means no delivery socket to name; a made-up
