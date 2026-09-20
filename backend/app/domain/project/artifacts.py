@@ -18,10 +18,11 @@
   人正在交，清单就没什么可说的。表里那一行留着：它是这个名字的身份，同一个名字再
   被声明时落回同一行，那一项的历史因此是连着的。
 
-**沿用和新建是两个动作，不是一个参数的两种值。** 这是整套东西唯一的防线：名字写
-错不会撞出错误，`报告` 和 `结题报告` 都是合法名字，而清单进每一轮的开场，错的那一
-项从此每轮都在场。分成两个动作之后，「沿用一个不存在的名字」和「新建一个已经存在
-的名字」都当场报错，而错一次的代价只是下一轮改对。
+**沿用和新建是两个动作，不是一个参数的两种值**，而且两者收的东西不同：沿用只认
+id（`reuse`），新建才写名字（`claim`）。名字是给人读的，写错它不报错 —— `报告` 和
+`结题报告` 都是合法名字，按名字认一次手滑就在清单上多一项，而这份清单进每一轮的开
+场，错的那一项从此每轮都在场。id 错了则解析不出来或者不在清单上，两种都是当场的报
+错；新建那一次把新的 id 返回来，往后照抄它。
 
 **改名、合并、删除是人的动作**，因为「这两项是不是同一个东西」要人判断。改名改的是
 这一行，卡指着的是行的 id，所以改完之前的交付照样算这一项的版本。
@@ -98,26 +99,33 @@ def clean_name(raw: str | None) -> str:
 
 
 async def reuse(
-    session: AsyncSession, *, project_id: uuid.UUID, ref: str
+    session: AsyncSession, *, project_id: uuid.UUID, artifact_id: str
 ) -> ProjectArtifact:
     """沿用清单上已经有的那一项 —— 这次交付是它的新一版。
 
-    `ref` 是清单上的真名，或者那一行的 id（界面上点出来的那条路）。对不上就报错，
-    并把清单现在有什么列出来：读这句话的是一个下一轮就要重递的 agent，只说「没有
-    这一项」等于让它再猜一轮，而猜错的后果是清单上多一项看着像重复的东西。
+    **点名已有的一项只认 id，不认名字。** 名字是给人读的，而名字写错不报错：
+    `报告` 和 `结题报告` 都是合法名字，按名字认的话一次手滑就是清单上多一项。id
+    错了要么解析不出来、要么不在这个项目的清单上，两种都是当场的报错。清单每一轮
+    都在系统提示里，id 连着名字一起给，照抄即可；新建的那一次会把新的 id 返回来。
     """
     listed = await list_for_project(session, project_id)
-    wanted = clean_name(ref)
-    by_id = _as_uuid(wanted)
+    wanted = (artifact_id or "").strip()
+    asked = _as_uuid(wanted)
     for row in listed:
-        if row.id == by_id or row.name == wanted:
+        if row.id == asked:
             found = await session.get(ProjectArtifact, row.id)
             if found is not None:
                 return found
+    same_name = next((row for row in listed if row.name == _unwrap(wanted)), None)
+    if same_name is not None:
+        raise ValidationError(
+            f"artifact 要的是清单上那一项的 id，不是名字。《{same_name.name}》的 "
+            f"id 是 {same_name.id}。"
+        )
     raise ValidationError(
-        f"产物清单上没有《{wanted}》。" + _what_the_list_has(listed) + "确实是一样"
-        "新做出来的东西，就用 new_artifact 声明它；要交付清单上已有的那一项，"
-        "把名字照抄过去。"
+        f"产物清单上没有 id 为 {wanted} 的那一项。"
+        + _what_the_list_has(listed)
+        + "确实是一样新做出来的东西，就用 new_artifact 加上它的名字声明它。"
     )
 
 
@@ -230,10 +238,12 @@ def _claims():
 
 
 def _what_the_list_has(listed: list[ArtifactSummary]) -> str:
+    """清单现在有什么，连 id 一起 —— 读这句话的是一个下一轮就要重递的 agent，
+    只说「没有这一项」等于让它再猜一轮。"""
     if not listed:
         return "这个项目还没有交付过任何东西，清单是空的。"
-    names = "、".join(f"《{row.name}》" for row in listed)
-    return f"清单上现在有：{names}。"
+    rows = "；".join(f"《{row.name}》 id={row.id}" for row in listed)
+    return f"清单上现在有：{rows}。"
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:

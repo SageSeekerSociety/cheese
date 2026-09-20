@@ -5,6 +5,8 @@
 告` 和 `结题报告` 都合法），把它变成一次当场的报错正是这两个动作存在的理由。
 """
 
+import uuid
+
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
@@ -108,31 +110,43 @@ def test_the_list_has_no_other_way_in(client):
 # --- 长：沿用同一项 ---------------------------------------------------------
 
 
-def test_reusing_the_name_delivers_the_same_artifact_again(client):
+def test_reusing_the_id_delivers_the_same_artifact_again(client):
     pid = _project(client)
     first = _room(client, pid, "第一轮")
     second = _room(client, pid, "第二轮")
-    _file_card(client, first, new_artifact="结题报告")
+    declared = _file_card(client, first, new_artifact="结题报告").json()["data"]
 
-    r = _file_card(client, second, artifact="结题报告")
+    r = _file_card(client, second, artifact=declared["artifact"]["id"])
 
     assert r.status_code == 200, r.text
+    assert r.json()["data"]["artifact"]["id"] == declared["artifact"]["id"]
     assert _manifest(client, pid) == [("结题报告", 0)]
     assert not any("新建了产物" in line for line in _lines(client, second))
 
 
-def test_a_name_copied_with_its_brackets_is_the_same_artifact(client):
-    """系统提示里的清单排成《结题报告》，照抄那一行时括号会跟着进来。"""
+def test_naming_the_artifact_instead_of_pointing_at_it_says_the_id(client):
+    """沿用只认 id：名字写错不报错，所以按名字认的手滑会留在清单上。"""
     pid = _project(client)
     first = _room(client, pid, "第一轮")
+    declared = _file_card(client, first, new_artifact="结题报告").json()["data"]
     second = _room(client, pid, "第二轮")
-    _file_card(client, first, new_artifact="结题报告")
 
-    r = _file_card(client, second, artifact="《结题报告》")
+    r = _file_card(client, second, artifact="结题报告")
+
+    assert r.status_code == 422
+    assert declared["artifact"]["id"] in r.json()["message"]
+    assert _manifest(client, pid) == [("结题报告", 0)]
+
+
+def test_a_new_name_copied_with_its_brackets_loses_them(client):
+    """房间里和清单上都把产物写成《结题报告》，照抄时括号会跟着进来。"""
+    pid = _project(client)
+    rid = _room(client, pid)
+
+    r = _file_card(client, rid, new_artifact="《结题报告》")
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["artifact"]["name"] == "结题报告"
-    assert _manifest(client, pid) == [("结题报告", 0)]
 
 
 def test_a_version_is_a_delivery_that_landed(client):
@@ -189,18 +203,19 @@ def test_revoking_the_only_delivery_takes_the_item_back_off_the_list(client):
 # --- 两个动作各自的打回 -----------------------------------------------------
 
 
-def test_reusing_a_name_the_list_does_not_have_is_refused(client):
+def test_reusing_an_id_the_list_does_not_have_is_refused(client):
     pid = _project(client)
     first = _room(client, pid, "第一轮")
-    _file_card(client, first, new_artifact="结题报告")
+    declared = _file_card(client, first, new_artifact="结题报告").json()["data"]
     second = _room(client, pid, "第二轮")
 
-    r = _file_card(client, second, artifact="报告")
+    r = _file_card(client, second, artifact=str(uuid.uuid4()))
 
     assert r.status_code == 422
     message = r.json()["message"]
-    # 打回要教得会：清单上有什么，以及新建该怎么说。
+    # 打回要教得会：清单上有什么（连 id），以及新建该怎么说。
     assert "《结题报告》" in message
+    assert declared["artifact"]["id"] in message
     assert "new_artifact" in message
 
 
@@ -232,7 +247,7 @@ def test_a_delivery_that_names_both_is_refused(client):
     pid = _project(client)
     rid = _room(client, pid)
 
-    r = _file_card(client, rid, artifact="结题报告", new_artifact="结题报告")
+    r = _file_card(client, rid, artifact=str(uuid.uuid4()), new_artifact="结题报告")
 
     assert r.status_code == 422
     assert _manifest(client, pid) == []

@@ -53,16 +53,17 @@ def delivery_task_id(client, room_id, *, commit=True):
 def delivery_artifact(client, room_id, name="报告"):
     """递卡时声明的那一项产物 (#1085 结论三)。
 
-    清单上已经有这个名字就沿用它，没有就声明一项新的 —— 和真正的调用方做的是同一
-    个判断（它读系统提示里那份清单）。一个项目里递第二张卡的测试因此不需要知道第
-    一张卡把它建出来了。
+    清单上已经有这个名字就按 id 沿用它，没有就用名字声明一项新的 —— 和真正的调用
+    方做的是同一个判断（它读系统提示里那份清单，那里名字和 id 都有）。一个项目里递
+    第二张卡的测试因此不需要知道第一张卡把它建出来了。
     """
     room_id = uuid.UUID(str(room_id))
     room = client.get(f"/topics/{room_id}").json()["data"]
     listed = client.get(f"/projects/{room['project_id']}/artifacts")
     rows = listed.json()["data"]["data"] if listed.status_code == 200 else []
-    if any(row["name"] == name for row in rows):
-        return {"artifact": name}
+    found = next((row for row in rows if row["name"] == name), None)
+    if found is not None:
+        return {"artifact": found["id"]}
     return {"new_artifact": name}
 
 

@@ -353,9 +353,10 @@ def approvals_required_of(project: Project | None) -> int:
 #: 每一轮的开场都带着它。
 _ARTIFACT_ACTION_MISSING = (
     "没说这次交付动的是哪一项产物。两种说法选一种：\n"
-    "  --artifact '<清单上的真名>'      这次交付是那一项的新一版\n"
-    "  --new-artifact '<新的真名>'      这次交付做出了一样清单上还没有的东西\n"
-    "清单在系统提示的「这个项目的产物清单」里，沿用时把名字照抄过去。"
+    "  --artifact <清单上那一项的 id>    这次交付是那一项的新一版\n"
+    "  --new-artifact '<新的真名>'       这次交付做出了一样清单上还没有的东西\n"
+    "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
+    "新建的那一次会把新的 id 返回来。"
 )
 
 _ARTIFACT_ACTION_BOTH = (
@@ -530,7 +531,7 @@ class AcceptService:
             )
             if is_new
             else await artifacts.reuse(
-                self._session, project_id=topic.project_id, ref=artifact or ""
+                self._session, project_id=topic.project_id, artifact_id=artifact or ""
             )
         )
         card = await self._repo.add(

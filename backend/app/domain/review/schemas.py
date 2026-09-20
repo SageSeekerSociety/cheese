@@ -24,8 +24,10 @@ class AcceptCardCreate(BaseModel):
     # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
-    # 这次交付动的是清单上哪一项产物 (#1085 结论三): `artifact` 沿用一项（真名，
-    # 或界面点出来的那一行的 id），`new_artifact` 声明一项清单上还没有的。Exactly
+    # 这次交付动的是清单上哪一项产物 (#1085 结论三): `artifact` 沿用一项，by id —
+    # a name would let one typo grow a near-duplicate silently; `new_artifact`
+    # declares one the list does not have yet, and that is the call that hands
+    # back the new id. Exactly
     # one of them, enforced in review/services.py rather than here for the same
     # reason `change_subject` is: the answer to "you named neither" has to be
     # the sentence that teaches the two actions apart, not pydantic's

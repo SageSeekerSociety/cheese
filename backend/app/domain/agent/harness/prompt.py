@@ -76,14 +76,16 @@ def build_system_prompt(
         lines = "\n".join(
             f"- 《{a['name']}》"
             + (f"　第 {a['version']} 版" if a["version"] else "　还没交付过")
+            + f"　id={a['id']}"
             for a in artifacts
         )
         parts.append(
             "## 这个项目的产物清单（交出去的东西，一项一行）\n"
             "递验收卡时说清这次交付动的是哪一项：交付下面某一项的新一版，用 "
-            "`artifact` 点名它（**名字照抄下面的**）；确实做出了一样下面没有的东西，"
-            "用 `new_artifact` 给它起个名字。两个都不给、或者两个都给，递卡会被打"
-            "回。\n" + lines
+            "`artifact=<id>` 点名它（**照抄下面那一行的 id，不要写名字**——名字写错"
+            "不会报错，只会在清单上多一项看着像重复的东西）；确实做出了一样下面没有"
+            "的东西，用 `new_artifact=<真名>` 给它起个名字，返回里带着新的 id。两个"
+            "都不给、或者两个都给，递卡会被打回。\n" + lines
         )
     if roster:
         lines = "\n".join(

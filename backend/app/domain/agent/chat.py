@@ -4359,7 +4359,8 @@ class ChatService:
                 else await project_artifacts.list_for_project(session, topic.project_id)
             )
             artifact_refs = [
-                {"name": a.name, "version": a.version} for a in artifact_rows
+                {"id": str(a.id), "name": a.name, "version": a.version}
+                for a in artifact_rows
             ]
             project_id = topic.project_id
             # This agent's conversation here, not just any: a room may host
