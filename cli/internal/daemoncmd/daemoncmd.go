@@ -374,7 +374,26 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 		Use:   "uninstall",
 		Short: "Remove cheese from this machine (service, config, everything it wrote, binary)",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			// Resolved before anything is stopped: a home we cannot name is a
+			// footprint we cannot remove, and finding that out after the service
+			// is gone leaves the machine half-uninstalled.
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("locate home directory: %w", err)
+			}
 			warnScreens(*cfgPath)
+			// Said before it happens, because it is the part nobody expects. The
+			// service and the binary are ours and nobody misses them; the
+			// footprint root is where every room's session home and worktree
+			// live, so on a machine that is mid-task this line is the only
+			// warning that unpushed work is about to go. The command asks
+			// nothing and waits for nothing — it is run over ssh as often as at
+			// a keyboard — so naming what goes is what it owes its owner.
+			fmt.Printf(
+				"This also deletes %s and everything in it: the session home and "+
+					"worktree of every room that ran here, and the package caches "+
+					"they share.\n",
+				filepath.Join(home, footprintRoot))
 			// Capture the live connector's pid (recorded by `cheese run`) BEFORE anything,
 			// so we can guarantee it is actually stopped.
 			pid := state.RawPID(*cfgPath)
@@ -391,10 +410,6 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 				return fmt.Errorf(
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
 						"nothing was removed — stop it and run this again", pid)
-			}
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return fmt.Errorf("locate home directory: %w", err)
 			}
 			if err := removeFootprint(config.Dir(), home); err != nil {
 				return err

@@ -75,17 +75,29 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def platform_dir():
-    """The installation this copy of the runner belongs to.
+# Every directory the platform has installed this room's own files into, the
+# current one first. A copy of `place.footprint_dirs()`, not a second answer:
+# this file is shipped to the machine as a standalone stdlib-only program, with
+# nothing of ours importable beside it, so it carries the names; the copy is
+# held to the original by test_footprint_root.py.
+#
+# Read rather than assumed, and not read off our own path either: a relaunch
+# writes this file under the current root at the top of the launch, while the
+# executor it is about to replace goes on running under the previous one until
+# the bootstrap stops it. A reset in that window has to stop the executor that
+# is actually running — looking only where this copy happens to sit finds
+# nothing, skips the stop, and then kills the terminal out from under a daemon
+# that goes on writing the status file this reset is about to read.
+PLATFORM_DIRS = (".cheese", ".claude")
 
-    Read off our own path rather than guessed at. A reset has to stop the
-    executor that is actually running, and a room prepared before the platform
-    last moved its root has that executor where the launcher of the day put it —
-    but so does this file, which that same launcher installed beside it. Whoever
-    started us already made the choice of root; asking again here is how one root
-    gets read while the other is the one in use.
-    """
-    return Path(__file__).parent
+
+def platform_dir(home):
+    """Where this room's platform files actually are."""
+    for name in PLATFORM_DIRS:
+        directory = home / name
+        if (directory / "executor").exists():
+            return directory
+    return home / PLATFORM_DIRS[0]
 
 
 def read_status(directory: Path) -> dict:
@@ -356,7 +368,7 @@ if __name__ == "__main__":
         status = read_status(root)
         if status["state"] == "preparing":
             raise SystemExit("environment is still preparing")
-        installed = platform_dir()
+        installed = platform_dir(Path.home())
         executor = installed / "execution-owner.json"
         if executor.exists():
             if json.loads(executor.read_text())["resource"] != Path.home().name:

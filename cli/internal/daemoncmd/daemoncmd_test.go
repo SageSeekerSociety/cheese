@@ -1,6 +1,9 @@
 package daemoncmd
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,4 +66,90 @@ func TestUninstallLeavesNothingBehind(t *testing.T) {
 	if _, err := os.Stat(theirs); err != nil {
 		t.Errorf("uninstall removed something that was not ours: %v", err)
 	}
+}
+
+// The test above proves removeFootprint clears a machine; this one proves that
+// `cheese uninstall` is what calls it, and calls it on the path it always takes.
+//
+// It reads the source rather than running the command, because running it is not
+// something a test can be allowed to do. uninstallCmd stops and uninstalls the
+// connector's service through kardianos, which resolves the launchd plist from
+// user.Current() and not from $HOME — no temporary home redirects it, so on any
+// machine that has the connector installed the run would uninstall it for real.
+// The same call kills the per-user tmux server (a stable socket, shared with
+// whatever sessions are live) and then deletes its own executable. What is left
+// to check without any of that is the wiring — and the wiring is the whole of
+// what could rot: a removal that exists, is tested, and is called from nowhere
+// leaves every machine exactly as it was before. Delete the call, or move it
+// inside a branch that is not always taken, and this goes red.
+func TestUninstallRemovesTheFootprintOnEveryRun(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "daemoncmd.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body *ast.BlockStmt
+	ast.Inspect(file, func(node ast.Node) bool {
+		function, ok := node.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "uninstallCmd" {
+			return true
+		}
+		ast.Inspect(function, func(node ast.Node) bool {
+			field, ok := node.(*ast.KeyValueExpr)
+			if !ok {
+				return true
+			}
+			key, isName := field.Key.(*ast.Ident)
+			value, isFunction := field.Value.(*ast.FuncLit)
+			if isName && isFunction && key.Name == "RunE" {
+				body = value.Body
+			}
+			return true
+		})
+		return false
+	})
+	if body == nil {
+		t.Fatal("uninstallCmd no longer has a RunE to read")
+	}
+
+	removes := func(node ast.Node) bool {
+		found := false
+		ast.Inspect(node, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if name, ok := call.Fun.(*ast.Ident); ok && name.Name == "removeFootprint" {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+
+	for _, statement := range body.List {
+		// Only what the statement itself evaluates. An `if` contributes its init
+		// and its condition and never the block it guards, so a call that moved
+		// into a branch stops counting as one every run makes.
+		var evaluated []ast.Node
+		switch statement := statement.(type) {
+		case *ast.IfStmt:
+			if statement.Init != nil {
+				evaluated = append(evaluated, statement.Init)
+			}
+			evaluated = append(evaluated, statement.Cond)
+		case *ast.ExprStmt:
+			evaluated = append(evaluated, statement.X)
+		case *ast.AssignStmt:
+			for _, value := range statement.Rhs {
+				evaluated = append(evaluated, value)
+			}
+		}
+		for _, node := range evaluated {
+			if removes(node) {
+				return
+			}
+		}
+	}
+	t.Error("`cheese uninstall` no longer removes the footprint root on every run")
 }

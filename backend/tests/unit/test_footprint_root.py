@@ -18,7 +18,7 @@ import re
 import uuid
 from pathlib import Path
 
-from app.domain.agent import device_provider
+from app.domain.agent import device_provider, environment_runner, machine_launcher
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.place import footprint_dirs, footprint_root
 from app.domain.agent.resource_cleanup import PLATFORM_DIRS
@@ -29,6 +29,7 @@ REPOSITORY = Path(__file__).resolve().parents[3]
 def test_the_shipped_programs_carry_the_root_that_place_chose():
     """The copies that run on the machine, held to the one that chooses."""
     assert tuple(PLATFORM_DIRS) == footprint_dirs()
+    assert tuple(environment_runner.PLATFORM_DIRS) == footprint_dirs()
     assert (bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR) == footprint_dirs()
 
 
@@ -37,15 +38,14 @@ def test_the_connector_uninstalls_the_root_the_platform_writes():
 
     It is also the copy that matters most: the connector's `uninstall` is the
     only thing on a borrowed machine that ever removes the footprint, and a name
-    that has drifted removes nothing while reporting that it did.
+    that has drifted removes nothing while reporting that it did. Only the name
+    is checked here; that `uninstall` still reaches `removeFootprint` is checked
+    in Go, where the identifier resolves — `cli/internal/daemoncmd/daemoncmd_test.go`.
     """
     source = (REPOSITORY / "cli/internal/daemoncmd/daemoncmd.go").read_text()
     declared = re.search(r'footprintRoot\s*=\s*"([^"]+)"', source)
     assert declared, "the connector stopped declaring a footprint root"
     assert declared.group(1) == footprint_root()
-    assert "removeFootprint(config.Dir(), home)" in source, (
-        "uninstall no longer removes the footprint root"
-    )
 
 
 class RecordingHub:
@@ -89,6 +89,36 @@ def test_the_directories_a_room_is_given_are_inside_the_footprint():
         device_provider.launcher_path(room),
     ):
         inside_the_footprint(path)
+
+
+# Where the launch script puts something on the machine: a redirection into
+# `$HOME`/`$REAL_HOME`, or a directory made under one of them. Reads are not
+# write points, and neither is the `rm -rf "$HOME/Library/Caches/uv"` a room
+# does to its own caches on the way up — those are the machine owner's
+# directories, cleared rather than installed into, and naming them here would
+# demand the platform own them.
+LAUNCHER_WRITE = re.compile(r'(?:>>?|mkdir -p) "\$(?:REAL_)?HOME/([^"/]+)')
+
+
+def test_the_launcher_installs_only_inside_the_footprint():
+    """The one place the root is spelled out literally, held to the chosen one.
+
+    The launch script is a single shell string that names the root some sixty
+    times, which is why it spells it rather than threading a name through. So
+    nothing but this test stands between a move of the root and a launcher that
+    goes on installing the room's own programs — the runner, the hook, the CLI,
+    the drain, the tunnels — where `cheese uninstall` will not look. Nothing
+    fails when that happens: the room launches, works, and leaves its files on
+    a machine whose owner has been told the platform is gone.
+    """
+    script = machine_launcher.launch_script(command="$AGENT")
+    written = LAUNCHER_WRITE.findall(script)
+    assert written, "the launcher stopped writing anything under the home"
+    for directory in written:
+        assert directory == footprint_root(), (
+            f"the launcher installs into $HOME/{directory}, which is outside "
+            "the footprint root the connector removes"
+        )
 
 
 async def test_what_the_backend_asks_a_machine_to_run_stays_inside_the_footprint():

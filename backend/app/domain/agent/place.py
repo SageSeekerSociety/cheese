@@ -15,8 +15,9 @@ read — in this order, most recent first.
 
 Three programs cannot ask this module and carry the name themselves: the
 environment runner, the cleanup script and the executor bootstrap all run ON the
-borrowed machine, where nothing of ours is importable — one is piped in on
-stdin and has no `__file__` to look at, one is exec'd out of a string. Their
+borrowed machine, where nothing of ours is importable — one is written out
+beside the room's own files and run as a script, one is piped in on stdin and
+has no `__file__` to look at, one is exec'd out of a string. Their
 copies are checked against this module by
 `backend/tests/unit/test_footprint_root.py`, and so is the connector's, which is
 Go. The value is chosen here and nowhere else.

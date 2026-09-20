@@ -53,7 +53,8 @@ from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
 # The launcher below spells the platform's own directory literally, because the
 # script is one long shell string and a name threaded through sixty paths would
 # be harder to read than the paths it stands for. The name is
-# `place.footprint_root()`, and test_footprint_root.py holds the script to it.
+# `place.footprint_root()`, and `test_the_launcher_installs_only_inside_the_footprint`
+# reads every write point out of the rendered script and holds it to that name.
 
 # Starts the tunnel helper and does NOT return until its port answers.
 #
