@@ -15,11 +15,8 @@
     "board": "Board",
     "calendar": "Calendar",
     "delivery": "Export and publish",
-    "docs": "{project} docs",
     "library": "Library",
     "members": "Members",
-    "overview": "Overview",
-    "settings": "{project} settings",
-    "switch": "Switch {project}"
+    "overview": "Overview"
   }
 }

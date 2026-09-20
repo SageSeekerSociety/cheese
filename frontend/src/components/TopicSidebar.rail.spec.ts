@@ -205,8 +205,6 @@ describe('私聊的未读落在「成员」那一行上', () => {
 
   it('有人私聊你 → 「成员」那一行上亮一个数，是所有私聊未读的总和', () => {
     const { container } = mount({ privateUnreadMap: { cheese: 1, zhang: 2, li: 3 } })
-    console.log('PINNED ROWS:', JSON.stringify(titlesIn(container, '.pinned-row')))
-    console.log('MEMBERS ROW HTML:', container.querySelector('.pinned-row:last-of-type')?.outerHTML?.slice(0, 600))
     expect(pinnedRow(container, '成员').querySelector('.unread-badge')?.textContent?.trim()).toBe('6')
   })
 
