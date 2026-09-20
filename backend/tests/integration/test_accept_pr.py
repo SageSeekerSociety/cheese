@@ -1330,17 +1330,24 @@ def test_a_pr_already_merged_on_github_is_taken_as_the_accept(client, app_world)
 
 
 def test_accept_without_github_binding_local_merges(client):
-    """未绑定项目 (#363)：本地合并就是它唯一、正当的采纳，如实标注。"""
+    """未绑定项目 (#363)：本地合并就是它唯一、正当的采纳，如实标注。
+
+    如实标注发生在**人点之前**（I23）：卡一描述出来就带着托管方是谁、它能做
+    什么，而不是采纳完再补一条 note 上去。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
+
+    before = _cards(client, tid)[0]
+    assert before["status"] == "pending"
+    assert before["forge"]["kind"] == "platform"
+    assert "无外部 CI" in before["forge"]["declaration"]
 
     r = _accept(client, cid)
     assert r.status_code == 200, r.text
     card = r.json()["data"]
     assert card["status"] == "accepted"
     assert card["pr_number"] is None
-    assert "本项目未接 GitHub" in card["note"]
     delivered = _topic(client, tid)
     assert delivered["status"] == "active"
     assert (

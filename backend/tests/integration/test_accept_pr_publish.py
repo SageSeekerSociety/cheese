@@ -337,12 +337,15 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     monkeypatch.setattr(
         accept_routes, "github_app_tokens_for_project", _tokens_for_project
     )
-    monkeypatch.setattr(ws, "get_upstream", _boom)
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=7)
+    # Only now: an accept whose forge cannot be resolved is refused outright
+    # (#362), so a workspace that is already broken would stop the card being
+    # filed at all — which is not what this route's error handling is about.
+    monkeypatch.setattr(ws, "get_upstream", _boom)
 
     r = client.get(f"/topics/{tid}/pr-checks")
 
@@ -483,6 +486,14 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
 
         monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
 
+    # 写在卡上，而且是在人点之前（I23）：ℹ️ 不是 ⚠️，和「该走 PR 却没走」的卡
+    # 一眼可分。
+    filed = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
+    assert filed["status"] == "pending"
+    assert filed["forge"]["kind"] == "platform"
+    assert filed["forge"]["declaration"].startswith("ℹ️ 本项目未接外部仓库")
+    assert "⚠️" not in filed["forge"]["declaration"]
+
     r = client.post(
         f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
@@ -491,8 +502,6 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "accepted"
-    assert card["note"].startswith("ℹ️ 本项目未接 GitHub")
-    assert "⚠️" not in card["note"]
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # the only accept such a project has
     assert (
@@ -543,5 +552,5 @@ def test_unbound_project_with_github_upstream_pushes_nothing(
     assert card["status"] == "accepted"
     assert [a for a in git_calls if a[0] in ("push", "fetch")] == []
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
-    assert card["note"].startswith("ℹ️ 本项目未接 GitHub")
-    assert card["note"].count("未接 GitHub") == 1
+    assert card["forge"]["kind"] == "platform"
+    assert card["forge"]["pushes_to_external_remote"] is False

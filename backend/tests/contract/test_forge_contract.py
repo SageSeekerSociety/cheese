@@ -152,11 +152,13 @@ def test_no_after_the_fact_forge_note_survives_anywhere():
     note AFTER the accept, so before the click the card said nothing, and after
     it the same fact existed twice.
     """
-    root = pathlib.Path(__file__).resolve().parents[2]
+    here = pathlib.Path(__file__).resolve()
+    root = here.parents[2]
     hits = [
         str(path.relative_to(root))
         for path in (*root.glob("app/**/*.py"), *root.glob("tests/**/*.py"))
-        if "PLATFORM_FORGE_NOTE" in path.read_text(encoding="utf-8")
+        # This file names it to say it must not exist; every other mention is one.
+        if path != here and "PLATFORM_FORGE_NOTE" in path.read_text(encoding="utf-8")
     ]
 
     assert hits == []
