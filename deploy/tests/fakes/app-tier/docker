@@ -59,6 +59,9 @@ emit_named_rows() {
 }
 
 emit_contract_rows() {
+  if [ "$scenario" != forgejo_absent ]; then
+    printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
+  fi
   printf 'backend\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"

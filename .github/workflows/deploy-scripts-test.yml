@@ -69,6 +69,9 @@ jobs:
       - name: Cloud control connection lifecycle
         run: python3 deploy/tests/test_cloud_control.py
 
+      - name: Forge deployment configuration
+        run: python3 deploy/tests/test_forge_config.py
+
       - name: Workspace ownership handover
         run: bash deploy/tests/test-workspace-ownership.sh
 

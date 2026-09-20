@@ -79,7 +79,12 @@ export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 # runner's per-run re-checkout, so the deploy carries them itself — no box-side
 # heal hack needed to re-apply them after each CI redeploy.
 COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
+case " $COMPOSE_OVERLAYS " in
+  *docker-compose.forgejo.yml*) ;;
+  *) COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:+$COMPOSE_OVERLAYS }docker-compose.forgejo.yml" ;;
+esac
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
+FORGE_CUTOVER_PENDING="${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}/forge-migration/cutover-pending"
 
 # Only environments wired for sibling agent containers need the large runtime
 # images. Dev's subscription overlay is that signal; production app-only boxes
@@ -120,10 +125,6 @@ ensure_device_connection_owner() {
 }
 
 ensure_forgejo() {
-  case " $COMPOSE_OVERLAYS " in
-    *docker-compose.forgejo.yml*) ;;
-    *) return 0 ;;
-  esac
   local container waited=0
   container="$(dc ps -q forgejo 2>/dev/null | head -n 1 || true)"
   if [ -z "$container" ] || [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" != true ]; then
@@ -147,10 +148,6 @@ ensure_forgejo() {
 }
 
 migrate_project_repositories() {
-  case " $COMPOSE_OVERLAYS " in
-    *docker-compose.forgejo.yml*) ;;
-    *) return 0 ;;
-  esac
   local pending=0 legacy
   # The backend's persistent HOME keeps immutable source backups and receipts.
   # Check before stopping writers: later releases retain their normal rollout.
@@ -162,6 +159,8 @@ migrate_project_repositories() {
     *) fail "repository migration preflight failed; running backend was not touched" ;;
   esac
   log "pausing repository writers for the first forge migration"
+  mkdir -p "$(dirname "$FORGE_CUTOVER_PENDING")"
+  touch "$FORGE_CUTOVER_PENDING"
   dc stop backend || fail "could not stop repository writers"
   # This service is absent from the new compose file but may still be running
   # from the previous release; stop it before freezing its receive-pack store.
@@ -226,6 +225,13 @@ if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
 fi
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
+
+# Every deployment needs a repository service for projects without GitHub.
+# Preparation emits only shell-quoted public addresses, never credentials.
+forge_environment="$(python3 "$HERE/bootstrap-forgejo.py" --prepare \
+  --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}")" \
+  || fail "repository configuration failed; running services were not touched"
+eval "$forge_environment"
 
 # Resolve overlays now that fail() is defined; abort if deploy.env names one that
 # was not checked out, rather than silently deploying without the wiring.
@@ -528,15 +534,9 @@ dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — a
 # APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
 # and git reads its global config out of there.
 #
-# ORDER MATTERS, and it is why this block sits here rather than before the
-# migration. Handing 2.2M files to another uid is the one step of this deploy
-# that cannot be undone by simply not proceeding: whatever fails after it leaves
-# the box holding a backend of one uid and a workspace tree of another, which is
-# a project-wide 422 on the file panel. It ran before the migration and the
-# credential check until 2026-08-11, when the credential check aborted
-# deploy-dev *after* the trees had already moved and took dev down until the
-# next deploy (run 31466502982). So: last fallible step first, irreversible step
-# last, and nothing between it and `dc up` that can fail.
+# Schema and credential checks precede ownership repair. Repository migration
+# follows it because the new backend uid must read the old workspace files;
+# a failed repository migration leaves writers stopped until a release retries.
 VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
 # Create it here, not by letting the bind mount conjure it: a missing source
 # path makes docker create it as root:root, and the backend (uid 1000) then
@@ -831,6 +831,9 @@ done
 if [ "$code" != ok ]; then
   log "HEALTH CHECK FAILED"
   printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" || true
+  if [ -f "$FORGE_CUTOVER_PENDING" ]; then
+    fail "repository migration completed; refusing to restart the legacy repository writer; retry this release from migration receipts"
+  fi
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to ${PREV_SHA}…"
     # Rolling the images back without rolling the ownership back is not a
@@ -861,6 +864,9 @@ if [ "$code" != ok ]; then
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
+
+# Keep the cutover guard across failed releases until the new app is healthy.
+rm -f "$FORGE_CUTOVER_PENDING"
 
 # Host clock survives API rollouts. Non-systemd installations must arrange an
 # external minute trigger; startup/reconnect recovery alone is not a timer.

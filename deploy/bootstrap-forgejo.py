@@ -6,9 +6,11 @@ import json
 import logging
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import urllib.request
+from urllib.parse import urlsplit
 import uuid
 
 
@@ -27,13 +29,56 @@ def atomic_private(path: Path, content: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--container", required=True)
+    parser.add_argument("--container")
     parser.add_argument("--backend-env", type=Path, required=True)
+    parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--api-url", default="http://127.0.0.1:3300/api/v1")
     parser.add_argument("--docker-context")
     args = parser.parse_args()
     # Refuse a wrong path before creating an administrator or issuing a token.
     original = args.backend_env.read_text()
+    if args.prepare:
+        values = {}
+        for line in original.splitlines():
+            key, separator, value = line.strip().removeprefix("export ").partition("=")
+            if separator and key in {
+                "FRONTEND_URL",
+                "FORGEJO_URL",
+                "FORGE_WEBHOOK_URL",
+            }:
+                parts = shlex.split(value, comments=True)
+                if len(parts) > 1:
+                    raise ValueError(f"Invalid {key} in backend environment")
+                values[key] = parts[0] if parts else ""
+        public = os.environ.get("FORGEJO_URL") or values.get("FORGEJO_URL")
+        if not public:
+            frontend = values.get("FRONTEND_URL", "")
+            if not frontend:
+                raise ValueError("Set FRONTEND_URL or FORGEJO_URL before deploying")
+            public = frontend.rstrip("/") + "/forge/"
+        target = urlsplit(public)
+        if (
+            target.scheme not in {"http", "https"}
+            or not target.hostname
+            or target.username
+            or target.password
+            or target.query
+            or target.fragment
+        ):
+            raise ValueError("FORGEJO_URL must be an HTTP(S) URL without credentials")
+        webhook = (
+            os.environ.get("FORGE_WEBHOOK_URL")
+            or values.get("FORGE_WEBHOOK_URL")
+            or public
+        )
+        hosts = os.environ.get("FORGEJO_WEBHOOK_HOSTS") or urlsplit(webhook).hostname
+        if not hosts:
+            raise ValueError("FORGE_WEBHOOK_URL must contain a hostname")
+        print("export FORGEJO_URL=" + shlex.quote(public.rstrip("/") + "/"))
+        print("export FORGEJO_WEBHOOK_HOSTS=" + shlex.quote(hosts))
+        return
+    if not args.container:
+        parser.error("--container is required when provisioning the administrator")
     logging.basicConfig(
         filename=args.backend_env.parent / "forgejo-bootstrap.log",
         level=logging.INFO,
