@@ -33,8 +33,7 @@ const SPACES: NavItem = {
   title: '空间',
   to: '/spaces',
   icon: 'mdi-view-dashboard',
-  match: (path) =>
-    path === '/' || path.startsWith('/spaces') || path.startsWith('/teams') || path.startsWith('/work'),
+  match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams') || path.startsWith('/work'),
 }
 
 // 「待办」这个词还没定（设计文档 §7 拍板 1），路径和标签都可能再改。

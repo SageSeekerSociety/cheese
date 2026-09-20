@@ -19,6 +19,8 @@ import type { ActivityPart, SpaceRef, WorkCard, WorkSignal } from '@/lib/myWork'
 import { computed, onMounted, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
+
 import { listAwaitingMe, listTopics } from '@/api'
 import { t } from '@/i18n'
 import {
@@ -33,8 +35,6 @@ import {
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
 import { TasksApi } from '@/network/api/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
-
-import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 defineOptions({ name: 'MyWork' })
 
@@ -210,7 +210,9 @@ onMounted(async () => {
       <!-- 我手上的项目：按壳分组。组名读这个壳的词表（项目 / 工作 / 课程），
            所以服务端加第五个壳时这里不用改。 -->
       <section v-for="group in groups" :key="group.key" class="my-work__group">
-        <h2 class="t-title my-work__group-title">{{ t('work.groupTitle', { project: termParams(group.shell).project }) }}</h2>
+        <h2 class="t-title my-work__group-title">
+          {{ t('work.groupTitle', { project: termParams(group.shell).project }) }}
+        </h2>
         <v-row density="comfortable">
           <v-col v-for="card in group.cards" :key="card.project.id" cols="12" md="6" lg="4">
             <v-card :to="entryOf(card.project)" class="my-work__card" variant="outlined" rounded="lg">

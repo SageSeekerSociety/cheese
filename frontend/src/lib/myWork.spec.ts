@@ -4,7 +4,6 @@ import type { WorkCard, WorkSignal } from './myWork'
 
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_SHELL } from '@/lib/shell'
 import {
   activityParts,
   activityStamp,
@@ -15,6 +14,8 @@ import {
   topicsSignal,
   workGroups,
 } from './myWork'
+
+import { DEFAULT_SHELL } from '@/lib/shell'
 
 const topic = (over: Partial<Topic>): Topic =>
   ({
@@ -78,12 +79,19 @@ describe('待我处理按项目分堆', () => {
 
 describe('排序与分组', () => {
   it('最近动过的在前，问不出来的一律排最后', () => {
-    const cards = [card('old', { lastActivityAt: '2026-09-01T00:00:00Z' }), card('unknown'), card('new', { lastActivityAt: '2026-09-12T00:00:00Z' })]
+    const cards = [
+      card('old', { lastActivityAt: '2026-09-01T00:00:00Z' }),
+      card('unknown', {}),
+      card('new', { lastActivityAt: '2026-09-12T00:00:00Z' }),
+    ]
     expect(sortCards(cards).map((c) => c.project.id)).toEqual(['new', 'old', 'unknown'])
   })
 
   it('并列时保持清单本来的顺序', () => {
-    const cards = [card('a', { lastActivityAt: '2026-09-12T00:00:00Z' }), card('b', { lastActivityAt: '2026-09-12T00:00:00Z' })]
+    const cards = [
+      card('a', { lastActivityAt: '2026-09-12T00:00:00Z' }),
+      card('b', { lastActivityAt: '2026-09-12T00:00:00Z' }),
+    ]
     expect(sortCards(cards).map((c) => c.project.id)).toEqual(['a', 'b'])
   })
 
@@ -130,10 +138,10 @@ describe('排序与分组', () => {
 describe('我加入的空间', () => {
   it('按卡片顺序去重，没有空间的项目跳过', () => {
     const spaces = joinedSpaces([
-      { ...card('a'), space: { id: 7, name: '空间七' } },
-      { ...card('b'), space: null },
-      { ...card('c'), space: { id: 7, name: '空间七' } },
-      { ...card('d'), space: { id: 9, name: '空间九' } },
+      { ...card('a', {}), space: { id: 7, name: '空间七' } },
+      { ...card('b', {}), space: null },
+      { ...card('c', {}), space: { id: 7, name: '空间七' } },
+      { ...card('d', {}), space: { id: 9, name: '空间九' } },
     ])
     expect(spaces).toEqual([
       { id: 7, name: '空间七' },

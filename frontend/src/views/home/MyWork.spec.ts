@@ -5,18 +5,18 @@
 import type { Project, Topic } from '@/cx_types'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { createPinia } from 'pinia'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render, waitFor, within } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { listAwaitingMe, listProjects, listTopics } from '@/api'
-import { TasksApi } from '@/network/api/tasks'
-import { setLocale } from '@/i18n'
-
 import MyWork from './MyWork.vue'
+
+import { listAwaitingMe, listProjects, listTopics } from '@/api'
+import { setLocale } from '@/i18n'
+import { TasksApi } from '@/network/api/tasks'
 
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
@@ -76,8 +76,15 @@ const routes = [
   { path: '/work', name: 'HomeWork', component: MyWork },
   { path: '/spaces', name: 'HomeSpaces', component: { template: '<div>空间列表</div>' } },
   { path: '/spaces/:spaceId', name: 'SpaceDetail', component: { template: '<div>空间</div>' } },
-  { path: '/projects/:projectId', name: 'workspace-project', component: { template: '<div>工作区</div>' }, props: true },
+  {
+    path: '/projects/:projectId',
+    name: 'workspace-project',
+    component: { template: '<div>工作区</div>' },
+    props: true,
+  },
 ]
+
+vi.setConfig({ testTimeout: 20000 })
 
 type View = Awaited<ReturnType<typeof mount>>
 
@@ -93,7 +100,7 @@ type View = Awaited<ReturnType<typeof mount>>
  * 用例、机器忙的时候默认窗口会假红。
  */
 function findText(view: View, text: string) {
-  return within(view.container).findByText(text, {}, { timeout: 5000 })
+  return within(view.container as HTMLElement).findByText(text, {}, { timeout: 4000 })
 }
 
 async function mount(width = 1280) {
@@ -154,7 +161,9 @@ describe('我的工作页', () => {
     const view = await mount()
     expect(await findText(view, '论文复现')).toBeTruthy()
     // 所属空间在卡片上（同一页顶部的横排里也有它，所以按卡片里那一行问）。
-    await waitFor(() => expect(view.container.querySelector('.my-work__card .my-work__space')?.textContent).toContain('春季课程'))
+    await waitFor(() =>
+      expect(view.container.querySelector('.my-work__card .my-work__space')?.textContent).toContain('春季课程')
+    )
     expect(await findText(view, '2 个在跑')).toBeTruthy()
     expect(await findText(view, '1 件等你')).toBeTruthy()
     expect(await findText(view, '一页纸：先把数据管线跑通。')).toBeTruthy()
@@ -188,8 +197,7 @@ describe('我的工作页', () => {
     vi.mocked(listTopics).mockImplementation(async (projectId: string) => ({
       data: [
         topic(`t-${projectId}`, {
-          last_activity_at:
-            projectId === 'new' ? '2026-09-20T00:00:00Z' : '2026-08-01T00:00:00Z',
+          last_activity_at: projectId === 'new' ? '2026-09-20T00:00:00Z' : '2026-08-01T00:00:00Z',
         }),
       ],
       total: 1,

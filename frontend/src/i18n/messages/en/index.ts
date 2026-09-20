@@ -8,8 +8,8 @@ import publicSite from './publicSite.json'
 import questions from './questions.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
-import work from './work.json'
 import users from './users.json'
+import work from './work.json'
 
 // Namespaces absent here have no English translation yet. They are listed, key by
 // key, in `frontend/src/i18n/untranslated.json` and asserted by

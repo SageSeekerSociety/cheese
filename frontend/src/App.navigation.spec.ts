@@ -95,6 +95,9 @@ async function mountApp(path: string, width: number) {
         component: Home,
         meta: { barSlot: true },
         children: [
+          // 手机上那一格分段里也有「我的工作」：这一页的假路由要和真路由一致，
+          // 否则点它就是在往一个不存在的地址推。
+          { path: 'work', name: 'HomeWork', component: blank },
           { path: 'spaces', name: 'HomeSpaces', component: blank },
           { path: 'teams', name: 'HomeTeams', component: blank },
         ],
