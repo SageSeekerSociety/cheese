@@ -133,7 +133,6 @@ def test_a_project_that_switched_harness_is_filtered_by_that_one(monkeypatch):
     按 claude-code 筛出来的订阅别名 codex 指不到——``binding.resolve`` 把它挑出来
     绑到活上，在派出去的那一刻才失败。
     """
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     monkeypatch.setattr(
         settings, "agent_harness_models", {"codex": ["sonnet", "codex-fixture"]}
     )
