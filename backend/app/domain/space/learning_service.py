@@ -203,9 +203,7 @@ class SpaceLearningService:
             )
         return by_project, names_by_category
 
-    async def _knowledge_point_options(
-        self, space_id: int
-    ) -> list[dict[str, Any]]:
+    async def _knowledge_point_options(self, space_id: int) -> list[dict[str, Any]]:
         """这门课可筛的知识点 —— 分类本身就是课程设计的格子，不限于已有项目的那些。"""
         rows = (
             await self._session.execute(
@@ -357,9 +355,7 @@ class SpaceLearningService:
         names = await self._display_names(set(owners))
 
         return {
-            "students": [
-                {"handle": h, "name": names.get(h, h)} for h in owners
-            ],
+            "students": [{"handle": h, "name": names.get(h, h)} for h in owners],
             "knowledgePoints": await self._knowledge_point_options(space_id),
             "projectCount": len(projects),
         }
@@ -596,6 +592,7 @@ def _knowledge_point_name(
     if category_id is None:
         return None
     return names_by_category.get(category_id)
+
 
 def _excerpt(content: str) -> str:
     """一条发言的摘要。

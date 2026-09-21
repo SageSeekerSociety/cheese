@@ -116,16 +116,10 @@ class FakeSession:
             rows.sort(key=lambda b: b.created_at, reverse=True)
             return _FakeResult(rows[:QUESTION_LIMIT])
         if key == "Project":
-            return _FakeResult(
-                [p for p in self.projects if not uuids or p.id in uuids]
-            )
+            return _FakeResult([p for p in self.projects if not uuids or p.id in uuids])
         if key == "Topic":
             return _FakeResult(
-                [
-                    (t.id, t.title)
-                    for t in self.topics
-                    if not uuids or t.id in uuids
-                ]
+                [(t.id, t.title) for t in self.topics if not uuids or t.id in uuids]
             )
         if key == "Task":
             return _FakeResult(
@@ -340,16 +334,24 @@ async def test_queues_report_the_review_flag_signal_as_absent(monkeypatch):
 @pytest.mark.anyio
 async def test_queues_count_students_not_questions(monkeypatch):
     """「多少人撞上」才是共性 —— 一个学生问十遍不如两个学生各问一遍。"""
+    # 知识点读的是**项目**挂的那道赛题的课程分类（见模块说明：今天没有更细的一维），
+    # 学生就是项目的主人 —— 所以「两个学生撞上同一处」是**两个项目**归到同一个分类，
+    # 不是两个人的发言进了同一个房间。
     alice = project("Alice 的作业", "alice", 1)
     bob = project("Bob 的作业", "bob", 2)
+    carol = project("Carol 的作业", "carol", 3)
     loop_room = topic("循环作业")
     recursion_room = topic("递归作业")
     session = FakeSession(
-        projects=[alice, bob],
-        tasks=[task(1, 11), task(2, 12)],
+        projects=[alice, bob, carol],
+        tasks=[task(1, 11), task(2, 12), task(3, 12)],
         topics=[loop_room, recursion_room],
         categories=[category(11, "循环"), category(12, "递归")],
-        users=[user("alice", "爱丽丝"), user("bob", "鲍勃")],
+        users=[
+            user("alice", "爱丽丝"),
+            user("bob", "鲍勃"),
+            user("carol", "卡罗"),
+        ],
         blocks=[
             # 循环: 一个人问了十遍。
             *[
@@ -357,8 +359,8 @@ async def test_queues_count_students_not_questions(monkeypatch):
                 for i in range(10)
             ],
             # 递归: 两个人各问一遍。
-            block(alice, content="递归看不懂", topic_id=recursion_room.id),
-            block(bob, content="递归出口在哪", topic_id=recursion_room.id),
+            block(bob, content="递归看不懂", topic_id=recursion_room.id),
+            block(carol, content="递归出口在哪", topic_id=recursion_room.id),
         ],
     )
     svc = _service(monkeypatch, session)
@@ -383,9 +385,7 @@ async def test_queues_every_row_can_point_back_at_a_real_message(monkeypatch):
     """队列里没有一行是点不回去的 —— 例子带的是原文坐标，不是拼出来的话。"""
     alice = project("Alice 的作业", "alice", 1)
     room = topic("循环作业")
-    newest = block(
-        alice, content="最新那句", created_at=LATER, topic_id=room.id
-    )
+    newest = block(alice, content="最新那句", created_at=LATER, topic_id=room.id)
     session = FakeSession(
         projects=[alice],
         tasks=[task(1, 11)],
@@ -635,9 +635,7 @@ async def test_outline_drops_blocks_the_asker_may_no_longer_read(monkeypatch):
     )
 
     assert data["missing"] == [str(revoked.id)]
-    quotes = [
-        e["quote"] for s in data["sections"] for e in s["excerpts"]
-    ]
+    quotes = [e["quote"] for s in data["sections"] for e in s["excerpts"]]
     assert quotes == ["读得了的那句"]
 
 
