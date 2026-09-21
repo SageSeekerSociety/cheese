@@ -88,6 +88,8 @@ logger = logging.getLogger(__name__)
 # How long the launcher file write may go unanswered. The hub adds 5s of grace
 # on top for the exec.result frame itself.
 _LAUNCHER_SHIP_TIMEOUT_S = 30
+_SESSION_RECONNECT_GRACE_S = 10.0
+_SESSION_RECONNECT_POLL_S = 0.25
 
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
@@ -1648,7 +1650,7 @@ class DeviceChannel(Channel):
         return factory()
 
     async def _resolve_session_host(self, db, session: SessionRef) -> str:
-        """这条会话自己的机器，确认它在线。只读，不写，不提交。
+        """读取这条会话自己的机器。在线等待由调用方在归还数据库连接后完成。
 
         机器从会话行上读，不是项目钉住的那台工作机。问的是这条会话而不是这个房间：
         一间房里的两个队友各有一条会话，可能坐在两台机器上。
@@ -1660,9 +1662,31 @@ class DeviceChannel(Channel):
             session.topic_id, session.agent_handle, harness=session.harness
         )
         host = place.machine if place else settings.agent_session_device_id
-        if not host or not self._hub.is_online(host):
+        if not host:
+            logger.error("session_host_unconfigured topic=%s", session.topic_id)
             raise ScreenSetupError("这条会话的机器尚未配置或未连接")
         return host
+
+    async def _wait_for_session_host(self, host: str, session: SessionRef) -> None:
+        """Give the pinned connector time to reconnect after an ingress reload.
+
+        Call after releasing the database session: simultaneous room starts
+        must leave the connection pool available while transport recovers.
+        """
+        if self._hub.is_online(host):
+            return
+        logger.info(
+            "session_host_reconnecting topic=%s host=%s", session.topic_id, host
+        )
+        deadline = time.monotonic() + _SESSION_RECONNECT_GRACE_S
+        while not self._hub.is_online(host):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "session_host_offline topic=%s host=%s", session.topic_id, host
+                )
+                raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+            await asyncio.sleep(min(_SESSION_RECONNECT_POLL_S, remaining))
 
     async def _session_agent(self, db, session: SessionRef):
         """Resolve the selected conversation's project handle to its author."""
@@ -1690,7 +1714,9 @@ class DeviceChannel(Channel):
             host = await self._resolve_session_host(db, session)
             agent = await self._session_agent(db, session)
             await db.commit()
-            return Placement(host, agent.id, agent.username, rented=False)
+            placement = Placement(host, agent.id, agent.username, rented=False)
+        await self._wait_for_session_host(host, session)
+        return placement
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
