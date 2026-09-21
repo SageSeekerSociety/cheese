@@ -18,6 +18,7 @@ on:
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
+      - '.github/workflows/deploy-dev.yml'
       - '.github/workflows/build.yml'
       - '.github/scripts/plan-image-builds.sh'
       - '.github/scripts/test-plan-image-builds.sh'
@@ -26,6 +27,7 @@ on:
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
+      - '.github/workflows/deploy-dev.yml'
       - '.github/workflows/build.yml'
       - '.github/scripts/plan-image-builds.sh'
       - '.github/scripts/test-plan-image-builds.sh'
@@ -71,6 +73,9 @@ jobs:
 
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
+
+      - name: Automatic release ordering
+        run: python3 deploy/tests/test_auto_deploy.py
 
       - name: Persistent ingress survives application switches
         run: |
