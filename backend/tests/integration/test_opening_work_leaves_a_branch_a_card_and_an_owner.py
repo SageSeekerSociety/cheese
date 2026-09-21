@@ -84,8 +84,17 @@ def _open_work(client, room_id: str, title: str) -> dict:
     return response.json()["data"]
 
 
-def test_opening_two_pieces_of_work_leaves_two_cards_and_two_branches(client):
-    """两条活 = 两张卡 + 两条分支 + 两个负责人，一张卡一条分支，不共用。"""
+def test_opening_two_pieces_of_work_leaves_two_flat_cards_each_on_its_own_branch(
+    client,
+):
+    """两条活 = 两张卡 + 两条分支 + 两个负责人，而且两条活是平的。
+
+    分支名对不对不在这里验：平台只记一个名字，建分支的是机器上的执行器
+    （`room_task/services.py` 的 `task.branch_name = f"task/{...}"`），所以「非空且
+    互不相等」除非 uuid 撞车否则永远绿。能红的是这两条活**从哪里开出去**：结论 33
+    说活在房间里是平的，没有子卡，所以两条都该从同一条基线长出来、谁也不挂在谁
+    身上 —— 哪天 split 开始默认把新活接在上一条后面，这里会红。
+    """
     _project_id, room_id = _room_with_a_session_on_a_machine(client)
 
     first = _open_work(client, room_id, "接口分页")
@@ -93,9 +102,11 @@ def test_opening_two_pieces_of_work_leaves_two_cards_and_two_branches(client):
 
     cards = client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]
     assert [card["id"] for card in cards] == [first["id"], second["id"]]
-    assert first["branch_name"] and second["branch_name"]
-    assert first["branch_name"] != second["branch_name"]
     assert first["owner_handle"] == second["owner_handle"] == "alice"
+    assert first["branch_name"] and second["branch_name"]
+    assert first["base_task_id"] is second["base_task_id"] is None
+    assert first["base_branch"] == second["base_branch"]
+    assert first["base_branch"] not in (first["branch_name"], second["branch_name"])
 
 
 def test_opening_work_adds_no_session_of_its_own_and_no_second_lease(client):

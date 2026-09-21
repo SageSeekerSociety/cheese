@@ -559,10 +559,14 @@ class AgentWorkRunner:
         and not the person who asked. That person is right here in the turn
         record, next to the continuation id the split endpoint already reads.
 
-        None covers two cases the caller must treat identically — fall back to
-        whatever it did before: no turn of ours is running, or the turn was
-        started by the platform itself (`author="system"` — gate verdicts,
-        conflict nudges). Only a real person's handle comes back."""
+        None covers three cases the caller must treat identically — fall back to
+        whatever it did before: no turn of ours is running; the turn was started
+        by the platform itself (`author="system"` — gate verdicts, conflict
+        nudges); or this room's agent started the turn itself, its `author`
+        being an agent handle (`open_turn_the_session_started` — a worker's
+        completion notice wakes the session and it runs a whole turn off that,
+        which is the likeliest turn to open work of its own). Only a real
+        person's handle comes back."""
         rec = self._current_turn_record(topic_id)
         author = rec.get("author") if rec is not None else None
         if not isinstance(author, str) or not names_a_person(author):
