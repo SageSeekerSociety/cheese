@@ -43,6 +43,14 @@ It uses the configuration bundled in the image. If the new container fails its
 health check, the release restores the saved image and configuration and reports
 failure. Both the old and new configurations remain in the release directory.
 
+Kimi K3 uses the native Messages endpoint at
+`https://api.moonshot.cn/anthropic`. Set `MOONSHOT_API_KEY` in the gateway's
+`$HOME/gateway/compose/.env` before releasing a configuration that includes it.
+Its budget prices convert the published CNY rates at the existing RMB 7.1/USD
+convention; they are estimates, not a live exchange rate. The pinned adapter
+keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
+unsupported adaptive-thinking field.
+
 The box's `backend/.env` must contain:
 
 ```

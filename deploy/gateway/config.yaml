@@ -18,10 +18,29 @@
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
 #
-# Every model here is one this deployment already uses directly today; pointing
-# the callers at the gateway instead is what makes their spend visible. Nothing
-# new is introduced — the upstreams and keys are the same.
+# Provider credentials stay in the gateway; callers use project-scoped keys so
+# every configured upstream is metered against the same project budget.
 model_list:
+  - model_name: kimi-k3
+    litellm_params:
+      model: anthropic/kimi-k3
+      api_base: https://api.moonshot.cn/anthropic
+      api_key: os.environ/MOONSHOT_API_KEY
+      # CN rates per million tokens: RMB 20 input, 100 output, 2 cache read,
+      # 20 cache write (5m), 40 cache write (1h).
+      # https://platform.kimi.com/docs/pricing/chat
+      # Budget estimates in USD use the existing RMB 7.1/USD convention.
+      input_cost_per_token: 0.000002816902
+      output_cost_per_token: 0.000014084508
+      cache_read_input_token_cost: 0.000000281691
+      cache_creation_input_token_cost: 0.000002816902
+      cache_creation_input_token_cost_above_1hr: 0.000005633803
+    model_info:
+      cheese_selectable: true
+      cheese_label: Kimi K3
+      # K3 always reasons: keep native effort, but omit adaptive thinking.
+      supports_output_config: true
+      supports_max_reasoning_effort: true
   # 芝士's own turns and the agents' Claude Code both speak the Anthropic
   # protocol, so both arrive on /v1/messages and are metered by the same rows.
   - model_name: glm-4.6
