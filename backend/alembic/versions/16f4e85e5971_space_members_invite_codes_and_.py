@@ -8,7 +8,7 @@ migrations, so they exist in the database but not in the models autogenerate
 compares against. Only the four operations below belong to this change.
 
 Revision ID: 16f4e85e5971
-Revises: d5b2c8f41a37
+Revises: b2f4d81a3c07
 Create Date: 2026-09-19 22:20:00.000000
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "16f4e85e5971"
-down_revision: str | Sequence[str] | None = "d5b2c8f41a37"
+down_revision: str | Sequence[str] | None = "b2f4d81a3c07"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
