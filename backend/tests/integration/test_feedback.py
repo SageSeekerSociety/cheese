@@ -1787,6 +1787,45 @@ def test_cards_report_the_avatar_its_author_picked_and_null_for_everyone_else(cl
     assert rows["没有档案的人提的"]["author_avatar_id"] is None
 
 
+def test_the_chat_roster_and_the_feedback_card_report_the_same_face(client):
+    """工作台聊天区读的那份名册和反馈读的是**同一个判断**，不是两条。
+
+    聊天区画的是 `props.members`，也就是 `GET /projects/{id}/members`；反馈画的是
+    `author_avatar_id`。两边各自从 `UserProfile` 解析头像，而「挑过没有」这条规则
+    只要有一侧写得不一样（名册那边哪天改成直接发 `avatar_id`，或者这里改用别的查法），
+    表现就是**同一个人在聊天区有脸、在反馈里是彩色首字母** —— 两套门禁都不会红，
+    因为两边各自都「对」。
+
+    所以这里比的不是「都非空」，是**同一份答案**：挑过的人在两边拿到同一个 id，
+    没挑过的人在两边都拿到 null。判据本身在 `chosen_avatar_ids` 和
+    `ProjectRepository.list_members`，两处都按 `Avatar.avatar_type` 认默认图 ——
+    两边都写了、都写了注释，这个用例是唯一能拦住它们漂开的东西。
+    """
+    ids = _seed_profiles(client, {"fb-picked": "predefined", "fb-plain": "default"})
+    project = _project(client, "fb-picked")
+    client.post(
+        f"/projects/{project}/members",
+        json={"user_handle": "fb-plain"},
+        headers=session_auth_headers("fb-picked"),
+    )
+    _report(client, "fb-picked", title="挑过头像的人提的")
+    _report(client, "fb-plain", title="没挑过头像的人提的")
+
+    roster = {
+        m["user_handle"]: m["avatar_id"]
+        for m in client.get(
+            f"/projects/{project}/members", headers=session_auth_headers("fb-picked")
+        ).json()["data"]["data"]
+    }
+    cards = {c["title"]: c["author_avatar_id"] for c in _cards(client, "fb-picked")}
+
+    assert roster["fb-picked"] == ids["fb-picked"]
+    assert cards["挑过头像的人提的"] == ids["fb-picked"]
+    # 没挑过的那一半：两侧都必须是 null，而不是各自发一个默认头像 id。
+    assert roster["fb-plain"] is None
+    assert cards["没挑过头像的人提的"] is None
+
+
 def test_every_face_the_detail_draws_is_resolved_the_same_way(client, as_admin):
     """详情页一屏里有三种作者：报告的作者、评论的作者、内部备注的作者。
 
