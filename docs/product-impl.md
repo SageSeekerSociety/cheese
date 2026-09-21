@@ -105,7 +105,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写主人个人记忆。
 - **记忆注入**：每轮把项目记忆（私聊则个人记忆）+ 实况文档拼进 system prompt。🟡 会话收尾**自动提取**记忆未做；项目话题里加载**成员个人记忆**未做。
-- **巡检（本体心跳）**：`POST /api/projects/{id}/heartbeat`。走根话题串行锁、注入今天日期 + 里程碑剩余天数（Batch E）。🟡 巡检暂未注入各话题文档/项目记忆、逾期里程碑未入视野（剩余 backlog）。
+- **巡检（本体心跳）**：已退役。`POST /api/projects/{id}/heartbeat` 2026-08-12 摘掉（`app/api/routes/activities.py` 留成一个空 router，原因写在原地；`tests/contract/test_parked_bypass_turns.py` 守着它别被挂回来），定时 tick 那一侧跟着 scheduler 包一起删掉（§3.8）。它回来的时候是一份 skill，不是一个钟。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写
 

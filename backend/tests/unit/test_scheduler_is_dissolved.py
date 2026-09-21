@@ -11,6 +11,7 @@
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -20,60 +21,53 @@ from app.main import app
 
 REPO = Path(__file__).resolve().parents[3]
 
-#: 不扫的目录：版本库内部、装出来的依赖、以及只在一台机器上活着的草稿。
-_SKIP_DIRS = {
-    ".git",
-    ".claude",
-    "node_modules",
-    "tmp",
-    ".venv",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "dist",
-    "htmlcov",
-}
-
 #: `docs/plans/` 和 `docs/topics/` 里是**写完就定格的记录**——一份带日期的方案、
 #: 一次 rebase 的语义冲突怎么解的、某条结论是哪天合的。它们写下时是真的，读的人
 #: 也是当记录读。守卫逼着去改它们，改出来的不是更新，是一份假的历史。所以这条
 #: 守卫盯的是活代码、配置，和描述「现在是什么样」的文档。
-_SKIP_PATHS = {"docs/plans", "docs/topics"}
+_SKIP_PATHS = ("docs/plans/", "docs/topics/")
 
-_THIS_FILE = Path(__file__).resolve()
+_THIS_FILE = Path(__file__).resolve().relative_to(REPO).as_posix()
 
 
-def _repo_text_files() -> list[Path]:
-    found: list[Path] = []
-    stack = [REPO]
-    while stack:
-        current = stack.pop()
-        for entry in current.iterdir():
-            if entry.is_symlink():
-                continue
-            if entry.is_dir():
-                relative = entry.relative_to(REPO).as_posix()
-                if entry.name not in _SKIP_DIRS and relative not in _SKIP_PATHS:
-                    stack.append(entry)
-                continue
-            if entry.resolve() == _THIS_FILE:
-                continue
-            try:
-                entry.read_text()
-            except (UnicodeDecodeError, OSError):
-                continue
-            found.append(entry)
+def _repo_text() -> list[tuple[str, str]]:
+    """向 git 要被跟踪的文件，不去走工作树。
+
+    这条守卫判的是版本库里还有没有 scheduler，而工作树上另有一份只属于这台机器的
+    东西。`backend/.env` 就是：每个人照 `.env.example` 抄一份出来，本 PR 之前的那
+    份里有 `SCHEDULER_INTERVAL_SECONDS` 这一行，于是一个早就配好 `.env` 的检出会
+    红，而红的理由跟版本库里的代码无关。CI 和新开的 worktree 都不生成这个文件，两
+    边都看不见这种红。被 gitignore 掉的其余东西（评测结果、谁临时写下的笔记）是同
+    一个口子。
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(REPO), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
+    found: list[tuple[str, str]] = []
+    for name in listed:
+        if not name or name == _THIS_FILE or name.startswith(_SKIP_PATHS):
+            continue
+        path = REPO / name
+        # 跟踪着的符号链接（`.claude/skills/` 下那一批）指到版本库外面去。
+        if path.is_symlink():
+            continue
+        try:
+            found.append((name, path.read_text()))
+        except (UnicodeDecodeError, OSError):
+            continue
     return found
 
 
 def _hits(pattern: str) -> list[str]:
     rx = re.compile(pattern)
     out: list[str] = []
-    for path in _repo_text_files():
-        for number, line in enumerate(path.read_text().splitlines(), start=1):
+    for name, text in _repo_text():
+        for number, line in enumerate(text.splitlines(), start=1):
             if rx.search(line):
-                out.append(f"{path.relative_to(REPO)}:{number}: {line.strip()}")
+                out.append(f"{name}:{number}: {line.strip()}")
     return out
 
 
