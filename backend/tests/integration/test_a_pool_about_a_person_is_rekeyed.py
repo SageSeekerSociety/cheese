@@ -86,9 +86,9 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
             await _rekey(db_session)
 
             assert await store.recall(MemoryScope.user, landed) == ["他要结论在最前面"]
-            assert await store.count(MemoryScope.user, not_landed) == 0
+            assert await store.recall(MemoryScope.user, not_landed) == []
             # 老键上一行不剩：新代码不认它，留着就是一条谁也读不到的记忆。
-            assert await store.count(MemoryScope.user, "andyl") == 0
+            assert await store.recall(MemoryScope.user, "andyl") == []
 
     _portal.call(run)
 
