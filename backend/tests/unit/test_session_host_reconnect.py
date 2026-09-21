@@ -25,7 +25,7 @@ async def test_startup_waits_for_its_host_to_reconnect(monkeypatch):
     monkeypatch.setattr(device_provider, "_SESSION_RECONNECT_POLL_S", 0.005)
     asyncio.get_running_loop().call_later(0.02, online.add, "chosen-host")
     await channel._wait_for_session_host(
-        "chosen-host", SessionRef(uuid.uuid4(), uuid.uuid4(), "reviewer", "pi")
+        "chosen-host", SessionRef(uuid.uuid4(), uuid.uuid4(), "reviewer", harness="pi")
     )
     assert len(asked) > 1
     assert set(asked) == {"chosen-host"}
@@ -38,7 +38,8 @@ async def test_startup_stops_when_the_pinned_host_stays_offline(monkeypatch):
     with pytest.raises(ScreenSetupError, match="未连接"):
         await asyncio.wait_for(
             channel._wait_for_session_host(
-                "chosen-host", SessionRef(uuid.uuid4(), uuid.uuid4(), "reviewer", "pi")
+                "chosen-host",
+                SessionRef(uuid.uuid4(), uuid.uuid4(), "reviewer", harness="pi"),
             ),
             timeout=0.5,
         )
@@ -90,7 +91,7 @@ async def test_reconnect_leaves_database_connections_available(
     monkeypatch.setattr(device_provider, "_SESSION_RECONNECT_POLL_S", 0.005)
     asyncio.get_running_loop().call_later(0.02, reconnect)
     result = await channel.precheck(
-        SessionRef(uuid.uuid4(), uuid.uuid4(), "reviewer", "codex"),
+        SessionRef(uuid.uuid4(), uuid.uuid4(), "reviewer", harness="codex"),
         needs_place=needs_place,
     )
     assert result.agent_handle == "reviewer"

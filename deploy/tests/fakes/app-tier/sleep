@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = 31 ]; then
+  [ -z "${APP_TIER_DOCKER_LOG:-}" ] || printf 'sleep 31\n' >> "$APP_TIER_DOCKER_LOG"
+  exit 0
+fi
+exec /bin/sleep "$@"

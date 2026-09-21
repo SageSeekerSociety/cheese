@@ -340,10 +340,7 @@ def periodic_jobs(
     from app.domain.agent.forgejo_tokens import purge_expired_tokens
     from app.domain.delivery.ledger import resend_unsent_deliveries
     from app.domain.machine.warm import sweep_warm_pool
-    from app.domain.notification.maintenance import (
-        drain_email_queue,
-        finalize_expired_aggregations,
-    )
+    from app.domain.notification.maintenance import drain_email_queue
     from app.domain.notification.push_delivery import drain_push_queue
     from app.domain.project.forge import reconcile_repository_webhooks
     from app.domain.review import pr_poll
@@ -427,14 +424,6 @@ def periodic_jobs(
             "backend error flush",
             settings.backend_error_flush_interval_s,
             backend_log.flush_expired,
-        ),
-        # An aggregation window that never closes is a notification written and
-        # never delivered — and aggregated notifications are what a busy room
-        # produces most of.
-        PeriodicRunner(
-            "notification finalize",
-            settings.notification_finalize_interval_s,
-            lambda: finalize_expired_aggregations(sessions),
         ),
         # The only consumer of the Redis list every email notification is pushed
         # onto. Unrun, that key is not slow — it grows forever and no mail goes.

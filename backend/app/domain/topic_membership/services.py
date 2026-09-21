@@ -20,6 +20,7 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
 )
+from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
@@ -311,25 +312,17 @@ class TopicMemberService:
         member is an agent iff it carries an ``AgentBinding``. Returns every
         such member, because a room may host more than one 芝士 — callers that
         need "the agent acting here" want :meth:`resolve_agent_handle`.
-        """
-        from app.domain.identity.repositories import AgentBindingRepository
-        from app.domain.user.repositories import UserRepository
 
+        项目名册问的是同一句，所以两边读的是同一处推导
+        (:meth:`IdentityService.agents_among`)：一句话有两份声明，迟早在某一个
+        handle 上给出两个答案，而房间说它是 agent、项目名册说它是人，正是这次改动
+        要消掉的那种差（I4a）。
+        """
         members = await self._repo.list_for_topic(topic_id)
-        if not members:
-            return []
-        by_handle = await UserRepository(self._session).get_by_handles(
+        agents = await IdentityService(self._session).agents_among(
             [m.member_handle for m in members]
         )
-        agent_ids = await AgentBindingRepository(self._session).agent_user_ids(
-            [u.id for u in by_handle.values()]
-        )
-        return [
-            m.member_handle
-            for m in members
-            if (user := by_handle.get(m.member_handle)) is not None
-            and user.id in agent_ids
-        ]
+        return [m.member_handle for m in members if m.member_handle in agents]
 
     async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
         """Does ``handle`` answer THIS room as one of its agents?

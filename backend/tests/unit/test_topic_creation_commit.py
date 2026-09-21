@@ -51,7 +51,17 @@ async def test_creation_response_follows_commit(monkeypatch, commit_fails):
     monkeypatch.setattr(
         topics,
         "TopicService",
-        lambda session: SimpleNamespace(create=AsyncMock(return_value=topic)),
+        lambda session: SimpleNamespace(
+            create=AsyncMock(return_value=topic),
+            relevance_for_topics=AsyncMock(return_value={}),
+        ),
+    )
+    monkeypatch.setattr(
+        topics,
+        "TopicMemberService",
+        lambda session: SimpleNamespace(
+            managed_topic_ids=AsyncMock(return_value={topic.id})
+        ),
     )
     resolver = SimpleNamespace(
         resolve=AsyncMock(return_value=SimpleNamespace(handle="owner")),

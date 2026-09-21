@@ -98,7 +98,7 @@ describe('边缘的错误页不是应用的答复', () => {
     serve([envelope])
     await expect(listProjects()).rejects.toMatchObject({
       status: 503,
-      message: '暂时无法发起 GitHub 账号连接，请稍后重试（HTTP 503）',
+      message: '暂时无法发起 GitHub 账号连接，请稍后重试',
     })
     expect(calls).toHaveLength(3)
   })

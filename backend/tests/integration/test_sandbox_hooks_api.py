@@ -40,7 +40,7 @@ def _post(client, topic, *, project=None, event_id=None, body=None):
 
 
 def _logged(project, topic):
-    return read_log(SessionRef(project, topic))
+    return read_log(SessionRef(project, topic, harness="claude-code"))
 
 
 def test_hook_rejected_without_valid_token(client):
