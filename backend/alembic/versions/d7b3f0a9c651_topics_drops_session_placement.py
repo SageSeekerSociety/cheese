@@ -24,7 +24,7 @@ owner 只挂 `connector` 与 `execution` 两个路由，两个都只读它。理
 （按结论 60 修订）要消掉的形状。
 
 Revision ID: d7b3f0a9c651
-Revises: c1a7e05d4b83
+Revises: b4d1a70c9e52
 Create Date: 2026-09-21
 
 """
@@ -35,7 +35,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d7b3f0a9c651"
-down_revision: str | Sequence[str] | None = "c1a7e05d4b83"
+down_revision: str | Sequence[str] | None = "b4d1a70c9e52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -57,7 +57,3 @@ class AgentInstanceRepository:
             .order_by(AgentInstance.created_at)
         )
         return list(result.scalars())
-
-    async def delete(self, instance: AgentInstance) -> None:
-        await self._session.delete(instance)
-        await self._session.flush()
