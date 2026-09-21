@@ -39,13 +39,17 @@ watch(
 // without a manual refresh. The same tick refreshes the topic list, so the
 // sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too.
 let pollTimer: number | undefined
+function refreshVisible() {
+  if (document.visibilityState === 'hidden') return
+  void store.refreshUnread()
+  void store.refreshTopics()
+}
 onMounted(() => {
-  pollTimer = window.setInterval(() => {
-    void store.refreshUnread()
-    void store.refreshTopics()
-  }, 30_000)
+  pollTimer = window.setInterval(refreshVisible, 30_000)
+  document.addEventListener('visibilitychange', refreshVisible)
 })
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', refreshVisible)
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
 })
 

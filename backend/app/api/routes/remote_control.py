@@ -30,7 +30,6 @@ from app.domain.agent.remote_control import CONTROLS, key, store
 from app.domain.agent.runtime import get_broker
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -84,8 +83,22 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
 
     `SADD` returning 1 is the whole of the idempotency: the worker re-sends its
     pending list with every batch, and the room must not fill with copies.
+
+    A session that never recorded which agent it is — opened before #1185 and
+    still inside the seven-day retention — has no name to ask under, so its
+    questions stay on the panel and nothing is written into the room. Picking a
+    name off the room is not the answer: it seats whatever collaborators it
+    holds, so it would file the question under an agent that may not have asked
+    it. What this may not do is decide the worker's return code. The batch is
+    already stored by the time this runs, and failing here would skip
+    `announce` too — so the panel, the one surface these sessions have left,
+    would stop refreshing, and the worker would re-send the same pending list
+    into the same failure until the session ages out.
     """
     sid = session["id"]
+    author = session.get("agent_handle")
+    if not author:
+        return
     topic_id = uuid.UUID(session["topic_id"])
     rc = store()
     snapshot = await rc.snapshot(session)
@@ -101,7 +114,7 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
             roster=None,
             topic_refs=[],
             publish=True,
-            author=session.get("agent_handle") or topic_agent_handle(topic_id),
+            author=author,
             publication_id=f"rc-ask-{request_id}",
             # 这句是芝士自己问出口的，不是谁交给它去读的一句话：它在等**人**按
             # 下那个按钮。不说明的话轮次输入账目会把它记成一条待读输入 —— 「忘
@@ -194,14 +207,13 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     data["execution"] = (
         {"resource_id": resource, "execution": current[0].lease} if current else None
     )
-    # A credential naming the room's stand-in seat acts as the agent seated
-    # there; the session records who that is, so its questions and answers are
-    # attributed to the same identity every other write of that turn carries.
-    acting = claims.get("a")
-    if acting:
-        acting = await ActorResolver(
-            session=db, bearer=None, cheese_token=""
-        ).seated_agent(place.room_id, acting)
+    # Who this session is, decided once and recorded on it: the agent the
+    # credential named, else the one this room seats. Everything the session
+    # says afterwards is attributed to that, and `not_its_own` reads it back to
+    # refuse letting a session approve its own tools.
+    acting = await ActorResolver(session=db, bearer=None, cheese_token="").acting_agent(
+        place.room_id, claims.get("a")
+    )
     session = await store().create({**claims, "a": acting}, data)
     await announce(session)
     return {"session": session}
@@ -460,18 +472,26 @@ def not_its_own(session: dict, actor: Actor) -> None:
     of the session, which knows, and never of the room, which holds whatever
     collaborators it holds and cannot be said to have an agent.
 
-    A session opened before it recorded this falls back to the handle its own
-    credential would have carried, derived from its place the way
-    `mint_scoped_token` derives it. That is still the session answering for
-    itself, and without it every session already running would be unguarded.
+    The handle comes off the session itself: `rc_create` settles who the session
+    is once, when it opens, and records it. Asking the room again here would be
+    a second answer to a question already decided, and a wrong one in a room
+    that has since seated somebody else.
 
     Being this session is the whole question: the handle a session runs under is
     an agent's either way, so also asking whether the actor was an agent added a
     second, weaker answer to a question this one had already settled.
+
+    A session that never recorded it — opened before #1185 and still inside the
+    seven-day retention — cannot be told apart from its own controller, and a
+    gate that cannot tell refuses. Deriving a name from the room instead is the
+    answer this change retired: a room may seat several agents, so it would
+    both clear the wrong actor and stop the right one.
     """
-    mine = session.get("agent_handle") or topic_agent_handle(
-        uuid.UUID(session["topic_id"])
-    )
+    mine = session.get("agent_handle")
+    if not mine:
+        raise ForbiddenError(
+            "This session records no agent; reopen it before controlling it"
+        )
     if actor.handle == mine:
         raise ForbiddenError("A session cannot decide its own controls")
 

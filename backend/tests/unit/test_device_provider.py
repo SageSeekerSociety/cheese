@@ -421,7 +421,7 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     async def agent(self, topic):
         return SimpleNamespace(id=1, username="agent")
 
-    monkeypatch.setattr(IdentityService, "ensure_topic_agent_user", agent)
+    monkeypatch.setattr(IdentityService, "ensure_room_agent_user", agent)
     monkeypatch.setattr(
         "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
     )

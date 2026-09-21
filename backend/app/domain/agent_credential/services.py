@@ -1,4 +1,8 @@
-"""Project credentials authenticate the fixed agent of the project's root room.
+"""Project credentials authenticate the project's own 芝士.
+
+That is ``default_agent_instance_id``, not a name derived from the project's
+root room: the same participant answers in the browser and off-platform, so
+what either signs carries one name and reaches exactly the same rooms.
 
 The principal does not change with the destination or inherit the issuer's
 roles. Its current memberships grant access; issuance creates no membership.
@@ -19,7 +23,7 @@ from app.core.sandbox_auth import (
     mint_project_agent_credential,
     project_agent_claims,
 )
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
@@ -61,15 +65,19 @@ class ProjectAgentCredentialService:
         return project
 
     async def agent_handle(self, project_id: uuid.UUID) -> str | None:
-        """The project's fixed agent identity, independent of the target room.
+        """The project's own 芝士, independent of the target room.
 
-        Its existing memberships grant access; holding this credential never
-        creates a membership or borrows another room's agent seat.
+        Its existing seats grant access; holding this credential never creates a
+        seat and is never itself a reason to be let into a room. It is the
+        agent's own handle rather than one derived from the project's root room:
+        an off-platform 芝士 holding this credential is the same participant as
+        the one answering in the browser, so what it signs carries the same name
+        and reaches exactly the same rooms.
         """
         project = await self._projects.get(project_id)
-        if project is None or project.root_topic_id is None:
+        if project is None or project.default_agent_instance_id is None:
             return None
-        return topic_agent_handle(project.root_topic_id)
+        return agent_instance_handle(project.default_agent_instance_id)
 
     async def issue(
         self, *, project_id: uuid.UUID, expires_in_days: int | None = None

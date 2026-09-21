@@ -43,6 +43,18 @@ class ForgeAttributionUpdate(BaseModel):
     requester_coauthor: bool | None
 
 
+class ProjectDefaultModelUpdate(BaseModel):
+    """项目默认模型：主线和未显式绑模型的活都走这个。
+
+    `model=None` 表示清掉显式设置，回落到部署兜底（订阅部署→订阅默认；
+    否则→部署级 agent_model）。设一个不在 model_choices 里的名字会被
+    `validate` 拒掉，而不是静默落到部署兜底——静默换池正是 #1365 之后
+    这条控制点要杀掉的失败（I27）。
+    """
+
+    model: str | None = None
+
+
 class TaskLinkCreate(BaseModel):
     task_id: uuid.UUID
 
