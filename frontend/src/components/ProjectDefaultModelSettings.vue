@@ -70,9 +70,7 @@ watch(() => props.projectId, load)
 <template>
   <div>
     <h3 class="text-subtitle-1 mb-2">默认模型</h3>
-    <p class="text-body-2 text-medium-emphasis mb-4">
-      房间主线直接使用项目默认；已运行的房间保留原绑定
-    </p>
+    <p class="text-body-2 text-medium-emphasis mb-4">房间主线直接使用项目默认；已运行的房间保留原绑定</p>
     <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
     <template v-if="state">
       <div class="d-flex align-center" style="gap: 12px">
@@ -82,6 +80,7 @@ watch(() => props.projectId, load)
           item-title="label"
           item-value="id"
           :disabled="busy || !state.can_manage"
+          autocomplete="off"
           density="compact"
           variant="outlined"
           hide-details

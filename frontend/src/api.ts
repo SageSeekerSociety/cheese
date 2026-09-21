@@ -887,10 +887,7 @@ export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaul
   return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
 }
 
-export function setProjectDefaultModel(
-  projectId: string,
-  model: string | null,
-): Promise<ProjectDefaultModel> {
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
   return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
     method: 'PUT',
     body: JSON.stringify({ model }),

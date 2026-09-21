@@ -1133,12 +1133,11 @@ def _default_model_state(project_settings: dict | None) -> dict:
     chosen = (project_settings or {}).get("default_model")
     # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
     # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
-    effective = chosen if isinstance(chosen, str) and chosen in {c["id"] for c in choices} else None
+    known_ids = {c["id"] for c in choices}
+    effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
     return {
         "model": effective,
-        "deployment_default": next(
-            (c["id"] for c in choices if c["default"]), None
-        ),
+        "deployment_default": next((c["id"] for c in choices if c["default"]), None),
         "choices": choices,
         "can_manage": False,  # 由路由层按权限填
     }
