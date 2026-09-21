@@ -53,6 +53,17 @@ def test_identity_is_cheeses_own_and_never_an_anthropic_account():
     assert "anthropic.com" not in body["account"]["email"]
 
 
+def test_the_connectivity_probe_is_answered_by_the_boundary_it_probes():
+    """`/api/hello` is the client asking whether it can reach Anthropic at all:
+    a preflight, a startup warm-up and a diagnostic each send it, and each
+    reads the status and nothing else. This proxy IS the box's way out, so an
+    answer from here is the true one — and an unanswered probe is one more
+    request leaving on the platform's credential for a body nobody reads."""
+    answer = _answer("/api/hello")
+    assert answer.status == 200
+    assert answer.body == b""
+
+
 def test_settings_are_answered_empty_rather_than_fetched():
     answer = _answer("/api/claude_code/settings")
     assert answer.status == 204

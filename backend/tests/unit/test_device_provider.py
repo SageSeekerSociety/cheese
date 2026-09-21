@@ -33,15 +33,11 @@ from app.domain.device.supply import Supply, Visibility
 
 @pytest.fixture(autouse=True)
 def _no_device_identity(monkeypatch):
-    """Default every test to a device that brings no ccproxy identity.
+    """The backend addresses this device at the base it was built with.
 
-    `_device_ccproxy_upstream` hits the database, and these tests run without
-    one. Tests about the machine-ticket signal override this with a real value."""
-
-    async def none(_self, _device_id):
-        return ""
-
-    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", none)
+    (A device that brings no ccproxy identity is the whole layer's default, in
+    `tests/unit/conftest.py`; the tests about the machine-ticket signal
+    override it with a real value.)"""
 
     async def public_base(self, _device_id):
         return self._public_base

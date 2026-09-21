@@ -46,6 +46,12 @@
     },
     {
       "hosts": ["api.anthropic.com"],
+      "exact": "/api/hello",
+      "status": 200,
+      "body": null
+    },
+    {
+      "hosts": ["api.anthropic.com"],
       "exact": "/api/claude_code/settings",
       "status": 204,
       "body": null
