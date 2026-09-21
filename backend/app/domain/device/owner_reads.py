@@ -24,10 +24,9 @@ require a coordinated owner release; unrelated columns do not.
 
 Outliving the app cuts the other way as well: a release that moves a read onto
 a shape only the new backend writes leaves THIS process reading the old one
-until somebody releases it separately. So a read is moved in the release
-BEFORE the one that moves the write — this build reads the session rows and
-falls back to the room column, so it serves whichever of the two the running
-backend writes, and it can be released at any point between the two.
+until somebody releases it separately. So a read is moved in the release BEFORE
+the one that moves the write, reading both shapes in between, and the column it
+used to read is dropped a release later still.
 """
 
 import uuid
@@ -133,16 +132,6 @@ async def session_places(
 ) -> list[tuple[dict, dict | None]]:
     """Every session sitting in this place: where its process runs, and the
     hands it rented. A room seats several agents, so this is a list.
-
-    The second read is the deploy window, not a second source of truth. An app
-    release does not replace this process, so this build goes out on its own
-    and before the release that moves the write — and until that one is out,
-    the running backend is still recording a room's location on the room, as
-    is every room that already had a screen open. A place that has a session
-    row is answered by that row and this never runs.
-
-    P19 drops `topics.session_placement`; this branch goes with it, in the same
-    commit, because by then it can only return nothing.
     """
     located = (
         await session.execute(
@@ -153,15 +142,7 @@ async def session_places(
             )
         )
     ).all()
-    if located:
-        return [(row.runtime_location, row.work_lease) for row in located]
-    on_the_room = await session.scalar(
-        select(Topic.session_placement).where(Topic.id == place_id)
-    )
-    if not on_the_room:
-        return []
-    where = {key: value for key, value in on_the_room.items() if key != "execution"}
-    return [(where, on_the_room.get("execution"))]
+    return [(row.runtime_location, row.work_lease) for row in located]
 
 
 async def place(session: AsyncSession, place_id: uuid.UUID) -> Place | None:

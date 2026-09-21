@@ -539,9 +539,6 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 （主线一条、有人被点名的每条活各一条），就解析出 N 份租约，两个队友可以在不同机器上（4.1、6.1）。
 **唯一共用一双手的是原生子 agent**——它不是第二条会话，用的是父进程那一份（结论 43）。
 
-**今天这两件事混在一列里**：`topics.session_placement` 一个房间一行，同时被当成「工作机器」和
-「会话进程在哪」——于是同一个房间里两个 agent 的会话没法各自搬家，换机就报错（9.4）。
-
 **同一个 handle 的多条线程是一个参与者** [已定] 结论 11：
 它在房间主线、在每一条活上各有一条会话，**这些线程共享身份和记忆**，
 线程之间走**内部便条**（5.5）。会话是线程的载体，不是第二个身份。
@@ -572,10 +569,6 @@ docstring 逐字「Send original bytes, preserving progress after each acknowled
 `harness/claude_code/remote_execution/launch.py:92 transfer_history`，
 它只有一个调用点（`central_provider.py:236`），被 `if not previous` 圈住，**只在首次 placement 时跑，而且只走机器→机器**。
 结论 29 把「权威副本在平台、恢复从平台副本恢复」写成了**骨架契约的一条**，这条空壳因此不再是实现细节。
-
-**「对话」与「轮次」的寿命不同，而今天挤在一个列名里**：
-`topic/models.py:144 session_placement` 这个名字里，「session」是长期的、「placement」是易失的；
-两个寿命不同的事实挤在一个 JSON 列上，于是换机就报错。
 
 ### 1.7 地点 Place 〔L2〕
 
@@ -922,8 +915,6 @@ Claude Code serves them through its MCP transport, pi registers them as extensio
 
 1. **会话身份和 transcript 的权威副本在平台**，每轮结束前增量交上来；**恢复从平台副本恢复**。
 2. **pi 满足它的路径倾向和 Claude Code 同一条**：进程在中心机、工具走执行器。
-   今天 pi 不是这样——`harness/pi/channel.py:204-209` 把会话位置写进 `room.session_placement`，
-   会话记在执行机上，执行机重启会话就没了。
 3. **契约测试要盖到 pi 的 TypeScript 侧**（`harness/pi/platform.ts`）：
    pi 的机器侧算一个实现 [已定] 结论 29。
 
@@ -1483,7 +1474,7 @@ Cloud 是一条持久的等待事件 + 连接器上来就自动重投，自托�
 **看不到**：**骨架名与「运行方式」下拉**（结论 28：harness 是开发者选项）、
 pool 名（`device` / `cloud`）、可见性枚举（`isolated` / `host`）、
 托管方名（除非项目里真的有一个外部仓库，那时它的名字是那个仓库的名字）、机器 id、
-`merge_method` 原值、`session_placement`、代际号、内部英文名。
+`merge_method` 原值、`work_lease`/`runtime_location`、代际号、内部英文名。
 
 ### 8.2 开发者选项 / 机器主人看到
 
@@ -1625,12 +1616,12 @@ so check there and not in the menu, the contract or the doc**」。
 | **参与者** | `identity/`、`user/`、`agent_instance/`、`agent_type/`。`ensure_identity` 已给 agent 建 user 行 | `actor.py:48` 的 `is_agent` 字段给了分岔的钩子；`AgentConfiguration` 与 `agent_type/schemas.py:19/21` 带 `model`/`harness` | ①`Actor` 上没有 `is_agent` 列，授权/收件人/署名三类决策里 `is_agent`/`looks_like_agent_handle`/`names_a_person` 零命中；②`AgentConfiguration` 与类型 schema 里没有 `model`/`harness`/`effort` 三个字段（`effort` 移到活的资源绑定上，1.1），而选模型的代码改读「这条活的绑定」 |
 | **席位** | `topic/models.py:252 TopicMembership` + `topic_membership/` + `membership/`（两个包只有 service/repo，model 在 `topic/` 里） | 第二条授权线：`Actor.via` + 路由级 cheese-gate（`api/auth.py`） | ①认证路径只答「这张凭证是真的吗」；「它能干什么」全仓只有一个答法，入参是一条席位行；②往另一个项目的房间插一个 agent 实例的 handle 被拒，人没有这条限制（I9b）；③`resolve_agent_handle`（定义在 `topic_membership/services.py`，10 个调用点，其中 `api/auth.py:234` **在认证路径里**）零命中；④一个坐两个 AI 队友的房间，不带 @ 的消息不启动任何一轮；⑤认证路径上的改动有一条独立的回归测试：一张过期或张冠李戴的沙箱 token 仍然被拒 |
 | **项目** | `project/`、`workspace/`。`workspace/service.py:236 ensure_repo` 无条件建平台侧 git 仓 | `workspace/` 现在同时是「项目的 git 源」和「项目的资料库」（`:860 write_library_file`，#1209 合进来的；#1247 又给资料库加了页面和 `:887 delete_library_file`），两样不同的东西挤一个包；建项目不播种 agent 实例，`agent_instance/services.py:53 IMPLICIT_DEFAULT` 是一个 `instance_id=None` 的隐式默认 | ①产品判断不再读「项目有没有绑外部仓库」这个布尔，只读 4.5 的能力位；②建任意一个项目，断言存在一行芝士实例与它在根房间的席位行，`IMPLICIT_DEFAULT` 这种无实例行的隐式默认不存在 |
-| **房间** | `topic/` | `topics` 是最混层的一张表：`session_placement`、`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at`、`private_owner`/`private_peer` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
+| **房间** | `topic/` | `topics` 是最混层的一张表：`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at`、`private_owner`/`private_peer` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
 | **├ 项目总览** | `TopicKind.root`（`topic/models.py:58`），已存在 | `domain/scheduler/` 615 行在替它调度 | `scheduler/` 不存在；`scheduler/service.py:445` 那处 `summon` 连同整个包一起没有 |
 | **└ 私聊** | `private_owner`/`private_peer` 两列 + 52 处 `is_private` 分支（30 处在 `chat.py`） | 两席名册没住在 `topic_memberships`；`chat.py:2476` 自动发布 + `prompt.py:196-197` 配套提示词；`chat.py:4398-4405` 把算力钉成 `"device"` | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
 | **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | `cheese split` 的四样：第二身份（`handles.py:37`）、第二会话/地点、kickoff（`runtime.py:784-806`）、`cheese_bind`（`prompt.py:152/176`） | ①`topic_agent_handle` 零调用点；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
-| **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | transcript 只有上行没有回放（`event_drain.py` 上行；`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住）；placement 在 `topics` 上；pi 的会话记在执行机（`pi/channel.py:204-209`） | ①`transfer_history` 的源可以是平台存的 transcript，调用点不再只有首次 placement；②`pi/channel.py` 不再写 `room.session_placement`；③`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；④**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
-| **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `Topic.session_placement`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④`topics.session_placement` 不存在，它拆成两条并都挂到会话上（结论 56，按结论 60 修订）：`agent_sessions` 上每条会话自己的工作机器租约一列、自己的运行位置一列；⑤租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑥地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
+| **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | transcript 只有上行没有回放（`event_drain.py` 上行；`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住） | ①`transfer_history` 的源可以是平台存的 transcript，调用点不再只有首次 placement；②`pi/channel.py` 不再写 `room.session_placement`；③`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；④**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
+| **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `agent_sessions` 的 `work_lease`/`runtime_location`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④`topics.session_placement` 不存在，它拆成两条并都挂到会话上（结论 56，按结论 60 修订）：`agent_sessions` 上每条会话自己的工作机器租约一列、自己的运行位置一列；⑤租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑥地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
 | **托管方** | `review/forge.py Forge` + `github_pr.py` + `agent/github_app.py`。`resolve()` 按能力位查注册表，三档齐全，署名降级进房间 | 写远端的凭据由一次真探测答（`git push --dry-run`），探测本身要连远端，所以读路径上有一份 10 分钟的进程内缓存 | 平台开始持有远端凭据的记录时，探测改成先问记录再连远端 |
 | **事件** | `block/`（脊柱的载体）；`alert/` + `notification/` + `agent/platform_notices.py`（两张通知表） | `AuthorType` 的 `human`/`ai`/`system` 三档是种类分叉；事件的落点来自 `block/about.py` 的封闭表（`EventAbout` 三档 + `landing()`），架在现有的 `topic_id`/`task_id` 两列上，21 处产生事件的调用点无一自己挑落点（守卫 `test_event_landing_guard.py`） | ①`AuthorType` 只剩「参与者」和「平台」两档；②结论 14 列在项目总览那一档的事件都从 `EventAbout.project` 取落点：房间归档（含级联）与取消归档已经落在 `Project.root_topic_id` 那个房间而不是被归档的房间自己的时间线上，巡检决策日志同；房间创生、主干新提交、名册变化今天还没有产生方，它们出现时走同一档 |
@@ -1670,13 +1661,9 @@ so check there and not in the menu, the contract or the doc**」。
 
 ### 9.3 三层分层今天在哪破
 
-`tests/unit/test_domain_import_guard.py` 的 `DOMAIN_ROOT` 只到 `app/domain`，
-而 `api/routes` 下有上百条直接 import 别人 repositories 的语句，**CI 永远看不到**。
-判据：**I3 的守卫范围必须覆盖 `app/domain` 与 `api/routes`。**
-
 `topics` 表的逐列层归属登记表**本稿没有给出**，所以 I3 的后半今天写不成守卫。
 本稿能先写下的分类只有这一句，它不是登记表：
-`session_placement` 是 L1×L2 的绑定、`cleanup_id`/`cleanup_due_at` 是 L2 的清理计划、
+`cleanup_id`/`cleanup_due_at` 是 L2 的清理计划、
 `compute_config`/`compute_profile` 是 L0 的项目/房间配置、`resource_id` 是代际号（跨层）、
 `transcripts_archived_at` 是 L1 的收据。
 
@@ -1685,7 +1672,6 @@ so check there and not in the menu, the contract or the doc**」。
 | 事实 | 两份在哪 | 后果 |
 |---|---|---|
 | **会话住在哪** | `agent_session/models.py` 的表 vs `device/models.py:153 DeviceTopicRow` 的 docstring | 上游按错的那一份写；换机就报错 |
-| 会话位置 | `agent_sessions` vs `topics.session_placement`。写：`central_provider.py:351`、`pi/channel.py:204`；读：`api/routes/execution.py`、`terminal.py`、`remote_control.py`、`connector.py`、`device_provider.py`、`machine/repositories.py`、`topic/retire.py`、`codex/channel.py`、`central_provider.py` 多处；清它全仓只有 `topic/services.py:722` 一处 | 同上 |
 | 可见性默认值 | 一处读 `default_visibility()`（`device_provider.py:172`）vs 四处绑定时写死 host（`topics.py:1414`、`compute_configs.py:90`、`device_provider.py:740`、`cloud_provider.py:131`），另有两处入册时写死（`warm.py:474`、`machine/services.py:740`） | 沙箱上线那天，走选择器挑机器的人拿到的仍是整机读写 |
 | 静默提醒 | `chat.py:1533` vs `pi/platform.ts:624` | pi 房间一轮两条都收 |
 | 平台在机器上的根 | `.cheese` 和 `.claude`：二元组两遍（`environment_runner.py:84`、`resource_cleanup.py:25`）+ 三个单根常量（`machine_launcher.py:57`、`bootstrap.py:22/23`） | 卸载删不干净 |
