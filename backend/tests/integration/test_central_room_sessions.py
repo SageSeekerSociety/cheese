@@ -252,7 +252,7 @@ async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
         owner=None,
         turn_id=None,
         launch=ClaudeLaunch("System"),
-        precheck=("executor", 1, "room-stand-in"),
+        precheck=Placement("executor", 1, "room-stand-in", rented=True),
     )
     screen = selected._ensure_screen.await_args.kwargs
     assert screen["agent_handle"] == "other-teammate"
