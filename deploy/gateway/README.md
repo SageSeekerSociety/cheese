@@ -121,6 +121,8 @@ docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gatew
 
 ## Health checks
 
+The gateway keeps up to five 20 MB log files; recreating its container does not preserve its stdout history.
+
 The scheduled check calls `/health/readiness` and the authenticated model catalog.
 It checks the gateway database and admin authentication without generating tokens;
 provider quota and inference remain untested. For a bounded inference check, run

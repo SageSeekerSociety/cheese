@@ -18,6 +18,11 @@ services:
     # The Dockerfile pins the upstream digest and verifies the patched file hash.
     image: ${GATEWAY_IMAGE:?set the CI-built gateway image}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     depends_on:
       litellm-db:
         condition: service_healthy
