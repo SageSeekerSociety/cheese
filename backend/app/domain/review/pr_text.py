@@ -8,11 +8,10 @@ Chinese room name here, `采纳 topic/8f3a… → main (#7)` there, "验收人�
 a body.
 """
 
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.repository import identity
 from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
-from app.domain.workspace import identity
 
 #: What `Cheese-Task:` writes where a 分身 id would go, for work no worker was
 #: ever bound to. A placeholder rather than a shorter line, so every one of these
@@ -124,7 +123,8 @@ def pr_trailers(
     # The ROOM is a URL (#189): a uuid in `git log` is a dead end unless the
     # reader already knows this platform's routes, and this line exists so that
     # somebody auditing a commit can get to where the change was made.
-    lines.append(f"Cheese-Topic: {_room_url(topic)}")
+    room_title = " ".join((topic.title or "").split())
+    lines.append(f"Cheese-Topic: {_room_url(topic)} {room_title}".rstrip())
     if card is not None:
         # The CARD stays a bare id, deliberately. There is no route that opens an
         # accept card: `?card=` on the room's page takes a TASK id
@@ -134,8 +134,8 @@ def pr_trailers(
         # URL is a frontend change (a deep link that resolves an accept card),
         # not a string change here.
         lines.append(f"Cheese-Card: {card.id}")
-    acting = who.author.name if who and who.author else topic_agent_handle(topic.id)
-    lines.append(f"Cheese-Agent: {acting}")
+    if who and who.author:
+        lines.append(f"Cheese-Agent: {who.author.name}")
     lines.extend(task_trailer(topic, item) for item in (who.tasks if who else ()))
     coauthors = who.coauthors if who else ()
     credited = [line for line in map(identity.coauthored_by, coauthors) if line]

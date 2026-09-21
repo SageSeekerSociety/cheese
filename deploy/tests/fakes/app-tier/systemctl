@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[ -z "${APP_TIER_DOCKER_LOG:-}" ] || echo "systemctl $*" >> "$APP_TIER_DOCKER_LOG"
+case "$*" in
+  daemon-reload|*cheese-room-cleanup.timer*) exit 0 ;;
+esac
+case "${1:-}" in
+  is-active) [ "${APP_TIER_HOST_EXECUTOR:-inactive}" = active ] ;;
+  show) echo "${APP_TIER_HOST_KILL_MODE:-control-group}" ;;
+  stop|start) exit 0 ;;
+  *) exit 1 ;;
+esac

@@ -657,7 +657,10 @@ defineExpose({ reload: loadAcceptCard })
           红着合有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
           没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
         -->
-        <div v-if="pendingCard.pr_number && acceptBlockedTitle" class="mt-2">
+        <div
+          v-if="pendingCard.pr_number && acceptBlockedTitle && !mergeReasons.some((r) => r.kind === 'dependency')"
+          class="mt-2"
+        >
           <v-btn
             v-if="!showForceMergeInput"
             size="small"

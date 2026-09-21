@@ -8,7 +8,7 @@
 //
 // 合成之后只有一棵树：树上标着每个文件改了多少，点开看的是这个文件自己的 diff，
 // 要微调就切到编辑（保存冲突的两条出路原样保留）。分段开关没了。
-import type { GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
+import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -68,6 +68,10 @@ const sourceStatus = computed(() =>
   selectedTask.value ? currentTask.value?.presentation.display_status ?? '' : '只读'
 )
 const sourceUnavailable = computed(() => tasksLoaded.value && !!selectedTask.value && !currentTask.value)
+const requestedSource = ref<FileSource>('live')
+const fileSource = computed<FileSource>(() =>
+  selectedTask.value && currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
+)
 
 async function loadOverview() {
   const room = props.topicId
@@ -161,7 +165,7 @@ async function loadGit(opts: { silent?: boolean } = {}) {
     // everyone's).
     const [log, diff] = await Promise.all([
       getGitLog(pid, tid, task).catch(() => ({ data: [] as GitCommit[], total: 0 })),
-      getGitDiff(pid, tid, task),
+      getGitDiff(pid, tid, task, fileSource.value),
     ])
     // Guard against a topic switch mid-flight.
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch) return
@@ -200,9 +204,12 @@ const fileVersion = ref<string | null>(null)
 const fileBinary = ref(false)
 const fileTooLarge = ref(false)
 const fileBytes = ref(0)
+const fileEditable = ref(false)
 const fileReadOnly = computed(
   () =>
     props.readOnly ||
+    fileSource.value === 'committed' ||
+    !fileEditable.value ||
     currentTask.value?.status !== 'open' ||
     fileBinary.value ||
     fileTooLarge.value ||
@@ -212,7 +219,7 @@ const fileReadOnly = computed(
 const drafts = reactive(new Map<string, { content: string; saved: string; version: string | null }>())
 const lastFiles = new Map<string, string>()
 function sourceKey() {
-  return selectedTask.value ?? `project:${props.projectId}`
+  return `${selectedTask.value ?? `project:${props.projectId}`}:${fileSource.value}`
 }
 function draftKey(path: string) {
   return `${sourceKey()}:${path}`
@@ -376,6 +383,7 @@ const {
   path: () => openPath.value,
   version: () => fileVersion.value,
   task: () => selectedTask.value,
+  source: () => fileSource.value,
   nonce: () => docNonce.value,
   enabled: () => openIsDocument.value,
 })
@@ -392,7 +400,13 @@ async function onRevisionDecided() {
 // download button hands over for anything else that can't be shown as text.
 const openRawUrl = computed(() =>
   openPath.value && props.projectId
-    ? workspaceFileRawUrl(props.projectId, openPath.value, props.topicId ?? undefined, selectedTask.value)
+    ? workspaceFileRawUrl(
+        props.projectId,
+        openPath.value,
+        props.topicId ?? undefined,
+        selectedTask.value,
+        fileSource.value
+      )
     : ''
 )
 
@@ -414,6 +428,7 @@ function resetFilePanel() {
   fileBinary.value = false
   fileTooLarge.value = false
   fileBytes.value = 0
+  fileEditable.value = false
   fileConflict.value = false
   expandedDirs.value = new Set()
 }
@@ -446,7 +461,7 @@ async function doLoadFiles() {
   loading.value = true
   errorMsg.value = null
   try {
-    const listed = (await listFiles(pid, tid, task)).data
+    const listed = (await listFiles(pid, tid, task, fileSource.value)).data
     // Guard against a topic switch mid-flight — without it the previous topic's
     // listing repopulates the new panel.
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch) return
@@ -511,7 +526,7 @@ async function selectFile(path: string) {
     return
   }
   try {
-    const f = await readFile(pid, path, tid ?? undefined, task)
+    const f = await readFile(pid, path, tid ?? undefined, task, fileSource.value)
     // A topic switch mid-flight must not land the previous topic's file — and
     // its draft — in the new topic's panel.
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
@@ -524,6 +539,7 @@ async function selectFile(path: string) {
     fileBinary.value = f.binary
     fileTooLarge.value = f.too_large
     fileBytes.value = f.bytes ?? listed
+    fileEditable.value = f.editable !== false && f.source !== 'committed'
     const draft = drafts.get(draftKey(path))
     if (draft && !f.binary && !f.too_large) {
       fileDraft.value = draft.content
@@ -539,8 +555,7 @@ async function selectFile(path: string) {
   }
 }
 
-// One write path. `expected` is the version this save is based on; null means
-// the human explicitly chose to overwrite after being shown the conflict.
+// Every save carries the version on which the user's decision was based.
 async function writeOpenFile(expected: string | null) {
   const pid = props.projectId
   const tid = props.topicId
@@ -580,8 +595,20 @@ function saveFile() {
 }
 
 // 冲突后的两条出路,都由人点：丢掉自己的改动看最新的，或者明知有冲突仍然覆盖。
-function overwriteFile() {
-  void writeOpenFile(null)
+async function overwriteFile() {
+  const pid = props.projectId
+  const tid = props.topicId
+  const task = selectedTask.value
+  const path = openPath.value
+  const epoch = sourceEpoch
+  if (!pid || !path || fileReadOnly.value) return
+  try {
+    const current = await readFile(pid, path, tid, task, 'live')
+    if (epoch !== sourceEpoch || openPath.value !== path) return
+    await writeOpenFile(current.version)
+  } catch (error) {
+    if (epoch === sourceEpoch) errorMsg.value = error instanceof Error ? error.message : '读取文件失败'
+  }
 }
 
 function reloadOpenFile() {
@@ -672,6 +699,17 @@ async function navigateSource(task: string | null, path?: string) {
   showAll.value = task === null || !!path
   pendingOpen = path ?? lastFiles.get(sourceKey()) ?? null
   requestedPath.value = null
+  await Promise.all([loadGit(), loadFiles()])
+}
+
+async function selectVersion(source: FileSource) {
+  if (fileSource.value === source) return
+  const path = openPath.value
+  keepDraft()
+  clearSource()
+  requestedSource.value = source
+  showAll.value = true
+  pendingOpen = path ?? lastFiles.get(sourceKey()) ?? null
   await Promise.all([loadGit(), loadFiles()])
 }
 
@@ -819,6 +857,29 @@ defineExpose({ openFile })
         当前查看：{{ sourceTitle
         }}<span v-if="selectedTask && currentTask?.status !== 'open'"> · 任务已结束，只读</span>
       </p>
+      <div v-if="selectedTask && currentTask?.status === 'open'" class="seg ma-3" aria-label="文件版本">
+        <button
+          type="button"
+          class="seg__btn"
+          :class="{ 'seg__btn--on': fileSource === 'live' }"
+          @click="selectVersion('live')"
+        >
+          机器实时文件
+        </button>
+        <button
+          type="button"
+          class="seg__btn"
+          :class="{ 'seg__btn--on': fileSource === 'committed' }"
+          @click="selectVersion('committed')"
+        >
+          已提交版本
+        </button>
+      </div>
+      <p class="source-note">
+        {{
+          fileSource === 'live' ? '机器实时文件包含尚未提交的修改。' : '已提交版本只读，不包含机器上尚未提交的修改。'
+        }}
+      </p>
       <div class="changes-bar">
         <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
            是为了顺手看一眼旁边那个没动过的文件。 -->
@@ -849,8 +910,11 @@ defineExpose({ openFile })
       <div v-if="loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
-      <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
+      <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4 file-load-error">
         {{ errorMsg }}
+        <v-btn v-if="fileSource === 'live'" variant="text" size="small" @click="selectVersion('committed')"
+          >切换到已提交版本</v-btn
+        >
       </v-alert>
 
       <div v-else class="file-tool">
@@ -902,7 +966,7 @@ defineExpose({ openFile })
               :class="{ 'seg__btn--on': effectiveView === 'edit' }"
               @click="fileView = 'edit'"
             >
-              编辑
+              {{ fileReadOnly ? '全文' : '编辑' }}
             </button>
           </div>
           <!-- Read-only files (binary / oversized / images) get no 保存 button at
@@ -1009,6 +1073,8 @@ defineExpose({ openFile })
                   :path="suffixOf(openPath) === 'docx' ? openPath : null"
                   :version="fileVersion"
                   :task="selectedTask"
+                  :source="fileSource"
+                  :read-only="props.readOnly || currentTask?.status !== 'open' || fileSource === 'committed'"
                   @decided="onRevisionDecided"
                 />
               </div>
@@ -1164,6 +1230,9 @@ defineExpose({ openFile })
   min-width: 0;
   min-height: 0;
   background: var(--surface);
+}
+.file-load-error {
+  flex: 0 0 auto;
 }
 .changes-bar {
   display: flex;

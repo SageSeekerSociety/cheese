@@ -26,7 +26,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.models import RoomCleanup
+from app.domain.topic.models import RoomCleanup, TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from tests.conftest import seed_user
@@ -311,7 +311,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
         return None
 
     monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     async def _ensure(topic_id: str) -> tuple[int, uuid.UUID]:
         async with client.test_factory() as session:
@@ -338,8 +338,17 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
 def test_direct_and_cascading_archive_retain_machines_during_grace(client):
     async def _seed():
         async with client.test_factory() as session:
-            project = await ProjectRepository(session).add(name="Archive Cloud")
+            projects = ProjectRepository(session)
+            project = await projects.add(name="Archive Cloud")
             topics = TopicRepository(session)
+            # 项目总览：归档一个房间是项目的事，落在总览上，所以这条 fixture 得
+            # 有一个总览——真实项目从 `ProjectService.create` 出来时总是有的。
+            root = await topics.add(
+                project_id=project.id,
+                title="Archive Cloud · 项目总览",
+                kind=TopicKind.root,
+            )
+            await projects.set_root_topic(project, root.id)
             direct = await topics.add(project_id=project.id, title="Direct")
             parent = await topics.add(project_id=project.id, title="Parent")
             child = await topics.add(
@@ -431,7 +440,7 @@ def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch
     async def _reprovision():
         async with client.test_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
-                topic_id, actor=Actor("owner", 1, False, "token")
+                topic_id, actor=Actor("owner", 1, "token")
             )
             old = await ProjectMachineRepository(session).get(old_id)
             await session.commit()
@@ -485,7 +494,7 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
         return None
 
     monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     async def _ensure(topic_id: str):
         async with client.test_factory() as session:

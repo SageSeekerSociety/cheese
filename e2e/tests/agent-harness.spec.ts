@@ -49,7 +49,7 @@ test('the harness is chosen, and the model list follows it', async ({ page }, te
     const agent = (await saved.json()).data;
     await expect(dialog).not.toBeVisible();
     await page.reload();
-    const card = page.locator('.agents-page .v-card').filter({ hasText: name });
+    const card = page.locator('.agent-team .v-card').filter({ hasText: name });
     await expect(card).toContainText(agent.configuration.model);
     await card.getByRole('button', { name: '编辑', exact: true }).click();
     await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeEnabled();

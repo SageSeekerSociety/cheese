@@ -20,7 +20,7 @@ describe('attachment images', () => {
     expect(url).toBe('blob:image')
     // header 是重点：<img src> 带不了它，所以这一步只能由脚本发。
     expect(fetch).toHaveBeenCalledWith(
-      '/api/topics/topic-a/attachments/raw?path=uploads%2Fabc%2F%E6%88%AA%E5%9B%BE%201.png',
+      '/api/topics/topic-a/attachments/raw?path=uploads%2Fabc%2F%E6%88%AA%E5%9B%BE%201.png&source=live',
       { headers: { Authorization: 'Bearer test-image-token' } }
     )
     expect(create).toHaveBeenCalledWith(blob)

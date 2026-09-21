@@ -47,7 +47,7 @@ function aiSaid(id: string, content: string): Block {
     project_id: 'p1',
     topic_id: 't1',
     kind: 'message',
-    author_type: 'ai',
+    author_type: 'participant',
     author: 'cheese-t1',
     content,
     reply_to: null,

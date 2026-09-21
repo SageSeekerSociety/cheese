@@ -22,12 +22,16 @@
       --artifact <产物 id>                     # 交付清单上那一项的新一版
   cheese accept-request mentor-1 "验收证据" --subject "feat: add site" \
       --new-artifact "项目官网"                # 做出了清单上还没有的一样东西
+  cheese accept-request mentor-1 "验收证据" --subject "docs: 结题报告定稿" \
+      --artifact <产物 id> --deliver 报告/结题报告.pdf   # 交出去的那一份
+  cheese accept-request mentor-1 "验收证据" --subject "feat: 上线官网" \
+      --artifact <产物 id> --deliver-url https://...     # 交出去的是一个地址
   cheese close-task <task_id>                # 放弃或撤销任务
   cheese tell "数据清洗" "口径改了,按新的来"    # 在那条活上留一句话(不叫醒任何人)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese status                             # 平台状态快照
-  cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
-  cheese artifact 评审简报.docx              # 文档类交付物同理,用户可以打开和下载
+  cheese show report.html                   # 把这一份摆到房间里给人看(进预览窗口)
+  cheese show 评审简报.docx                  # 文档同理,用户可以打开和下载
   cheese recalc 预算表.xlsx                 # 重算表格里的公式,并报出算不出来的格
   cheese convert 旧稿.doc --to docx         # 老格式升级;--to pdf 用来自己看版面
   cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
@@ -46,6 +50,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -103,7 +108,6 @@ DIRECT_MCP_TOOLS = frozenset(
         "cheese_close_task",
         "cheese_decision",
         "cheese_fetch",
-        "cheese_gh_token",
         "cheese_members",
         "cheese_milestone",
         "cheese_notify",
@@ -121,24 +125,32 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     env = os.environ if environ is None else environ
     topic = TOPIC if environ is None else env.get("CHEESE_TOPIC", "")
     project = PROJECT if environ is None else env.get("CHEESE_PROJECT", "")
-    if tool in {
-        "cheese_ask",
-        "cheese_bind",
-        "cheese_close_task",
-        "cheese_decision",
-        "cheese_feedback_propose",
-        "cheese_members",
-        "cheese_status",
-        "cheese_tell",
-        "cheese_title",
-    } and not topic:
+    if (
+        tool
+        in {
+            "cheese_ask",
+            "cheese_bind",
+            "cheese_close_task",
+            "cheese_decision",
+            "cheese_feedback_propose",
+            "cheese_members",
+            "cheese_status",
+            "cheese_tell",
+            "cheese_title",
+        }
+        and not topic
+    ):
         raise ValueError("Missing CHEESE_TOPIC")
-    if tool in {
-        "cheese_milestone",
-        "cheese_notify",
-        "cheese_recall",
-        "cheese_remember",
-    } and not project:
+    if (
+        tool
+        in {
+            "cheese_milestone",
+            "cheese_notify",
+            "cheese_recall",
+            "cheese_remember",
+        }
+        and not project
+    ):
         raise ValueError("Missing CHEESE_PROJECT")
     if tool == "cheese_bind":
         return {
@@ -246,8 +258,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "path": f"/projects/{project}/milestones",
             "body": body,
         }
-    if tool == "cheese_gh_token":
-        return {"method": "GET", "path": "/sandbox/github-token"}
     if tool == "cheese_feedback_propose":
         # 话题级:配额、指纹去重、拒绝的记忆全挂在话题上,而「这个人能不能在这个
         # 话题里提」的答案就是 authorize_topic 已经算过的那个。
@@ -356,6 +366,14 @@ def _task_root() -> Path:
 # prepared by the other launcher could not create a task at all.
 ENVIRONMENT_RUNNER_PATHS = (".cheese", ".claude")
 
+# 平台放在这个会话自己 home 里的那一个目录:随消息发来的附件落在
+# `~/attachments/<地址>`,`library get` 取下来的那一份也落在这里。它不是工作目录
+# ——工作目录是被托管的那个检出,平台往里写一个字节,就是别人仓库里一个他没有加过、
+# 而我们也不会去删的未跟踪文件(结论 49)。名字由 `app/domain/agent/place.py` 的
+# `STAGED_DIR` 选定,这里是它的一份抄件,`backend/tests/unit/test_footprint_root.py`
+# 把两边对住。
+STAGED_DIR = "attachments"
+
 
 def _environment_runner() -> Path | None:
     for directory in ENVIRONMENT_RUNNER_PATHS:
@@ -386,15 +404,7 @@ def _git_task(
     env = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
     }
-    # The credential only travels in the child's environment, never argv or
-    # repository config. This cache is owned by Cheese, not a user's checkout.
-    env.update(
-        {
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "http.extraHeader",
-            "GIT_CONFIG_VALUE_0": f"X-Cheese-Token: {TOKEN}",
-        }
-    )
+    env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(
@@ -410,28 +420,120 @@ def _git_task(
     return result.stdout.strip()
 
 
-def _task_worktree(task_id: str) -> Path:
-    task_id = str(uuid.UUID(task_id))
+def _git_credential(operation: str) -> None:
+    """Git invokes this at use time; only the bound host AND path receive a token."""
+    if operation != "get":
+        return
+    fields = dict(line.rstrip("\n").split("=", 1) for line in sys.stdin if "=" in line)
+    data = _call("GET", "/sandbox/forge-token")["data"]
+    path = urllib.parse.unquote(fields.get("path", "")).strip("/").removesuffix(".git")
+    destinations = [(data["url"], data["token"])]
+    if data.get("kind") in ("forgejo", "github_app"):
+        destinations.append(
+            (
+                _forge_git_relay(data["repo"]),
+                TOKEN if data["kind"] == "github_app" else data["token"],
+            )
+        )
+    for destination, credential in destinations:
+        bound = urllib.parse.urlsplit(destination)
+        wanted = urllib.parse.unquote(bound.path).strip("/").removesuffix(".git")
+        if (
+            fields.get("protocol") == bound.scheme
+            and fields.get("host", "").lower() == bound.netloc.lower()
+            and path == wanted
+        ):
+            print(f"username={data['username']}\npassword={credential}\n")
+            return
+
+
+def _forge_git_relay(repository: str) -> str:
+    return f"{API}/sandbox/forge/{_need('CHEESE_PROJECT', PROJECT)}/{repository}.git"
+
+
+def _configure_git_transport(repo: Path, data: dict) -> None:
+    if data.get("forge_kind") not in ("forgejo", "github_app"):
+        return
+    relay = _forge_git_relay(data["forge_repo"])
+    # Keep origin canonical so native tools retain the repository identity.
+    key = f"url.{relay}.insteadOf"
+    existing = _git_task(repo, "config", "--list").splitlines()
+    if any(line.startswith(f"url.{relay}.insteadof=") for line in existing):
+        _git_task(repo, "config", "--unset-all", key)
+    reachable = True
+    try:
+        root = data["remote"].rsplit("/", 2)[0]
+        probe = root + ("/api/v1/version" if data["forge_kind"] == "forgejo" else "/")
+        request = urllib.request.Request(probe)
+        with urllib.request.urlopen(request, timeout=5):
+            pass
+    except urllib.error.HTTPError:
+        reachable = False
+    except (OSError, urllib.error.URLError):
+        reachable = False
+    if not reachable:
+        _git_task(repo, "config", "--replace-all", key, data["remote"])
+        print("[cheese] 仓库无法直连，本次通过平台访问", file=sys.stderr)
+
+
+def _git_attribution(message_file: str) -> None:
+    task_id = _task_id()
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
     if data["room_id"] != TOPIC:
+        raise RuntimeError("Task belongs to another room")
+    trailers = []
+    for person in data["coauthors"]:
+        if "\n" in person or "\r" in person:
+            raise ValueError("Invalid contributor identity")
+        trailers.extend(["--trailer", f"Co-authored-by: {person}"])
+    if trailers:
+        subprocess.run(
+            [
+                "git",
+                "interpret-trailers",
+                "--in-place",
+                "--if-exists",
+                "addIfDifferent",
+                *trailers,
+                message_file,
+            ],
+            check=True,
+        )
+
+
+def _task_worktree(task_id: str, *, allow_closed: bool = False) -> Path:
+    task_id = str(uuid.UUID(task_id))
+    project = _need("CHEESE_PROJECT", PROJECT)
+    data = _call(
+        "GET" if allow_closed else "POST", f"/projects/{project}/git/tasks/{task_id}"
+    )["data"]
+    if data["room_id"] != TOPIC:
         raise SystemExit("[cheese] 这条任务不属于当前房间")
-    if data["closed"]:
+    if data["closed"] and not allow_closed:
         raise SystemExit("[cheese] 这条任务已结束，请创建新任务")
     cache = Path.home() / ".cheese" / "repositories"
     cache.mkdir(parents=True, exist_ok=True)
     repo = cache / f"{project}.git"
     task_dir = _task_root() / task_id
     task_dir.parent.mkdir(parents=True, exist_ok=True)
-    remote = os.environ.get("CHEESE_GIT_REMOTE") or f"{API}/projects/{project}/git"
+    remote = data["remote"]
     # Native subagents can request worktrees concurrently. Serialize creation
     # so an interrupted clone cannot be mistaken for a complete repository.
     with (cache / f"{project}.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if not repo.exists():
             _git_task(cache, "init", "--bare", str(repo))
+        _git_task(repo, "config", "--replace-all", "credential.helper", "")
+        _git_task(
+            repo, "config", "--add", "credential.helper", "!cheese git-credential"
+        )
+        _git_task(repo, "config", "credential.useHttpPath", "true")
         if "origin" not in _git_task(repo, "remote").splitlines():
             _git_task(repo, "remote", "add", "origin", remote)
+        else:
+            _git_task(repo, "remote", "set-url", "origin", remote)
+        _configure_git_transport(repo, data)
         # The commits, not every version of every file. A project's repo is
         # mostly old blobs — measured on cheese's own: 195 MB whole, 9.6 MB
         # this way — and all of that crossed the platform's backend on the way
@@ -439,7 +541,11 @@ def _task_worktree(task_id: str) -> Path:
         # (2026-09-20). The whole history is still here, so `git log` and a
         # diff against the base still work; a file's older contents are fetched
         # if something actually reads them.
-        for ref in (data["branch"], data["base"]):
+        exists_on_forge = bool(
+            _git_task(repo, "ls-remote", "--heads", "origin", data["branch"])
+        )
+        refs = [data["base"]] + ([data["branch"]] if exists_on_forge else [])
+        for ref in refs:
             _git_task(
                 repo,
                 "fetch",
@@ -450,8 +556,9 @@ def _task_worktree(task_id: str) -> Path:
         if not (task_dir / ".git").exists():
             existing = _git_task(repo, "branch", "--list", data["branch"])
             create = [] if existing else ["-b", data["branch"]]
+            remote_start = data["branch"] if exists_on_forge else data["base"]
             start = (
-                data["branch"] if existing else f"refs/remotes/origin/{data['branch']}"
+                data["branch"] if existing else f"refs/remotes/origin/{remote_start}"
             )
             _git_task(repo, "worktree", "prune")
             _git_task(
@@ -478,6 +585,9 @@ def _task_worktree(task_id: str) -> Path:
             os.environ.get("GIT_AUTHOR_EMAIL", f"{AUTHOR}@agent.cheese.local"),
         )
         hooks = repo / "hooks"
+        prepare = hooks / "prepare-commit-msg"
+        prepare.write_text('#!/bin/sh\nexec cheese git-attribution "$1"\n')
+        prepare.chmod(0o755)
         hook = hooks / "post-commit"
         hook.write_text("#!/bin/sh\nexec cheese sync\n")
         hook.chmod(0o755)
@@ -546,6 +656,17 @@ def _sync_task(task_id: str) -> None:
             data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
             if data["room_id"] != TOPIC:
                 raise RuntimeError("Task belongs to another room")
+            _git_task(worktree, "config", "--replace-all", "credential.helper", "")
+            _git_task(
+                worktree,
+                "config",
+                "--add",
+                "credential.helper",
+                "!cheese git-credential",
+            )
+            _git_task(worktree, "config", "credential.useHttpPath", "true")
+            _git_task(worktree, "remote", "set-url", "origin", data["remote"])
+            _configure_git_transport(worktree, data)
             branch = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if branch != data["branch"]:
                 raise RuntimeError(
@@ -570,12 +691,7 @@ def _sync_task(task_id: str) -> None:
                     input_text=f"Work in progress for task {task_id}\n",
                 )
             )
-            _git_task(
-                worktree,
-                "push",
-                "origin",
-                f"{snapshot}:refs/cheese/snapshots/task/{task_id}/{snapshot}",
-            )
+            _backup_task_snapshot(worktree, admin, data, head, snapshot)
             if data["closed"]:
                 record.write(
                     f"{datetime.now(UTC).isoformat()} archived snapshot={snapshot}; "
@@ -594,6 +710,91 @@ def _sync_task(task_id: str) -> None:
             )
             _report_task_sync(task_id, "failed", branch=branch)
             raise
+
+
+def _backup_task_snapshot(worktree, admin, data, head, snapshot):
+    task_id = data["task_id"]
+    ref = f"refs/cheese/snapshots/{task_id}"
+    base = f"refs/remotes/origin/{data['base']}"
+    if _git_task(worktree, "rev-list", "--count", snapshot, f"^{base}") == "0":
+        return  # Every object is already on the forge; there is no unfinished work.
+    _git_task(worktree, "update-ref", ref, snapshot)
+    bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
+    if not bundle.exists():
+        _git_task(worktree, "bundle", "create", str(bundle), ref, f"^{base}")
+    digest = hashlib.sha256()
+    with bundle.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
+    with bundle.open("rb") as stream:
+        request = urllib.request.Request(f"{API}{path}", data=stream, method="PUT")
+        request.add_header("Content-Type", "application/x-git-bundle")
+        request.add_header("Content-Length", str(bundle.stat().st_size))
+        request.add_header("X-Cheese-Token", TOKEN)
+        request.add_header("X-Cheese-Head", head)
+        request.add_header("X-Content-SHA256", digest.hexdigest())
+        with urllib.request.urlopen(request, timeout=120) as response:
+            receipt = json.load(response)["data"]
+    if receipt["digest"] != digest.hexdigest():
+        raise RuntimeError("Task backup acknowledgement did not match the bundle")
+    # The immutable object-store copy is now the backup; failed uploads keep this file.
+    bundle.unlink()
+
+
+def _recover_task(task_id):
+    task_id = str(uuid.UUID(task_id))
+    data = _call("GET", f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest")[
+        "data"
+    ]
+    recovery_root = Path.home() / ".cheese" / "recovered"
+    recovery_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    recovered = recovery_root / f"{task_id}-{data['snapshot_sha'][:12]}"
+    if recovered.exists():
+        raise RuntimeError(f"Recovery directory already exists: {recovered}")
+    bundle = recovery_root / f".cheese-recovery-{data['id']}.bundle"
+    _raw_request(
+        "GET",
+        f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{data['id']}",
+        None,
+        str(bundle),
+    )
+    with bundle.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != data["digest"]:
+        raise RuntimeError("Task backup checksum failed; no files were restored")
+    # gitformat-bundle: prerequisite records start with '-', before the blank
+    # line ending the header. Complete migration bundles need no live branch.
+    needs_base = False
+    with bundle.open("rb") as stream:
+        if stream.readline() not in (b"# v2 git bundle\n", b"# v3 git bundle\n"):
+            raise RuntimeError("Invalid task backup format")
+        while (line := stream.readline()) != b"\n":
+            if not line:
+                raise RuntimeError("Incomplete task backup header")
+            needs_base |= line.startswith(b"-")
+    if needs_base:
+        worktree = _task_worktree(task_id, allow_closed=True)
+        _git_task(worktree, "bundle", "verify", str(bundle))
+        _git_task(worktree, "bundle", "unbundle", str(bundle))
+        _git_task(
+            worktree,
+            "worktree",
+            "add",
+            "--detach",
+            str(recovered),
+            data["snapshot_sha"],
+        )
+    else:
+        with tempfile.TemporaryDirectory(dir=recovery_root) as temporary:
+            staging = Path(temporary) / "files"
+            _git_task(recovery_root, "init", str(staging))
+            _git_task(staging, "bundle", "verify", str(bundle))
+            _git_task(staging, "bundle", "unbundle", str(bundle))
+            _git_task(staging, "checkout", "--detach", data["snapshot_sha"])
+            staging.rename(recovered)
+    bundle.unlink()
+    print(f"已恢复到独立目录：{recovered}\n原工作目录和评审分支均未覆盖。")
 
 
 def _sync_all_tasks() -> None:
@@ -673,7 +874,7 @@ def _api_root() -> str:
 
     A direct backend URL is the app root. A public URL includes the gateway's
     ``/api`` mount, which nginx strips before forwarding. Removing that suffix
-    here makes device calls to ``/openapi.json`` and ``/sandbox/github-token``
+    here makes device calls to ``/openapi.json`` and ``/sandbox/forge-token``
     miss the gateway and hit the frontend instead.
     """
     return API
@@ -791,8 +992,7 @@ def _format_status(d: dict) -> str:
             m = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/", c["pr_url"])
             if m:
                 lines.append(
-                    f"  查 CI: export GH_TOKEN=$(cheese gh-token); "
-                    f"gh api repos/{m.group(1)}/commits/<head_sha>/check-runs"
+                    f"  查 CI: gh api repos/{m.group(1)}/commits/<head_sha>/check-runs"
                 )
         if c.get("status") == "gate_failed" and c.get("gate_output_tail"):
             lines.append("  闸门输出（尾部）:")
@@ -1160,6 +1360,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--all", action="store_true", help="同步本房间机器上已有的全部任务目录"
     )
 
+    recovery = sub.add_parser(
+        "recover",
+        help="把任务最近的文件备份恢复到独立目录",
+        description=(
+            "恢复最近一次任务备份并返回恢复目录；保留原工作目录，未提交文件不进入 PR。"
+        ),
+    )
+    recovery.add_argument("task_id", help="任务 UUID")
+
     pb = sub.add_parser(
         "bind",
         help="告诉平台这条活由哪个分身在做",
@@ -1194,6 +1403,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="把指定任务的新提交推到其现有 PR 并刷新验收状态。",
     )
     pfix.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
+    pfix.add_argument(
+        "--drop-dependency",
+        action="store_true",
+        help="已整理并验证独立改动后，将现有 PR 改到项目默认分支，清除任务依赖和旧批准",
+    )
 
     pfetch = sub.add_parser(
         "fetch",
@@ -1333,9 +1547,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="附上当前会话的环境与日志快照(默认不附)",
     )
-    pfbprop.add_argument(
-        "--tags", default=None, help="逗号分隔的标签,最多 20 个"
-    )
+    pfbprop.add_argument("--tags", default=None, help="逗号分隔的标签,最多 20 个")
     pfbprop.add_argument(
         "--session-id", default=None, help="当前会话 id(不填则由平台补)"
     )
@@ -1453,7 +1665,10 @@ def build_parser() -> argparse.ArgumentParser:
     pa = sub.add_parser(
         "accept-request",
         help="提交当前任务的 PR 给验收人",
-        description="为一条任务请求人工验收，沿用任务的 PR。",
+        description=(
+            "为一条任务请求人工验收，沿用任务的 PR。"
+            "是否采纳由项目的验收人决定；执行者用此工具递交，不自行合并 PR。"
+        ),
     )
     pa.add_argument(
         "reviewer", nargs="?", help="验收人的 handle；省略时沿用任务上的人选"
@@ -1469,6 +1684,17 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument(
         "--new-artifact",
         help="这次交付做出了一样清单上还没有的东西，给它起个真名；返回新的 id",
+    )
+    pa.add_argument(
+        "--deliver",
+        help=(
+            "这次交出去的那一份文件（工作目录里的路径），"
+            "平台留一份快照；单份最大 80MB"
+        ),
+    )
+    pa.add_argument(
+        "--deliver-url",
+        help="这次交出去的是一个地址（网站、看板）；只记这个指针",
     )
     pa.add_argument("--body", help="改动原因和验证说明")
     pa.add_argument("--task", help="任务 id；默认读取当前任务工作目录")
@@ -1523,29 +1749,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
-        "gh-token",
-        help="铸一个 GitHub token(约1小时过期); stderr 会带上仓库名、"
-        "这个 token 到底能干什么,以及对应的具体命令",
-        description=(
-            "铸一个 token 操作这个仓库:`GH_TOKEN=$(cheese gh-token) gh api "
-            "repos/<owner/repo>/issues/187`\n"
-            "\n"
-            "**先看 stderr 那几行再动手**。token 能干什么不是固定的——它带的就是平台\n"
-            "GitHub App 在这个仓库上被授予的全部权限,一项不减,所以能力清单由铸出来的\n"
-            "那一刻的 stderr 说了算。先核实权限再读 issue 正文。\n"
-            "stderr 列出 CI、日志、issue、PR 和仓库文件的读取命令。\n"
-            "\n"
-            "`gh` 推断不出这是哪个仓库(工作区是平台自己那个仓的工作树,不是 GitHub 的),"
-            "**必须显式带 -R owner/repo**(或用 "
-            "`gh api repos/<owner>/<repo>/...` 的全路径写法)。"
-            "仓库名和过期时间不用自己猜,"
-            "stderr 里就有;stdout 只有 token 本身,所以 `GH_TOKEN=$(cheese gh-token)` "
-            "照常能用。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    sub.add_parser(
         "status",
         help="平台状态快照:本轮运行状态/验收卡与闸门输出/磁盘与额度水位",
         description=(
@@ -1585,7 +1788,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "资料库放的是用户给这个项目的文件,按他给的名字。它是项目一级的——\n"
             "另一个房间上周传的那份,你在这里也拿得到。\n\n"
-            "跟着某条消息发来的资料已经在你工作目录的 library/ 下了,不用再取。\n"
+            "跟着某条消息发来的资料不用再取:消息里给的就是它在这台机器上的\n"
+            "绝对路径,照那个路径读。\n"
             "用户提到一份你手上没有的('上周那份预算表'),先 ls 看叫什么,再 get。\n\n"
             "资料库只读:改它没有意义,要改就改出另一份,原件留在原处。"
         ),
@@ -1593,19 +1797,28 @@ def build_parser() -> argparse.ArgumentParser:
     libsub = plib.add_subparsers(dest="libcmd", required=True)
     libsub.add_parser("ls", help="列出资料库里的文件(最近给的在前)")
     plibget = libsub.add_parser(
-        "get", help="取一份到工作目录(默认 library/<名字>,和随消息发来的那份同一个位置)"
+        "get",
+        help=(
+            "取一份到自己 home 下的 ~/attachments/library/<名字>"
+            "(和随消息发来的那份同一个位置),不写进工作目录"
+        ),
     )
     plibget.add_argument("name", help="资料库里的名字,如 预算表.xlsx")
-    plibget.add_argument("--out", default=None, help="写到别处(默认 library/<名字>)")
+    plibget.add_argument(
+        "--out", default=None, help="写到别处(默认 ~/attachments/library/<名字>)"
+    )
 
     part = sub.add_parser(
-        "artifact",
-        help="把工作区文件设为交付物(当前预览)",
+        "show",
+        help="把工作区里的一份东西摆到房间里给人看",
         description=(
-            "做出了要交给用户的东西就点名它——网页、可视化、SVG,以及报告、简报、"
-            "表格这类 PDF 和 Office 文件。点名之后用户在右侧看得到,也能下载;"
-            "没点名的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
-            "你显式指定。每次调用都会把预览指向最新那个。"
+            "做出了值得给人看的东西就摆出来——网页、可视化、SVG,以及报告、简报、"
+            "表格这类 PDF 和 Office 文件。摆出来的用户在右侧看得到,也能下载;"
+            "没摆出来的文件他在界面上根本看不见。平台不会去猜该显示哪个文件——"
+            "你显式指定。最后摆的那一样同时是这个房间的当前预览。\n\n"
+            "摆出来的东西留在这个房间里。用户想把一份留下来以后再用,自己按"
+            "「保存到资料库」;它不因此上产物清单——这一轮真交付了什么,走 "
+            "accept-request 的 --artifact / --deliver。"
         ),
     )
     part.add_argument("path", help="工作区相对路径,如 report.docx")
@@ -1783,6 +1996,8 @@ def main() -> None:
         )
     elif a.cmd == "worktree":
         print(_task_worktree(a.task_id))
+    elif a.cmd == "recover":
+        _recover_task(a.task_id)
     elif a.cmd == "sync":
         if a.all:
             _sync_all_tasks()
@@ -1820,7 +2035,10 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
         _sync_task(task)
-        r = _call("POST", f"/topics/{topic}/tasks/{task}/push-fix")["data"]
+        path = f"/topics/{topic}/tasks/{task}/push-fix"
+        if a.drop_dependency:
+            path += "?drop_dependency=true"
+        r = _call("POST", path)["data"]
         if r.get("pushed"):
             print(f"已推到 PR #{r['pr_number']}：{r.get('pr_url') or ''}")
         else:
@@ -1854,7 +2072,11 @@ def main() -> None:
                 shown = f"{size / 1024:.0f}K" if size >= 1024 else f"{size}B"
                 print(f"{row['path']}\t{shown}")
         else:
-            out = a.out or f"library/{a.name}"
+            # 默认落在自己 home 下,和随消息发来的那份同一个位置;不落在工作目录
+            # ——那是被托管的检出,资料库那一份写进去就是别人仓库里一个未跟踪文件
+            # (结论 49)。`Path.home()` 按这个会话自己的 `$HOME` 解,正是执行器
+            # 落附件时用的那一个。
+            out = a.out or str(Path.home() / STAGED_DIR / "library" / a.name)
             parent = os.path.dirname(out)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -1896,11 +2118,7 @@ def main() -> None:
         else:
             print(f"已记入项目{kind}。")
     elif a.cmd == "recall":
-        hits = (
-            _planned_call("cheese_recall", a)
-            .get("data", {})
-            .get("hits", [])
-        )
+        hits = _planned_call("cheese_recall", a).get("data", {}).get("hits", [])
         if not hits:
             # 关键词检索没命中 ≠ 没有这条记忆。说清楚这一点,否则一次空结果就会被
             # 当成"确认不存在",然后一头撞上那条记忆本来要拦住的坑。
@@ -1958,6 +2176,8 @@ def main() -> None:
             "change_body": a.body,
             "artifact": a.artifact,
             "new_artifact": a.new_artifact,
+            "deliver": a.deliver,
+            "deliver_url": a.deliver_url,
         }
         # 不写验收人 = 用项目默认验收人。**不要**在这里塞一个空串:后端把
         # 「没说」和「说了空的」当同一件事处理会掩盖真正的空输入,而它给的
@@ -1977,6 +2197,11 @@ def main() -> None:
         # 存在的地方 —— 不印出来,这一轮里没有别的地方读得到。
         if a.new_artifact and art.get("id"):
             print(f"这一项的 id 是 {art['id']}，以后交付它用 --artifact {art['id']}。")
+        # 交付物落没落下来当场说一句:字节只在这一刻读得到,没读到就再也读不到了。
+        if a.deliver:
+            print(f"这一版交出去的是 {a.deliver}，已留存。")
+        elif a.deliver_url:
+            print(f"这一版交出去的是 {a.deliver_url}。")
     elif a.cmd == "tell":
         # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
         # 由后端校验它确实是这个房间派出的活。
@@ -1989,62 +2214,6 @@ def main() -> None:
     elif a.cmd == "milestone":
         _planned_call("cheese_milestone", a)
         print(f"已钉里程碑：{a.title}")
-    elif a.cmd == "gh-token":
-        # Same API surface as every other platform endpoint.
-        # stdout carries ONLY the token so `GH_TOKEN=$(cheese gh-token)` works;
-        # the expiry note goes to stderr.
-        plan = request_plan("cheese_gh_token", vars(a))
-        req = urllib.request.Request(f"{_api_root()}{plan['path']}")
-        if TOKEN:
-            req.add_header("X-Cheese-Token", TOKEN)
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                data = json.load(r).get("data", {})
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors="replace")[:300]
-            print(f"[cheese] gh-token 失败 HTTP {e.code}: {detail}", file=sys.stderr)
-            sys.exit(1)
-        print(data.get("token", ""))
-        # stderr, not stdout: `GH_TOKEN=$(cheese gh-token)` must keep working.
-        # The repo name rides along because without it the token is useless —
-        # `gh api repos/:owner/:repo/...` needs a name the workspace (not a
-        # checkout of the repo) can't supply.
-        repo = data.get("repo") or "<owner>/<repo>"
-        # The permission line comes from the payload, never from a literal
-        # here: what the token carries depends on what the GitHub App was
-        # granted, and a hardcoded list went stale the moment that changed —
-        # which is how agents ended up believing they couldn't read an issue
-        # that the token could in fact read.
-        perms = data.get("permissions") or "(权限未知)"
-        lines = [
-            f"[cheese] {perms}, 仓库 {repo}, 过期 {data.get('expires_at', '?')}",
-            "[cheese] 看 CI: export GH_TOKEN=$(cheese gh-token) 然后",
-            f"[cheese]   gh api repos/{repo}/commits/<sha>/check-runs  # 哪些检查挂了",
-            f"[cheese]   gh api repos/{repo}/actions/jobs/<job_id>/logs  # 完整日志",
-            "[cheese]   (<job_id> = check-run 的 html_url 里 /job/ 后面那串数字)",
-        ]
-        # Only advertise what this token can actually do. Printing the issue
-        # recipe when `issues` was not granted just buys a 403 and a wasted turn.
-        if "issues" in perms:
-            lines.append(
-                "[cheese] 读 issue 正文/评论(不用找人贴): "
-                f"gh api repos/{repo}/issues/<n>  和  .../issues/<n>/comments"
-            )
-        if "pull_requests" in perms:
-            lines.append(
-                f"[cheese] 读 PR 正文/评审意见: gh api repos/{repo}/pulls/<n>  和  "
-                f".../pulls/<n>/comments"
-            )
-        if "contents" in perms:
-            lines.append(
-                "[cheese] 读工作区以外的仓库文件: "
-                f"gh api repos/{repo}/contents/<path>?ref=<branch>"
-            )
-        lines.append(
-            "[cheese] 任务交付：在任务目录提交后 cheese sync；"
-            "已有 PR 用 cheese push-fix，平台沿用该任务的 PR。"
-        )
-        print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
         d = _planned_call("cheese_members", a).get("data", {})
         rows = d.get("data", d) if isinstance(d, dict) else d
@@ -2067,7 +2236,7 @@ def main() -> None:
             # render as a white frame.
             print(
                 "[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
-                "[cheese] 要给人看结果,用 cheese_artifact 点名一个文件——网页、图片,"
+                "[cheese] 要给人看结果,用 cheese_show 点名一个文件——网页、图片,"
                 "或报告、表格这类文档。",
                 file=sys.stderr,
             )
@@ -2082,13 +2251,13 @@ def main() -> None:
             sys.exit(1)
         # The backend knocks on the port through the tunnel before accepting; a
         # dead server is refused there, with the reason.
-        _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
+        _call("POST", f"/topics/{topic}/shown", {"path": a.note, "as": "app"})
         print(f"已把 :{a.port} 上的应用设为当前预览（{a.note}）。")
-    elif a.cmd == "artifact":
+    elif a.cmd == "show":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        # The platform resolves artifact paths against the worktree ROOT (/work),
+        # The platform resolves these paths against the worktree ROOT (/work),
         # but the agent's cwd may be a subdir (e.g. after `cd backend`). Normalize
-        # the given path to worktree-root-relative so `cheese artifact x.html` from
+        # the given path to worktree-root-relative so `cheese show x.html` from
         # /work/backend points at backend/x.html, not a missing /work/x.html.
         root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
         rel = os.path.relpath(os.path.abspath(a.path), root)
@@ -2112,8 +2281,8 @@ def main() -> None:
             except UnicodeError as exc:
                 print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
                 sys.exit(1)
-        _call("POST", f"/topics/{topic}/artifact", {"path": rel, "as": kind, **payload})
-        print(f"已把 {rel} 设为当前预览（{kind}）。")
+        _call("POST", f"/topics/{topic}/shown", {"path": rel, "as": kind, **payload})
+        print(f"已把 {rel} 摆出来给房间里的人看（{kind}）。")
     elif a.cmd == "convert":
         topic = _need("CHEESE_TOPIC", TOPIC)
         try:
@@ -2161,7 +2330,7 @@ def main() -> None:
             print(f"[cheese] 无法读取 {a.path}: {exc}", file=sys.stderr)
             sys.exit(1)
         # The platform resolves paths against the worktree ROOT, and the agent's
-        # cwd may be a subdir — same normalization as `artifact`, for the same
+        # cwd may be a subdir — same normalization as `show`, for the same
         # reason: an absolute path is refused outright there.
         root = os.environ.get("CHEESE_WORKTREE_ROOT", "/work")
         rel = os.path.relpath(os.path.abspath(a.path), root)
@@ -2217,4 +2386,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "git-credential":
+        _git_credential(sys.argv[2])
+    elif len(sys.argv) == 3 and sys.argv[1] == "git-attribution":
+        _git_attribution(sys.argv[2])
+    else:
+        main()

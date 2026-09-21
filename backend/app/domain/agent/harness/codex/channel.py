@@ -13,12 +13,12 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.codex.launch import script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.workspace import service as ws
+from app.domain.library import service as library
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +56,9 @@ class CodexChannel:
         )
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
-        precheck = await self.channel.precheck(session)
-        agent = precheck[2]
+        precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
+        assert isinstance(precheck, Placement)
+        agent = precheck.agent_handle
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
         metadata = {}
@@ -194,18 +195,24 @@ class CodexChannel:
         return handles
 
     async def images(self, handle: Handle, images: list[dict]) -> list[str]:
-        if not images:
-            return []
-        urls = []
-        for image in images:
-            data = ws.read_attachment(
-                handle.session.project_id, handle.session.topic_id, image["path"]
+        """Codex takes images inline, so the bytes travel with the message.
+
+        Not also written to the machine, the way the pi channel next door
+        already says it: the data URL below is what Codex reads, so the second
+        copy was a file the platform put in the agent's checkout that nothing
+        ever mentioned to it and nothing ever deleted — an untracked file in
+        somebody's repository (结论 49，不变量 I21b).
+        """
+        return [
+            "data:{};base64,{}".format(
+                image["media_type"],
+                base64.b64encode(
+                    library.read_attachment(
+                        handle.session.project_id,
+                        handle.session.topic_id,
+                        image["path"],
+                    )
+                ).decode(),
             )
-            encoded = base64.b64encode(data).decode()
-            await self.call(
-                handle,
-                "stage_file",
-                {"path": image["path"], "data": encoded},
-            )
-            urls.append(f"data:{image['media_type']};base64,{encoded}")
-        return urls
+            for image in images
+        ]

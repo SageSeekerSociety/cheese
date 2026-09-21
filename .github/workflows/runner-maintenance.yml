@@ -17,9 +17,18 @@ name: Runner maintenance
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Maintenance operation
+        type: choice
+        default: action-archive-cache
+        options:
+          - action-archive-cache
+          - disk-guard
 
 jobs:
   action-archive-cache:
+    if: inputs.operation != 'disk-guard'
     strategy:
       fail-fast: false
       matrix:
@@ -59,3 +68,41 @@ jobs:
           else
             echo "runner=$RUNNER_NAME: no passwordless sudo — .env staged, takes effect on next service restart/reboot" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  disk-guard:
+    if: inputs.operation == 'disk-guard'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3, 4, 5, 6]
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    steps:
+      - name: Update the disk guard without restarting runners
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/disk-guard-$GITHUB_RUN_ID.sh"
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github.raw+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/deploy/ci-runner/disk-guard.sh?ref=$GITHUB_SHA" \
+            -o "$candidate"
+          bash -n "$candidate"
+          updated=0
+          for guard in "$HOME"/actions-runner*/disk-guard.sh; do
+            [ -f "$guard" ] || continue
+            cp -p "$guard" "$guard.before-$GITHUB_RUN_ID-$RUNNER_NAME"
+            install -m 0755 "$candidate" "$guard.next-$GITHUB_RUN_ID-$RUNNER_NAME"
+            mv "$guard.next-$GITHUB_RUN_ID-$RUNNER_NAME" "$guard"
+            cmp "$candidate" "$guard"
+            echo "runner=$RUNNER_NAME guard=$guard revision=$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            updated=$((updated + 1))
+          done
+          [ "$updated" -gt 0 ]
+
+      - name: Hold so the other slots land on other runners
+        run: sleep 45

@@ -7,12 +7,14 @@ Two facts used to be invisible in the room and are asserted here:
   the timeline had every individual 改文件 line and no net result.
 """
 
+import asyncio
 import threading
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task
 from tests.integration.conftest import chat_ws_url
@@ -111,20 +113,27 @@ def test_the_turn_ends_with_a_change_summary(client, monkeypatch):
     """The commits that were NOT on the branch at turn start are this turn's."""
     log_calls: list[int] = []
 
-    def fake_git_log(project_id, limit=50, topic_id=None):
-        log_calls.append(limit)
+    async def fake_git_log(_files):
+        log_calls.append(50)
         # First read is the turn-start baseline (nothing yet); the second is
         # after the checkpoint turned this turn's edits into a commit.
         if len(log_calls) == 1:
             return []
-        return [{"hash": "abc1234", "author": "芝士", "message": "chore: snapshot"}]
+        return [
+            {
+                "hash": "abc1234",
+                "sha": "abc1234",
+                "author": "芝士",
+                "message": "chore: snapshot",
+            }
+        ]
 
-    def fake_git_diff(project_id, ref=None):
+    async def fake_git_diff(_files, ref):
         assert ref == "abc1234"
         return DIFF
 
-    monkeypatch.setattr(ws, "git_log", fake_git_log)
-    monkeypatch.setattr(ws, "git_diff", fake_git_diff)
+    monkeypatch.setattr(ProjectFiles, "history", fake_git_log)
+    monkeypatch.setattr(ProjectFiles, "commit_diff", fake_git_diff)
 
     topic_id = _topic(client)
     _chat(client, topic_id)
@@ -152,14 +161,21 @@ def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
 
     log_calls: list[int] = []
 
-    def fake_git_log(project_id, limit=50, topic_id=None):
-        log_calls.append(limit)
+    async def fake_git_log(_files):
+        log_calls.append(50)
         if len(log_calls) == 1:
             return []  # turn-start baseline: nothing on the branch yet
-        return [{"hash": "abc1234", "author": "芝士", "message": "chore: snapshot"}]
+        return [
+            {
+                "hash": "abc1234",
+                "sha": "abc1234",
+                "author": "芝士",
+                "message": "chore: snapshot",
+            }
+        ]
 
-    monkeypatch.setattr(ws, "git_log", fake_git_log)
-    monkeypatch.setattr(ws, "git_diff", lambda project_id, ref=None: DIFF)
+    monkeypatch.setattr(ProjectFiles, "history", fake_git_log)
+    monkeypatch.setattr(ProjectFiles, "commit_diff", AsyncMock(return_value=DIFF))
 
     topic_id = _topic(client)
     _chat(client, topic_id)
@@ -185,17 +201,24 @@ def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
 def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
     """No new commit → no summary. 不刷屏 also means not posting an empty one."""
     monkeypatch.setattr(
-        ws,
-        "git_log",
-        lambda project_id, limit=50, topic_id=None: [
-            {"hash": "old0000", "author": "芝士", "message": "chore: snapshot"}
-        ],
+        ProjectFiles,
+        "history",
+        AsyncMock(
+            return_value=[
+                {
+                    "hash": "old0000",
+                    "sha": "old0000",
+                    "author": "芝士",
+                    "message": "chore: snapshot",
+                }
+            ]
+        ),
     )
 
-    def never(project_id, ref=None):
+    async def never(_files, ref):
         raise AssertionError("no new commit — nothing to diff")
 
-    monkeypatch.setattr(ws, "git_diff", never)
+    monkeypatch.setattr(ProjectFiles, "commit_diff", never)
 
     topic_id = _topic(client)
     _chat(client, topic_id)
@@ -206,26 +229,17 @@ def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
 def test_the_baseline_read_never_delays_the_turns_start(
     client, monkeypatch, stub_hooks
 ):
-    """The baseline is read through `git_log`, which ensures the repo exists —
-    on a cold project that is a `git init` plus a base commit. Awaited in front
-    of the provider it is charged to the start of EVERY turn, and a turn
-    cancelled inside that window dies before it can store its session id
-    (test_turn_exit_paths.py owns that contract). So the read must be started,
-    not awaited, there: what it measures only becomes commits at the checkpoint.
-    """
+    """A slow forge history read must not delay starting the agent's turn."""
     agent_started = threading.Event()
     saw_the_agent_first: list[bool] = []
 
-    def slow_git_log(*_args, **_kwargs):
-        # Runs on a worker thread. If the turn awaits it before starting the
-        # provider, the agent can never fire this event and the wait times out —
-        # which is the regression, recorded rather than raised because
-        # _known_commits swallows exceptions by design.
-        saw_the_agent_first.append(agent_started.wait(timeout=5))
+    async def slow_git_log(*_args, **_kwargs):
+        # Waiting for history before starting the provider would deadlock here.
+        saw_the_agent_first.append(await asyncio.to_thread(agent_started.wait, 5))
         return []
 
     stub_hooks.on_start = agent_started.set
-    monkeypatch.setattr(ws, "git_log", slow_git_log)
+    monkeypatch.setattr(ProjectFiles, "history", slow_git_log)
 
     topic_id = _topic(client)
     _chat(client, topic_id)
@@ -240,7 +254,7 @@ def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
     def boom(*_args, **_kwargs):
         raise OSError("no workspace here")
 
-    monkeypatch.setattr(ws, "git_log", boom)
+    monkeypatch.setattr(ProjectFiles, "history", boom)
 
     topic_id = _topic(client)
     _chat(client, topic_id)

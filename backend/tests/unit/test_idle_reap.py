@@ -32,7 +32,9 @@ async def test_idle_and_active_rooms_both_keep_screens(client, tmp_path, monkeyp
     svc = SchedulerService(chat_service=chat)
 
     async with factory() as session:
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await ProjectService(session).create(
+            name="P", owner_handle="u", forge_kind="github_app"
+        )
         topics = TopicService(session)
         active = await topics.create(project_id=project.id, title="A", created_by="u")
         idle = await topics.create(project_id=project.id, title="I", created_by="u")
@@ -42,7 +44,7 @@ async def test_idle_and_active_rooms_both_keep_screens(client, tmp_path, monkeyp
                 project_id=project.id,
                 topic_id=t.id,
                 author="u",
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content="hi",
             )
         await session.execute(

@@ -2,6 +2,7 @@
 
 import uuid
 
+from app.domain.project import forge
 from app.domain.project.models import Project
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.services import RoomLockService, TaskService
@@ -16,6 +17,7 @@ def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
             project = Project(name="P", owner_handle="alice")
             s.add(project)
             await s.flush()
+            await forge.provision_repository(project.id, s)
             root = Topic(project_id=project.id, title="root", kind=TopicKind.root)
             s.add(root)
             await s.flush()

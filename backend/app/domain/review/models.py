@@ -51,6 +51,22 @@ class AcceptStatus(enum.StrEnum):
     pr_open = "pr_open"
 
 
+class DeliverableKind(enum.StrEnum):
+    """交出去的那一个东西是什么形态 (#1085 结论五)。
+
+    三样，因为「用户会单独交给别人的那一个东西」只有这三种交法：交一份文件、交一
+    个地址、交一次合并。形态之间没有物理共性，所以这里记的是交法，不是类别名。
+    """
+
+    #: 一份文件：论文的 PDF、幻灯片、被改过的那份 .docx。字节在建卡时落一份快照。
+    file = "file"
+    #: 一个地址：网站、看板、外部服务上的一份东西。只记指针。
+    link = "link"
+    #: 一次合并：代码仓库这种交出去就是主干往前走一步的项目。没有可下载的东西，
+    #: 这一版就是那次提交。
+    merge = "merge"
+
+
 class GateOutcome(enum.StrEnum):
     """What a quality-gate run actually established (2026-08-11).
 
@@ -106,6 +122,22 @@ class AcceptCard(UuidPk, Timestamps, Base):
         nullable=True,
         index=True,
     )
+    # 这一版交出去的是什么 (#1085 结论五)。一版就是一次交付，所以这张卡**是**那一
+    # 版，交付物记在它身上，而不是产物那一行上（那一行只有名字）。
+    #
+    # NULL 不是 `merge`：没声明过和「交出去的是这次合并」是两件不同的事，而它们
+    # 在页面上说的话也不同（「这一版没有留存文件」对前者成立，对后者是假话）。清
+    # 单之前的卡、以及交付物落地之前的那几张，都是 NULL。
+    deliverable_kind: Mapped[DeliverableKind | None] = mapped_column(
+        Enum(DeliverableKind, native_enum=False, length=16), nullable=True
+    )
+    # `file`：这一版那一份的文件名。字节不在库里也不在这张表上 —— 成品是从源构建
+    # 出来的，所以它既不该进 git，也不该等到有人要下载时再重建一次（半年后依赖变
+    # 了，重建出来的和当时交出去的不是一份东西）。建卡那一刻落一份快照，位置由
+    # project_id + 卡 id 推出来 (workspace/service.py 的 artifact_snapshot_path)。
+    deliverable_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # `link`：交出去的是一个地址（网站、看板），只记指针。
+    deliverable_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     status: Mapped[AcceptStatus] = mapped_column(
         Enum(AcceptStatus, native_enum=False, length=16),
         default=AcceptStatus.pending,

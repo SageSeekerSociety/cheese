@@ -660,13 +660,36 @@ class BlockRepository:
         self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
     ) -> Block | None:
         """The topic's current preview (spec §9.1): the most recent artifact block
-        芝士 pointed at. Newest wins — re-running `cheese artifact` repoints it."""
+        芝士 pointed at. Newest wins — re-running `cheese show` repoints it."""
         stmt = (
             select(Block)
             .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.artifact)
             .order_by(Block.created_at.desc())
         )
         return (await self._session.scalars(stmt)).first()
+
+    async def shown_in_room(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
+        """这个房间里摆出来过的东西，每样一次，新的在前 (#1085 结论四)。
+
+        一个房间常有好几样东西值得摆出来 —— 一份改好的 .docx、一张图、一个跑起来
+        的应用 —— 而「当前预览」只说得出最后那一样。同一份被重新摆过几次只算一
+        样：那是同一个东西的新一次渲染，不是又一件东西。
+        """
+        stmt = (
+            select(Block)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.artifact)
+            .order_by(Block.created_at.desc())
+        )
+        seen: set[str] = set()
+        newest_first: list[Block] = []
+        for block in (await self._session.scalars(stmt)).all():
+            if block.content in seen:
+                continue
+            seen.add(block.content)
+            newest_first.append(block)
+        return newest_first
 
     # ---- Emoji reactions (Slack semantics) ----
 

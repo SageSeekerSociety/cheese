@@ -1,17 +1,8 @@
 #!/usr/bin/env bash
 # One-time ownership migration for the backend's host bind mounts.
 #
-# WHY: the backend process and the in-container agent share one git store (the
-# project's main-repo .git is bind-mounted into every sandbox container,
-# read-write) and BOTH commit into it — the agent's own commit is how a topic
-# branch moves. git creates object directories 0755 and loose objects 0444,
-# owned by whoever wrote them, so a uid split leaves the second side able to
-# read everything and add nothing. Backend-side that showed up as a
-# project-wide 422 on the file panel; sandbox-side as an agent whose work could
-# not leave the container. So the backend image runs as the SAME uid as the
-# sandbox's `node` (1000, see backend/Dockerfile). Files written by the old uid
-# (1001) must be handed over once, or the new backend cannot read its own
-# history.
+# The backend image uses uid/gid 1000. Persistent files written by older images
+# as uid 1001 need a one-time ownership change so the backend can access them.
 #
 # Idempotent and safe to re-run: it only touches entries whose uid is wrong, and
 # drops a marker so a second deploy skips the walk entirely. Runs the chown in a
@@ -24,7 +15,7 @@
 #
 # Env:
 #   AGENT_UID / AGENT_GID   target ownership (default 1000, must match
-#                           app.domain.workspace.service.AGENT_UID)
+#                           backend/Dockerfile)
 #   FORCE_OWNERSHIP_FIX     set to 1 to ignore the marker and re-walk
 #   OWNERSHIP_REPORT_FILE   if set, `migrated` or `noop` is written here so the
 #                           caller can tell whether this run actually moved

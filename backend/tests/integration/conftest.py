@@ -383,6 +383,7 @@ def api_client(
     app: "FastAPI",
     db_session: AsyncSession,
     _portal: "BlockingPortal",
+    stub_project_forge,
 ) -> Generator["TestClient"]:
     """In-process FastAPI TestClient with ``get_db`` overridden to share the
     per-test transactional session. The TestClient is forced to use the

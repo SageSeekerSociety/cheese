@@ -34,7 +34,7 @@ def _seed(client, project, room, entries):
                     "project_id": uuid.UUID(project),
                     "topic_id": uuid.UUID(room),
                     "author": "alice",
-                    "author_type": AuthorType.human,
+                    "author_type": AuthorType.participant,
                     "kind": BlockKind.message,
                     "content": f"message {i}",
                     "created_at": start + timedelta(seconds=i),

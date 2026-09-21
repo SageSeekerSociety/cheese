@@ -16,7 +16,7 @@ from app.api.routes import terminal
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from tests.integration.test_connector_viewer import _login
-from tests.machine_work import machine_commits
+from tests.machine_work import declare_task, machine_commits
 
 
 def _room(client) -> tuple[str, str]:
@@ -36,7 +36,10 @@ def _thread(client, room_id: str, title: str = "一件活") -> str:
         json=dict(reviewer_handle="alice", **{"title": title}),
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]["id"]
+    task_id = r.json()["data"]["id"]
+    room = client.get(f"/topics/{room_id}").json()["data"]
+    declare_task(uuid.UUID(room["project_id"]), uuid.UUID(task_id))
+    return task_id
 
 
 def _owner(client) -> dict[str, str]:

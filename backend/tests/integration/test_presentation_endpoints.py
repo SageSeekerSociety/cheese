@@ -72,7 +72,7 @@ def _seeded(client, stub_hooks=None) -> dict[str, str]:
                     topic_id=room.id,
                     task_id=talking.id,
                     kind=BlockKind.message,
-                    author_type=AuthorType.ai,
+                    author_type=AuthorType.participant,
                     author="cheese",
                     content="刚说的",
                 )
