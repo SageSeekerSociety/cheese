@@ -16,17 +16,17 @@ import pathlib
 
 #: 每个文件问 ``is_private`` 几次。
 #:
-#: ``agent/chat.py`` 的 2 是定死的两类，ARCH §9.1 判据②逐字写着：
-#: ① ``_private_owner``——名册恰好两席，这间房的人是谁；
-#: ② ``_assemble_turn`` 的 ``needs_place``——这一轮不租地点，只有会话自己那块
-#:    64 MiB 草稿区。
+#: ``agent/chat.py`` 的 1 是定死的：``_is_dm``，整个文件唯一读那个布尔的地方。
+#: ARCH §9.1 判据②的两类读点都从它推出来——``_private_owner``（名册恰好两席，这
+#: 间房的人是哪一位）和 ``_assemble_turn`` 的 ``needs_place``（这一轮不租地点，只
+#: 有会话自己那块 64 MiB 草稿区）——所以那两类各自在的地方不再碰这个布尔。
 #: 其余文件是登记，不是认可：它们多半是 ``WHERE is_private IS FALSE`` 这类「私聊
 #: 不进这张列表」的过滤，和轮次组装不是一回事，各自有各自的去向。
 BASELINE = {
     "app/api/auth.py": 2,
     "app/api/routes/project_environment.py": 2,
     "app/api/routes/projects.py": 1,
-    "app/domain/agent/chat.py": 2,
+    "app/domain/agent/chat.py": 1,
     "app/domain/agent_instance/services.py": 1,
     "app/domain/authz/policy.py": 2,
     "app/domain/dashboard/services.py": 1,
@@ -85,10 +85,11 @@ def test_is_private_is_asked_no_more_often_than_the_baseline():
     )
 
 
-def test_a_turn_asks_it_exactly_twice():
-    """轮次组装只剩两类读点：名册两席，和会话自己的草稿区。"""
+def test_a_turn_asks_it_once_and_derives_the_rest():
+    """整个文件只读一次那个布尔，两类答案都从它推出来。"""
     source = (_APP / "domain" / "agent" / "chat.py").read_text()
-    assert _names_it(ast.parse(source)) == 2
-    # 逐字点名，这样换掉其中一处而总数不变的改法也会被看见。
-    assert "private_seats" in source, "名册两席那一处走 TopicMemberService"
-    assert "needs_place = not topic.is_private" in source, "不租地点那一处"
+    assert _names_it(ast.parse(source)) == 1
+    # 逐字点名，这样换掉那一处而总数不变的改法也会被看见。
+    assert "def _is_dm(topic: Topic) -> bool:" in source, "唯一的读点"
+    assert "private_seats" in source, "名册两席那一类走 TopicMemberService"
+    assert "needs_place = not _is_dm(topic)" in source, "不租地点那一类"

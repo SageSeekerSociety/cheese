@@ -1165,6 +1165,30 @@ def _is_out_of_credit(detail: str | None) -> bool:
     return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
 
 
+def _is_dm(topic: Topic) -> bool:
+    """这间房是不是一间私聊。**这是 `is_private` 在这个文件里唯一的读点。**
+
+    私聊是项目内名册两席的房间（结论 19），这一轮凡是「私聊要不一样」的地方，答
+    案都从这里推出来，不再各自问一遍那个布尔：同一件事问 N 遍，N 遍的判据就会各
+    自漂移，这次退役的正是漂开了的三十处。推出来的是两件事：
+
+    - **这间房没有名册。**私聊不暴露成员列表，`@` 解析不到项目里的第三个人：解
+      析表给 `[]`，`@某某` 原样留在正文里，显示成一条「项目成员里没有这个 handle」
+      的 ⚠️。这一条管的是正文去了哪里，不只是渲染：名册还要往下走进
+      `_notify_mentions`，解析到的每个 handle 都会收到一条带正文前 200 字的强提醒。
+    - **这一轮不租地点**（`needs_place`，结论 19、不变量 I2）：不碰仓库文件、不
+      跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。它桌上只有
+      对话、记忆和平台工具，加上会话自己那块 64 MiB 草稿区（不是一个地点，随会
+      话生灭）。
+
+    问的是这间房的性质，**不是名册上此刻坐了几个人**。「两席里的人是哪一位」由
+    `_private_owner` 答，席位不齐时它答 None，而一间私聊的正文不会因为席位不齐
+    就可以广播出去。两个问题分开问，是因为它们答错的后果不同：答不出「对面是
+    谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
+    """
+    return topic.is_private
+
+
 class ChatService:
     def __init__(
         self,
@@ -2890,10 +2914,10 @@ class ChatService:
                 # @handle / @话题名" is canonicalized into the structured token
                 # (<@alice> / <#id>) BEFORE the block is stored, so it renders
                 # as a clickable chip instead of leaking raw "@Alice" text.
-                # 两席的房间没有名册可以解析（也不暴露成员列表），原样存下来。
+                # 私聊没有名册可以解析（也不暴露成员列表），原样存下来。
                 roster = (
                     []
-                    if "@" not in content or await self._private_owner(session, topic)
+                    if "@" not in content or _is_dm(topic)
                     else await ProjectRepository(session).list_members(topic.project_id)
                 )
                 # Use the same room seat and display name as the mention picker,
@@ -3184,13 +3208,11 @@ class ChatService:
         个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
         一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
 
-        **这是 `is_private` 在这个文件里的两个读点之一**：「这间房是不是两席的私
-        聊，人是谁」。轮次里凡是要这个答案的地方都问它，而不是各自再问一遍那个
-        布尔——同一件事问两遍，两遍的判据就会各自漂移。另一个读点是
-        `_assemble_turn` 里的 `needs_place`：这一轮不租地点，只有会话自己那块
-        64 MiB 草稿区。
+        答的只是「人是哪一位」。「这间房是不是私聊」是另一个问题，由 `_is_dm` 答
+        （这个文件里 `is_private` 唯一的读点）：席位不齐的时候这里答 None，而那间
+        房仍然是私聊，名册和地点都不因为席位不齐就变回房间的那一套。
         """
-        if not topic.is_private:
+        if not _is_dm(topic):
             return None
         seats = await TopicMemberService(session).private_seats(topic.id)
         return seats[0] if seats is not None else None
@@ -3342,7 +3364,7 @@ class ChatService:
                 # as a non-member while silently dropping its notification.
                 roster = (
                     []
-                    if topic is None or await self._private_owner(session, topic)
+                    if topic is None or _is_dm(topic)
                     else await ProjectRepository(session).list_members(project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
@@ -3811,7 +3833,7 @@ class ChatService:
                 # like for like — see `_canon`.
                 roster = (
                     []
-                    if topic is None or await self._private_owner(session, topic)
+                    if topic is None or _is_dm(topic)
                     else await ProjectRepository(session).list_members(project_id)
                 )
                 topic_refs, _ = _topic_ref_lists(
@@ -4573,13 +4595,11 @@ class ChatService:
             # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
             # 方，问的都是下面两个答案之一，不再各自问一遍那个布尔。
             #
-            # 一、名册上那两席，人是哪一位。
+            # 一、名册上那两席，人是哪一位（席位不齐时 None）。
             private_owner = await self._private_owner(session, topic)
-            # 二、这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：不碰仓库
-            # 文件、不跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出
-            # 来。私聊是今天唯一这样的一轮——它桌上只有对话、记忆和平台工具，加上
-            # 会话自己那块 64 MiB 草稿区（不是一个地点，随会话生灭）。
-            needs_place = not topic.is_private
+            # 二、这一轮要不要一双手？见 `_is_dm`：不租地点的一轮桌上只有对话、
+            # 记忆和平台工具，加上会话自己那块 64 MiB 草稿区。
+            needs_place = not _is_dm(topic)
             acting_agent = await self._acting_handle(session, topic.id, agent)
             doc_root = await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
@@ -4602,11 +4622,12 @@ class ChatService:
             wanted_harness = DEFAULT_HARNESS
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
-            # 两席的房间里没有第三个人可点名，名册也就不进提示词——`[]` 和
-            # 「没有名册这回事」在下游是两种情况（见 `_HookWorkState.roster`）。
+            # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
+            # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
+            # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `_notify_mentions`。
             roster = (
                 []
-                if private_owner
+                if _is_dm(topic)
                 else await projects_repo.list_members(topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
