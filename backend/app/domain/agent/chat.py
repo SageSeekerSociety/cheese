@@ -35,9 +35,9 @@ from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import (
-    DEFAULT_HARNESS,
     Opening,
     SessionRef,
+    harness_for,
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
@@ -264,6 +264,9 @@ class _TurnContext:
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
     provider: ComputeProvider
+    # 这一轮跑在哪个骨架上，解析过一次的那个答案（结论 28）。会话行的键里有它，
+    # 所以执行那一半必须读这里，不能自己再解析一次。
+    harness: str
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
@@ -2231,7 +2234,12 @@ class ChatService:
                     if agent_handle is None or harness is None:
                         agent = await self._agent_at(session, place)
                         agent_handle = agent_handle or agent.handle
-                        harness = harness or DEFAULT_HARNESS
+                        # 事件没说骨架（老的 hook 流），就问这个项目跑的是哪
+                        # 个——同一个答法，和开这一轮用的那一个（结论 28）。
+                        owner = await ProjectRepository(session).get(place.project_id)
+                        harness = harness or harness_for(
+                            owner.settings if owner else None
+                        )
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
                         agent_handle=agent_handle,
@@ -4622,8 +4630,10 @@ class ChatService:
             project = await projects_repo.get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            # 骨架是这套部署跑的那一个（结论 28），不是这个参与者的属性。
-            wanted_harness = DEFAULT_HARNESS
+            # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
+            # 这个参与者的属性。这一轮只解析这一次，往下每一处都读它：会话行的键
+            # 里有骨架，两处各自解析一次就够把一条会话拆成两条。
+            wanted_harness = harness_for(project.settings if project else None)
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
@@ -4671,7 +4681,7 @@ class ChatService:
             resume_session_id = await AgentSessionService(session).resume_token(
                 place.room_id,
                 session_agent.handle,
-                harness=DEFAULT_HARNESS,
+                harness=wanted_harness,
             )
             untitled = topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
@@ -4922,6 +4932,7 @@ class ChatService:
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
+            harness=wanted_harness,
             needs_place=needs_place,
             replay_notice=replay_notice,
             resume_session_id=resume_session_id,
@@ -5188,7 +5199,7 @@ class ChatService:
                 project_id,
                 topic_id,
                 prepared.agent.handle,
-                DEFAULT_HARNESS,
+                prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
@@ -5291,6 +5302,9 @@ class ChatService:
             project = await projects.get(project_id)
             if project is None:
                 raise NotFoundError("Project not found")
+            # 这个项目跑的骨架（结论 28），趁项目行还在手上解析一次——下面把会话
+            # 指针写回去的那一段在另一个事务里，那里已经没有项目可读。
+            harness = harness_for(project.settings)
 
             title = " ".join(text.split())[:40] or "活动记录"
             topic = await topics.add(
@@ -5363,7 +5377,7 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
-                    harness=DEFAULT_HARNESS,
+                    harness=harness,
                 )
             await session.commit()
 

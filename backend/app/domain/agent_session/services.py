@@ -11,7 +11,6 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.harness import DEFAULT_HARNESS
 from app.domain.agent_session.models import SessionPlace
 from app.domain.agent_session.repositories import AgentSessionRepository
 
@@ -21,7 +20,7 @@ class AgentSessionService:
         self._repo = AgentSessionRepository(session)
 
     async def resume_token(
-        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str = DEFAULT_HARNESS
+        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> str | None:
         """What this agent resumes its conversation in this topic by."""
         return await self._repo.resume_token(topic_id, agent_handle, harness)
@@ -32,7 +31,7 @@ class AgentSessionService:
         topic_id: uuid.UUID,
         agent_handle: str,
         resume_token: str,
-        harness: str = DEFAULT_HARNESS,
+        harness: str,
     ) -> None:
         """Record where this agent's conversation got to."""
         await self._repo.save(
@@ -43,7 +42,7 @@ class AgentSessionService:
         )
 
     async def place(
-        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str = DEFAULT_HARNESS
+        self, topic_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> SessionPlace | None:
         """Where this agent's conversation here is — its machines, resolved."""
         row = await self._repo.get(topic_id, agent_handle, harness)
@@ -54,7 +53,7 @@ class AgentSessionService:
         *,
         topic_id: uuid.UUID,
         agent_handle: str,
-        harness: str = DEFAULT_HARNESS,
+        harness: str,
         work_lease: dict | None,
         runtime_location: dict,
     ) -> None:

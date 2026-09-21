@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
-from app.domain.agent.harness import DEFAULT_HARNESS, HARNESSES, Harness
+from app.domain.agent.harness import HARNESSES, Harness, deployment_harness
 from app.domain.agent.market import (
     TIER_INCLUDED,
     subscription_model_ids,
@@ -108,7 +108,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     # 按这套部署跑的骨架筛。跑哪个骨架是部署的选择（结论 28），所以这一筛问的
     # 是部署，不是任何一个参与者——一个骨架指不到的模型，在这套部署里根本不是一
     # 个能用的模型，列出来只会让绑上它的那条活在派出去的那一刻才失败。
-    running = HARNESSES[DEFAULT_HARNESS]
+    running = HARNESSES[deployment_harness()]
     choices = [item for item in choices if _drives(running, item)]
     # 项目级默认模型：项目 settings 里显式写一个**目录里有的**名字，就把对应的
     # 那条标 default=True，其余全部清掉。没写、或写了个目录里没有的名字（历史

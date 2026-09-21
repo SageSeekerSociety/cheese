@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import SessionRef, deployment_harness
 from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
@@ -87,8 +87,8 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
 
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        ada = await sessions.place(topic, "ada")
-        linus = await sessions.place(topic, "linus")
+        ada = await sessions.place(topic, "ada", harness=deployment_harness())
+        linus = await sessions.place(topic, "linus", harness=deployment_harness())
     assert ada is not None and linus is not None
     assert ada.lease["device_id"] == "hands-a"
     assert linus.lease["device_id"] == "hands-b"
@@ -103,7 +103,9 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
     }
     await _open(central, project, topic, "ada", "hands-a")
     async with client.test_factory() as db:
-        again = await AgentSessionService(db).place(topic, "ada")
+        again = await AgentSessionService(db).place(
+            topic, "ada", harness=deployment_harness()
+        )
     assert again is not None
     assert again.lease["device_id"] == "hands-a"
     assert again.resource_id == ada.resource_id
@@ -125,14 +127,17 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
     # 骨架交回一个可续的 token——写侧和真正跑完一轮时走的是同一个入口。
     async with client.test_factory() as db:
         await AgentSessionService(db).remember(
-            topic_id=topic, agent_handle="ada", resume_token="conversation-1"
+            topic_id=topic,
+            agent_handle="ada",
+            resume_token="conversation-1",
+            harness=deployment_harness(),
         )
         await db.commit()
 
     # 搬家：进程换一台会话机，手上那棵工作树不动。
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        before = await sessions.place(topic, "ada")
+        before = await sessions.place(topic, "ada", harness=deployment_harness())
         assert before is not None and before.machine == "center"
         await sessions.remember_place(
             topic_id=topic,
@@ -143,6 +148,7 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
                 "resource_id": before.resource_id,
                 "channel": before.channel,
             },
+            harness=deployment_harness(),
         )
         await db.commit()
 
@@ -154,7 +160,9 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
     }
     # 下一轮：续接指针是从这条会话行上读出来的，和 `chat.py` 读的是同一处。
     async with client.test_factory() as db:
-        resumes_by = await AgentSessionService(db).resume_token(topic, "ada")
+        resumes_by = await AgentSessionService(db).resume_token(
+            topic, "ada", harness=deployment_harness()
+        )
     await _open(central, project, topic, "ada", "hands-a", resume=resumes_by)
 
     opened = central._ensure_screen.await_args.kwargs
@@ -178,11 +186,15 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
                 "resource_id": str(topic),
                 "channel": "device",
             },
+            harness=deployment_harness(),
         )
         await db.commit()
         assert await sessions.has_run(topic) is False
         await sessions.remember(
-            topic_id=topic, agent_handle="ada", resume_token="conversation-1"
+            topic_id=topic,
+            agent_handle="ada",
+            resume_token="conversation-1",
+            harness=deployment_harness(),
         )
         await db.commit()
         assert await sessions.has_run(topic) is True

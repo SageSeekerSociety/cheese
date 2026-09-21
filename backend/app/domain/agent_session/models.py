@@ -105,9 +105,10 @@ class AgentSession(UuidPk, Timestamps, Base):
     )
     # ResolvedAgent.handle — the agent's key inside its project.
     agent_handle: Mapped[str] = mapped_column(String(64))
-    harness: Mapped[str] = mapped_column(
-        String(64), default="claude-code", server_default="claude-code"
-    )
+    # 哪个骨架跑的这条会话。没有默认值：一个不说骨架的写入，等于把「跑的是哪个」
+    # 又答了一遍（结论 28 说只许有一个答法，那个答法是部署设置加项目设置）。每一
+    # 条写路径都说得出来，所以这里不必替谁猜。
+    harness: Mapped[str] = mapped_column(String(64))
     # What the harness resumes this conversation by. Opaque to the platform: it
     # is Claude Code's session id today and whatever the next harness hands back
     # tomorrow, so nothing here may parse it.

@@ -40,6 +40,7 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.handles import CHEESE_HANDLE
 from tests.conftest import StubChannel, drain_hooks, stub_compute
@@ -103,7 +104,7 @@ async def _stored_session_id(factory, topic_id: str) -> str | None:
     served by the project's implicit 芝士, so that is the key to read under."""
     async with factory() as s:
         return await AgentSessionService(s).resume_token(
-            uuid.UUID(topic_id), CHEESE_HANDLE
+            uuid.UUID(topic_id), CHEESE_HANDLE, harness=deployment_harness()
         )
 
 

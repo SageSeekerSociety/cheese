@@ -44,6 +44,7 @@ harness 一样都不用付。
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -137,3 +138,128 @@ def test_the_ledger_says_exactly_who_still_depends_on_this_harness():
             f"{module} 从适配器拿的名字变了。"
             f"账本写着 {_LEDGER[module]}，实际是 {actual[module]}"
         )
+
+
+# --- 骨架的名字只写在注册表里 -----------------------------------------------
+#
+# 结论 28：harness 不是产品概念，是部署/项目级的开发者选项。不变量 I5：领域层不
+# 出现实现的名字，而且**按字面量抓，不按 import 抓**——从注册表 import 一个常量
+# 是对的写法，源码里再打一遍那个名字不是。
+#
+# 为什么按字面量：一处字面量就是「跑的是哪个骨架」的第二个答法，而它永远不会跟着
+# 设置改。原样长在这儿的三处——``central_provider`` 的分岔、``agent_session`` 那
+# 一列的两个默认值、``hook_events`` 给事件盖的戳——每一处都让一套配成别的骨架的
+# 部署当场答错，而没有一条功能测试会因此变红。
+#
+# 名字只许出现在一个文件里：``harness/__init__.py``。那里是注册表，也是
+# ``deployment_harness()`` 在部署没配的时候取值的地方。适配器自己那个目录也不
+# 例外——``hooks_substrate`` 早就是 ``harness = CLAUDE_CODE``，import 得到的东西
+# 就不该再拼一遍。
+
+_REGISTRY = "app/domain/agent/harness/__init__.py"
+
+#: 注册表里写着的名字。这里按源码认，不 import ``HARNESSES`` ——守卫要抓的正是
+#: 「名字被写成了字面量」，拿被守的东西当判据等于放弃判据。
+_HARNESS_NAMES = ("claude-code",)
+
+
+def _docstring_constants(tree: ast.AST) -> set[int]:
+    """文档字符串那些节点。写清楚一个骨架长什么样是说明，不是选择。"""
+    return {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+
+
+def _name_literals(source: str) -> list[tuple[int, str]]:
+    """源码里把骨架名字原样打出来的地方。
+
+    只认**整个**字符串就是那个名字的：``"https://…/claude-code-releases"`` 是
+    Anthropic 的下载地址，不是「这一轮跑哪个骨架」的答案，把它也算进来只会把下一
+    个人导去改一处本来对的代码。
+    """
+    tree = ast.parse(source)
+    skip = _docstring_constants(tree)
+    return [
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in _HARNESS_NAMES
+        and id(node) not in skip
+    ]
+
+
+def test_the_harness_name_is_written_down_once_in_the_backend() -> None:
+    offenders: dict[str, list[tuple[int, str]]] = {}
+    for path in sorted(APP.rglob("*.py")):
+        relative = str(path.relative_to(APP.parent))
+        if relative == _REGISTRY:
+            continue
+        hits = _name_literals(path.read_text(encoding="utf-8"))
+        if hits:
+            offenders[relative] = hits
+    assert not offenders, (
+        f"这些地方把骨架的名字原样写了出来：{offenders}。跑的是哪个骨架由部署设置"
+        f"加项目设置答（``deployment_harness()`` / ``harness_for()``），名字本身"
+        f"只写在 {_REGISTRY} 里。"
+    )
+
+
+_FRONTEND_SRC = APP.parent.parent / "frontend/src"
+_IN_THE_INTERFACE = re.compile(
+    "|".join(f"""['"`]{re.escape(name)}['"`]""" for name in _HARNESS_NAMES)
+)
+
+
+def test_the_interface_does_not_know_any_harness_by_name() -> None:
+    """界面上一个骨架名字都没有：普通用户看不到骨架这回事（结论 28）。"""
+    assert _FRONTEND_SRC.is_dir(), (
+        f"{_FRONTEND_SRC} 不在——这条守卫会扫到零个文件然后绿。"
+    )
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(_FRONTEND_SRC.rglob("*")):
+        if path.suffix not in (".ts", ".vue", ".js"):
+            continue
+        hits = [
+            f"line {number}: {line.strip()}"
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), 1
+            )
+            if _IN_THE_INTERFACE.search(line)
+        ]
+        if hits:
+            offenders[str(path.relative_to(_FRONTEND_SRC))] = hits
+    assert not offenders, (
+        f"界面上出现了骨架的名字：{offenders}。骨架是开发者选项，界面上没有它。"
+    )
+
+
+# 守卫自己得能抓到东西：名字都收走之后，「扫出来是空的」既是它守住了的样子，也是
+# 它什么都没在看的样子。该红的喂进去要命中，不该红的喂进去要放过。
+_MUST_CATCH = {
+    "a-branch": 'if harness != "claude-code":\n    pass\n',
+    "a-column-default": 'harness = mapped_column(String(64), default="claude-code")\n',
+    "a-stamp": 'event = AgentSessionInfo(sid, harness="claude-code")\n',
+    "a-dict-value": 'env = {"CHEESE_HARNESS": "claude-code"}\n',
+}
+
+_MUST_PASS = {
+    # 从注册表拿常量是对的写法——I5 明说了按字面量抓，不按 import 抓。
+    "the-constant": "harness = CLAUDE_CODE\n",
+    # Anthropic 的下载地址，名字在里面但它答的不是「跑哪个骨架」。
+    "a-url": 'BASE = "https://downloads.claude.ai/claude-code-releases"\n',
+    # 说明不是选择。
+    "a-docstring": '"""一间房里的 claude-code 队友换成了 pi。"""\n',
+}
+
+
+@pytest.mark.parametrize("source", _MUST_CATCH.values(), ids=list(_MUST_CATCH))
+def test_self_test_the_literal_guard_goes_red_on(source: str) -> None:
+    assert _name_literals(source), f"没抓到：{source!r}"
+
+
+@pytest.mark.parametrize("source", _MUST_PASS.values(), ids=list(_MUST_PASS))
+def test_self_test_the_literal_guard_lets_through(source: str) -> None:
+    assert _name_literals(source) == [], f"误红：{source!r}"

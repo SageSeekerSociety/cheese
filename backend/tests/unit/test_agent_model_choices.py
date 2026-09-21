@@ -17,7 +17,6 @@ from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import CODEX, PI
 from app.domain.agent.market import subscription_model_alias
-from app.domain.agent_instance import configuration as config
 from app.domain.agent_instance.configuration import model_choices
 
 
@@ -26,8 +25,8 @@ def _offered(project_settings: dict | None = None) -> set[str]:
 
 
 def _running(monkeypatch, harness: str) -> None:
-    """这套部署跑的是哪个骨架。它是部署的选择，不是谁的属性。"""
-    monkeypatch.setattr(config, "DEFAULT_HARNESS", harness)
+    """这套部署跑的是哪个骨架。它是部署设置，不是谁的属性（结论 28）。"""
+    monkeypatch.setattr(settings, "agent_harness", harness)
 
 
 @pytest.mark.parametrize(

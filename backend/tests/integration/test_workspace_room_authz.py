@@ -24,6 +24,7 @@ def _connect_workspace(client, project, room):
 
         async with client.test_factory() as session:
             topic = await session.get(Topic, uuid.UUID(room))
+            from app.domain.agent.harness import deployment_harness
             from app.domain.agent_session.services import AgentSessionService
 
             await AgentSessionService(session).remember_place(
@@ -35,6 +36,7 @@ def _connect_workspace(client, project, room):
                     "channel": "central",
                     "resource_id": str(topic.resource_id or topic.id),
                 },
+                harness=deployment_harness(),
             )
             task = await session.get(Task, task_id)
             task.pr_number = int(task.id.hex[:6], 16)

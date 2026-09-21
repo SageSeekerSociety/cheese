@@ -115,7 +115,7 @@ class ComputePool:
     """
 
     def __init__(self, backends: list[ComputeProvider], default_name: str):
-        from app.domain.agent.harness import DEFAULT_HARNESS
+        from app.domain.agent.harness import deployment_harness
 
         # Every backend runs a harness. Checked HERE, once, at wiring time: the
         # turn path then reads `runtime_for` as an answer rather than as a
@@ -125,7 +125,9 @@ class ComputePool:
             (backend.name, runtime_for(backend).harness): backend
             for backend in backends
         }
-        self._default = (default_name, DEFAULT_HARNESS)
+        # 部署跑的那个骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，
+        # 而不是等到某一轮才发现自己跑的是另一个东西（结论 28）。
+        self._default = (default_name, deployment_harness())
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
         self._owners: dict[uuid.UUID, AgentRuntime] = {}

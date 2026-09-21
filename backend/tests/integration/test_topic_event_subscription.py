@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import Channel
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
@@ -413,7 +414,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
         resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE
+            topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     ai_messages = [
         row
