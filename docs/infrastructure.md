@@ -163,6 +163,30 @@ without deploying — use it to validate connectivity safely.
 The repo is **squash-only** (merge commits and rebase are disabled; branches
 auto-delete on merge). Every PR lands as one squashed commit.
 
+
+`main` requires the GitHub Actions check `CI required` and the
+[Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
+The ruleset has no bypass actors. Add a green PR through GitHub's merge queue UI
+or the GraphQL `enqueuePullRequest` mutation. With auto-merge disabled, gh 2.79.0
+attempts `enablePullRequestAutoMerge` and fails even for a green PR.
+The queue tests its changes against the latest main and preceding queued
+changes before merging.
+
+`.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
+It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
+Documentation-only changes run repository guards. Failed scope detection, failed
+or cancelled selected suites, and unexpected skips fail `CI required`. Remote
+execution acceptance remains advisory pending the stability target in #1279; the
+MCP latest-version canary runs on schedule or manual dispatch.
+
+Queue settings: two concurrent merge-group builds, ALLGREEN, squash merge, one
+to five PRs per merge, no minimum-batch wait, and a 60-minute check-response timeout.
+That timeout bounds a stalled queue; the feedback-time targets remain those in
+#1279.
+
+PRs opened before the gate was installed need a new pull-request event to report
+`CI required`, for example after updating their branch or reopening the PR.
+
 ## CI runner pool (cheese-ci)
 
 Heavy CI (`test.yml`'s migration-heads/test, `e2e.yml`'s e2e) runs on the
