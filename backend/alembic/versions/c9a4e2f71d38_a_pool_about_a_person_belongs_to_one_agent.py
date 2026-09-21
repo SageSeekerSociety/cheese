@@ -46,25 +46,37 @@ depends_on: str | Sequence[str] | None = None
 #: 下半：一间私聊都没有的人，他所在的每个项目。两边都落到项目的默认芝士名下
 #: （结论 4：每个项目自动有一个芝士实例），因为行上没有记着是哪位队友观察到的，而
 #: 默认那位是唯一一个「这个项目一定有」的答案。
+#:
+#: 「他所在的项目」要两问：``project_members`` **不存建项目的那个人**（谁是所有者
+#: 记在 ``projects.owner_handle`` 上，``list_members`` 读的时候才把那一行补出来），
+#: 只问成员表就会漏掉每一个项目的所有者——而他正是最可能被记下点什么的那个人。
 PERSONAL_MEMORY_TARGETS = """
     CREATE TEMP TABLE cheese_personal_targets AS
-    SELECT DISTINCT tm.member_handle AS person,
-           p.id::text || ':' || a.handle || ':' || tm.member_handle AS scope_id
-      FROM topic_memberships tm
-      JOIN topics t ON t.id = tm.topic_id AND t.is_private
-      JOIN projects p ON p.id = t.project_id
+    WITH in_a_dm AS (
+        SELECT DISTINCT tm.member_handle AS person, t.project_id
+          FROM topic_memberships tm
+          JOIN topics t ON t.id = tm.topic_id AND t.is_private
+    ),
+    belongs AS (
+        SELECT pm.user_handle AS person, pm.project_id
+          FROM project_members pm
+         UNION
+        SELECT p.owner_handle, p.id
+          FROM projects p
+         WHERE p.owner_handle IS NOT NULL AND p.owner_handle <> ''
+    )
+    SELECT DISTINCT d.person,
+           p.id::text || ':' || a.handle || ':' || d.person AS scope_id
+      FROM in_a_dm d
+      JOIN projects p ON p.id = d.project_id
       JOIN agent_instances a ON a.id = p.default_agent_instance_id
      UNION
-    SELECT DISTINCT pm.user_handle,
-           p.id::text || ':' || a.handle || ':' || pm.user_handle
-      FROM project_members pm
-      JOIN projects p ON p.id = pm.project_id
+    SELECT DISTINCT b.person,
+           p.id::text || ':' || a.handle || ':' || b.person
+      FROM belongs b
+      JOIN projects p ON p.id = b.project_id
       JOIN agent_instances a ON a.id = p.default_agent_instance_id
-     WHERE NOT EXISTS (
-           SELECT 1
-             FROM topic_memberships tm
-             JOIN topics t2 ON t2.id = tm.topic_id AND t2.is_private
-            WHERE tm.member_handle = pm.user_handle)
+     WHERE NOT EXISTS (SELECT 1 FROM in_a_dm d WHERE d.person = b.person)
 """
 
 #: 旧行复制到每一个目标池。

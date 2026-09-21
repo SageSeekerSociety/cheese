@@ -99,6 +99,10 @@ def test_a_person_with_no_private_chat_lands_under_each_projects_cheese(
     """一间私聊都没有的人无从归属，按计划落到他所在项目的默认芝士名下。
 
     少给一份就是让那个项目的芝士从此不知道这件事，而没有第二个地方能把它找回来。
+
+    这里的 bob 是项目的**所有者**，故意的：所有者不在 ``project_members`` 里
+    （这个仓把他记在 ``projects.owner_handle`` 上），只问成员表的那一版迁移会把
+    每一个项目的所有者漏掉——而他正是最可能被记下点什么的那个人。
     """
 
     async def run() -> None:
