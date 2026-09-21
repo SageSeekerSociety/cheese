@@ -56,27 +56,42 @@ def _recording(monkeypatch) -> list[dict]:
     return asked
 
 
-async def test_the_checkout_asked_is_the_calling_agents_own(client, monkeypatch):
+async def test_another_teammates_hands_are_not_this_agents_checkout(
+    client, monkeypatch
+):
+    """房间里坐着另一位队友那双手，问的人是 reviewer——那双手不是它的。
+
+    拿房间里第一条带租约的地点，这里就会去默认那位的检出目录里查，命中就是一次凭空
+    拒绝。reviewer 自己有手之后，查的才是它自己那条。
+    """
     asked = _recording(monkeypatch)
     async with client.test_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
         sessions = AgentSessionService(session)
         generation = str(room.resource_id or room.id)
-        for handle, device in (
-            ("cheese", HANDS_OF_THE_DEFAULT),
-            ("reviewer", HANDS_OF_THE_REVIEWER),
-        ):
-            await sessions.remember_place(
-                topic_id=room.id,
-                agent_handle=handle,
-                harness=harness,
-                work_lease={"kind": "device", "device_id": device},
-                runtime_location=_at(device, generation=generation),
-            )
+        await sessions.remember_place(
+            topic_id=room.id,
+            agent_handle="cheese",
+            harness=harness,
+            work_lease={"kind": "device", "device_id": HANDS_OF_THE_DEFAULT},
+            runtime_location=_at(HANDS_OF_THE_DEFAULT, generation=generation),
+        )
         await session.flush()
 
         search = agent_checkout_search(session, room, "reviewer", harness)
+        assert await search(["pnpm"]) == []
+        assert asked == []
+
+        await sessions.remember_place(
+            topic_id=room.id,
+            agent_handle="reviewer",
+            harness=harness,
+            work_lease={"kind": "device", "device_id": HANDS_OF_THE_REVIEWER},
+            runtime_location=_at(HANDS_OF_THE_REVIEWER, generation=generation),
+        )
+        await session.flush()
+
         assert await search(["pnpm"]) == []
 
     assert [t["device_id"] for t in asked] == [HANDS_OF_THE_REVIEWER]
