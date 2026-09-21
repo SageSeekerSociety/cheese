@@ -202,11 +202,11 @@ class Task(UuidPk, Timestamps, Base):
     # dispatch stayed frozen there forever while the real state moved on.
     brief: Mapped[str] = mapped_column(Text, default="", server_default="")
     # 分身交回来的最后一句话 —— `SubagentStop.last_assistant_message`, written
-    # by the platform every time a bound worker hands something back, each one
-    # overwriting the last. A worker reports finished more than once (parking a
-    # long command counts), so the newest is the only one worth keeping and no
-    # single one of them means the work is over. What ends it is the room
-    # closing the card, after reading this.
+    # by the platform every time a sub-thread whose label names this card hands
+    # something back, each one overwriting the last. A worker reports finished
+    # more than once (parking a long command counts), so the newest is the only
+    # one worth keeping and no single one of them means the work is over. What
+    # ends it is the room closing the card, after reading this.
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 交付标记, stamped when the work merges. Independent of `status`, above.

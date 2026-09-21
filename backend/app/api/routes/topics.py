@@ -790,17 +790,18 @@ async def conclude_task(
     """收卡, said by the ROOM about one of its threads.
 
     The worker's conclusion is already on the card: the platform writes it there
-    on every `SubagentStop` from a bound worker. This is the other half — the
-    room saying the work is over — and it is deliberately a separate act, done
-    by hand.
+    on every `SubagentStop` whose label names this card. This is the other half
+    — the room saying the work is over — and it is deliberately a separate act,
+    done by hand.
 
     It has to be. A worker reports finished more than once (parking a long
     command in its own background counts as finishing), and stops arrive from
-    workers the platform never bound — measured on 2.1.224: after the session's
-    own Stop, with an unknown id, an empty type and a fragment of a prompt as
-    their closing message. Closing on either of those would collapse work that
-    is still going. The room decides when work has ended; code acceptance merges
-    the task's branch and closes it through the separate acceptance flow.
+    sub-threads the harness started for its own purposes — measured on 2.1.224:
+    after the session's own Stop, with an unknown id, an empty label and a
+    fragment of a prompt as their closing message. Closing on either of those
+    would collapse work that is still going. The room decides when work has
+    ended; code acceptance merges the task's branch and closes it through the
+    separate acceptance flow.
 
     `conclusion` is optional: given, it overwrites the worker's last word (which
     is sometimes the fragment above); omitted, that last word stands.
@@ -1931,7 +1932,8 @@ async def split_topic(
         await idem.record_result(db, key, out)
     # The thread and its idempotency key commit together, so a crash here cannot
     # produce a second thread on resume — and the caller must see the row and
-    # its brief doc before it can bind a worker to them.
+    # its brief doc, and the thread label on it, before it can put a worker on
+    # them.
     await db.commit()
     return ok(out)
 

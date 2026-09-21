@@ -53,6 +53,11 @@
       "agent_id": "sub-1",
       "thread_label": "general-purpose"
     },
-    { "kind": "subagent_stop", "agent_id": "sub-1", "text": "查到了" }
+    {
+      "kind": "subagent_stop",
+      "agent_id": "sub-1",
+      "text": "查到了",
+      "thread_label": "general-purpose"
+    }
   ]
 }

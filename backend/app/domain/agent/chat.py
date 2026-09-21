@@ -3524,10 +3524,10 @@ class ChatService:
     ) -> dict | None:
         """A worker started, or handed something back — on ITS thread's line.
 
-        Nothing is written for a worker the platform never bound, and that is
-        not tidiness. Measured twice on 2.1.224: after the session's own Stop, a
-        SubagentStop arrives with an id matching no worker we saw, an empty
-        type, and a fragment of a prompt where the closing message should be —
+        Nothing is written for a sub-thread whose label names no card here, and
+        that is not tidiness. Measured twice on 2.1.224: after the session's own
+        Stop, a SubagentStop arrives with an id matching no worker we saw, an
+        empty label, and a fragment of a prompt where the closing message is —
         something inside Claude Code, not work anybody dispatched. Writing those
         would put a stranger's half-sentence in a room as if 芝士 had said it.
 
@@ -3564,15 +3564,6 @@ class ChatService:
             # above), so the fragments Claude Code's own internal agents stop
             # with never become anybody's conclusion.
             await self._record_conclusion(task_id, event.text.strip())
-            # 这条活花了多少，是它自己这些收工报上来的用量加起来的（结论 53：
-            # 模型请求上没有「这是哪张卡」，账按项目记，卡的那一份从事件算）。
-            await self._record_thread_spend(
-                project_id=project_id,
-                topic_id=topic_id,
-                task_id=task_id,
-                turn_id=turn_id,
-                usage=event.usage,
-            )
         meta["agent_id"] = event.agent_id
         if event.thread_label:
             meta["thread_label"] = event.thread_label
@@ -3601,39 +3592,6 @@ class ChatService:
             if task is None:
                 return
             await tasks.note_worker(task, subagent_id)
-            await session.commit()
-
-    async def _record_thread_spend(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        task_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        usage: AgentUsage | None,
-    ) -> None:
-        """这条子线程报上来的一段用量，记在它做的那张卡上。
-
-        报了才写。骨架报不出用量时写一行 0，卡上就成了「这条活花了 0」——那是
-        「不知道」冒充「没花」，房间那条线上早就为这件事分了两种行（`UsageRepository
-        .add` 的 `metered`）。
-        """
-        if usage is None or not (
-            usage.input_tokens or usage.output_tokens or usage.cost_usd
-        ):
-            return
-        async with self._sessions() as session:
-            await UsageRepository(session).add(
-                project_id=project_id,
-                topic_id=topic_id,
-                task_id=task_id,
-                model=usage.model,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cost_usd=usage.cost_usd,
-                route=self._session_route.get(topic_id, "native"),
-                turn_id=turn_id,
-            )
             await session.commit()
 
     async def _record_conclusion(self, task_id: uuid.UUID, text: str) -> None:

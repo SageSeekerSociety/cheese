@@ -120,18 +120,13 @@ def _hook_event_name(hook: dict) -> str:
     return str(hook.get("hook_event_name") or hook.get("hookEventName") or "")
 
 
-def _usage_from_hook(hook: dict) -> AgentUsage | None:
-    """What this payload says it spent, or None when it says nothing.
-
-    None and a zeroed `AgentUsage` are different claims — 「没报」 against
-    「没花」 — and only the caller knows which one its event should make: the
-    room's own turn writes a zero line rather than block on a missing number,
-    while a card would read that zero as 「这条活花了 0」. So the distinction is
-    kept here and each caller collapses it its own way.
-    """
+def _usage_from_hook(hook: dict) -> AgentUsage:
+    """Best-effort token accounting from a Stop payload. Interactive hooks don't
+    reliably carry usage, so this is zero unless a `usage` dict is present — the
+    turn is never blocked on missing usage (design note: 拿不到就置 0)."""
     usage = hook.get("usage")
     if not isinstance(usage, dict):
-        return None
+        return AgentUsage()
     # Anthropic-shaped payload: cache buckets fold into input (usage.tokens).
     input_tokens, output_tokens = input_output_tokens(usage)
     return AgentUsage(
@@ -206,10 +201,6 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             agent_id=agent_id,
             text=str(hook.get("last_assistant_message") or ""),
             thread_label=_thread_label(hook) or "",
-            # Only when the payload says. A zeroed AgentUsage would read as
-            # 「这条活什么都没花」 on the card, which is a different claim from
-            # 「这个钩子没报」 and the wrong one to make up.
-            usage=_usage_from_hook(hook),
             transcript_path=str(path) if path else None,
             session_id=str(sid) if sid else None,
         )
@@ -327,9 +318,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         return AgentResult(
             text=str(hook.get("last_assistant_message") or ""),
             session_id=str(sid) if sid else None,
-            # 拿不到就置 0：房间那条线上「这一轮没报用量」写成一行 0，轮次从不
-            # 因为缺一个数字卡住。
-            usage=_usage_from_hook(hook) or AgentUsage(),
+            usage=_usage_from_hook(hook),
             agent_handle=hook.get("_agent_handle"),
             harness="claude-code",
             thread_label=_thread_label(hook),

@@ -226,12 +226,6 @@ class AgentSubagentStop:
     agent_id: str
     text: str = ""
     thread_label: str = ""
-    #: What this sub-thread spent while it ran, when the harness says. The
-    #: card's 「这条活花了多少」 is these numbers added up by label — the model
-    #: request itself carries no card id (结论 53), and asking it to would put
-    #: the platform's bookkeeping inside somebody else's protocol. Absent where
-    #: the harness reports no usage, which is not zero and is why this is None.
-    usage: AgentUsage | None = None
     #: Path to the subagent's own transcript ON THE MACHINE THAT RAN IT. Present
     #: for a reader that can reach that filesystem; useless to one that cannot,
     #: which is why the closing message is carried in full rather than by

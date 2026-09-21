@@ -39,7 +39,6 @@ from app.domain.room_task.services import TaskService
 from app.domain.room_task.thread_label import thread_label
 from app.domain.topic.repositories import TopicProgressRepository
 from app.domain.topic.services import TopicService
-from app.domain.usage.repositories import UsageRepository
 
 pytestmark = pytest.mark.anyio
 
@@ -224,52 +223,6 @@ async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
         task = await TaskService(session).get(task_id)
         assert task is not None
         assert task.subagent_id == "worker-1"
-
-    await provider._close_topic(room_id)
-
-
-async def test_what_this_work_cost_is_its_own_events_added_up(client, tmp_path) -> None:
-    """卡上「这条活花了多少」，是这条子线程自己报的用量按线程标识累加出来的。
-
-    模型请求上没有「这是哪张卡」这个字段（结论 53），所以这个数只能从事件来。
-    两次收工累加，而同一个房间里另一条活报的用量不掺进来。
-    """
-    factory = client.test_factory
-    project_id, room_id = await _seed_room(factory)
-    mine = await _dispatch(factory, project_id, room_id, "我这条")
-    other = await _dispatch(factory, project_id, room_id, "别人那条")
-    router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
-
-    for task_id, worker, eid, tokens in (
-        (mine, "worker-1", "spend-a", 1000),
-        (mine, "worker-1", "spend-b", 500),
-        (other, "worker-2", "spend-c", 7000),
-    ):
-        assert router.push(
-            str(room_id),
-            {
-                "hook_event_name": "SubagentStop",
-                "agent_id": worker,
-                "agent_type": thread_label(task_id),
-                "last_assistant_message": f"交一次（{eid}）",
-                "usage": {
-                    "model": "claude-sonnet-5",
-                    "input_tokens": tokens,
-                    "output_tokens": 1,
-                    "cost_usd": 0.0,
-                },
-                "_eid": eid,
-            },
-        )
-    await _settle(factory, room_id, "spend-a", "spend-b", "spend-c")
-
-    async with factory() as session:
-        usage = UsageRepository(session)
-        spent = await usage.for_task(mine)
-        assert spent["input_tokens"] == 1500, spent
-        assert (await usage.for_task(other))["input_tokens"] == 7000
-        # 卡上写的是它真花在哪个模型上（`presentation.card_model` 读这里）。
-        assert (await usage.last_model_by_task([mine]))[mine] == "claude-sonnet-5"
 
     await provider._close_topic(room_id)
 
