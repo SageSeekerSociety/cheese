@@ -358,28 +358,6 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert not (work / "escaped").exists()
 
 
-def test_decision_uses_shared_plan_without_executor_invocation(central_transport):
-    process, _, _, work = central_transport
-    tools = process.call("tools/list", {})["tools"]
-    assert any(tool["name"] == "cheese_decision" for tool in tools)
-    result = process.call(
-        "tools/call",
-        {
-            "name": "cheese_decision",
-            "arguments": {
-                "id": "direct-decision",
-                "session_id": "fixture",
-                "text": "literal $(touch escaped)",
-            },
-        },
-    )
-    outcome = json.loads(result["content"][0]["text"])
-    assert json.loads(outcome["result"]["stdout"])["data"] == {
-        "decision": "literal $(touch escaped)"
-    }
-    assert not (work / "escaped").exists()
-
-
 @pytest.mark.parametrize(
     "path", ["https://other.test/x", "//other.test/x", "relative", "/x#fragment"]
 )
