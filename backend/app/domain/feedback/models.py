@@ -123,9 +123,8 @@ class FeedbackVisibility(enum.StrEnum):
 def _enum(enum_cls: type[enum.Enum]) -> Enum:
     """A column type that lands as a plain VARCHAR(16).
 
-    `native_enum=False` plus no `create_constraint`, which is what
-    `alerts.level` / `alerts.kind` already do in
-    `alembic/versions/cf93e4735e4a_full_schema.py`. The alternative (a PG enum
+    `native_enum=False` plus no `create_constraint` — the same shape the
+    inbox's own level and kind columns land as. The alternative (a PG enum
     type created by its own migration) would make adding a sixth status a
     migration, and the status set is the part of this feature most likely to
     move. The other lesson is `TopicStatus`'s: a value that enters a PG enum can

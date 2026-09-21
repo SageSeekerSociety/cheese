@@ -1133,7 +1133,7 @@ agent 调「开一台机器 / 换到 Cloud」，撞上项目策略（换到另�
 
 **今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
-`address()` 给出收件人。`chat.py` 里的 @ 仍然自己发一条 `AlertKind.mention`，它随 `alert/` 整包删除一起归拢。
+`address()` 给出收件人。`chat.py` 里的 @ 仍然自己往收件箱写一行 `MENTION`，没有过 `address()`。
 
 ### 5.3 总览与调度
 
