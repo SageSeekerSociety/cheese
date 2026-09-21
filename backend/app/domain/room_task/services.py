@@ -149,14 +149,14 @@ class TaskService:
         归属不靠它（那是线程标识的事），所以重复一次、换一个 id 都不是冲突：一条
         活重派一个分身，卡上换成新的那个就是对的答案。
 
+        没有 id 的开工事件在骨架那一层就整条丢掉了（`hook_events._agent_id`：没有
+        id 的分身和会话本身分不开），所以这里收到的一定是个认得出人的 id。
+
         A worker starting IS this work starting, and `last_turn_at` is the signal
         the board falls back on before the worker has said anything: without it a
         thread reads 失联 for the whole gap between starting and its first tool
         call, which is the busiest moment it has.
         """
-        subagent_id = subagent_id.strip()
-        if not subagent_id:
-            return task
         task.subagent_id = subagent_id
         task.last_turn_at = datetime.now(UTC)
         await self._session.flush()

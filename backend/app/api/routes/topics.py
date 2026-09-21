@@ -694,7 +694,7 @@ async def say_on_task(
     So this lands what was said WHERE THE WORK IS, and wakes the ROOM to act on
     it. Nothing is woken on the card — there is no session there to wake.
 
-    Through the room's id for the same reason `/bind` and `/title` are: a card
+    Through the room's id for the same reason `/conclude` and `/title` are: a card
     is not a place, so it has no address of its own and no token scoped to it.
     """
     place = await TopicService(db).place_or_404(topic_id)
@@ -1868,15 +1868,15 @@ async def split_topic(
     """从上往下拆解：dispatch a todo as a card of work in this room (eval A2).
 
     Writes the card and stops there. The WORKER is the caller's to start: it
-    spawns one inside its own session and reports the id back with
-    `/tasks/{id}/bind`. The platform used to raise a whole second container per
-    piece of work — its own screen, its own home, its own clone of the
-    repository — to run something that is a second worker in a session the room
-    already has.
+    spawns one inside its own session carrying this card's thread label, and the
+    platform reads whose work each event is off that label. The platform used to
+    raise a whole second container per piece of work — its own screen, its own
+    home, its own clone of the repository — to run something that is a second
+    worker in a session the room already has.
 
     So a card returned from here has no worker yet, and that is a normal state
-    rather than a half-finished dispatch: 认领 is a separate call because the id
-    it carries does not exist until the worker does."""
+    rather than a half-finished dispatch: nothing here reports a worker, because
+    the id it would carry does not exist until the worker does."""
     service = TopicService(db)
     parent_place = await service.place_or_404(topic_id)
     # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall

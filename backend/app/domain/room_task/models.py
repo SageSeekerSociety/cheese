@@ -154,13 +154,7 @@ class Task(UuidPk, Timestamps, Base):
     )
     last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_check_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # WHICH worker inside the room's session is doing this. A subagent is a
-    # second worker in one Claude session: its hooks come up the SAME pipe as
-    # the room's own, carrying `agent_id` and nothing else to say whose they
-    # are (the room's own events carry no such key at all). So this column is
-    # the whole of the attribution — without it every tool call a worker makes
-    # reads as the room's, and the room's timeline is one interleaved stream
-    # from nobody.
+    # WHICH worker inside the room's session is doing this.
     #
     # A string, not a foreign key: the id is minted by the harness inside the
     # container, so the platform can only ever recognise it — it is written when
