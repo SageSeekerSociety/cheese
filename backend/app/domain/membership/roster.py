@@ -15,12 +15,13 @@ agent 在项目里列不出另一个 agent——结论 12 那句「不同 handle
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.services import IdentityService
 from app.domain.project.models import ProjectRole
 from app.domain.project.services import ProjectService
 
@@ -37,6 +38,11 @@ class Member:
     handle: str
     name: str
     role: str
+    # 这一行是不是一个 agent：判据是它背后的 user 带不带 ``AgentBinding``，从来不是
+    # handle 长什么样（I9），也不是「它是不是本项目的实例」——后者会把一个有授权行
+    # 但不是本项目实例的 agent-user 判成人，而房间名册对同一个 handle 答 agent，于是
+    # 同一个事实又有了两份声明（I4a）。本项目的实例另外给出 ``active`` 与
+    # ``project_default``，那两列只有实例答得出。
     agent: bool = False
     avatar_id: int | None = None
     # False = 已停用的队友：名册上还有它（它在已经接手的房间里照常工作），只是派新
@@ -86,6 +92,10 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     .add`` 是平台给它放座位的原语），那也仍然只是一行：授权行给出角色，实例给出名字
     和启用与否。
 
+    ``agent`` 这一列由 binding 答（``IdentityService.agents_among``），不是由「这一行
+    是不是本项目的实例」答：有授权行而实例建在别处的队友照样是 agent，房间名册对它
+    答的也是 agent。
+
     队友那几行还带着「是不是这个项目的默认队友」：一间没有 AI 席位的老房间落到谁身
     上由它决定，而这张表是界面唯一能知道那是谁的地方。
     """
@@ -106,6 +116,10 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         )
         for person in await projects.people(project_id)
     ]
+    # 授权行那一半里也坐着 agent：``MemberService.add`` 是平台给队友放座位的原语，
+    # 而队友的实例不一定建在这个项目里。谁是 agent 由 binding 答，一次问完整张表。
+    agents = await IdentityService(session).agents_among([row.handle for row in rows])
+    rows = [replace(row, agent=True) if row.handle in agents else row for row in rows]
     at = {row.handle: index for index, row in enumerate(rows)}
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         seat = agent_instance_handle(instance.id)

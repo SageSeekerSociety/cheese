@@ -328,6 +328,11 @@ def test_an_agent_is_still_added_to_the_roster_directly(client, bearer):
     )
     assert r.status_code == 200, r.text
     assert "cheese-direct" in _handles(client, project_id)
+    rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
+    row = next(m for m in rows if m["user_handle"] == "cheese-direct")
+    # 它进名册了，而且名册**认得它是队友**——分两栏靠的就是这一格。判据是 binding，
+    # 不是「它是不是本项目的实例」：这一位的实例不在这个项目里，照样是队友。
+    assert row["agent"] is True
 
 
 def test_a_teammate_who_joined_after_the_project_is_not_invited(client, bearer):
