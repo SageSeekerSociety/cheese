@@ -1,0 +1,12 @@
+{
+  "allSpaces": "All spaces",
+  "awaiting": "{count} waiting for you",
+  "emptyBody": "Create a {project} and Cheese starts with you: say what you want to do, and it reads, writes and breaks the work down.",
+  "emptyTitle": "Start here",
+  "groupTitle": "My {project}",
+  "lastActivity": "Active {time}",
+  "loading": "Looking at your projects…",
+  "mySpaces": "Spaces I'm in",
+  "quiet": "Nothing lately",
+  "running": "{count} running"
+}

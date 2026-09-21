@@ -53,9 +53,12 @@ def _issued_token(client, project_id: str, owner: str = "alice") -> str:
     assert r.status_code == 200, r.text
     # This fixture explicitly grants ordinary project membership. Issuing a
     # credential itself does not grant a role (covered by test_agent_role_parity).
+    # 看的是它有没有**自己那一行授权行**，不是名册上提没提到它：项目的队友本来就在
+    # 名册上（带 source），而项目级写面那道闸问的是前者。
     handle = r.json()["data"]["agent_handle"]
     members = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
-    if not any(m["user_handle"] == handle for m in members):
+    granted = {m["user_handle"] for m in members if "source" not in m}
+    if handle not in granted:
         added = client.post(
             f"/projects/{project_id}/members",
             json={"user_handle": handle},

@@ -15,6 +15,30 @@ upstream frontend_active { server 127.0.0.1:$UPSTREAM_PORT; }
 server {
   listen 127.0.0.1:$LISTEN_PORT;
 
+  location ~ ^/(api/)?llm/tunnel\$ {
+    rewrite ^/api/(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:8091;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_read_timeout 4h;
+    proxy_send_timeout 4h;
+    proxy_buffering off;
+  }
+
+  location ~ ^/(api/)?forge/events/ {
+    rewrite ^/api/(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:8093;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection \$connection_upgrade;
+    proxy_read_timeout 24h;
+    proxy_buffering off;
+    client_max_body_size 5m;
+  }
+
   # Device and execution traffic enters through this stable front door with
   # the public /api prefix. Keep it off the frontend containers this proxy
   # replaces during an ordinary application rollout.

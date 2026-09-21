@@ -103,14 +103,12 @@ from app.main import app  # noqa: E402
 # decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
-# platform runs (app/core/background.py). Three of them would act on the test's own
-# data behind its back: the email drain claims whatever a notification test
-# queued and dead-letters it after three tries, the finalizer closes an
-# aggregation window a test may be asserting is still open, and the deadline
-# sweep flips a membership to FAILED. Zero is the same "not on this box" switch
-# a deployment uses.
+# platform runs (app/core/background.py). Two of them would act on the test's
+# own data behind its back: the email drain claims whatever a notification test
+# queued and dead-letters it after three tries, and the deadline sweep flips a
+# membership to FAILED. Zero is the same "not on this box" switch a deployment
+# uses.
 settings.notification_email_drain_interval_s = 0
-settings.notification_finalize_interval_s = 0
 settings.task_deadline_sweep_interval_s = 0
 
 

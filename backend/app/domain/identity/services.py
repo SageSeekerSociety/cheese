@@ -19,6 +19,7 @@ trail keeps the distinct handles.
 """
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,3 +119,17 @@ class IdentityService:
         if user is None:
             return False
         return await self._bindings.get_for_user(user.id) is not None
+
+    async def agents_among(self, handles: Sequence[str]) -> set[str]:
+        """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user，两次往返。
+
+        名册要对整张表问这一句。逐个 ``is_agent`` 是 N+1——一个 30 人的项目就是 60
+        次往返，而判据本身（带不带 agent-binding）一次就能全部问出来。
+        """
+        if not handles:
+            return set()
+        users = await self._users.get_by_handles(list(handles))
+        agent_ids = await self._bindings.agent_user_ids(
+            [user.id for user in users.values()]
+        )
+        return {handle for handle, user in users.items() if user.id in agent_ids}

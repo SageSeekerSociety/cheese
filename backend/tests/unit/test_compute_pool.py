@@ -21,7 +21,7 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     native.deliver = AsyncMock(return_value=True)
     codex.deliver = AsyncMock(return_value=True)
     pool = ComputePool([native, codex], "device")
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     with pytest.raises(RuntimeError, match="multiple live harnesses"):
         await pool.deliver(session.topic_id, "ambiguous")
     await pool.activate(session, codex)

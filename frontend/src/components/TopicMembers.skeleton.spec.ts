@@ -17,7 +17,6 @@ vi.mock('../api', async () => {
   return {
     ...actual,
     listTopicMembers: (...a: unknown[]) => listTopicMembers(...a),
-    listProjectAgents: vi.fn(async () => ({ data: [] })),
   }
 })
 
@@ -72,7 +71,7 @@ beforeEach(() => {
 
 async function openRoster() {
   render(Roster, {
-    props: { topicId: 't1', projectId: 'p1', projectMembers: [], me: 'alice' },
+    props: { topicId: 't1', projectMembers: [], me: 'alice' },
     global: { plugins: [createVuetify({ components, directives })] },
   })
   await settle()

@@ -50,6 +50,7 @@ IDS = [f["name"].removesuffix(".json") for f in FIXTURES]
 SESSION = SessionRef(
     project_id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
     topic_id=uuid.UUID("00000000-0000-4000-8000-000000000002"),
+    harness="claude-code",
 )
 OPENING = Opening(system_prompt="CONTRACT")
 

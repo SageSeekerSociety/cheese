@@ -92,7 +92,7 @@ async def test_a_turn_that_needs_no_place_never_asks_for_hands(
     """needs_place 是真的分支：假的时候执行机连问都不问。"""
     project, topic = room
     central = central_over_offline_hands(client, monkeypatch)
-    session = SessionRef(project, topic, "cheese", "claude-code")
+    session = SessionRef(project, topic, "cheese", harness="claude-code")
 
     resolved = await central.precheck(session, needs_place=False)
 
@@ -120,7 +120,7 @@ async def test_a_channel_nobody_wraps_answers_the_question_too(
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub: Any = SimpleNamespace(is_online=lambda device: device == "center")
     channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
-    session = SessionRef(project, topic, "cheese", "pi")
+    session = SessionRef(project, topic, "cheese", harness="pi")
 
     resolved = await channel.precheck(session, needs_place=False)
 
@@ -140,7 +140,7 @@ async def test_a_session_with_no_hands_runs_in_its_own_scratch_area(
     central = central_over_offline_hands(client, monkeypatch)
 
     await central.ensure_ready(
-        session=SessionRef(project, topic, "cheese", "claude-code"),
+        session=SessionRef(project, topic, "cheese", harness="claude-code"),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
@@ -170,7 +170,7 @@ async def test_the_hands_decide_the_workspace_not_the_memory_scope(
     channel = DeviceChannel(hub=hub, session_factory=client.test_factory)
     channel._existing_screen = lambda *args: None
     channel._ensure_screen = AsyncMock(return_value=SimpleNamespace(device_id="center"))
-    session = SessionRef(project, topic, "cheese", "pi")
+    session = SessionRef(project, topic, "cheese", harness="pi")
     token = mint_scoped_token(project_id=str(project), topic_id=str(topic))
 
     await channel.ensure_ready(
@@ -258,7 +258,7 @@ async def test_the_session_machine_check_lets_go_before_asking_for_hands(
     executor.precheck = hands
 
     resolved = await central.precheck(
-        SessionRef(project, topic, "cheese", "claude-code"), needs_place=True
+        SessionRef(project, topic, "cheese", harness="claude-code"), needs_place=True
     )
 
     assert resolved.rented is True

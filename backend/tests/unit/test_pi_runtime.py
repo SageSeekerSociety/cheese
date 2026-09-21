@@ -67,7 +67,7 @@ class Runner:
 
 
 def wire(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="pi")
     handle = Handle(
         session,
         "device",
@@ -166,7 +166,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
     channel = cast(AsyncMock, runtime.channel)
     retained = channel.discover.return_value[0]
     dead = Handle(
-        SessionRef(session.project_id, uuid.uuid4()),
+        SessionRef(session.project_id, uuid.uuid4(), harness="pi"),
         "device",
         "/dead",
         "dead",

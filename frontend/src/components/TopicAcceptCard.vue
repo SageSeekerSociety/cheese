@@ -277,6 +277,12 @@ async function onApproveCard() {
   }
 }
 
+// 能改派给谁：名册上还在岗的那些。队友当验收人没问题——AI 队友和人的权限一样大
+// ——要挡的只有停用的队友：停用就是为了挡住新的活，而改派就是派活。后端的
+// `reviewer_handle` 只是个 handle，不校验这个人还在不在，点下去就是把卡停在一个没
+// 人驱动的实例名下，界面上还照样写着「等 @xxx 验收」。
+const reviewerChoices = computed(() => store.members.filter((m) => m.active !== false))
+
 async function onReassignCard(handle: string) {
   const card = pendingCard.value
   if (!card || handle === card.reviewer_handle) return
@@ -515,7 +521,7 @@ defineExpose({ reload: loadAcceptCard })
             <v-list density="compact">
               <v-list-subheader>改派验收人</v-list-subheader>
               <v-list-item
-                v-for="mbr in store.members"
+                v-for="mbr in reviewerChoices"
                 :key="mbr.user_handle"
                 :active="mbr.user_handle === pendingCard.reviewer_handle"
                 @click="onReassignCard(mbr.user_handle)"
@@ -525,7 +531,7 @@ defineExpose({ reload: loadAcceptCard })
                   {{ mbr.role }}
                 </v-list-item-subtitle>
               </v-list-item>
-              <v-list-item v-if="store.members.length === 0">
+              <v-list-item v-if="reviewerChoices.length === 0">
                 <v-list-item-title class="text-caption text-medium-emphasis"> 暂无可选成员 </v-list-item-title>
               </v-list-item>
             </v-list>

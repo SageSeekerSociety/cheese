@@ -494,6 +494,7 @@ async def test_placed_room_uses_session_identity_not_executor(
     from datetime import UTC, datetime
 
     from app.core.config import settings as app_settings
+    from app.domain.agent.harness import deployment_harness
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.device.models import DeviceRow
     from app.domain.project.repositories import ProjectRepository
@@ -533,6 +534,7 @@ async def test_placed_room_uses_session_identity_not_executor(
                 "resource_id": room_id,
                 "channel": "device",
             },
+            harness=deployment_harness(),
         )
         await session.commit()
 

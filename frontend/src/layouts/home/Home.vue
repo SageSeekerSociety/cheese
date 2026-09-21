@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// 首页这一层（空间 / 小队）在两端是两种形态。
+// 首页这一层（我的工作 / 空间 / 小队）在两端是两种形态。
 //
 // 桌面上它是左边那条常驻侧栏（HomeSidebar）。手机上没有常驻二级侧栏
 // （docs/plans/2026-08-18-mobile-shell-design.md §3.3）—— 底栏已经是一层常驻
 // chrome，再叠一个抽屉就要求人记住「哪些东西在下面、哪些在汉堡里」，而这个划分
-// 没有语义依据。所以同一份清单在手机上压成两格分段。
+// 没有语义依据。所以同一份清单在手机上压成三格分段。
 //
 // 分段住在**顶栏里**，不在页面上：放页面上的话，小队那一页会出现两行 tab
 // （这一对 + 它自己的 发现/我的/待定），而且顶栏还得再写一遍这一层的名字。
@@ -24,6 +24,10 @@ const route = useRoute()
   <template v-else>
     <Teleport v-if="!mdAndUp" to="#app-bar-slot">
       <v-tabs class="home-sections" grow slider-color="primary" bg-color="transparent" height="56">
+        <!-- 我的工作排在最前：它是这一层的落地页，手机上「换个项目」也走这一格
+             —— 底栏「工作区」那一格只落到上次打开的那个项目（那一格的落点由壳和
+             验收用例钉着），所以在手机上翻自己的项目要有这一条路。 -->
+        <v-tab :to="{ name: 'HomeWork' }">{{ t('navigation.myWork') }}</v-tab>
         <v-tab :to="{ name: 'HomeSpaces' }">{{ t('navigation.spaces') }}</v-tab>
         <v-tab :to="{ name: 'HomeTeams' }">{{ t('navigation.teams') }}</v-tab>
       </v-tabs>

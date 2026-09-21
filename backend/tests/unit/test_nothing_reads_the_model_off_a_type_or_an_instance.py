@@ -182,7 +182,7 @@ _BACKEND_MUST_PASS = {
     # 活的绑定就是模型今天的住处（room_task/binding.py），它不是一个读点。
     "the-work-binding": "model = task.model or project.default_model\n",
     # 部署设置，不是从一份 configuration 上读出来的。
-    "the-deployment-harness": "harness = DEFAULT_HARNESS\n",
+    "the-deployment-harness": "harness = deployment_harness()\n",
     # 同名的键，持有它的不是一份 configuration。
     "somebody-else-s-model": "opening = {'model': binding.model}\n",
 }

@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.delivery.addressing import Addressed, Event, Hand, address
+from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
@@ -11,8 +13,8 @@ from app.domain.discussion.repositories import (
     _content_str_to_json,
 )
 from app.domain.notification.models import NotificationType
-from app.domain.notification.publisher import publish_notification_event
 from app.domain.user.repositories import UserProfileRepository
+from app.domain.user.services import handles_by_ids
 
 
 class DiscussionService:
@@ -58,16 +60,39 @@ class DiscussionService:
 
         # mentioned_user_ids is a transient attr set by the repo, not a mapped column
         if entity.mentioned_user_ids:  # type: ignore[attr-defined]
-            await publish_notification_event(
+            handles = await handles_by_ids(
                 self._session,
-                recipient_ids=set(entity.mentioned_user_ids),  # type: ignore[attr-defined]
-                type_=NotificationType.MENTION,
-                payload={
-                    "discussion": {"type": "discussion", "id": str(entity.id)},
-                    "model": {"type": entity.model_type, "id": str(entity.model_id)},
-                    "excerpt": content.strip()[:120],
-                },
-                actor_id=user_id,
+                entity.mentioned_user_ids,  # type: ignore[attr-defined]
+            )
+            await deliver(
+                self._session,
+                DeliveryEvent(
+                    # 这条事件的身份就是刚落下的那条回复 —— 去重键跟着它走，所以
+                    # 同一条回复被算第二遍也只打扰被 @ 的人一次。
+                    id=event_id_for(NotificationType.MENTION, entity.id),
+                    type=NotificationType.MENTION,
+                    payload={
+                        "discussion": {"type": "discussion", "id": str(entity.id)},
+                        "model": {
+                            "type": entity.model_type,
+                            "id": str(entity.model_id),
+                        },
+                        "excerpt": content.strip()[:120],
+                    },
+                    occurred_at=entity.created_at,
+                ),
+                # `Event.asked` 是单数：一条卡停在一个待确认问题上，只有一个人能
+                # 答。一条回复 @ 到几个人，就是几条同样的关系 —— 各自过一遍同一份
+                # 判据再并起来，而不是在这里另写一份「谁会收到」。
+                Addressed(
+                    tuple(
+                        recipient
+                        for handle in handles
+                        for recipient in address(
+                            Event(asked=handle), Hand.participant
+                        ).recipients
+                    )
+                ),
             )
 
         return await self._build_discussion_dto(entity, current_user_id=user_id)

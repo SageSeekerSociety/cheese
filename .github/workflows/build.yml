@@ -1,11 +1,7 @@
 name: Build and Push Docker Image
 
-# The build jobs below run on the dev box's own runner, not a GitHub-hosted
-# one: this is a private repo, so hosted minutes are billed per-minute, and
-# these jobs need native amd64 Docker with a warm layer cache across runs — the
-# box already has both for free, and a hosted runner would rebuild every layer
-# from scratch every time. (The org's Actions billing lapsed on 2026-08-13, so
-# even the `plan` job that used to run hosted moved onto the cheese-ci pool.)
+# Image builds use the dev box's native amd64 Docker and persistent layer cache.
+# Planning and registry manifest copies need neither, so they run hosted.
 on:
   push:
     branches: [main]
@@ -38,19 +34,9 @@ concurrency:
 
 jobs:
   plan:
-    # On the cheese-ci pool, not the dev box: gh api calls + a planning script +
-    # registry-side `buildx imagetools` manifest copies — no docker builds, no
-    # local layer cache, nothing box-local. It gates all three heavy build jobs,
-    # so running it on the dev box meant even "does this need building?" queued
-    # behind whatever else that single slot was doing (measured over 63 runs:
-    # median 0.3m queue, p90 5.9m, max 16.8m). It ran on a hosted runner for
-    # that reason until the org's Actions billing lapsed on 2026-08-13; the
-    # cheese-ci pool is separate three-machine capacity, so it still never queues
-    # behind the dev-box builds it gates (and it does not wait on them — they
-    # `needs: plan`, so there is no deadlock). The pool has no `gh`, so a step
-    # below installs it per-machine; docker/buildx for the imagetools promotion
-    # already ship on the pool (the e2e job uses the pool's docker).
-    runs-on: [self-hosted, cheese-ci]
+    # Keep planning off the shared CI pool so its workload cannot delay builds.
+    # Hosted Ubuntu includes gh and buildx for the registry manifest copies.
+    runs-on: ubuntu-latest
     # gh api calls + a planning script, no docker builds; still bounded well
     # under the jobs it gates.
     timeout-minutes: 10
@@ -71,21 +57,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The cheese-ci pool machines don't ship `gh` (hosted runners do). Install
-      # it once per machine into a dir that survives actions/checkout's workspace
-      # reset, then prepend it to PATH — same trick test.yml's scope uses.
-      - name: Ensure gh CLI
-        run: |
-          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
-          if [ ! -x "$gh_dir/bin/gh" ]; then
-            gh_version=2.63.2
-            mkdir -p "$gh_dir"
-            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
-              | tar -xz -C "$gh_dir" --strip-components=1
-          fi
-          echo "$gh_dir/bin" >> "$GITHUB_PATH"
-          "$gh_dir/bin/gh" --version
-
       - name: Test image build planning
         run: bash .github/scripts/test-plan-image-builds.sh
 
@@ -97,16 +68,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base_sha=""
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = branch ]; then
-            if ! base_sha="$(gh api \
-                "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=success&event=push&per_page=1" \
-                --jq '.workflow_runs[0].head_sha // empty')"; then
-              echo "::warning::Could not resolve the previous successful build; rebuilding every image"
-              base_sha=""
-            fi
-          fi
-          BASE_SHA="$base_sha" \
           CURRENT_SHA="$GITHUB_SHA" \
           EVENT_NAME="$GITHUB_EVENT_NAME" \
           REF_TYPE="$GITHUB_REF_TYPE" \

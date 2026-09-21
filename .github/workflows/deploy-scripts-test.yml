@@ -18,11 +18,19 @@ on:
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
+      - '.github/workflows/deploy-dev.yml'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/plan-image-builds.sh'
+      - '.github/scripts/test-plan-image-builds.sh'
   pull_request:
     branches: [main]
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
+      - '.github/workflows/deploy-dev.yml'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/plan-image-builds.sh'
+      - '.github/scripts/test-plan-image-builds.sh'
 
 permissions:
   contents: read
@@ -66,6 +74,15 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      - name: Automatic release ordering
+        run: python3 deploy/tests/test_auto_deploy.py
+
+      - name: Persistent ingress survives application switches
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
+          python3 deploy/tests/test_ingress_lifecycle.py
+          python3 deploy/llm-tunnel/verify-sites.py
+
       - name: Gateway release and image planning
         run: |
           python3 deploy/tests/test_gateway_release.py
@@ -96,4 +113,3 @@ jobs:
 
       - name: CI runner provisioning
         run: bash deploy/tests/test-ci-runner-provision.sh
-
