@@ -40,6 +40,7 @@ from app.domain.feedback.models import (
 # repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
 # 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
 from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
+from app.domain.topic.models import TopicMembership
 
 #: 「热门」的阈值 —— 按支持数，不按浏览量。原型给过理由（「浏览是路过，支持是表态」），
 #: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
@@ -163,18 +164,67 @@ class CommentPage:
     reply_cursors: dict[uuid.UUID, str]
 
 
+def filed_in_a_room_of(handle: str) -> Any:
+    """「这条反馈是在我当时在的那个房间里提的」，写成一条 WHERE 子句。
+
+    结论 47 的第二档。反馈中心是平台级的收件箱，一条私密反馈在那里对所有人是 404；
+    但它是在某个房间里提出来的，而**那个房间里的人本来就看过它的内容**——agent 提
+    的东西在它的房间里全部留痕（结论 47 第二句）。所以对这些人藏起来只藏掉了追踪它
+    的那条路，藏不掉内容本身。
+
+    名册按**反馈提出的那一刻**取（``created_at <= Feedback.created_at``），和补发
+    投递取名册同一条规则（结论 58）：否则今天把谁加进这个房间，谁就能回头翻出这个
+    房间历史上提过的每一条私密反馈——一次加人变成一次授权，而加人的那个人并不知道
+    自己在授权。
+
+    ``topic_id`` 是 ``ON DELETE SET NULL``（反馈比提它的房间活得久），房间没了这一
+    档就自动关上，**不用额外写一句**：``topic_id`` 是 NULL 的时候
+    ``tm.topic_id = feedback.topic_id`` 恒为 unknown，``EXISTS`` 本来就假。没有房间，
+    就没有「那个房间的成员」。
+
+    这条子句是「当时在不在那个房间里」，**不是**整档判据：门还要问「今天还读得到这
+    个房间」，那一句在 :meth:`FeedbackService.may_see` 里 —— 见那里的理由。
+    """
+    return (
+        select(TopicMembership.id)
+        .where(
+            TopicMembership.topic_id == Feedback.topic_id,
+            TopicMembership.member_handle == handle,
+            TopicMembership.created_at <= Feedback.created_at,
+        )
+        .exists()
+    )
+
+
 def visible_to(handle: str | None, *, is_admin: bool) -> Any:
-    """`FeedbackService.may_see`, spelled as a WHERE clause.
+    """A deliberate **superset** of `FeedbackService.may_see`, as a WHERE clause.
 
     Only one reader needs it: 「我的反馈」 is an `OR` over three columns, and the
     third arm (指派给我的) is not by itself a reason to see a row — so it has to
-    be narrowed in the database rather than row by row.
+    be pre-filtered in the database rather than fetched whole and thrown away.
 
-    A second spelling of one rule is exactly the drift `PUBLIC_ONLY` warns about,
-    so this one is not left to trust. `test_feedback.py` files one row per
-    relation and asserts this predicate and `may_see` return the same verdict for
-    every one of them; the arms here are written in `may_see`'s order so the two
-    read as one sentence.
+    Superset and not equal, on purpose. `may_see`'s room arm also asks 「今天还读
+    得到那个房间」 (`may_read_topic`), which is four claims across four tables
+    (`app/auth/project_access.py`); spelling those in SQL is the second copy that
+    `PUBLIC_ONLY` warns about, and it is the copy that drifts. So the last cut is
+    made in Python instead: `FeedbackService.list_mine` puts every row this
+    clause returns through `may_see` before answering, which is why the rule has
+    exactly one spelling even though this predicate is not all of it.
+
+    What that leaves this clause responsible for: be **wide** enough to lose no
+    row `may_see` would open (a row dropped here is never seen again), and narrow
+    enough that a page is not mostly rows the caller will never be shown. The
+    room arm is here for the first half — without it, a private report filed in
+    my room and assigned to me would never reach `may_see` at all.
+
+    The room arm is also not a second spelling of itself: `may_see` asks this very
+    clause about one row (`FeedbackRepository.filed_in_a_room_of_mine`) rather
+    than re-deciding it in Python, because it needs the roster and the roster is
+    in the database either way.
+
+    A second reader of this predicate has to narrow with `may_see` the same way.
+    Trusting this clause alone hands out the title and status of a report whose
+    detail route answers 404 — 「一条规则两个答案，取决于你问哪一个」.
     """
     if is_admin:
         # may_see's second arm: an admin is never narrowed. Said once here rather
@@ -184,6 +234,7 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     if handle:
         arms.append(Feedback.author_handle == handle)
         arms.append(Feedback.submitted_by_handle == handle)
+        arms.append(filed_in_a_room_of(handle))
     return or_(*arms)
 
 
@@ -322,6 +373,24 @@ class FeedbackRepository:
             Feedback.id == feedback_id, Feedback.deleted_at.is_(None)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def filed_in_a_room_of_mine(
+        self, feedback_id: uuid.UUID, handle: str
+    ) -> bool:
+        """:func:`filed_in_a_room_of`, asked about one row.
+
+        `may_see` runs the very clause the list query runs, against this one id,
+        instead of re-deciding the rule in Python: the answer needs the roster,
+        the roster is a table, and a second spelling of a visibility rule is what
+        `PUBLIC_ONLY` and `visible_to` both exist to prevent.
+
+        「当时在不在那个房间里」 only. 「今天还读得到那个房间」 is the other half
+        and stays in `may_see`.
+        """
+        stmt = select(Feedback.id).where(
+            Feedback.id == feedback_id, filed_in_a_room_of(handle)
+        )
+        return (await self._session.scalar(stmt)) is not None
 
     def _list_stmt(
         self,
@@ -517,13 +586,17 @@ class FeedbackRepository:
         serve one arm of it.
 
         The 指派给我的 arm is the only narrowed one. Being handed a report is work,
-        not access — §4.3's visibility union is 提交者 ∪ 管理员, and being the
-        assignee grants no management power (§8.9). So `visible_to` is ANDed onto
-        that arm, and the list answers about a private row exactly what the detail
-        endpoint answers: nothing. Without it this was the one read path that
-        skipped the predicate in the module docstring, handing a third party the
-        title of a report that `may_see` then refused with a 404 — a list that
-        disagrees with its own rows.
+        not access — the visibility union is 提交者 ∪ 管理员 ∪ 提出它的房间, and
+        being the assignee grants no management power (§8.9). So `visible_to` is
+        ANDed onto that arm. Without it this was the one read path that skipped
+        the predicate in the module docstring, handing a third party the title of
+        a report that `may_see` then refused with a 404 — a list that disagrees
+        with its own rows.
+
+        `visible_to` is a superset of `may_see`, not the whole of it, so the rows
+        this returns are **not yet** the answer: `FeedbackService.list_mine` makes
+        the last cut with `may_see` itself. Both halves are needed and neither is
+        optional — see `visible_to` for which half lives where and why.
         """
         where = [
             or_(

@@ -21,7 +21,7 @@
             <template #activator="{ props }">
               <v-icon v-bind="props" color="info" size="18" class="ms-2">mdi-information-outline</v-icon>
             </template>
-            <span>此赛题要求实名参与，您的联系方式将用于身份验证和通知</span>
+            <span>此题目要求实名参与，您的联系方式将用于身份验证和通知</span>
           </v-tooltip>
         </div>
 
@@ -58,7 +58,7 @@
         autocomplete="off"
         label="申请理由"
         v-bind="applyReasonProps"
-        hint="请简要说明参与赛题的目的和期望"
+        hint="请简要说明参与题目的目的和期望"
         rows="3"
         auto-grow
       ></v-textarea>

@@ -2,10 +2,10 @@
   <v-sheet flat rounded="lg" class="member-page">
     <div class="member-page__hero">
       <div>
-        <h1 class="member-page__title">我发布的赛题</h1>
+        <h1 class="member-page__title">我发布的题目</h1>
       </div>
 
-      <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">发布赛题</v-btn>
+      <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">发布题目</v-btn>
     </div>
 
     <v-row dense class="mt-1">
@@ -21,7 +21,7 @@
             tone="warning"
             label="待审核题目"
             :value="formatCount(overview?.pendingTaskApprovalCount)"
-            helper="还在等待空间管理员审核的题目数"
+            helper="还在等待题目板管理员审核的题目数"
           />
         </v-col>
         <v-col cols="12" sm="6" xl="3">
@@ -48,7 +48,7 @@
             tone="success"
             label="成功主体数"
             :value="formatCount(overview?.successfulParticipantCount)"
-            helper="当前空间内通过你题目的成功主体"
+            helper="当前题目板内通过你题目的成功主体"
           />
         </v-col>
       </template>
@@ -122,10 +122,10 @@
         <v-empty-state
           icon="mdi-pencil-box-multiple-outline"
           title="还没有发布记录"
-          text="你在这个空间下还没有发布过赛题，发布后会在这里集中查看审核和参与状态。"
+          text="你在这个题目板下还没有发布过题目，发布后会在这里集中查看审核和参与状态。"
         />
         <div class="empty-actions">
-          <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">去发布赛题</v-btn>
+          <v-btn color="primary" rounded="lg" prepend-icon="mdi-plus" @click="navigateToPublishTask">去发布题目</v-btn>
         </div>
       </template>
 
@@ -258,7 +258,7 @@ const loadTasks = async () => {
     tasks.value = data.tasks
   } catch (error) {
     console.error('load my publishing tasks failed', error)
-    toast.error('加载我发布的赛题失败')
+    toast.error('加载我发布的题目失败')
   } finally {
     listLoading.value = false
   }

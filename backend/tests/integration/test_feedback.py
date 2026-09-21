@@ -43,6 +43,13 @@ ADMIN = "fb-admin"
 STRANGER = "fb-stranger"
 REPORTER = "fb-reporter"
 
+#: 结论 47 第二档的三个角色：和提交者同在一个房间的人、同项目但不在那个房间的人、
+#: 以及反馈提出之后才被加进那个房间的人。
+ROOMMATE = "fb-roommate"
+OUTSIDER = "fb-outsider"
+LATECOMER = "fb-latecomer"
+DEPARTED = "fb-departed"
+
 #: 竞态用例把删除的锁拿满这么久才提交，窗口就是这么撑开的。长到「排队等锁」
 #: （约等于这一整段）和「根本没排」（毫秒）之间差三个数量级，短到整个用例还能忍受。
 _HOLD_SECONDS = 2.0
@@ -77,10 +84,55 @@ def _topic(client, project: str, handle: str, title: str = "反馈话题") -> st
     ).json()["data"]["id"]
 
 
+def _join_room(client, topic: str, handle: str, *, by: str) -> None:
+    r = client.post(
+        f"/topics/{topic}/members",
+        json={"handle": handle},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _join_project(client, project: str, handle: str, *, by: str) -> None:
+    r = client.post(
+        f"/projects/{project}/members",
+        json={"user_handle": handle, "role": "member"},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _remove_from_project(client, project: str, handle: str, *, by: str) -> None:
+    r = client.delete(
+        f"/projects/{project}/members/{handle}",
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
 def _report(client, handle: str, **body) -> dict:
     """File a report as ``handle`` and return the created detail."""
     payload = {"title": "按钮点了没反应", **body}
     r = client.post("/feedback", json=payload, headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _report_in_room(client, project: str, topic: str, handle: str, **body) -> dict:
+    """在一个房间里提一条反馈，并返回创建出来的详情。
+
+    为什么不是 `_report(..., topic_id=...)`：请求体里没有 `topic_id` 这个字段。
+    它是可见性并集里「提出它的那个房间」那一档的授权键，所以由服务端从 URL 解出
+    来，客户端填不了（`FeedbackCreate`）。于是「带房间来源的反馈」在产品里只有一
+    种造法——agent 落一张提案卡，人按发送——测试里也只有这一种。
+    """
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    block_id = _propose(client, topic, token).json()["data"]["block_id"]
+    r = client.post(
+        f"/topics/{topic}/feedback-proposals/{block_id}/accept",
+        json={"title": "按钮点了没反应", **body},
+        headers=session_auth_headers(handle),
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -196,6 +248,122 @@ def test_security_is_a_subclass_of_private(client, as_admin):
     assert (
         client.get(
             f"/feedback/{row['id']}", headers=session_auth_headers(STRANGER)
+        ).status_code
+        == 404
+    )
+
+
+def test_the_room_that_filed_it_can_see_it(client):
+    """结论 47 的第二档：提出它的那个房间的成员看得见，别人看不见。
+
+    反馈中心是平台级的收件箱，一条私密反馈在那里对所有人是 404。但它是在某个房间里
+    提出来的，而那个房间的人本来就看过它的内容——agent 提的东西在它的房间里全部留痕。
+    对他们藏起来，藏掉的只是追踪它的那条路。
+
+    四条一起写，因为它们钉的是同一条规则的四个边：**在那个房间里**（不是同项目就
+    行），**当时在**（不是现在在），**今天还读得到那个房间**（不是当时在就永远算），
+    而不满足的人拿到的是 404 而不是 403——藏起来的条目不确认自己存在。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+    # 同项目、不在那个房间：这一条要排除的正是「同项目就算数」那种读法。
+    _join_project(client, project, OUTSIDER, by=REPORTER)
+    # 提出的那一刻两样都满足，之后被移出项目：这一档撤得回来吗。
+    _join_project(client, project, DEPARTED, by=REPORTER)
+    _join_room(client, topic, DEPARTED, by=REPORTER)
+
+    # 提出之后才进这个房间的人：除了入房时刻，他和 ROOMMATE 处处相同——同一个项
+    # 目、同一个房间。不先把他加进项目的话，他的 404 有两个成因（名册时刻不对、
+    # 以及压根读不到这个项目的房间），删掉名册时刻那一句也照样绿。
+    _join_project(client, project, LATECOMER, by=REPORTER)
+
+    row = _report_in_room(client, project, topic, REPORTER, visibility="private")
+
+    # 加人不是授权：他进来时这条已经提完了。
+    _join_room(client, topic, LATECOMER, by=REPORTER)
+
+    def opened(handle: str) -> int:
+        return client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(handle)
+        ).status_code
+
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 404
+    assert opened(LATECOMER) == 404
+    assert opened(STRANGER) == 404
+
+    # 负向对照：移出项目就读不到了。断言分两步——先证明这个人此刻确实开得了，
+    # 再移出、再开——否则一条永远 404 的断言也能绿，而那正是要排除的。
+    assert opened(DEPARTED) == 200
+    _remove_from_project(client, project, DEPARTED, by=REPORTER)
+    assert opened(DEPARTED) == 404
+
+
+def test_security_does_not_narrow_the_room_arm(client, as_admin):
+    """管理员标了安全问题之后，提出它的那个房间的人照样打得开。
+
+    `security` 收窄的是**公开那一档**（§8.3）：它把一条公开反馈从「所有登录用户」缩回
+    到私密那套鉴权。房间那一档不在它的收窄范围里，理由和「作者保住自己那条」是同一
+    条——「不能泄露」说的是泄露给没看过它的人，而那个房间的人看过：这条反馈的全文本来
+    就落在他们的对话流里。
+
+    两条断言一起才是负向对照。只断房间那一档，把这一档整个删掉也照样绿；只断外人那一
+    条，往房间那一档上加一句 `and not row.security` 也照样绿。外人的 200 先断一次，是
+    为了让他后面那个 404 确实由这次 PATCH 造成，而不是他本来就看不见。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+    # 同项目、不在那个房间：他手上只有公开那一档，所以他是被收窄的那一侧。
+    _join_project(client, project, OUTSIDER, by=REPORTER)
+
+    row = _report_in_room(client, project, topic, REPORTER)
+    assert row["visibility"] == "public"
+
+    def opened(handle: str) -> int:
+        return client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(handle)
+        ).status_code
+
+    # 标之前：公开那一档对两个人都开着。
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 200
+
+    patched = client.patch(
+        f"/admin/feedback/{row['id']}",
+        json={"security": True},
+        headers=session_auth_headers(as_admin),
+    )
+    assert patched.status_code == 200, patched.text
+
+    # 标之后：公开那一档关了，房间那一档没有。
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 404
+
+
+def test_a_report_filed_outside_any_room_opens_no_second_door(client):
+    """没有房间来源的反馈，房间这一档就关着。
+
+    `topic_id` 是可空的（沙箱里撞到墙的那一类根本没有房间），而且是 `ON DELETE SET
+    NULL`——房间被删掉以后这一列变 NULL。两种情况下这条规则都必须退化成「谁也不是
+    那个房间的成员」，而不是退化成「NULL 匹配上了谁」。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    # 项目也要进：不进的话他读不到这个项目的任何房间，那条 404 就变成「他不是项目
+    # 成员」的结论，而这条用例要钉的是「这条反馈没有房间来源」。挡住他的必须只有
+    # 这一件事。
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+
+    row = _report(client, REPORTER, visibility="private")
+
+    assert (
+        client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(ROOMMATE)
         ).status_code
         == 404
     )
@@ -1364,7 +1532,7 @@ def test_a_report_can_point_at_the_topic_it_came_from(client):
     """
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
-    row = _report(client, REPORTER, topic_id=topic, project_id=project)
+    row = _report_in_room(client, project, topic, REPORTER)
     assert row["topic_id"] == topic
     assert uuid.UUID(row["id"])
 
@@ -1376,7 +1544,8 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     """「我的反馈」 是一份**能打开的**清单：里面有的都能开，能开的都在里面。
 
     Being *assigned* a report is not access to it. §8.9 gives the assignee no
-    management power, and §4.3's visibility union is 提交者 ∪ 管理员. The list used
+    management power, and the visibility union is
+    提交者 ∪ 管理员 ∪ 提出它的房间. The list used
     to include the assignee arm unfiltered, so a third party was handed the title
     and status of a private report on one endpoint while the detail endpoint
     answered 404 for it — one rule, two answers, depending on which one you asked.
@@ -1386,6 +1555,12 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     Written as an agreement over a table of rows rather than as one case: every
     row below is checked with the same two questions, so a future edit that widens
     or narrows either side lands here.
+
+    房间那一档在表里占两行，一开一关：在我还在的房间里提的（开），和在我已经离场
+    的那个项目的房间里提的（关）。后一行钉的是清单的收窄分两步——SQL 的
+    `visible_to` 带不动「今天还读得到那个房间」，`FeedbackService.list_mine` 用
+    `may_see` 补最后一刀。少了那一刀，被移出项目的负责人仍拿得到标题和状态，而详
+    情页对他是 404。
     """
     mine_private = _report(client, STRANGER, title="我提的私密", visibility="private")
     mine_public = _report(client, STRANGER, title="我提的公开")
@@ -1394,8 +1569,44 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     )
     theirs_public = _report(client, REPORTER, title="别人提的公开")
     theirs_security = _report(client, REPORTER, title="别人提的安全")
+    # 第四档也要在这张表里：别人提的私密，但是在我在的那个房间里提的。它是 `visible_to`
+    # 和 `may_see` 各自新长出来的那条手臂，两边同时长错的话只有这里看得见。
+    project = _project(client, REPORTER)
+    room = _topic(client, project, REPORTER, title="我也在的房间")
+    _join_project(client, project, STRANGER, by=REPORTER)
+    _join_room(client, room, STRANGER, by=REPORTER)
+    theirs_in_my_room = _report_in_room(
+        client,
+        project,
+        room,
+        REPORTER,
+        title="别人在我房间里提的私密",
+        visibility="private",
+    )
+    # 第五档是第四档的离场那一侧，单独一个项目，免得撤销把上面那条也撤了：提出它
+    # 的那一刻我在那个房间里，今天我已经被移出那个项目。详情页对我 404（`may_see`
+    # 的房间那一档还要问「今天还读得到那个房间」），所以清单里也不能有它的标题
+    # ——SQL 那半句（`visible_to`）带不动这个判据，最后一刀在 `list_mine` 里。
+    left_project = _project(client, REPORTER)
+    left_room = _topic(client, left_project, REPORTER, title="我待过的房间")
+    _join_project(client, left_project, STRANGER, by=REPORTER)
+    _join_room(client, left_room, STRANGER, by=REPORTER)
+    theirs_in_a_room_i_left = _report_in_room(
+        client,
+        left_project,
+        left_room,
+        REPORTER,
+        title="别人在我待过的房间里提的私密",
+        visibility="private",
+    )
 
-    for row in (theirs_private, theirs_public, theirs_security):
+    for row in (
+        theirs_private,
+        theirs_public,
+        theirs_security,
+        theirs_in_my_room,
+        theirs_in_a_room_i_left,
+    ):
         patched = client.patch(
             f"/admin/feedback/{row['id']}",
             json={"assignee_handle": STRANGER},
@@ -1410,6 +1621,9 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         headers=session_auth_headers(as_admin),
     )
     assert flagged.status_code == 200, flagged.text
+
+    # 指派落完之后才离场，否则测的是「指派给一个非成员」而不是「离场撤掉了它」。
+    _remove_from_project(client, left_project, STRANGER, by=REPORTER)
 
     listed = {card["id"] for card in _mine(client, STRANGER)}
 
@@ -1427,8 +1641,16 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         theirs_private,
         theirs_public,
         theirs_security,
+        theirs_in_my_room,
+        theirs_in_a_room_i_left,
     ):
         assert (row["id"] in listed) == openable(row), row["title"]
+    # …and the two room rows sit on **opposite** sides of the agreement, each one
+    # named: an agreement both halves get wrong the same way still passes the
+    # loop, and it would pass it twice if both rows happened to land closed.
+    assert openable(theirs_in_my_room)
+    assert not openable(theirs_in_a_room_i_left)
+    assert theirs_in_a_room_i_left["id"] not in listed
 
     # The third arm — 我提的和 agent 替我提的 — is checked from the other side:
     # the reporter did not write this row (the agent did), and it is still theirs,

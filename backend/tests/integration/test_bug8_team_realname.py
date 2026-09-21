@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestBug8TeamRealNameCheck:
@@ -35,8 +35,8 @@ class TestBug8TeamRealNameCheck:
         suffix = unique_int()
 
         # Create space
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Bug8 Space ({suffix})",
                 "intro": "Test",

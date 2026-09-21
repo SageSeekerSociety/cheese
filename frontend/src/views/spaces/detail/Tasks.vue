@@ -301,7 +301,7 @@ const navigateToPublishTask = async () => {
       }
     }
   } catch (error) {
-    console.error('获取空间详情失败:', error)
+    console.error('获取题目板详情失败:', error)
     // 如果出错，直接跳转到发布赛题页面
     router.push({ name: 'SpacesDetailPublishTask', params: { spaceId: route.params.spaceId } })
   }

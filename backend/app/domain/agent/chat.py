@@ -102,8 +102,6 @@ from app.domain.agent_instance.services import (
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.models import AlertKind, AlertLevel
-from app.domain.alert.services import AlertService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -129,6 +127,8 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationLevel, NotificationType
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
@@ -4519,14 +4519,14 @@ class ChatService:
         # Nobody needs a notification for their own message.
         targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
-            notifs = AlertService(session)
+            notifs = ProjectNotificationService(session)
             preview = markdown_preview(text, 200)
             who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
-                    level=AlertLevel.strong,
-                    kind=AlertKind.mention,
+                    level=NotificationLevel.strong,
+                    kind=NotificationType.MENTION,
                     title=f"{who} 在「{topic.title}」@了你",
                     body=preview,
                     target_handle=h,
@@ -4764,6 +4764,34 @@ class ChatService:
                 project.settings if project else None,
                 topic.compute_profile,
             )
+            # 先问这套部署有没有这个骨架，再过档位策略：策略那一步要解析模型，而一个
+            # 没注册的骨架一个模型都指不到（结论 43），先问它就会以「没有默认模型」
+            # 收场，房间读到的不是真正的原因。
+            provider = self._compute.select(
+                provider_id=compute_id, harness=wanted_harness
+            )
+            if provider is None:
+                # The machine is fine; what this deployment runs is not
+                # deployed on it. Say so rather than starting something else:
+                # a turn taken on another harness is a turn nobody asked for.
+                return _TurnBail(
+                    [
+                        {
+                            "type": "event_block",
+                            "block": await self._bail_notice(
+                                project_id=topic.project_id,
+                                topic_id=topic_id,
+                                turn_id=turn_id,
+                                session=session,
+                                text=(
+                                    f"本话题选的机器上没有部署 {wanted_harness}，"
+                                    "本轮没有开始。"
+                                ),
+                            ),
+                        },
+                        {"type": "done"},
+                    ]
+                )
             # 这一轮要占的两样东西 —— 哪台机器、哪个模型 —— 在这里一起过项目的档位
             # 策略（结论 3 后半、结论 40 后半）。位置是**解析之后、占用之前**：再
             # 往下就是写绑定、开机器、发请求，撞上策略的调用一旦走到那里，「这一轮
@@ -4817,31 +4845,6 @@ class ChatService:
 
                 await bind_room_device_choice(
                     session, topic, project.settings if project else None
-                )
-            provider = self._compute.select(
-                provider_id=compute_id, harness=wanted_harness
-            )
-            if provider is None:
-                # The machine is fine; what this deployment runs is not
-                # deployed on it. Say so rather than starting something else:
-                # a turn taken on another harness is a turn nobody asked for.
-                return _TurnBail(
-                    [
-                        {
-                            "type": "event_block",
-                            "block": await self._bail_notice(
-                                project_id=topic.project_id,
-                                topic_id=topic_id,
-                                turn_id=turn_id,
-                                session=session,
-                                text=(
-                                    f"本话题选的机器上没有部署 {wanted_harness}，"
-                                    "本轮没有开始。"
-                                ),
-                            ),
-                        },
-                        {"type": "done"},
-                    ]
                 )
             # 开一台机器是租手的一部分，所以不租手的一轮也不等它开完。
             if needs_place and provider.provisions_machine:

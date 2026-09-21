@@ -82,7 +82,7 @@
       v-else-if="!loading"
       icon="mdi-chart-areaspline"
       title="暂无概览数据"
-      text="当前筛选范围下还没有可展示的空间统计结果。"
+      text="当前筛选范围下还没有可展示的题目板统计结果。"
     />
   </div>
 </template>

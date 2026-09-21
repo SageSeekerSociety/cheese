@@ -1695,7 +1695,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--visibility",
         choices=["public", "private"],
         default="public",
-        help="private 只有管理员和提交者本人看得见",
+        help="private 只有管理员、提交者本人、以及提出它时在那个房间里的人看得见",
     )
     pfbprop.add_argument(
         "--attach-logs",
@@ -1793,7 +1793,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="change_alert",
         help="change_alert=知会一声(默认);decision_request=要人拍板,配 --options",
     )
-    pn.add_argument("--to", default=None, help="target handle（不填=广播）")
+    pn.add_argument(
+        "--to",
+        default=None,
+        help="收件人 handle;不填=发给这个房间名册上的人(不含芝士),"
+        "名册上没有人会报错",
+    )
     pn.add_argument(
         "--options",
         default=None,
@@ -2327,8 +2332,17 @@ def main() -> None:
         print(f"[cheese] 已发出选项问题（{len(opts)} 个选项）")
 
     elif a.cmd == "notify":
-        _planned_call("cheese_notify", a)
-        print(f"已发送通知给 {a.to or '所有人'}。")
+        # 一条通知落成几行,收件人是谁,由平台按名册算 —— 不填 --to 不等于"所有人":
+        # 到的是这个房间名册上的人,不含芝士,项目里别的房间的人看不到。把它当"所有
+        # 人"转述给人,就是替平台许下一个它没答应的承诺。
+        rows = (_planned_call("cheese_notify", a).get("data") or {}).get("data") or []
+        who = [r.get("target_handle") for r in rows if r.get("target_handle")]
+        if len(who) > 5:
+            print(f"已发送通知给 {'、'.join(who[:5])} 等 {len(who)} 人。")
+        elif who:
+            print(f"已发送通知给 {'、'.join(who)}。")
+        else:
+            print("已发送通知。")
     elif a.cmd == "machine":
         r = _planned_call("cheese_machine", a).get("data") or {}
         if r.get("proposal"):

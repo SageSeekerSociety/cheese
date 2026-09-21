@@ -1,13 +1,14 @@
-"""Alert routes — spec §8.5/8.6, evals G2/G3.
+"""项目收件箱的路由 —— spec §8.5/8.6, evals G2/G3.
 
-Spans two resource prefixes (per-project collection + per-alert actions),
-so this router uses an empty prefix and spells out each path.
+横跨两个资源前缀（项目下的集合 + 单条通知上的动作），所以这个 router 用空前缀，
+每条路径写全。
 
-Every endpoint that reads or writes a person's mailbox resolves the recipient
-through ``ActorResolver.resolve_recipient`` — the rule lives at the trust
-boundary (app.api.auth), not here, so the next per-recipient endpoint cannot
-quietly skip it. ``target_handle`` is only ever an assertion checked against
-the verified credential, never an identity by itself.
+每一条读写某个人信箱的端点都经 ``ActorResolver.resolve_recipient`` 认收件人 ——
+那条规则住在信任边界上（app.api.auth），不在这里，所以下一个按收件人取信的端点
+绕不过它。``target_handle`` 永远只是一句待核对的断言，不是身份本身。
+
+路径上仍然叫 ``alerts``：URL 是对外的契约，而读写的表已经是 `notification` ——
+平台报告自己的那些和人对人的那些同住一张收件箱（结论 58）。
 """
 
 import uuid
@@ -19,14 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.domain.alert.models import Alert
-from app.domain.alert.schemas import (
-    AlertCreate,
-    AlertOut,
+from app.core.errors import ValidationError
+from app.domain.notification.models import Notification
+from app.domain.notification.schemas import (
+    PROJECT_NOTIFICATION_KINDS,
     FeedbackIn,
+    NotificationCreate,
+    NotificationOut,
     ResolveIn,
 )
-from app.domain.alert.services import AlertService
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="", tags=["alerts"])
@@ -34,18 +37,19 @@ router = APIRouter(prefix="", tags=["alerts"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-def _dump(alert: Alert) -> dict:
-    return AlertOut.model_validate(alert).model_dump(mode="json")
+def _dump(row: Notification) -> dict:
+    return NotificationOut.from_row(row).model_dump(mode="json")
 
 
-async def _acting_recipient(resolver: ActorResolver, alert: Alert) -> str:
-    """The verified caller allowed to act on this alert: its addressee,
-    or — for a broadcast (no target) — any authenticated caller. Read/feedback/
-    resolve write per-alert state, so the anonymous slice never applies.
+async def _acting_recipient(resolver: ActorResolver, notification: Notification) -> str:
+    """能对这一条动手的那个验证过的调用者：它的收件人。
+
+    并表之前还有第二档 —— 一条广播（没有收件人）任何验证过的调用者都能动。广播
+    现在在写入时就展开成一人一行，所以这里只剩一句话。
     """
     return await resolver.resolve_recipient(
-        requested=alert.target_handle,
-        project_id=alert.project_id,
+        requested=notification.recipient_handle,
+        project_id=notification.project_id,
         allow_anonymous=False,
     )
 
@@ -53,30 +57,32 @@ async def _acting_recipient(resolver: ActorResolver, alert: Alert) -> str:
 @router.post("/projects/{project_id}/alerts")
 async def create_notification(
     project_id: uuid.UUID,
-    body: AlertCreate,
+    body: NotificationCreate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Post into the project's alert stream — agents (scoped token),
-    the dev override, or a signed-in human; never an anonymous drive-by. The
-    route checks the credential itself rather than leaning on the middleware
-    gate alone (see ``require_verified_caller``)."""
+    """往项目的收件箱里写 —— agent（带 scope 的令牌）、开发覆盖，或者一个登录了
+    的人；匿名的进不来。路由自己核一遍凭据，而不是只靠中间件那道闸
+    （见 ``require_verified_caller``）。
+
+    返回的是**一组**：一条广播在这里就展开成一人一行，所以「刚写下的那一条」不再
+    只有一个答案。
+    """
+    if body.kind not in PROJECT_NOTIFICATION_KINDS:
+        raise ValidationError("这一类通知不从项目收件箱写入")
     await resolver.require_verified_caller(
         project_id=project_id, topic_id=body.topic_id
     )
-    # `alerts.topic_id` is a FK to `topics`, and a thread is not a row there —
-    # so the place id every agent has (`$CHEESE_TOPIC`, a thread's id for a
-    # 分身) violated the constraint and `cheese notify` 500ed for all of them.
-    # An alert is addressed to a person rather than to a place, so the room is
-    # the honest thing to point it at. It is a narrowing: answering a decision
-    # request posts 【决策】back into this topic, so a thread's question is
-    # answered in the room around it instead of in the thread. Carrying the
-    # thread would take a `task_id` column of its own, the way blocks and usage
-    # already have one.
+    # `topic_id` 是 `topics` 的外键，而一条线程不是那张表里的行 —— 所以每个 agent
+    # 手上那个地点 id（`$CHEESE_TOPIC`，对分身来说是线程的 id）违反约束，
+    # `cheese notify` 对它们全部 500。一条通知是发给人的，不是发给地点的，所以指
+    # 向房间是诚实的做法。这是一次收窄：答复一个决策请求会把【决策】发回这个房
+    # 间，于是线程里的问题答在它外面那个房间里。要带上线程得给它一列自己的
+    # `task_id`，像块和用量已经有的那样。
     topic_id = body.topic_id
     if topic_id is not None:
         topic_id = (await TopicService(db).place_or_404(topic_id)).room_id
-    alert = await AlertService(db).create(
+    rows = await ProjectNotificationService(db).create(
         project_id=project_id,
         level=body.level,
         kind=body.kind,
@@ -86,7 +92,7 @@ async def create_notification(
         topic_id=topic_id,
         payload=body.payload,
     )
-    return ok(_dump(alert))
+    return ok(page([_dump(row) for row in rows], len(rows)))
 
 
 @router.get("/projects/{project_id}/alerts")
@@ -97,11 +103,11 @@ async def list_notifications(
     target_handle: str | None = None,
     unread_only: bool = False,
 ) -> dict:
-    """This caller's alerts: the ones addressed to them plus broadcasts."""
+    """这个调用者在这个项目里的信。"""
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    items, total = await AlertService(db).list_for_project(
+    items, total = await ProjectNotificationService(db).list_for_project(
         project_id, target_handle=handle, unread_only=unread_only
     )
     return ok(page([_dump(n) for n in items], total))
@@ -117,7 +123,9 @@ async def project_inbox(
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    items, total = await AlertService(db).inbox(project_id, target_handle=handle)
+    items, total = await ProjectNotificationService(db).inbox(
+        project_id, target_handle=handle
+    )
     return ok(page([_dump(n) for n in items], total))
 
 
@@ -128,12 +136,14 @@ async def notifications_unread_count(
     resolver: ActorResolverDep,
     target_handle: str | None = None,
 ) -> dict:
-    """Badge count for the bell: unread, non-silent, visible to this user.
-    Server-side so the client never has to fetch the full list just to count."""
+    """铃铛上的数字：这个人还没读、又不是 silent 的那些。算在服务端，省得客户端
+    为了数个数把整份列表拉下来。"""
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    count = await AlertService(db).unread_count(project_id, target_handle=handle)
+    count = await ProjectNotificationService(db).unread_count(
+        project_id, target_handle=handle
+    )
     return ok({"unread": count})
 
 
@@ -144,53 +154,56 @@ async def mark_all_notifications_read(
     resolver: ActorResolverDep,
     target_handle: str | None = None,
 ) -> dict:
-    """全部标记已读 (Feishu-style) — for the calling user, nobody else.
+    """全部标记已读（飞书那样）—— 只标调用者自己的，别人的一条不动。
 
-    Unlike the reads, there is no anonymous slice here: this writes ``read_at``,
-    so the caller must hold a verified identity — naming a handle without one is
-    refused, not honored.
+    和上面那几条读不同，这里没有匿名那一档：它写 `read`，所以调用者必须拿着一个
+    验证过的身份，光报一个名字要被拒。
     """
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id, allow_anonymous=False
     )
-    marked = await AlertService(db).mark_all_read(project_id, target_handle=handle)
+    marked = await ProjectNotificationService(db).mark_all_read(
+        project_id, target_handle=handle
+    )
     return ok({"marked": marked})
 
 
-@router.post("/alerts/{alert_id}/read")
+@router.post("/alerts/{notification_id}/read")
 async def mark_notification_read(
-    alert_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    notification_id: int, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    service = AlertService(db)
-    alert = await service.get_or_404(alert_id)
-    await _acting_recipient(resolver, alert)
-    return ok(_dump(await service.mark_read(alert_id)))
+    service = ProjectNotificationService(db)
+    row = await service.get_or_404(notification_id)
+    await _acting_recipient(resolver, row)
+    return ok(_dump(await service.mark_read(notification_id)))
 
 
-@router.post("/alerts/{alert_id}/feedback")
+@router.post("/alerts/{notification_id}/feedback")
 async def set_notification_feedback(
-    alert_id: uuid.UUID,
+    notification_id: int,
     body: FeedbackIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    service = AlertService(db)
-    alert = await service.get_or_404(alert_id)
-    await _acting_recipient(resolver, alert)
-    return ok(_dump(await service.set_feedback(alert_id, body.feedback)))
+    service = ProjectNotificationService(db)
+    row = await service.get_or_404(notification_id)
+    await _acting_recipient(resolver, row)
+    return ok(_dump(await service.set_feedback(notification_id, body.feedback)))
 
 
-@router.post("/alerts/{alert_id}/resolve")
+@router.post("/alerts/{notification_id}/resolve")
 async def resolve_notification(
-    alert_id: uuid.UUID,
+    notification_id: int,
     body: ResolveIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """拍板 a decision request (spec G2). The decision is attributed to the
-    verified caller — a body-supplied name is never trusted."""
-    service = AlertService(db)
-    alert = await service.get_or_404(alert_id)
-    handle = await _acting_recipient(resolver, alert)
-    resolved = await service.resolve(alert_id, chosen=body.chosen, decided_by=handle)
+    """拍板一个决策请求 (spec G2)。决定记在验证过的调用者名下 —— body 里报来的
+    名字一概不认。"""
+    service = ProjectNotificationService(db)
+    row = await service.get_or_404(notification_id)
+    handle = await _acting_recipient(resolver, row)
+    resolved = await service.resolve(
+        notification_id, chosen=body.chosen, decided_by=handle
+    )
     return ok(_dump(resolved))

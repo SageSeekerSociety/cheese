@@ -506,7 +506,7 @@ const ROWS: FeedbackDetail[] = [
   }),
 ]
 
-/** 列表可见性。真实实现在 `services.may_see` 里判（提交者 ∪ 管理员），这里按预览身份简化：
+/** 列表可见性。真实实现在 `services.may_see` 里判（提交者 ∪ 管理员 ∪ 提出它的房间），这里按预览身份简化：
  *  预览一律当管理员，所以私密条目原样显示，带着中性「私密」标签。 */
 function visibleToMe(item: FeedbackCard): boolean {
   if (item.visibility === 'public') return true

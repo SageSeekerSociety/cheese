@@ -95,7 +95,7 @@
                 <v-text-field v-model="intro" autocomplete="off" :counter="255" v-bind="introProps" />
 
                 <template v-if="isCurrentUserAtLeastAdmin">
-                  <v-list-subheader>每个发布者对普通用户可见的未结项已通过赛题数量上限(M)</v-list-subheader>
+                  <v-list-subheader>每个发布者对普通用户可见的未结项已通过题目数量上限(M)</v-list-subheader>
                   <v-radio-group v-model="visibleLimitMode" inline hide-details class="mb-2">
                     <v-radio label="无限制" value="unlimited" />
                     <v-radio label="限制数量" value="limited" />

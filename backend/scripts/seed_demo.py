@@ -27,10 +27,14 @@ from app.domain.cx_space.models import Space, SpaceKind
 from sqlalchemy import text
 
 from app.core.db import async_session_factory
-from app.domain.alert.models import Alert, AlertKind, AlertLevel
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.memory.models import MemoryEntry, MemoryScope
 from app.domain.milestone.models import Milestone, MilestoneStatus
+from app.domain.notification.models import (
+    Notification,
+    NotificationLevel,
+    NotificationType,
+)
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -288,15 +292,18 @@ async def seed() -> None:
 
         # --- A decision-request notification + an accept card (待处理) ---
         s.add(
-            Alert(
+            Notification(
                 project_id=project.id,
                 topic_id=topic.id,
-                level=AlertLevel.light,
-                kind=AlertKind.decision_request,
-                target_handle="user-1",
+                level=NotificationLevel.light.value,
+                type=NotificationType.DECISION_REQUEST,
+                recipient_handle="user-1",
                 title="评测集怎么切分？",
                 body="按时间切分还是随机切分训练/测试集？",
-                payload={"options": ["按时间切分", "随机切分"]},
+                metadata_payload={"options": ["按时间切分", "随机切分"]},
+                read=False,
+                created_at=now,
+                updated_at=now,
             )
         )
         s.add(

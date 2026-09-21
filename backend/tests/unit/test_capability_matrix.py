@@ -21,7 +21,12 @@ import pytest
 from app.core.config import Settings
 from app.domain.agent.capability import BuiltIn, Declaration, Difference
 from app.domain.agent.capability import matrix as matrix_module
-from app.domain.agent.capability.matrix import MatrixIncomplete, declarations, matrix
+from app.domain.agent.capability.matrix import (
+    MatrixIncomplete,
+    declarations,
+    matrix,
+    written,
+)
 from app.domain.agent.harness import CLAUDE_CODE, CODEX, HARNESSES, Harness
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, private
 from app.domain.agent.harness.claude_code.remote_execution import client as execution
@@ -35,7 +40,7 @@ HARNESS_PACKAGE = APP / "domain/agent/harness"
 # --- 1. 表上版本 -------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", sorted(HARNESSES))
+@pytest.mark.parametrize("name", sorted(written()))
 def test_a_declaration_was_verified_against_the_version_that_is_pinned(
     name: str,
 ) -> None:
@@ -43,8 +48,11 @@ def test_a_declaration_was_verified_against_the_version_that_is_pinned(
 
     这不是「改个数字」的提醒：新 build 里那几格还成不成立，只有读过才知道，而
     ``verified_against`` 就是那次阅读留下的唯一痕迹。
+
+    每一份写下来的声明，不只是在跑的那些：一个骨架可以留着适配层而不上注册表
+    （结论 43），而它的 pin 一样会被人升级。
     """
-    declared = declarations()[name]
+    declared = written()[name]
     assert declared.verified_against == declared.pinned_version, (
         f"{name} 的 pin 是 {declared.pinned_version}，"
         f"而行为声明上次是对着 {declared.verified_against} 读的。"
@@ -67,7 +75,7 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     上起不来——镜像里装的还是上一个 build，``remote_execution/client.py`` 的版本
     闸门当场拒掉那一轮；tag 那几处各自不同步，则是 ``docker run`` 找不到镜像。
     """
-    pins = {name: d.pinned_version for name, d in declarations().items()}
+    pins = {name: d.pinned_version for name, d in written().items()}
     claude = pins[CLAUDE_CODE]
     # 机器上单独跑的两个脚本：一个由平台 exec 出一段字符串，一个作为松散文件送上
     # 机器，两个都不在包里，import 不到 device_launch。
@@ -128,7 +136,7 @@ def test_no_second_literal_of_a_pin_hides_in_the_harness_packages() -> None:
     的那一份（``private.py`` 的 ``IMAGE``）在带引号的匹配下天然隐身，而它恰恰是
     一份升级时要跟着改的复制品。
     """
-    pins = {d.pinned_version for d in declarations().values()}
+    pins = {d.pinned_version for d in written().values()}
     allowed = {
         HARNESS_PACKAGE / "claude_code/device_launch.py",
         HARNESS_PACKAGE / "claude_code/remote_execution/client.py",
@@ -172,6 +180,25 @@ def test_the_matrix_has_a_filled_cell_for_every_harness_and_concept() -> None:
         assert set(row) == set(BuiltIn), name
         for concept, cell in row.items():
             assert isinstance(cell, Difference) or cell.strip(), f"{name}/{concept}"
+
+
+def test_every_difference_code_is_one_some_declaration_fills_in() -> None:
+    """没有人填的差异码，是一句替谁也没读过的一格印好的答案。
+
+    这条守卫同时是结论 43 的那一条：四条硬性要求
+    （``harness.SubagentRequirement``）在这张表上没有格子——答不出的骨架不在注册
+    表里——所以一条「本骨架不支持子 agent」的码进来之后，没有任何一份声明用得上
+    它，红在这里。名单封闭的意义就在这儿：一条填不进任何一格的码，是给一件本来
+    不该发生的事先备好的说法。
+    """
+    used = {
+        cell
+        for declared in written().values()
+        for cell in declared.how_disabled.values()
+        if isinstance(cell, Difference)
+    }
+    orphans = sorted(set(Difference) - used)
+    assert not orphans, f"这几条差异码没有任何一份声明在用：{orphans}"
 
 
 def test_a_cell_left_empty_is_refused_rather_than_drawn(monkeypatch) -> None:

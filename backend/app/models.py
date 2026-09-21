@@ -10,7 +10,6 @@ from app.domain.agent import dispatch_log as agent_dispatch_log  # noqa: F401
 from app.domain.agent import models as agent  # noqa: F401
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
 from app.domain.agent_session import models as agent_session  # noqa: F401
-from app.domain.alert import models as alert  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401

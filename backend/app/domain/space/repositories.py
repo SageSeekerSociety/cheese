@@ -29,13 +29,17 @@ class SpaceRepository:
         return result.scalar_one_or_none()
 
     async def list_spaces(self, *, limit: int, offset: int = 0) -> Sequence[Space]:
-        stmt: Select[tuple[Space]] = select(Space).where(Space.deleted_at.is_(None))
+        stmt: Select[tuple[Space]] = select(Space).where(
+            Space.deleted_at.is_(None), Space.review_status == "APPROVED"
+        )
         stmt = stmt.order_by(Space.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
     async def count_spaces(self) -> int:
-        stmt = select(func.count(Space.id)).where(Space.deleted_at.is_(None))
+        stmt = select(func.count(Space.id)).where(
+            Space.deleted_at.is_(None), Space.review_status == "APPROVED"
+        )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 

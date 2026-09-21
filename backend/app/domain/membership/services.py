@@ -338,13 +338,15 @@ class InvitationService:
         )
         # 一条强提醒，而且是**待办**：decision_request 在被答复之前不会从收件箱里
         # 消失（resolved_at 才让它消失），正好是「等你回一句」这种东西该有的样子。
-        from app.domain.alert.models import AlertKind, AlertLevel
-        from app.domain.alert.services import AlertService
+        # 函数体里 import：`notification.services` 在模块头 import 本模块（广播
+        # 要按名册展开），两边都写在模块头就是一个导入环。
+        from app.domain.notification.models import NotificationLevel, NotificationType
+        from app.domain.notification.services import ProjectNotificationService
 
-        await AlertService(self._session).create(
+        await ProjectNotificationService(self._session).create(
             project_id=project_id,
-            level=AlertLevel.strong,
-            kind=AlertKind.decision_request,
+            level=NotificationLevel.strong,
+            kind=NotificationType.DECISION_REQUEST,
             title=f"{actor.handle} 邀请你加入项目「{project.name}」",
             body="接受之后你能看到这个项目的全部话题。",
             target_handle=invitee_handle,
@@ -436,17 +438,17 @@ class InvitationService:
 
         from sqlalchemy import select
 
-        from app.domain.alert.models import Alert
+        from app.domain.notification.models import Notification
 
-        stmt = select(Alert).where(
-            Alert.project_id == invitation.project_id,
-            Alert.target_handle == invitation.invitee_handle,
-            Alert.resolved_at.is_(None),
+        stmt = select(Notification).where(
+            Notification.project_id == invitation.project_id,
+            Notification.recipient_handle == invitation.invitee_handle,
+            Notification.resolved_at.is_(None),
         )
-        for alert in (await self._session.scalars(stmt)).all():
-            if (alert.payload or {}).get("invitation_id") == str(invitation.id):
-                alert.resolved_at = datetime.now(UTC)
-                payload = dict(alert.payload or {})
+        for row in (await self._session.scalars(stmt)).all():
+            if (row.metadata_payload or {}).get("invitation_id") == str(invitation.id):
+                row.resolved_at = datetime.now(UTC)
+                payload = dict(row.metadata_payload or {})
                 payload["resolved_choice"] = invitation.status.value
-                alert.payload = payload
+                row.metadata_payload = payload
         await self._session.flush()

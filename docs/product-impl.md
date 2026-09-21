@@ -145,11 +145,11 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
-- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）对所有人可见。
+- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）在写入时展开成名册上一人一行 —— 说了房间就是房间的名册，没说房间就是项目名册加项目主人，agent 不在里面；展开成零行（名册上只剩 agent）直接报错，不静默丢掉。
 - **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
-- **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
-- **实现**：`AlertService`（`backend/app/domain/alert/`）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`。前端 `components/NeedsYou.vue`。
+- **分级限流**：今天没有分级限流在起作用，没有通知因为超额被丢掉。反馈提案卡有自己的配额（`settings.feedback_proposals_per_topic_per_day`）。
+- **实现**：`ProjectNotificationService`（`backend/app/domain/notification/`，与人对人的通知同住 `notification` 一张表）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`，通知 id 是 bigint。前端 `components/NeedsYou.vue`。
 
 ### 3.8 里程碑 / 日历  ✅ / 🟡
 
@@ -183,7 +183,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **行为**：平台自带反馈系统，人和芝士都走同一条链路。
   - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 我的 / 待处理…），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
   - **芝士主动提**：芝士在话题里干完活，可以直接把一条反馈**作为提案卡**发进对话流（`cheese feedback propose`）。卡上最显眼的是**「你当时说的」**（引用用户原话，或明说「用户没有就这个问题说过话」），下面才是判断依据 / 发生了什么 / 复现 / 证据；用户点**采纳**才真的建出反馈（提交者=点的人，作者=卡上的芝士），点**不用**按**指纹**记一条 dismissal，同一指纹不再出现。每话题每天限 2 条（`settings.feedback_proposals_per_topic_per_day`），超了回 412 并说明是三道限流里的哪一道。
-  - **可见性**：`public` / `private`。私密条目只有提交者本人和平台管理员看得到，列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
+  - **可见性**：`public` / `private`。私密条目只有提交者本人、平台管理员、以及「提出它时在那个房间里、且今天还读得到那个房间」的人看得到（结论 47 的三档；房间来源只有发送提案卡那条路留得下，`topic_id` 不是请求体字段），列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
   - **互动**：评论（可删自己的）、支持（一人一次，可取消）。
   - **管理端**（`/admin/feedback`）：改状态 / 优先级、指派负责人、标安全（`security` 是 `private` 之下的**读时收窄**——公开条目一旦标上，读路径也按私密鉴权）、加备注（只增不改）。管理端**没有**「转为公开」按钮：可见性由提交者定，管理员不能替他把私密的东西亮出来。
   - **默认筛选**：已解决的 **bug** 沉底不展示，其他类型的已解决项照常显示。
