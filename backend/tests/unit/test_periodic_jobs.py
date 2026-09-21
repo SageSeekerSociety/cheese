@@ -136,21 +136,19 @@ def _jobs():
 @pytest.mark.parametrize(
     ("name", "interval_setting"),
     [
-        ("notification finalize", "notification_finalize_interval_s"),
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
         ("chat progress reminder", "chat_progress_check_interval_s"),
     ],
 )
 def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
-    """These three had no runner in any deployed image, and each absence is
-    invisible: an aggregation window that never closes, an email queue with no
-    consumer, a deadline nobody checks.
+    """These had no runner in any deployed image, and each absence is
+    invisible: an email queue with no consumer, a deadline nobody checks.
 
     Being on the list is half of it. A default interval of 0 would put them
     right back where they were — registered, deployed, and run by nobody — so
     the SHIPPED default is asserted rather than whatever this test process has
-    (the harness turns these three off; see tests/conftest.py)."""
+    (the harness turns some of them off; see tests/conftest.py)."""
     from app.core.config import Settings
 
     assert any(j.name == name for j in _jobs()), (

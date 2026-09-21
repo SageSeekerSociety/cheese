@@ -1,15 +1,8 @@
-"""The two notification jobs that only a clock can start.
+"""The notification job that only a clock can start.
 
-Everything else in this domain runs on the request that caused it: a mention
-publishes, a handler writes the in-app row and pushes the email onto Redis.
-These two have no such caller.
-
-``finalize_expired_aggregations`` closes an aggregation window. A burst of
-mentions is merged into one notification that stays open for
-``notification_config.aggregation_window``; the merged notification is only
-DELIVERED when that window is finalized, so without this the aggregated ones
-are written and never sent — the exact notifications a busy room produces most
-of.
+Everything else in this domain runs on the request that caused it: the ledger
+records a delivery, a handler writes the in-app row and pushes the email onto
+Redis. This one has no such caller.
 
 ``drain_email_queue`` is the only consumer of the Redis list every email
 notification is pushed onto. Nothing else reads that key, so an unrun drain is
@@ -27,7 +20,6 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.email import get_email_sender
-from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
@@ -68,10 +60,6 @@ def _compose_email(item: dict[str, Any]) -> tuple[str, str]:
     """
     type_ = str(item.get("type") or "")
     headline = _SUBJECT_LINES.get(type_, "你在芝士上有一条新通知")
-    if item.get("finalized"):
-        # 聚合窗口收口发出的那一条，代表的是一批而不是一件。不说明的话，收件人
-        # 会以为平台把其余几十条弄丢了。
-        headline += "（这一批合并成了一条）"
 
     summary = ""
     payload = item.get("payload")
@@ -88,15 +76,6 @@ def _compose_email(item: dict[str, Any]) -> tuple[str, str]:
         body.append(f"<blockquote>{html.escape(summary)}</blockquote>")
     body.append(f'<p><a href="{html.escape(link, quote=True)}">到芝士里查看</a></p>')
     return f"[芝士] {headline}", "".join(body)
-
-
-async def finalize_expired_aggregations(sessions: SessionFactory) -> dict[str, int]:
-    """Close every aggregation window that has expired, delivering what it held."""
-    async with sessions() as session:
-        handler = build_notification_event_handler(session)
-        finalized = await handler.finalize_expired()
-        await session.commit()
-    return {"finalized": len(finalized)}
 
 
 async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:

@@ -180,7 +180,7 @@ class CodexChannel:
                 )
                 continue
             if status["alive"]:
-                ref = SessionRef(project_id, room_id, handle, harness)
+                ref = SessionRef(project_id, room_id, handle, harness=harness)
                 agent = place.runtime["agent_handle"]
                 handles.append(
                     Handle(

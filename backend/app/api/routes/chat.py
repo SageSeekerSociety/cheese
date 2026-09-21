@@ -49,7 +49,7 @@ from starlette.websockets import WebSocketState
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.core.config import settings
-from app.core.errors import AppError, ForbiddenError
+from app.core.errors import AppError, BaseError, ForbiddenError
 from app.core.obs import get_logger
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
@@ -199,7 +199,14 @@ async def chat(
                     str(raw_client_id)[:64] if isinstance(raw_client_id, str) else None
                 )
                 if not content and not attachments:
-                    await send({"type": "error", "message": "empty content"})
+                    await send(
+                        {
+                            "type": "error",
+                            "code": "empty_message",
+                            "message": "请输入消息或添加附件",
+                            "client_id": client_id,
+                        }
+                    )
                     continue
                 # Await only the short durable receive. Any model work is still
                 # background-owned by AgentWorkRunner and survives this socket.
@@ -226,11 +233,30 @@ async def chat(
                         turn=str(turn_id),
                         duration_ms=(time.monotonic() - received_at) * 1000,
                     )
-                except AppError as exc:
-                    await send({"type": "error", "message": exc.message})
+                except (AppError, BaseError) as exc:
+                    await send(
+                        {
+                            "type": "error",
+                            "code": type(exc).__name__,
+                            "message": exc.message
+                            if isinstance(exc, AppError)
+                            else str(exc.args[0]),
+                            "client_id": client_id,
+                        }
+                    )
                 except Exception:  # noqa: BLE001 — keep the socket usable
                     _log.exception("chat_message_receive_failed", topic=str(topic_id))
-                    await send({"type": "error", "message": "消息未能保存，请重新发送"})
+                    await send(
+                        {
+                            "type": "error",
+                            "code": "message_receive_failed",
+                            "message": (
+                                "发送结果暂时无法确认，请重试；"
+                                "系统会核对记录以避免重复发送"
+                            ),
+                            "client_id": client_id,
+                        }
+                    )
         except WebSocketDisconnect:
             pass
         finally:

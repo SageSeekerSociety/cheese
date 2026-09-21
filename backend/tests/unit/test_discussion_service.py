@@ -7,6 +7,7 @@ import pytest
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.services import DiscussionService
+from app.domain.notification.models import NotificationType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -372,12 +373,19 @@ class TestReactionTypeToDict:
 
 
 class TestCreateDiscussion:
+    @pytest.fixture(autouse=True)
+    def _roster(self):
+        """名册：用户 id -> handle。投递那一侧只认名字（I11）。"""
+
+        async def _handles(_session, ids):
+            return tuple(f"user{i}" for i in ids)
+
+        with patch("app.domain.discussion.services.handles_by_ids", new=_handles):
+            yield
+
     @pytest.mark.anyio
-    @patch(
-        "app.domain.discussion.services.publish_notification_event",
-        new_callable=AsyncMock,
-    )
-    async def test_creates_and_returns_dto(self, mock_publish):
+    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
+    async def test_creates_and_returns_dto(self, mock_deliver):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=42, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
@@ -398,14 +406,11 @@ class TestCreateDiscussion:
         assert result["sender"]["id"] == 5
         assert result["sender"]["nickname"] == "user_5"
         repo.create.assert_awaited_once()
-        mock_publish.assert_not_awaited()
+        mock_deliver.assert_not_awaited()
 
     @pytest.mark.anyio
-    @patch(
-        "app.domain.discussion.services.publish_notification_event",
-        new_callable=AsyncMock,
-    )
-    async def test_publishes_notification_for_mentions(self, mock_publish):
+    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
+    async def test_publishes_notification_for_mentions(self, mock_deliver):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(
             id=42,
@@ -431,10 +436,10 @@ class TestCreateDiscussion:
             mentioned_user_ids=[10, 20],
         )
 
-        mock_publish.assert_awaited_once()
-        call_kwargs = mock_publish.call_args.kwargs
-        assert call_kwargs["recipient_ids"] == {10, 20}
-        assert call_kwargs["actor_id"] == 5
+        mock_deliver.assert_awaited_once()
+        _session, event, addressed = mock_deliver.await_args.args
+        assert event.type is NotificationType.MENTION
+        assert {r.handle for r in addressed.recipients} == {"user10", "user20"}
 
     @pytest.mark.anyio
     async def test_empty_content_raises_bad_request(self):
@@ -473,11 +478,8 @@ class TestCreateDiscussion:
             )
 
     @pytest.mark.anyio
-    @patch(
-        "app.domain.discussion.services.publish_notification_event",
-        new_callable=AsyncMock,
-    )
-    async def test_filters_non_positive_mention_ids(self, mock_publish):
+    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
+    async def test_filters_non_positive_mention_ids(self, mock_deliver):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
@@ -503,11 +505,8 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch(
-        "app.domain.discussion.services.publish_notification_event",
-        new_callable=AsyncMock,
-    )
-    async def test_deduplicates_mention_ids(self, mock_publish):
+    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
+    async def test_deduplicates_mention_ids(self, mock_deliver):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
@@ -533,11 +532,8 @@ class TestCreateDiscussion:
         assert create_kwargs["mentioned_user_ids"] == [10]
 
     @pytest.mark.anyio
-    @patch(
-        "app.domain.discussion.services.publish_notification_event",
-        new_callable=AsyncMock,
-    )
-    async def test_model_type_uppercased(self, mock_publish):
+    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
+    async def test_model_type_uppercased(self, mock_deliver):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
@@ -557,11 +553,8 @@ class TestCreateDiscussion:
         assert create_kwargs["model_type"] == "PROJECT"
 
     @pytest.mark.anyio
-    @patch(
-        "app.domain.discussion.services.publish_notification_event",
-        new_callable=AsyncMock,
-    )
-    async def test_content_is_stripped(self, mock_publish):
+    @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
+    async def test_content_is_stripped(self, mock_deliver):
         svc, repo, rxn_svc, profile_repo = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity

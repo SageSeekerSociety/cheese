@@ -8,6 +8,10 @@
 // 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和管理他（角色、
 // 移出）。管理动作只对 owner / lead 出现，这条判断在后端也各做一次
 // （membership/services.py），前端藏起来只是为了不给人一个必定失败的按钮。
+//
+// 还有一件不属于「管理他」的事：**自己退出项目**。它不是名册上某一行的动作，而是
+// 这一页右上角那颗按钮（后端 `DELETE /projects/{id}/membership` 认的恒是当前身份
+// 那个人）。放在这里是因为这个页面就是「我和这个项目的关系」唯一说得清的地方。
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -17,6 +21,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import {
   inviteProjectMember,
+  leaveProject,
   listProjectAgents,
   listProjectInvitations,
   removeProjectMember,
@@ -54,9 +59,13 @@ function countLabel(n: number): string {
   return n > 99 ? '99+' : String(n)
 }
 
-// AI 队友这一段读的是**队友列表**，不是项目名册：名册上只有平台那个共用身份
-// （一行），而项目里可以有好几个队友，各有各的角色设定、模型和记忆。每个队友一
-// 间私聊，所以每一行都有自己的私聊按钮和自己的未读。
+// AI 队友这一段读的是**队友列表**，不是名册上那几行——它要的东西名册上没有，而
+// 不是名册上没有队友（名册上每个队友都有自己的一行）：
+//   - 私聊地址和未读键用的是实例自己的 `handle`（`agentDmKey`／`DmView`），名册
+//     行给的是席位 handle（`cheese-<实例 id 前 12 位>`），拿它去开私聊开的是别人；
+//   - 「默认」那颗标和右边的「设置」入口问的是这个队友本身怎么配的。
+// 所以这一段不是第二份名册，是队友的管理数据；「这个项目里有谁」仍然只有名册一
+// 个出处（人那一段就读它）。
 // 停用的队友不列：它在已经用着它的话题里照常工作，只是不再拿出来选。
 const teammates = ref<ProjectAgent[]>([])
 watch(
@@ -139,8 +148,9 @@ const groups = computed(() =>
 const myRole = computed(() => store.members.find((m) => m.user_handle === me.value)?.role ?? null)
 const canManage = computed(() => me.value === ownerHandle.value || myRole.value === 'lead')
 
-// 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而把
-// 自己踢出去是一个点一下就回不来的操作，两者都不该藏在一个 ⋯ 菜单里。
+// 项目所有者和自己这两行不带管理动作：把所有者降职会让项目没人管得了，而自己是
+// 不是要走由本人决定 —— 那颗按钮在右上角，带着一次确认（后端也会拒掉所有者：他
+// 得先把项目转让出去，否则这个项目就没人管得了）。
 // 带 source 的行（小队带进来的人、所有者）背后没有成员表那一行，改角色和移出都
 // 无从下手——它们进名册的方式就不是被加进来的。
 function manageable(m: ProjectMemberRow): boolean {
@@ -191,6 +201,42 @@ function confirmRemove() {
   if (!m) return
   removeTarget.value = null
   void run(m.user_handle, () => removeProjectMember(props.projectId, m.user_handle))
+}
+
+// ---- 退出项目（自己走） ----
+// 所有者不显示这一颗：后端会拒绝他（他一走项目就没人管得了），前端藏起来是为了
+// 不给人一个必定失败的按钮 —— 和角色 / 移出那两颗按钮同一条理由。
+//
+// 「来自小队」的人照样显示：他在这条路上得到的是一句「请在小队里退出」，那句话
+// 正是他需要的下一步。把入口藏掉，他就只剩下一个点不动的页面。
+const leaveOpen = ref(false)
+const leaving = ref(false)
+const canLeave = computed(() => !!me.value && me.value !== ownerHandle.value)
+
+async function confirmLeave() {
+  leaving.value = true
+  error.value = null
+  try {
+    await leaveProject(props.projectId)
+  } catch (e) {
+    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、访问来自小队、还是某个
+    // 话题唯一的 owner）就是用户要的全部内容，原样摆在页面上 —— 关掉弹窗，因为它
+    // 等的是一个已经不会有结果的「退出」。
+    leaveOpen.value = false
+    error.value = e instanceof Error ? e.message : '退出失败'
+    leaving.value = false
+    return
+  }
+  leaveOpen.value = false
+  // 退出的那一刻，这条请求已经成功了：**接下来做什么都不能再把它变成失败**。
+  // 两份刷新是为了让别的页面不拿着旧数据把我送回这个项目（名册里没有我了，项目
+  // 列表里也没有这个项目了），但它们是锦上添花 —— 刷新接口抖一下，用 allSettled
+  // 让失败就地咽掉，人照样是退出成功的，照样该离开这一页。用 Promise.all 的话一次
+  // 刷新失败会走到 catch 里，页面上挂出「退出失败」，而人其实已经退出了 —— 他再
+  // 点一次只会拿到 409。这一页本身也留不住：我已经不在名册上，它下一次读就是空的。
+  await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
+  void router.push({ name: 'HomeSpaces' })
+  leaving.value = false
 }
 
 // ---- 邀请 ----
@@ -281,11 +327,15 @@ async function submitInvite() {
           <h1 class="t-page-title">成员</h1>
         </div>
         <v-spacer />
+        <v-btn v-if="canLeave" variant="text" prepend-icon="mdi-exit-to-app" @click="leaveOpen = true">
+          退出项目
+        </v-btn>
         <v-btn
           v-if="canManage"
           color="primary"
           variant="flat"
           prepend-icon="mdi-account-plus-outline"
+          class="ms-2"
           @click="inviteOpen = true"
         >
           邀请成员
@@ -498,6 +548,20 @@ async function submitInvite() {
           >
             邀请
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="leaveOpen" max-width="420">
+      <v-card>
+        <v-card-title class="t-title pt-4">退出项目？</v-card-title>
+        <v-card-text class="t-body c-muted">
+          退出后这个项目的话题你就看不到了。已经发过的消息和做过的事都留着；想回来得由项目的组长再邀请你一次
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="leaveOpen = false">取消</v-btn>
+          <v-btn color="error" variant="flat" :loading="leaving" @click="confirmLeave">退出</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

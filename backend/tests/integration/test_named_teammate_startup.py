@@ -54,13 +54,14 @@ async def test_invited_teammate_is_the_startup_identity(
     )
     channel = device if harness == "pi" else CentralChannel(device)
     placement = await channel.precheck(
-        SessionRef(project_id, room_id, "reviewer", harness), needs_place=needs_place
+        SessionRef(project_id, room_id, "reviewer", harness=harness),
+        needs_place=needs_place,
     )
     assert placement.agent_handle == seat
     assert placement.agent_user_id != default_id
     assert placement.rented is needs_place
 
-    ref = SessionRef(project_id, room_id, "reviewer", harness)
+    ref = SessionRef(project_id, room_id, "reviewer", harness=harness)
     opening = Opening(system_prompt="Trial", agent_handle=seat, needs_place=needs_place)
     if harness == "pi":
         device.ensure_ready = AsyncMock(

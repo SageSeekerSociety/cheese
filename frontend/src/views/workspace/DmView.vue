@@ -65,8 +65,9 @@ async function load() {
   }
 }
 
-// 队友的显示名不在名册里（名册是人 + 平台那个共用身份），得问队友列表。拿不到
-// 就退回 handle：一个私聊不该因为标题写不出名字就打不开。
+// 私聊的地址用的是实例自己的 `handle`，而名册行给的是席位 handle，所以这里按
+// `handle` 找的是队友列表。拿不到就退回 handle：一个私聊不该因为标题写不出名字
+// 就打不开。
 async function loadAgentName(pid: string, handle: string) {
   try {
     const found = (await listProjectAgents(pid)).data.find((a) => a.handle === handle)

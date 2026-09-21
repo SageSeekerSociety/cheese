@@ -728,9 +728,9 @@ class TestTeamServiceTransferOwner:
 # TeamMembershipService tests
 # ===================================================================
 
-# All membership_services methods call publish_notification_event, so we
-# patch it globally for all membership tests.
-_PUBLISH_PATH = "app.domain.team.membership_services.publish_notification_event"
+# Every membership_services method hands its event to the delivery ledger, so
+# we patch that one step out for all membership tests.
+_PUBLISH_PATH = "app.domain.team.membership_services._notify"
 
 
 class TestCreateJoinRequest:
@@ -780,20 +780,6 @@ class TestCreateJoinRequest:
 
         with pytest.raises(ConflictError, match="pending application"):
             await svc.create_team_join_request(user_id=42, team_id=1, message=None)
-
-    @pytest.mark.anyio
-    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
-    async def test_skips_notification_when_no_admins(self, mock_publish):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.get_by_id.return_value = _make_team(id=1)
-        team_repo.is_team_member.return_value = False
-        app_repo.exists_pending_for_user_and_team.return_value = False
-        team_repo.list_admin_and_owner_ids.return_value = set()
-        app_repo.save.return_value = _make_application(id=300)
-
-        await svc.create_team_join_request(user_id=42, team_id=1, message=None)
-
-        mock_publish.assert_not_awaited()
 
 
 class TestCancelJoinRequest:

@@ -20,6 +20,7 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
 )
+from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
@@ -311,25 +312,17 @@ class TopicMemberService:
         member is an agent iff it carries an ``AgentBinding``. Returns every
         such member, because a room may host more than one 芝士 — callers that
         need "the agent acting here" want :meth:`resolve_agent_handle`.
-        """
-        from app.domain.identity.repositories import AgentBindingRepository
-        from app.domain.user.repositories import UserRepository
 
+        项目名册问的是同一句，所以两边读的是同一处推导
+        (:meth:`IdentityService.agents_among`)：一句话有两份声明，迟早在某一个
+        handle 上给出两个答案，而房间说它是 agent、项目名册说它是人，正是这次改动
+        要消掉的那种差（I4a）。
+        """
         members = await self._repo.list_for_topic(topic_id)
-        if not members:
-            return []
-        by_handle = await UserRepository(self._session).get_by_handles(
+        agents = await IdentityService(self._session).agents_among(
             [m.member_handle for m in members]
         )
-        agent_ids = await AgentBindingRepository(self._session).agent_user_ids(
-            [u.id for u in by_handle.values()]
-        )
-        return [
-            m.member_handle
-            for m in members
-            if (user := by_handle.get(m.member_handle)) is not None
-            and user.id in agent_ids
-        ]
+        return [m.member_handle for m in members if m.member_handle in agents]
 
     async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
         """Does ``handle`` answer THIS room as one of its agents?
@@ -518,6 +511,64 @@ class TopicMemberService:
         ):
             raise ValidationError("不能移除最后一个 owner")
         await self._repo.delete(member)
+
+    async def revoke_project_seats(
+        self, *, project_id: uuid.UUID, member_handle: str
+    ) -> list[uuid.UUID]:
+        """把这个人从这个项目的每一间房里撤出去 —— 退项目 / 被移出项目走这里。
+
+        返回**真的撤掉席位的房间**（``MemberService.leave`` 靠它区分「他在这份名
+        册上只剩这些席位」和「他本来就和这个项目没关系」）。空列表 = 一个字节都没
+        动：要么他没有席位，要么他唯一的席位在最后一个 owner 那条例外上。
+
+        为什么项目级的退场必须走到话题这一层：项目成员身份是**进得来这个项目的全部
+        话题**的凭据（``authorize_topic_access`` 认它），只删名册那一行、把话题席位
+        留着，人还是每个房间都进得去 —— 退项目就只退了个名单。所以两条路（自己退、
+        被 owner / lead 移出）共用这一份撤销。
+
+        没有授权检查，因为**它不是一条被别人调用的用户动作**：调用方是项目级的退场
+        动作，授权已经在那里做完了（``MemberService.leave`` 认本人，``remove`` 认
+        owner / lead）。
+
+        只管项目的话题树，不管私聊：私聊是两个人之间的一间房，不是项目发的通行证
+        （``TopicRepository.list_for_project`` 本来就不含它），人离开项目不该把它
+        带走。
+
+        唯一的例外是**最后一个 owner**：撤掉他，这间房就没有人管得了 —— 无主房间在
+        产品里是死路（``_require_manager`` 那个逃逸口正是为修这种房间存在的）。所以
+        既不静默放行，也不替房间指定继任者：拒绝，并点名是哪间房，让人先把房间交出
+        去再走。
+
+        「最后一个 owner」这个判断要读得**准**：两个人同时退同一个项目，各自读到
+        「这间房有两个 owner」就各自把自己删掉，房间照样落进无主状态。所以读 owner
+        的那条查询带 ``FOR UPDATE``（见 ``owners_by_topic``），两个事务在这里排队，
+        后一个读到的是前一个提交后的结果，正确拒掉。
+        """
+        topics = await self._topics.list_for_project(project_id)
+        if not topics:
+            return []
+        titles = {t.id: t.title for t in topics}
+        seats = await self._repo.topic_ids_for_member(list(titles), member_handle)
+        if not seats:
+            return []
+        owners = await self._repo.owners_by_topic(sorted(seats))
+        orphaned = sorted(
+            titles[topic_id]
+            for topic_id in seats
+            if member_handle in owners.get(topic_id, []) and len(owners[topic_id]) <= 1
+        )
+        if orphaned:
+            raise ValidationError(
+                "你是话题「"
+                + "」「".join(orphaned)
+                + "」唯一的 owner，先把话题交给别人"
+            )
+        # 一条 DELETE 清掉全部席位，返回值就是数据库真的删掉的那些房间。以前是一条
+        # 一条 get + delete —— 项目多少间房就多少次往返，而且「查到」被当成了「删
+        # 掉」：中途被别人删掉的那几条会让调用方以为撤了其实没撤。
+        return await self._repo.delete_for_member(
+            topic_ids=sorted(seats), member_handle=member_handle
+        )
 
 
 async def addressable_seat(session_factory, topic_id: uuid.UUID) -> str | None:
