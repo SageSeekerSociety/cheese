@@ -153,8 +153,8 @@ export default createVuetify({
     // one. `hideDetails: 'auto'` drops that row whenever a field happens to have
     // no hint, error or counter, which is most fields — so two plain fields stack
     // flush and the lower one's label lands on the upper one's bottom border.
-    // That shipped: 「运行方式」and「模型」in the AI-teammate dialog both sat on the
-    // border of the field above them.
+    // That shipped: stacked selects in the AI-teammate dialog sat on the border
+    // of the field above them.
     // Compact call sites (toolbar search, inline filters, chat composer) say
     // `hide-details` explicitly and are unaffected — 66 of the 149 fields in the
     // tree already do, which is why the default was never the thing holding them
