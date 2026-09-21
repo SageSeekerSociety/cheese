@@ -268,23 +268,43 @@ async def list_projects(
 
 
 @router.get("/by-task/{task_id}")
-async def projects_for_task(task_id: int, db: DbSession) -> dict:
+async def projects_for_task(
+    task_id: int, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The 2.0 projects created from this 赛题.
 
     The 赛题 page uses it to show what already exists rather than offering to
     create a second one blindly — a 赛题 with three teams on it should read as
     three projects, not as a button that quietly makes a fourth.
+
+    Who may ask is decided by the task, not by the project: every row carries a
+    project id, a name and an owner handle, and the id is the key to the rest of
+    these routes. So the door is ``authorize_task`` — the task's own visibility
+    judgment — and the 出题者 (``Task.creator_id``) is the caller this exists
+    for.
     """
+    actor = await resolver.resolve(fallback_handle=None)
+    await resolver.authorize_task(actor, task_id=task_id)
     projects = await ProjectRepository(db).list_for_external_task(task_id)
     items = await _shelled_many(db, projects)
     return ok(page(items, len(items)))
 
 
 @router.get("/by-team/{team_id}")
-async def project_for_team(team_id: int, db: DbSession) -> dict:
+async def project_for_team(
+    team_id: int, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The AI-workspace project for a 知是 Team (P4). ``data`` is null when the
     team has no project yet — the team page uses this to show/hide its 「AI 工作台」
-    entry."""
+    entry.
+
+    ``/projects?team_id=`` next door has always answered only to a member of the
+    team (``authorize_team``); this route hands out the same project by the same
+    guessable id and had no door at all, so the parameter was the guarded way in
+    and the path was the way around it.
+    """
+    actor = await resolver.resolve(fallback_handle=None)
+    await resolver.authorize_team(actor, team_id=team_id)
     project = await ProjectRepository(db).get_by_team(team_id)
     data = (
         _shelled(project, await effective_shell(db, project))
@@ -336,8 +356,12 @@ def _agent_out(
 
 
 @router.get("/{project_id}/agents")
-async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
+async def list_project_agents(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The project's saved agents, including its default for new rooms."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     await service.for_project(project)
@@ -356,9 +380,14 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
 
 @router.post("/{project_id}/agents")
 async def create_project_agent(
-    project_id: uuid.UUID, body: AgentInstanceCreate, db: DbSession
+    project_id: uuid.UUID,
+    body: AgentInstanceCreate,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Add an agent to this project. It starts with an empty memory pool."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.create(
@@ -382,6 +411,7 @@ async def update_project_agent(
     agent_id: uuid.UUID,
     body: AgentInstanceUpdate,
     db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Edit one agent's name and saved configuration.
 
@@ -389,6 +419,8 @@ async def update_project_agent(
     pool, so changing it would hand the agent an empty one and orphan
     everything it had learned in this project.
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
@@ -410,7 +442,10 @@ async def update_project_agent(
 
 @router.delete("/{project_id}/agents/{agent_id}")
 async def deactivate_project_agent(
-    project_id: uuid.UUID, agent_id: uuid.UUID, db: DbSession
+    project_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Retire an agent — not a delete.
 
@@ -419,6 +454,8 @@ async def deactivate_project_agent(
     that is the shape a DELETE returns everywhere here, not because a row went
     away.
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
@@ -428,9 +465,14 @@ async def deactivate_project_agent(
 
 @router.put("/{project_id}/default-agent")
 async def set_project_default_agent(
-    project_id: uuid.UUID, body: ProjectDefaultAgentIn, db: DbSession
+    project_id: uuid.UUID,
+    body: ProjectDefaultAgentIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Select the existing agent that new rooms start with."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(
@@ -803,6 +845,7 @@ async def list_decisions(
 async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
+    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """Every thread in the project, each with the card it currently rides on.
@@ -822,6 +865,8 @@ async def list_project_tasks(
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     tasks = await TaskRepository(db).list_for_project(project_id)
     task_ids = [t.id for t in tasks]
@@ -1459,7 +1504,9 @@ def _branch_protection_payload(bp: BranchProtection) -> dict:
 
 
 @router.get("/{project_id}/branch-protection")
-async def get_branch_protection(project_id: uuid.UUID, db: DbSession) -> dict:
+async def get_branch_protection(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The project's branch-protection rules (issue #718), GitHub 那一页的顺序。
 
     平台补位 GitHub 判定不了的部分，所以规则存在这里；两块只读附注说明 GitHub
@@ -1467,6 +1514,8 @@ async def get_branch_protection(project_id: uuid.UUID, db: DbSession) -> dict:
     ``github_protection``（GitHub 自己开没开保护 —— 开了的话设置页把同名规则灰
     掉，两处都能改就是两套配置）。GitHub 查询失败一律降级成 unknown，绝不 500。
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")

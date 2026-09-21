@@ -26,6 +26,20 @@ async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
 
 
+async def search_accounts(
+    session: AsyncSession, q: str, limit: int
+) -> Sequence[tuple[str, str]]:
+    """(handle, 昵称) —— 按关键词找账号，给「加管理员」那个选择器用。
+
+    Lives beside the other two rather than in the calling domain, for the reason
+    ``chosen_avatars_by_handle`` states: what an account is called is a fact about
+    `User`/`UserProfile`, and the two rules that are easy to get wrong — a missing
+    profile must not hide the account, and agents are not candidates — are written
+    once, in ``UserRepository.search_accounts``.
+    """
+    return await UserRepository(session).search_accounts(q, limit)
+
+
 async def chosen_avatars_by_handle(
     session: AsyncSession, handles: Iterable[str]
 ) -> dict[str, int]:
