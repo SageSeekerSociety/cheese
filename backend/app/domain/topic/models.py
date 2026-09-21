@@ -141,15 +141,6 @@ class Topic(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True, index=True
     )
     resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    # Its two facts moved onto the session that owns them
-    # (`agent_sessions.work_lease` / `.runtime_location`). No code writes it any
-    # more — the one write left is a test fixture standing in for the previous
-    # image — and the one read left is the deploy window's fallback in
-    # `device/owner_reads.py session_places()`, which is the only record of a
-    # room that image placed. P19 backfills once more and drops the column and
-    # that branch in the same commit; until then this is a column to delete,
-    # never one to assume empty.
-    session_placement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
 
