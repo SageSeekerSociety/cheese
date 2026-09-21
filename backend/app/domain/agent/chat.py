@@ -2344,7 +2344,7 @@ class ChatService:
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
-                private_owner = topic.private_owner
+                private_owner = await self._private_owner(session, topic)
             await get_work_runner().open_self_started_turn(self, topic_id, turn_id)
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
@@ -3168,6 +3168,18 @@ class ChatService:
         if seat in await TopicMemberService(session).agent_handles(topic_id):
             return seat
         return await self._agent_handle(session, topic_id)
+
+    @staticmethod
+    async def _private_owner(session: AsyncSession, topic: Topic) -> str | None:
+        """私聊里那位人类，名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
+
+        个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
+        一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
+        """
+        if not topic.is_private:
+            return None
+        seats = await TopicMemberService(session).private_seats(topic.id)
+        return seats[0] if seats is not None else None
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -4546,7 +4558,7 @@ class ChatService:
 
             is_private = topic.is_private
             # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
-            private_owner = topic.private_owner
+            private_owner = await self._private_owner(session, topic)
             acting_agent = await self._acting_handle(session, topic.id, agent)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
