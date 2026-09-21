@@ -137,7 +137,7 @@ def test_the_signal_goes_quiet_once_the_platform_has_announced_the_death(client)
         pid,
         tid,
         kind=BlockKind.event,
-        author_type=AuthorType.system,
+        author_type=AuthorType.platform,
         content="⚠️ 芝士上一轮卡死了，已强制结束。",
         age=timedelta(hours=5),
     )

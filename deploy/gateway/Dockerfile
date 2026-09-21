@@ -5,7 +5,10 @@ ENV LITELLM_WORKER_STARTUP_HOOKS=litellm.llms:load_guardrail_translation_mapping
 
 COPY patch_stream_timing.py test_stream_timing.py test_provider_http_timing.py test_router_logging.py test_startup_registry.py test_startup_beta_headers.py test_startup_telemetry.py /opt/cheese-gateway/
 COPY provider_http_timing.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/provider_http_timing.py
+COPY patch_deepseek_images.py test_deepseek_images.py config.yaml /opt/cheese-gateway/
 RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
+    && /app/.venv/bin/python /opt/cheese-gateway/patch_deepseek_images.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_images.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_http_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_router_logging.py \

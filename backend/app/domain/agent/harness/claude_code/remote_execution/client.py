@@ -978,7 +978,25 @@ def transport(config, target_path):
                             ),
                         )
                         outcome = {"result": receipt["value"]}
-                value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
+                image = outcome.get("result", {})
+                if isinstance(image, dict) and image.get("type") == "image":
+                    # Base64 in text hits Claude Code's MCP text-output limit.
+                    # Keep native Read metadata in text and pixels in an image block.
+                    file = image["file"]
+                    metadata = {k: v for k, v in file.items() if k != "base64"}
+                    outcome = {"result": {**image, "file": metadata}}
+                    value = {
+                        "content": [
+                            {"type": "text", "text": json.dumps(outcome)},
+                            {
+                                "type": "image",
+                                "data": file["base64"],
+                                "mimeType": file["type"],
+                            },
+                        ]
+                    }
+                else:
+                    value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
             elif method == "ping":
                 value = {}
             else:

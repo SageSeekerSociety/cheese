@@ -36,6 +36,8 @@ vi.mock('@/api', async () => {
 
 import FeedbackMinePage from './FeedbackMinePage.vue'
 
+import FeedbackRoutes from '@/router/feedback'
+
 // `author_handle` 得给：卡片会把它交给头像组件，缺了 Vue 会在控制台喊一句 prop
 // 类型不对的警告。其余字段靠 `as unknown as` 补。
 const CARD = {
@@ -50,7 +52,11 @@ const CARD = {
 function mountPage() {
   const router = createRouter({
     history: createWebHashHistory(),
-    routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
+    // 用**应用真的那张表**：卡片里是一条 `<router-link :to="{ name: 'FeedbackDetail' }">`，
+    // 名字解析不到时 Vue Router 是在**渲染那一刻**抛「No match for ...」的（不是导航
+    // 时抛），而这条用例根本不点那条链接。手抄一条同名路由也能过，但路由改名时它不会
+    // 跟着改 —— 抄一份就是给「用例和路由表悄悄分家」留一个后门。
+    routes: [...FeedbackRoutes, { path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
   })
   const vuetify = createVuetify({ components, directives })
   // 提交抽屉是个 `v-navigation-drawer`，它要 `v-app` provide 的 layout。

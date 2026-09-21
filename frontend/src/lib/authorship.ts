@@ -21,10 +21,11 @@ export function isAgentHandle(handle: string): boolean {
 
 /** 这条是平台自己写的（部署提醒、闸门结论、自动重发），不是谁说的话。 */
 function isPlatformBlock(b: Pick<Block, 'author_type'>): boolean {
-  // 判「不是参与者」而不是列举平台那一档的名字：那一档正在改名，行上写的今天是
-  // `system`、两次发布之后是 `platform`，而这份 bundle 会在已经打开的标签页里一直
-  // 跑下去，跨过那次发布。列名字的话，改名当天「<@bobby> 合并了 #12」会掉进人说的
-  // 话那一支，渲染成完整气泡加头像——一条谁都没说过的话。
+  // 判「不是参与者」而不是列举平台那一档的名字：那一档正在改名，两个名字现在同时在
+  // 库里，新行写的是 `platform`，`system` 只剩存量行还带着；而这份 bundle 会在已经
+  // 打开的标签页里一直跑下去，跨过剩下那次发布。列名字的话，改名当天
+  // 「<@bobby> 合并了 #12」会掉进人说的话那一支，渲染成完整气泡加头像，一条谁都没
+  // 说过的话。
   return b.author_type !== 'participant'
 }
 
