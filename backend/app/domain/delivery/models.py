@@ -16,7 +16,7 @@ Redis 一重启就没了，Redis 连不上时直接放行。所以「已经算�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, String, Uuid
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,11 +43,15 @@ class Delivery(UuidPk, Base):
     dedup_key: Mapped[str] = mapped_column(String(160), unique=True)
     type: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
-    #: 事件发生的时刻（不是写这一行的时刻，虽然通常只差毫秒）。补发出去的那条通知
-    #: 按它落时间戳，收件人看到的才是事情发生的时间，而不是我们恢复的时间。
+    #: 事件发生的时刻（不是写这一行的时刻，虽然通常只差毫秒）。这是「这一笔本该是
+    #: 什么时候的事」，一条没送到的投递事后要查的就是它。收件箱那一行的时间戳不取
+    #: 它 —— 那一列是「人什么时候能看见」，见 `notification/handlers.py`。
     event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     #: 确认已经送出去的回写。NULL = 还没送到，补发会再来一次。
     sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: 发过几次没成。到 `ledger.MAX_ATTEMPTS` 就不再补发 —— 那一行留在这里是死信。
+    #: 没有这个上限，一行始终发不出去的投递就是一台每分钟跑一次的定时机器。
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

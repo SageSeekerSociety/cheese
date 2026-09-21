@@ -27,8 +27,6 @@ class NotificationDelivery:
     #: 补发撞上唯一约束什么也不发生 —— 「恰好一次」由它保证。None = 没走账本的调用
     #: 点（社交通知，随 P27 搬过去），那种行之间不互斥。
     delivery_key: str | None = None
-    #: 这条通知该显示成什么时候。补发时是事件发生的时刻，不是我们恢复的时刻。
-    created_at: datetime | None = None
 
 
 class NotificationChannelHandler(Protocol):
@@ -53,7 +51,6 @@ class InAppNotificationHandler:
             if delivery.is_aggregated_finalization:
                 # Aggregated rows already exist in DB; finalization just flips the flag.
                 continue
-            created_at = delivery.created_at or now
             rows.append(
                 {
                     "receiver_id": delivery.recipient_id,
@@ -66,8 +63,12 @@ class InAppNotificationHandler:
                     "finalized": True,
                     "delivery_key": delivery.delivery_key,
                     "version": 0,
-                    "created_at": created_at,
-                    "updated_at": created_at,
+                    # 入库的时刻，不是事件发生的时刻：收件箱按 `created_at DESC`
+                    # 翻页，落一个旧时间戳会把这一条插进二十分钟前的位置 —— 未读数
+                    # 加一，人打开收件箱却看不到新东西。事件发生的时刻记在账本的
+                    # `deliveries.event_at` 上。
+                    "created_at": now,
+                    "updated_at": now,
                     "deleted_at": None,
                 }
             )

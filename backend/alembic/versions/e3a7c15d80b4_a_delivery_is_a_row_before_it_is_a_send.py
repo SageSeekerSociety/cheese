@@ -42,6 +42,7 @@ def upgrade() -> None:
         sa.Column("event_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dedup_key"),
     )

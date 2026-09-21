@@ -11,9 +11,15 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.domain.delivery import ledger as ledger_module
 from app.domain.delivery.addressing import REASON_REVIEWER, Addressed, Recipient
-from app.domain.delivery.ledger import DeliveryEvent, Ledger
+from app.domain.delivery.ledger import MAX_ATTEMPTS, DeliveryEvent, Ledger
 from app.domain.delivery.models import Delivery
+from app.domain.notification.handlers import (
+    InAppNotificationHandler,
+    NotificationDelivery,
+    NotificationEventHandler,
+)
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.user.models import User
 from tests.support.crashing_ledger import CrashingLedger, FakeClock
@@ -59,6 +65,31 @@ async def _inbox(session, receiver_id: int) -> list[Notification]:
         .order_by(Notification.id)
     )
     return list(rows)
+
+
+class _RecordingChannel:
+    """数自己被交了几次的渠道 —— 邮件队列和推送队列的替身。
+
+    那两个真渠道都是往 Redis 里 rpush，队列里没有去重键：交第二遍就是真的多一封
+    信、多一条推送。所以「交了几次」正是这里要数的东西。
+    """
+
+    name = "recording"
+
+    def __init__(self) -> None:
+        self.handed: list[str | None] = []
+
+    async def send_batch(self, deliveries: list[NotificationDelivery]) -> None:
+        self.handed.extend(d.delivery_key for d in deliveries)
+
+
+class _FailingChannel:
+    """一个怎么都收不下的渠道。"""
+
+    name = "failing"
+
+    async def send_batch(self, deliveries: list[NotificationDelivery]) -> None:
+        raise RuntimeError("这个渠道收不下")
 
 
 async def _ledger_rows(session) -> list[Delivery]:
@@ -205,6 +236,88 @@ async def test_a_resend_uses_the_roster_from_when_the_event_happened(db_factory)
 
         (landed,) = await _inbox(session, alice_then)
         assert await _inbox(session, alice_now) == []
-        # 显示的也是事情发生的时刻，不是我们恢复的时刻。
-        assert landed.created_at == EVENT_AT
         assert clock.now - EVENT_AT == timedelta(hours=1)
+        # 定档的是名册，不是时间戳：收件箱按 `created_at` 倒序翻页，补发出来的这条
+        # 若按事件发生的时刻落库，就会插在一小时前的位置 —— 未读数加一，人打开收件
+        # 箱却看不到新东西。
+        assert landed.created_at > EVENT_AT
+
+
+async def test_a_resend_does_not_queue_the_email_and_push_again(
+    db_factory, monkeypatch
+):
+    """⑥补发只重投站内信：邮件和推送不会因为补发再排一遍队。
+
+    账本的「恰好一次」只有站内信担得起 —— 去重键落在 `notification.delivery_key`
+    的唯一约束上。队列渠道没有这个键，账本替它们重投一次就是收件人真的多收一份，
+    而一行发不出去的投递每分钟被扫一次。
+    """
+    clock = FakeClock(EVENT_AT)
+    event = _event()
+    queue = _RecordingChannel()
+
+    def _all_channels(session) -> NotificationEventHandler:
+        return NotificationEventHandler(
+            session=session,
+            channel_handlers=[InAppNotificationHandler(session=session), queue],
+        )
+
+    monkeypatch.setattr(
+        ledger_module, "build_notification_event_handler", _all_channels
+    )
+
+    async with db_factory() as session:
+        alice = await _user(session, "alice")
+        # 发出去了，`sent_at` 还没回写就崩 —— 补发一定会再来一次。
+        await CrashingLedger(session, now=clock, after_dispatch=True).deliver(
+            event, _addressed("alice")
+        )
+        await session.commit()
+
+    assert len(queue.handed) == 1
+
+    clock.advance(seconds=60)
+    async with db_factory() as session:
+        await Ledger(session, now=clock).resend_unsent()
+        await session.commit()
+        assert len(await _inbox(session, alice)) == 1
+
+    assert len(queue.handed) == 1  # 队列这边没有第二份
+
+
+async def test_a_delivery_that_never_goes_out_stops_being_retried(
+    db_factory, monkeypatch
+):
+    """⑦补发有上限：一行始终发不出去的投递不是一台定时机器。
+
+    到顶之后那一行留在账本里 —— `sent_at` 仍是 NULL，`attempts` 到顶，补发不再扫
+    它。查得到、能人工看，但不会每分钟再试一遍。
+    """
+    clock = FakeClock(EVENT_AT)
+    event = _event()
+
+    async with db_factory() as session:
+        alice = await _user(session, "alice")
+        await CrashingLedger(session, now=clock, after_record=True).deliver(
+            event, _addressed("alice")
+        )
+        await session.commit()
+
+    monkeypatch.setattr(
+        ledger_module, "InAppNotificationHandler", lambda *, session: _FailingChannel()
+    )
+    for _ in range(MAX_ATTEMPTS):
+        clock.advance(seconds=60)
+        async with db_factory() as session:
+            assert await Ledger(session, now=clock).resend_unsent() == 0
+            await session.commit()
+
+    monkeypatch.undo()
+    clock.advance(seconds=60)
+    async with db_factory() as session:
+        assert await Ledger(session, now=clock).resend_unsent() == 0
+        await session.commit()
+        assert await _inbox(session, alice) == []
+        (row,) = await _ledger_rows(session)
+        assert row.sent_at is None
+        assert row.attempts == MAX_ATTEMPTS

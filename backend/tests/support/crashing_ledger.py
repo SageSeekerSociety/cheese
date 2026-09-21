@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.delivery.ledger import Ledger, Pending
+from app.domain.notification.handlers import NotificationEventHandler
 
 
 class Crash(Exception):
@@ -58,13 +59,13 @@ class CrashingLedger(Ledger):
         self._after_record = after_record
         self._after_dispatch = after_dispatch
 
-    async def _send_one(self, row: Pending) -> None:
+    async def _send_one(self, row: Pending, channels: NotificationEventHandler) -> bool:
         if self._after_record:
             raise Crash("记下来了，还没发就崩了")
-        await super()._send_one(row)
+        return await super()._send_one(row, channels)
 
-    async def _dispatch(self, row: Pending) -> bool:
-        accepted = await super()._dispatch(row)
+    async def _dispatch(self, row: Pending, channels: NotificationEventHandler) -> bool:
+        accepted = await super()._dispatch(row, channels)
         if self._after_dispatch:
             raise Crash("发出去了，确认还没回写就崩了")
         return accepted

@@ -18,13 +18,32 @@
 **写入之后、发出之前。** 账本那一行已经和事件一起提交了，通知还没发。这一档靠补发
 救：`resend_unsent()` 扫 `sent_at IS NULL` 的行，重新发一遍。这也是渠道发送失败时
 走的那条路 —— 发送抛异常不往上抛，那一行就留在「没发出去」，由补发接手。以前这一
-档是静默丢失：`_dispatch_to_handlers` 吞掉异常，而没有任何一行记着它本该发出去。
+档是静默丢失：`NotificationEventHandler.dispatch` 吞掉异常，而没有任何一行记着它本
+该发出去。
 
 **发出之后、回写之前。** 通知已经写进收件箱，`sent_at` 还没写回就崩了。这一档不能
 靠账本自己认出来（账本里它还是「没发出去」），靠的是**去重键落在收件箱那一行上**：
 补发再发一次，插入撞上 `notification.delivery_key` 的唯一约束，什么也不发生，然后
 把 `sent_at` 补上。所以「恰好一次」是由去重键保证的，不是由「先发还是先回写」的顺序
 保证的 —— 两种顺序都有一个崩得掉的窗口。
+
+## 补发只重投站内信这一个渠道
+
+第一次发送交给全部渠道；补发只交给站内信。因为账本的「恰好一次」只有站内信这一个
+渠道担得起 —— 去重键落在 `notification.delivery_key` 的唯一约束上，补发插第二遍什
+么也不发生。邮件与浏览器推送是往 Redis 队列里 rpush，队列里没有这个键，补发一次就
+是真的多一封信、多一条推送；而一行始终发不出去的投递每分钟被扫一次，那就成了一台
+定时发信机。
+
+队列那两个渠道也不需要账本替它们重投：它们各自的 drain 有 claim/ack、`max_retries`
+和死信队列，排进队列之后的送达由它们自己负责到底。代价说清楚：进程在记账之后、发
+送之前整个没了（那一批渠道一个都没跑过），补发只救得回站内信那一条，这一次的邮件
+和推送不会再补。站内信是收件人一定看得到的那一份，另外两个是它的扩音器。
+
+## 试到第几次为止
+
+`MAX_ATTEMPTS` 次。到顶还没发出去的行留在账本里、`sent_at` 仍是 NULL、`attempts`
+到顶，补发不再扫它 —— 那一行就是死信：查得到、能人工看，但不会再每分钟重试一遍。
 
 ## 去重键跟着事件走
 
@@ -40,6 +59,11 @@
 `record()` 当场把 handle 解析成收件箱并写进账本。补发是在事后发生的 —— 有可能是几
 分钟后，也有可能是一次重启之后 —— 那时候再按 handle 查一遍，查到的是**那时候**的
 名册。这条事件点的是事情发生时的那个人，所以名册在写入时定档，补发只照着账本发。
+
+定档的是名册，不是时间戳：补发出去的那条通知按**入库的时刻**落 `created_at`，因为
+收件箱是按 `created_at DESC` 翻页的，落一个旧时间戳会让这条通知出现在二十分钟前的
+位置 —— 未读数加一，人打开收件箱却看不到新东西。事件发生的时刻留在账本的
+`event_at` 上。
 """
 
 from __future__ import annotations
@@ -49,6 +73,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -58,12 +83,19 @@ from app.core.db import SessionFactory
 from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.models import Delivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
-from app.domain.notification.handlers import NotificationDelivery
+from app.domain.notification.handlers import (
+    InAppNotificationHandler,
+    NotificationDelivery,
+    NotificationEventHandler,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
+
+#: 补发试到第几次为止。见模块说明「试到第几次为止」。
+MAX_ATTEMPTS: Final = 5
 
 
 def _utcnow() -> datetime:
@@ -93,7 +125,6 @@ class Pending:
     type: NotificationType
     payload: dict
     dedup_key: str
-    event_at: datetime
 
 
 def dedup_key(event_id: uuid.UUID, handle: str) -> str:
@@ -113,13 +144,18 @@ class Ledger:
         self._session = session
         self._now = now
         self._channels = build_notification_event_handler(session)
+        #: 补发只走这一个渠道，见模块说明「补发只重投站内信这一个渠道」。
+        self._mailbox_only = NotificationEventHandler(
+            session=session,
+            channel_handlers=[InAppNotificationHandler(session=session)],
+        )
 
     async def deliver(self, event: DeliveryEvent, addressed: Addressed) -> None:
         """把这条事件送给它点到的那些人 —— 全仓唯一一处发通知。
 
         先记账再发送：中间任何一步没走完，账本里那一行都还在，补发会接着做完。
         """
-        await self.send(await self.record(event, addressed))
+        await self.send(await self.record(event, addressed), self._channels)
 
     async def record(self, event: DeliveryEvent, addressed: Addressed) -> list[Pending]:
         """把寻址结果落成账本上的行，返回这一次新记下的、还没发的那些。
@@ -167,13 +203,14 @@ class Ledger:
                     type=event.type,
                     payload=event.payload,
                     dedup_key=key,
-                    event_at=event.occurred_at,
                 )
             )
         return pending
 
-    async def send(self, pending: Sequence[Pending]) -> None:
-        """把这些行发出去，发到了就回写 `sent_at`。
+    async def send(
+        self, pending: Sequence[Pending], channels: NotificationEventHandler
+    ) -> None:
+        """把这些行交给 `channels`，发到了就回写 `sent_at`，没发到就记一次尝试。
 
         一行发不出去不影响其余的，也不往上抛：账本里那一行留在「没发出去」，补发会
         再来。往上抛会连带回滚调用方的事务，而那个事务里装着引发这条投递的事件本
@@ -181,29 +218,46 @@ class Ledger:
         """
         for row in pending:
             try:
-                await self._send_one(row)
+                if not await self._send_one(row, channels):
+                    await self._count_attempt(row)
             except Exception:
                 logger.exception(
                     "投递没送出去，留给补发：delivery=%s key=%s", row.id, row.dedup_key
                 )
 
-    async def _send_one(self, row: Pending) -> None:
-        if await self._dispatch(row):
-            await self.mark_sent(row.id)
+    async def _send_one(self, row: Pending, channels: NotificationEventHandler) -> bool:
+        if not await self._dispatch(row, channels):
+            return False
+        await self.mark_sent(row.id)
+        return True
 
-    async def _dispatch(self, row: Pending) -> bool:
-        """交给各个渠道。全都收下才算发出去。"""
-        return await self._channels.dispatch(
+    async def _dispatch(self, row: Pending, channels: NotificationEventHandler) -> bool:
+        """交给这一次该走的渠道。全都收下才算发出去。"""
+        return await channels.dispatch(
             [
                 NotificationDelivery(
                     recipient_id=row.receiver_id,
                     type=row.type,
                     payload=row.payload,
                     delivery_key=row.dedup_key,
-                    created_at=row.event_at,
                 )
             ]
         )
+
+    async def _count_attempt(self, row: Pending) -> None:
+        """这一行又试了一次没成。到顶就不再试了 —— 那一行成了死信。"""
+        record = await self._session.get(Delivery, row.id)
+        if record is None:
+            return
+        record.attempts += 1
+        await self._session.flush()
+        if record.attempts >= MAX_ATTEMPTS:
+            logger.error(
+                "投递试满 %d 次仍未送出，不再补发：delivery=%s key=%s",
+                MAX_ATTEMPTS,
+                row.id,
+                row.dedup_key,
+            )
 
     async def mark_sent(self, delivery_id: uuid.UUID) -> None:
         """确认回写 —— 这一笔送到了，补发不必再管它。"""
@@ -215,12 +269,15 @@ class Ledger:
     async def resend_unsent(self, *, limit: int = 200) -> int:
         """把账本里还没送出去的补发掉，返回这一轮补成了几条。
 
-        名册不重算：发给账本里记着的那个收件箱。
+        名册不重算：发给账本里记着的那个收件箱。渠道也不全走一遍：只重投站内信，
+        队列那两个渠道排进去之后由它们自己的 drain 负责到底。试满 `MAX_ATTEMPTS`
+        次的那些行不再扫。
         """
         rows = (
             await self._session.scalars(
                 select(Delivery)
                 .where(Delivery.sent_at.is_(None))
+                .where(Delivery.attempts < MAX_ATTEMPTS)
                 .order_by(Delivery.recorded_at)
                 .limit(limit)
             )
@@ -233,10 +290,10 @@ class Ledger:
                     type=NotificationType(row.type),
                     payload=row.payload or {},
                     dedup_key=row.dedup_key,
-                    event_at=row.event_at,
                 )
                 for row in rows
-            ]
+            ],
+            self._mailbox_only,
         )
         return sum(1 for row in rows if row.sent_at is not None)
 
