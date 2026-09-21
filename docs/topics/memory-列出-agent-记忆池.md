@@ -7,7 +7,7 @@
 改动只在 backend：
 
 - <&backend/app/api/routes/memory.py> — `list_memory` 增加 agent 池；`_list_openviking` 增加按 handle 的单池。
-- <&backend/app/domain/memory/models.py> — 抽出 `agent_project_scope_prefix()`，复合键的格式只在一处定义。
+- <&backend/app/domain/memory/models.py> — 抽出那个前缀函数（今天叫 `project_scope_prefix()`），复合键的格式只在一处定义。
 - <&backend/tests/integration/test_agent_identity.py> — 4 个功能测试（列得出/覆盖多个 agent/不跨项目泄漏/逃生开关）。
 - <&backend/tests/unit/test_memory_openviking.py> — 1 个 OpenViking 分支测试。
 
@@ -78,7 +78,7 @@
 
 ## 明确没做
 
-- 没改写入侧 scope 路由（`add_memory` / `_agent_memory_scope`）。
+- 没改写入侧 scope 路由（`add_memory` / `_calling_agent`）。
 - 没动 `_recall_agent_memories` 的注入逻辑和 `limit=50`。
 - 没动 `DELETE /api/memory/{entry_id}`。
 - 没改前端（上面第 1 点里那个标签不精确，留作后续）。

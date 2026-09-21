@@ -124,6 +124,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.membership.roster import roster_rows
 from app.domain.memory.models import MemoryScope
+from app.domain.memory.pools import pools_for_turn
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
@@ -3179,18 +3180,6 @@ class ChatService:
             raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(place.room, project)
 
-    async def _agent_memory_pool(
-        self, session: AsyncSession, topic: Topic
-    ) -> tuple[MemoryScope, str]:
-        """Where the agent working in *topic* writes what it learns.
-
-        The AGENT owns the pool, not the room — a 芝士 that works in five rooms
-        of one project has one memory, which is what "the same 芝士" was
-        supposed to mean all along.
-        """
-        agent = await self._resolved_agent(session, topic)
-        return memory_pool(topic.project_id, agent)
-
     async def _recall_agent_memories(
         self,
         memory,
@@ -3201,7 +3190,10 @@ class ChatService:
     ) -> RecallResult:
         """What this 芝士 carries into every turn inside this project.
 
-        Its own pool, plus one read-only tail: the shared ``project`` pool from
+        Its own pool and one pool per person sitting with it (`pools_for_turn`
+        picks them; every key starts with this project's id, so nothing another
+        project learned about the same person is reachable from here), plus one
+        read-only tail: the shared ``project`` pool from
         before memory was split per agent at all. Writes only ever go to the
         first, so the tail does not grow — but dropping it would make the day
         this shipped look, from inside a room, exactly like amnesia. What the
@@ -3213,12 +3205,15 @@ class ChatService:
         carried, and reached with `recall`. A pool nobody is told is bigger
         than what arrived is how memory quietly stops existing.
         """
-        own = (
-            memory_pool(topic.project_id, agent)
-            if agent is not None
-            else await self._agent_memory_pool(session, topic)
+        resolved = (
+            agent if agent is not None else await self._resolved_agent(session, topic)
         )
-        pools = [own, (MemoryScope.project, str(topic.project_id))]
+        pools = pools_for_turn(
+            topic.project_id,
+            resolved.handle,
+            await TopicMemberService(session).people_handles(topic.id),
+        )
+        pools.append((MemoryScope.project, str(topic.project_id)))
         return await recall_pools(memory, pools)
 
     async def _acting_handle(
@@ -4671,15 +4666,9 @@ class ChatService:
             doc_root = await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
-            if private_owner:
-                # Private chat: the owner's cross-project personal memory.
-                memories = await recall_pools(
-                    memory, [(MemoryScope.user, private_owner)]
-                )
-            else:
-                memories = await self._recall_agent_memories(
-                    memory, session, topic=topic, agent=agent
-                )
+            memories = await self._recall_agent_memories(
+                memory, session, topic=topic, agent=agent
+            )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             project = await ProjectRepository(session).get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
