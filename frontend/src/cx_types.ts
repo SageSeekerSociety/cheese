@@ -722,6 +722,13 @@ export interface AcceptCard {
   pr_repo: string | null
   pr_head_sha: string | null
   pr_merged_at: string | null
+  // 这次交付更新的是哪一项产物，以及这张卡自己是它的第几版 (#1085 结论三/五)。
+  // 版本号是后端按卡的状态算好的（还没采纳的那一张算的是它采纳之后的号），前端
+  // 一个都不推。落地之前递的那些卡没有这一项，所以是 null。
+  artifact: { id: string; name: string; version: number } | null
+  // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
+  // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
+  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
