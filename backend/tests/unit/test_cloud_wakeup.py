@@ -169,18 +169,21 @@ async def test_the_room_stops_waiting_before_the_delivering_turn_is_queued(monke
         deps, "device_hub", SimpleNamespace(is_online=lambda device_id: True)
     )
     monkeypatch.setattr("app.domain.topic_membership.services.addressable_seat", _seat)
+    # 这个对象是 lru_cache 住的：建之前清一次，跑完再清一次，免得替身留在缓存里
+    # 被后面的用例拿到。
     deps.get_cloud_wakeup.cache_clear()
-    monkeypatch.addfinalizer(deps.get_cloud_wakeup.cache_clear)
+    try:
+        await deps.get_cloud_wakeup().wake([(topic_id, "dev-1")])
 
-    await deps.get_cloud_wakeup().wake([(topic_id, "dev-1")])
+        assert [entry[0] for entry in log] == ["recorded", "submitted"]
+        assert log[0][2] == "ready", "房间还停在「正在创建」"
+        submitted = log[1][2]
+        # 这一轮不再自带开场白 —— 开场白就是上面那条记录，一件事一条记录。
+        assert submitted.get("nudge_event") is None
+        assert [r.handle for r in submitted["addressed"].recipients] == ["cheese-abc"]
 
-    assert [entry[0] for entry in log] == ["recorded", "submitted"]
-    assert log[0][2] == "ready", "房间还停在「正在创建」"
-    submitted = log[1][2]
-    # 这一轮不再自带开场白 —— 开场白就是上面那条记录，一件事一条记录。
-    assert submitted.get("nudge_event") is None
-    assert [r.handle for r in submitted["addressed"].recipients] == ["cheese-abc"]
-
-    # 下一拍扫描、连接器挂上来：同一个房间不会被再叫醒一次。
-    await deps.get_cloud_wakeup().wake([(topic_id, "dev-1")])
-    assert [entry[0] for entry in log] == ["recorded", "submitted"]
+        # 下一拍扫描、连接器挂上来：同一个房间不会被再叫醒一次。
+        await deps.get_cloud_wakeup().wake([(topic_id, "dev-1")])
+        assert [entry[0] for entry in log] == ["recorded", "submitted"]
+    finally:
+        deps.get_cloud_wakeup.cache_clear()
