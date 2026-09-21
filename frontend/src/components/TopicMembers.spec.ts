@@ -19,40 +19,20 @@ vi.mock('../api', async () => {
       ],
       total: 4,
     })),
-    // 项目里还有一个没进这个房间的队友：请它进来和请一个人是同一个「添加」列表。
-    listProjectAgents: vi.fn(async () => ({
-      data: [
-        {
-          id: 'a1',
-          handle: 'cheese',
-          seat_handle: 'cheese-t1',
-          display_name: '芝士',
-          is_default: true,
-          is_active: true,
-        },
-        {
-          id: 'a2',
-          handle: 'cheese-pi',
-          seat_handle: 'cheese-a2',
-          display_name: '评审',
-          is_default: false,
-          is_active: true,
-        },
-        {
-          id: 'a3',
-          handle: 'old',
-          seat_handle: 'cheese-a3',
-          display_name: '退休',
-          is_default: false,
-          is_active: false,
-        },
-      ],
-      total: 3,
-    })),
   }
 })
 
 import TopicMembers from './TopicMembers.vue'
+
+// 项目名册一张，队友也在上面（后端合的）：请一个队友进房间和请一个人是同一件事，
+// 所以「添加」那张单子读的就是这一份，不再另外拉一份队友清单拼上去。
+const PROJECT_MEMBERS = [
+  { user_handle: 'alice', role: 'lead', name: 'Alice', agent: false, active: true },
+  { user_handle: 'dave', role: 'member', name: 'Dave', agent: false, active: true },
+  { user_handle: 'cheese-t1', role: 'member', name: '芝士', agent: true, active: true },
+  { user_handle: 'cheese-a2', role: 'member', name: '评审', agent: true, active: true },
+  { user_handle: 'cheese-a3', role: 'member', name: '退休', agent: true, active: false },
+]
 
 const Roster = TopicMembers as unknown as Component
 
@@ -99,7 +79,7 @@ const settle = async () => {
 
 async function openRoster() {
   const utils = render(Roster, {
-    props: { topicId: 't1', projectId: 'p1', projectMembers: [], me: 'alice' },
+    props: { topicId: 't1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
     global: { plugins: [createVuetify({ components, directives })] },
   })
   await settle()

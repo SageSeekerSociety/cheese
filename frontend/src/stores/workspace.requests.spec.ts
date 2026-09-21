@@ -133,3 +133,16 @@ it('a refresh after archiving does not reuse a pre-archive list response', async
   expect(store.topics[0].status).toBe('archived')
   fresh.resolve({ data: [{ ...room('old', 'a'), status: 'archived' }], total: 1 })
 })
+
+it('shows the new room first and refreshes the sidebar without delaying navigation', async () => {
+  const store = useWorkspaceStore()
+  await store.openProject('a')
+  store.topics = [room('older', 'a')]
+  const fresh = deferred<Awaited<ReturnType<typeof listTopics>>>()
+  vi.mocked(listTopics).mockReturnValueOnce(fresh.promise)
+  const created = { ...room('new', 'a'), i_participate: true }
+  vi.mocked(createTopic).mockResolvedValueOnce(created)
+  expect(await store.create('new')).toEqual(created)
+  expect(store.topics.map((topic) => topic.id)).toEqual(['new', 'older'])
+  fresh.resolve({ data: [created, room('older', 'a')], total: 2 })
+})

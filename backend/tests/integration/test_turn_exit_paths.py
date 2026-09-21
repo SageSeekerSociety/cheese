@@ -40,6 +40,7 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.handles import CHEESE_HANDLE
 from tests.conftest import StubChannel, drain_hooks, stub_compute
@@ -103,7 +104,7 @@ async def _stored_session_id(factory, topic_id: str) -> str | None:
     served by the project's implicit 芝士, so that is the key to read under."""
     async with factory() as s:
         return await AgentSessionService(s).resume_token(
-            uuid.UUID(topic_id), CHEESE_HANDLE
+            uuid.UUID(topic_id), CHEESE_HANDLE, harness=deployment_harness()
         )
 
 
@@ -208,13 +209,14 @@ _CHILD = textwrap.dedent(
         # the pointer to actually be in the DB before saying "ready": the marker
         # is what tells the parent it may kill us, and killing us early would
         # test nothing.
+        from app.domain.agent.harness import deployment_harness
         from app.domain.agent_session.services import AgentSessionService
         from app.domain.identity.handles import CHEESE_HANDLE
 
         for _ in range(500):
             async with factory() as s:
                 token = await AgentSessionService(s).resume_token(
-                    uuid.UUID(TOPIC), CHEESE_HANDLE
+                    uuid.UUID(TOPIC), CHEESE_HANDLE, harness=deployment_harness()
                 )
             if token == SID:
                 break

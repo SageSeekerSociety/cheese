@@ -22,8 +22,9 @@ from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
-from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness import Opening, SessionRef, deployment_harness
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.remote_execution import (
     runtime as executor_runtime,
 )
@@ -43,7 +44,7 @@ AGENT = "agent"
 
 def ref(project, topic, agent=AGENT):
     """A session key, which is what a place is recorded under."""
-    return SessionRef(project, topic, agent, "claude-code")
+    return SessionRef(project, topic, agent, harness="claude-code")
 
 
 async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
@@ -57,6 +58,7 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
             "resource_id": str(resource),
             "channel": "device",
         },
+        harness=deployment_harness(),
     )
 
 
@@ -272,7 +274,7 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
     ]
     codex = CodexChannel(central, ClaudeLaunch("system").execution)
-    session = SessionRef(project, topic, AGENT, "codex")
+    session = SessionRef(project, topic, AGENT, harness="codex")
     handle = await codex.ensure(
         session, Opening("shared system", model="fixture", agent_handle="agent")
     )
@@ -290,10 +292,17 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         "alive": True,
     }
     assert await codex.discover("center") == [handle]
-    central.restore_screens = AsyncMock(return_value=[])
+    # 中心通道同时被 Claude Code 和 Codex 两个 runtime 包着（``build_compute_pool``），
+    # 所以它答不出哪一条会话是谁的，也不该答：它把落在自己这儿的会话原样交出来，
+    # 骨架的名字当 ``running`` 一起交（``Channel.discover`` 的契约）。
+    central.restore_screens = AsyncMock(
+        side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
+    )
     central.executor.discover = AsyncMock(return_value=[])
-    assert await central.discover("center") == []
-    central.restore_screens.assert_awaited_once_with([])
+    assert await central.discover("center") == [(project, topic, None, "codex")]
+    # 认领在 runtime 这一侧，判据是它自己的骨架——所以 Claude Code 一条也认不到，
+    # 不靠平台层写一个 "claude-code" 把别人的会话挡在外面。
+    assert await ClaudeCodeRuntime(central).recover("center") == []
 
 
 @pytest.mark.anyio

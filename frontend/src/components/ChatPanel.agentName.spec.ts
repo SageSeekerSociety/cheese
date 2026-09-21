@@ -166,6 +166,44 @@ describe('AI 说的话署谁的名', () => {
     expect(names).not.toContain('芝士')
   })
 
+  it('房间里没有 AI 席位时，落到项目的默认队友，不是名册上第一位', async () => {
+    // 老房间（席位是后来才有的）。后端给这样一间房解析出来的是项目的**默认**队
+    // 友，所以界面也只能读那一位：名册上第一个带 AI 标的是建得最早的那一位，而
+    // 停用默认队友会把默认改判给另一位——照第一位写名字，答话的是别人。
+    vi.stubGlobal('fetch', async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        const u = String(url)
+        if (u.includes('/members'))
+          return {
+            code: 200,
+            data: { data: [{ id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false }], total: 1 },
+          }
+        if (u.includes('/progress')) return { code: 200, data: { items: [], updated_at: null } }
+        if (u.includes('/tasks')) return { code: 200, data: { data: [], total: 0 } }
+        return { code: 200, data: { data: history, total: history.length, has_more: false } }
+      },
+    }))
+    history = []
+    const { container } = render(Panel, {
+      props: {
+        topic: topicOf('t1'),
+        showComposer: true,
+        members: [
+          { user_handle: 'cheese-oldest', role: 'member', name: '退休', agent: true, project_default: false },
+          { user_handle: 'cheese-onduty', role: 'member', name: '接班', agent: true, project_default: true },
+        ],
+      },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    const shown = container.textContent ?? ''
+    expect(shown).toContain('交给接班')
+    expect(shown).not.toContain('退休')
+  })
+
   it('名册还没到，也不能空着 —— 退回「芝士」', async () => {
     vi.stubGlobal('fetch', async (url: string) => ({
       ok: true,

@@ -149,7 +149,7 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
         return_value=SimpleNamespace(id=8, username="ada-seat")
     )
     resolved = await provider.precheck(
-        SessionRef(project_id, topic_id, "ada", "claude-code"), needs_place=True
+        SessionRef(project_id, topic_id, "ada", harness="claude-code"), needs_place=True
     )
 
     assert resolved == ("own-cloud", 8, "ada-seat", True)

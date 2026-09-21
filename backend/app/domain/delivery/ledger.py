@@ -6,11 +6,10 @@
 案 —— 谁该收到已经由 `delivery/addressing.py` 那个纯函数答完了，这里只负责让那个答
 案真的到达。
 
-不变量 I11 的「只有一处发通知」是**目标，不是现状**：社交那一侧还有 8 处直接调
-`notification/publisher.py` 的 `publish_notification_event`（`discussion/services.py`
-一处、`team/membership_services.py` 七处）。它们不走账本 —— 既不记账也不去重：同一
-条社交通知重复触发就落两行，没送到也没有任何一行记着它欠着。把它们搬上账本是另一件
-还没有人做的事；在那之前，这里说的「唯一」只管房间里这条线。
+不变量 I11 的「只有一处发通知」是**现状**：社交那一侧（入队申请、邀请、审批结果、
+讨论里被 @）以前有自己的一条路，既不记账也不去重，现在和房间里那条线走同一个入
+口。全仓没有第二条发通知的路，守卫盯着这件事
+（`tests/unit/test_social_notifications_through_the_ledger.py`）。
 
 记录和发送不分成两个模块，因为它们是同一个事务边界：账本那一行必须和引发它的事件
 一起提交，否则「这条事件本该通知谁」这句话在崩溃之后就没人记得。分成 `ledger.py` 加
@@ -65,6 +64,10 @@
 键是 `事件 id:收件人 handle`。跟着**事件**，不跟着这一次发送尝试：重试、补发、同一
 条事件被算两遍，算出来都是同一个键，所以每个人只收到一次。
 
+房间里的事件天生有 id（那条 block 的 uuid）。社交那些事件长在一条主键是自增整数的
+领域记录上 —— 一条申请、一条邀请、一条讨论回复 —— 所以它们的身份由
+`event_id_for()` 从「哪条记录上发生了哪件事」算出来，见那个函数。
+
 以前的键是 `事件类型:收件人集合:payload 的 sha1`，跟着**内容**走。差别在两头都真实
 发生：payload 里多一个时间戳，同一件事就变成两条通知；两件不同的事凑巧同一份内容，
 第二件就被吞掉。而且它住在一个带 TTL 的 Redis 键里，重启即失效。
@@ -112,6 +115,10 @@ logger = logging.getLogger(__name__)
 #: 补发试到第几次为止。见模块说明「试到第几次为止」。
 MAX_ATTEMPTS: Final = 5
 
+#: 社交事件 id 的命名空间。固定值：换掉它等于把在途的去重键全部作废，同一件事会
+#: 再通知一遍。
+_EVENT_NAMESPACE: Final = uuid.uuid5(uuid.NAMESPACE_DNS, "notification.cheese")
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -147,6 +154,20 @@ class Pending:
 def dedup_key(event_id: uuid.UUID, handle: str) -> str:
     """这条事件发给这个人的那一次投递的身份。跟事件走，不跟发送尝试走。"""
     return f"{event_id}:{handle}"
+
+
+def event_id_for(type_: NotificationType, record_id: int) -> uuid.UUID:
+    """长在一条领域记录上的那种事件的身份：哪条记录，发生了哪件事。
+
+    `record_id` 是引发它的那条记录（申请、邀请、讨论回复），`type_` 是那条记录上
+    发生的这一件事 —— 两样都要：一条邀请从发出到被取消是同一条记录上的两件事，只
+    按记录算，第二件就会撞上第一件的去重键，收件人再也收不到取消那一条。
+
+    算出来的 id 只取决于这两样，所以同一件事重算一遍得到同一个 id：重试、补发、同
+    一条事件被算两遍，收件人只被打扰一次。当场 `uuid4()` 得到的是**这一次调用**的
+    身份，那就等于没有去重。
+    """
+    return uuid.uuid5(_EVENT_NAMESPACE, f"{type_.value}:{record_id}")
 
 
 class Ledger:
@@ -327,8 +348,7 @@ async def deliver(
 ) -> None:
     """走账本的唯一入口。入参是寻址结果，不是一句文案。
 
-    不变量 I11 的「只有一处发通知」是目标：社交那 8 处还走
-    `publish_notification_event`，既不记账也不去重。
+    全仓发通知只有这一处（I11）：房间里的事件和社交那几条都从这里出去。
     """
     await Ledger(session).deliver(event, addressed)
 

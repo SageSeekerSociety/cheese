@@ -110,6 +110,7 @@ const GET_RETRY_DELAYS_MS = [250, 750]
 // both say 200 — and, like the statuses above, it is about this second.
 export function isRetryableGetFailure(method: string, status?: number, error?: unknown, errorPage = false): boolean {
   if (method.toUpperCase() !== 'GET') return false
+  if (error instanceof ApiError && error.retryable === false) return false
   if (errorPage) return true
   if (status != null) return RETRYABLE_GET_STATUSES.has(status)
   return !(error instanceof DOMException && error.name === 'AbortError')
@@ -141,10 +142,53 @@ function wait(ms: number): Promise<void> {
 export class ApiError extends Error {
   constructor(
     readonly status: number,
-    message: string
+    message: string,
+    readonly code?: string,
+    readonly requestId?: string,
+    readonly retryable?: boolean
   ) {
     super(message)
     this.name = 'ApiError'
+  }
+}
+
+export class RequestTimeoutError extends Error {
+  constructor() {
+    super('请求等待超时，请重试')
+    this.name = 'RequestTimeoutError'
+  }
+}
+
+export const READ_BUDGET_MS = 20_000
+export const TOKEN_REFRESH_BUDGET_MS = 10_000
+
+async function withinBudget<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  outer?: AbortSignal | null
+): Promise<T> {
+  if (outer?.aborted) throw outer.reason ?? new DOMException('请求已取消', 'AbortError')
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      controller.abort(outer?.reason)
+      reject(outer?.reason ?? new DOMException('请求已取消', 'AbortError'))
+    }
+    if (outer?.aborted) onAbort()
+    else outer?.addEventListener('abort', onAbort, { once: true })
+    timer = setTimeout(() => {
+      const error = new RequestTimeoutError()
+      controller.abort(error)
+      reject(error)
+    }, ms)
+  })
+  try {
+    return await Promise.race([work(controller.signal), cancelled])
+  } finally {
+    clearTimeout(timer)
+    if (onAbort) outer?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -217,14 +261,18 @@ export async function refreshNow(): Promise<void> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
-        const res = await fetch('/api/users/auth/refresh-token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-        })
-        if (!res.ok) return
-        const body = (await res.json()) as { data?: { accessToken?: string } }
-        const next = body?.data?.accessToken
+        const next = await withinBudget(async (signal) => {
+          const res = await fetch('/api/users/auth/refresh-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            signal,
+          })
+          if (!res.ok) return undefined
+          const body = (await res.json()) as { data?: { accessToken?: string } }
+          signal.throwIfAborted()
+          return body?.data?.accessToken
+        }, TOKEN_REFRESH_BUDGET_MS)
         if (next) localStorage.setItem('accessToken', next)
       } catch {
         // Offline, or the refresh cookie is gone. Sending the stale token is
@@ -251,7 +299,12 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
+  return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
+}
+
+async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
@@ -262,6 +315,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // for some other reason would make every call fire twice.
   let authRetried = false
   for (let attempt = 0; ; attempt += 1) {
+    init?.signal?.throwIfAborted()
     let res: Response
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -304,7 +358,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
-      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
+      if (
+        details.error?.retryable !== false &&
+        attempt < GET_RETRY_DELAYS_MS.length &&
+        isRetryableGetFailure(method, res.status)
+      ) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
@@ -312,10 +371,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
       const said = body as { message?: string; error?: { message?: string } }
-      const serverSaid = said.message || said.error?.message || ''
+      const serverSaid = said.error?.message || said.message || ''
       throw new ApiError(
         res.status,
-        serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`
+        serverSaid || `请求失败（HTTP ${res.status}）`,
+        details.error?.name,
+        res.headers?.get('X-Request-ID') ?? undefined,
+        details.error?.retryable
       )
     }
     const envelope = body as ApiEnvelope<T>

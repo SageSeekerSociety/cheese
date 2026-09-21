@@ -44,6 +44,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.service import (
     STEP_ERROR_MAX,
     AgentEvent,
@@ -286,7 +287,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             AgentSessionInfo(
                 session_id=str(sid),
                 agent_handle=hook.get("_agent_handle"),
-                harness="claude-code",
+                harness=CLAUDE_CODE,
             )
             if sid
             else None
@@ -436,7 +437,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             session_id=str(sid) if sid else None,
             usage=_usage_from_hook(hook),
             agent_handle=hook.get("_agent_handle"),
-            harness="claude-code",
+            harness=CLAUDE_CODE,
             thread_label=_thread_label(hook),
         )
 
@@ -463,7 +464,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             is_error=True,
             errors=[kind],
             agent_handle=hook.get("_agent_handle"),
-            harness="claude-code",
+            harness=CLAUDE_CODE,
         )
 
     # Any unmapped event: nothing to surface.

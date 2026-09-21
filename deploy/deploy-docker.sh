@@ -208,28 +208,70 @@ migrate_project_repositories() {
   log "project repositories migrated; backups and migration.log are in the persistent app home under forge-migration"
 }
 
-reload_api_front_routes() {
+ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
-  local config backup
+  local config backup frontend_backup changed=false router_changed=false port
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
-  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" && return 0
+  # Seed from the actual serving frontend, including a successor left serving
+  # by an interrupted rollout. Never guess the target during migration.
+  if [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ]; then
+    port="${FRONTEND_PORT:-8080}"
+    if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+      port="$(sed -n 's/^upstream frontend_active { server 127\.0\.0\.1:\([0-9]*\); }.*/\1/p' "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
+      [ -n "$port" ] || fail "cannot identify the serving frontend before ingress migration"
+    fi
+    printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$port" > "$ACTIVE_BACKEND_DIR/frontend.conf"
+  fi
+  if ! cmp -s "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"; then
+    [ ! -f "$ACTIVE_BACKEND_DIR/app-router.conf" ] || router_changed=true
+    cp "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"
+  fi
+  ACTIVE_BACKEND_DIR="$ACTIVE_BACKEND_DIR" docker compose \
+    -p cheese-dataplane -f "$HERE/llm-tunnel/app-router-compose.yml" up -d app-router \
+    || fail "cannot start application router; the existing ingress was not changed"
+  docker exec cheese-app-router nginx -t || fail "application router config rejected"
+  if [ "$router_changed" = true ]; then
+    docker exec cheese-app-router nginx -s reload || fail "application router could not reload"
+  fi
+  wait_for_healthz 18085 "application router" || fail "application router is not healthy"
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    curl -fsS -m 3 http://127.0.0.1:18086/ >/dev/null \
+      || fail "application router cannot reach the serving frontend"
+  fi
+
   backup="${config}.pre-device-connection"
   cp "$config" "$backup"
-  cp "$HERE/llm-tunnel/nginx.conf" "$config"
+  if ! cmp -s "$HERE/llm-tunnel/nginx.conf" "$config"; then
+    cp "$HERE/llm-tunnel/nginx.conf" "$config"
+    changed=true
+  fi
+  frontend_backup=""
+  if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
+    frontend_backup="$ACTIVE_FRONTEND_DIR/sites-frontend.conf.pre-app-router"
+    cp "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" "$frontend_backup"
+    bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT"
+    cmp -s "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" || changed=true
+  fi
+  if [ "$changed" = false ]; then
+    rm -f "$backup" ${frontend_backup:+"$frontend_backup"}
+    return 0
+  fi
   if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
     cp "$backup" "$config"
+    [ -z "$frontend_backup" ] || cp "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
     rm -f "$backup"
     fail "api-front rejected the device connection route; restored its config"
   fi
   if ! docker exec "$API_FRONT_CONTAINER" nginx -s reload; then
     cp "$backup" "$config"
+    [ -z "$frontend_backup" ] || cp "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
     docker exec "$API_FRONT_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
     rm -f "$backup"
     fail "api-front could not reload the device connection route; restored its config"
   fi
-  rm -f "$backup"
-  log "api-front now routes device WebSockets to the stable connection owner"
+  rm -f "$backup" ${frontend_backup:+"$frontend_backup"}
+  log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
 }
 log() { echo "[deploy-docker $(date '+%H:%M:%S')] $*"; }
 fail() { echo "[deploy-docker $(date '+%H:%M:%S')] ERROR: $*" >&2; exit 1; }
@@ -613,11 +655,12 @@ rm -f "$OWNERSHIP_REPORT"
 migrate_project_repositories
 
 # ---- Backend rollout without downtime (boxes with an api-front switch) ----
-# ACTIVE_BACKEND_DIR names the directory the box's host nginx (api-front,
-# deploy/llm-tunnel) reads its backend upstream from. When it is set, the
+# ACTIVE_BACKEND_DIR names the directory app-router reads its upstreams from.
+# The persistent api-front routes business traffic to this separate process.
+# When it is set, the
 # backend is not recreated in place: a second container comes up on the new
-# image first, api-front is pointed at it, the compose backend is recreated
-# behind it, api-front is pointed back, and the second container goes away.
+# image first, app-router is pointed at it, the compose backend is recreated
+# behind it, app-router is pointed back, and the second container goes away.
 # The box's :8081 — and the frontend's /api, which a rollout box points at it
 # (API_UPSTREAM) — never has a moment without a healthy backend behind it.
 # Measured before this existed: every deploy cut the backend for the ~13 s the
@@ -630,7 +673,13 @@ API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
 BACKEND_PORT="${BACKEND_PORT:-8081}"
 BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
-DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-5}"
+# app-router retires workers after 30s; allow the signal one second to arrive
+# before removing their upstream. Longer business streams still reconnect.
+DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
+if [ "$DRAIN_SECONDS" -lt 31 ]; then
+  log "raising application drain from ${DRAIN_SECONDS}s to 31s to cover the nginx worker deadline"
+  DRAIN_SECONDS=31
+fi
 NEXT_BACKEND="${PROJECT}-backend-next"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
@@ -675,9 +724,9 @@ switch_active_backend() {
   # Rename, never rewrite in place: nginx re-reads the file on reload and a
   # half-written one would take the whole server config down with it.
   mv -f "$tmp" "$ACTIVE_BACKEND_DIR/backend.conf"
-  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
-    || fail "api-front did not reload: $ACTIVE_BACKEND_DIR/backend.conf now names $target but traffic has not moved"
-  log "api-front now sends backend traffic to $target"
+  docker exec cheese-app-router nginx -s reload \
+    || fail "app-router did not reload: $ACTIVE_BACKEND_DIR/backend.conf now names $target but traffic has not moved"
+  log "app-router now sends backend traffic to $target"
 }
 
 # $1 = host port, $2 = what is expected there. Polls the published port from
@@ -698,6 +747,9 @@ wait_for_healthz() {
 }
 
 rollout_backend() {
+  if grep -Fq "server 127.0.0.1:$BACKEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/backend.conf"; then
+    fail "backend router is still on :$BACKEND_PORT_NEXT from a previous rollout; recover it before redeploying"
+  fi
   docker rm -f "$NEXT_BACKEND" >/dev/null 2>&1 || true
   log "starting the next backend as $NEXT_BACKEND on :${BACKEND_PORT_NEXT}…"
   # A one-off from the service definition: same image, env file, mounts and
@@ -712,6 +764,7 @@ rollout_backend() {
     fail "$NEXT_BACKEND never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
   switch_active_backend "127.0.0.1:${BACKEND_PORT_NEXT}"
+  sleep "$DRAIN_SECONDS"
   log "recreating backend on the new image behind ${NEXT_BACKEND}…"
   dc up -d --no-deps backend \
     || fail "compose up backend failed; $NEXT_BACKEND is still serving on :$BACKEND_PORT_NEXT and api-front points at it"
@@ -728,13 +781,14 @@ rollout_backend() {
 
 switch_active_frontend() {
   local port="$1" previous
-  previous="$(cat "$ACTIVE_FRONTEND_DIR/sites-frontend.conf")"
-  bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" "$port" "$FRONTEND_PROXY_PORT"
-  if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
-    printf '%s\n' "$previous" > "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"
+  previous="$(cat "$ACTIVE_BACKEND_DIR/frontend.conf")"
+  printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$port" > "$ACTIVE_BACKEND_DIR/frontend.conf.next"
+  mv "$ACTIVE_BACKEND_DIR/frontend.conf.next" "$ACTIVE_BACKEND_DIR/frontend.conf"
+  if ! docker exec cheese-app-router nginx -t; then
+    printf '%s\n' "$previous" > "$ACTIVE_BACKEND_DIR/frontend.conf"
     fail "frontend proxy configuration rejected; running nginx was not reloaded"
   fi
-  docker exec "$API_FRONT_CONTAINER" nginx -s reload \
+  docker exec cheese-app-router nginx -s reload \
     || fail "frontend proxy reload failed; both frontends remain running"
   log "frontend proxy now sends traffic to :$port"
 }
@@ -758,7 +812,7 @@ rollout_frontend() {
   [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
   # A failed prior switch may still be using this container. Never remove it
   # automatically while the standing proxy names its port.
-  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT_NEXT;" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf"; then
+  if grep -Fq "server 127.0.0.1:$FRONTEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/frontend.conf"; then
     fail "frontend proxy is still on :$FRONTEND_PORT_NEXT from a previous rollout; recover it before redeploying"
   fi
   docker rm -f "$NEXT_FRONTEND" >/dev/null 2>&1 || true
@@ -785,7 +839,7 @@ rollout_frontend() {
 # untouched until the separate owner release operation.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_device_connection_owner
-reload_api_front_routes
+ensure_application_router
 check_session_base_survives_release
 
 if [ -n "$ACTIVE_BACKEND_DIR" ]; then

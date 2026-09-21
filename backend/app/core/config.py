@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     # needs no entry: everything the project can use is something it can drive,
     # and listing those again would be a second copy to fall out of date.
     agent_harness_models: dict[str, list[str]] = {}
+    # 这套部署跑哪个骨架（结论 28）。骨架是开发者选项，不是产品概念：它不在类型
+    # 上也不在实例上，普通用户看不到，单个项目可以在自己的设置里盖过这一行。
+    # 空着 = 注册表里那个未配置时的骨架；注册表是唯一写着骨架名字的地方（不变量
+    # I5），所以这里给不出一个名字当默认值。名字不在注册表里，启动就失败——
+    # 悄悄跑另一个骨架，正是结论 28 要防的那件事。
+    agent_harness: str = ""
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
@@ -684,12 +690,10 @@ class Settings(BaseSettings):
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
     # --- notifications and deadlines ---
-    # Three jobs nothing in a request path can do. An aggregation window that
-    # never closes is a notification written and never delivered; an undrained
-    # email queue is an inbox that never receives; an unswept deadline is a
-    # promise the platform made and quietly did not keep. Each failure is
-    # silent, which is why the intervals are on by default. 0 disables one.
-    notification_finalize_interval_s: int = 60
+    # Two jobs nothing in a request path can do. An undrained email queue is an
+    # inbox that never receives; an unswept deadline is a promise the platform
+    # made and quietly did not keep. Each failure is silent, which is why the
+    # intervals are on by default. 0 disables one.
     notification_email_drain_interval_s: int = 60
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。

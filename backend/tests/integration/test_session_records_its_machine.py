@@ -21,8 +21,9 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import SessionRef, deployment_harness
 from app.domain.agent.harness.channel import Placement
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
 
@@ -66,7 +67,7 @@ def channel(client, monkeypatch, executors=("executor",)):
 async def _open(central, project, topic, agent, executor, *, resume=None):
     """One turn of one agent's session, through the resolution entry."""
     await central.ensure_ready(
-        session=SessionRef(project, topic, agent, "claude-code"),
+        session=SessionRef(project, topic, agent, harness="claude-code"),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System", resume_session_id=resume),
@@ -87,8 +88,8 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
 
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        ada = await sessions.place(topic, "ada")
-        linus = await sessions.place(topic, "linus")
+        ada = await sessions.place(topic, "ada", harness=deployment_harness())
+        linus = await sessions.place(topic, "linus", harness=deployment_harness())
     assert ada is not None and linus is not None
     assert ada.lease["device_id"] == "hands-a"
     assert linus.lease["device_id"] == "hands-b"
@@ -103,7 +104,9 @@ async def test_two_sessions_in_one_room_hold_their_own_leases(
     }
     await _open(central, project, topic, "ada", "hands-a")
     async with client.test_factory() as db:
-        again = await AgentSessionService(db).place(topic, "ada")
+        again = await AgentSessionService(db).place(
+            topic, "ada", harness=deployment_harness()
+        )
     assert again is not None
     assert again.lease["device_id"] == "hands-a"
     assert again.resource_id == ada.resource_id
@@ -125,14 +128,17 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
     # 骨架交回一个可续的 token——写侧和真正跑完一轮时走的是同一个入口。
     async with client.test_factory() as db:
         await AgentSessionService(db).remember(
-            topic_id=topic, agent_handle="ada", resume_token="conversation-1"
+            topic_id=topic,
+            agent_handle="ada",
+            resume_token="conversation-1",
+            harness=deployment_harness(),
         )
         await db.commit()
 
     # 搬家：进程换一台会话机，手上那棵工作树不动。
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
-        before = await sessions.place(topic, "ada")
+        before = await sessions.place(topic, "ada", harness=deployment_harness())
         assert before is not None and before.machine == "center"
         await sessions.remember_place(
             topic_id=topic,
@@ -143,6 +149,7 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
                 "resource_id": before.resource_id,
                 "channel": before.channel,
             },
+            harness=deployment_harness(),
         )
         await db.commit()
 
@@ -154,7 +161,9 @@ async def test_a_session_that_moves_machine_keeps_what_it_said(
     }
     # 下一轮：续接指针是从这条会话行上读出来的，和 `chat.py` 读的是同一处。
     async with client.test_factory() as db:
-        resumes_by = await AgentSessionService(db).resume_token(topic, "ada")
+        resumes_by = await AgentSessionService(db).resume_token(
+            topic, "ada", harness=deployment_harness()
+        )
     await _open(central, project, topic, "ada", "hands-a", resume=resumes_by)
 
     opened = central._ensure_screen.await_args.kwargs
@@ -178,11 +187,15 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
                 "resource_id": str(topic),
                 "channel": "device",
             },
+            harness=deployment_harness(),
         )
         await db.commit()
         assert await sessions.has_run(topic) is False
         await sessions.remember(
-            topic_id=topic, agent_handle="ada", resume_token="conversation-1"
+            topic_id=topic,
+            agent_handle="ada",
+            resume_token="conversation-1",
+            harness=deployment_harness(),
         )
         await db.commit()
         assert await sessions.has_run(topic) is True
@@ -192,12 +205,17 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
 async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     client, room, monkeypatch
 ):
-    """换过骨架的房间，冷启动只归最后落位的那条会话——其他通道一概不认领。
+    """换过骨架的房间，冷启动只归最后落位的那条会话——别的骨架一概不认领。
 
     会话行按 (房间, agent, 骨架) 各占一行，而换骨架的时候没有任何地方去把旧那行
     的位置清空，所以这样的房间带着两行非空的 ``runtime_location``。房间的屏只有
-    一块：把两行都发给各条通道，中心通道会照着那条陈旧的 claude-code 行去认领这
-    块其实是 pi 开的屏，pi 通道也认领同一块，房间归最后恢复完的那条。
+    一块：认错了，就是拿 Claude Code 的拼装器去翻译 pi 说的话，再当成自己的报进
+    房间。
+
+    认领的判据在 runtime 那一侧，是它自己的骨架——通道答不出这个，一条
+    ``CentralChannel`` 同时被 Claude Code 和 Codex 两个 runtime 包着
+    （``build_compute_pool``）。所以通道把落在自己这儿的会话原样交出来，骨架的名
+    字当 ``running`` 一起交（``Channel.discover`` 的契约）。
     """
     project, topic = room
     del project
@@ -222,9 +240,11 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     assert [(row[1], row[3]) for row in placed] == [(topic, "pi")]
 
     central = channel(client, monkeypatch)
-    central.restore_screens = AsyncMock(return_value=[])
+    central.restore_screens = AsyncMock(
+        side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
+    )
     central.executor.discover = AsyncMock(return_value=[])
 
-    await central.discover()
-
-    assert central.restore_screens.await_args.args[0] == []
+    assert [found[3] for found in await central.discover()] == ["pi"]
+    # 这块屏是 pi 开的，所以 Claude Code 那一侧一条都不认领。
+    assert await ClaudeCodeRuntime(central).recover() == []

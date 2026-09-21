@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import release_read_session
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -47,9 +48,29 @@ def clean_path(path: str) -> str:
 
 class ProjectFiles:
     def __init__(
-        self, session: AsyncSession, project_id: uuid.UUID, task_id: uuid.UUID | None
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        task_id: uuid.UUID | None,
+        *,
+        release_session: bool = False,
     ):
         self.session, self.project_id, self.task_id = session, project_id, task_id
+        self.release_session = release_session
+
+    async def _data(self, *args, **kwargs):
+        if self.release_session:
+            kwargs["release_session"] = True
+        return await repository_data(*args, **kwargs)
+
+    async def _head(self, *args, **kwargs):
+        if self.release_session:
+            kwargs["release_session"] = True
+        return await branch_head(*args, **kwargs)
+
+    async def _release(self):
+        if self.release_session:
+            await release_read_session(self.session)
 
     async def task(self):
         task = await self.session.get(Task, self.task_id) if self.task_id else None
@@ -85,6 +106,7 @@ class ProjectFiles:
         )
         if not target or target.get("kind") != "device":
             raise GatewayUnavailableError("任务机器尚未连接；可以查看已提交版本")
+        await self._release()
         try:
             # Interactive file requests must not inherit the agent's 11-minute
             # command timeout; cancellation also cancels the pending device call.
@@ -115,7 +137,7 @@ class ProjectFiles:
         )
         if not branch:
             raise NotFoundError("任务没有独立的文件版本")
-        head = await branch_head(self.project_id, self.session, branch)
+        head = await self._head(self.project_id, self.session, branch)
         if not head:
             raise NotFoundError("这个任务还没有提交文件")
         return head
@@ -205,13 +227,13 @@ class ProjectFiles:
         task = await self.task()
         if task is None or not task.branch_name:
             return None
-        head = task.delivered_head or await branch_head(
+        head = task.delivered_head or await self._head(
             self.project_id, self.session, task.branch_name
         )
         if not head:
             return None  # The task has not pushed its first commit yet.
         base = task.base_branch or await default_branch(self.project_id, self.session)
-        comparison = await repository_data(
+        comparison = await self._data(
             self.project_id,
             self.session,
             f"/compare/{quote(base, safe='')}...{quote(head, safe='')}",
@@ -255,7 +277,7 @@ class ProjectFiles:
         else:
             head = await self.revision()
             commits = (
-                await repository_data(
+                await self._data(
                     self.project_id,
                     self.session,
                     f"/commits?sha={head}&per_page=50&limit=50",
@@ -295,7 +317,7 @@ class ProjectFiles:
             raise NotFoundError("项目没有代码仓库")
         if task:
             if not task.pr_number:
-                if not task.branch_name or not await branch_head(
+                if not task.branch_name or not await self._head(
                     self.project_id, self.session, task.branch_name
                 ):
                     return ""
@@ -311,16 +333,18 @@ class ProjectFiles:
                 tokens = await tokens_for_project(self.project_id, self.session)
                 if tokens is None:
                     raise GatewayUnavailableError("项目的代码托管凭据尚未配置")
+                await self._release()
                 token, _ = await tokens.installation_token()
                 owner, repo = binding.repo.split("/", 1)
                 client = await status_client(self.project_id, self.session)
+                await self._release()
                 relation = await client.compare_status(
                     owner=owner, repo=repo, base=ref, head=head, token=token
                 )
                 if relation not in ("ahead", "identical"):
                     raise NotFoundError("此提交不在项目已交付的历史中")
             return await self.commit_diff(ref or head)
-        data = await repository_data(self.project_id, self.session, path, diff=True)
+        data = await self._data(self.project_id, self.session, path, diff=True)
         if data is None:
             raise NotFoundError("此版本的差异不存在")
         return data
@@ -335,7 +359,7 @@ class ProjectFiles:
             if binding.kind == "forgejo"
             else f"/commits/{revision}"
         )
-        data = await repository_data(self.project_id, self.session, path, diff=True)
+        data = await self._data(self.project_id, self.session, path, diff=True)
         if data is None:
             raise NotFoundError("此版本的差异不存在")
         return data
@@ -343,7 +367,7 @@ class ProjectFiles:
     async def _tree(self, sha):
         entries, page_number = [], 1
         while True:
-            data = await repository_data(
+            data = await self._data(
                 self.project_id,
                 self.session,
                 f"/git/trees/{quote(sha, safe='')}?per_page=500&page={page_number}",
@@ -376,7 +400,7 @@ class ProjectFiles:
         raise NotFoundError("已提交版本中没有这个文件")
 
     async def _blob(self, entry):
-        data = await repository_data(
+        data = await self._data(
             self.project_id, self.session, f"/git/blobs/{entry['sha']}"
         )
         if not data or data.get("encoding") != "base64":

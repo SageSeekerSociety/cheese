@@ -8,7 +8,7 @@
 补发那条扫描去面对一批故意还没送的行，而那条扫描的全部含义是「没送到的再送一次」。
 
 Revision ID: 6c3f0a1d92b7
-Revises: a7f2c4d86b13
+Revises: c9f41b7a2e08
 """
 
 from collections.abc import Sequence
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "6c3f0a1d92b7"
-down_revision: str | Sequence[str] | None = "a7f2c4d86b13"
+down_revision: str | Sequence[str] | None = "c9f41b7a2e08"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

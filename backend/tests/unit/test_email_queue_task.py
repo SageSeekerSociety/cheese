@@ -251,17 +251,3 @@ async def test_the_email_escapes_what_other_people_wrote(monkeypatch):
     body = sender.send.await_args.kwargs["body_html"]
     assert "<script>" not in body
     assert "&lt;script&gt;" in body
-
-
-@pytest.mark.anyio
-async def test_an_aggregated_email_says_it_stands_for_a_batch(monkeypatch):
-    """聚合窗口收口发出的那一条代表的是一批。不说明的话，收件人会以为平台把
-    其余几十条弄丢了。"""
-    _result, _redis, sender = await _drain(
-        monkeypatch,
-        send_result=True,
-        item=json.dumps(
-            {"recipientId": 7, "type": "REACTION", "payload": {}, "finalized": True}
-        ),
-    )
-    assert "合并成了一条" in sender.send.await_args.kwargs["subject"]

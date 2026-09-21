@@ -106,24 +106,26 @@ confirms every previously online managed device reconnects with a new connection
 generation before resuming execution. This maintenance causes one brief device
 reconnection after active calls have finished.
 
-**On dev the backend rolls out without downtime.** The box's **:8081** is
-`cheese-api-front`, a host-network nginx from `deploy/llm-tunnel/` whose
-backend upstream comes from an include file (`~/ops/llm-tunnel/active/
-backend.conf`). With `ACTIVE_BACKEND_DIR` set in `~/ops/deploy.env`, the deploy
-script starts the new image as `cheese-backend-next` on **:18082**, waits for
-its `/healthz`, points api-front at it and reloads, recreates the compose
-`backend` (on **:18081**) behind it, points api-front back, and removes the
-temporary container. The frontend container reaches the backend through that
-same host port (`API_UPSTREAM=host.docker.internal:8081`), so its `/api` never
-sees the swap either; the ghg edge (APISIX) proxies to **:8080** (frontend) and
-**:8081** (api-front). What remains is about one second on **:8080** when the
-frontend container itself is recreated. Measured on the first rollout
-(2026-09-04): 0 failed requests on :8081 across the swap, 1 second of refused
-connections on :8080. Before it, every deploy cut the backend for the ~13 s a
-container takes to boot. A box without `ACTIVE_BACKEND_DIR` — prod (RUC),
-etrip — still recreates in place, gap included; the first deploy after
-enabling it on a box pays the old gap once, because the frontend that is still
-running resolves `backend` by compose name.
+**Application switches leave the persistent ingress running.** On boxes with
+`ACTIVE_BACKEND_DIR`, `cheese-api-front` keeps its device, screen, execution,
+model-tunnel and forge-event routes. Business requests pass to the separate
+`cheese-app-router` nginx on loopback **:18085** (backend) and **:18086**
+(frontend). Only app-router reads the changing `backend.conf` and
+`frontend.conf` upstream files and reloads during an ordinary application release.
+
+The deploy starts a healthy successor, switches app-router to it, drains old
+workers, recreates the compose service, switches back and drains again before
+removing the successor. The minimum drain is 31 seconds: the worker shutdown
+deadline is 30 seconds, plus one second for signal delivery. Business streams
+longer than the deadline can reconnect; device and model connections bypass
+these workers. `ACTIVE_FRONTEND_DIR` enables the same procedure for the
+frontend behind the persistent **:18080** entry. Frontends still reach APIs
+through `API_UPSTREAM=host.docker.internal:8081`.
+
+The first pipeline release installing app-router starts and checks it before
+reloading the persistent ingress once. That migration can reconnect existing
+devices; subsequent business releases do not reload their ingress. A box without
+`ACTIVE_BACKEND_DIR` still recreates application containers in place.
 
 ### dev — continuous deploy
 
