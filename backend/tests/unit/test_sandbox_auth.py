@@ -97,10 +97,12 @@ def test_one_agent_keeps_one_identity_across_rooms():
     assert minted == {agent}
 
 
-def test_a_token_minted_without_an_agent_names_nobody():
-    """A project-wide capability (git-http / LLM proxy, a transcript drain) is
-    the platform acting, not an agent — and naming a room's agent for it would
-    put writes it never made into that agent's audit trail."""
+def test_a_token_minted_without_an_agent_claims_no_identity():
+    """Minting derives no name: a project-wide capability (git-http / LLM proxy)
+    names nobody because it names no room either, and a room-scoped token that
+    pinned no teammate leaves the answer to that room's roster instead of to a
+    name derived here — which would put writes into an agent's audit trail on
+    the strength of where the token was minted."""
     assert sa.token_agent_handle(sa.mint_scoped_token(project_id="P")) is None
     assert (
         sa.token_agent_handle(sa.mint_scoped_token(project_id="P", topic_id="T"))

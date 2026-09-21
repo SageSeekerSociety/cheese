@@ -70,9 +70,16 @@ def mint_scoped_token(
     collaboration space and may seat several agents, so a handle derived from
     the room would give two of them one name and one of them two names — and a
     token is precisely where that mistake is unrecoverable, because the name is
-    signed into it. A token minted without an agent carries no identity claim,
-    which is what a project-wide capability (the git-http / LLM proxies, a
-    transcript drain) is: the platform acting, not an agent.
+    signed into it.
+
+    A token minted without an agent carries no identity claim, and what that
+    means afterwards is decided by whether it also names a topic. Naming none
+    either, it is a project-wide capability — the git-http and LLM proxies —
+    and nobody can answer for it: the platform acting, not an agent. Naming a
+    topic, it is a turn in that room with no teammate pinned, and the room's
+    roster answers for it (``api.auth.ActorResolver.acting_agent``); the
+    transcript drain mints one of these, and the endpoints it posts to verify
+    the token directly rather than resolving an actor at all.
     """
     payload: dict[str, str | int | None] = {
         "p": project_id,

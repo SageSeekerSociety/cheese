@@ -83,12 +83,26 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
 
     `SADD` returning 1 is the whole of the idempotency: the worker re-sends its
     pending list with every batch, and the room must not fill with copies.
+
+    A session that never recorded which agent it is — opened before #1185 and
+    still inside the seven-day retention — has no name to ask under, and the
+    batch says so instead of picking one. The room cannot answer for it: it
+    seats whatever collaborators it holds, so asking it would file the question
+    under an agent that may not have asked it. Reopening the session records
+    the agent, and the events already landed (`receive` is keyed by event id).
     """
     sid = session["id"]
     topic_id = uuid.UUID(session["topic_id"])
     rc = store()
     snapshot = await rc.snapshot(session)
-    for request_id, pending in (snapshot.get("pending") or {}).items():
+    outstanding = (snapshot.get("pending") or {}).items()
+    author = session.get("agent_handle")
+    if outstanding and not author:
+        raise ConflictError(
+            "This session records no agent; reopen it so its questions can be "
+            "asked in the room"
+        )
+    for request_id, pending in outstanding:
         if not await rc.redis.sadd(key(sid, "voiced"), request_id):
             continue
         payload = await chat._persist_assistant_message(
@@ -100,7 +114,7 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
             roster=None,
             topic_refs=[],
             publish=True,
-            author=session["agent_handle"],
+            author=author,
             publication_id=f"rc-ask-{request_id}",
             # 这句是芝士自己问出口的，不是谁交给它去读的一句话：它在等**人**按
             # 下那个按钮。不说明的话轮次输入账目会把它记成一条待读输入 —— 「忘
@@ -466,8 +480,19 @@ def not_its_own(session: dict, actor: Actor) -> None:
     Being this session is the whole question: the handle a session runs under is
     an agent's either way, so also asking whether the actor was an agent added a
     second, weaker answer to a question this one had already settled.
+
+    A session that never recorded it — opened before #1185 and still inside the
+    seven-day retention — cannot be told apart from its own controller, and a
+    gate that cannot tell refuses. Deriving a name from the room instead is the
+    answer this change retired: a room may seat several agents, so it would
+    both clear the wrong actor and stop the right one.
     """
-    if actor.handle == session["agent_handle"]:
+    mine = session.get("agent_handle")
+    if not mine:
+        raise ForbiddenError(
+            "This session records no agent; reopen it before controlling it"
+        )
+    if actor.handle == mine:
         raise ForbiddenError("A session cannot decide its own controls")
 
 

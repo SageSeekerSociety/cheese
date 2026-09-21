@@ -26,12 +26,28 @@ agent 只有一个名字，从它自己派生，它签的字、它的席位、�
 席位的房间答不出「我是谁」——不是回落到一个房间派生的名字，是没有答案。它幂等，
 第二遍只花一次扫描。
 
+**替身退役从总览放开到每一间房**：``b4d1a70c9e52`` 只解析总览
+（``WHERE s.root_topic_id IS NOT NULL``），因为它要办的事是「项目有它的芝士和一个
+席位」。而 ``aeb21133e`` 之前建的**每一间**房，名册上坐的都是那间房派生出来的替身
+``cheese-<房间 hex12>``，项目自己那位芝士在那些房里根本没有席位。从今天起名册就是
+全部答案（``holds_an_agent_seat`` 不再给项目凭证留例外），席位也是「我是谁」的唯一
+出处，所以那些房里：线下那张项目凭证会从 200 变 403，``resolve_agent_handle`` 也还
+是答出替身的名字——署名、commit identity、令牌的 ``a`` 于是继续用房间派生的名字。
+所以这里把那套形状（唯一的 agent 席位就是本房间的替身 → 改署名、并反应、补上芝士
+自己的席位、删替身行）对每一间房再跑一遍。判据和 ``b4d1a70c9e52`` 一样：替身还在
+名册上，且这间房没有坐着别的 agent 实例——坐着别的就说不出替身站的是谁，一行不动。
+
+项目名册上那一行也跟着重指：项目凭证认证成的名字从 ``cheese-<根房间 hex12>`` 换成
+了芝士自己的 handle，而 ``project_members.user_handle`` 是个字符串。不重指，旧那行
+授的项目级访问（``authorize_topic_access`` 的 ``is_project_member`` 那一档）就悄没声
+地作废了，还没有任何报错指向原因。
+
 降级不做：把一位芝士的记忆再按房间劈开需要知道每条当初属于哪间房，而重键之后那个
 事实已经不在行上了。
 """
 
 import importlib.util
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from alembic import op
@@ -67,6 +83,105 @@ REKEY_AGENT_MEMORY = """
        AND m.scope_id <> p.id::text || ':' || a.handle
 """
 
+#: 每一间房里那条「唯一的 agent 席位就是本房间派生的替身」。
+#:
+#: 判据与 ``b4d1a70c9e52`` 的 ``STAND_INS`` 逐字相同，只是不再限于总览：替身还坐在
+#: 名册上，且这间房没有别的 agent 实例的席位。坐着别的就说不出替身站的是哪一个，
+#: 那一行留着不动——和 ``f3a8c5d2e917`` 当时的判断一致。
+#:
+#: 线程不会进这张表：线程没有自己的名册，``EXISTS`` 那一段就为假。
+ROOM_STAND_INS = """
+    CREATE TEMP TABLE cheese_room_stand_ins AS
+    SELECT t.id AS topic_id,
+           'cheese-' || left(replace(t.id::text, '-', ''), 12) AS stand_in,
+           'cheese-' || left(replace(a.id::text, '-', ''), 12) AS own
+      FROM topics t
+      JOIN projects p ON p.id = t.project_id
+      JOIN agent_instances a ON a.id = p.default_agent_instance_id
+     WHERE EXISTS (
+           SELECT 1 FROM topic_memberships tm
+            WHERE tm.topic_id = t.id
+              AND tm.member_handle =
+                  'cheese-' || left(replace(t.id::text, '-', ''), 12))
+       AND NOT EXISTS (
+           SELECT 1
+             FROM topic_memberships tm
+             JOIN agent_instances other
+               ON tm.member_handle =
+                  'cheese-' || left(replace(other.id::text, '-', ''), 12)
+            WHERE tm.topic_id = t.id
+              AND other.id <> a.id)
+"""
+
+#: 替身说过的话记到芝士自己名下。
+RETIRE_ROOM_STAND_INS = (
+    """
+    UPDATE blocks b SET author = m.own
+      FROM cheese_room_stand_ins m
+     WHERE b.topic_id = m.topic_id AND b.author = m.stand_in
+    """,
+    # 芝士已经用自己的席位留过的那个表情，胜过替身留的同一个。
+    """
+    DELETE FROM block_reactions br
+     USING cheese_room_stand_ins m, blocks b
+     WHERE b.id = br.block_id AND b.topic_id = m.topic_id
+       AND br.author = m.stand_in
+       AND EXISTS (SELECT 1 FROM block_reactions o
+                    WHERE o.block_id = br.block_id AND o.emoji = br.emoji
+                      AND o.author = m.own)
+    """,
+    """
+    UPDATE block_reactions br SET author = m.own
+      FROM cheese_room_stand_ins m, blocks b
+     WHERE b.id = br.block_id AND b.topic_id = m.topic_id
+       AND br.author = m.stand_in
+    """,
+    # 席位：替身腾出来的那一行，换成项目自己那位芝士。用户行、execution binding
+    # 和展示资料上一步已经补好了（``cheese_seats`` 不挑房间）。
+    """
+    INSERT INTO topic_memberships (id, topic_id, member_handle, role, created_at, updated_at)
+    SELECT gen_random_uuid(), m.topic_id, m.own, 'member', now(), now()
+      FROM cheese_room_stand_ins m
+    ON CONFLICT (topic_id, member_handle) DO NOTHING
+    """,
+    """
+    DELETE FROM topic_memberships tm
+     USING cheese_room_stand_ins m
+     WHERE tm.topic_id = m.topic_id AND tm.member_handle = m.stand_in
+    """,
+)
+
+#: 项目名册上那一行：项目凭证以前认证成 ``cheese-<根房间 hex12>``，现在认证成芝士
+#: 自己的 handle。先删掉会撞唯一约束的那种情况（两行都在，留芝士自己那行），再把
+#: 剩下的重指过去。
+REPOINT_PROJECT_MEMBER = (
+    """
+    DELETE FROM project_members pm
+     USING projects p, agent_instances a
+     WHERE pm.project_id = p.id
+       AND a.id = p.default_agent_instance_id
+       AND p.root_topic_id IS NOT NULL
+       AND pm.user_handle =
+           'cheese-' || left(replace(p.root_topic_id::text, '-', ''), 12)
+       AND EXISTS (
+           SELECT 1 FROM project_members own
+            WHERE own.project_id = p.id
+              AND own.user_handle =
+                  'cheese-' || left(replace(a.id::text, '-', ''), 12))
+    """,
+    """
+    UPDATE project_members pm
+       SET user_handle = 'cheese-' || left(replace(a.id::text, '-', ''), 12),
+           updated_at = now()
+      FROM projects p
+      JOIN agent_instances a ON a.id = p.default_agent_instance_id
+     WHERE pm.project_id = p.id
+       AND p.root_topic_id IS NOT NULL
+       AND pm.user_handle =
+           'cheese-' || left(replace(p.root_topic_id::text, '-', ''), 12)
+    """,
+)
+
 _SEAT_BACKFILL = (
     Path(__file__).resolve().parent
     / "b4d1a70c9e52_a_project_has_its_cheese_and_its_seat.py"
@@ -83,10 +198,22 @@ def _seats():
     return module
 
 
+def retire_stand_ins(execute: Callable[[str], object]) -> None:
+    """替身退役那几步，按顺序。``upgrade()`` 和用例都走这一份：用例照着抄一份顺序，
+    抄出来的那份就会和真要发布的这份走散。"""
+    execute(ROOM_STAND_INS)
+    for statement in RETIRE_ROOM_STAND_INS:
+        execute(statement)
+    execute("DROP TABLE cheese_room_stand_ins")
+    for statement in REPOINT_PROJECT_MEMBER:
+        execute(statement)
+
+
 def upgrade() -> None:
-    # 先把席位补齐，再重键：重键读的是 `projects.default_agent_instance_id`，
-    # 而补齐那一步正是把这个指针填上的地方。
+    # 先把席位补齐，再退役替身、再重键：后两步读的都是
+    # `projects.default_agent_instance_id`，而补齐那一步正是把这个指针填上的地方。
     _seats().upgrade()
+    retire_stand_ins(op.execute)
     op.execute(REKEY_AGENT_MEMORY)
 
 

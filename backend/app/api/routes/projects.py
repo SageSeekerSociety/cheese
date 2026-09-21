@@ -931,22 +931,6 @@ async def _agent_memory_scope(
     return memory_pool(project_id, agent)
 
 
-async def _agent_memory_read_scopes(
-    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
-) -> list[tuple[MemoryScope, str]]:
-    """Every pool a read on behalf of ``place`` should cover: the agent's own.
-
-    One pool, because an agent has one memory inside a project wherever it is
-    standing. What the rooms accumulated while memory was keyed by the room was
-    rekeyed onto the agent by `d5c48f1a6b73`, so there is no second pool left to
-    read and no room whose id would name one.
-    """
-    if caller is None:
-        return []
-    agent_scope = await _agent_memory_scope(db, project_id, caller)
-    return [agent_scope] if agent_scope is not None else []
-
-
 def _authorize_personal_memory_owner(place: Place | None, owner: str) -> None:
     """个人记忆 lives in a private chat, and a private chat is a room — so this
     asks the room even when a thread inside it is the caller."""
@@ -1035,14 +1019,10 @@ async def search_memory(
         _authorize_personal_memory_owner(place, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
-    # The agent's own memory, the pool this room filled before memory followed
-    # the agent, and the shared pool — the last two read-only tails of earlier
-    # keyings. Merged on score, not concatenated by pool: which pool a fact
-    # happens to sit in says nothing about how well it answers the question, and
-    # the caller reads top-down.
-    hits = []
-    for scope in await _agent_memory_read_scopes(db, project_id, caller):
-        hits.extend(await store.search(*scope, query))
+    # 芝士自己那个池，加上项目的共享池。按分数合并，不按池子首尾相接：一条事实
+    # 恰好落在哪个池里，说明不了它答这个问题答得多好，而调用方是从上往下读的。
+    agent_scope = await _agent_memory_scope(db, project_id, caller) if caller else None
+    hits = list(await store.search(*agent_scope, query)) if agent_scope else []
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})
