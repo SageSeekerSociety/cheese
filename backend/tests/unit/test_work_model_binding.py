@@ -12,7 +12,9 @@ import uuid
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.agent import gateway_catalog
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
 from app.domain.room_task import presentation
 from app.domain.room_task.binding import catalog, resolve
@@ -34,14 +36,22 @@ def _work(model: str | None = None, effort: str | None = None) -> Task:
 # —— 次序：这条活的绑定 → 项目默认 ————————————————————————————————
 
 
+@pytest.fixture(autouse=True)
+def configured_default(monkeypatch):
+    monkeypatch.setattr(settings, "agent_model", "deepseek-flash")
+    gateway_catalog.reset()
+    yield
+    gateway_catalog.reset()
+
+
 def test_a_room_has_no_binding_so_it_runs_on_the_project_default():
     """房间主线不是一条活，它永远走项目默认（结论 3：主线程不换模型，缓存一直热）。"""
-    assert resolve(None, catalog(None)).model == "sonnet"
-    assert resolve(None, catalog(None)).supply == SUBSCRIPTION
+    assert resolve(None, catalog(None)).model == "deepseek-flash"
+    assert resolve(None, catalog(None)).supply == GATEWAY
 
 
 def test_a_work_without_a_binding_of_its_own_runs_on_the_project_default():
-    assert resolve(_work(), catalog(None)).model == "sonnet"
+    assert resolve(_work(), catalog(None)).model == "deepseek-flash"
 
 
 def test_a_work_runs_on_what_it_is_bound_to():
@@ -52,7 +62,7 @@ def test_a_work_runs_on_what_it_is_bound_to():
 
 def test_the_binding_carries_the_supply_that_serves_it():
     """id 上看不出走哪个池 —— 订阅模型的 id 是 `opus` 这种短名。目录说了算。"""
-    assert resolve(_work(model="glm-5.2"), catalog(None)).supply == GATEWAY
+    assert resolve(_work(model="deepseek-flash"), catalog(None)).supply == GATEWAY
 
 
 def test_the_project_default_follows_the_projects_own_supply():
@@ -137,7 +147,7 @@ def test_a_card_that_has_spent_nothing_shows_what_it_is_bound_to():
 
 def test_a_card_with_neither_shows_the_project_default():
     shown = presentation.card_model(_work(), spent=None, choices=catalog(None))
-    assert shown == "sonnet"
+    assert shown == "deepseek-flash"
 
 
 def test_an_unpriced_row_does_not_get_to_say_which_model_ran():
