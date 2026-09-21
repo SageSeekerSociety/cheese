@@ -435,9 +435,9 @@ def app_world(client, monkeypatch):
     from app.domain.agent import github_app
     from app.domain.project import forge as project_forge
     from app.domain.project.models import ProjectForge
+    from app.domain.repository import forge_files
     from app.domain.review import pr_publish
     from app.domain.review import services as review_services
-    from app.domain.workspace import forge_files
 
     fake = FakeGitHubPrClient()
     recorded: dict = {
@@ -1334,7 +1334,7 @@ def test_a_legacy_discussion_card_cannot_accept_without_a_remote_branch(
 def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkeypatch):
     """有活才有卡：绑定项目上树的分支不存在时，递卡当场被拒，错误信息点名
     该推哪条分支——而不是等到采纳时才发现无从交付。"""
-    from app.domain.workspace import forge_files
+    from app.domain.repository import forge_files
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)

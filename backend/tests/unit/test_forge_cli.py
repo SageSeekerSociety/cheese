@@ -7,12 +7,53 @@ import json
 import os
 import sys
 import tarfile
+import threading
+import urllib.request
 import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 from app.domain.agent import forge_cli
+
+
+def test_fj_subpath_transport_preserves_pagination_headers():
+    paths = []
+
+    class Upstream(BaseHTTPRequestHandler):
+        def do_GET(self):
+            paths.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "2")
+            self.send_header("X-Total-Count", "62")
+            self.send_header("Set-Cookie", "upstream-private=value")
+            self.end_headers()
+            self.wfile.write(b"[]")
+
+        def log_message(self, *_):
+            pass
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with forge_cli.fj_path_transport(
+            f"http://127.0.0.1:{upstream.server_port}/forge"
+        ) as destination:
+            with urllib.request.urlopen(
+                destination + "/api/v1/repos/project/code/pulls?page=2&limit=30",
+                timeout=5,
+            ) as response:
+                assert response.read() == b"[]"
+                assert response.headers["X-Total-Count"] == "62"
+                assert response.headers.get("Set-Cookie") is None
+        assert paths == ["/forge/api/v1/repos/project/code/pulls?page=2&limit=30"]
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        thread.join()
 
 
 @pytest.fixture

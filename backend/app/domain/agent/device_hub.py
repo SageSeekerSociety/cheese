@@ -540,7 +540,10 @@ class DeviceHub:
         *,
         timeout: float = 30,
     ) -> Any:
-        """Atomically stage one file under the screen's workspace and await ack."""
+        """Atomically write one server-sent file under the machine's footprint
+        root and await the ack, which carries the absolute path the machine
+        resolved it to. Not the screen's work directory: that is the hosted
+        checkout, which the platform never writes into (结论 49)."""
         device = self._device(device_id)
         device.file_seq += 1
         file_id = f"f{device.file_seq}"

@@ -11,7 +11,7 @@ import uuid
 from app.domain.agent import clone
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 
 def _project_and_topics(client) -> tuple[str, str, str]:

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.identity.handles import topic_agent_handle
+from app.domain.repository import identity
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.workspace import identity
 
 
 @pytest.fixture(autouse=True)
@@ -427,7 +427,7 @@ async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch):
 def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
     """The identity file sits beside the hook spool; two definitions of "this
     topic's session dir" is how they drift apart."""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
     pid, tid = _ids()

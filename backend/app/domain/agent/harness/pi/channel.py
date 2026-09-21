@@ -38,8 +38,8 @@ from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.library import service as library
 from app.domain.topic.models import Topic
-from app.domain.workspace import service as ws
 
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 logger = logging.getLogger(__name__)
@@ -269,7 +269,7 @@ class PiChannel:
         return [
             {
                 "data": base64.b64encode(
-                    ws.read_attachment(
+                    library.read_attachment(
                         handle.session.project_id,
                         handle.session.topic_id,
                         image["path"],
