@@ -20,11 +20,16 @@ from app.domain.agent.service import AgentSubagentStart, AgentSubagentStop
 from app.domain.room_task.models import Task
 from app.domain.room_task.schemas import TaskOut
 
-_FORBIDDEN = ("place", "lease")
+# 按 `_` 切词整词认，不用子串：`released_at` 里有 "lease"、`replaced_at` 里有
+# "place"，子串匹配会让这条守卫红在一个跟地点毫无关系的字段上，而一条会误报的守卫，
+# 第一个撞上的人改的是守卫不是代码 —— 改完它就再也拦不住 `place_id` 了。
+_FORBIDDEN = frozenset(
+    {"place", "places", "placement", "placements", "lease", "leases"}
+)
 
 
 def _offending(names) -> list[str]:
-    return [name for name in names if any(word in name.lower() for word in _FORBIDDEN)]
+    return [name for name in names if set(name.lower().split("_")) & _FORBIDDEN]
 
 
 def test_a_piece_of_work_has_no_place_of_its_own():
@@ -46,3 +51,13 @@ def test_a_subagent_declares_no_environment():
     """子 agent 不声明独立环境：它跑在父进程里，手就是父进程那双。"""
     for event in (AgentSubagentStart, AgentSubagentStop):
         assert _offending(f.name for f in dataclasses.fields(event)) == [], event
+
+
+def test_the_guard_reads_whole_words():
+    """守卫认整词：一个带 lease/place 字样但与地点无关的字段名不该让它红。"""
+    assert _offending(["released_at", "replaced_at", "replace_reason"]) == []
+    assert _offending(["place_id", "placement", "work_lease"]) == [
+        "place_id",
+        "placement",
+        "work_lease",
+    ]

@@ -89,11 +89,12 @@ def test_opening_two_pieces_of_work_leaves_two_flat_cards_each_on_its_own_branch
 ):
     """两条活 = 两张卡 + 两条分支 + 两个负责人，而且两条活是平的。
 
-    分支名对不对不在这里验：平台只记一个名字，建分支的是机器上的执行器
-    （`room_task/services.py` 的 `task.branch_name = f"task/{...}"`），所以「非空且
-    互不相等」除非 uuid 撞车否则永远绿。能红的是这两条活**从哪里开出去**：结论 33
-    说活在房间里是平的，没有子卡，所以两条都该从同一条基线长出来、谁也不挂在谁
-    身上 —— 哪天 split 开始默认把新活接在上一条后面，这里会红。
+    分支名长什么样不在这里验：平台只记一个名字，建分支的是机器上的执行器
+    （`room_task/services.py` 的 `task.branch_name = f"task/{...}"`）。这里验的是
+    P28 验收那句话本身 —— 两条活各有一条自己的分支，名字非空且互不相等，哪天分支
+    名改成从别的东西算出来、两条活撞到同一个名字上，这里会红。还有这两条活**从
+    哪里开出去**：结论 33 说活在房间里是平的，没有子卡，所以两条都该从同一条基线
+    长出来、谁也不挂在谁身上 —— 哪天 split 开始默认把新活接在上一条后面，这里会红。
     """
     _project_id, room_id = _room_with_a_session_on_a_machine(client)
 
@@ -104,6 +105,7 @@ def test_opening_two_pieces_of_work_leaves_two_flat_cards_each_on_its_own_branch
     assert [card["id"] for card in cards] == [first["id"], second["id"]]
     assert first["owner_handle"] == second["owner_handle"] == "alice"
     assert first["branch_name"] and second["branch_name"]
+    assert first["branch_name"] != second["branch_name"]
     assert first["base_task_id"] is second["base_task_id"] is None
     assert first["base_branch"] == second["base_branch"]
     assert first["base_branch"] not in (first["branch_name"], second["branch_name"])
