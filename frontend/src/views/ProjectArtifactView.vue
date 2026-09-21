@@ -5,13 +5,14 @@
 // 清单本身一样。能下载的是**当时交出去的那一份**，不是现在从源重建一次的结果：半
 // 年后依赖变了，重建出来的可能和当时交出去的不是同一个东西。
 //
-// 三种交法在这一页上长得不一样，因为它们确实不是一回事：一份文件给下载，一个地址
-// 给打开，一次合并什么都不给——代码项目交出去的是主干往前走一步。
-import type { ArtifactVersion, ProjectArtifactDetail } from '../api'
+import type { ArtifactComparison, ArtifactVersion, ProjectArtifactDetail } from '../api'
 
 import { computed, ref, watch } from 'vue'
 
-import { artifactVersionFileUrl, downloadFile, getProjectArtifact } from '../api'
+import { artifactVersionFileUrl, compareArtifactVersions, downloadFile, getProjectArtifact } from '../api'
+import ArtifactVersionPreview from '../components/ArtifactVersionPreview.vue'
+import { t } from '../i18n'
+import { parseDiffLines } from '../lib/diff'
 import { relTime } from '../lib/relTime'
 
 const props = defineProps<{ projectId: string; artifactId: string }>()
@@ -21,6 +22,51 @@ const loading = ref(false)
 const loadError = ref('')
 const actionError = ref('')
 const downloading = ref('')
+const before = ref('')
+const after = ref('')
+const comparison = ref<ArtifactComparison | null>(null)
+const comparing = ref(false)
+const comparisonError = ref('')
+const showPreviews = ref(false)
+let comparisonGeneration = 0
+const beforeVersion = computed(() => artifact.value?.versions.find((v) => v.card_id === before.value))
+const afterVersion = computed(() => artifact.value?.versions.find((v) => v.card_id === after.value))
+
+function comparisonNote(note: string | null): string {
+  const messages: Record<string, string> = {
+    oversized: t('tasks.artifactComparison.oversized'),
+    binary: t('tasks.artifactComparison.binary'),
+    unsupported: t('tasks.artifactComparison.unsupported'),
+    unavailable: t('tasks.artifactComparison.unavailable'),
+    source: t('tasks.artifactComparison.source'),
+    link: t('tasks.artifactComparison.link'),
+  }
+  return note ? messages[note] : ''
+}
+
+watch([before, after, () => props.projectId, () => props.artifactId], async () => {
+  const generation = ++comparisonGeneration
+  comparison.value = null
+  comparisonError.value = ''
+  showPreviews.value = false
+  comparing.value = false
+  if (!before.value || !after.value || before.value === after.value) return
+  comparing.value = true
+  try {
+    const result = await compareArtifactVersions(props.projectId, props.artifactId, before.value, after.value)
+    if (generation !== comparisonGeneration) return
+    comparison.value = result
+    showPreviews.value =
+      result.kind === 'link' ||
+      result.kind === 'unavailable' ||
+      (result.kind === 'file' && result.files.some((file) => file.diff === null))
+  } catch (e) {
+    if (generation === comparisonGeneration)
+      comparisonError.value = e instanceof Error ? e.message : t('tasks.artifactComparison.loadError')
+  } finally {
+    if (generation === comparisonGeneration) comparing.value = false
+  }
+})
 
 /** 最新的一版在最前面：人来这一页多半是为了拿当前这一版。 */
 const newestFirst = computed(() => [...(artifact.value?.versions ?? [])].reverse())
@@ -34,13 +80,15 @@ async function load() {
   loadError.value = ''
   try {
     const found = await getProjectArtifact(projectId, artifactId)
-    if (props.artifactId !== artifactId) return
+    if (props.artifactId !== artifactId || props.projectId !== projectId) return
     artifact.value = found
+    before.value = found.versions.at(-2)?.card_id ?? ''
+    after.value = found.versions.at(-1)?.card_id ?? ''
   } catch (e) {
-    if (props.artifactId !== artifactId) return
+    if (props.artifactId !== artifactId || props.projectId !== projectId) return
     loadError.value = e instanceof Error ? e.message : '未能读取这一项产物'
   } finally {
-    if (props.artifactId === artifactId) loading.value = false
+    if (props.artifactId === artifactId && props.projectId === projectId) loading.value = false
   }
 }
 
@@ -65,6 +113,8 @@ watch(
   [() => props.projectId, () => props.artifactId],
   () => {
     artifact.value = null
+    before.value = ''
+    after.value = ''
     actionError.value = ''
     void load()
   },
@@ -108,6 +158,72 @@ watch(
         </header>
 
         <p v-if="actionError" role="alert" class="t-body c-danger mb-4">{{ actionError }}</p>
+
+        <section v-if="artifact.versions.length >= 2" class="comparison mt-8">
+          <h2 class="t-title mb-4">{{ t('tasks.artifactComparison.title') }}</h2>
+          <div class="comparison-selectors">
+            <label class="t-body"
+              >{{ t('tasks.artifactComparison.before') }}
+              <select v-model="before" :aria-label="t('tasks.artifactComparison.before')">
+                <option v-for="version in newestFirst" :key="version.card_id" :value="version.card_id">
+                  {{ t('tasks.artifactComparison.version', { number: version.number }) }} · {{ version.subject }}
+                </option>
+              </select>
+            </label>
+            <label class="t-body"
+              >{{ t('tasks.artifactComparison.after') }}
+              <select v-model="after" :aria-label="t('tasks.artifactComparison.after')">
+                <option v-for="version in newestFirst" :key="version.card_id" :value="version.card_id">
+                  {{ t('tasks.artifactComparison.version', { number: version.number }) }} · {{ version.subject }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <p v-if="before === after" class="t-body c-muted mt-4">{{ t('tasks.artifactComparison.chooseTwo') }}</p>
+          <p v-else-if="comparing" class="t-body c-muted mt-4" role="status">
+            {{ t('tasks.artifactComparison.loading') }}
+          </p>
+          <p v-else-if="comparisonError" class="t-body c-danger mt-4" role="alert">{{ comparisonError }}</p>
+          <template v-else-if="comparison">
+            <p v-if="comparison.note" class="t-body c-muted mt-4">{{ comparisonNote(comparison.note) }}</p>
+            <p v-if="comparison.identical !== null" class="t-body mt-4" role="status">
+              {{
+                comparison.kind === 'link'
+                  ? comparison.identical
+                    ? t('tasks.artifactComparison.sameLink')
+                    : t('tasks.artifactComparison.changedLink')
+                  : comparison.identical
+                    ? t('tasks.artifactComparison.identical')
+                    : t('tasks.artifactComparison.changed')
+              }}
+            </p>
+            <article v-for="file in comparison.files" :key="file.path" class="comparison-file mt-4">
+              <h3 class="t-body pa-3">{{ file.path }}</h3>
+              <p v-if="file.before_mode !== file.after_mode" class="t-body pa-3">
+                {{ t('tasks.artifactComparison.fileMode') }} {{ file.before_mode || '—' }} →
+                {{ file.after_mode || '—' }}
+              </p>
+              <p v-if="file.note" class="t-body c-muted pa-3">{{ comparisonNote(file.note) }}</p>
+              <pre
+                v-if="file.diff"
+                class="comparison-diff t-body"
+              ><span v-for="(line, index) in parseDiffLines(file.diff)" :key="index" :class="`diff-${line.kind}`">{{ line.text }}</span></pre>
+            </article>
+            <v-btn
+              v-if="comparison.kind === 'file'"
+              class="mt-4"
+              variant="text"
+              @click="showPreviews = !showPreviews"
+              >{{
+                showPreviews ? t('tasks.artifactComparison.hidePreviews') : t('tasks.artifactComparison.showPreviews')
+              }}</v-btn
+            >
+            <div v-if="showPreviews && beforeVersion && afterVersion" class="comparison-previews mt-4">
+              <ArtifactVersionPreview :project-id="projectId" :artifact-id="artifactId" :version="beforeVersion" />
+              <ArtifactVersionPreview :project-id="projectId" :artifact-id="artifactId" :version="afterVersion" />
+            </div>
+          </template>
+        </section>
 
         <h2 class="t-title mt-8 mb-3">版本历史</h2>
 
@@ -159,7 +275,7 @@ watch(
 
 <style scoped>
 .artifact-content {
-  max-width: 720px;
+  max-width: 1120px;
   margin: 0 auto;
 }
 .artifact-head {
@@ -205,5 +321,64 @@ watch(
 }
 .version-row__none {
   flex: 0 0 auto;
+}
+.comparison-selectors,
+.comparison-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.comparison-selectors label {
+  min-width: 0;
+}
+.comparison-selectors select {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+}
+.comparison-file {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.comparison-file h3 {
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.comparison-diff {
+  overflow: auto;
+  max-height: 480px;
+}
+.comparison-diff span {
+  display: block;
+  min-width: 100%;
+  min-height: var(--lh-14);
+  width: max-content;
+  padding: 0 12px;
+}
+.diff-add {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+}
+.diff-del {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+.diff-hunk,
+.diff-meta {
+  color: var(--muted);
+  background: var(--fill);
+}
+@media (max-width: 700px) {
+  .comparison-selectors,
+  .comparison-previews {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

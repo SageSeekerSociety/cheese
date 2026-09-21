@@ -9,6 +9,14 @@ afterEach(() => {
 })
 
 describe('authenticated file download', () => {
+  it('adds a query to a retained artifact file URL without changing the route', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['saved']) }))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:artifact')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await downloadFile('/api/projects/p/artifacts/a/versions/v/file', 'report.txt')
+    expect(fetch).toHaveBeenCalledWith('/api/projects/p/artifacts/a/versions/v/file?download=true', expect.anything())
+  })
   it('downloads bytes with the session token and original filename', async () => {
     localStorage.setItem('accessToken', 'test-download-token')
     const blob = new Blob(['document'])

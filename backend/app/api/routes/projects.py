@@ -1,5 +1,6 @@
 """Project routes."""
 
+import asyncio
 import logging
 import uuid
 from dataclasses import asdict
@@ -24,6 +25,7 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    SystemBusyError,
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
@@ -67,6 +69,12 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
+from app.domain.preview.office import (
+    OfficeRenderFailed,
+    OfficeRenderUnavailable,
+    is_renderable,
+    render_to_pdf,
+)
 from app.domain.project import artifacts
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.protection import (
@@ -87,11 +95,13 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
+from app.domain.textfile import compare_bytes
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 
@@ -577,6 +587,61 @@ async def read_artifact(
     )
 
 
+@router.get("/{project_id}/artifacts/{artifact_id}/compare")
+async def compare_artifact_versions(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    before: uuid.UUID,
+    after: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> dict:
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    history = {v.card_id: v for v in await artifacts.versions(db, artifact_id)}
+    if before not in history or after not in history:
+        raise NotFoundError("这一项没有所选的交付版本")
+    left, right = history[before], history[after]
+    result = {
+        "kind": "unavailable",
+        "identical": None,
+        "files": [],
+        "note": "unavailable",
+    }
+    if left.kind == right.kind == "file" and left.filename and right.filename:
+        old = library.read_artifact_snapshot(project_id, before, left.filename)
+        new = library.read_artifact_snapshot(project_id, after, right.filename)
+        comparison = await asyncio.to_thread(
+            compare_bytes, old, new, left.filename, right.filename
+        )
+        result = {
+            "kind": "file",
+            "identical": comparison["identical"],
+            "files": [{"path": right.filename, **comparison}],
+            "note": None,
+        }
+    elif left.kind == right.kind == "merge" and left.revision and right.revision:
+        changes = await ProjectFiles(db, project_id, None).compare_revisions(
+            left.revision, right.revision
+        )
+        result = {
+            "kind": "merge",
+            "identical": not changes,
+            "files": changes,
+            "note": "source",
+        }
+    elif left.kind == right.kind == "link":
+        result = {
+            "kind": "link",
+            "identical": left.url == right.url,
+            "files": [],
+            "note": "link",
+        }
+    return ok(result)
+
+
 @router.get("/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file")
 async def download_artifact_version(
     project_id: uuid.UUID,
@@ -585,6 +650,7 @@ async def download_artifact_version(
     db: DbSession,
     resolver: ActorResolverDep,
     topic: str = "",
+    preview_pdf: bool = False,
 ) -> Response:
     """这一版交出去的那一份字节 (#1085 结论五)。
 
@@ -604,10 +670,23 @@ async def download_artifact_version(
         # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
         raise NotFoundError("这一版交出去的不是一份文件")
     data = library.read_artifact_snapshot(project_id, card_id, version.filename)
+    if preview_pdf:
+        if len(data) > 10 * 1024 * 1024:
+            raise ValidationError("文件超过 10 MB，无法生成预览")
+        if not is_renderable(version.filename):
+            raise ValidationError("这个格式不能转换为预览")
+        try:
+            data = await render_to_pdf(
+                data, version.filename, settings.office_render_endpoint
+            )
+        except OfficeRenderUnavailable as exc:
+            raise SystemBusyError(str(exc)) from exc
+        except OfficeRenderFailed as exc:
+            raise ValidationError(str(exc)) from exc
     filename = quote(version.filename, safe="")
     return Response(
         content=data,
-        media_type="application/octet-stream",
+        media_type="application/pdf" if preview_pdf else "application/octet-stream",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
             "X-Content-Type-Options": "nosniff",

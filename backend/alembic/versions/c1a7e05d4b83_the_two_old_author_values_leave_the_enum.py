@@ -38,7 +38,7 @@ each rewritten row used to be, and that distinction is exactly what this design
 says the column never carried: the answer lives in `blocks.author`.
 
 Revision ID: c1a7e05d4b83
-Revises: a7f1c0d4e2b9
+Revises: e6b4c92a07d1
 """
 
 from collections.abc import Sequence
@@ -48,7 +48,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c1a7e05d4b83"
-down_revision: str | Sequence[str] | None = "a7f1c0d4e2b9"
+down_revision: str | Sequence[str] | None = "e6b4c92a07d1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
