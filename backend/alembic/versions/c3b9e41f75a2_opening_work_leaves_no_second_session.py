@@ -10,7 +10,8 @@
 旧镜像面对新库。那一版的 `AgentSession` 与 `Task` 仍然映射着 `agent_sessions.task_id`
 和 `tasks.transcripts_archived_at`，`select(AgentSession)` / `session.get(Task, …)` 一发
 就是 `UndefinedColumn`：每一轮对话、每一次读卡都 500。两列因此原样留在这里，连同
-`uq_agent_sessions_thread` 一起，由紧随其后、隔一次部署的那条迁移删掉。
+`uq_agent_sessions_thread` 一起，由 #1402 那条迁移删掉——它的前提是本次发布已经跑完，
+所以它隔一次部署。
 
 留得下的只有加得进去的：`task_id IS NOT NULL` 的行先删掉 —— 那些行是活还是一个地点
 的年代留下的，今天没有任何查询读得到它们（每条读路径都带着那句 `task_id IS NULL`），
@@ -42,27 +43,14 @@ logger = logging.getLogger("alembic.opening_work_leaves_no_second_session")
 
 
 def upgrade() -> None:
-    # 数出来再删：一条带 `work_lease` 的老行说的是「当年有一台机器是按这条活租
-    # 的」，行没了就没有第二处能说出它是哪一台。真删掉了这样的行，部署日志里至少
-    # 还留着数目这条线索。
-    doomed = (
-        op.get_bind()
-        .execute(
-            sa.text(
-                "SELECT count(*) AS rows, count(work_lease) AS leased "
-                "FROM agent_sessions WHERE task_id IS NOT NULL"
-            )
-        )
-        .mappings()
-        .one()
+    # 删掉的行没有第二处记着，所以部署日志里留一个数。
+    deleted = op.get_bind().execute(
+        sa.text("DELETE FROM agent_sessions WHERE task_id IS NOT NULL")
     )
     logger.info(
-        "opening_work_leaves_no_second_session: deleting %s thread session row(s), "
-        "%s of them holding a work lease",
-        doomed["rows"],
-        doomed["leased"],
+        "opening_work_leaves_no_second_session: deleted %s thread session row(s)",
+        deleted.rowcount,
     )
-    op.execute(sa.text("DELETE FROM agent_sessions WHERE task_id IS NOT NULL"))
     op.execute(
         sa.text(
             "ALTER INDEX uq_agent_sessions_room "
