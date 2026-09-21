@@ -21,6 +21,10 @@ import type {
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPublishers,
+  SpaceLearningFilters,
+  SpaceLearningOutline,
+  SpaceLearningQuestions,
+  SpaceLearningQueues,
   SpaceMyParticipatingOverview,
   SpaceMyParticipations,
   SpaceMyPublishedTasks,
@@ -195,6 +199,51 @@ export namespace SpacesApi {
       url: `/spaces/${spaceId}/analytics/participants`,
       method: 'GET',
       params,
+    })
+
+  // 学习维度。筛选那一维的 knowledgePoint 是**分类 id**（知识点今天就是课程分类），
+  // 返回的每条发言里的 knowledgePoint 是**分类名**，两者不要混用。
+  export const getLearningFilters = (spaceId: number) =>
+    NewApiInstance.request<SpaceLearningFilters>({
+      url: `/spaces/${spaceId}/analytics/learning/filters`,
+      method: 'GET',
+    })
+
+  export const getLearningQuestions = (
+    spaceId: number,
+    params?: Partial<{
+      from: number
+      to: number
+      student: string
+      knowledgePoint: number
+    }>
+  ) =>
+    NewApiInstance.request<SpaceLearningQuestions>({
+      url: `/spaces/${spaceId}/analytics/learning/questions`,
+      method: 'GET',
+      params,
+    })
+
+  export const getLearningQueues = (
+    spaceId: number,
+    params?: Partial<{
+      from: number
+      to: number
+      student: string
+    }>
+  ) =>
+    NewApiInstance.request<SpaceLearningQueues>({
+      url: `/spaces/${spaceId}/analytics/learning/queues`,
+      method: 'GET',
+      params,
+    })
+
+  // POST 而不是 GET: 勾的是哪几条会随人一直变，而且可能几十个 id。
+  export const buildLearningOutline = (spaceId: number, data: { blockIds: string[] }) =>
+    NewApiInstance.request<SpaceLearningOutline>({
+      url: `/spaces/${spaceId}/analytics/learning/outline`,
+      method: 'POST',
+      data,
     })
 
   export const getMyPublishingOverview = (spaceId: number) =>

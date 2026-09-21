@@ -121,6 +121,12 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),
         ("app.domain.space.analytics_view_service", "app.domain.user.repositories"),
+        # 学习那一格是读模型：课程 → 它名下的赛题 → 从赛题开的项目。这一跳走的是
+        # project 领域 `list_ids_for_space_tasks`（它自己的注释：「One query rather
+        # than a walk」），而 project 领域没有 service 暴露它 —— `ProjectService` 只
+        # 按 id /（课, 小队）取项目。搬不出来，和 dashboard 那条「横跨多领域聚合的读
+        # 模型」同形，按存量入账。
+        ("app.domain.space.learning_service", "app.domain.project.repositories"),
         (
             "app.domain.space.member_participating_service",
             "app.domain.user.repositories",

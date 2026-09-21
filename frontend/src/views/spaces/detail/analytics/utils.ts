@@ -9,7 +9,7 @@ export type AnalyticsCompletionStatus =
   | 'REJECTED_RESUBMITTABLE'
   | 'FAILED'
   | 'SUCCESS'
-export type AnalyticsSection = 'overview' | 'alerts' | 'publishers' | 'tasks' | 'participants'
+export type AnalyticsSection = 'overview' | 'alerts' | 'publishers' | 'tasks' | 'participants' | 'learning'
 export type AnalyticsExportSection = 'publishers' | 'tasks' | 'participants'
 
 export interface SpaceAnalyticsQueryState {
@@ -26,6 +26,10 @@ export interface SpaceAnalyticsQueryState {
   participationApproved?: AnalyticsApproveFilter
   completionStatus?: AnalyticsCompletionStatus
   realName: AnalyticsRealNameFilter
+  /** 学习那一格独有: 学生的 handle。 */
+  student?: string
+  /** 学习那一格独有: 知识点（今天就是课程分类的 id）。 */
+  knowledgePoint?: number
 }
 
 type RawQuery = Record<string, unknown>
@@ -121,6 +125,8 @@ export const normalizeAnalyticsQuery = (query: RawQuery, now = Date.now()): Spac
     participationApproved: asEnum(query.participationApproved, APPROVE_VALUES),
     completionStatus: asEnum(query.completionStatus, COMPLETION_VALUES),
     realName: asEnum(query.realName, REAL_NAME_VALUES) ?? defaults.realName,
+    student: typeof query.student === 'string' && query.student ? query.student : undefined,
+    knowledgePoint: toNumber(query.knowledgePoint),
   }
 }
 
@@ -133,12 +139,28 @@ const withScopeParams = (filters: SpaceAnalyticsQueryState): AnalyticsApiParams 
   ...(filters.taskApproved && filters.taskApproved !== 'ALL' ? { taskApproved: filters.taskApproved } : {}),
 })
 
+/** 学习那一格的时间 / 学生范围。队列不认知识点，所以它单独来一份。 */
+export const buildLearningQueueParams = (filters: SpaceAnalyticsQueryState): AnalyticsApiParams => ({
+  from: startOfUtcDayTimestamp(filters.from),
+  to: endOfUtcDayTimestamp(filters.to),
+  ...(filters.student ? { student: filters.student } : {}),
+})
+
 export const buildAnalyticsApiParams = (
   section: AnalyticsSection,
   filters: SpaceAnalyticsQueryState
 ): AnalyticsApiParams => {
   if (section === 'alerts') {
     return {}
+  }
+
+  // 学习这一格读的是学生项目里的对话，不认分类 / 题目审批状态，所以只带时间与
+  // 学生、知识点三维 —— 后两维是它自己的。
+  if (section === 'learning') {
+    return {
+      ...buildLearningQueueParams(filters),
+      ...(filters.knowledgePoint != null ? { knowledgePoint: filters.knowledgePoint } : {}),
+    }
   }
 
   const scoped = withScopeParams(filters)
@@ -212,6 +234,8 @@ export const serializeAnalyticsQuery = (filters: Partial<SpaceAnalyticsQueryStat
   if (filters.participationApproved) query.participationApproved = filters.participationApproved
   if (filters.completionStatus) query.completionStatus = filters.completionStatus
   if (filters.realName && filters.realName !== 'all') query.realName = filters.realName
+  if (filters.student) query.student = filters.student
+  if (filters.knowledgePoint != null) query.knowledgePoint = String(filters.knowledgePoint)
 
   return query
 }
