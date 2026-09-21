@@ -2,7 +2,8 @@
 
 按 `receiver_id` 查的是知是那一侧的站内信（全站一个收件箱，翻页按游标）；按
 `project_id` + `recipient_handle` 查的是某个项目里的收件箱（角标、等你决定、
-话题相关性）。两种查法读的是同一张表的同一批行。
+话题相关性）。两种查法读的是同一张表，但各认各的行：带着名册上名字的那些是项目
+收件箱的，不带的才是站内信（`_my_mail` 与 `_mine_in` 各说一半）。
 """
 
 import uuid
@@ -29,16 +30,32 @@ class NotificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    def _my_mail(self, stmt, user_id: int):
+        """知是那一侧的站内信：收件人是我，而且这一行不属于哪个项目收件箱。
+
+        后半句由 `recipient_handle` 为空说出：项目那一侧写下的每一行都带着名册上
+        的名字（`add`），投递账本写给知是的那些只有 `receiver_id`
+        （`notification/handlers.py`）。两边同住一张表，读的时候各认各的那一列。
+
+        少了这一句，房间里的一次 @ 会同时落进知是的铃铛，而那边渲染不了它：前端
+        按 `type` 找模板，`MENTION` 那一个读的是 `payload` 里的
+        `mentioner`/`discussionTitle`/`discussionId`，项目通知一个都没有（文字在
+        `title`/`body` 上），渲染出来是一句「有人提到了你 / 在讨论 未知讨论 中提到
+        了你」，还不带跳转；未读数却照加，知是那边一点「全部已读」还会把项目角标
+        一起清掉。
+        """
+        return stmt.where(
+            Notification.receiver_id == user_id,
+            Notification.recipient_handle.is_(None),
+            Notification.deleted_at.is_(None),
+        )
+
     async def get_by_id_for_user(
         self, user_id: int, notification_id: int
     ) -> Notification | None:
-        stmt: Select[tuple[Notification]] = select(Notification).where(
-            and_(
-                Notification.id == notification_id,
-                Notification.receiver_id == user_id,
-                Notification.deleted_at.is_(None),
-            )
-        )
+        stmt: Select[tuple[Notification]] = self._my_mail(
+            select(Notification), user_id
+        ).where(Notification.id == notification_id)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -52,11 +69,9 @@ class NotificationRepository:
         type_: NotificationType | None = None,
         read: bool | None = None,
     ) -> Sequence[Notification]:
-        stmt: Select[tuple[Notification]] = select(Notification).where(
-            Notification.receiver_id == user_id,
-            Notification.deleted_at.is_(None),
-            Notification.finalized.is_(True),
-        )
+        stmt: Select[tuple[Notification]] = self._my_mail(
+            select(Notification), user_id
+        ).where(Notification.finalized.is_(True))
 
         if type_ is not None:
             stmt = stmt.where(Notification.type == type_)
@@ -82,14 +97,8 @@ class NotificationRepository:
 
     async def mark_all_as_read_for_user(self, user_id: int) -> int:
         stmt = (
-            update(Notification)
-            .where(
-                and_(
-                    Notification.receiver_id == user_id,
-                    Notification.read.is_(False),
-                    Notification.deleted_at.is_(None),
-                )
-            )
+            self._my_mail(update(Notification), user_id)
+            .where(Notification.read.is_(False))
             .values(read=True)
         )
         result = await self._session.execute(stmt)
@@ -98,10 +107,8 @@ class NotificationRepository:
 
     async def count_unread_for_user(self, user_id: int) -> int:
         """Count unread notifications for a given user."""
-        stmt = select(func.count(Notification.id)).where(
-            Notification.receiver_id == user_id,
-            Notification.read.is_(False),
-            Notification.deleted_at.is_(None),
+        stmt = self._my_mail(select(func.count(Notification.id)), user_id).where(
+            Notification.read.is_(False)
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
@@ -110,14 +117,8 @@ class NotificationRepository:
         self, user_id: int, notification_id: int, read: bool
     ) -> int:
         stmt = (
-            update(Notification)
-            .where(
-                and_(
-                    Notification.receiver_id == user_id,
-                    Notification.id == notification_id,
-                    Notification.deleted_at.is_(None),
-                )
-            )
+            self._my_mail(update(Notification), user_id)
+            .where(Notification.id == notification_id)
             .values(read=read)
         )
         result = await self._session.execute(stmt)
@@ -129,11 +130,9 @@ class NotificationRepository:
     ) -> list[Notification]:
         if not ids:
             return []
-        stmt: Select[tuple[Notification]] = select(Notification).where(
-            Notification.receiver_id == user_id,
-            Notification.id.in_(list(ids)),
-            Notification.deleted_at.is_(None),
-        )
+        stmt: Select[tuple[Notification]] = self._my_mail(
+            select(Notification), user_id
+        ).where(Notification.id.in_(list(ids)))
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
@@ -149,10 +148,8 @@ class NotificationRepository:
         Mirrors the filters used in ``list_for_user`` so that pagination
         metadata (total/hasMore/nextStart) can be computed consistently.
         """
-        stmt = select(func.count(Notification.id)).where(
-            Notification.receiver_id == user_id,
-            Notification.deleted_at.is_(None),
-            Notification.finalized.is_(True),
+        stmt = self._my_mail(select(func.count(Notification.id)), user_id).where(
+            Notification.finalized.is_(True)
         )
 
         if type_ is not None:
@@ -189,7 +186,13 @@ class NotificationRepository:
     async def over_quota(
         self, topic_id: uuid.UUID | None, level: NotificationLevel
     ) -> bool:
-        """这个房间这一档在窗口里是不是已经发满了（silent 不限，房间外的也不限）。"""
+        """这个房间这一档在窗口里是不是已经发满了（silent 不限，房间外的也不限）。
+
+        数的是**行**，而并表之后一条广播就是名册上每人一行：三个人的房间里发一条
+        广播，「每天 ≤2 条 light」当场就满了。`alerts` 那会儿一条广播是一行，同一
+        个配额数的是「发了几条」—— 想按条数限流，得先给同一次发送的那几行一个共同
+        的身份（账本的去重键就是），这里只数行。
+        """
         if topic_id is None or level not in _QUOTA:
             return False
         window, cap = _QUOTA[level]

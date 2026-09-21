@@ -19,6 +19,8 @@ from httpx import AsyncClient
 from app.domain.notification.models import Notification, NotificationType
 
 _AGENT_USER_ID = 1
+#: `authed_client` 就是这个人（平台 agent 用户，见 contract/conftest.py）。
+_AGENT_HANDLE = "cheese"
 
 
 async def _seed(
@@ -94,6 +96,52 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
     assert resp.status_code == 404
     resp = await authed_client.get(f"/notifications/{id2}")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_a_project_notification_never_reaches_the_flat_inbox(
+    authed_client: AsyncClient,
+) -> None:
+    """项目收件箱的那一行不进知是的铃铛 —— 哪怕收件人就是这个登录用户。
+
+    两张通知表并成一张之后，房间里的一次 @ 和一封站内信是同一张表的两行。这一侧
+    渲染不了前者：它按 ``type`` 找模板，而平台报告自己的那几种（`change_alert`、
+    `decision_request`、房间里的 `MENTION`）文字在 ``title``/``body`` 上，模板要
+    的 ``payload`` 里空空如也 —— 铃铛里会多出一排读不出内容的空壳，未读数照加，
+    再点一次「全部已读」，项目那边没读的也跟着被抹掉。
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    mine = await _seed(factory)
+
+    project = await authed_client.post("/projects", json={"name": "并表"})
+    assert project.status_code == 200, project.text
+    pid = project.json()["data"]["id"]
+    posted = await authed_client.post(
+        f"/projects/{pid}/alerts",
+        json={
+            "level": "strong",
+            "kind": "MENTION",
+            "title": "在房间里@了你",
+            "body": "看一眼",
+            "target_handle": _AGENT_HANDLE,
+        },
+    )
+    assert posted.status_code == 200, posted.text
+
+    # 铃铛里只有站内信那一条。
+    listed = await authed_client.get("/notifications", params={"pageSize": 10})
+    data = listed.json()["data"]
+    assert [n["id"] for n in data["notifications"]] == [mine]
+    assert data["page"]["total"] == 1
+    unread = await authed_client.get("/notifications/unread-count")
+    assert unread.json()["data"]["count"] == 1
+
+    # 「全部已读」也够不着它：项目那边的未读不该被这一侧一键清掉。
+    await authed_client.put("/notifications/status", json={"read": True})
+    inbox = await authed_client.get(
+        f"/projects/{pid}/alerts", params={"target_handle": _AGENT_HANDLE}
+    )
+    assert [row["read"] for row in inbox.json()["data"]["data"]] == [False]
 
 
 @pytest.mark.anyio

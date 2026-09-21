@@ -10,8 +10,10 @@
   ``PUT /notifications/status``、``PATCH|DELETE /notifications/{id}``）。该资源由
   ``app.api.routes.notifications_flat`` 提供，把合并时被漏接的
   ``NotificationService``（知是 int 收件箱）重新接到 HTTP 上——顶栏通知铃调的就是
-  这套。与 cheesex 的 ``/api/projects/{id}/alerts``（uuid、项目范围）是另一
-  套、互不相干。用 ``authed_client`` 打（这些端点要求登录用户），断言响应形状。
+  这套。和 cheesex 的 ``/api/projects/{id}/alerts`` 读**同一张表**（两张通知表
+  并成了一张，id 都是 bigint），分的是行不是表：带名册 handle 的那些属于项目收
+  件箱，这套只读 ``recipient_handle`` 为空的行。用 ``authed_client`` 打（这些端
+  点要求登录用户），断言响应形状。
 """
 
 import os

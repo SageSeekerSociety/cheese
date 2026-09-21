@@ -61,48 +61,57 @@ def _upgrade(client) -> None:
     asyncio.run(_run())
 
 
+def _join(client, pid: str | None, tid: str | None, *handles: str) -> None:
+    """把这几个人放上名册 —— 给了哪一份就上哪一份（项目的、房间的，或者两份）。"""
+    now = datetime.now(UTC)
+    rosters = []
+    if pid is not None:
+        rosters.append(
+            (
+                "INSERT INTO project_members"
+                " (id, project_id, user_handle, role, created_at, updated_at)"
+                " VALUES (:id, :where, :handle, 'member', :now, :now)"
+                " ON CONFLICT DO NOTHING",
+                uuid.UUID(pid),
+            )
+        )
+    if tid is not None:
+        rosters.append(
+            (
+                "INSERT INTO topic_memberships"
+                " (id, topic_id, member_handle, role, created_at, updated_at)"
+                " VALUES (:id, :where, :handle, 'member', :now, :now)"
+                " ON CONFLICT DO NOTHING",
+                uuid.UUID(tid),
+            )
+        )
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            for handle in handles:
+                for sql, where in rosters:
+                    await s.execute(
+                        text(sql),
+                        {
+                            "id": uuid.uuid4(),
+                            "where": where,
+                            "handle": handle,
+                            "now": now,
+                        },
+                    )
+            await s.commit()
+
+    asyncio.run(_run())
+
+
 def _room(client) -> tuple[str, str]:
     """一个项目 + 一个房间，名册上是 alice、bob 和一个 agent。"""
     pid = client.post("/projects", json={"name": "并表"}).json()["data"]["id"]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "房间", "created_by": "alice"}
     ).json()["data"]["id"]
-
-    async def _run() -> None:
-        async with client.test_factory() as s:
-            for handle in ("alice", "bob"):
-                await s.execute(
-                    text(
-                        "INSERT INTO project_members"
-                        " (id, project_id, user_handle, role, created_at, updated_at)"
-                        " VALUES (:id, :pid, :handle, 'member', :now, :now)"
-                        " ON CONFLICT DO NOTHING"
-                    ),
-                    {
-                        "id": uuid.uuid4(),
-                        "pid": uuid.UUID(pid),
-                        "handle": handle,
-                        "now": datetime.now(UTC),
-                    },
-                )
-            for handle in ("alice", "bob", AGENT):
-                await s.execute(
-                    text(
-                        "INSERT INTO topic_memberships"
-                        " (id, topic_id, member_handle, role, created_at, updated_at)"
-                        " VALUES (:id, :tid, :handle, 'member', :now, :now)"
-                        " ON CONFLICT DO NOTHING"
-                    ),
-                    {
-                        "id": uuid.uuid4(),
-                        "tid": uuid.UUID(tid),
-                        "handle": handle,
-                        "now": datetime.now(UTC),
-                    },
-                )
-            await s.commit()
-
-    asyncio.run(_run())
+    _join(client, pid, tid, "alice", "bob")
+    _join(client, None, tid, AGENT)
     return pid, tid
 
 
@@ -226,6 +235,29 @@ def test_running_the_move_twice_adds_nothing(client):
     assert {h: [r["id"] for r in rows] for h, rows in first.items()} == {
         h: [r["id"] for r in rows] for h, rows in again.items()
     }
+
+
+def test_the_second_run_leaves_out_whoever_joined_after_the_first(client):
+    """名册冻在第一遍那一份上。
+
+    删表那条迁移会在 `DROP TABLE` 之前把这次搬家原样再跑一遍，而那时房间里已经多
+    了人。第二遍要是重算一次名册，新来的会算出一个没人占过的收件人、一个没人占过
+    的去重键 —— 撞不上任何已有的行，于是凭空多出一批：第一次部署之后才进房间的人
+    突然收到几周前的广播，全是未读，而那条广播发生的时候他们还不在这个房间里。
+    """
+    pid, tid = _room(client)
+    _seed_alerts(
+        client, pid, tid, [{"target": None, "title": "全体注意", "topic": True}]
+    )
+
+    _upgrade(client)
+    first = _recipients_of(client, "全体注意")
+    assert first == {"alice", "bob"}
+
+    _join(client, pid, tid, "carol")
+    _upgrade(client)
+
+    assert _recipients_of(client, "全体注意") == first
 
 
 def test_the_move_finds_the_live_account_not_a_retired_one(client):

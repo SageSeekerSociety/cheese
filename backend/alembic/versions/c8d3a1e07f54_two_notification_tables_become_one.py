@@ -11,8 +11,17 @@ Create Date: 2026-09-21 10:00:00
 
 **表和数据都留着不动**：搬家在窗口里扫不到旧镜像后写的那几行（那批不是「晚一点
 到」，是再也不到），所以这条迁移写成幂等的，由 `DROP TABLE` 那一条在删表之前原样
-再跑一遍。幂等靠的是 `notification.delivery_key` 的唯一约束：每一条搬过来的行带着
-`alert:<原 uuid>:<收件人>`，重跑撞上约束什么也不做。
+再跑一遍。
+
+幂等问的是**「这条 alert 落过行没有」**（`NOT EXISTS`，按 `delivery_key` 的
+`alert:<原 uuid>:` 前缀找），不是逐行去撞 `delivery_key` 的唯一约束。差别在收件人
+是谁算的：广播的收件人是**跑这条迁移的那一刻**从名册上现算的，第二遍跑的时候名册
+已经不是第一遍那一份了 —— 窗口期里进房间的人会算出一个新 handle、一个新
+`delivery_key`，撞不上任何已有的行，于是凭空多出一批：第一次部署之后才进房间的人
+突然收到几周前的广播，全是未读。整条跳过，收件人就冻在第一遍那一份上。
+
+（第一遍一个收件人都算不出来的那一条例外：它一行也没落下，第二遍还会再算一次。
+名册当时是空的，这条广播本来就谁也没送到。）
 
 **广播在这里展开成一人一行。** `alerts` 里 `target_handle IS NULL` 表示「这条谁都
 看得见」，而 `notification` 一行只对一个收件人 —— 所以一条广播搬成当时房间里每人
@@ -35,10 +44,12 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-#: 把 `alerts` 的行搬进 `notification`，一个收件人一行。重跑是空操作。
+#: 把 `alerts` 的行搬进 `notification`，一个收件人一行。已经搬过的那条 alert 整条
+#: 跳过（`NOT EXISTS`），所以重跑是空操作，名册在两遍之间变了也是。
 #:
 #: `left(handle, 7) <> 'cheese-'` 是 `identity/handles.looks_like_agent_handle`
-#: 的 SQL 孪生，判据逐字相同（不写 LIKE：`%` 要跨 DBAPI 的参数风格转义）。
+#: 的 SQL 孪生，判据逐字相同。`starts_with` 同理，都不写 LIKE：`%` 要跨 DBAPI 的
+#: 参数风格转义。
 #:
 #: handle 查账号那一句和服务侧是同一句：`UserRepository.get_by_username` 带
 #: `deleted_at IS NULL`，这里也带。`user.username` 上没有唯一约束，所以一个注销
@@ -107,6 +118,10 @@ MOVE_ALERTS = sa.text(
               OR (s.handle <> 'cheese' AND left(s.handle, 7) <> 'cheese-')
           )
     ) r ON true
+    WHERE NOT EXISTS (
+        SELECT 1 FROM notification n
+         WHERE starts_with(n.delivery_key, 'alert:' || a.id::text || ':')
+    )
     ON CONFLICT (delivery_key) DO NOTHING
     """
 )
@@ -114,8 +129,8 @@ MOVE_ALERTS = sa.text(
 
 def upgrade() -> None:
     # 收件人在这一行上有两个名字：名册上的 handle（投递这一侧认的就是它）和账号池
-    # 里的那一行。handle 在账号池里找不到对应行时后者为空 —— 少一条知是那一侧读得
-    # 到的记录，好过把一条本该送到的通知整条丢掉。
+    # 里的那一行。handle 在账号池里找不到对应行时后者为空 —— 收件箱按 handle 读，
+    # 认不回账号也不该把一条本该送到的通知整条丢掉。
     op.execute("ALTER TABLE notification ALTER COLUMN receiver_id DROP NOT NULL")
     for column in (
         "ADD COLUMN IF NOT EXISTS recipient_handle varchar(64)",
