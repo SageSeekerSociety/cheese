@@ -365,6 +365,68 @@ const ROWS: FeedbackDetail[] = [
         minutesAgo: 5,
         replyTo: 'chiruotong',
       }),
+      // 第 4~8 栋楼存在的理由只有一个：**让这一页明显长过一屏**。
+      //
+      // 评论框现在黏在评论区底部（`.fb-composer`，理由写在 FeedbackDetailPage.vue
+      // 里），而「黏住」只在框的**自然位置掉到屏幕外**时才看得见 —— 框是评论区最后
+      // 一个元素，前面那几栋楼不够高的话，它从一开始就在屏幕里，滚到哪儿都不动。
+      // 上面三栋楼加正文和「现场」三段一共只有 759px 的滚动量，900px 的视口装得下，
+      // 于是这一版最要做的那个改动在预览里一次都演不出来。多这几栋之后，点两下
+      // 「加载更多评论」页面就够长，滚到半路能看见框贴在底下、正文还在屏幕外时不出现。
+      //
+      // 内容照这条反馈本身接着写，不另起一件事 —— 假数据里混进无关话题，看的人会
+      // 以为是别的用例。
+      comment({
+        id: 'c-12',
+        author: 'maxiaoyu',
+        body: 'Android 上也撞上了，而且更别扭：键盘弹出来抽屉被顶上去一截，按钮跟着涨成两行，**第二行还是压在键盘底下**。',
+        minutesAgo: 260,
+        likes: 2,
+      }),
+      comment({
+        id: 'c-13',
+        parent: 'c-12',
+        author: 'andylizf',
+        body: '那是 `dvh` 算进去了、底部安全区没算。和横屏那条同一个改法，一起修。',
+        minutesAgo: 235,
+        replyTo: 'maxiaoyu',
+      }),
+      comment({
+        id: 'c-14',
+        author: 'pengwenbo',
+        body: '补一个相关的：说明文字也被盖住半行，正好是「必填」那一句。读的人以为整块都可以不填。',
+        minutesAgo: 180,
+      }),
+      comment({
+        id: 'c-15',
+        parent: 'c-14',
+        author: 'cheese-c82aeb40',
+        authorIsAgent: true,
+        body: '同一个根因。抽屉里所有贴底的元素都得跟着可视区高度走，不只是提交按钮 —— 现在是一处一处调，改完整块一起验一遍更省事。',
+        minutesAgo: 150,
+        replyTo: 'pengwenbo',
+      }),
+      comment({
+        id: 'c-16',
+        author: 'caisongyang',
+        body: '桌面端外接键盘的时候也复现了，窗口拉矮一点就出来。',
+        minutesAgo: 120,
+      }),
+      comment({
+        id: 'c-17',
+        parent: 'c-16',
+        author: ME,
+        body: '桌面端这条我复现不出来，能贴一下窗口高度和浏览器吗？先按移动端改，桌面的另开一条跟。',
+        minutesAgo: 95,
+        replyTo: 'caisongyang',
+      }),
+      comment({
+        id: 'c-18',
+        author: 'ligan',
+        body: '这条我等改完再来验。先在下面记一笔：改完把「提交反馈」那个按钮在键盘弹出时的位置也看一眼，别只修抽屉 —— 上一轮就是两处各写一遍、只修了一处。',
+        minutesAgo: 45,
+        likes: 1,
+      }),
     ],
   }),
   row({
