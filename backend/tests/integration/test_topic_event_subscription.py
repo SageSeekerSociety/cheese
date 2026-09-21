@@ -30,6 +30,7 @@ from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
@@ -639,10 +640,17 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
         compute=ComputePool([provider], provider.name),
     )
     requested_id = uuid.uuid4()
+    # WHO this turn acts as. `ChatService` reads it off the room's roster before
+    # it ever reaches a runtime, and a runtime holds no roster of its own — so a
+    # turn driven straight at the provider has to carry the same answer, or it
+    # mints a project-scoped token that names nobody.
+    async with factory() as session:
+        acting = await TopicMemberService(session).resolve_agent_handle(topic_id)
     events = [
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle=acting,
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",

@@ -18,7 +18,11 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import DEFAULT_HARNESS, HARNESSES, Harness
-from app.domain.agent.market import subscription_model_ids, subscription_model_listings
+from app.domain.agent.market import (
+    TIER_INCLUDED,
+    subscription_model_ids,
+    subscription_model_listings,
+)
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 
@@ -78,6 +82,12 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "description": "平台模型池",
             "default": not subscription_default and item.id == settings.agent_model,
             "supply": GATEWAY,
+            # The pool's models are 档位 `included`: the gateway only offers what
+            # it can bill (`gateway_catalog.offerable`), and what they cost the
+            # project is already capped by the project key's `max_budget`. The
+            # tiers a policy gates on are about spend a budget does NOT cap —
+            # subscription quota, and a machine that belongs to somebody else.
+            "tier": TIER_INCLUDED,
         }
         for item in gateway_catalog.offerable()
     )
@@ -100,13 +110,31 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "description": "平台模型池",
                 "default": False,
                 "supply": GATEWAY,
+                "tier": TIER_INCLUDED,
             }
         )
     # 按这套部署跑的骨架筛。跑哪个骨架是部署的选择（结论 28），所以这一筛问的
     # 是部署，不是任何一个参与者——一个骨架指不到的模型，在这套部署里根本不是一
     # 个能用的模型，列出来只会让绑上它的那条活在派出去的那一刻才失败。
     running = HARNESSES[DEFAULT_HARNESS]
-    return [item for item in choices if _drives(running, item)]
+    choices = [item for item in choices if _drives(running, item)]
+    # 项目级默认模型：项目 settings 里显式写一个**目录里有的**名字，就把对应的
+    # 那条标 default=True，其余全部清掉。没写、或写了个目录里没有的名字（历史
+    # 数据），就保留上面按部署兜底算出来的 default（订阅部署→订阅 sonnet；否则
+    # →settings.agent_model）。这条是 #1365 之后主线唯一能拿到「项目想用哪个模型」
+    # 的地方——主线不是一条活，它读 binding.resolve(None, …)，后者拿 catalog 里
+    # default=True 的那条。写进来的名字不在目录里就按没设处理，而不是让目录空掉：
+    # 空目录会让 resolve 抛「没有可用的默认模型」，把一条只是配错了的项目整条堵死。
+    #
+    # 按骨架筛之后才问，所以「目录里有」问的是筛完的目录：项目挑了一个这套部署
+    # 的骨架指不到的模型，就按没设处理走部署兜底，而不是把一条派出去才会失败的
+    # 绑定标成默认。
+    chosen = (project_settings or {}).get("default_model")
+    known_ids = {item["id"] for item in choices}
+    if isinstance(chosen, str) and chosen in known_ids:
+        for item in choices:
+            item["default"] = item["id"] == chosen
+    return choices
 
 
 def _drives(harness: Harness, model: dict) -> bool:

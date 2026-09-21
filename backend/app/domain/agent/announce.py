@@ -79,6 +79,7 @@ async def announce(
     author: str = "system",
     turn_id: uuid.UUID | None = None,
     points_at: Event = NAMES_NOBODY,
+    event_id: uuid.UUID | None = None,
 ) -> Block | None:
     """把 `content` 说进房间，并投给这条事件点到的那些人。
 
@@ -89,6 +90,11 @@ async def announce(
     所以一次回滚不会留下「房间说递了卡，卡却不存在」。要跨事务活下来的调用点
     （合并结果已经在 GitHub 上发生了，房间必须知道）走
     `webhook.service.post_with_retries`，它每次重试开一个新 session 再调这里。
+
+    `event_id` 是这条事件的身份，投递账本按它去重（结论 58「去重键跟事件」）。默认
+    就是房间里刚落下的那一行 —— 一次性的提示说完即止，它的身份和它那一行同生。给
+    得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
+    id 不能每次新建（`domain/policy/proposals.py`）。
 
     返回落下的 block；房间已经不在了返回 None。
     """
@@ -118,6 +124,7 @@ async def announce(
         content=content,
         meta=meta or {},
         points_at=points_at,
+        event_id=event_id,
     )
     return block
 
@@ -177,12 +184,14 @@ async def _notify(
     content: str,
     meta: dict,
     points_at: Event,
+    event_id: uuid.UUID | None = None,
 ) -> None:
     await deliver(
         session,
         DeliveryEvent(
             # 房间里刚落下的那一行就是这条事件 —— 投递账本按它去重、按它补发。
-            id=block.id,
+            # 调用点给了身份就用它：那件事比它这一行长命。
+            id=event_id or block.id,
             # 一个类别码走完所有平台提示，具体是哪件事看 `eventType` —— 通知要显示
             # 的那句话是后端给的 `content`，不是前端按类别码拼出来的模板。
             type=NotificationType.ROOM_NOTICE,

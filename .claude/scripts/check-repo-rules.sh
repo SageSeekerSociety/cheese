@@ -305,6 +305,36 @@ check_retired_author_type_as_string() {
     "$hits"
 }
 
+# Rule 9 — an agent's handle is derived from the AGENT, never from a room. A
+# room is a collaboration space and may seat several agents, so a handle derived
+# from one gives two agents in that room the same name, and the same agent two
+# names in two rooms — and the name is what a seat grants, what a block is signed
+# with, what a token carries and what keys a memory pool, so the four disagree
+# the moment a room seats a second agent.
+#
+# That derivation really existed (`topic_agent_handle`, `cheese-<topic hex12>`),
+# under its own name beside the correct one, for long enough that nine files
+# called it. Deleting it is not self-enforcing: nothing goes red when somebody
+# writes the same three lines again next to a room id, and the handle it returns
+# looks exactly like a real one. So the guard matches the SHAPE of the name, not
+# one spelling — `room_agent_handle` is the same function with the launder
+# applied.
+#
+# `agent_instance_handle` is the one minting function and passes: it names the
+# agent it derives from. Scoped to the source trees; prose may still discuss the
+# retired one.
+check_room_derived_agent_handle() {
+  local hits
+  hits="$(grep -rnE --include='*.py' --include='*.ts' --include='*.vue' \
+    '(topic|room|place|screen)_agent_handle' \
+    "$ROOT/backend" "$ROOT/frontend" 2>/dev/null || true)"
+  [ -z "$hits" ] && return 0
+  echo "FAIL: an agent handle derived from a room"
+  report "an agent handle derived from a room, not from the agent" \
+    "derive it from the agent: identity.handles.agent_instance_handle(instance_id)" \
+    "$hits"
+}
+
 run_all() {
   check_naive_datetime
   check_raw_http_exception
@@ -313,6 +343,7 @@ run_all() {
   check_fixed_palette
   check_platform_cli_in_claude_md
   check_retired_author_type_as_string
+  check_room_derived_agent_handle
 }
 
 # --- palette baseline update ------------------------------------------------
@@ -525,7 +556,22 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "tests naming the old value must pass"
   rm -rf "$tmp/backend/tests"
 
-  echo "PASS: check-repo-rules self-test (7 rules, scoping and the palette ratchet verified)"
+  # Rule 9. The fixture is the function that actually existed until P11.
+  mkdir -p "$tmp/backend/app/domain/identity"
+  printf 'def topic_agent_handle(topic_id):\n    return "cheese-" + topic_id.hex[:12]\n' \
+    > "$tmp/backend/app/domain/identity/handles.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a room-derived agent handle must fail"
+  # Renaming it into another room word must not launder it.
+  printf 'def room_agent_handle(room_id):\n    return "cheese-" + room_id.hex[:12]\n' \
+    > "$tmp/backend/app/domain/identity/handles.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the same function under a room word must fail"
+  # Deriving from the agent is the whole point — it must pass.
+  printf 'def agent_instance_handle(instance_id):\n    return "cheese-" + instance_id.hex[:12]\n' \
+    > "$tmp/backend/app/domain/identity/handles.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "deriving from the agent must pass"
+  rm "$tmp/backend/app/domain/identity/handles.py"
+
+  echo "PASS: check-repo-rules self-test (8 rules, scoping and the palette ratchet verified)"
   exit 0
 fi
 
@@ -535,4 +581,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, retired author_type name as a string)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, retired author_type name as a string, room-derived agent handle)"

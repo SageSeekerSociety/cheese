@@ -810,10 +810,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),
@@ -841,6 +850,38 @@ export function setTopicComputeProfile(
 // transports. What they must NOT do is paper over a missing endpoint: the agent
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
+
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
+export interface AgentFieldChoice {
+  id: string
+  label: string
+  description: string
+  default: boolean
+}
+
+// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
+// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
+export interface ProjectDefaultModel {
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
+  choices: AgentFieldChoice[]
+  can_manage: boolean
+}
+
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
+
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
+}
 
 // Built-in starting configurations, copied only when creating an agent.
 export function listAgentTypes(): Promise<ListPayload<AgentType>> {
@@ -1708,6 +1749,12 @@ export function getPrChecks(topicId: string, taskId?: string | null): Promise<Pr
   return request<PrChecks>(
     `/topics/${encodeURIComponent(topicId)}/pr-checks${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
   )
+}
+
+/** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
+ *  到——他要审的正是这一份。 */
+export function cardDeliverableUrl(cardId: string): string {
+  return `${BASE}/accept-cards/${encodeURIComponent(cardId)}/deliverable`
 }
 
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都

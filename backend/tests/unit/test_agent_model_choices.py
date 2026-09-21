@@ -130,6 +130,63 @@ def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
     assert "codex-fixture" in _offered({})
 
 
+@pytest.mark.parametrize(
+    ("supply", "default_model"),
+    [
+        # 订阅部署下，项目显式把默认改成网关模型 —— #1365 之前这是 agent 上的配置
+        # 反推出来的，主线会走 gateway；#1365 之后唯一能让主线读到这个意图的地方
+        # 就是 project.settings["default_model"]。
+        ("subscription", "deepseek-flash"),
+        # 网关部署下，项目显式把默认改成另一个网关模型
+        ("gateway", "glm-5.2"),
+    ],
+)
+def test_project_default_model_overrides_deployment_default(
+    monkeypatch, deployed_pool, supply, default_model
+):
+    """项目 settings 里显式写 default_model，就把它那条标 default=True，其余清掉。
+
+    没写时按部署兜底算（订阅部署→sonnet；网关部署→agent_model）。这条是事故
+    「agent 配了 deepseek、主线静默换到订阅 sonnet」的修复点。
+    """
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    monkeypatch.setattr(settings, "agent_model", "gateway-model")
+    project = {"supply": supply, "default_model": default_model}
+    choices = model_choices(project)
+    defaults = [item for item in choices if item["default"]]
+    assert len(defaults) == 1
+    # 主线 resolve(None, catalog) 拿的就是 catalog 里 default=True 的那一条，
+    # 所以「目录里只有它标了 default」就是「主线走它」。
+    assert defaults[0]["id"] == default_model
+
+
+def test_no_default_model_falls_back_to_deployment_default(monkeypatch, deployed_pool):
+    """没写 default_model 时保留部署兜底算出来的 default —— 不破坏现状。"""
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    # deployed_pool fixture 把 settings.agent_model 设成 "glm-5.2"
+    # 订阅部署 + 项目 supply=subscription → 默认 sonnet
+    choices = model_choices({"supply": "subscription"})
+    defaults = [item for item in choices if item["default"]]
+    assert len(defaults) == 1
+    assert defaults[0]["id"] == "sonnet"
+    # 网关部署 → 默认 settings.agent_model（= glm-5.2）
+    choices = model_choices({"supply": "gateway"})
+    defaults = [item for item in choices if item["default"]]
+    assert len(defaults) == 1
+    assert defaults[0]["id"] == "glm-5.2"
+
+
+def test_unknown_default_model_is_silently_ignored(monkeypatch, deployed_pool):
+    """历史数据可能写过目录里没有的名字，那种情况按没设处理，不让目录空掉。"""
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    project = {"supply": "subscription", "default_model": "nothing-real"}
+    choices = model_choices(project)
+    # 仍然有一个 default（部署兜底算出来的 sonnet），不是零个
+    defaults = [item for item in choices if item["default"]]
+    assert len(defaults) == 1
+    assert defaults[0]["id"] == "sonnet"
+
+
 # --- What the platform pool offers ------------------------------------------
 # The gateway decides: it needs a route and a price to serve a model at all, so
 # these tests say what a project is offered given what a gateway reports, and
