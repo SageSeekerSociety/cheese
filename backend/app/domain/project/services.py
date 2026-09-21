@@ -207,6 +207,13 @@ class ProjectService:
         """Resolve quota ownership, including older personal-team projects."""
         return await self._repo.team_for_project(project_id)
 
+    async def space_for_project(self, project_id: uuid.UUID) -> int | None:
+        """The Space whose shared pool this project may spend, if any.
+
+        None for a project made from the rail — see the repository method.
+        """
+        return await self._repo.space_for_project(project_id)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
         if project is None:

@@ -59,6 +59,26 @@ class ProjectRepository:
             .where(User.username == project.owner_handle, Team.deleted_at.is_(None))
         )
 
+    async def space_for_project(self, project_id: uuid.UUID) -> int | None:
+        """The Space this project draws on, via the 赛题 it was created from.
+
+        One hop and not a hierarchy walk, for the same reason
+        ``list_ids_for_space_tasks`` is one: a project names its 赛题
+        (``external_task_id``) and the 赛题 names its Space (``space_id``).
+
+        A project made from the rail belongs to no 赛题 and therefore to no
+        Space. That is the property self-directed work relies on — it can
+        never reach a course's shared pool, because nothing on it names one.
+        """
+        from app.domain.task.models import Task
+
+        project = await self.get(project_id)
+        if project is None or project.external_task_id is None:
+            return None
+        return await self._session.scalar(
+            select(Task.space_id).where(Task.id == project.external_task_id)
+        )
+
     async def get_by_team(self, team_id: int) -> Project | None:
         """The AI-workspace project for a 知是 Team (P4 native link), newest first."""
         stmt = (
