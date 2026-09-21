@@ -72,6 +72,12 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      - name: Persistent ingress survives application switches
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
+          python3 deploy/tests/test_ingress_lifecycle.py
+          python3 deploy/llm-tunnel/verify-sites.py
+
       - name: Gateway release and image planning
         run: |
           python3 deploy/tests/test_gateway_release.py

@@ -719,31 +719,48 @@ nth_log_line() { grep -n -- "$2" "$1" 2>/dev/null | sed -n "${3}p" | cut -d: -f1
 last_log_line() { grep -n -- "$2" "$1" 2>/dev/null | tail -n 1 | cut -d: -f1 || true; }
 
 test_rollout_keeps_a_backend_serving() {
-  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up
+  local run_dir docker_log next_up flip_to_next blue_up flip_back next_gone frontend_up first_drain second_drain
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env >/dev/null 2>&1 || fail "rollout deploy did not succeed"
   next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-backend-next -p 0.0.0.0:18082:8081 backend')"
-  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 1)"
+  flip_to_next="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 1)"
   blue_up="$(log_line "$docker_log" 'up -d --no-deps backend')"
-  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 2)"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 2)"
   next_gone="$(last_log_line "$docker_log" 'rm -f cheese-backend-next')"
   frontend_up="$(log_line "$docker_log" 'up -d --no-deps frontend')"
+  first_drain="$(nth_log_line "$docker_log" 'sleep 31' 1)"
+  second_drain="$(nth_log_line "$docker_log" 'sleep 31' 2)"
   [ -n "$next_up" ] || fail "rollout never started cheese-backend-next"
   [ -n "$flip_to_next" ] && [ -n "$flip_back" ] || fail "rollout did not reload api-front twice"
   [ -n "$blue_up" ] || fail "rollout never recreated the compose backend"
   [ -n "$frontend_up" ] || fail "rollout never brought the frontend up"
   [ "$next_up" -lt "$flip_to_next" ] || fail "api-front was reloaded before the next backend existed"
   [ "$flip_to_next" -lt "$blue_up" ] || fail "the compose backend was recreated before traffic had moved off it"
+  [ "$flip_to_next" -lt "$first_drain" ] && [ "$first_drain" -lt "$blue_up" ] || fail "old backend removed before worker drain"
   [ "$blue_up" -lt "$flip_back" ] || fail "api-front was pointed back before the compose backend was recreated"
   [ "$flip_back" -lt "$next_gone" ] || fail "cheese-backend-next was removed while api-front still pointed at it"
+  [ "$flip_back" -lt "$second_drain" ] && [ "$second_drain" -lt "$next_gone" ] || fail "successor removed before worker drain"
   [ "$next_gone" -lt "$frontend_up" ] || fail "the frontend came up before the backend rollout finished"
   grep -Fqx 'upstream backend_active { server 127.0.0.1:18081; }' "$run_dir/active/backend.conf" \
     || fail "api-front was left pointing away from the compose backend: $(cat "$run_dir/active/backend.conf")"
-  [ "$(ls "$run_dir/active" | wc -l | tr -d ' ')" = 1 ] \
-    || fail "the switch directory holds leftovers: $(ls "$run_dir/active")"
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || fail "business rollout retired the persistent ingress workers"
   rm -rf "$run_dir"
   echo "PASS: rollout keeps a healthy backend behind api-front throughout"
+}
+
+test_rollout_preserves_a_successor_still_serving_after_failure() {
+  local run_dir
+  run_dir="$(new_rollout_run_dir)"
+  printf 'upstream backend_active { server 127.0.0.1:18082; }\n' > "$run_dir/active/backend.conf"
+  if rollout_run "$run_dir" env >/dev/null 2>&1; then
+    fail "retry accepted an upstream still serving from the previous successor"
+  fi
+  ! grep -q 'rm -f cheese-backend-next' "$run_dir/docker.log" \
+    || fail "retry deleted the serving backend successor"
+  rm -rf "$run_dir"
+  echo "PASS: retry keeps the previous serving backend successor alive"
 }
 
 test_frontend_rollout_keeps_serving() {
@@ -757,13 +774,17 @@ test_frontend_rollout_keeps_serving() {
     || fail "stable frontend ingress still sends public execution through the rolling frontend"
   rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >"$run_dir/deploy.log" 2>&1 || { cat "$run_dir/deploy.log"; fail "frontend rollout failed"; }
   next_up="$(log_line "$docker_log" 'run -d --no-deps --name cheese-frontend-next')"
-  flip="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 3)"
+  flip="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 3)"
   recreate="$(log_line "$docker_log" 'up -d --no-deps frontend')"
-  flip_back="$(nth_log_line "$docker_log" 'exec cheese-api-front nginx -s reload' 4)"
+  flip_back="$(nth_log_line "$docker_log" 'exec cheese-app-router nginx -s reload' 4)"
   gone="$(last_log_line "$docker_log" 'rm -f cheese-frontend-next')"
   [ -n "$next_up" ] && [ -n "$flip" ] && [ -n "$flip_back" ] || fail "missing frontend switches"
   [ "$next_up" -lt "$flip" ] && [ "$flip" -lt "$recreate" ] && [ "$recreate" -lt "$flip_back" ] && [ "$flip_back" -lt "$gone" ] || fail "frontend replaced before traffic moved"
-  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy did not return to compose"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/frontend.conf" || fail "frontend proxy did not return to compose"
+  : > "$docker_log"
+  rollout_run "$run_dir" env ACTIVE_FRONTEND_DIR="$run_dir/active" >/dev/null 2>&1 || fail "second rollout failed"
+  ! grep -q 'exec cheese-api-front nginx -s reload' "$docker_log" \
+    || fail "ordinary frontend/backend release reloaded the persistent ingress"
   rm -rf "$run_dir"
   echo "PASS: frontend stays behind a healthy proxy target across recreate"
 }
@@ -776,7 +797,7 @@ test_frontend_rollout_rejects_unhealthy_next() {
     fail "unhealthy frontend was accepted"
   fi
   ! grep -q 'up -d --no-deps frontend' "$run_dir/docker.log" || fail "old frontend was replaced without a healthy successor"
-  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/sites-frontend.conf" || fail "frontend proxy moved to unhealthy successor"
+  grep -Fq 'server 127.0.0.1:8080;' "$run_dir/active/frontend.conf" || fail "frontend proxy moved to unhealthy successor"
   rm -rf "$run_dir"
   echo "PASS: failed frontend startup leaves the old frontend serving"
 }
@@ -1131,6 +1152,7 @@ case "$CASE" in
   session-base) test_deploy_warns_when_the_session_base_will_not_survive ;;
   healthy) test_healthy_current_pair_passes ;;
   rollout) test_rollout_keeps_a_backend_serving ;;
+  rollout-retry) test_rollout_preserves_a_successor_still_serving_after_failure ;;
   frontend-rollout) test_frontend_rollout_keeps_serving ;;
   frontend-rollout-unhealthy) test_frontend_rollout_rejects_unhealthy_next ;;
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
@@ -1163,6 +1185,7 @@ case "$CASE" in
     test_workflow_rejects_stale_frontend
     test_healthy_current_pair_passes
     test_rollout_keeps_a_backend_serving
+    test_rollout_preserves_a_successor_still_serving_after_failure
     test_frontend_rollout_keeps_serving
     test_frontend_rollout_rejects_unhealthy_next
     test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up

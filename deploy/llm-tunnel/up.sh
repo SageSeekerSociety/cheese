@@ -29,4 +29,9 @@ if [ ! -f "$ACTIVE_DIR/backend.conf" ]; then
   printf 'upstream backend_active { server 127.0.0.1:%s; }\n' "${BACKEND_PORT:-18081}" \
     > "$ACTIVE_DIR/backend.conf"
 fi
-exec docker compose -p cheese-dataplane --env-file .env -f compose.yml up -d "$@"
+if [ ! -f "$ACTIVE_DIR/frontend.conf" ]; then
+  printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "${FRONTEND_PORT:-8080}" > "$ACTIVE_DIR/frontend.conf"
+fi
+cp app-router.conf "$ACTIVE_DIR/app-router.conf"
+export ACTIVE_BACKEND_DIR="$ACTIVE_DIR"
+exec docker compose -p cheese-dataplane --env-file .env -f compose.yml -f app-router-compose.yml up -d "$@"
