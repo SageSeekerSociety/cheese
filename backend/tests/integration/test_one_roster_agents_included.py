@@ -1,12 +1,18 @@
 """一张名册，队友也在上面（结论 12；ARCH §9.4「名册」那一行；不变量 I4a、I9）。
 
 「这个项目里有谁」以前有两个答案：``ProjectMember``（只有人）和 ``topic_memberships``
-（人加 agent 的席位）。读名册的那条路走的是前一个，于是一个 agent 在项目里列不出
-另一个 agent——结论 12 那句「不同 handle 之间只走 chat，agent 对 agent 也是」在代码
-上没有输入：列不出来的东西，@ 不到，也就发不出那条 chat。
+（人加 agent 的席位）。读项目名册的那条路走的是前一个，于是一个 agent 在项目里列不
+出另一个 agent——结论 12 那句「不同 handle 之间只走 chat，agent 对 agent 也是」在代
+码上没有输入：列不出来的名字 @ 不成一个 token，也就通知不到任何人，那条 chat 等于
+没发出去。
 
 现在只有一个读法（``membership/roster.py`` 的 ``roster()``）。``ProjectMember`` 仍是
 人的授权行、席位仍是席位，它们是同一张名册的两个**来源**，不是两张名册。
+
+名册这张单子发给谁：人从 ``GET /projects/{id}/members`` 拿（那道门认人——一轮里铸出
+来的凭据过不了 ``authorize_project``，见 ``projects.py`` 的 ``_artifact_keeper``），
+队友的那一份由平台在组这一轮时直接递给它。所以下面第一条断言这张单子上有谁，第二条
+断言队友手上那份确实到了：它照着名字喊出来的那个队友，真的被点到、被通知到。
 """
 
 from app.core.sandbox_auth import mint_scoped_token
@@ -28,6 +34,11 @@ def _teammate(client, project_id: str, handle: str, name: str) -> dict:
     )
     assert made.status_code == 200, made.text
     return made.json()["data"]
+
+
+def _retire(client, project_id: str, instance_id: str) -> None:
+    gone = client.delete(f"/projects/{project_id}/agents/{instance_id}")
+    assert gone.status_code == 200, gone.text
 
 
 def _room(client, project_id: str) -> str:
@@ -60,43 +71,52 @@ def _as_teammate(project_id: str, room: str, seat: str) -> dict:
     }
 
 
-def _roster(client, project_id: str, headers: dict) -> dict[str, dict]:
-    rows = client.get(f"/projects/{project_id}/members", headers=headers)
+def _roster(client, project_id: str) -> dict[str, dict]:
+    rows = client.get(
+        f"/projects/{project_id}/members", headers=session_auth_headers(OWNER)
+    )
     assert rows.status_code == 200, rows.text
     return {row["user_handle"]: row for row in rows.json()["data"]["data"]}
 
 
-def test_an_agent_lists_the_other_agents_in_its_project(client):
-    """验收①：项目里的 agent A 列得出同项目的 agent B。
+def test_the_project_roster_lists_people_and_teammates_together(client):
+    """验收①：一张名册上，人和这个项目的队友都在，每一位带着自己的名字。
 
-    列出来的那一行带的是 B 自己的名字和它坐名册用的 handle——@ 得到、通知得到的
-    那一个，不是它记忆池的 key。
+    队友那一行带的是它**坐名册用的** handle（@ 得到、通知得到的那一个），不是它记
+    忆池的 key；停用的队友还在名册上（它在已经接手的房间里照常工作），只是标着停用，
+    派新活的地方据此把它滤掉。
     """
     project = _project(client)
     project_id = project["id"]
-    planner = _teammate(client, project_id, "planner", "规划师")
     reviewer = _teammate(client, project_id, "reviewer", "评审")
-    room = _room(client, project_id)
-    _seat(client, room, planner["seat_handle"])
+    retired = _teammate(client, project_id, "old-hand", "退休")
+    _retire(client, project_id, retired["id"])
 
-    roster = _roster(
-        client, project_id, _as_teammate(project_id, room, planner["seat_handle"])
-    )
+    roster = _roster(client, project_id)
+
+    assert OWNER in roster, sorted(roster)
+    assert roster[OWNER]["agent"] is False
+    assert roster[OWNER]["active"] is True
 
     seen = roster.get(reviewer["seat_handle"])
     assert seen is not None, f"评审不在名册上：{sorted(roster)}"
     assert seen["agent"] is True
     assert seen["name"] == "评审"
-    # 人没有因此从名册上掉下去：合的是读法，不是把一份换成另一份。
-    assert OWNER in roster, sorted(roster)
-    assert roster[OWNER]["agent"] is False
+    assert seen["active"] is True
+
+    gone = roster.get(retired["seat_handle"])
+    assert gone is not None, f"退休的队友掉出了名册：{sorted(roster)}"
+    assert gone["active"] is False
 
 
-def test_an_agent_can_chat_the_teammate_it_just_listed(client):
-    """验收②：列得出，就 @ 得到——A 对 B 发的那条 chat 真的送到了 B 手上。
+def test_an_agent_can_chat_the_teammate_it_could_not_see(client):
+    """验收②：队友手上那张名册上有另一位队友，所以 A 对 B 发得出一条 chat。
 
     两件事一起断言：存下来的正文里是结构化的 ``<@handle>``（不是一段谁也点不动的
-    「@评审」原文），以及 B 收到一条强提醒。名册解析不到的名字两件事都不会发生。
+    「@评审」原文），以及 B 收到一条强提醒。名册解析不到这个名字，两件事一件都不会
+    发生——这正是结论 12 以前在代码上跑不起来的样子。
+
+    评审没坐在这间房里：@ 一位还没进这间房的队友，和 @ 一个还没进来的人是同一件事。
     """
     project = _project(client)
     project_id = project["id"]
