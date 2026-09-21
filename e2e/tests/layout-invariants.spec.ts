@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from '@playwright/test';
-import { login } from './helpers';
+import { api, login } from './helpers';
 
 // 表单字段的几何不变量。
 //
@@ -141,6 +141,67 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     // 等到名字和角色设定都是这个队友自己的值，这一屏就不会再动了。
     await expect(dialog.getByLabel('名字', { exact: true })).toHaveValue(/.+/);
     await expect(dialog.getByLabel('角色设定（可留空）')).toBeVisible();
+    expect(await fieldDefects(dialog)).toEqual([]);
+  });
+
+  test('反馈中心 · 提交反馈抽屉', async ({ page }) => {
+    await login(page);
+    await page.goto('/feedback');
+    await page.getByRole('button', { name: '提交反馈' }).first().click();
+
+    // 抽屉是 `temporary` 的：关着的时候它**根本不在 DOM 里**，所以 `.fb-drawer`
+    // 出现就等于「这一屏来了」。等的是里面那个字段真的画出来，不是抽屉的容器：
+    // 容器一挂上就有坐标，字段还在后面几帧里。
+    //
+    // 范围只取抽屉，不取 `body`：这一页的工具行上还有一个搜索框，喂给
+    // `fieldDefects` 会把两处不相干的字段放在一起比，而它们本来就不在一个平面
+    // 上（一个是页面正文，一个是浮层）。
+    const drawer = page.locator('.fb-drawer');
+    await drawer.waitFor();
+    await expect(drawer.getByLabel('标题', { exact: true })).toBeVisible();
+    expect(await fieldDefects(drawer)).toEqual([]);
+  });
+
+  test('管理后台 · 反馈队列里打开一条', async ({ page }) => {
+    await login(page);
+
+    // 这条反馈是**这条用例自己造的**：详情面板上的字段只在某一条被打开之后才
+    // 存在，而 e2e 的库是干净的、用例之间的顺序也不是契约（别指望别的用例留下
+    // 的数据）。标题带一个时间戳是为了搜得到——队列里不止这一条。
+    const stamp = `${Date.now()}`;
+    await api(page, 'post', '/feedback', {
+      kind: 'bug',
+      title: `【e2e】字段几何 ${stamp}`,
+      problem: 'layout-invariants 自己造的，只为了把详情面板的字段画出来。',
+      visibility: 'public',
+    });
+
+    await page.goto('/admin/queue');
+    await page.locator('.qpage__search-input').fill(stamp);
+    await page.locator('.fbrow__link').filter({ hasText: stamp }).first().click();
+
+    // 视口默认 1280 宽，详情是按**页面内**那一套画的（`.qdet`），不是抽屉。
+    //
+    // 用 `getByRole('textbox')` 而不是 `getByLabel('指派给')`：那个字段的
+    // accessible name 是「指派给 指派给」（label 拼上 placeholder），旁边那颗
+    // 清除图标的 aria-label 是「清除 指派给」——两个都被 `getByLabel('指派给')`
+    // 子串命中，locator 当场变成 2 个元素。
+    const detail = page.locator('.qdet');
+    await expect(detail.getByRole('textbox', { name: /指派给/ })).toBeVisible();
+    expect(await fieldDefects(detail)).toEqual([]);
+  });
+
+  test('管理后台 · 「添加管理员」那张表单', async ({ page }) => {
+    await login(page);
+    await page.goto('/admin/members');
+
+    // 这一页唯一的一组字段在对话框里：名单本身是张表，一个 `.v-field` 都没有，
+    // 所以这里不能拿 `body` 当范围——`fieldDefects` 会当场炸「这个范围里一个
+    // 字段都没有」，而那正是它该做的（空范围永远返回「没有缺陷」）。
+    await page.getByRole('button', { name: '添加管理员' }).first().click();
+    const dialog = page.locator('.v-overlay__content').filter({ hasText: '搜索账号' });
+    await dialog.waitFor();
+    await expect(dialog.getByLabel('搜索账号')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 });
