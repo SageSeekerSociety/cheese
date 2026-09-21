@@ -54,6 +54,7 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
     async def place():
         async with client.test_factory() as session:
             room = await session.get(Topic, room_id)
+            from app.domain.agent.harness import deployment_harness
             from app.domain.agent_session.services import AgentSessionService
 
             await AgentSessionService(session).remember_place(
@@ -65,6 +66,7 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
                     "channel": "central",
                     "resource_id": str(room.resource_id or room.id),
                 },
+                harness=deployment_harness(),
             )
             await session.commit()
 

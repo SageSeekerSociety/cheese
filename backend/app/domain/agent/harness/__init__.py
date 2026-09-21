@@ -42,9 +42,9 @@ alive. ``interrupt`` is that missing middle.
 """
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from app.domain.agent.service import (
     AgentEvent,
@@ -93,13 +93,59 @@ ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
 
-# The harnesses this deployment can run, by name. Declared here rather than
-# beside ``HARNESSES`` below because ``SessionRef`` defaults to one of them, and
-# a default spelled as a literal is the same fact written down twice. What each
-# of them can be pointed at is further down, under 「which harness」.
+# The harnesses this deployment can run, by name — and the ONLY place in
+# ``backend/app`` where a harness name is written down (不变量 I5). Declared here
+# rather than beside ``HARNESSES`` below because the resolution just under them
+# needs a name before the registry exists. What each of them can be pointed at
+# is further down, under 「which harness」.
 CLAUDE_CODE = "claude-code"
 CODEX = "codex"
 PI = "pi"
+
+# 部署的设置里没写跑哪个骨架时，跑的就是这个。写在这里而不是写进
+# ``core/config.py`` 的默认值，因为骨架的名字全仓只在这个文件出现（不变量 I5，
+# ``tests/unit/test_harness_boundary.py`` 的字面量守卫盯着这一条）。
+_UNCONFIGURED = CLAUDE_CODE
+
+#: 项目设置里盖过部署设置的那个键（``Project.settings``）。开发者选项，界面上没
+#: 有它——普通用户看不到骨架这回事（结论 28）。
+HARNESS_SETTING = "harness"
+
+
+def _known(name: str, source: str) -> str:
+    """名字得是注册表里有的一个，否则这套部署配错了。
+
+    不兜底回默认值：兜底的那一版会让一个配错名字的部署安静地跑另一个骨架，而
+    「跑的是哪个」正是结论 28 要求只有一个答法的那件事。部署级的这一条在装配
+    ``ComputePool`` 时就会解析，所以配错了是起不来，不是跑到一半才炸。
+    """
+    if name not in HARNESSES:
+        raise ValueError(
+            f"{source} 指定的骨架 {name!r} 这套部署没有；有的是 {sorted(HARNESSES)}"
+        )
+    return name
+
+
+def deployment_harness() -> str:
+    """这套部署跑的骨架（结论 28）——一条部署设置，不是谁的属性。
+
+    设置在函数里读，不在模块顶上 import：这个文件是 codex runner 那个
+    standard-library-only 归档的一部分（``codex/bundle.py``），而 ``core.config``
+    带着 pydantic-settings 和它整棵依赖树，不在归档里——顶上一行 import 就是
+    runner 进程起不来。runner 自己从不问这个问题，它被告知自己是谁。
+    """
+    from app.core.config import settings
+
+    configured = (settings.agent_harness or "").strip()
+    return _known(configured, "agent_harness") if configured else _UNCONFIGURED
+
+
+def harness_for(project_settings: Mapping[str, Any] | None) -> str:
+    """这个项目跑的骨架：项目自己的设置盖过部署设置，都没说就是部署的那个。"""
+    wanted = str((project_settings or {}).get(HARNESS_SETTING) or "").strip()
+    if not wanted:
+        return deployment_harness()
+    return _known(wanted, f"项目设置 {HARNESS_SETTING}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,17 +162,24 @@ class SessionRef:
     project — not the seat it authors under. The two differ, and reading under
     one while writing under the other hands back None rather than failing.
 
-    The two halves are left unset by the calls that address a PLACE rather than
-    a conversation: a room's event spool and the screen it is watched in are one
+    It is left unset by the calls that address a PLACE rather than a
+    conversation: a room's event spool and the screen it is watched in are one
     per room, so reading them names no agent. Anything that resolves where a
-    session runs must fill them in — that resolution is per session and there is
+    session runs must fill it in — that resolution is per session and there is
     nothing on the room left to fall back to.
+
+    ``harness`` has none of that leeway: it is keyword-only and has no default.
+    跑的是哪个骨架由部署设置加项目设置答（结论 28），所以一个默认值就是第二个答
+    法——而且是个够不着项目那一层的答法：它只看得见部署设置，于是一个项目盖过了
+    部署的房间，ref 会带着部署那个名字去写会话行，把一条对话拆成两行。每个构造点
+    都说得出一个自己知道的答案：适配器里面是 ``self.harness``（它就是那个
+    runtime），轮次那一路是这一轮解析出来的那个。
     """
 
     project_id: uuid.UUID
     topic_id: uuid.UUID
     agent_handle: str = ""
-    harness: str = CLAUDE_CODE
+    harness: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,11 +541,7 @@ HARNESSES: dict[str, Harness] = {
     PI: Harness(PI, "pi", draws_on_its_screen=False),
 }
 
-# 这套部署跑的骨架（结论 28）。骨架不是产品概念，不在类型上也不在实例上，所以
-# 没有第二处可以答「跑的是哪个」；P16 把这一行换成真的部署设置。
-DEFAULT_HARNESS = CLAUDE_CODE
-
 
 def harness_name(name: str | None) -> str:
     """调用方给的 harness 名，没给就是这套部署跑的那个。"""
-    return name or DEFAULT_HARNESS
+    return name or deployment_harness()

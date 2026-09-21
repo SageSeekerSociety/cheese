@@ -166,7 +166,7 @@ class Rooms:
             *,
             topic_id,
             agent_handle,
-            harness="claude-code",
+            harness,
             work_lease,
             runtime_location,
         ):
@@ -216,7 +216,7 @@ def channel(monkeypatch):
 async def test_a_pi_session_starts_on_the_machine_that_holds_the_workspace(channel):
     rooms, hub = Rooms(), Hub()
     handle = await channel(rooms, hub).ensure(
-        SessionRef(PROJECT, TOPIC, "agent-x", "pi"),
+        SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
         Opening(system_prompt="房间的提示词"),
     )
 
@@ -260,7 +260,7 @@ async def test_a_first_turn_waits_for_the_runner_to_bind(channel, impatient):
     hub.dial_failures = 3
 
     handle = await channel(rooms, hub).ensure(
-        SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
+        SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"), Opening(system_prompt="x")
     )
 
     assert handle.session_id == hub.session_id
@@ -284,7 +284,8 @@ async def test_a_runner_that_never_bound_reports_its_own_last_words(channel, imp
 
     with pytest.raises(ScreenSetupError) as refused:
         await channel(rooms, hub).ensure(
-            SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
+            SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
+            Opening(system_prompt="x"),
         )
     assert "pi 没有握上手" in str(refused.value)
 
@@ -302,7 +303,8 @@ async def test_a_machine_that_kept_no_reason_still_reports_the_refusal(
 
     with pytest.raises(ScreenSetupError) as refused:
         await channel(rooms, hub).ensure(
-            SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
+            SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
+            Opening(system_prompt="x"),
         )
     assert "no such file or directory" in str(refused.value)
 
@@ -312,7 +314,7 @@ async def test_a_restarted_backend_finds_the_session_it_did_not_start(channel):
     """pi 的会话活得比开它的那个后端长，所以位置得写下来。"""
     rooms, hub = Rooms(), Hub()
     started = await channel(rooms, hub).ensure(
-        SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
+        SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"), Opening(system_prompt="x")
     )
 
     # A second channel with no memory of the first, reading only the row.
@@ -372,5 +374,6 @@ async def test_a_session_whose_runner_never_answered_is_an_error_not_a_handle(ch
     hub.alive = False
     with pytest.raises(ScreenSetupError):
         await channel(rooms, hub).ensure(
-            SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
+            SessionRef(PROJECT, TOPIC, "agent-x", harness="pi"),
+            Opening(system_prompt="x"),
         )

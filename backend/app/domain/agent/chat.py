@@ -35,9 +35,9 @@ from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import (
-    DEFAULT_HARNESS,
     Opening,
     SessionRef,
+    harness_for,
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
@@ -265,6 +265,9 @@ class _TurnContext:
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
     provider: ComputeProvider
+    # 这一轮跑在哪个骨架上，解析过一次的那个答案（结论 28）。会话行的键里有它，
+    # 所以执行那一半必须读这里，不能自己再解析一次。
+    harness: str
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
@@ -2106,15 +2109,21 @@ class ChatService:
         the broker so open clients see the backfill live."""
         async with self._sessions() as session:
             topic = await TopicRepository(session).get(topic_id)
-        if topic is None:
-            return 0
+            if topic is None:
+                return 0
+            # 这间房的轮次跑在哪个骨架上（结论 28）——读 spool 的那个 ref 得和轮次
+            # 用的是同一个答案，不然读的是另一个骨架的日志。
+            project = await ProjectRepository(session).get(topic.project_id)
+        harness = harness_for(project.settings if project else None)
         from app.domain.agent.runtime import get_broker
 
         broker = get_broker()
         channel = str(topic_id)
         landed = 0
         async with self._lock_for(topic_id):
-            async for frame in self._reconcile_spool(topic.project_id, topic_id, None):
+            async for frame in self._reconcile_spool(
+                topic.project_id, topic_id, None, harness=harness
+            ):
                 await broker.publish(channel, frame)
                 landed += 1
         return landed
@@ -2232,7 +2241,12 @@ class ChatService:
                     if agent_handle is None or harness is None:
                         agent = await self._agent_at(session, place)
                         agent_handle = agent_handle or agent.handle
-                        harness = harness or DEFAULT_HARNESS
+                        # 事件没说骨架（老的 hook 流），就问这个项目跑的是哪
+                        # 个——同一个答法，和开这一轮用的那一个（结论 28）。
+                        owner = await ProjectRepository(session).get(place.project_id)
+                        harness = harness or harness_for(
+                            owner.settings if owner else None
+                        )
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
                         agent_handle=agent_handle,
@@ -3823,11 +3837,25 @@ class ChatService:
         )
 
     async def _reconcile_spool(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        *,
+        harness: str,
     ) -> AsyncIterator[dict]:
         """Land what a session said while nobody was listening (backend down, or
         no listener during a prior turn) — idempotent by event id, best-effort,
         and never blocking the turn.
+
+        ``harness`` is the one this room's turns run on, resolved by the caller
+        — the ref that reads the spool carries the same answer the turn used,
+        rather than asking again and possibly getting a different one. Nothing
+        downstream reads it today: the spool is addressed by (project, topic)
+        in ``hooks_substrate.read_log``/``acknowledge_log``, and no ``backlog``
+        implementation looks at it — so a spool is NOT partitioned by harness.
+        It is required because ``SessionRef`` has no default harness (不变量
+        I5) and every construction point must be able to state its answer.
 
         The harness's ``backlog`` says WHAT was said; this decides what to do
         about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
@@ -3855,7 +3883,7 @@ class ChatService:
         phases_ms: dict[str, float] = {}
         event_count = 0
         try:
-            session_ref = SessionRef(project_id, topic_id)
+            session_ref = SessionRef(project_id, topic_id, harness=harness)
             backlog = self._compute.backlog(session_ref)
             spooled = backlog.unread()
             event_count = len(spooled)
@@ -4658,8 +4686,10 @@ class ChatService:
             project = await ProjectRepository(session).get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            # 骨架是这套部署跑的那一个（结论 28），不是这个参与者的属性。
-            wanted_harness = DEFAULT_HARNESS
+            # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
+            # 这个参与者的属性。这一轮只解析这一次，往下每一处都读它：会话行的键
+            # 里有骨架，两处各自解析一次就够把一条会话拆成两条。
+            wanted_harness = harness_for(project.settings if project else None)
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
@@ -4705,7 +4735,7 @@ class ChatService:
             resume_session_id = await AgentSessionService(session).resume_token(
                 place.room_id,
                 session_agent.handle,
-                harness=DEFAULT_HARNESS,
+                harness=wanted_harness,
             )
             untitled = topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
@@ -4956,6 +4986,7 @@ class ChatService:
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
+            harness=wanted_harness,
             needs_place=needs_place,
             replay_notice=replay_notice,
             resume_session_id=resume_session_id,
@@ -5141,7 +5172,9 @@ class ChatService:
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
         # event-id. No-op for an empty spool.
-        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+        async for frame in self._reconcile_spool(
+            project_id, topic_id, turn_id, harness=prepared.harness
+        ):
             yield frame
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=spool_reconciled "
@@ -5226,7 +5259,7 @@ class ChatService:
                 project_id,
                 topic_id,
                 prepared.agent.handle,
-                DEFAULT_HARNESS,
+                harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
@@ -5401,7 +5434,10 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
-                    harness=DEFAULT_HARNESS,
+                    # 这一轮真正跑在哪个骨架上，问跑它的那个适配器——平台自己起
+                    # 的活没有 agent 类型站在后面，``platform_work`` 给的是这台
+                    # 机器跑的东西（结论 28）。
+                    harness=runtime.harness,
                 )
             await session.commit()
 

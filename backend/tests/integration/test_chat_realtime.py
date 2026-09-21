@@ -9,6 +9,7 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import BlockKind
@@ -532,7 +533,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         assert topic is not None
         assert topic.compute_profile == InstantScreen.name
         resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE
+            topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     assert resumes_by == "s-affinity"
 
