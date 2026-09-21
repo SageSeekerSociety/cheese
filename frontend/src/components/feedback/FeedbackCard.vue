@@ -47,8 +47,8 @@ const supportable = computed(() => !isClosed(props.item.status))
 const isPrivate = computed(() => props.item.visibility === 'private')
 /** 支持按钮能不能出现。私密和安全问题都不行 —— 理由见上面那段注释。 */
 const supportShown = computed(() => !isPrivate.value && !props.item.security)
-const PRIVATE_HINT = '私密反馈：只有你和管理员能看到，其他人看不到它'
-const SECURITY_HINT = '安全问题：只有你和管理员能看到它，其他人看不到它'
+const PRIVATE_HINT = '私密反馈：只有你、平台管理员、以及提出它时在那个房间里的人能看到，其他人看不到它'
+const SECURITY_HINT = '安全问题：只有你、平台管理员、以及提出它时在那个房间里的人能看到它，其他人看不到它'
 /** 支持那一列留白时摆什么。
  *  两种「不能公开」要**分开说**：以前这里写死一把锁加一句「私密反馈」，于是被标成
  *  安全问题的公开条目也顶着那句 —— 一句和这条对不上的说明，比没有说明更坏。 */
@@ -104,7 +104,7 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
           />
           {{ item.author_handle }} · {{ relTime(item.created_at) }}
         </span>
-        <!-- 中性色，不是警告色：私密是一个事实（这条只有我和管理员能看见），不是一件
+        <!-- 中性色，不是警告色：私密是一个事实（这条只有我、平台管理员、和提出它时在那个房间里的人能看见），不是一件
              需要被纠正的事。写在作者名之后，因为它回答的正是「这条谁看得见」，
              和旁边的「谁提的」是同一类信息。 -->
         <span v-if="isPrivate" class="chip-neutral" :title="PRIVATE_HINT">

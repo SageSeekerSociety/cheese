@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_topic
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -115,18 +116,50 @@ class FeedbackService:
     async def require_admin(self, handle: str | None) -> str:
         return await self._admins.require_admin(handle)
 
-    def may_see(self, row: Feedback, *, handle: str | None, is_admin: bool) -> bool:
-        """The visibility union, in one line — 公开 + 私密 + 是我提的.
+    async def may_see(
+        self, row: Feedback, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """The visibility union — 公开 + 管理员 + 是我提的 + **提它的那个房间**.
+
+        结论 47 的三档：开发者（管理员）看得见，提出它的那个房间的成员看得见，反馈
+        中心里其他人看不见。前两档一直在这里；第三档是房间这一档，它补的是同一条结
+        论的第二句——agent 提的内容在它的房间里全部留痕，所以对那个房间的人藏起来，
+        藏掉的只是追踪它的那条路，藏不掉内容。
 
         A private report is visible to admins **and to the person who filed it**:
         the reporter must be able to follow their own report, and the agent that
         filed on their behalf counts as them. Everyone else cannot, and gets 404
         rather than 403 — see `visible_row`.
 
+        房间这一档取的是**反馈提出那一刻**的名册（`filed_in_a_room_of`），不是现在
+        的：按现在取的话，把谁加进这个房间就等于把这个房间历史上的每一条私密反馈一
+        并交给他，而加人的那个人并不知道自己在授权。
+
+        它**还要**今天读得到那个房间（`may_read_topic`），两句都成立才开门。少了后
+        一句，这一档就是一扇撤不回的门：退房间是硬删名册行，所以撤得掉；退项目不是
+        —— `MemberService.remove` 只删 `ProjectMember` 一行，被移出项目的人从此进
+        不了这个项目的任何房间，而他在各房间的名册行原地不动。那些行今天是惰性的
+        （房间门读的是项目读权，`may_read_topic`），本档把它们变成门，于是「一次加
+        人变成一次授权」在离场那一侧原样长了回来。判据留在这里而不是靠名册干净：
+        退项目、退队、不再是出题者是三条路，只有「今天还读得到吗」一句话同时管住。
+
+        问的是**房间自己的项目**（`may_read_topic` 从 topic 解出来），不是
+        `row.project_id`：这一档的授权键只有一个，就是 `topic_id`，那么项目也必须从它
+        解出来。读第二列等于让两个可以各自漂开的字段回答同一个问题——房间被移去别的项
+        目、或者哪天 `project_id` 换个来源，两列就不再说同一件事，而鉴权只能有一个答案。
+
         `security` narrows the public arm, so it is checked in the same breath:
         a row an admin flagged as a security matter is not public even though the
         reporter left `visibility` at its default. That flag is set on triage, by
         someone other than the reporter, and it is the one that must not leak.
+        It does **not** narrow the room arm, for the same reason the author keeps
+        access to a row that was flagged: 「不能泄露」说的是泄露给没看过它的人，而
+        那个房间的人看过。
+
+        Async because the roster and the project's claims are tables — the three
+        arms above are on the row, this one is not. Those queries are reached
+        only by a row the three cheap arms already refused, and `topic_id is
+        None` (报在沙箱里、或房间已删) turns both of them off before either runs.
         """
         if row.visibility == FeedbackVisibility.public and not row.security:
             return True
@@ -134,7 +167,13 @@ class FeedbackService:
             return True
         if not handle:
             return False
-        return handle in (row.author_handle, row.submitted_by_handle)
+        if handle in (row.author_handle, row.submitted_by_handle):
+            return True
+        if row.topic_id is None:
+            return False
+        if not await self._repo.filed_in_a_room_of_mine(row.id, handle):
+            return False
+        return await may_read_topic(self._session, topic_id=row.topic_id, handle=handle)
 
     async def visible_row(
         self, feedback_id: uuid.UUID, *, handle: str | None, is_admin: bool
@@ -146,7 +185,7 @@ class FeedbackService:
         makes this the rule for every id-taking feedback endpoint.
         """
         row = await self._repo.get(feedback_id)
-        if row is None or not self.may_see(row, handle=handle, is_admin=is_admin):
+        if row is None or not await self.may_see(row, handle=handle, is_admin=is_admin):
             raise NotFoundError("反馈不存在")
         return row
 
@@ -195,12 +234,34 @@ class FeedbackService:
     async def list_mine(
         self, *, handle: str, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
-        return await self._repo.list_related_to(
+        """「我的反馈」：清单里的每一条，详情页都开得了。
+
+        两步，因为规则只有一份拼写。SQL 那一步（`visible_to`）把「指派给我的」收
+        窄到一个**超集**——它带不动「今天还读得到那个房间」那半句，那是四张表四条
+        主张，抄进 WHERE 就是第二份迟早漂开的答案。最后一刀在这里，用的就是详情页
+        那个 `may_see`，所以清单和它自己的行不会各说一套。
+
+        挡下来的是哪一条：被移出项目、又恰好是某条私密反馈的负责人、而那条反馈提
+        出时他在那个房间里。详情页早就对他 404 了；少了这一步，清单还在把它的标题
+        和状态递给他。
+
+        总数跟着减这一页挡下的条数。一页装不下时它仍可能偏大（别的页上挡下的那几
+        条还算在里面），但只会偏大、不会偏小，而且它是一个数字不是一条能点开的行
+        ——前端拿它写「共 N 条」，一次只取一页。
+        """
+        is_admin = await self.is_admin(handle)
+        rows, total = await self._repo.list_related_to(
             handle,
-            is_admin=await self.is_admin(handle),
+            is_admin=is_admin,
             limit=limit,
             offset=offset,
         )
+        kept = [
+            row
+            for row in rows
+            if await self.may_see(row, handle=handle, is_admin=is_admin)
+        ]
+        return kept, total - (len(rows) - len(kept))
 
     async def counts(
         self, *, handle: str | None, is_admin: bool = False
@@ -502,8 +563,11 @@ class FeedbackService:
             environment=body.environment,
             submitted_by_handle=None,
             submitted_by_user_id=None,
-            topic_id=body.topic_id,
-            project_id=body.project_id,
+            # 没有房间来源，而且不是「客户端这次没填」：请求体里根本没有这个字段
+            # （`FeedbackCreate`）。人从反馈中心提的一条不是在任何房间里说的话，
+            # 所以房间那一档对它关着——`may_see` 的 `row.topic_id is None` 早退。
+            topic_id=None,
+            project_id=None,
             priority=body.priority,
             tags=body.tags,
         )
@@ -540,8 +604,10 @@ class FeedbackService:
             environment=body.environment,
             submitted_by_handle=submitted_by_handle,
             submitted_by_user_id=submitted_by_user_id,
-            topic_id=body.topic_id,
-            project_id=body.project_id,
+            # 从卡上取，不从请求体取——和作者同一条理由，而房间比作者更要紧：它是
+            # 可见性并集里「提出它的那个房间」那一档的授权键（`may_see`）。
+            topic_id=proposal.topic_id,
+            project_id=proposal.project_id,
             priority=body.priority,
             tags=body.tags,
         )
