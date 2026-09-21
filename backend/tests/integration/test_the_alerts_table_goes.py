@@ -5,16 +5,19 @@
 遍：再搬一次接住它们，逐行核对每一条都在 `notification` 里有同一份内容，然后才
 `DROP TABLE`。
 
-四条判据，对应迁移的四步：
+五条判据，对应迁移的四步 —— 第 2 步占两条，它合过来的方向和它不盖的方向各一条：
 
 1. **搬家前后同一个收件人看到的条数与内容一致** —— 上一次已经到手的一条不少、
    一字不差，窗口里写的那一条这一次到了。
 2. **窗口里留在已经搬过的那些行上的读、拍板、反馈，跟着过来** —— 那批行第一遍
    搬过，所以第二遍按原 uuid 整条跳过；跳过就等于把那几笔留在原表上跟着 `DROP
    TABLE` 一起没，而一条拍过板的决策请求会因此回到收件箱里显示待答，被再拍一次。
-3. **对不上就停在那儿，不是把表删掉** —— 造一条搬完之后被改过的 alert，迁移抛错
+3. **合过来只填不盖** —— 旧行冻在搬家那一刻，而换完镜像之后人在收件箱里拍的板、
+   按的赞落的都是新那一行；拿旧行去盖新的，擦掉的是正常使用，代价和第 2 条一模
+   一样（回到待答、被再拍一次、房间里第二条【决策】块）。
+4. **对不上就停在那儿，不是把表删掉** —— 造一条搬完之后被改过的 alert，迁移抛错
    点名它，表和行原样留着，收件箱一行没动。
-4. **一个收件人也算不出来的广播不算对不上** —— 它谁也没送到过，删表之后照旧没人
+5. **一个收件人也算不出来的广播不算对不上** —— 它谁也没送到过，删表之后照旧没人
    读得到，所以写进迁移日志、不挡删表；这一行随表一起消失，日志里连项目、房间、
    标题、写下的时刻一起留着，事后拿一个 uuid 是查不回来的。
 
@@ -135,6 +138,78 @@ def test_what_the_window_left_on_an_already_moved_row_comes_over(client):
     assert not _alerts_exists(client)
 
 
+def test_what_the_person_did_in_the_new_inbox_survives(client):
+    """第 2 步**只填不盖**：换完镜像之后人在收件箱里拍的板、按的赞，旧行盖不掉。
+
+    第 2 步合过来的是**旧行**上的读、拍板、反馈，而旧行冻在第一遍搬家那一刻 ——
+    把它写成直接覆盖（`a.resolved_at` 而不是 `COALESCE(n.resolved_at, ...)`），
+    擦掉的正是「两次部署之间有人用过收件箱」这件正常的事，而代价和上一条一模一样：
+    那条决策请求 `resolved_at` 回到空，于是回到「等你处理的事」里显示待答，人再拍
+    一次板，房间里落第二条【决策】块。
+
+    所以这两行旧那一侧只带「读过」和一个旧反馈 —— 带一样状态才进得了第 2 步的
+    WHERE，进不去的行这一步本来就不碰 —— 拍板、新反馈都发生在新那一侧。
+    """
+    pid, tid = _room(client)
+    _seed_alerts(
+        client,
+        pid,
+        tid,
+        [
+            {
+                "target": "alice",
+                "title": "要不要上",
+                "kind": "decision_request",
+                "level": "strong",
+                "payload": {"options": ["上", "再等等"]},
+                "topic": True,
+            },
+            {"target": "bob", "title": "看一眼", "topic": True},
+        ],
+    )
+    _upgrade(client)  # 上一次部署：第一遍搬家，这两条都搬过去了
+    # 窗口里旧镜像在旧行上留下的：一个已读，一个赞。拍板和新反馈还没发生。
+    _the_old_image_writes(client, "要不要上", read=True)
+    _the_old_image_writes(client, "看一眼", feedback="up")
+
+    # 换完镜像，收件箱就是 `notification` 了 —— 人动的是新那一行（bigint id）。
+    alice = {row["title"]: row for row in _inbox(client, pid, "alice")}
+    r = client.post(
+        f"/alerts/{alice['要不要上']['id']}/resolve",
+        json={"chosen": "上"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    bob = {row["title"]: row for row in _inbox(client, pid, "bob")}
+    r = client.post(
+        f"/alerts/{bob['看一眼']['id']}/read", headers=session_auth_headers("bob")
+    )
+    assert r.status_code == 200, r.text
+    r = client.post(
+        f"/alerts/{bob['看一眼']['id']}/feedback",
+        json={"feedback": "down"},
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+
+    decided = {row["title"]: row for row in _inbox(client, pid, "alice")}["要不要上"]
+    reacted = {row["title"]: row for row in _inbox(client, pid, "bob")}["看一眼"]
+    assert decided["resolved_at"] is not None
+    assert decided["payload"]["resolved_choice"] == "上"
+    # 新那一侧按的是「down」，旧行上冻着的是「up」；旧行的 `read_at` 是空的
+    assert (reacted["feedback"], reacted["read"]) == ("down", True)
+
+    _upgrade(client, DROP_MIGRATION)
+
+    after_alice = {row["title"]: row for row in _inbox(client, pid, "alice")}
+    after_bob = {row["title"]: row for row in _inbox(client, pid, "bob")}
+    assert after_alice["要不要上"] == decided  # 拍板、选的那一项，一字没动
+    assert after_bob["看一眼"] == reacted  # 赞和已读，一字没动
+    # 拍过板的不回到「等你处理的事」里 —— 回去就会被再拍一次
+    assert "要不要上" not in [row["title"] for row in _pending(client, pid, "alice")]
+    assert not _alerts_exists(client)
+
+
 def test_a_row_that_does_not_line_up_stops_the_migration(client):
     """搬完之后被改过的那一条：迁移停在那儿，表和行原样留着。"""
     pid, tid = _room(client)
@@ -218,13 +293,22 @@ def _the_old_image_writes(
     *,
     resolved: dict | None = None,
     feedback: str | None = None,
+    read: bool = False,
 ) -> None:
     """旧镜像在窗口里动了这条 alert —— 拍板写 `resolved_at` 加 `read_at` 加
-    `payload.resolved_choice`（并往房间里丢一条【决策】），按赞写 `feedback`。
-    搬过去的那一份不知道。"""
+    `payload.resolved_choice`（并往房间里丢一条【决策】），按赞写 `feedback`，
+    读掉写 `read_at`。搬过去的那一份不知道。"""
 
     async def _run() -> None:
         async with client.test_factory() as s:
+            if read:
+                await s.execute(
+                    text(
+                        "UPDATE alerts SET read_at = coalesce(read_at, now())"
+                        " WHERE title = :title"
+                    ),
+                    {"title": title},
+                )
             if resolved is not None:
                 await s.execute(
                     text(
