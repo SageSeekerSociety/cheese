@@ -221,9 +221,9 @@ class Meter:
 SUBSCRIPTION = "subscription"
 GATEWAY = "gateway"
 
-# Why a turn was refused. The proxy renders each as itself: a budget refusal is
-# a 429 the client should back off from, a binding refusal is a 400 nobody
-# should retry until the card changes.
+# Which layer `reason` came from, and so how a refusal carrying it is rendered:
+# a budget refusal is a 429 the client should back off from, a binding refusal
+# is a 400 nobody should retry until the card changes.
 BUDGET = "budget"
 BINDING = "binding"
 
@@ -239,12 +239,14 @@ class Verdict:
 
     allow: bool
     reason: str
-    # What KIND of refusal this is, so it can be rendered as itself. Everything
-    # used to become "cheese project budget: …" with a 429, because a spent
-    # budget was the only way a turn was ever refused; a card bound to a model
-    # the catalogue cannot serve is now the other way, and telling that user
-    # their quota ran out points them at the one thing that is fine.
-    # "budget" (the default) keeps a backend too old to say behaving as before.
+    # Which layer `reason` came from, so a refusal can be rendered as itself.
+    # Every refusal used to become "cheese project budget: …" with a 429,
+    # because a spent budget was the only way a turn was ever refused; a card
+    # bound to a model the catalogue cannot serve is now the other way, and
+    # telling that user their quota ran out points them at the one thing that
+    # is fine. "budget" (the default) keeps a backend too old to say behaving
+    # as before. Read only when `allow` is false; an allowed turn has a reason
+    # too, and it says nothing anyone has to act on.
     reason_kind: str = BUDGET
     pool: str = SUBSCRIPTION
     key: str | None = None
