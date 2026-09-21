@@ -68,6 +68,9 @@ def test_addressing_the_second_teammate_addresses_the_second_teammate(client):
     to_second = client.portal.call(recipient_of, f"@{second['display_name']} 看一下")
     assert to_second["mentioned"] is True
     assert to_second["handle"] == second["handle"], to_second
+    # 记的是哪一个实例，不只是它叫什么。寻址从这里算席位（`reviewer` 这样的名字在
+    # 名册上不是任何人的席位，拿它去点名，@ 它起不了一轮）。
+    assert to_second["instance_id"] == second["id"], to_second
 
     to_first = client.portal.call(recipient_of, f"@{first['display_name']} 你来")
     assert to_first["handle"] == first["handle"], to_first
