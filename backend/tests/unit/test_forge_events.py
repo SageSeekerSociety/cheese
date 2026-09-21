@@ -196,7 +196,11 @@ def test_live_subscription_stops_receiving_when_its_authorization_expires(
 
 @pytest.mark.anyio
 async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
-    from app.domain.review import events
+    from app.domain.review import events, pr_poll
+
+    # 这条盯的是 socket 的生命周期，不是对账本身；对账另有它自己的用例。
+    monkeypatch.setattr(pr_poll, "open_draft_prs", AsyncMock())
+    monkeypatch.setattr(pr_poll, "poll_open_prs", AsyncMock())
 
     started = asyncio.Event()
     stopped = asyncio.Event()
@@ -231,7 +235,7 @@ async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
     monkeypatch.setattr(events, "register_subscriptions", register)
     monkeypatch.setattr(events.asyncio, "sleep", retry)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(AsyncMock(), None), 2)
+        await asyncio.wait_for(events.listen(object(), None), 2)
 
 
 @pytest.mark.anyio
