@@ -24,16 +24,16 @@ import { orderedNav, termParams } from '@/lib/shell'
 
 const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese' }
 
-// 这一格装的是首页那一层，落点是空间；小队是它并排的另一半（手机上就是那一行
-// 页内分段），所以在 /teams 底下这一格照样亮着——不然人在这一格里翻小队，底栏
-// 却整排都是灰的，看起来像已经走出了这个 app 的导航。
+// 这一格装的是首页那一层，落点是空间；我的工作和 小队 是它并排的另外两半（手机上
+// 就是那一行页内分段），所以在 /work 和 /teams 底下这一格照样亮着——不然人在这一
+// 格里翻自己的项目或小队，底栏却整排都是灰的，看起来像已经走出了这个 app 的导航。
 const SPACES: NavItem = {
   key: 'Spaces',
   type: 'item',
   title: '空间',
   to: '/spaces',
   icon: 'mdi-view-dashboard',
-  match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams'),
+  match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams') || path.startsWith('/work'),
 }
 
 // 「待办」这个词还没定（设计文档 §7 拍板 1），路径和标签都可能再改。
