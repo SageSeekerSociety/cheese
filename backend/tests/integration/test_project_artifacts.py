@@ -1,5 +1,10 @@
 """产物清单的一生 —— 交付创建它，交付给它加版本，没交付成的不留在清单上 (#1085)。
 
+**这里每一张卡交出去的都是一个地址**，因为「声明动的是哪一项」只在交文件、交地址的
+交付上存在：
+交出去一次合并的，交的是项目那个仓库，谁都不用声明 —— 那一半在
+`test_artifact_is_the_repository.py`。
+
 沿用和新建是两个动作，所以这里每个错法都要有自己的一句话：沿用一个清单上没有的名
 字、新建一个已经在清单上的名字、两个都给、两个都不给。写错名字本身不会报错（`报
 告` 和 `结题报告` 都合法），把它变成一次当场的报错正是这两个动作存在的理由。
@@ -37,10 +42,19 @@ def _room(client, project_id: str, title: str = "做一个东西") -> str:
 
 
 def _file_card(client, room_id: str, **artifact):
-    """递一张卡。`artifact` / `new_artifact` 原样传下去，包括一个都不给。"""
+    """递一张**交出去一个地址**的卡。`artifact` / `new_artifact` 原样传下去，包括
+    一个都不给。
+
+    交的是地址，因为声明产物这个动作只在交文件、交地址的交付上存在：交出去一次合
+    并的，交的是项目那个仓库，平台自己认得出是哪一项（见
+    `test_artifact_is_the_repository.py`）。地址不用在机器上放一份文件，这个文件
+    问的又不是交付物本身的事。
+    """
     body = {
         "change_subject": "chore(test): file an accept card",
         "reviewer_handle": "alice",
+        "deliver_url": "https://example.com/交出去的那一份",
+        **({"about": "交给甲方的那一份"} if artifact.get("new_artifact") else {}),
         **artifact,
     }
     response = client.post(
@@ -392,3 +406,90 @@ def test_the_agent_cannot_change_the_list(client):
         client.delete(f"/projects/{pid}/artifacts/{aid}", headers=agent).status_code
         == 403
     )
+
+
+# --- 那一句话：说清这是什么东西，下一次交付才判断得了 -----------------------
+
+
+def _about(client, project_id: str, name: str) -> str:
+    row = next(a for a in _manifest_rows(client, project_id) if a["name"] == name)
+    return row["about"]
+
+
+def test_a_new_item_without_a_sentence_is_refused(client):
+    """清单上只有名字的话，下一次交付又只能看着名字猜。"""
+    pid = _project(client)
+    rid = _room(client, pid)
+
+    r = _file_card(client, rid, new_artifact="结题报告", about="")
+
+    assert r.status_code == 422
+    assert _manifest(client, pid) == []
+
+
+def test_the_sentence_shows_up_next_to_the_name(client):
+    pid = _project(client)
+    rid = _room(client, pid)
+
+    _file_card(client, rid, new_artifact="结题报告", about="交给甲方的最终报告")
+
+    assert _about(client, pid, "结题报告") == "交给甲方的最终报告"
+
+
+def test_copying_the_change_subject_into_the_sentence_is_refused(client):
+    """按改动标题写，正是清单长成一份改动列表的那条老路。"""
+    pid = _project(client)
+    rid = _room(client, pid)
+
+    r = _file_card(
+        client,
+        rid,
+        new_artifact="结题报告",
+        about="chore(test): file an accept card",
+    )
+
+    assert r.status_code == 422
+    assert _manifest(client, pid) == []
+
+
+def test_a_sentence_that_runs_long_is_refused(client):
+    pid = _project(client)
+    rid = _room(client, pid)
+
+    r = _file_card(client, rid, new_artifact="结题报告", about="报" * 200)
+
+    assert r.status_code == 422
+    assert _manifest(client, pid) == []
+
+
+def test_delivering_again_may_leave_the_sentence_alone(client):
+    """写对了的那句话说的是这样东西本身，交一版新的不会让它变得不对。"""
+    pid = _project(client)
+    first = _room(client, pid, "第一轮")
+    second = _room(client, pid, "第二轮")
+    declared = _file_card(
+        client, first, new_artifact="结题报告", about="交给甲方的最终报告"
+    ).json()["data"]
+
+    _file_card(client, second, artifact=declared["artifact"]["id"])
+
+    assert _about(client, pid, "结题报告") == "交给甲方的最终报告"
+
+
+def test_delivering_again_may_replace_the_sentence(client):
+    """要改的那一种情况是这东西真的变成了另一样东西。"""
+    pid = _project(client)
+    first = _room(client, pid, "第一轮")
+    second = _room(client, pid, "第二轮")
+    declared = _file_card(
+        client, first, new_artifact="结题报告", about="交给甲方的最终报告"
+    ).json()["data"]
+
+    _file_card(
+        client,
+        second,
+        artifact=declared["artifact"]["id"],
+        about="交给评审组的最终报告",
+    )
+
+    assert _about(client, pid, "结题报告") == "交给评审组的最终报告"

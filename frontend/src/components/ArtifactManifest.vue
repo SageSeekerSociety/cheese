@@ -134,12 +134,17 @@ watch(
       <li v-if="!rows.length" class="made__empty t-body">暂无产物</li>
       <li v-for="row in rows" :key="row.id" class="made-row">
         <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
-        <router-link
-          class="made-row__name t-body"
-          :to="{ name: 'project-artifact', params: { projectId, artifactId: row.id } }"
-        >
-          {{ row.name }}
-        </router-link>
+        <div class="made-row__what">
+          <router-link
+            class="made-row__name t-body"
+            :to="{ name: 'project-artifact', params: { projectId, artifactId: row.id } }"
+          >
+            {{ row.name }}
+          </router-link>
+          <!-- 这是什么东西、给谁的。判断「这两项是不是同一个东西」要的正是它：
+               两个名字并排摆着，人也看不出什么。没人写过的就不占一行。 -->
+          <span v-if="row.about" class="made-row__about t-meta c-faint">{{ row.about }}</span>
+        </div>
         <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         <v-menu location="bottom end">
           <template #activator="{ props: menu }">
@@ -264,10 +269,23 @@ watch(
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.made-row__name {
+.made-row__what {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.made-row__about {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.made-row__name {
+  min-width: 0;
   color: var(--text);
+  align-self: flex-start;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
