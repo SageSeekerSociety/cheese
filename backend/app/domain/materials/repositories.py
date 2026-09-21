@@ -18,6 +18,24 @@ class MaterialRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def list_by_ids(self, material_ids: list[int]) -> list[Material]:
+        """Whatever of these ids exists, in the order asked for.
+
+        One query, not one per id: the caller is a 课程 listing its 课件, and the
+        order it asked in is the order a teacher arranged them in — a set would
+        hand them back shuffled.
+        """
+        if not material_ids:
+            return []
+        stmt: Select[tuple[Material]] = select(Material).where(
+            Material.id.in_(material_ids)
+        )
+        found = {
+            material.id: material
+            for material in (await self._session.execute(stmt)).scalars()
+        }
+        return [found[i] for i in material_ids if i in found]
+
     async def create(
         self,
         *,

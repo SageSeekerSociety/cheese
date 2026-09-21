@@ -92,6 +92,14 @@ class SpaceCategory(Base):
         JSON, nullable=False, default=list, server_default="[]"
     )
     default_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 课程级教学配置 (#8d772257): 本周范围、课程级 system prompt 模板、课件与知识
+    # 材料的引用。A 创研课 teaches, and what it is teaching this week is a
+    # property of the 项目集 — twenty 赛题 under one 教学安排. Rides the same
+    # override chain as the three above, via the same resolve(); empty for every
+    # 项目集 that is not a course.
+    teaching: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

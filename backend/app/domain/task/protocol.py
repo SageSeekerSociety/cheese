@@ -16,13 +16,151 @@ harder to reason about than either source alone.
 This replaces the cheesex `task_templates` table, which held these same four
 fields for a parallel 题目 hierarchy nobody could create from the UI. The 知是
 side already had the levels; it was missing only the protocol.
+
+**教学配置 (#8d772257).** A 创研课 is not a 黑客松: the institution does not only
+supply credits, it teaches. The `teaching` key carries that — this week's scope,
+a course-level system prompt, and the 课件 the week leans on. It rides the SAME
+three levels as the other keys (项目集 → 赛题 override → 项目 settings) because a
+second inheritance rule for education fields would be a second thing to keep in
+step, and the two would disagree the first time someone edited one of them.
 """
 
 from dataclasses import dataclass, field
 from typing import Any
 
-#: Keys a 赛题 may override. Anything else on the category is inherited as-is.
-_OVERRIDABLE = ("resource_pack", "conditions", "default_role")
+#: Keys a level may override. Anything else on the category is inherited as-is.
+_OVERRIDABLE = ("resource_pack", "conditions", "default_role", "teaching")
+
+
+def _text(value: Any) -> str | None:
+    """A non-blank string, or None. Whitespace-only is None: a field a teacher
+    tabbed through is not a configuration."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _week(value: Any) -> int | None:
+    """A week number. Bools are rejected for `compute_credits`' reason — `True`
+    is an int in Python and would silently become 第 1 周."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
+def _texts(value: Any) -> list[str]:
+    """The non-blank strings of a list, in order, deduplicated. A config is a
+    thing a person types, so a repeated line is a typo, not two entries."""
+    if not isinstance(value, list):
+        return []
+    seen: dict[str, None] = {}
+    for item in value:
+        text = _text(item)
+        if text is not None:
+            seen.setdefault(text.strip(), None)
+    return list(seen)
+
+
+def _ids(value: Any) -> list[int]:
+    """Positive int ids, in order, deduplicated. Same reasoning as `_texts`."""
+    if not isinstance(value, list):
+        return []
+    seen: dict[int, None] = {}
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
+            continue
+        seen.setdefault(item, None)
+    return list(seen)
+
+
+@dataclass(frozen=True)
+class Teaching:
+    """课程级教学配置 — the frame a 创研课's agents work inside THIS week.
+
+    It is a 项目集-level thing (二十个赛题, 一份教学安排) that rides the same
+    three levels as the rest of the protocol. Everything in it changes weekly,
+    which is why none of it is baked into a project at creation: the week is a
+    fact about NOW, and a copy taken at registration is wrong by week two.
+
+    **It is read, never taught.** Nothing here is content the agent must learn —
+    it is scope. `allowed_topics` says what this week is about, `avoid_in_code`
+    what not to reach for yet; an agent that ignores both still works, it just
+    works on next month's material.
+    """
+
+    #: Course-level system prompt TEMPLATE. `{current_week}` / `{allowed_topics}`
+    #: / `{avoid_in_code}` inside it are filled from the three fields below —
+    #: filled by literal replacement, never `str.format`, so a 讲义 that quotes
+    #: `{"key": ...}` at the agent cannot take the turn down with it.
+    system_prompt: str | None = None
+    #: Which week of the course this is. None = the course did not say.
+    current_week: int | None = None
+    #: What this week covers, in the teacher's words.
+    allowed_topics: list[str] = field(default_factory=list)
+    #: What the course has not taught yet — constructs a solution must not lean
+    #: on, e.g. `["递归"]` in a week that has only reached loops.
+    avoid_in_code: list[str] = field(default_factory=list)
+    #: 课件/知识材料 by REFERENCE, not by copy. Resolved to names and links when
+    #: the prompt is built (`app.domain.task.teaching`), so a renamed 课件 or a
+    #: rotated link is picked up without re-saving the 项目集 — and so this key
+    #: stays a small JSON blob rather than a second copy of the material library.
+    material_ids: list[int] = field(default_factory=list)
+    knowledge_ids: list[int] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        """Nothing configured. Callers branch on this to skip the lookups that
+        resolve the references — a non-course project must not pay a query, and
+        must not put a word into its prompt, for a configuration it has none
+        of."""
+        return not (
+            self.system_prompt
+            or self.current_week is not None
+            or self.allowed_topics
+            or self.avoid_in_code
+            or self.material_ids
+            or self.knowledge_ids
+        )
+
+    def fill(self, template: str) -> str:
+        """The `system_prompt` template with this week's variables substituted.
+
+        Plain `str.replace` over the three known tokens. `str.format` would
+        treat every `{` in a teacher's prose as a field and raise on the ones it
+        does not recognize — a 讲义 quoting a dict literal would break every
+        turn of the course, and the failure would name a brace rather than the
+        config that caused it.
+        """
+        allowed = "、".join(self.allowed_topics) or "（未指定）"
+        avoid = "、".join(self.avoid_in_code) or "（未指定）"
+        week = str(self.current_week) if self.current_week is not None else "（未指定）"
+        for token, value in (
+            ("{current_week}", week),
+            ("{allowed_topics}", allowed),
+            ("{avoid_in_code}", avoid),
+        ):
+            template = template.replace(token, value)
+        return template
+
+    @classmethod
+    def from_json(cls, raw: Any) -> "Teaching":
+        """Read what a JSON column holds. NEVER raises, and never a partial
+        failure.
+
+        `resolve` runs on every turn of every project, so a malformed value
+        reaching it must not take the turn down: a project whose 项目集 carries a
+        typo in one field has to keep working on the other five. Junk is
+        dropped, not raised — the strict check belongs at the edit endpoint,
+        where a person is looking at the form and can be told what is wrong.
+        """
+        if not isinstance(raw, dict):
+            return cls()
+        return cls(
+            system_prompt=_text(raw.get("system_prompt")),
+            current_week=_week(raw.get("current_week")),
+            allowed_topics=_texts(raw.get("allowed_topics")),
+            avoid_in_code=_texts(raw.get("avoid_in_code")),
+            material_ids=_ids(raw.get("material_ids")),
+            knowledge_ids=_ids(raw.get("knowledge_ids")),
+        )
 
 
 @dataclass(frozen=True)
@@ -36,6 +174,10 @@ class Protocol:
     conditions: list[dict[str, Any]] = field(default_factory=list)
     #: Expert role a project inherits when it has none of its own (spec §8.2).
     default_role: str | None = None
+    #: 课程级教学配置 — what the course wants its agents to know THIS week. Empty
+    #: for anything that is not a course, which is every project that existed
+    #: before this key did.
+    teaching: Teaching = field(default_factory=Teaching)
 
     @property
     def compute_credits(self) -> float:
@@ -61,24 +203,56 @@ class Protocol:
         )
 
 
-def resolve(*, category: Any | None, task: Any | None) -> Protocol:
-    """The terms in force for ``task``: its 项目集's, with its own overrides.
+def _project_override(project: Any | None) -> dict[str, Any]:
+    """A project's own protocol overrides, from `Project.settings["protocol"]`.
 
-    Both arguments are optional so callers do not have to branch: a 赛题 with no
-    category, or a project with no 赛题 at all, resolves to an empty protocol —
-    which is the 项目自治 default (spec §4), not an error.
+    `settings` is free-form and holds unrelated keys (`forge_kind`, the compute
+    profile), so anything that is not a dict under `protocol` is treated as
+    absent rather than as an error: the caller is a per-turn read of every
+    project in the product, not the form that wrote it.
+    """
+    settings = getattr(project, "settings", None)
+    if not isinstance(settings, dict):
+        return {}
+    override = settings.get("protocol")
+    return override if isinstance(override, dict) else {}
+
+
+def resolve(
+    *, category: Any | None, task: Any | None, project: Any | None = None
+) -> Protocol:
+    """The terms in force for one project: three levels, most specific last.
+
+    项目集 → 赛题 (`protocol_override`) → 项目 (`settings["protocol"]`). Every
+    key takes the same trip, including `teaching`: the levels are a property of
+    the protocol, not of any one field in it, so a field added here is
+    overridable at all three the day it is added rather than when someone
+    remembers to wire it up again.
+
+    Each level replaces a key WHOLE — no deep merge, for the reason the 项目集
+    placement was chosen: a half-inherited resource pack is harder to reason
+    about than either source alone.
+
+    All three arguments are optional so callers do not have to branch: a 赛题
+    with no category, or a project with no 赛题 at all, resolves to an empty
+    protocol — which is the 项目自治 default (spec §4), not an error.
     """
     values: dict[str, Any] = {
-        "resource_pack": dict(getattr(category, "resource_pack", None) or {}),
-        "conditions": list(getattr(category, "conditions", None) or []),
+        "resource_pack": getattr(category, "resource_pack", None) or {},
+        "conditions": getattr(category, "conditions", None) or [],
         "default_role": getattr(category, "default_role", None),
+        "teaching": getattr(category, "teaching", None) or {},
     }
-    override = getattr(task, "protocol_override", None) or {}
-    for key in _OVERRIDABLE:
-        if key in override and override[key] is not None:
-            values[key] = override[key]
+    for source in (
+        getattr(task, "protocol_override", None) or {},
+        _project_override(project),
+    ):
+        for key in _OVERRIDABLE:
+            if key in source and source[key] is not None:
+                values[key] = source[key]
     return Protocol(
         resource_pack=dict(values["resource_pack"] or {}),
         conditions=list(values["conditions"] or []),
         default_role=values["default_role"] or None,
+        teaching=Teaching.from_json(values["teaching"]),
     )
