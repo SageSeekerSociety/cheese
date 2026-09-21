@@ -207,7 +207,7 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         ],
         db_factory,
     )
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     runner.submit(
         chat,

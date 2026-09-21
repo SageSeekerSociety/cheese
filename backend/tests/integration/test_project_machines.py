@@ -311,7 +311,7 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
         return None
 
     monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     async def _ensure(topic_id: str) -> tuple[int, uuid.UUID]:
         async with client.test_factory() as session:
@@ -440,7 +440,7 @@ def test_reopen_after_cleanup_claim_provisions_a_new_machine(client, monkeypatch
     async def _reprovision():
         async with client.test_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
-                topic_id, actor=Actor("owner", 1, False, "token")
+                topic_id, actor=Actor("owner", 1, "token")
             )
             old = await ProjectMachineRepository(session).get(old_id)
             await session.commit()
@@ -494,7 +494,7 @@ def test_a_room_waiting_on_the_provider_holds_no_team_lock(client, monkeypatch):
         return None
 
     monkeypatch.setattr(MachineService, "require_use_authority", _authorized)
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     async def _ensure(topic_id: str):
         async with client.test_factory() as session:

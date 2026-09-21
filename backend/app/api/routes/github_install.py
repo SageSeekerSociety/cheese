@@ -222,9 +222,7 @@ async def github_app_install_callback(
         user = await UserRepository(db).get_by_id(claims.user_id)
         if user is None or user.username != claims.handle:
             return failure("access_denied")
-        actor = Actor(
-            handle=user.username, user_id=user.id, is_agent=False, via="token"
-        )
+        actor = Actor(handle=user.username, user_id=user.id, via="token")
         await MemberService(db).require_manager(project_id, actor)
         if setup_action == "request":
             return _settings_redirect(project_id, github_install="pending")

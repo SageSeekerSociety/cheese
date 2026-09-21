@@ -264,7 +264,7 @@ def warm_case(client, monkeypatch):
                 )
             )
             await session.commit()
-            return Actor("owner", user.id, False, "token")
+            return Actor("owner", user.id, "token")
 
     actor = asyncio.run(seed())
     return client, topics, actor, ClaimCloud()
@@ -375,7 +375,7 @@ def test_nonmember_cannot_claim_and_unassigned_device_has_no_team(warm_case):
             with pytest.raises(ForbiddenError):
                 await MachineService(session, cloud).ensure_topic_machine(
                     uuid.UUID(topics[0]),
-                    actor=Actor("outsider", 999999, False, "token"),
+                    actor=Actor("outsider", 999999, "token"),
                 )
 
     asyncio.run(run())
