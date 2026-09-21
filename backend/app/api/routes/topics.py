@@ -1371,16 +1371,21 @@ async def set_topic_compute_profile(
     # 「开跑即锁定」锁的是**界面上那个人**：房间跑起来之后他再换一档，扔掉的是正在
     # 跑的那条会话和它的工作区，而他从那个下拉框里看不见那边在干什么。
     #
-    # agent 自己这一次调用不是那件事。它是结论 23 的那一次——「这台机器够不着了，
-    # 我要另一台」——而那句话只可能在房间跑起来之后说出口：说它的就是正在这个房间里
-    # 跑的那一轮。按开跑锁死，这个工具在生产里一次也调不通，agent 收到的是一句
-    # 「新建话题可另选算力」，而它连新建话题都做不到。准不准由下面那道策略闸门答
-    # （结论 40）：自托管那台机器要机主点头，Cloud 花的是项目的钱。
-    by_a_turn = actor.via == "cheese"
-    if not by_a_turn and (
+    # 正在这个房间里跑的那一轮说的不是那件事。它说的是结论 23 的那一句——「这台机器
+    # 够不着了，我要另一台」——而那句话只可能在房间跑起来之后说出口。按开跑锁死，
+    # 这个工具在生产里一次也调不通，agent 收到的是一句「新建话题可另选算力」，而它
+    # 连新建话题都做不到。**但它换不成**：换成什么由下面那一段答（结论 23），这里
+    # 放它过的只是「说得出口」。
+    #
+    # 认的是**这个房间这一轮的那张令牌**，不是「说话的是个 agent」：项目级 agent
+    # 凭据也是 `via == "cheese"`，而它够得着这个项目里的每一个房间（`app/main.py`
+    # 上那句话），拿它当判据等于任何一张项目凭据都能动别人正跑着的房间。
+    asked_by_this_rooms_turn = resolver.speaks_for_this_rooms_turn(topic_id)
+    started = bool(
         await AgentSessionService(db).has_run(topic_id)
         or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
-    ):
+    )
+    if started and not asked_by_this_rooms_turn:
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:
@@ -1433,38 +1438,60 @@ async def set_topic_compute_profile(
         raise NotFoundError("Project not found")
     policy = gate.policy_of(project.settings)
     # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
-    # 备、再取一次机主，而不限档时判决与那几条查询无关。
-    if not policy.lets_everything_through:
-        verdict = gate.check(
-            await machine_policy_call(db, project=project, topic=topic, choice=choice),
-            policy,
-            actor.handle,
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。房间已经开跑的那一次是例
+    # 外：它无论档位都要人点头，所以那次调用照写。
+    verdict: gate.Allowed | gate.Proposal | None = None
+    if started or not policy.lets_everything_through:
+        call = await machine_policy_call(
+            db, project=project, topic=topic, choice=choice
         )
-        if isinstance(verdict, gate.Proposal):
-            # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
-            # 是一条提议，下一步在 approver 手上。
-            await propose(db, verdict, place_id=topic_id)
-            await db.flush()
-            # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-            # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
-            # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
-            # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
-            # 法，先信谁？
-            current = room_choice(topic, project.settings)
-            return ok(
-                {
-                    "current": current.profile,
-                    "choice": current.model_dump(),
-                    "device_id": current.device_id,
-                    "locked": False,
-                    "inherited": topic.compute_profile is None,
-                    "proposal": {
-                        "approver": verdict.approver,
-                        "tier": verdict.call.tier,
-                        "content": verdict.content,
-                    },
-                }
+        verdict = (
+            # 房间跑起来之后换机器，**当场不换**（结论 23）：换过去丢掉的是这台机
+            # 器上的工作区和还没提交的改动，而那是别人的机器、别人的电（自托管的
+            # 收件人是机主本人）或者项目的钱（Cloud 的收件人是项目主人）。所以它和
+            # 撞上档位策略的那一次是同一种东西：这次调用没有发生，房间里多的是一条
+            # 给人的提议。
+            #
+            # 不走 `gate.check`，因为它答的是另一个问题（「这一档可不可以自己发
+            # 生」）—— 今天每个项目都不限档，问它只会一路放行，于是自托管换机器既
+            # 没有机主点头、也没有那句「丢了什么」。
+            gate.Proposal(
+                call=call,
+                asked_by=actor.handle,
+                content=(
+                    f"{actor.handle} 要把这个房间换到「{call.label}」上去。"
+                    "房间已经在跑，换过去会丢掉现在这台机器上的工作区和还没提交的"
+                    f"改动；这一步等 @{call.approver} 点头。"
+                ),
             )
+            if started
+            else gate.check(call, policy, actor.handle)
+        )
+    if isinstance(verdict, gate.Proposal):
+        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+        # 是一条提议，下一步在 approver 手上。
+        await propose(db, verdict, place_id=topic_id)
+        await db.flush()
+        # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
+        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+        # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
+        # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
+        # 法，先信谁？
+        current = room_choice(topic, project.settings)
+        return ok(
+            {
+                "current": current.profile,
+                "choice": current.model_dump(),
+                "device_id": current.device_id,
+                "locked": started,
+                "inherited": topic.compute_profile is None,
+                "proposal": {
+                    "approver": verdict.approver,
+                    "tier": verdict.call.tier,
+                    "content": verdict.content,
+                },
+            }
+        )
 
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind
@@ -1711,7 +1738,6 @@ async def ask_for_a_delivery(
         topic_id=topic_id,
         project_id=place.project_id,
     )
-    await db.commit()
     return ok({"id": str(row.id), "at": when.isoformat(), "to": recipient})
 
 

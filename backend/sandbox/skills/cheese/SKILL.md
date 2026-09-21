@@ -174,7 +174,7 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_recover(task_id)` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
 | `cheese_sync(task?, all?)` | 同步当前或指定任务；`all` 同步本房间机器上已有的任务目录 |
 | `cheese_close_task(task_id, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
-| `cheese_machine(profile, device_id?)` | 要一台机器：把这个房间的算力换成某一档。撞上项目的档位策略时这次调用不报错、也不挂着等，它变成一条给机主（自托管）或项目主人（Cloud）的提议 |
+| `cheese_machine(profile, device_id?)` | 要一台机器：给这个房间要某一档算力。**房间已经跑起来之后它不当场换**——换过去会丢掉这台机器上的工作区和还没提交的改动，所以产物是一条给机主（自托管）或项目主人（Cloud）的提议，等人点头。撞上项目的档位策略时也一样：不报错、不挂着等，变成一条提议 |
 | `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，如实回 `delivered: false`。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
 | `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |

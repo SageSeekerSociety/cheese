@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -73,6 +73,25 @@ def _project_devices(client, pid: str, *names: str) -> list[str]:
             return device_ids
 
     return asyncio.run(_seed())
+
+
+def _project_credential(client, pid: str) -> str:
+    """这个项目自己的那张 agent 凭据 —— 到项目里哪个房间都认得。
+
+    签发本身不给角色，所以先把那位芝士加进项目成员，凭据才够得着房间：这条用例要
+    证的是「够得着也动不了」，不是「够不着」。
+    """
+    from tests.integration.conftest import session_auth_headers
+
+    rows = client.get(f"/projects/{pid}/agents").json()["data"]["data"]
+    (default,) = [row for row in rows if row["is_default"]]
+    joined = client.post(
+        f"/projects/{pid}/members",
+        json={"user_handle": default["seat_handle"]},
+        headers=session_auth_headers("andyl"),
+    )
+    assert joined.status_code == 200, joined.text
+    return mint_project_agent_credential(project_id=pid, epoch=0)
 
 
 def _agent_seat(client, tid: str) -> str:
@@ -270,13 +289,15 @@ def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
     assert _topic_binding(client, tid).device_id == second
 
 
-def test_the_turn_running_in_the_room_can_still_ask_for_another_machine(client):
-    """`cheese_machine` 打的是这条真路由（结论 23、40）。
+def test_the_turn_running_in_the_room_asks_and_does_not_switch(client):
+    """`cheese_machine` 打的是这条真路由，而它换不动机器（结论 23、40）。
 
     这个工具只会被**正在这个房间里跑的那一轮**调用，而那一刻房间必然已经开跑过。
-    所以「开跑即锁定」必须只锁界面上那个人：锁住 agent，等于表上摆了一样在生产里
-    一次也调不通的工具，它拿到的回话还是「新建话题可另选算力」——而它连新建话题都
-    做不到。
+    所以「开跑即锁定」不能把它一起锁死：锁住它，表上就摆了一样在生产里一次也调不通
+    的工具，它拿到的回话还是「新建话题可另选算力」——而它连新建话题都做不到。
+
+    放它说得出口，不等于放它当场换：换过去丢掉的是这台机器上的工作区和还没提交的
+    改动，所以产物是一条给机主的提议，钉一动不动。
 
     契约那一组对着一台假 HTTP 断言这次调用落在哪个地址上，答不出这里的问题：地址
     是对的，答话是拒绝。
@@ -294,7 +315,7 @@ def test_the_turn_running_in_the_room_can_still_ask_for_another_machine(client):
     _mark_started(client, tid)
     seat = _agent_seat(client, tid)
 
-    # 界面上那个人：房间开跑了，这一档就定住了。
+    # 界面上那个人：房间开跑了，这一档就定住了，连提议都没有。
     by_a_person = client.put(
         f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": there},
@@ -302,7 +323,7 @@ def test_the_turn_running_in_the_room_can_still_ask_for_another_machine(client):
     assert by_a_person.status_code == 422
     assert _topic_binding(client, tid).device_id == here
 
-    # 房间里跑着的那一轮自己要另一台：这才是这个工具的那次调用。
+    # 房间里跑着的那一轮自己要另一台：说得出口，换不成，产物是一条给机主的提议。
     by_the_turn = client.put(
         f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": there},
@@ -312,9 +333,38 @@ def test_the_turn_running_in_the_room_can_still_ask_for_another_machine(client):
             )
         },
     )
+
     assert by_the_turn.status_code == 200, by_the_turn.text
-    assert by_the_turn.json()["data"]["device_id"] == there
-    assert _topic_binding(client, tid).device_id == there
+    body = by_the_turn.json()["data"]
+    assert body["proposal"] is not None, body
+    assert "there" in body["proposal"]["content"], body["proposal"]
+    assert _topic_binding(client, tid).device_id == here, "钉被搬走了"
+    assert body["device_id"] == here
+
+
+def test_a_project_credential_cannot_move_a_room_that_is_already_running(client):
+    """项目级 agent 凭据不是「这个房间这一轮」（结论 23）。
+
+    它够得着这个项目里的每一个房间，所以拿「说话的是个 agent」当判据，等于任何一张
+    项目凭据都能动别人正跑着的房间 —— 连一条提议都不该从它这里长出来。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid)
+    here, there = _project_devices(client, pid, "here", "there")
+    client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": here},
+    )
+    _mark_started(client, tid)
+
+    refused = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+        headers={"X-Cheese-Token": _project_credential(client, pid)},
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert _topic_binding(client, tid).device_id == here
 
 
 def test_selecting_cloud_without_machine_create_authority_is_refused(

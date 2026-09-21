@@ -14,6 +14,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.delivery.models import TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD
 from app.domain.delivery.timer import DELIVERED_AS_ASKED, deliver_due
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, name: str, owner: str = "user-1") -> str:
@@ -71,15 +72,74 @@ def test_a_note_reaches_the_other_thread_of_the_same_handle(client, monkeypatch)
     assert len(_blocks(client, there)) == before, "便条落到时间线上去了"
 
 
-def test_a_note_to_another_handle_is_refused(client, monkeypatch):
-    """送给另一个 handle 被拒（I14②）。
+def _seat_another_agent(client, project_id: str, topic_id: str, owner: str) -> str:
+    """让这个房间坐的是**另一个** agent，原来那位退出去。
 
-    不同 handle 之间只走 chat，agent 对 agent 也是：没有第二条私下通道，两个 agent
-    要说话就在房间里说，人看得见。
+    只加不减不行：名册上两位 agent 时，`resolve_agent_handle` 仍旧答项目默认的那
+    一位，于是比席位这一步比的还是同一个 handle，什么也证不了。
+    """
+    seated_so_far = _seat(client, topic_id)
+    created = client.post(
+        f"/projects/{project_id}/agents",
+        json={"handle": "reviewer", "display_name": "评审"},
+    )
+    assert created.status_code == 200, created.text
+    other = created.json()["data"]["seat_handle"]
+    headers = session_auth_headers(owner)
+    seated = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": other, "role": "member"},
+        headers=headers,
+    )
+    assert seated.status_code == 200, seated.text
+    dropped = client.delete(
+        f"/topics/{topic_id}/members/{seated_so_far}", headers=headers
+    )
+    assert dropped.status_code == 200, dropped.text
+    assert _seat(client, topic_id) == other
+    return other
+
+
+def test_a_note_to_another_agent_in_the_same_project_is_refused(client, monkeypatch):
+    """同一个项目里，给另一个 agent 的线程留便条被拒（I14②）。
+
+    这条比跨项目那条更要紧，而且只有它打得到守卫要守的那一行：跨项目先被「不是一
+    个项目」拦下，比席位那一步一次都没跑到。**不同 handle 之间只走 chat，agent 对
+    agent 也是**（结论 12）——两个 AI 队友要说话就在房间里说，人看得见。悄悄放它过
+    去，多出来的正是结论 12 要拦的那条 agent 对 agent 的私下通道。
+    """
+    project = _project(client, "同一个项目")
+    here = _room(client, project, "房间一")
+    theirs = _room(client, project, "房间二")
+    mine = _seat(client, here)
+    other = _seat_another_agent(client, project, theirs, owner="user-1")
+    assert other != mine
+
+    handed = []
+
+    async def remember(self, topic_id, notice, *, blocks=()):
+        handed.append(str(topic_id))
+        return True
+
+    monkeypatch.setattr(ChatService, "notify_running_turn", remember)
+
+    r = client.post(
+        f"/topics/{here}/note", json={"thread": theirs, "content": "偷偷说一句"}
+    )
+
+    assert r.status_code >= 400, r.text
+    assert NOT_YOUR_OWN_THREAD in r.text
+    assert handed == [], "被拒的便条还是送出去了"
+
+
+def test_a_note_to_another_project_is_refused(client, monkeypatch):
+    """跨项目也被拒。
+
+    一个 handle 是**一个项目里**的一个参与者：跨项目的同名席位不是同一条线程上的
+    自己，它读的记忆、能看见的东西都是另一套。
     """
     here = _room(client, _project(client, "我的项目"), "房间一")
     elsewhere = _room(client, _project(client, "别人的项目"), "别人的房间")
-    assert _seat(client, here) != _seat(client, elsewhere)
 
     handed = []
 

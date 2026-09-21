@@ -24,12 +24,20 @@ import uuid
 from pathlib import Path
 
 if __package__:
-    from app.domain.agent.executor_transport import MACHINE_OUT_OF_REACH, RemoteClient
+    from app.domain.agent.executor_transport import (
+        MACHINE_OUT_OF_REACH,
+        MachineOutOfReach,
+        RemoteClient,
+    )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
-    from executor_transport import MACHINE_OUT_OF_REACH, RemoteClient
+    from executor_transport import (
+        MACHINE_OUT_OF_REACH,
+        MachineOutOfReach,
+        RemoteClient,
+    )
 
 PINNED_VERSION = "2.1.277"
 NATIVE_TOOLS = (
@@ -752,9 +760,8 @@ def transport(config, target_path):
                 "invoke",
                 {"id": payload["id"], "tool": payload["tool"], "args": args},
             )
-        except Exception as exc:
-            if str(exc) == MACHINE_OUT_OF_REACH:
-                unreachable_since[0] = time.monotonic()
+        except MachineOutOfReach:
+            unreachable_since[0] = time.monotonic()
             raise
         unreachable_since[0] = None
         return receipt

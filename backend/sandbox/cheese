@@ -127,8 +127,8 @@ class ToolTable:
         return tuple(tool["name"] for tool in self._tools)
 
     def schemas(self) -> list[dict]:
-        """MCP `tools/list` 要的那一份。每次新建，调用方改不动这张表。"""
-        return [json.loads(json.dumps(tool)) for tool in self._tools]
+        """MCP `tools/list` 要的那一份。"""
+        return list(self._tools)
 
     def __contains__(self, name: object) -> bool:
         return name in self.names()
@@ -271,11 +271,6 @@ PLATFORM_TOOLS = ToolTable(
         },
     )
 )
-
-
-def platform_tools() -> tuple[str, ...]:
-    """平台 MCP 上的那六样，会话侧就答得出，机器离线时一样都不少。"""
-    return PLATFORM_TOOLS.names()
 
 
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:

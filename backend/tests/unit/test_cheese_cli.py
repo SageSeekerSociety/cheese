@@ -77,7 +77,7 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     }
     # 平台 MCP 上那六样里的每一个 `cheese_*` 都要有计划：没有计划的那一个，
     # 会话侧打不出去，而它恰恰是机器离线时唯一还能用的那一批（结论 21）。
-    platform = {t for t in cli.platform_tools() if t.startswith("cheese_")}
+    platform = {t for t in cli.PLATFORM_TOOLS.names() if t.startswith("cheese_")}
     assert platform <= set(arguments), platform - set(arguments)
     plans = {
         tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()

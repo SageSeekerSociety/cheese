@@ -108,3 +108,62 @@ def test_the_status_and_the_body_survive_in_the_platform_log(
     assert "418" in logged
     assert "whatever the executor said" in logged
     assert "context_fs" in logged
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [TimeoutError("timed out"), ConnectionResetError("closed without answering")],
+    ids=["read timed out", "hung up without answering"],
+)
+def test_a_machine_that_never_answers_is_out_of_reach_too(
+    monkeypatch, tmp_path, failure
+):
+    """够不着的那一档里最常见的一个：执行器一个字也没答（结论 23）。
+
+    答了 502/503/504 的机器至少还答了。真正够不着的那台什么也不答，调用方等到的
+    是这条连接的读超时或者一次被挂断的连接 —— 而调用方要认的是同一件事，所以它得
+    是**判得出来的一种**，不是一句拿去比对的话。认不出来的后果不是少一行日志：那一
+    轮余下的每一次文件与命令调用都会再各等一次同样的超时。
+    """
+    token = tmp_path / "execution.token"
+    token.write_text("t")
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            return None
+
+        @staticmethod
+        def getresponse():
+            raise failure
+
+        @staticmethod
+        def close():
+            pass
+
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test", "token_file": str(token)}
+    )
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+
+    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
+        client.call("context_fs")
+
+    # agent 读到的还是同一句话；多出来的只是调用方判得动的那个类型。
+    assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
+
+
+def test_a_handler_that_threw_is_still_not_that_type(monkeypatch, tmp_path):
+    """判得出来的那一种只能装够不着。
+
+    `MachineOutOfReach` 是 `RuntimeError` 的子类，所以「执行器答了 500」那条路要是
+    也抛它，调用方一样会把这一轮剩下的文件与命令调用全部当掉 —— 而机器好好的。
+    """
+    client = failing_client(monkeypatch, tmp_path, 500)
+
+    with pytest.raises(RuntimeError) as raised:
+        client.call("context_fs")
+
+    assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
