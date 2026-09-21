@@ -308,31 +308,6 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     assert body["supply"].get("key") is None
 
 
-@pytest.mark.anyio
-async def test_admission_that_cannot_resolve_a_model_refuses_in_its_own_words(
-    client, monkeypatch
-):
-    """准入只有两种答案：allow 和 refuse。
-
-    解析不出模型时把异常抛出去，客户端收到的是一个 422；而代理对 admission 的
-    HTTP 错误 fail-open，且 fail-open 有方向 —— 它回落到订阅池。于是一个本该被
-    拒绝的项目被静默送去订阅池跑了，正是 I27 要杀掉的换池。所以这里说出来，用
-    准入自己的词。
-    """
-    from app.domain.room_task import binding
-
-    monkeypatch.setattr(binding, "model_choices", lambda _settings: [])
-    pid = _make_project(client)
-    headers = {"Authorization": f"Bearer {mint_scoped_token(project_id=pid)}"}
-
-    response = client.post("/llm/admission", headers=headers)
-
-    assert response.status_code == 200, response.text
-    body = response.json()["data"]
-    assert body["allow"] is False
-    assert "模型" in body["reason"]
-
-
 # --- which ccproxy identity a turn goes out as ------------------------------
 # ccproxy only honours a machine's ticket over that machine's OWN identity
 # (measured 2026-08-14: m516's ticket over an m161 connection is a 401 with no

@@ -34,7 +34,6 @@ from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
     NotFoundError,
-    ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
@@ -154,17 +153,16 @@ async def admission(
     # binding on the card. This is the one control point (结论 46): a request
     # whose model cannot be resolved is refused and told so, never quietly
     # served from the other pool.
+    #
+    # 解析失败没有在这里接住：准入今天传的永远是 `None`（房间主线），而目录里必
+    # 有一个 default，所以 `resolve` 在这条路径上抛不出来。这条活自己的绑定进到
+    # 准入，是 P33 派子 agent 那一刻的事；接住它、以及「拒绝理由不能被套上项目额
+    # 度的前缀」（代理今天把所有 allow=False 渲染成 `cheese project budget: …`），
+    # 跟着那条 PR 一起落，那时它才有真能走到的路径可测。
     project = await ProjectRepository(db).get(project_uuid)
-    try:
-        pool = binding.resolve(
-            None, binding.catalog(project.settings if project else None)
-        ).supply
-    except ValidationError as exc:
-        # 答不出就拒绝并说出来（I27），而不是把这个异常变成一个 422。准入只答
-        # allow / refuse：代理对 admission 的 HTTP 错误 fail-open，而 fail-open
-        # 有方向 —— 它回落到订阅池。一个网关池的项目解析不出模型时收到 422，等于
-        # 被悄悄送去订阅池跑，正是这条路径存在的理由要杀掉的那次静默换池。
-        return ok({"allow": False, "reason": str(exc), "supply": {}})
+    pool = binding.resolve(
+        None, binding.catalog(project.settings if project else None)
+    ).supply
     supply: dict = {"pool": pool}
     if pool == GATEWAY and decision.allow:
         # Minted lazily and cached on the project; the proxy never holds a

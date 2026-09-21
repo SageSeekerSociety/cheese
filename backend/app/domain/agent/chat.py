@@ -3984,9 +3984,24 @@ class ChatService:
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
+            #
+            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
+            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
+            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
+            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
+            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
+            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
+            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
+            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
+            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
             (
                 json.dumps(
-                    {"agent": agent.configuration, "git_author": acting_agent},
+                    {
+                        "agent": agent.configuration,
+                        "git_author": acting_agent,
+                        "model": model,
+                        "supply": supply,
+                    },
                     sort_keys=True,
                 )
                 + ":explicit-chat-v3-native-skills"

@@ -357,6 +357,88 @@ def test_rc_profile_retains_its_provider_identity(monkeypatch, tmp_path):
     assert flow.request.headers["authorization"] == "Bearer provider-secret"
 
 
+def _admission_pool(mod, monkeypatch, pool: str):
+    """A control plane that answers every project with this pool."""
+    monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
+    monkeypatch.setattr(
+        mod,
+        "ADMISSION",
+        SimpleNamespace(
+            check=lambda project, topic, bearer: SimpleNamespace(
+                allow=True, reason="", pool=pool, key="project-key", upstream=None
+            )
+        ),
+    )
+
+
+def test_a_gateway_sessions_control_endpoints_are_answered_by_cheese(
+    monkeypatch, tmp_path
+):
+    """一个走网关池的 RC 会话，Anthropic 账号这件事它根本没有。
+
+    让 `/api/oauth/profile` 原样上游，回包里是**平台自己那个订阅账号**的 uuid 和
+    email —— 而问它的是一个在跑别人代码的沙箱。答复里换成这条活自己的地点：组织
+    是项目，账号是房间。
+
+    判据是准入答出来的池，不是凭据里签着的型号：型号那份声明已经没了（模型绑在活
+    上，每个请求现场解析），而池是同一次准入答复里的东西，本来就要问一次。
+    """
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    _admission_pool(mod, monkeypatch, "gateway")
+    token = _scoped_token("test-secret", rc=True)
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    for path in (
+        "/api/oauth/profile",
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+    ):
+        flow = _make_flow(path=path, caller_bearer="machine-ticket")
+        # 归账那一侧允许 header 在已证明的项目内部挑房间；身份这一侧不允许 ——
+        # 答出去的是这条 RC 会话被签在哪儿。
+        flow.request.headers["x-cheese-attr"] = "p1/some-other-topic"
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response.status_code == (204 if path.endswith("settings") else 200)
+        assert flow.request.stream is False
+        assert flow.server_conn.via is None
+        # 平台的订阅凭据没有被挂上去，请求也没有出过这一跳。
+        assert flow.request.headers.get("authorization") != "Bearer provider-secret"
+        if path.endswith("profile"):
+            data = json.loads(flow.response.content)
+            assert data["organization"]["uuid"] == "p1"
+            assert data["account"]["uuid"] == "t1"
+        elif path.endswith("settings"):
+            assert flow.response.content == b""
+        else:
+            assert (
+                json.loads(flow.response.content)["restrictions"][
+                    "allow_remote_control"
+                ]["allowed"]
+                is True
+            )
+
+
+def test_a_subscription_sessions_profile_still_goes_to_its_own_account(
+    monkeypatch, tmp_path
+):
+    """订阅会话问的是它自己那个账号，所以照旧上游。
+
+    让代理对**每一个** RC 会话都本地应答，是结论 46「要做的两件」之一，而那一条
+    自己要求先拿真的 Claude Code 实测（P34），所以不在这里顺手加上。
+    """
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    _admission_pool(mod, monkeypatch, "subscription")
+    token = _scoped_token("test-secret", rc=True)
+    mod.http_connect(_make_connect_flow(_basic(token)))
+    flow = _make_flow(path="/api/oauth/profile", caller_bearer="machine-ticket")
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response is None
+    assert flow.request.headers["authorization"] == "Bearer provider-secret"
+
+
 def test_rc_without_backend_never_falls_through_to_official_service(
     monkeypatch, tmp_path
 ):
