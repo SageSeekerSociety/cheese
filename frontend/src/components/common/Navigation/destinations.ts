@@ -30,7 +30,7 @@ const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', ico
 const SPACES: NavItem = {
   key: 'Spaces',
   type: 'item',
-  title: '空间',
+  title: '题目板',
   to: '/spaces',
   icon: 'mdi-view-dashboard',
   match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams') || path.startsWith('/work'),

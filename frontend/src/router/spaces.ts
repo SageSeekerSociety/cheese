@@ -26,7 +26,7 @@ export default {
       component: () => import('@/layouts/spaces/SpacesTasks.vue'),
       redirect: { name: 'SpacesDetailTasksList' },
       meta: {
-        title: '赛题',
+        title: '题目',
         icon: { type: 'icon', value: 'mdi-cube-outline' },
       },
       children: [
@@ -82,7 +82,7 @@ export default {
             header: () => import('@/components/common/PageHeader.vue'),
           },
           meta: {
-            title: '赛题',
+            title: '题目',
             backTo: 'SpacesDetailTasksList',
           },
           children: [
@@ -91,7 +91,7 @@ export default {
               name: 'TasksDetail',
               component: () => import('@/views/tasks/detail/Overview.vue'),
               meta: {
-                title: '赛题概览',
+                title: '题目概览',
                 disableBreadcrumbLink: true,
               },
             },
@@ -139,7 +139,7 @@ export default {
           name: 'TasksEdit',
           component: () => import('@/views/tasks/Edit.vue'),
           meta: {
-            title: '编辑赛题',
+            title: '编辑题目',
             backTo: 'TasksDetail',
           },
         },

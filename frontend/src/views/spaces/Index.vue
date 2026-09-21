@@ -2,13 +2,45 @@
   <!-- 广告词只给第一次来的人看，而底栏点进来的是每天回来的人：手机上它连
          内边距要吃掉 128px，一屏去掉一大半，下面才是你来这儿要用的东西。 -->
   <div v-if="mdAndUp" class="header-corner-glow-flow">
-    <PageHeader icon="mdi-view-dashboard" title="空间"></PageHeader>
+    <PageHeader icon="mdi-view-dashboard" title="题目板"></PageHeader>
     <div class="w-100 pa-8 py-16">
       <div class="text-h4 text-high-emphasis">在知是，灵感启航。</div>
       <div class="text-subtitle-1 text-medium-emphasis mt-1">让你的学术好奇心，在此与一个好课题相遇。</div>
     </div>
   </div>
   <v-container fluid>
+    <v-sheet v-if="AccountService.loggedIn" border rounded="lg" class="pa-4 mb-4">
+      <h2 class="text-h6 mb-3">{{ t('spaces.review.mine') }}</h2>
+      <v-alert v-if="applicationsError" type="error" variant="tonal" class="mb-3">
+        {{ t('spaces.review.loadFailed') }}
+        <v-btn variant="text" @click="loadApplications">{{ t('spaces.review.retry') }}</v-btn>
+      </v-alert>
+      <p v-if="!applications.length && !applicationsError" class="text-body-2 text-medium-emphasis">
+        {{ t('spaces.review.emptyMine') }}
+      </p>
+      <div v-for="item in applications" :key="item.id" class="py-3">
+        <div class="d-flex flex-wrap align-center ga-2 mb-1">
+          <v-avatar v-if="item.avatarId" size="32" :image="getAvatarUrl(item.avatarId)" />
+          <h3 class="text-body-1 font-weight-medium application-copy">{{ item.name }}</h3>
+          <span class="text-body-2 text-medium-emphasis">{{ t(`spaces.review.${item.reviewStatus}`) }}</span>
+        </div>
+        <p class="text-body-2 application-copy">{{ item.reviewReason || item.intro }}</p>
+        <v-btn v-if="item.reviewStatus === 'REJECTED'" class="mt-2" variant="text" @click="openResubmit(item)">{{
+          t('spaces.review.resubmit')
+        }}</v-btn>
+        <v-btn v-if="item.reviewStatus === 'APPROVED'" class="mt-2" variant="text" :to="`/spaces/${item.id}`">{{
+          t('spaces.review.enter')
+        }}</v-btn>
+      </div>
+      <div v-if="applicationOffset || applications.length === 50" class="d-flex justify-end">
+        <v-btn :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
+          t('spaces.review.previous')
+        }}</v-btn>
+        <v-btn :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
+          t('spaces.review.next')
+        }}</v-btn>
+      </div>
+    </v-sheet>
     <!-- 这一页通篇是**别人**的空间，没有一个字说他自己的东西从哪儿开——登录后
          的首页现在是「我的工作」（/work），空间列表降级成了它顶部的一排。这一格
          只给一个项目都没有的人看；有项目的人这一页还是原来那副样子。 -->
@@ -18,15 +50,23 @@
         建一个项目，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。
       </p>
       <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="startProject">新建项目</v-btn>
-      <p class="text-caption text-medium-emphasis mt-3 mb-0">或者先逛逛下面的空间，看看别人在做什么。</p>
+      <p class="text-caption text-medium-emphasis mt-3 mb-0">或者先逛逛下面的题目板，看看别人在做什么。</p>
     </v-sheet>
     <v-row no-gutters>
       <v-col cols="12">
         <v-card class="search-card elevation-0">
           <v-card-title class="d-flex align-center justify-space-between pb-0 pt-4 px-4">
             <div class="d-flex align-center">
-              <span class="text-h6">探索空间</span>
+              <span class="text-h6">探索题目板</span>
             </div>
+            <v-btn
+              v-if="AccountService.loggedIn"
+              color="primary"
+              variant="flat"
+              prepend-icon="mdi-plus"
+              @click="openCreateSpace"
+              >{{ t('spaces.create.open') }}</v-btn
+            >
             <!-- <v-btn-toggle v-model="selectedSort" class="sort-toggle" rounded="lg" color="primary" density="comfortable">
               <v-btn
                 v-for="(item, index) in sortOptions"
@@ -53,7 +93,7 @@
             >
               <template #empty>
                 <div class="empty-state-container py-6">
-                  <v-empty-state title="暂无空间" icon="mdi-google-maps" class="custom-empty-state" />
+                  <v-empty-state title="暂无题目板" icon="mdi-google-maps" class="custom-empty-state" />
                 </div>
               </template>
               <v-row>
@@ -89,9 +129,61 @@
       </v-col>
     </v-row>
   </v-container>
+  <v-dialog v-model="createDialog" max-width="520" :persistent="creating">
+    <v-card :title="resubmittingId === null ? t('spaces.create.open') : t('spaces.review.resubmit')">
+      <v-form @submit.prevent="createSpace">
+        <v-card-text>
+          <p class="text-body-2 mb-2">{{ t('spaces.create.ownership') }}</p>
+          <p class="text-body-2 text-medium-emphasis mb-4">{{ t('spaces.create.visibility') }}</p>
+          <p class="text-body-2 mb-2">{{ t('spaces.create.avatar') }}</p>
+          <AvatarUploader
+            v-if="createDialog"
+            v-model="selectedAvatar"
+            :src="existingAvatarId ? getAvatarUrl(existingAvatarId) : undefined"
+            :disabled="creating"
+            class="mb-4 board-avatar-picker"
+          />
+          <v-text-field
+            v-model="spaceName"
+            autocomplete="off"
+            maxlength="255"
+            :label="t('spaces.create.name')"
+            :placeholder="t('spaces.create.placeholder')"
+            :disabled="creating"
+            autofocus
+            variant="outlined"
+          />
+          <v-textarea
+            v-model="spaceIntro"
+            autocomplete="off"
+            :label="t('spaces.create.intro')"
+            :disabled="creating"
+            rows="3"
+            variant="outlined"
+          />
+          <v-alert v-if="createError" type="error" variant="tonal" role="alert">{{ createError }}</v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn :disabled="creating" @click="createDialog = false">{{ t('spaces.create.cancel') }}</v-btn>
+          <v-btn
+            type="submit"
+            color="primary"
+            variant="flat"
+            :loading="creating"
+            :disabled="!spaceName.trim() || creating"
+          >
+            {{ t('spaces.create.submit') }}
+          </v-btn>
+        </v-card-actions>
+      </v-form>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script lang="ts" setup>
+import type { PostSpaceRequestData, SpaceApplication } from '@/network/api/spaces/types'
+
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
@@ -102,12 +194,82 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/network/api/spaces'
+import AccountService from '@/services/account'
 
 const { t } = useI18n()
 const { mdAndUp } = useDisplay()
+const applications = ref<SpaceApplication[]>([])
+const applicationsError = ref(false)
+const applicationOffset = ref(0)
+const resubmittingId = ref<number | null>(null)
+
+async function loadApplications() {
+  applicationsError.value = false
+  try {
+    applications.value = (await SpacesApi.applications(applicationOffset.value)).data.items
+  } catch {
+    applicationsError.value = true
+  }
+}
+
+function changeApplicationsPage(delta: number) {
+  applicationOffset.value += delta
+  void loadApplications()
+}
+
+function openResubmit(item: SpaceApplication) {
+  resubmittingId.value = item.id
+  spaceName.value = item.name
+  spaceIntro.value = item.intro
+  selectedAvatar.value = undefined
+  existingAvatarId.value = item.avatarId ?? undefined
+  createError.value = ''
+  createDialog.value = true
+}
+const createDialog = ref(false)
+const creating = ref(false)
+const spaceName = ref('')
+const spaceIntro = ref('')
+const selectedAvatar = ref<File>()
+const existingAvatarId = ref<number>()
+const createError = ref('')
+
+function openCreateSpace() {
+  resubmittingId.value = null
+  spaceName.value = ''
+  spaceIntro.value = ''
+  selectedAvatar.value = undefined
+  existingAvatarId.value = undefined
+  createError.value = ''
+  createDialog.value = true
+}
+
+async function createSpace() {
+  if (creating.value || !spaceName.value.trim()) return
+  creating.value = true
+  createError.value = ''
+  try {
+    const payload: PostSpaceRequestData = { name: spaceName.value.trim(), intro: spaceIntro.value.trim() }
+    if (selectedAvatar.value) {
+      const { data } = await AvatarsApi.createAvatar(selectedAvatar.value)
+      payload.avatarId = data.avatarId
+    }
+    if (resubmittingId.value !== null) await SpacesApi.resubmit(resubmittingId.value, payload)
+    else await SpacesApi.create(payload)
+    createDialog.value = false
+    applicationOffset.value = 0
+    await loadApplications()
+  } catch {
+    createError.value = t('spaces.create.failed')
+  } finally {
+    creating.value = false
+  }
+}
 const { show: showNewProjectDialog } = useNewProjectDialog()
 
 const selectedSort = ref('newest')
@@ -165,12 +327,22 @@ function startProject() {
 }
 
 onMounted(async () => {
+  if (AccountService.loggedIn) void loadApplications()
   void detectFirstRun()
   await refresh()
 })
 </script>
 
 <style scoped>
+.board-avatar-picker {
+  width: 120px;
+}
+
+.application-copy {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .search-card {
   transition: all 0.3s ease;
   overflow: hidden;

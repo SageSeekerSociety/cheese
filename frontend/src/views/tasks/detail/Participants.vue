@@ -57,7 +57,7 @@
       <v-card-text v-else-if="filteredParticipants.length === 0" class="py-12">
         <v-empty-state
           :title="participants.length === 0 ? '暂无参与者' : '没有符合条件的参与者'"
-          :text="participants.length === 0 ? '等待用户报名参与赛题' : '尝试调整筛选条件'"
+          :text="participants.length === 0 ? '等待用户报名参与题目' : '尝试调整筛选条件'"
           icon="mdi-account-group"
         ></v-empty-state>
       </v-card-text>

@@ -50,7 +50,7 @@
               <template v-if="!taskData.joined && canUserJoin">
                 <v-btn color="primary" class="join-btn" rounded="lg" @click="$emit('join')">
                   <v-icon start icon="mdi-arrow-right" class="mr-1"></v-icon>
-                  领取赛题
+                  领取题目
                 </v-btn>
               </template>
               <template v-else-if="taskData.joined">
@@ -68,7 +68,7 @@
                   <v-icon start icon="mdi-upload" class="mr-1"></v-icon>
                   前往提交
                 </v-btn>
-                <v-btn color="error" variant="outlined" rounded="lg" @click="$emit('leave')"> 退出赛题 </v-btn>
+                <v-btn color="error" variant="outlined" rounded="lg" @click="$emit('leave')"> 退出题目 </v-btn>
               </template>
             </div>
           </div>

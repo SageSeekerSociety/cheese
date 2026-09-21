@@ -57,7 +57,7 @@
   "signInWithAPasskey": "通行密钥登录",
   "signedIn": "登录成功",
   "signinFailedPleaseTryAgain": "登录失败，请重试",
-  "someChallengesAreOnlyAvailableToParticular": "部分赛题可能仅对特定域名邮箱开放，使用个人邮箱可能影响您查看或参与这些内容。",
+  "someChallengesAreOnlyAvailableToParticular": "部分题目可能仅对特定域名邮箱开放，使用个人邮箱可能影响您查看或参与这些内容。",
   "startSharingKnowledgeWithYourTeam": "开启您的知识共享之旅",
   "termsOfService": "用户协议",
   "thirdpartySigninFailed": "OAuth 登录失败",

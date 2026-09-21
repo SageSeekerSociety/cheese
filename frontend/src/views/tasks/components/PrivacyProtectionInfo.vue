@@ -40,7 +40,7 @@
               <div>
                 <div class="text-subtitle-2 font-weight-medium mb-1">用途限制</div>
                 <p class="text-body-2 text-medium-emphasis mb-0">
-                  您的实名信息仅在必要的赛题报名环节使用，不用于其他目的
+                  您的实名信息仅在必要的题目报名环节使用，不用于其他目的
                 </p>
               </div>
             </div>
@@ -72,7 +72,7 @@
             </v-avatar>
             <div>
               <div class="text-subtitle-2 font-weight-medium mb-1">身份验证</div>
-              <p class="text-body-2 text-medium-emphasis mb-0">用于确认参与者身份，保证赛题参与的真实性和有效性</p>
+              <p class="text-body-2 text-medium-emphasis mb-0">用于确认参与者身份，保证题目参与的真实性和有效性</p>
             </div>
           </div>
         </v-card-text>
@@ -87,7 +87,7 @@
             <div>
               <div class="text-subtitle-2 font-weight-medium mb-1">参与资格筛选</div>
               <p class="text-body-2 text-medium-emphasis mb-0">
-                用于根据您的学业信息判断是否符合参与特定赛题的资格要求
+                用于根据您的学业信息判断是否符合参与特定题目的资格要求
               </p>
             </div>
           </div>
@@ -102,7 +102,7 @@
             </v-avatar>
             <div>
               <div class="text-subtitle-2 font-weight-medium mb-1">项目认证</div>
-              <p class="text-body-2 text-medium-emphasis mb-0">用于赛题结题后的证书发放、学分认定和成果展示</p>
+              <p class="text-body-2 text-medium-emphasis mb-0">用于题目结题后的证书发放、学分认定和成果展示</p>
             </div>
           </div>
         </v-card-text>
@@ -113,7 +113,7 @@
     <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
       <div class="text-subtitle-2 font-weight-medium mb-1">您的权利</div>
       <p class="text-body-2 mb-0">
-        我们的系统采用多层保护机制，在满足少数赛题对实名信息的需求的同时，确保您在平台上的隐私安全。
+        我们的系统采用多层保护机制，在满足少数题目对实名信息的需求的同时，确保您在平台上的隐私安全。
         所有对您信息的访问都会被记录，您可以随时查看这些记录。
       </p>
     </v-alert>

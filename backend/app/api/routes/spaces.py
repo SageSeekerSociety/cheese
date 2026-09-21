@@ -34,6 +34,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
@@ -53,7 +54,7 @@ _logger = logging.getLogger(__name__)
 class CreateSpaceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    name: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1, max_length=255)
     intro: str = ""
     description: str = ""
     avatar_id: int | None = Field(default=None, alias="avatarId")
@@ -148,7 +149,33 @@ class PatchSpaceManagerRequest(BaseModel):
     role: str = Field(..., min_length=1)
 
 
-router = APIRouter(prefix="/spaces", tags=["Spaces"])
+async def require_reviewed_space(
+    request: Request,
+    user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> None:
+    space_id = request.path_params.get("spaceId")
+    if space_id is None:
+        return
+    try:
+        space_id = int(space_id)
+    except ValueError:
+        return  # Path validation supplies the normal 422 response.
+    space = await SpaceRepository(db).get_by_id(space_id)
+    if space is None or space.review_status == "APPROVED":
+        return
+    # Applications are edited through resubmission, so a review covers fixed text.
+    if request.method == "GET" and request.url.path.rstrip("/").endswith(
+        f"/spaces/{space_id}"
+    ):
+        if await SpaceReviewService(db).is_owner(space_id, user.user_id):
+            return
+    raise NotFoundError("Space not found")
+
+
+router = APIRouter(
+    prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
+)
 
 
 def _expect_list(value: list | str | None, field: str) -> list:
@@ -247,6 +274,8 @@ def _space_to_api_model(space: Space) -> dict:
         "name": space.name,
         "intro": space.intro,
         "description": space.description,
+        "reviewStatus": space.review_status,
+        "reviewReason": space.review_reason,
         "avatarId": space.avatar_id,
         "enableRank": space.enable_rank,
         "visibleTaskLimit": space.visible_task_limit,
@@ -543,6 +572,8 @@ async def create_space(
             topic_ids=classification_topic_ids,
             actor_user_id=auth_user.user_id,
         )
+    space.review_status = "PENDING"
+    await db.flush()
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {
         "code": 201,

@@ -7,7 +7,7 @@
       class="mb-4"
       rounded="lg"
       title="审核未通过"
-      text="您的赛题未通过审核"
+      text="您的题目未通过审核"
     >
       <template #text>
         <div class="mt-2">
@@ -33,7 +33,7 @@
     >
       <template #text>
         <div class="mt-2">
-          <div class="font-weight-medium">{{ userReasons[0]?.message || '您当前无法参与此赛题' }}</div>
+          <div class="font-weight-medium">{{ userReasons[0]?.message || '您当前无法参与此题目' }}</div>
 
           <!-- 等级不足提示 -->
           <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
@@ -43,7 +43,7 @@
           <!-- 缺少实名信息提示 -->
           <div v-if="userReasons[0]?.code === 'USER_MISSING_REAL_NAME'" class="mt-2 text-medium-emphasis">
             <div class="d-flex align-center gap-2">
-              <span>此赛题需要提供实名信息才能参与。</span>
+              <span>此题目需要提供实名信息才能参与。</span>
               <v-btn color="primary" variant="tonal" size="small" :to="{ name: 'UserSettingsRealName' }">
                 前往填写
                 <v-icon end>mdi-arrow-right</v-icon>
@@ -53,7 +53,7 @@
 
           <!-- 人数已满提示 -->
           <div v-if="userReasons[0]?.code === 'PARTICIPANT_LIMIT_REACHED'" class="mt-2 text-medium-emphasis">
-            该赛题参与名额已满，请关注其他赛题。
+            该题目参与名额已满，请关注其他题目。
           </div>
         </div>
       </template>
@@ -71,7 +71,7 @@
         <div class="mt-2">
           <!-- 没有小队的情况 -->
           <div v-if="noTeams" class="font-weight-medium">
-            您需要创建或加入一个小队才能参与此赛题
+            您需要创建或加入一个小队才能参与此题目
             <div class="mt-2 d-flex align-center">
               <v-btn color="primary" variant="tonal" size="small" :to="{ name: 'HomeTeamsMine' }">
                 前往管理我的小队
@@ -82,7 +82,7 @@
 
           <!-- 有小队但都不符合条件的情况 -->
           <div v-else-if="hasTeamsButNoneEligible" class="font-weight-medium">
-            您有 {{ teamCount }} 个小队，但没有符合条件的小队可以参与此赛题
+            您有 {{ teamCount }} 个小队，但没有符合条件的小队可以参与此题目
 
             <v-expansion-panels variant="accordion" class="mt-3">
               <v-expansion-panel v-for="teamEligibility in teamEligibilityList" :key="teamEligibility.team.id">
@@ -108,10 +108,10 @@
 
                     <!-- 团队人数不满足要求 -->
                     <div v-if="reason.code === 'TEAM_SIZE_MIN_NOT_MET'" class="mt-1 text-medium-emphasis">
-                      此赛题要求小队最少 {{ taskData.minTeamSize }} 人，请邀请更多成员加入您的小队。
+                      此题目要求小队最少 {{ taskData.minTeamSize }} 人，请邀请更多成员加入您的小队。
                     </div>
                     <div v-if="reason.code === 'TEAM_SIZE_MAX_EXCEEDED'" class="mt-1 text-medium-emphasis">
-                      此赛题要求小队最多 {{ taskData.maxTeamSize }} 人，您的小队人数超出限制。
+                      此题目要求小队最多 {{ taskData.maxTeamSize }} 人，您的小队人数超出限制。
                     </div>
 
                     <!-- 团队成员缺少实名信息 -->
@@ -144,7 +144,7 @@
 
                     <!-- 团队成员等级不足 -->
                     <div v-if="reason.code === 'TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH'" class="mt-1 text-medium-emphasis">
-                      小队中有成员等级不足，无法参与此难度的赛题。
+                      小队中有成员等级不足，无法参与此难度的题目。
                     </div>
                   </div>
 
@@ -165,7 +165,7 @@
 
           <!-- 非小队原因导致的限制 -->
           <div v-else-if="userReasons.length > 0" class="font-weight-medium">
-            {{ userReasons[0]?.message || '您当前无法参与此赛题' }}
+            {{ userReasons[0]?.message || '您当前无法参与此题目' }}
 
             <!-- 根据不同原因显示不同提示 -->
             <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
@@ -173,7 +173,7 @@
             </div>
 
             <div v-if="userReasons[0]?.code === 'PARTICIPANT_LIMIT_REACHED'" class="mt-2 text-medium-emphasis">
-              该赛题参与名额已满，请关注其他赛题。
+              该题目参与名额已满，请关注其他题目。
             </div>
           </div>
         </div>
@@ -191,14 +191,14 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">赛题详情</v-card-title>
+            <v-card-title class="text-h5 ps-0">题目详情</v-card-title>
           </v-card-item>
 
           <v-card-text>
             <div class="task-description">
               <TipTapViewer v-if="isTipTapJson" :value="tipTapContent" />
               <div v-else-if="renderedMarkdown" class="markdown-body" v-html="renderedMarkdown" />
-              <p v-else class="text-medium-emphasis">暂无赛题详情</p>
+              <p v-else class="text-medium-emphasis">暂无题目详情</p>
             </div>
           </v-card-text>
         </v-card>
@@ -213,7 +213,7 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">赛题视频</v-card-title>
+            <v-card-title class="text-h5 ps-0">题目视频</v-card-title>
           </v-card-item>
           <v-card-text>
             <div class="video-container">
@@ -248,7 +248,7 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">赛题信息</v-card-title>
+            <v-card-title class="text-h5 ps-0">题目信息</v-card-title>
           </v-card-item>
 
           <v-divider class="mx-6"></v-divider>
@@ -392,11 +392,11 @@
                 <span>{{ p.name }}</span>
               </a>
             </div>
-            <div v-else class="text-medium-emphasis">还没有人从这道赛题开始做。</div>
+            <div v-else class="text-medium-emphasis">还没有人从这道题目开始做。</div>
 
             <v-btn color="primary" variant="tonal" rounded="pill" class="mt-4" @click="createProjectFromTask">
               <v-icon start>mdi-plus</v-icon>
-              从这道赛题创建项目
+              从这道题目创建项目
             </v-btn>
             <ResourceLimitsNotice />
           </v-card-text>
@@ -413,7 +413,7 @@
                 <div class="text-h5 font-weight-bold d-flex flex-wrap align-center gap-2">
                   <span>启星研导 <span class="text-primary">Navigator AI</span></span>
                 </div>
-                <div class="text-medium-emphasis">为您解析赛题核心，推荐学习路径，助力科研探索</div>
+                <div class="text-medium-emphasis">为您解析题目核心，推荐学习路径，助力科研探索</div>
               </div>
 
               <v-btn

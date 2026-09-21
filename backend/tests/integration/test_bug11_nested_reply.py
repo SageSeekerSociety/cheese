@@ -14,7 +14,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestBug11NestedReplyByDesign:
@@ -25,8 +25,8 @@ class TestBug11NestedReplyByDesign:
         headers = {"Authorization": f"Bearer {user.token}"}
 
         suffix = unique_int()
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Bug11 Space ({suffix})",
                 "intro": "Test",

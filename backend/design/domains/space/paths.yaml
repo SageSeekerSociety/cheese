@@ -2,7 +2,7 @@
 
 /spaces:
   get:
-    summary: List spaces
+    summary: List approved spaces
     operationId: listSpaces
     tags: [Spaces]
     parameters:
@@ -17,7 +17,7 @@
       '200':
         description: Spaces list
   post:
-    summary: Create space
+    summary: Submit a space for platform review
     operationId: createSpace
     tags: [Spaces]
     security:
@@ -29,7 +29,102 @@
             $ref: './schemas.yaml#/CreateSpaceRequest'
     responses:
       '201':
-        description: Space created
+        description: Space created in PENDING state; it cannot accept tasks until approved
+
+/space-applications:
+  get:
+    summary: List the caller's space applications
+    operationId: listSpaceApplications
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    responses:
+      '200':
+        description: Owner's applications with review state and rejection reason
+
+/space-applications/{spaceId}/resubmit:
+  post:
+    summary: Resubmit a rejected application as its owner
+    operationId: resubmitSpaceApplication
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/SpaceId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 255
+              intro:
+                type: string
+              avatarId:
+                type: integer
+                description: Uploaded avatar ID; omitted to keep the existing avatar
+    responses:
+      '200':
+        description: Application returned to PENDING
+      '409':
+        description: Application is not rejected, or the name is taken
+
+/admin/spaces:
+  get:
+    summary: List space applications as a platform administrator
+    operationId: listSpaceReviews
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED]
+          default: PENDING
+    responses:
+      '200':
+        description: Applications with applicant and review details
+      '403':
+        description: Platform administrator required
+
+/admin/spaces/{spaceId}/review:
+  post:
+    summary: Approve or reject a pending space as a platform administrator
+    operationId: reviewSpace
+    tags: [Spaces]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/SpaceId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [approved]
+            properties:
+              approved:
+                type: boolean
+              reason:
+                type: string
+                description: Required and nonblank when rejecting
+    responses:
+      '200':
+        description: Application reviewed
+      '400':
+        description: Rejection reason missing
+      '403':
+        description: Platform administrator required
+      '409':
+        description: Application already reviewed
 
 /spaces/{spaceId}:
   get:
