@@ -23,7 +23,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.delivery.addressing import Event
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -134,7 +134,7 @@ def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
     句话（谁该收到），分岔只在怎么送到（`identity/arrival.py`）。
     """
     room = _room(client)
-    agent = topic_agent_handle(uuid.UUID(room))
+    agent = agent_instance_handle(uuid.uuid4())
     agent_token = seed_user(client, agent)
     reporter = seed_user(client, "bob")
     _set_reporter(client, room, "bob")

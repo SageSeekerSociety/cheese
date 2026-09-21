@@ -48,9 +48,11 @@ def test_a_new_agent_can_act_be_attributed_to_and_be_de_authorized(client):
 
 
 def test_the_identity_does_not_come_from_a_room(client):
-    """Same agent, two rooms: one identity. The room-derived handle would have
-    given it two, and given a second agent in either room the first's name."""
-    from app.domain.identity.handles import agent_instance_handle, topic_agent_handle
+    """Same agent, two rooms: one identity, and neither room's id is in it.
+
+    A handle derived from the room would have given this agent two names, and
+    given a second agent in either room this one's name."""
+    from app.domain.identity.handles import agent_instance_handle
 
     project = _project(client)
     made = _agent(client, project, "planner", "规划师")
@@ -63,4 +65,11 @@ def test_the_identity_does_not_come_from_a_room(client):
     ]
 
     mine = agent_instance_handle(made["id"])
-    assert mine not in {topic_agent_handle(r) for r in rooms}
+    for room in rooms:
+        client.post(
+            f"/topics/{room}/members",
+            json={"user_handle": mine, "role": "member", "actor": "u"},
+        )
+        roster = client.get(f"/topics/{room}/members").json()["data"]["data"]
+        assert mine in [m["member_handle"] for m in roster]
+        assert room.replace("-", "")[:12] not in mine

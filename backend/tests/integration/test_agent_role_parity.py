@@ -1,11 +1,8 @@
 """Credentials identify participants; membership and roles grant permission."""
 
-import uuid
-
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.identity.handles import topic_agent_handle
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
 
@@ -21,13 +18,19 @@ def _rooms(client):
     return project, project["root_topic_id"], other
 
 
-def _agent(project, origin, *, scope="project", ttl=3600):
+def _agent(client, project, origin, *, scope="project", ttl=3600):
+    """房间里那位芝士自己的凭据。
+
+    身份是**凭出来**的，不是从房间推出来的：一间房可以坐好几个 agent，所以铸令牌
+    的那一刻必须说清是谁在用它。这里说的就是名册上坐着的那一位。
+    """
     return {
         "X-Cheese-Token": mint_scoped_token(
             project_id=project["id"],
             topic_id=origin,
             access_scope=scope,
             ttl_s=ttl,
+            agent_handle=_seated_agent(client, origin),
         )
     }
 
@@ -35,9 +38,8 @@ def _agent(project, origin, *, scope="project", ttl=3600):
 def _seated_agent(client, room: str) -> str:
     """房间名册上那条 agent 席位的 handle。
 
-    一个房间作用域的凭据就是以它的身份说话（`ActorResolver.seated_agent`），所以
     「撤席位」「给席位升权」这类断言要问名册，不能自己按房间 id 拼一个名字出来：
-    项目总览坐的是项目芝士自己的席位。
+    名字从 agent 自己来，项目总览坐的是项目芝士自己的席位。
     """
     body = client.get(f"/topics/{room}/members", headers=session_auth_headers("alice"))
     assert body.status_code == 200, body.text
@@ -56,8 +58,8 @@ def _join(client, room, handle):
 
 def test_cross_room_access_requires_membership_and_preserves_identity(client):
     project, origin, other = _rooms(client)
-    handle = topic_agent_handle(uuid.UUID(origin))
-    auth = _agent(project, origin)
+    handle = _seated_agent(client, origin)
+    auth = _agent(client, project, origin)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     _join(client, other, handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 200
@@ -88,11 +90,11 @@ def test_cross_room_access_requires_membership_and_preserves_identity(client):
 
 def test_room_only_credential_stays_restricted_even_with_membership(client):
     project, origin, other = _rooms(client)
-    _join(client, other, topic_agent_handle(uuid.UUID(origin)))
+    _join(client, other, _seated_agent(client, origin))
     assert (
         client.get(
             f"/topics/{other}/blocks",
-            headers=_agent(project, origin, scope="topic"),
+            headers=_agent(client, project, origin, scope="topic"),
         ).status_code
         == 403
     )
@@ -101,8 +103,8 @@ def test_room_only_credential_stays_restricted_even_with_membership(client):
 def test_project_access_cannot_cross_projects(client):
     project, origin, _ = _rooms(client)
     foreign, _, other = _rooms(client)
-    _join(client, other, topic_agent_handle(uuid.UUID(origin)))
-    auth = _agent(project, origin)
+    _join(client, other, _seated_agent(client, origin))
+    auth = _agent(client, project, origin)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     assert (
         client.get(f"/topics?project_id={foreign['id']}", headers=auth).status_code
@@ -112,7 +114,7 @@ def test_project_access_cannot_cross_projects(client):
 
 def test_expired_or_forged_agent_credentials_never_become_anonymous(client):
     project, origin, _ = _rooms(client)
-    for auth in (_agent(project, origin, ttl=-1), {"X-Cheese-Token": "forged"}):
+    for auth in (_agent(client, project, origin, ttl=-1), {"X-Cheese-Token": "forged"}):
         assert client.get(f"/topics/{origin}/blocks", headers=auth).status_code == 401
 
 
@@ -126,8 +128,8 @@ def test_removing_all_credentials_cannot_bypass_membership(client):
 @pytest.mark.parametrize("is_agent", [False, True])
 def test_project_role_controls_management_for_both_identities(client, is_agent):
     project, origin, _ = _rooms(client)
-    handle = topic_agent_handle(uuid.UUID(origin)) if is_agent else "bob"
-    auth = _agent(project, origin) if is_agent else session_auth_headers(handle)
+    handle = _seated_agent(client, origin) if is_agent else "bob"
+    auth = _agent(client, project, origin) if is_agent else session_auth_headers(handle)
     roster = f"/projects/{project['id']}/members"
     owner = session_auth_headers("alice")
     added = client.post(roster, json={"user_handle": handle}, headers=owner)
@@ -171,7 +173,7 @@ def test_project_role_controls_management_for_both_identities(client, is_agent):
 
 def test_revoked_room_membership_also_closes_agent_write_gate(client):
     project, origin, _ = _rooms(client)
-    auth = _agent(project, origin)
+    auth = _agent(client, project, origin)
     endpoint = f"/topics/{origin}/decision"
     assert (
         client.post(
@@ -201,7 +203,7 @@ def test_project_credential_has_one_identity_and_needs_a_grant(client):
     endpoint = f"/projects/{project['id']}/agent-credential"
     issued = client.post(endpoint, json={}, headers=owner)
     assert issued.status_code == 200, issued.text
-    handle = topic_agent_handle(uuid.UUID(origin))
+    handle = _seated_agent(client, origin)
     assert issued.json()["data"]["agent_handle"] == handle
     auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
@@ -226,7 +228,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
         params={"user_handle": "alice"},
         headers=owner,
     ).json()["data"]["id"]
-    handle = topic_agent_handle(uuid.UUID(origin))
+    handle = _seated_agent(client, origin)
     assert (
         client.post(
             f"/projects/{project['id']}/members",
@@ -235,7 +237,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
         ).status_code
         == 200
     )
-    auth = _agent(project, origin)
+    auth = _agent(client, project, origin)
     if project_credential:
         issued = client.post(
             f"/projects/{project['id']}/agent-credential", json={}, headers=owner
@@ -258,7 +260,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
     project, origin, _ = _rooms(client)
-    auth = _agent(project, origin)
+    auth = _agent(client, project, origin)
     handle = _seated_agent(client, origin)
     endpoint = f"/topics/{origin}/members"
     assert (
@@ -291,12 +293,12 @@ def test_manager_agent_can_issue_credentials_and_revocation_retires_them_all(cli
     assert (
         client.post(
             f"/projects/{project['id']}/members",
-            json={"user_handle": topic_agent_handle(uuid.UUID(origin)), "role": "lead"},
+            json={"user_handle": _seated_agent(client, origin), "role": "lead"},
             headers=owner,
         ).status_code
         == 200
     )
-    issued = client.post(endpoint, json={}, headers=_agent(project, origin))
+    issued = client.post(endpoint, json={}, headers=_agent(client, project, origin))
     auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
     second = client.post(endpoint, json={}, headers=auth)
     assert second.status_code == 200, second.text
@@ -312,7 +314,7 @@ def test_manager_agent_can_issue_credentials_and_revocation_retires_them_all(cli
 
 def test_turn_memory_remains_available_with_just_its_room_membership(client):
     project, origin, _ = _rooms(client)
-    auth = _agent(project, origin)
+    auth = _agent(client, project, origin)
     response = client.post(
         f"/projects/{project['id']}/memory",
         json={"topic": origin, "content": "A room-local observation"},
@@ -323,10 +325,10 @@ def test_turn_memory_remains_available_with_just_its_room_membership(client):
 
 def test_cloud_management_requires_role_even_with_an_agent_credential(client):
     project, origin, _ = _rooms(client)
-    auth = _agent(project, origin)
+    auth = _agent(client, project, origin)
     endpoint = f"/projects/{project['id']}/machines"
     owner = session_auth_headers("alice")
-    handle = topic_agent_handle(uuid.UUID(origin))
+    handle = _seated_agent(client, origin)
     roster = f"/projects/{project['id']}/members"
     assert (
         client.post(roster, json={"user_handle": handle}, headers=owner).status_code
@@ -349,12 +351,12 @@ def test_room_only_credential_cannot_use_project_management_roles(client):
     assert (
         client.post(
             f"/projects/{project['id']}/members",
-            json={"user_handle": topic_agent_handle(uuid.UUID(origin)), "role": "lead"},
+            json={"user_handle": _seated_agent(client, origin), "role": "lead"},
             headers=session_auth_headers("alice"),
         ).status_code
         == 200
     )
-    auth = _agent(project, origin, scope="topic")
+    auth = _agent(client, project, origin, scope="topic")
     for path, body in (
         ("members", {"user_handle": "bob"}),
         ("agent-credential", {}),
@@ -381,7 +383,7 @@ def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(
     client.headers.pop("X-Cheese-Token", None)
     for handle, auth in (
         ("alice", session_auth_headers("alice")),
-        (_seated_agent(client, origin), _agent(project, origin)),
+        (_seated_agent(client, origin), _agent(client, project, origin)),
     ):
         for action, body in (
             ("ask", {"question": "Which?", "options": ["A", "B"]}),
@@ -418,7 +420,7 @@ def test_review_actions_check_the_credentials_project_and_room(client):
             client.post(
                 f"/accept-cards/{card['id']}/{action}",
                 json=body,
-                headers=_agent(project, origin),
+                headers=_agent(client, project, origin),
             ).status_code
             == 403
         )

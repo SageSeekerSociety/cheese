@@ -27,7 +27,6 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
@@ -222,11 +221,12 @@ class CentralChannel(DeviceChannel):
         # below.
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
-            # The machine resolver supplies a room identity; the signed launch
-            # credential names the teammate actually taking this turn.
-            # A room-scoped legacy token leaves the precheck identity intact.
+            # The machine resolver supplies the room's agent; the signed launch
+            # credential names the teammate actually taking this turn. A token
+            # that names nobody (a platform capability) leaves the precheck
+            # identity intact.
             actor = token_agent_handle(token)
-            if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+            if actor and actor != agent_handle:
                 user = await user_by_handle(db, actor)
                 if user is None:
                     raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")

@@ -125,37 +125,6 @@ def test_two_agents_in_one_room_do_not_share_a_memory(client):
     ] == ["评审记的事"]
 
 
-def test_a_rooms_own_pool_stays_readable(client):
-    """Memory written while the pool was keyed by the ROOM must not disappear.
-
-    Nothing new lands there, but a room that had already learned something has
-    to keep reading it — otherwise the day this shipped looks, from inside that
-    room, exactly like amnesia.
-    """
-    import asyncio
-
-    from app.domain.identity.handles import topic_agent_handle
-    from app.domain.memory.models import MemoryScope, agent_project_scope_id
-    from app.domain.memory.store import memory_store
-
-    pid = _project(client)
-    room = _topic(client, pid, "old room")
-
-    async def _seed() -> None:
-        async with client.test_factory() as session:
-            await memory_store(session).remember(
-                MemoryScope.agent_project,
-                agent_project_scope_id(pid, topic_agent_handle(room)),
-                "这条是按房间分池时代记下的",
-            )
-            await session.commit()
-
-    asyncio.run(_seed())
-
-    hits = _recall(client, pid, room, "按房间分池")
-    assert [h["abstract"] for h in hits] == ["这条是按房间分池时代记下的"]
-
-
 # --- which agent works where -------------------------------------------------
 
 

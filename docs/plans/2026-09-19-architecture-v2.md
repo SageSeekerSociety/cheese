@@ -196,13 +196,11 @@ agent 实例由建它的项目拥有，只在那个项目有席位，别的项�
 | 跟着谁走 | 跟着参与者 | 跟着 (参与者, 房间) |
 | 谁能改 | 只有它自己/它的拥有者 | 房间的 owner/admin |
 
-今天 `identity/handles.py` 铸两种 agent handle：
-`agent_instance_handle`（**身份级**，从实例 id 派生，docstring 逐字说明了为什么不能从房间派生——
-「A room is a collaboration space and may seat several agents, so an agent's identity cannot be
-derived from a room — the same derivation would give two agents in one room the same name,
-and the same agent two names in two rooms.」）
-和 `topic_agent_handle`（**房间派生**，`cheese-<12 位 hex>`）。
-后者是 `cheese split` 那个第二身份的来源，按结论 31 要退场（1.5）。
+`identity/handles.py` 只铸一种 agent handle：`agent_instance_handle`（**身份级**，从实例 id
+派生，docstring 逐字说明了为什么不能从房间派生——「A room is a collaboration space and may
+seat several agents, so an agent's identity cannot be derived from a room — the same derivation
+would give two agents in one room the same name, and the same agent two names in two rooms.」）。
+房间派生的那一种是 `cheese split` 第二身份的来源，按结论 31 已随 P11 退场（1.5）。
 
 #### agent 的类型与实例
 
@@ -437,7 +435,7 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 
 | 今天有 | 在哪 | 按结论 31 |
 |---|---|---|
-| 第二身份 `cheese-<hex12>` | `identity/handles.py:37 topic_agent_handle`（`TOPIC_AGENT_PREFIX = "cheese-"`，`_TOPIC_AGENT_HEX = 12`），`runtime.py:512` 逐字「`cheese split` under her own `cheese-<hex12>` handle」 | **无**。分身不是第二个参与者 |
+| 第二身份 `cheese-<hex12>` | 已随 P11 退场：房间派生的铸造函数和它的 20 个调用点都没有了，名字只从 agent 自己来 | **无**。分身不是第二个参与者 |
 | 第二会话 / 屏幕 / 地点 | 分身自己的 screen 与租约 | **无** |
 | kickoff | `runtime.py:784-806`（`author="system"`，内容是 `KICKOFF_PROMPT`，`summon=True`） | **无**。平台不发起一轮（I12） |
 | `cheese_bind` | `harness/prompt.py:152/176` 两处提示词教它「起完分身立刻 `cheese_bind`」 | **无** |
@@ -1619,7 +1617,7 @@ so check there and not in the menu, the contract or the doc**」。
 | **房间** | `topic/` | `topics` 是最混层的一张表：`cleanup_id`、`cleanup_due_at`、`resource_id`、`compute_config`、`compute_profile`、`transcripts_archived_at`、`private_owner`/`private_peer` 全在一行上 | 每一列有一个层归属（I3 的登记表）；L1/L2 的列不在这张表上 |
 | **├ 项目总览** | `TopicKind.root`（`topic/models.py:58`），已存在 | `domain/scheduler/` 615 行在替它调度 | `scheduler/` 不存在；`scheduler/service.py:445` 那处 `summon` 连同整个包一起没有 |
 | **└ 私聊** | `private_owner`/`private_peer` 两列 + 52 处 `is_private` 分支（30 处在 `chat.py`） | 两席名册没住在 `topic_memberships`；`chat.py:2476` 自动发布 + `prompt.py:196-197` 配套提示词；`chat.py:4398-4405` 把算力钉成 `"device"` | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
-| **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | `cheese split` 的四样：第二身份（`handles.py:37`）、第二会话/地点、kickoff（`runtime.py:784-806`）、`cheese_bind`（`prompt.py:152/176`） | ①`topic_agent_handle` 零调用点；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
+| **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | `cheese split` 还剩三样：第二会话/地点、kickoff（`runtime.py:784-806`）、`cheese_bind`（`prompt.py:152/176`）——第二身份已随 P11 退场 | ①房间派生的 agent handle 零命中（`repo-guards.yml` 守着）；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
 | **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | transcript 只有上行没有回放（`event_drain.py` 上行；`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住） | ①`transfer_history` 的源可以是平台存的 transcript，调用点不再只有首次 placement；②`pi/channel.py` 不再写 `room.session_placement`；③`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；④**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_profile` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
 | **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `agent_sessions` 的 `work_lease`/`runtime_location`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④`topics.session_placement` 不存在，它拆成两条并都挂到会话上（结论 56，按结论 60 修订）：`agent_sessions` 上每条会话自己的工作机器租约一列、自己的运行位置一列；⑤租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑥地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
@@ -1678,7 +1676,6 @@ so check there and not in the menu, the contract or the doc**」。
 | 通知 | `alert/` vs `notification/` | 一个人被 @ 了而人不在页面上，什么都收不到 |
 | 「下一步在谁手上」 | `room_task/presentation.py`、`agent/platform_notices.py`、`ChatPanel.vue` 三处互不引用 | 看板显示「待处理」而没人被通知到 |
 | 名册 | 项目名册（`ProjectMember`，无 agent） vs 房间名册（`topic_memberships`，有 agent 席位） | agent 对 agent 不可见（结论 12 今天不可执行） |
-| agent handle 的铸造 | `identity/handles.py:37 topic_agent_handle` 与 `:47 agent_instance_handle` | 署名键与记忆键不相等（#1200）。按结论 31，前者退场，这条两份自然消失 |
 | 「认不出的失败」政策 | `chat.py` 的一条出口 vs `runtime.py` 的另一条 | 两条出口两种政策 |
 | 模型这一轮是什么 | 实例配置里的 `model` 字段 vs 用量记录 | 卡上显示的可能不是实际用的（I17 第三条） |
 

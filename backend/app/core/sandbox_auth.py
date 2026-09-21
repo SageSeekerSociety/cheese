@@ -30,7 +30,6 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from app.core.config import settings
-from app.domain.identity.handles import topic_agent_handle
 
 # Signing secret. Stable across restarts by construction — pinned via
 # SANDBOX_TOKEN, else derived from jwt_secret; see
@@ -62,19 +61,25 @@ def mint_scoped_token(
 ) -> str:
     """Mint an HMAC token scoped to a project (+ optional topic), expiring in ttl_s.
 
-    The token also names WHO acts with it (claim ``a``): the topic's 分身 agent
-    handle, derived from the topic id unless the caller pins one. Without it a
-    token said only "which topic" — every 分身 collapsed into the one platform
-    ``cheese`` account, so nothing it did was attributable and revoking one meant
-    waiting out the TTL. Tokens minted without a topic carry no identity claim
-    (project-wide capabilities like the git-http/LLM proxies act as the platform).
+    The token also names WHO acts with it (claim ``a``): ``agent_handle``, the
+    handle of the agent this turn runs as. Without it a token said only "which
+    topic" — every agent collapsed into the one platform ``cheese`` account, so
+    nothing it did was attributable and revoking one meant waiting out the TTL.
+
+    The caller names that agent; nothing here derives one. A room is a
+    collaboration space and may seat several agents, so a handle derived from
+    the room would give two of them one name and one of them two names — and a
+    token is precisely where that mistake is unrecoverable, because the name is
+    signed into it. A token minted without an agent carries no identity claim,
+    which is what a project-wide capability (the git-http / LLM proxies, a
+    transcript drain) is: the platform acting, not an agent.
     """
     payload: dict[str, str | int | None] = {
         "p": project_id,
         "t": topic_id,
         "exp": int(time.time()) + ttl_s,
     }
-    actor = agent_handle or (topic_agent_handle(topic_id) if topic_id else None)
+    actor = agent_handle
     if access_scope == "project":
         if not actor:
             raise ValueError("Project participant access requires an agent identity")

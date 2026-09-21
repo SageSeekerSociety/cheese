@@ -54,7 +54,6 @@ from app.domain.agent_instance.schemas import (
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    legacy_topic_pool,
     memory_pool,
 )
 from app.domain.block.models import BlockKind
@@ -932,27 +931,17 @@ async def _agent_memory_scope(
 async def _agent_memory_read_scopes(
     db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
 ) -> list[tuple[MemoryScope, str]]:
-    """Every pool a read on behalf of ``place`` should cover.
+    """Every pool a read on behalf of ``place`` should cover: the agent's own.
 
-    The agent's own pool, plus the pool this room filled back when memory was
-    keyed by the room. Writes go to the first alone; the second is a read-only
-    tail so that repointing memory at the agent does not read as amnesia in
-    every room that had already learned something.
-
-    The legacy tail is the ROOM's, even when a thread is asking: that pool was
-    filled when work was a room of its own, so keying it by the thread would
-    look up an id nothing ever wrote under.
+    One pool, because an agent has one memory inside a project wherever it is
+    standing. What the rooms accumulated while memory was keyed by the room was
+    rekeyed onto the agent by `d5c48f1a6b73`, so there is no second pool left to
+    read and no room whose id would name one.
     """
     if caller is None:
         return []
     agent_scope = await _agent_memory_scope(db, project_id, caller)
-    if agent_scope is None:
-        return []
-    scopes = [agent_scope]
-    legacy = legacy_topic_pool(project_id, caller[0].room_id)
-    if legacy != agent_scope:
-        scopes.append(legacy)
-    return scopes
+    return [agent_scope] if agent_scope is not None else []
 
 
 def _authorize_personal_memory_owner(place: Place | None, owner: str) -> None:

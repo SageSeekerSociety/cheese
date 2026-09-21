@@ -9,9 +9,9 @@
 
 这条判据不放宽成「这个项目认不认它」，哪怕只放宽一点：总览的花名册照着整个项目，
 所以「根房间认不认它」等于「项目认不认它」，撤掉的席位就白撤了。不照房间花名册答
-的只有一个 handle——项目凭证认证的那位芝士（`topic_agent_handle(根房间)`），它按
-定义不借任何房间的席位，只问目的地房间的话，线下那张凭证在除根房间外的任何房间里
-都会被答成「不是 agent」。
+的只有一个 handle——项目凭证认证的那位芝士，也就是这个项目自己的那一位，它按定义
+不借任何房间的席位，只问目的地房间的话，线下那张凭证在除总览外的任何房间里都会被
+答成「不是 agent」。
 
 **缝二（I9b）：一个 agent 实例只能在建它的那个项目里持有席位。** 人没有这条限制
 ——被邀请到哪就去哪。这是「谁拥有这个参与者」的直接后果：实例由建它的项目拥有，
@@ -21,7 +21,7 @@
 import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
-from app.domain.identity.handles import agent_instance_handle, topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -133,8 +133,8 @@ def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
     认它」——一个被从房间 X 撤掉席位的队友照样发得出来，而撤席位就是撤授权正是这
     整件事存在的理由。
 
-    兜底要管的只有一个 handle：项目凭证认证的那位芝士（`topic_agent_handle(根房间)`），
-    它按定义不借任何房间的席位。别的队友一律照房间的花名册答。
+    兜底要管的只有一个 handle：项目凭证认证的那位芝士，也就是这个项目自己的那一
+    位，它按定义不借任何房间的席位。别的队友一律照房间的花名册答。
     """
     project = _project(client, "Root seat is not a project pass")
     root = client.get(f"/projects/{project['id']}").json()["data"]["root_topic_id"]
@@ -183,12 +183,13 @@ def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
 def _project_credential(client, project) -> tuple[str, str]:
     """一张项目凭证，和它代表的那位芝士的 handle。
 
-    项目凭证认证的是**根房间**那位芝士，到哪个房间都不换身份。签发本身不给角色，
-    所以这里照 `test_project_agent_credential` 的做法显式把它加进项目成员——凭证
-    的可达范围来自它已有的成员身份。
+    项目凭证认证的是**这个项目自己**的那位芝士，到哪个房间都不换身份。签发本身不
+    给角色，所以这里照 `test_project_agent_credential` 的做法显式把它加进项目成员
+    ——凭证的可达范围来自它已有的成员身份。
     """
-    root = client.get(f"/projects/{project['id']}").json()["data"]["root_topic_id"]
-    handle = topic_agent_handle(uuid.UUID(root))
+    rows = client.get(f"/projects/{project['id']}/agents").json()["data"]["data"]
+    (default,) = [row for row in rows if row["is_default"]]
+    handle = default["seat_handle"]
     members = client.get(f"/projects/{project['id']}/members").json()["data"]["data"]
     if not any(m["user_handle"] == handle for m in members):
         joined = client.post(
@@ -201,11 +202,11 @@ def _project_credential(client, project) -> tuple[str, str]:
 
 
 def test_the_project_s_own_credential_speaks_in_every_room_of_it(client):
-    """席位问的是「这个房间认不认它」，而项目凭证的那位芝士坐在根房间。
+    """席位问的是「这个房间认不认它」，而项目凭证的那位芝士坐在总览。
 
-    一张线下的项目凭证（本地 agent、bot、CI 拿的都是它）在任意一个非根房间里，
-    handle 仍是根房间派生的那一个——它不借别的房间的席位，这是凭证的定义。只问目
-    的地房间的花名册，答案就永远是「不是 agent」，而这条路由不在
+    一张线下的项目凭证（本地 agent、bot、CI 拿的都是它）在任意一个非总览房间里，
+    handle 仍是同一位芝士自己的那一个——它不借别的房间的席位，这是凭证的定义。只
+    问目的地房间的花名册，答案就永远是「不是 agent」，而这条路由不在
     `_CHEESE_WRITE_PATHS` 里，这一句是它唯一的门：会从 200 变成 403。
     """
     project = _project(client, "Project credential speaks")

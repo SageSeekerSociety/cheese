@@ -19,7 +19,7 @@ from app.core.sandbox_auth import (
     mint_project_agent_credential,
     project_agent_claims,
 )
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
@@ -61,15 +61,19 @@ class ProjectAgentCredentialService:
         return project
 
     async def agent_handle(self, project_id: uuid.UUID) -> str | None:
-        """The project's fixed agent identity, independent of the target room.
+        """The project's own 芝士, independent of the target room.
 
         Its existing memberships grant access; holding this credential never
-        creates a membership or borrows another room's agent seat.
+        creates a membership or borrows another room's agent seat. It is the
+        agent's own handle rather than one derived from the project's root room:
+        an off-platform 芝士 holding this credential is the same participant as
+        the one answering in the browser, so what it signs has to carry the same
+        name.
         """
         project = await self._projects.get(project_id)
-        if project is None or project.root_topic_id is None:
+        if project is None or project.default_agent_instance_id is None:
             return None
-        return topic_agent_handle(project.root_topic_id)
+        return agent_instance_handle(project.default_agent_instance_id)
 
     async def issue(
         self, *, project_id: uuid.UUID, expires_in_days: int | None = None
