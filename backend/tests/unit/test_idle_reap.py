@@ -44,7 +44,7 @@ async def test_idle_and_active_rooms_both_keep_screens(client, tmp_path, monkeyp
                 project_id=project.id,
                 topic_id=t.id,
                 author="u",
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content="hi",
             )
         await session.execute(

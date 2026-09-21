@@ -30,6 +30,7 @@ from app.core.db import async_session_factory
 # Import every model whose table is referenced by a FK so SQLAlchemy can resolve
 # the mapper registry when we flush (milestones→topics, topics→blocks, etc.).
 from app.domain.block.models import Block  # noqa: F401
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.memory.models import MemoryEntry, MemoryScope
 from app.domain.milestone.models import Milestone, MilestoneStatus
 from app.domain.notification.models import Notification  # noqa: F401
@@ -66,11 +67,19 @@ def blocks_of(topic_id: str) -> list[dict]:
     return d["data"] if isinstance(d, dict) and "data" in d else d
 
 
-def count_blocks(topic_id: str, author_type: str | None, kind: str | None) -> int:
+def count_blocks(
+    topic_id: str, *, by_agent: bool | None = None, kind: str | None = None
+) -> int:
+    """数这个房间里的事件行。``by_agent`` 是芝士发的 / 人发的 / 两者都数。
+
+    分人和芝士靠的是**署名**，不是 ``author_type``：那一列只答「参与者还是平台」
+    （人和 agent 同属参与者），拿它问「这句是不是芝士说的」问不出来。
+    """
     n = 0
     for b in blocks_of(topic_id):
-        if author_type is not None and b.get("author_type") != author_type:
-            continue
+        if by_agent is not None:
+            if looks_like_agent_handle(b.get("author") or "") != by_agent:
+                continue
         if kind is not None and b.get("kind") != kind:
             continue
         n += 1
@@ -207,24 +216,24 @@ async def enrich_project(project_id: str, task_id: uuid.UUID) -> None:
 # --------------------------------------------------------------------------- #
 async def wait_ai_turn(topic_id: str, label: str, timeout: float = 300.0) -> None:
     """Block until an AI message block appears for this topic (= turn done)."""
-    before = count_blocks(topic_id, "ai", "message")
+    before = count_blocks(topic_id, by_agent=True, kind="message")
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(3)
-        now = count_blocks(topic_id, "ai", "message")
+        now = count_blocks(topic_id, by_agent=True, kind="message")
         if now > before:
-            events = count_blocks(topic_id, "ai", "event")
+            events = count_blocks(topic_id, by_agent=True, kind="event")
             _log(f"  ✓ {label}: AI replied (现场事件 {events} 个)")
             return
     _log(f"  ⚠ {label}: timed out after {timeout:.0f}s (continuing)")
 
 
 async def wait_human(topic_id: str, label: str, timeout: float = 20.0) -> None:
-    before = count_blocks(topic_id, "human", "message")
+    before = count_blocks(topic_id, by_agent=False, kind="message")
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(1)
-        if count_blocks(topic_id, "human", "message") > before:
+        if count_blocks(topic_id, by_agent=False, kind="message") > before:
             _log(f"  ✓ {label}: human message stored")
             return
     _log(f"  ⚠ {label}: human message not seen (continuing)")
@@ -391,7 +400,7 @@ async def main() -> None:
     _log("DONE. Real project left in DB for inspection:")
     print(f"  project_id : {project_id}")
     print(f"  open       : {BASE}/project/{project_id}")
-    work_events = count_blocks(work_id, "ai", "event")
+    work_events = count_blocks(work_id, by_agent=True, kind="event")
     decisions = api_get(f"/projects/{project_id}/decisions")
     n_dec = decisions.get("total") if isinstance(decisions, dict) else len(decisions)
     print(f"  工作话题 现场事件 : {work_events}")

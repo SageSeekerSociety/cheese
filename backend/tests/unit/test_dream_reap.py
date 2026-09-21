@@ -59,7 +59,7 @@ async def _idle_topic(factory, *, blocks: int = 25):
                 project_id=project.id,
                 topic_id=topic.id,
                 author="u",
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content=f"第 {i} 条",
             )
         await session.execute(
@@ -167,7 +167,7 @@ async def test_a_memory_pass_is_not_repeated_without_new_work(
                 project_id=project_id,
                 topic_id=topic_id,
                 author="cheese",
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 content=content,
                 turn_id=turn_id,
             )
@@ -195,7 +195,7 @@ async def test_someone_coming_back_still_keeps_the_screen(
             project_id=project_id,
             topic_id=topic_id,
             author="u",
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             content="我回来了，继续之前的事",
         )
         await session.commit()

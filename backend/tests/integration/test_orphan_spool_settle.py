@@ -254,7 +254,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
             project_id=_pid,
             topic_id=tid,
             author="u",
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             content="修一下登录页",
             kind=BlockKind.message,
         )

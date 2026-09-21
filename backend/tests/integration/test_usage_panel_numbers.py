@@ -48,7 +48,7 @@ async def _run_turn(factory, pid, tid, turn_id, started_at: datetime) -> None:
             project_id=pid,
             topic_id=tid,
             author="u",
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             content="做点事",
             kind=BlockKind.message,
             turn_id=turn_id,

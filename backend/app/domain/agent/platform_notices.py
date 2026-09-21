@@ -3,7 +3,7 @@
 ## 为什么有这个模块
 
 平台自己在房间里说话曾经有两条路。一条是 `ChatService.post_system_event()`，落
-`kind=event, author_type=system`，前端渲染成居中灰字一行。另一条是
+`kind=event, author_type=platform`，前端渲染成居中灰字一行。另一条是
 `runner.submit(author="system")`，它落下的其实是
 `kind=message, author_type=human, author="system"` —— 一条**伪装成人**的聊天
 消息，前端按真人发言渲染：完整气泡、头像、名字显示成 "system"。最长的一条（CI

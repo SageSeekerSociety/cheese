@@ -60,7 +60,7 @@ function message(roomId: string, id: string, createdAt: string, content: string)
     id,
     topic_id: roomId,
     kind: 'message',
-    author_type: 'human' as const,
+    author_type: 'participant' as const,
     author: '张衡',
     content,
     created_at: createdAt,
