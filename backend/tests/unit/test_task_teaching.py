@@ -143,9 +143,7 @@ def test_a_level_replaces_its_key_whole_and_leaves_the_others() -> None:
     coherent configuration and is not one.
     """
     got = resolve(
-        category=_category(
-            teaching=WEEK_THREE, resource_pack={"compute_credits": 500}
-        ),
+        category=_category(teaching=WEEK_THREE, resource_pack={"compute_credits": 500}),
         task=_task({"teaching": {"current_week": 9}}),
         project=_project(),
     )
@@ -161,16 +159,24 @@ def test_the_project_level_reads_the_protocol_key_and_ignores_the_rest() -> None
     (`forge_kind`, the compute profile). Only `settings["protocol"]` is read, and
     anything else under it that is not a dict is treated as absent — the reader
     here runs on every turn of every project, not on the form that wrote it."""
-    assert resolve(
-        category=_category(),
-        task=_task(),
-        project=_project({"forge_kind": "forgejo"}),
-    ) == Protocol()
+    assert (
+        resolve(
+            category=_category(),
+            task=_task(),
+            project=_project({"forge_kind": "forgejo"}),
+        )
+        == Protocol()
+    )
 
     for junk in ({"protocol": "not-a-dict"}, {"protocol": ["nope"]}, {"protocol": 7}):
-        assert resolve(
-            category=_category(teaching=WEEK_THREE), task=_task(), project=_project(junk)
-        ).teaching.current_week == 3
+        assert (
+            resolve(
+                category=_category(teaching=WEEK_THREE),
+                task=_task(),
+                project=_project(junk),
+            ).teaching.current_week
+            == 3
+        )
 
 
 def test_no_level_configured_is_an_empty_teaching_not_an_error() -> None:
