@@ -121,7 +121,14 @@ def test_project_access_cannot_cross_projects(client):
     project, origin, _ = _rooms(client)
     foreign, _, other = _rooms(client)
     handle = _teammate(client, project, origin)
-    _join(client, other, handle)
+    # 邻项目的房间连座位都给不了它：一个实例由建它的项目拥有，别处寻址不到它
+    # （I9b）。所以这里问的是「就算凭据说得出它是谁，它也进不去别人的项目」。
+    denied = client.post(
+        f"/topics/{other}/members",
+        json={"handle": handle, "role": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert denied.status_code == 404, denied.text
     auth = _agent(client, project, origin, as_handle=handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     assert (

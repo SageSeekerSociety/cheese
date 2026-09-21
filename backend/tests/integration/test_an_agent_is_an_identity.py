@@ -53,6 +53,7 @@ def test_the_identity_does_not_come_from_a_room(client):
     A handle derived from the room would have given this agent two names, and
     given a second agent in either room this one's name."""
     from app.domain.identity.handles import agent_instance_handle
+    from tests.integration.conftest import session_auth_headers
 
     project = _project(client)
     made = _agent(client, project, "planner", "规划师")
@@ -68,7 +69,8 @@ def test_the_identity_does_not_come_from_a_room(client):
     for room in rooms:
         seated = client.post(
             f"/topics/{room}/members",
-            json={"handle": mine, "role": "member", "actor": "u"},
+            json={"handle": mine, "role": "member"},
+            headers=session_auth_headers("u"),
         )
         assert seated.status_code == 200, seated.text
         roster = client.get(f"/topics/{room}/members").json()["data"]["data"]

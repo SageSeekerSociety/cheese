@@ -425,7 +425,10 @@ def test_a_project_credential_is_refused_where_its_agent_has_no_seat(client):
     pid = _project(client)
     room = _topic(client, pid)
     seat = next(a for a in _agents(client, pid) if a["is_default"])["seat_handle"]
-    assert client.delete(f"/topics/{room}/members/{seat}").status_code == 200
+    dropped = client.delete(
+        f"/topics/{room}/members/{seat}", headers=session_auth_headers("u")
+    )
+    assert dropped.status_code == 200, dropped.text
 
     r = client.post(
         f"/topics/{room}/comments",
