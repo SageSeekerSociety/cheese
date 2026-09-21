@@ -708,6 +708,79 @@ def _set_merge_since(client, card_id: str, iso: str) -> None:
 # ============================ 点击 = 当场合并 ================================
 
 
+@pytest.mark.parametrize("removed", [False, True])
+@pytest.mark.parametrize("action", ["accept", "override", "auto"])
+def test_queued_accept_stays_pending_until_github_merges(
+    client, app_world, monkeypatch, removed, action
+):
+    fake = app_world["fake"]
+    pid, tid, cid, number, head = _ready_card(client, app_world)
+    fake.check_state_by_sha[head] = ("success", "green")
+    enqueues = []
+
+    async def enqueue(**kwargs):
+        enqueues.append(kwargs)
+        return github_pr.MergeResult(queued=True)
+
+    async def in_queue(**kwargs):
+        return not removed
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", in_queue, raising=False)
+    if action == "auto":
+        _protect(client, pid, auto_merge_allowed=True)
+        response = _arm(client, cid, "alice")
+        _poll(client)
+    elif action == "override":
+        response = _merge_anyway(client, cid, "alice", reason="test")
+    else:
+        response = _accept(client, cid)
+    assert response.status_code == 200, response.text
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_merged_at"] is None
+    _poll(client)
+    _poll(client)
+    assert len(enqueues) == 1
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    if removed:
+        assert "离开合并队列" in card["note"]
+    else:
+        assert "等待队列检查" in card["note"]
+        fake.merge_externally(number)
+        _poll(client)
+        card = _cards(client, tid)[0]
+        assert card["status"] == "accepted"
+        assert card["decided_by"] == "alice"
+
+
+@pytest.mark.parametrize("action", ["reject", "void"])
+def test_cancelling_queued_card_dequeues_first(client, app_world, monkeypatch, action):
+    fake = app_world["fake"]
+    _pid, tid, cid, _number, head = _ready_card(client, app_world)
+    fake.check_state_by_sha[head] = ("success", "green")
+    calls = []
+
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def dequeue(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "dequeue_pull_request", dequeue, raising=False)
+    assert _accept(client, cid).status_code == 200
+    response = client.post(
+        f"/accept-cards/{cid}/{action}",
+        json={"decided_by": "alice", "note": "cancel"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    assert _cards(client, tid)[0]["status"] in ("rejected", "revoked")
+
+
 @pytest.mark.parametrize("parent_closed", [False, True])
 @pytest.mark.parametrize("action", ["accept", "override", "auto"])
 def test_dependent_task_cannot_be_accepted_before_its_parent_is_delivered(
