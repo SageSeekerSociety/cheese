@@ -60,6 +60,7 @@ def main():
         source = source.replace("/etc/nginx/active", str(active))
         source = source.replace("listen 8081;", f"listen 127.0.0.1:{port};")
         source = source.replace("127.0.0.1:8091", f"127.0.0.1:{terminator.server_port}")
+        source = source.replace("127.0.0.1:18085", f"127.0.0.1:{backend.server_port}")
         config = root / "nginx.conf"
         config.write_text(f"pid {root}/nginx.pid;\nerror_log stderr;\n" + source)
         (root / "logs").mkdir()
