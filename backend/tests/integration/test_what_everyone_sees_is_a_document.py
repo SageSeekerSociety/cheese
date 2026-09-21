@@ -94,6 +94,25 @@ def test_a_fact_for_everyone_is_readable_in_the_project_overview_document(client
     assert FACT in _doc_text(client, overview)
 
 
+def test_a_request_that_names_no_place_writes_nothing_into_that_document(client):
+    """不说自己在哪儿的那一路，一个字也写不进大家共看的文档。
+
+    这个端点的授权全在「你在哪个话题」那一句上；不带 `topic`，谁都没被解析、
+    没被授权过。落在记忆上时那只是自己池子里的一行，落在文档上就是往所有人共看
+    的那一份里添字，还在总览房间留一条「编辑了文档」。
+    """
+    project_id, _ = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+
+    refused = client.post(
+        f"/projects/{project_id}/memory",
+        json={"content": FACT, "scope": "everyone"},
+    )
+
+    assert refused.status_code == 403, refused.text
+    assert FACT not in _doc_text(client, overview)
+
+
 def test_it_is_a_document_and_not_a_memory(client):
     """同一条事实不会同时又是一条记忆。
 
@@ -210,13 +229,19 @@ def test_a_fact_the_repo_already_carries_still_goes_into_the_document(
     assert fact in _doc_text(client, overview)
 
 
-def _move_statement() -> str:
-    """迁移真正会跑的那一句，从迁移模块里取，不照抄一份。"""
+def _move_statements() -> tuple[str, ...]:
+    """迁移真正会跑的那两句，从迁移模块里取，不照抄一份。"""
     spec = importlib.util.spec_from_file_location("_p36_move", _MIGRATION)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.APPEND_PROJECT_MEMORY_TO_OVERVIEW
+    return (module.SEED_OVERVIEW_DOC, module.APPEND_PROJECT_MEMORY_TO_OVERVIEW)
+
+
+async def _run_migration(db_session: AsyncSession) -> None:
+    for statement in _move_statements():
+        await db_session.execute(sa.text(statement))
+    await db_session.flush()
 
 
 def test_the_migration_lands_every_project_pool_row_in_that_document(
@@ -247,8 +272,7 @@ def test_the_migration_lands_every_project_pool_row_in_that_document(
         await db_session.flush()
 
         for _ in range(2):
-            await db_session.execute(sa.text(_move_statement()))
-            await db_session.flush()
+            await _run_migration(db_session)
 
             doc = await TopicService(db_session).get_doc(project.root_topic_id)
             assert doc is not None
@@ -264,13 +288,14 @@ def test_the_migration_lands_every_project_pool_row_in_that_document(
     _portal.call(run)
 
 
-def test_the_migration_leaves_a_project_without_an_overview_document_alone(
+def test_the_migration_builds_the_first_document_for_a_project_that_has_none(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ) -> None:
-    """总览房间还没有文档的项目，这一步不建一份。
+    """总览房间还没有文档的项目，这一步给它建一份，行落在里面。
 
-    建出来的那一份内容全是记忆条目，文档栏第一次被打开就是一张清单——而这个房间
-    从来没有人写过文档。那批行留在表里，由 P36b 接着处理。
+    新建的项目都没有 doc 块，所以这是默认状态而不是边角情况。不搬，这些行就既不
+    在文档里、也不在任何一个读点上——谁都读不到；而 P36b 要逐行核对全部对上才
+    DELETE，漏一个项目那一档就永远删不掉。
     """
 
     async def run() -> None:
@@ -278,15 +303,26 @@ def test_the_migration_leaves_a_project_without_an_overview_document_alone(
             name="没有总览文档的项目", owner_handle="andyl", forge_kind="github_app"
         )
         store = memory_store(db_session)
+        assert project.root_topic_id is not None
+        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
         await store.remember(MemoryScope.project, str(project.id), FACT)
         await db_session.flush()
 
-        await db_session.execute(sa.text(_move_statement()))
-        await db_session.flush()
+        await _run_migration(db_session)
 
-        assert project.root_topic_id is not None
-        assert await TopicService(db_session).get_doc(project.root_topic_id) is None
+        doc = await TopicService(db_session).get_doc(project.root_topic_id)
+        assert doc is not None
+        assert doc.content.count(FACT) == 1
+        # 建出来的第一版从标题开始，前面不带空行。
+        assert doc.content.startswith("## ")
+        # 只搬不删，和有文档的那一条一样。
         assert await store.recall(MemoryScope.project, str(project.id)) == [FACT]
+
+        # 窗口里原样再跑一遍：不再建第二份文档，也不再追加同一条。
+        await _run_migration(db_session)
+        again = await TopicService(db_session).get_doc(project.root_topic_id)
+        assert again is not None and again.id == doc.id
+        assert again.content.count(FACT) == 1
 
     _portal.call(run)
 

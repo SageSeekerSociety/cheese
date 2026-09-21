@@ -1138,6 +1138,21 @@ async def add_memory(
         )
         return ok({"remembered": True, "layer": layer.value})
     if scope == "everyone":
+        if caller is None:
+            # 这一路写的是总览的实况文档，而这个端点的授权全在 `_authorized_place`
+            # 里：不带 `topic`，`resolve` 与 `authorize_topic` 一次都不跑。落在记忆
+            # 上时那只是自己池子里的一行，落在文档上就是替项目默认芝士往大家共看的
+            # 那一份里添字，还在总览房间留一条「编辑了文档」。写入闸
+            # （`cheese_token_gate`）只证明「这个项目的某张凭证」，连不代表任何参与
+            # 者的项目级能力票也算数，所以「你在哪儿」这一句必须有人答。
+            #
+            # 不在这里拿总览房间另解析一次 actor：一张按房间签的每轮 token 去问总览
+            # 房间，`_reject_out_of_scope_token` 会判它越界（403），于是每一次从线程
+            # 里发出的 `remember --everyone` 都被拦下——那是把正当调用一起挡掉。带上
+            # 地点，caller 就已经是这个项目里一个被授权的参与者。
+            raise ForbiddenError(
+                "写给所有人看的要带上 topic：平台据此确认你是这个项目里的人"
+            )
         if layer is MemoryLayer.core:
             raise ValidationError(
                 "写给所有人看的落在项目总览的实况文档里，文档没有核心记忆这一档"
