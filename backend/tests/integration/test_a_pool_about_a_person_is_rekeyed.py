@@ -62,7 +62,7 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
         store = memory_store(db_session)
 
         mine = await ProjectService(db_session).create(
-            name="有私聊的那个项目", owner_handle="andyl"
+            name="有私聊的那个项目", owner_handle="andyl", forge_kind="github_app"
         )
         await TopicService(db_session).get_or_create_private(
             project_id=mine.id, user_handle="andyl"
@@ -70,7 +70,7 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
         # 同一个人在另一个项目里也是成员，但没有私聊——归属的依据是私聊，所以这个
         # 项目不该分到那条记忆。
         bystander = await ProjectService(db_session).create(
-            name="只是成员的那个项目", owner_handle="andyl"
+            name="只是成员的那个项目", owner_handle="andyl", forge_kind="github_app"
         )
         mine_agent = await AgentInstanceService(db_session).for_project(mine)
         bystander_agent = await AgentInstanceService(db_session).for_project(bystander)
@@ -104,7 +104,7 @@ def test_a_person_with_no_private_chat_lands_under_each_projects_cheese(
     async def run() -> None:
         store = memory_store(db_session)
         project = await ProjectService(db_session).create(
-            name="没有私聊", owner_handle="bob"
+            name="没有私聊", owner_handle="bob", forge_kind="github_app"
         )
         agent = await AgentInstanceService(db_session).for_project(project)
         await store.remember(MemoryScope.user, "bob", "他习惯当天回消息")
