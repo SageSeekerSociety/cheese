@@ -16,12 +16,15 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, func, or_, select, true
+from sqlalchemy import Select, and_, func, or_, select, true, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
+    FeedbackCommentLike,
     FeedbackKind,
     FeedbackNote,
     FeedbackPriority,
@@ -85,6 +88,49 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
         arms.append(Feedback.author_handle == handle)
         arms.append(Feedback.submitted_by_handle == handle)
     return or_(*arms)
+
+
+def live_comment_clause() -> Any:
+    """一条评论算「还在」的条件：自己没被软删，**而且**它的楼还在。
+
+    Why the second half exists, since `deleted_at` alone looks sufficient:
+    `soft_delete_comment` stamps a top-level comment and its replies in one
+    transaction, but that cascade **cannot be made airtight against a reply
+    arriving at the same moment**. Postgres's FK check takes `FOR KEY SHARE` on
+    the parent row; the delete's `UPDATE` takes `FOR NO KEY UPDATE`; those two do
+    not conflict, so an insert that read the parent a moment earlier commits
+    after the cascade has already run, and its reply lands under a parent nobody
+    can see. Serialising would mean `SELECT ... FOR UPDATE` on the parent in the
+    delete path — which is the lock that *does* conflict with `FOR KEY SHARE` —
+    and that would make every like on a comment queue behind a delete.
+
+    Reading the invariant is cheaper and cannot lose the race: visibility is
+    decided when the thread is read, so no interleaving of writes can produce a
+    visible orphan. It also repairs rows that were orphaned **before** this
+    existed, which a write-side fix cannot do for history.
+
+    Used by every reader that counts or returns comments, so the two cannot
+    disagree — a card that counts an invisible reply is its own bug, and a
+    thread that returns one draws nothing (the client builds the tree from
+    top-level rows and their children, so an orphan is silently dropped).
+
+    The write side still cascades and the migration backfills: those are what
+    keep `deleted_at` in the table telling the truth, so the next query written
+    against this table does not have to know this clause exists.
+    """
+    parent = aliased(FeedbackComment)
+    return and_(
+        FeedbackComment.deleted_at.is_(None),
+        or_(
+            FeedbackComment.parent_id.is_(None),
+            select(parent.id)
+            .where(
+                parent.id == FeedbackComment.parent_id,
+                parent.deleted_at.is_(None),
+            )
+            .exists(),
+        ),
+    )
 
 
 def matching(q: str) -> Any:
@@ -477,16 +523,25 @@ class FeedbackRepository:
     async def add_support(self, feedback_id: uuid.UUID, handle: str) -> bool:
         """Idempotent: a repeat POST is a no-op, not a second row.
 
-        Returns whether a row was actually written, so the caller can report a
-        count that is the truth rather than a guess.
+        **`ON CONFLICT DO NOTHING` rather than read-then-insert**, and that is a
+        correctness fix rather than a micro-optimisation. The pair of statements
+        it replaces — `has_support`, then `add` — is a race the unique constraint
+        turns into a 500: two taps of the same button overlapping in flight (a
+        double-click on a slow connection is enough — the button is not disabled
+        while the request is out) both read "not supported", both insert, and the
+        loser's `flush` raises `IntegrityError` out of the route. One statement
+        cannot lose that race, and it also drops a round trip.
+
+        `RETURNING id` is what keeps the boolean honest: the row comes back only
+        when the insert really happened, so "was it written" costs nothing extra.
         """
-        if await self.has_support(feedback_id, handle):
-            return False
-        self._session.add(
-            FeedbackSupport(feedback_id=feedback_id, author_handle=handle)
+        stmt = (
+            pg_insert(FeedbackSupport)
+            .values(feedback_id=feedback_id, author_handle=handle)
+            .on_conflict_do_nothing(index_elements=["feedback_id", "author_handle"])
+            .returning(FeedbackSupport.id)
         )
-        await self._session.flush()
-        return True
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
     async def remove_support(self, feedback_id: uuid.UUID, handle: str) -> bool:
         """Also idempotent — deleting a support that is not there answers 200."""
@@ -508,7 +563,7 @@ class FeedbackRepository:
             select(FeedbackComment)
             .where(
                 FeedbackComment.feedback_id == feedback_id,
-                FeedbackComment.deleted_at.is_(None),
+                live_comment_clause(),
             )
             .order_by(FeedbackComment.created_at.asc(), FeedbackComment.id.asc())
         )
@@ -529,6 +584,7 @@ class FeedbackRepository:
         author_is_agent: bool,
         body: str,
         parent_id: uuid.UUID | None,
+        reply_to_handle: str | None,
     ) -> FeedbackComment:
         row = FeedbackComment(
             feedback_id=feedback_id,
@@ -537,14 +593,106 @@ class FeedbackRepository:
             author_user_id=author_user_id,
             author_is_agent=author_is_agent,
             body=body,
+            reply_to_handle=reply_to_handle,
         )
         self._session.add(row)
         await self._session.flush()
         return row
 
     async def soft_delete_comment(self, row: FeedbackComment) -> None:
-        row.deleted_at = datetime.now(UTC)
+        """Soft-delete `row`, and the replies that hang under it.
+
+        **The children have to go too, and that is not tidiness.** The client
+        renders a thread by taking the comments with no `parent_id` and then
+        asking each of those for its replies, while `list_comments` filters
+        deleted rows out — so a deleted parent does not merely hide itself:
+        every reply under it leaves the screen with it, with no tombstone and
+        nothing left that would ever query them again. `FeedbackComment.parent_id`
+        already states the intended behaviour («deleting a top-level comment
+        takes its replies with it»); this is where that is kept. B站 and 小红书
+        answer the same way, and no other reading survives contact with a
+        reader: a reply that says 「回复 X」 while X is nowhere on the page is
+        worse than either outcome.
+
+        One `UPDATE` for the children rather than a load-and-touch per reply —
+        a top-level comment can carry a page of them, and someone is waiting on
+        this request. A reply being deleted matches no rows here, which is
+        correct rather than lucky: `parent_id` only ever points at a TOP-LEVEL
+        comment (the service folds replies onto their grandparent), so a reply
+        has no children to begin with.
+        """
+        deleted_at = datetime.now(UTC)
+        row.deleted_at = deleted_at
+        await self._session.execute(
+            update(FeedbackComment)
+            .where(
+                FeedbackComment.parent_id == row.id,
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .values(deleted_at=deleted_at)
+        )
         await self._session.flush()
+
+    # --- 评论点赞 -------------------------------------------------------------
+    #
+    # Read side is batched for the whole thread, for the same reason the report
+    # counts are (`supports_counts`): a thread is a page of rows and the
+    # alternative is two queries per reply.
+
+    async def comment_like_counts(
+        self, comment_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, int]:
+        if not comment_ids:
+            return {}
+        stmt = (
+            select(FeedbackCommentLike.comment_id, func.count(FeedbackCommentLike.id))
+            .where(FeedbackCommentLike.comment_id.in_(list(comment_ids)))
+            .group_by(FeedbackCommentLike.comment_id)
+        )
+        return {
+            row[0]: int(row[1]) for row in (await self._session.execute(stmt)).all()
+        }
+
+    async def comment_like_count(self, comment_id: uuid.UUID) -> int:
+        stmt = select(func.count(FeedbackCommentLike.id)).where(
+            FeedbackCommentLike.comment_id == comment_id
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    async def comment_liked_by(
+        self, comment_ids: Sequence[uuid.UUID], handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these the viewer already liked — the button's filled state."""
+        if not comment_ids:
+            return set()
+        stmt = select(FeedbackCommentLike.comment_id).where(
+            FeedbackCommentLike.comment_id.in_(list(comment_ids)),
+            FeedbackCommentLike.author_handle == handle,
+        )
+        return set((await self._session.execute(stmt)).scalars().all())
+
+    async def add_comment_like(self, comment_id: uuid.UUID, handle: str) -> bool:
+        """`add_support`, one table down — including why it is one statement."""
+        stmt = (
+            pg_insert(FeedbackCommentLike)
+            .values(comment_id=comment_id, author_handle=handle)
+            .on_conflict_do_nothing(index_elements=["comment_id", "author_handle"])
+            .returning(FeedbackCommentLike.id)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
+
+    async def remove_comment_like(self, comment_id: uuid.UUID, handle: str) -> bool:
+        """Also idempotent — unliking something not liked answers 200."""
+        stmt = select(FeedbackCommentLike).where(
+            FeedbackCommentLike.comment_id == comment_id,
+            FeedbackCommentLike.author_handle == handle,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
 
     # --- 时间线 ---------------------------------------------------------------
 
@@ -739,7 +887,7 @@ class FeedbackRepository:
             select(FeedbackComment.feedback_id, func.count(FeedbackComment.id))
             .where(
                 FeedbackComment.feedback_id.in_(list(ids)),
-                FeedbackComment.deleted_at.is_(None),
+                live_comment_clause(),
             )
             .group_by(FeedbackComment.feedback_id)
         )

@@ -187,11 +187,32 @@ class CommentOut(BaseModel):
     #: `author_avatar_id` 是同一份契约，理由也一样。
     author_avatar_id: int | None
     body: str
+    #: 这条在回谁。顶层评论恒为 None；历史回复也是 None（那一列是后加的，
+    #: 折掉的目标没有任何地方记过，补不出来）。None 的含义是「不知道」，
+    #: 客户端不显示这一句就是了 —— 不要拿它当「没回谁」去编一个。
+    reply_to_handle: str | None
+    #: 点赞数。和卡片的 `supports` 是同一类事实，走同一处整页批量取 ——
+    #: 一条回复一次查询就是 N+1，而帖子正是一页回复。
+    likes: int
+    #: 调用者点过没有。
+    liked: bool
+    #: 调用者能不能删这一条。**服务端算**：判据（作者本人或管理员）和
+    #: `DELETE /feedback/{id}/comments/{comment_id}` 共用 `may_delete_comment`
+    #: 一处，所以按钮只要照这个布尔值画就不会出现「画得出来、点下去 403」。
+    #: 客户端自己拼一遍 `handle == mine || isAdmin` 就是这个仓库已经吃过一次
+    #: 的亏（`deployed` 那次：按钮亮着、服务端回 412）。
+    can_delete: bool
     created_at: datetime
 
     @classmethod
     def from_row(
-        cls, row: FeedbackComment, *, avatars: Mapping[str, int]
+        cls,
+        row: FeedbackComment,
+        *,
+        avatars: Mapping[str, int],
+        likes: int,
+        liked: bool,
+        can_delete: bool,
     ) -> CommentOut:
         return cls(
             id=row.id,
@@ -200,6 +221,10 @@ class CommentOut(BaseModel):
             author_is_agent=row.author_is_agent,
             author_avatar_id=avatars.get(row.author_handle),
             body=row.body,
+            reply_to_handle=row.reply_to_handle,
+            likes=likes,
+            liked=liked,
+            can_delete=can_delete,
             created_at=row.created_at,
         )
 
@@ -325,7 +350,7 @@ class FeedbackDetail(FeedbackCard):
         avatars: Mapping[str, int],
         last_activity_at: datetime | None = None,
         timeline: list[FeedbackTimeline] | None = None,
-        thread: list[FeedbackComment] | None = None,
+        thread: list[CommentOut] | None = None,
         notes: list[FeedbackNote] | None = None,
     ) -> FeedbackDetail:
         card = FeedbackCard.from_row(
@@ -350,10 +375,17 @@ class FeedbackDetail(FeedbackCard):
             topic_id=row.topic_id,
             project_id=row.project_id,
             timeline=[TimelineOut.model_validate(x) for x in timeline or []],
-            # Comments and notes go through their own `from_row` for the same
-            # reason the card does: the author's face is not on their row, and
-            # this is the one place that already has the page-wide map.
-            thread=[CommentOut.from_row(x, avatars=avatars) for x in thread or []],
+            # Comments arrive already built. Their `from_row` needs more than the
+            # avatar map now — a like count and two per-viewer answers, one of
+            # which (`can_delete`) is a policy the service owns — so building
+            # them here would mean moving that policy into a schema, or handing
+            # this method a viewer to re-decide it with. The service assembles
+            # them (`FeedbackService.comments_out`) and this only carries them.
+            #
+            # Notes still go through their own `from_row` for the reason the card
+            # does: the author's face is not on their row, and this is the one
+            # place that already has the page-wide map.
+            thread=list(thread or []),
             notes=[NoteOut.from_row(x, avatars=avatars) for x in notes or []],
         )
 
@@ -390,3 +422,17 @@ class SupportOut(BaseModel):
 
     count: int
     supported: bool
+
+
+class CommentLikeOut(BaseModel):
+    """Result of POST/DELETE a comment like — `SupportOut`, one level down.
+
+    Same shape and the same rule (the count **after** the write, never a delta),
+    with `liked` in place of `supported` because the client is answering a
+    different question: 「我点过这条回复没有」, not 「我顶过这条反馈没有」. One
+    field named `supported` on two different subjects is how a renderer ends up
+    binding the wrong one.
+    """
+
+    count: int
+    liked: bool

@@ -32,7 +32,7 @@ each in one place, each revertible without touching a route:
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +52,12 @@ from app.domain.feedback.models import (
     FeedbackVisibility,
 )
 from app.domain.feedback.proposals import AcceptedProposal
-from app.domain.feedback.schemas import FeedbackCreate, FeedbackDetail, FeedbackPatch
+from app.domain.feedback.schemas import (
+    CommentOut,
+    FeedbackCreate,
+    FeedbackDetail,
+    FeedbackPatch,
+)
 from app.domain.identity.services import IdentityService
 from app.domain.user.services import chosen_avatars_by_handle
 
@@ -139,6 +144,24 @@ class FeedbackService:
             # its existence is not a secret — only its contents are.
             raise ForbiddenError("需要平台管理员")
         return handle
+
+    def may_delete_comment(
+        self, row: FeedbackComment, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """Who may delete a comment — the author, or an admin.
+
+        Deleting someone else's words is the kind of thing that should be
+        visible as an admin action, so admins can — but the author always can.
+
+        One predicate, asked from **two** places: `delete_comment` before it
+        deletes, and `comments_out` to fill `CommentOut.can_delete`. Two
+        spellings of it is how 「按钮画得出来、点下去 403」 gets invented, and
+        this feature has already paid for that lesson once — the support button
+        stayed lit on `deployed` rows because the client re-derived a rule the
+        service had (see `CLOSED_STATUSES`). The client never re-derives this
+        one: it draws the button when the server says `can_delete`.
+        """
+        return is_admin or (handle is not None and row.author_handle == handle)
 
     # --- 读 -----------------------------------------------------------------
 
@@ -237,6 +260,52 @@ class FeedbackService:
     async def thread(self, feedback_id: uuid.UUID) -> list[FeedbackComment]:
         return await self._repo.list_comments(feedback_id)
 
+    async def comments_out(
+        self,
+        rows: Sequence[FeedbackComment],
+        *,
+        handle: str | None,
+        is_admin: bool,
+        avatars: Mapping[str, int] | None = None,
+    ) -> list[CommentOut]:
+        """The thread as the wire shape — the one place a comment becomes JSON.
+
+        Three things ride along that are not on the comment's own row, and all
+        three are asked for in **one query for the whole list**, never per row:
+
+        * the like count and the viewer's own like (`comment_like_counts`,
+          `comment_liked_by`) — the read side of a button that sits on every
+          reply, so a per-comment lookup is N+1 on a page of replies;
+        * `can_delete`, from `may_delete_comment`, so the client cannot draw a
+          delete button the server would refuse.
+
+        ``avatars`` exists so the detail screen resolves faces **once**. It draws
+        the report, every comment and every admin note on one page, and it
+        already builds a map covering all three; passing that in keeps this
+        method from resolving the comment authors a second time. ``None`` means
+        "resolve them for these rows", which is what the comments endpoint
+        (which has nothing but the thread) wants.
+        """
+        if not rows:
+            return []
+        ids = [row.id for row in rows]
+        if avatars is None:
+            avatars = await self.chosen_avatars([row.author_handle for row in rows])
+        like_counts = await self._repo.comment_like_counts(ids)
+        liked = await self._repo.comment_liked_by(ids, handle) if handle else set()
+        return [
+            CommentOut.from_row(
+                row,
+                avatars=avatars,
+                likes=like_counts.get(row.id, 0),
+                liked=row.id in liked,
+                can_delete=self.may_delete_comment(
+                    row, handle=handle, is_admin=is_admin
+                ),
+            )
+            for row in rows
+        ]
+
     async def detail(
         self, feedback_id: uuid.UUID, *, handle: str | None, is_admin: bool
     ) -> FeedbackDetail:
@@ -283,7 +352,11 @@ class FeedbackService:
             comments=len(thread),
             avatars=avatars,
             last_activity_at=activity.get(row.id),
-            thread=thread,
+            # The page-wide map goes straight back in: the comment authors are a
+            # subset of the handles resolved above, so this costs nothing.
+            thread=await self.comments_out(
+                thread, handle=handle, is_admin=is_admin, avatars=avatars
+            ),
             timeline=await self._repo.list_timeline(row.id),
             notes=notes,
         )
@@ -504,12 +577,21 @@ class FeedbackService:
             feedback_id, handle=actor_handle, is_admin=is_admin
         )
         parent = None
+        reply_to_handle = None
         if parent_id is not None:
             parent = await self._repo.get_comment(parent_id)
             if parent is None or parent.feedback_id != row.id:
                 # A parent that belongs to another report, or to none: 400, not
                 # 404 — the id the client sent is the problem, not a secret.
                 raise BadRequestError("回复的评论不属于这条反馈")
+            # The target, captured here because the very next line overwrites
+            # the thing that points at it. Only when the comment being answered
+            # is itself a reply: a reply to the 楼主 already renders directly
+            # under it, so 「回复 楼主」 on every 楼内回复 would be noise, and
+            # the reference platforms this was asked to match (B站/小红书) draw
+            # the prefix exactly where the fold loses the target — which is
+            # replies to replies, and only those.
+            reply_to_handle = parent.author_handle if parent.parent_id else None
             # Two levels only, folded the same way the prototype does it
             # (`stores/feedback.ts::addComment`): a reply to a reply lands under
             # the same top-level comment. Storing depth-3 would mean the client
@@ -523,8 +605,71 @@ class FeedbackService:
             author_is_agent=actor_is_agent,
             body=body,
             parent_id=parent_id,
+            reply_to_handle=reply_to_handle,
         )
         return created, row
+
+    async def like_comment(
+        self,
+        feedback_id: uuid.UUID,
+        comment_id: uuid.UUID,
+        *,
+        handle: str,
+        is_admin: bool,
+    ) -> tuple[int, bool]:
+        """点赞一条回复。`support`, one level down — the count after the write.
+
+        **Deliberately no `CLOSED_STATUSES` guard**, unlike `support`. A support
+        is an input to the 「热门」 tab, so letting people pile onto something
+        already 办完了 inflates a ranking nobody can act on — that is why the
+        report-level one answers 412. A like ranks nothing: it says 「这条回复说
+        得对」, and that stays worth saying under a thread on a closed report,
+        which is exactly where the conclusions («原来是这样，我也遇到了») end up.
+        Putting the guard here would mean the last useful replies on finished
+        items are the ones that cannot be marked.
+        """
+        await self._visible_comment(
+            feedback_id, comment_id, handle=handle, is_admin=is_admin
+        )
+        await self._repo.add_comment_like(comment_id, handle)
+        return await self._repo.comment_like_count(comment_id), True
+
+    async def unlike_comment(
+        self,
+        feedback_id: uuid.UUID,
+        comment_id: uuid.UUID,
+        *,
+        handle: str,
+        is_admin: bool,
+    ) -> tuple[int, bool]:
+        await self._visible_comment(
+            feedback_id, comment_id, handle=handle, is_admin=is_admin
+        )
+        await self._repo.remove_comment_like(comment_id, handle)
+        return await self._repo.comment_like_count(comment_id), False
+
+    async def _visible_comment(
+        self,
+        feedback_id: uuid.UUID,
+        comment_id: uuid.UUID,
+        *,
+        handle: str,
+        is_admin: bool,
+    ) -> FeedbackComment:
+        """The comment, once the caller is allowed to know the report exists.
+
+        Two gates, in this order: the report first (404 for one the caller may
+        not see — `visible_row`'s rule, and it must not be skipped or a like on
+        an id from a private report answers differently from a read of it), then
+        the comment's membership in it. The second is 404 too, not 400: by then
+        the caller has already proved they may see the report, so a comment id
+        that is not in it is just an id that is not there.
+        """
+        row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
+        comment = await self._repo.get_comment(comment_id)
+        if comment is None or comment.feedback_id != row.id:
+            raise NotFoundError("评论不存在")
+        return comment
 
     async def delete_comment(
         self,
@@ -534,14 +679,12 @@ class FeedbackService:
         handle: str,
         is_admin: bool,
     ) -> None:
-        row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
-        comment = await self._repo.get_comment(comment_id)
-        if comment is None or comment.feedback_id != row.id:
-            raise NotFoundError("评论不存在")
-        # Own comment, or admin. Deleting someone else's words is the kind of
-        # thing that should be visible as an admin action, so admins can — but
-        # the author always can.
-        if comment.author_handle != handle and not is_admin:
+        comment = await self._visible_comment(
+            feedback_id, comment_id, handle=handle, is_admin=is_admin
+        )
+        # The same predicate the read path fills `CommentOut.can_delete` with,
+        # so the affordance and the permission cannot disagree.
+        if not self.may_delete_comment(comment, handle=handle, is_admin=is_admin):
             raise ForbiddenError("只能删除自己的评论")
         await self._repo.soft_delete_comment(comment)
 

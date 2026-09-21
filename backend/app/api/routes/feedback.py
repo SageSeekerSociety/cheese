@@ -33,7 +33,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.schemas import (
     CommentCreate,
-    CommentOut,
+    CommentLikeOut,
     FeedbackCard,
     FeedbackCounts,
     FeedbackCreate,
@@ -281,15 +281,16 @@ async def list_feedback_comments(
     row = await service.visible_row(
         feedback_id, handle=handle, is_admin=service.is_admin(handle)
     )
+    # One batch for the whole thread: the faces, the like counts, the viewer's
+    # own likes, and whether each one may be deleted. `comments_out` is the only
+    # place a comment becomes JSON, so those four are assembled once rather than
+    # re-decided here — and the thread is a column of replies, so a per-comment
+    # lookup would be N+1 on the very page that draws all of them.
     thread = await service.thread(row.id)
-    # Same page-wide pass the card list does: the thread is a column of faces.
-    avatars = await service.chosen_avatars([c.author_handle for c in thread])
-    return ok(
-        [
-            CommentOut.from_row(c, avatars=avatars).model_dump(mode="json")
-            for c in thread
-        ]
+    comments = await service.comments_out(
+        thread, handle=handle, is_admin=service.is_admin(handle)
     )
+    return ok([c.model_dump(mode="json") for c in comments])
 
 
 @router.post("/{feedback_id}/comments")
@@ -302,18 +303,26 @@ async def create_feedback_comment(
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
+    is_admin = service.is_admin(who.handle)
     comment, _ = await service.comment(
         feedback_id,
         body.body,
         body.parent_id,
         actor_handle=who.handle,
         actor_user_id=who.user_id,
-        is_admin=service.is_admin(who.handle),
+        is_admin=is_admin,
     )
-    # One handle, one lookup: the freshly posted comment renders in the thread
-    # immediately, and it must carry its author's face like the rows around it.
-    avatars = await service.chosen_avatars([comment.author_handle])
-    return ok(CommentOut.from_row(comment, avatars=avatars).model_dump(mode="json"))
+    # The same assembler the list uses, over the one new row: the freshly posted
+    # comment renders in the thread immediately and must carry everything the
+    # rows around it carry (`likes` is 0 and `liked` is False, but `can_delete`
+    # is the interesting one — the author may delete the words they just wrote,
+    # and the button is drawn from the server's answer). A separate one-row
+    # builder here is exactly how the response to POST would drift from the
+    # response to GET.
+    created = await service.comments_out(
+        [comment], handle=who.handle, is_admin=is_admin
+    )
+    return ok(created[0].model_dump(mode="json"))
 
 
 @router.delete("/{feedback_id}/comments/{comment_id}")
@@ -333,6 +342,50 @@ async def delete_feedback_comment(
         is_admin=service.is_admin(who.handle),
     )
     return ok({"deleted": True})
+
+
+@router.post("/{feedback_id}/comments/{comment_id}/likes")
+async def like_feedback_comment(
+    feedback_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+) -> dict:
+    """点赞一条回复。重复点是幂等的，回的是**写完之后**的计数而不是增量。
+
+    和 `support_feedback` 同一个形状，同一个理由（增量会让两个人同时点各自渲染出
+    一个从来没存在过的数字）。区别在**不挡已办完的反馈**：点赞不参与排序，理由写在
+    `FeedbackService.like_comment` 上。
+    """
+    who = await resolver.resolve(fallback_handle=None)
+    if not who.authenticated or not who.handle:
+        raise AuthenticationRequiredError("需要登录")
+    count, liked = await service.like_comment(
+        feedback_id,
+        comment_id,
+        handle=who.handle,
+        is_admin=service.is_admin(who.handle),
+    )
+    return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
+
+
+@router.delete("/{feedback_id}/comments/{comment_id}/likes")
+async def unlike_feedback_comment(
+    feedback_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    service: FeedbackServiceDep,
+    resolver: ActorResolverDep,
+) -> dict:
+    who = await resolver.resolve(fallback_handle=None)
+    if not who.authenticated or not who.handle:
+        raise AuthenticationRequiredError("需要登录")
+    count, liked = await service.unlike_comment(
+        feedback_id,
+        comment_id,
+        handle=who.handle,
+        is_admin=service.is_admin(who.handle),
+    )
+    return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
 
 @router.post("/{feedback_id}/supports")
