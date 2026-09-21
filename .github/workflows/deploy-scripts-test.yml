@@ -66,6 +66,11 @@ jobs:
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
 
+      - name: Gateway release and image planning
+        run: |
+          python3 deploy/tests/test_gateway_release.py
+          bash .github/scripts/test-plan-image-builds.sh
+
       - name: Cloud control connection lifecycle
         run: python3 deploy/tests/test_cloud_control.py
 

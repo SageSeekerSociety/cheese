@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -40,7 +40,15 @@ const restricted = computed(() => !!item.value && (isPrivate.value || item.value
 const supportable = computed(() => !!item.value && !isClosed(item.value.status))
 
 const commentDraft = ref('')
+const posting = ref(false)
 const showCopied = ref(false)
+
+/** 底部的评论框收起时只有一行，点开才变成多行框。收起不是图省事：这个框是
+ *  `position: sticky` 挂在评论区底部的（理由写在 `.fb-composer` 那条注释里），
+ *  一直占着屏幕底下一条，常驻三行加按钮差不多 130px 就是永久少掉的一屏。 */
+const composerOpen = ref(false)
+const composerToggle = ref<HTMLButtonElement | null>(null)
+const composerInput = ref<{ focus: () => void } | null>(null)
 
 function reload() {
   void store.loadDetail(id.value)
@@ -50,16 +58,75 @@ onMounted(reload)
 // 从「相关反馈」跳到另一条时组件不会重建（同一个路由，只换参数），所以要自己跟。
 watch(id, reload)
 
-async function submitComment(body: string, parentId?: string) {
-  if (!item.value) return
-  await store.addComment(item.value.id, body, parentId)
+async function submitComment(body: string, parentId?: string): Promise<boolean> {
+  if (!item.value) return false
+  return await store.addComment(item.value.id, body, parentId)
 }
 
-/** 底部那个输入框用完要清空，清空是调用方的事（submitComment 只管一条评论的正文）。 */
+/** 楼内的一条回复。结果用回调带回给评论条（`emit` 不能 await，所以结果是这么过去的）：
+ *  发失败了框和草稿都留着，人按一下就能重试。 */
+function submitReply(parentId: string, body: string, done: (ok: boolean) => void) {
+  void submitComment(body, parentId).then(done)
+}
+
+/** 底部那个输入框发成功了才清空 —— 发失败还清掉，等于把刚写的两段话丢掉。
+ *  清空是调用方的事（`submitComment` 只管一条评论的正文）。
+ *
+ *  `posting` 是这一页自己的重入闸：store 的 `addComment` 没有（也不该有）——
+ *  它按「一次调用一条评论」办事，而这里连按两下会发两条一模一样的出去。 */
 async function postComment() {
-  const body = commentDraft.value
-  commentDraft.value = ''
-  await submitComment(body)
+  if (posting.value) return
+  posting.value = true
+  try {
+    if (await submitComment(commentDraft.value)) {
+      commentDraft.value = ''
+      // 发完把框收回去。焦点这一刻在按钮上，而那个按钮马上要跟着一起卸载 ——
+      // 交给收起态那条，键盘用户不会掉到 body 上（下一个 Tab 从页头重来）。
+      composerOpen.value = false
+      await nextTick()
+      composerToggle.value?.focus()
+    }
+  } finally {
+    posting.value = false
+  }
+}
+
+/** 点开收起态那一条。展开之后要把光标送进去，不然人还要再点一下那个框 ——
+ *  「点一下就能打字」是这一条唯一的卖点。 */
+async function openComposer() {
+  composerOpen.value = true
+  await nextTick()
+  composerInput.value?.focus()
+}
+
+/** 空草稿失焦就收回去：收起来的价值就是别占地方，留一个空框在那儿只是白占。
+ *  草稿非空绝不收 —— 那是把人写下的字藏起来。点「发表评论」也会走到这里，
+ *  但那时草稿非空，收不回去。 */
+function onComposerBlur() {
+  if (!commentDraft.value.trim()) composerOpen.value = false
+}
+
+/** 点赞 / 删除一条评论。走 store，和这一页其余部分一样；评论条只 emit，不发请求。
+ *  这里三个包装只做一件事：把「当前这条反馈的 id」补上（详情可能在请求在飞的
+ *  时候被换掉，store 自己会挡住那种情况，见 `_detailIfCurrent`）。 */
+function toggleCommentLike(commentId: string) {
+  if (!item.value) return
+  void store.toggleCommentLike(item.value.id, commentId)
+}
+
+function removeComment(commentId: string) {
+  if (!item.value) return
+  void store.deleteComment(item.value.id, commentId)
+}
+
+function loadMoreComments() {
+  if (!item.value) return
+  void store.loadMoreComments(item.value.id)
+}
+
+function loadMoreReplies(parentId: string) {
+  if (!item.value) return
+  void store.loadMoreReplies(item.value.id, parentId)
 }
 
 async function share() {
@@ -206,24 +273,65 @@ async function share() {
               <div class="t-eyebrow">评论 {{ item.comments }}</div>
             </div>
 
+            <!-- 所有动作都走 store，和页面其余部分一样（评论条自己不发请求）。
+                 点赞不刷新任何 Tab 的计数，删除会同时把楼里的回复从本地摘掉 ——
+                 两件事的理由都写在 store 里那两条 action 上。
+
+                 `has-more` 问的是**服务端**那一页取完没有：本地还剩几条说明不了
+                 「后面还有没有」，两者是不同的东西。两个 `loading-*` 是这一页
+                 唯一的重入闸，理由写在 store 上那两条 action 里。 -->
             <FeedbackCommentsThread
               :comments="item.thread"
-              @reply="(parentId, body) => submitComment(body, parentId)"
+              :has-more="!!item.thread_next_cursor"
+              :loading-more="store.moreCommentsLoading"
+              :loading-replies="store.moreRepliesLoading"
+              @reply="submitReply"
+              @like="toggleCommentLike"
+              @remove="removeComment"
+              @load-more="loadMoreComments"
+              @load-replies="loadMoreReplies"
             />
 
-            <div class="fb-comment-form">
-              <v-textarea
-                v-model="commentDraft"
-                autocomplete="off"
-                placeholder="补充你遇到的情况，或者说明为什么这个改动对你重要"
-                rows="3"
-                hide-details
-              />
-              <div class="d-flex justify-end mt-2">
-                <v-btn color="primary" :disabled="!commentDraft.trim()" size="small" @click="postComment">
-                  发表评论
-                </v-btn>
-              </div>
+            <div class="fb-composer">
+              <!-- 收起态是一条**真按钮**，不是一个带 @click 的 div：Tab 停得下、
+                  回车开得了、读屏念得出名字。这一批刚在卡片上付过这个学费
+                  （见 FeedbackCard.vue）。看着像输入框（连光标都是 text），
+                  但它此刻的职责是「点一下打开」。 -->
+              <button
+                v-if="!composerOpen"
+                ref="composerToggle"
+                type="button"
+                class="fb-composer__open"
+                @click="openComposer"
+              >
+                写下你的评论…
+              </button>
+              <template v-else>
+                <!-- max-rows：autoGrow 是全局默认，而这个框挂在视口底下 ——
+                     不封顶的话一段长评论会把整屏顶掉。 -->
+                <v-textarea
+                  ref="composerInput"
+                  v-model="commentDraft"
+                  autocomplete="off"
+                  placeholder="补充你遇到的情况，或者说明为什么这个改动对你重要"
+                  rows="3"
+                  max-rows="8"
+                  hide-details
+                  @blur="onComposerBlur"
+                />
+                <div class="d-flex justify-end mt-2">
+                  <!-- 一屏只有一个琥珀色主操作：这一页那个就是它。 -->
+                  <v-btn
+                    color="primary"
+                    size="small"
+                    :disabled="!commentDraft.trim()"
+                    :loading="posting"
+                    @click="postComment"
+                  >
+                    发表评论
+                  </v-btn>
+                </div>
+              </template>
             </div>
           </section>
         </main>
@@ -254,8 +362,19 @@ async function share() {
         </aside>
       </div>
 
-      <!-- 服务端的原话（412 的「已经办完了，不再接受支持」也走这里）。 -->
-      <v-alert v-if="store.error" type="error" density="compact" variant="tonal" class="mt-4">
+      <!-- 服务端的原话（412 的「已经办完了，不再接受支持」也走这里）。
+           可关：这一页上的失败大多是可重试的一次性失败（评论没发出去、下一页没
+           取到），一句话挂在页面底部陪着你看完剩下三条评论，读的人只会以为页面
+           坏了。关掉它不影响任何状态 —— 没成的操作本来就没改任何东西。 -->
+      <v-alert
+        v-if="store.error"
+        type="error"
+        density="compact"
+        variant="tonal"
+        closable
+        class="mt-4"
+        @click:close="store.clearError()"
+      >
         {{ store.error }}
       </v-alert>
     </div>
@@ -266,7 +385,14 @@ async function share() {
 
 <style scoped>
 .fb-page {
-  padding: 16px 16px 48px;
+  /* 底内边距是 0，**别再往回加**：这一页最后一样东西是那个黏底部的评论框，
+     而 `sticky` 量的是滚动容器**内容盒**的下沿，不是它的边框盒 —— 多出来的
+     底内边距会变成框下面的一条带子，评论从那里往上滚、从框底下露出来（实测
+     48px 的底内边距就是 48px 高的一条，半行评论卡在输入框下面）。这一页末尾
+     的留白改由评论框自己的下内边距给（见 `.fb-composer`），所以「黏住时」和
+     「滚到底时」长得一模一样，不会到最后突然往下挪一截。
+     列表那几页没有黏住的东西，它们的 48px 照旧。 */
+  padding: 16px 16px 0;
 }
 .fb-page__inner {
   margin: 0 auto;
@@ -338,7 +464,7 @@ async function share() {
   background: var(--fill);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: var(--lh-12);
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
@@ -350,8 +476,55 @@ async function share() {
   gap: 8px;
   margin-bottom: 12px;
 }
-.fb-comment-form {
-  padding-top: 4px;
+/* 评论框黏在**评论区自己**身上，不黏在视口上。
+ *
+ * 要解决的是「评论一多，想评论就得滚到最底下」。直接 `position: fixed` 到视口底部
+ * 也能解决，但代价是它从打开这一页的第一秒就在 —— 而这一页上面还有正文和「现场」
+ * 那三段，读的人多数是来读它们的，一个常驻条会一直压着那一屏、盖住最后一段。
+ * 挂在评论区这个 section 上，`sticky` 的行为正好是要的那一种：
+ *   正文还在屏幕上（评论区还在屏幕外）→ 它不出现；
+ *   滚进评论 → 贴在视口底部，滚到哪儿都够得着；
+ *   滚到评论区末尾 → 落回自己原来的位置，不会「都到底了还浮着一条」。
+ * 另外 `sticky` 只占左边这一列 —— `fixed` 会横跨整页，把右栏「进展」一起盖住。
+ *
+ * **不画上边线，只留不透明的底色**：左栏（正文那一条）到此为止，右栏「进展」在那
+ * 个高度上是空的，一条只画到一半的横线看着像坏了。分块由框自己那圈描边负责 ——
+ * 和 ChatPanel 里那个输入区同一个办法。
+ *
+ * `.fb-page` 才是这一页的滚动容器（页根自己领滚动，见 scroll.spec.ts），
+ * 所以 `bottom: 0` 贴的是它内容盒的下沿。
+ *
+ * **窄屏底下那条一级导航不用管**：`v-bottom-navigation` 会把自己注册成一个底部
+ * 布局项，`v-main` 因此拿到 `padding-bottom`，滚动容器本来就在它上面 —— 再自己
+ * 让开 56px 反而会在框底下留出一条能把评论露出来的带子。 */
+.fb-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 12px;
+  /* 下内边距就是这一页末尾的留白（`.fb-page` 那 48px 挪到这儿了）。 */
+  padding: 8px 0 16px;
+  background: var(--canvas);
+}
+/* 收起态。圆角和描边跟展开后的 v-textarea 同一套（那件组件的全局默认就是
+   outlined + rounded lg），所以点开那一下框不会「换一件衣服」。 */
+.fb-composer__open {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: var(--lh-14);
+  text-align: left;
+  cursor: text;
+}
+.fb-composer__open:hover,
+.fb-composer__open:focus-visible {
+  border-color: var(--line-2);
+  background: var(--fill);
 }
 .fb-aside {
   display: flex;

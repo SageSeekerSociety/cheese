@@ -670,6 +670,9 @@ class Settings(BaseSettings):
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
     notification_push_drain_interval_s: int = 15
+    #: 投递账本的补发。「写入之后、发出之前崩掉」那一档没有别的出路：那一行已经和
+    #: 事件一起提交了，发送这一半没人再碰它。不跑就是一份丢失记录，不是一次补救。
+    delivery_resend_interval_s: int = 60
     task_deadline_sweep_interval_s: int = 900
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
@@ -778,9 +781,6 @@ class Settings(BaseSettings):
     email_smtp_password: str = Field(default="", alias="EMAIL_SMTP_PASSWORD")
     email_smtp_ssl: bool = Field(default=False, alias="EMAIL_SMTP_SSL_ENABLE")
 
-    notification_dedup_ttl_seconds: int = Field(
-        default=10 * 60, alias="NOTIFICATION_DEDUP_TTL_SECONDS"
-    )
     notification_email_batch_size: int = Field(
         default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE"
     )

@@ -186,7 +186,7 @@ describe('筛完之后板还是一块板', () => {
     expect(getAllByText('暂无归你的任务').length).toBe(3)
     expect(queryByText('暂无施工中的任务')).toBeNull()
     // 顶上那行数的仍然是整块板：它说的是这个项目有多少活，和取景无关。
-    expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
+    expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
   })
 
   it('筛掉之后那一列的下一步提示也收起来 —— 「在房间里说明要做什么」在这一刻是句错话', async () => {

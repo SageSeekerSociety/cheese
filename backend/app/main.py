@@ -222,6 +222,17 @@ async def lifespan(_: FastAPI):
             listen(scheduler, async_session_factory), name="forge events"
         )
 
+    # What the platform pool offers is the gateway's answer, kept warm here so
+    # that asking for it never becomes a network call on the path that starts a
+    # turn. Until the first pass lands the catalogue serves its floor.
+    from app.api.deps import get_llm_gateway
+    from app.domain.agent import gateway_catalog
+
+    spawn(
+        gateway_catalog.keep_fresh(get_llm_gateway()),
+        name="gateway model catalogue",
+    )
+
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
 

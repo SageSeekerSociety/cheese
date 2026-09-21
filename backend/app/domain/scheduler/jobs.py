@@ -41,6 +41,7 @@ def periodic_jobs(
 ) -> list[PeriodicRunner]:
     from app.domain import backend_log
     from app.domain.agent.forgejo_tokens import purge_expired_tokens
+    from app.domain.delivery.ledger import resend_unsent_deliveries
     from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
@@ -151,6 +152,14 @@ def periodic_jobs(
             "notification push drain",
             settings.notification_push_drain_interval_s,
             lambda: drain_push_queue(sessions),
+        ),
+        # 投递账本上那些「记下了、没发出去」的行的唯一出路。那一行已经和引发它的
+        # 事件一起提交了，而发送这一半的进程可能在中间就没了 —— 不跑这个 job，账本
+        # 就只是一份丢失记录，而不是一次补救。
+        PeriodicRunner(
+            "delivery resend",
+            settings.delivery_resend_interval_s,
+            lambda: resend_unsent_deliveries(sessions),
         ),
         # A deadline nobody sweeps is a promise the platform made and quietly did
         # not keep: the moment it matters is the moment nobody is looking.

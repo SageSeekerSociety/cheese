@@ -18,6 +18,7 @@ import type {
   EnvironmentStatus,
   FeedbackCard,
   FeedbackComment,
+  FeedbackCommentLikeResult,
   FeedbackCounts,
   FeedbackCreateBody,
   FeedbackDetail,
@@ -1108,6 +1109,8 @@ export function deleteLibraryFile(projectId: string, path: string): Promise<{ de
 export interface ProjectArtifact {
   id: string
   name: string
+  /** 一句话：这是什么东西、给谁的。交付时写下，没人写过时是空串。 */
+  about: string
   /** 交付过几次。0 = 有一张卡正在交付它，但还没有哪一次落地。 */
   version: number
   /** 最近一次交付被采纳的时刻（ISO），一次都还没有时为 null。 */
@@ -2017,6 +2020,27 @@ export function getFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/feedback/${encodeURIComponent(feedbackId)}`)
 }
 
+/** 一页评论。不给 `parentId` 是顶层评论那一页（一页若干栋楼，每栋跟着它的前若干条
+ *  回复走），给了就是**那一栋楼里**从 `after` 往后的一段回复。
+ *
+ *  两个取法共用一条路由、一套游标，客户端不记第二种形状。`after` 是服务端发出来的
+ *  **不透明**串，原样带回来 —— 自己拼一个（「最后一条的时间戳 + id」）拼得出来，
+ *  但那是把服务端的排序规则抄了第二份，改排序的那天两边会漂开，症状是翻页漏行。
+ *
+ *  `next_cursor` 为 null 表示这一层取完了（顶层评论取完了 / 这栋楼取完了）。 */
+export function listFeedbackComments(
+  feedbackId: string,
+  opts: { after?: string | null; parentId?: string | null } = {}
+): Promise<{ items: FeedbackComment[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.after) params.set('after', opts.after)
+  if (opts.parentId) params.set('parent_id', opts.parentId)
+  const query = params.toString()
+  return request<{ items: FeedbackComment[]; next_cursor: string | null }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments${query ? `?${query}` : ''}`
+  )
+}
+
 /** 提一条反馈。**agent 不能走这条路** —— 服务端会 403；agent 的入口是提案卡。
  *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
 export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {
@@ -2050,11 +2074,27 @@ export function createFeedbackComment(
   })
 }
 
+/** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
+ *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
+ *  遍历，多算一次就会和服务端的答案漂开。 */
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
     { method: 'DELETE' }
   )
+}
+
+const commentLikeUrl = (feedbackId: string, commentId: string) =>
+  `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}/likes`
+
+/** 点赞一条评论。和 `supportFeedback` 同一个形状：回的是**写完之后的计数**，
+ *  不是增量。重复点是幂等的，所以「双击」这件事不需要客户端去防。 */
+export function likeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'POST' })
+}
+
+export function unlikeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'DELETE' })
 }
 
 /* ---- 管理端 (`/admin/feedback`) ---- */

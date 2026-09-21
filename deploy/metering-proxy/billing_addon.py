@@ -64,6 +64,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from mitmproxy import http, tls
 
@@ -760,6 +761,28 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     flow.request.headers["authorization"] = f"Bearer {token}"
 
 
+class GatewayStream(StreamingUsageExtractor):
+    """Reuse the bounded SSE line reader; retain only completion/error flags."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.complete = False
+        self.failed = False
+
+    def _consume(self, raw: bytes) -> None:
+        if not raw.startswith(b"data:"):
+            return
+        try:
+            event = json.loads(raw[5:])
+        except json.JSONDecodeError:
+            return
+        if isinstance(event, dict):
+            self.complete |= event.get("type") == "message_stop"
+            self.failed |= event.get("type") == "error" or isinstance(
+                event.get("error"), dict
+            )
+
+
 def responseheaders(flow: http.HTTPFlow) -> None:
     """Stream the response body through instead of buffering it whole. A turn's
     SSE response is otherwise held in RAM for the ENTIRE turn while it buffers,
@@ -775,7 +798,22 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     if resp is None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
-        resp.stream = True
+        if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
+            "content-type", ""
+        ):
+            extractor = GatewayStream()
+            flow.metadata["cheese_gateway_stream"] = extractor
+
+            def observe(chunk: bytes) -> bytes:
+                if chunk:
+                    extractor.feed(chunk)
+                else:
+                    extractor.close()
+                return chunk
+
+            resp.stream = observe
+        else:
+            resp.stream = True
         return
     if flow.metadata.get("cheese_rc_flags"):
         # Feature evaluation is small JSON. Inference SSE remains streamed.
@@ -805,6 +843,7 @@ def responseheaders(flow: http.HTTPFlow) -> None:
 def _log_gateway_timing(flow: http.HTTPFlow) -> None:
     project, topic = flow.metadata.get("cheese_attr") or ("", "")
     resp = flow.response
+    stream = flow.metadata.get("cheese_gateway_stream")
     logger.info(
         "gateway_request_timing %s",
         json.dumps(
@@ -833,10 +872,89 @@ def _log_gateway_timing(flow: http.HTTPFlow) -> None:
                 "response_start": getattr(resp, "timestamp_start", None),
                 "response_end": getattr(resp, "timestamp_end", None),
                 "status": resp.status_code if resp else None,
-                "failed": bool(getattr(flow, "error", None)),
+                "failed": bool(getattr(flow, "error", None))
+                or bool(stream and (stream.failed or not stream.complete)),
+                "stream_complete": stream.complete if stream else None,
+                "error_type": type(flow.error).__name__
+                if getattr(flow, "error", None)
+                else None,
             }
         ),
     )
+
+
+_failure_reports: set[asyncio.Task] = set()
+
+
+def _report_gateway_failure(flow: http.HTTPFlow) -> None:
+    """Report model failures through the existing authenticated error intake.
+
+    A clean HTTP 200 can contain an SSE error or end before message_stop.
+    Client disconnects use error(), not response(), and are not model failures.
+    Reporting must not hold up the stream or retain request/response contents.
+    """
+    resp = flow.response
+    if resp is None or "/v1/messages" not in flow.request.path:
+        return
+    stream = flow.metadata.get("cheese_gateway_stream")
+    if resp.status_code >= 500 or resp.status_code in (401, 403):
+        kind, message = (
+            "GatewayHTTPError",
+            f"Model gateway returned HTTP {resp.status_code}",
+        )
+    elif stream and (stream.failed or not stream.complete):
+        kind, message = (
+            "GatewayStreamError",
+            "Model response stream failed before completion",
+        )
+    else:
+        return
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    request_id = resp.headers.get("x-litellm-call-id")
+    logger.error("%s: %s (request_id=%s)", kind, message, request_id)
+    if not ADMISSION_URL or not SCOPED_SECRET or not project or not topic:
+        return
+    if len(_failure_reports) >= 8:
+        logger.warning("model failure report capacity exceeded")
+        return
+    body = json.dumps(
+        {
+            "project_id": project,
+            "topic_id": topic,
+            "errors": [
+                {
+                    "message": message,
+                    "exc_type": kind,
+                    "where": "model gateway",
+                    "request_id": request_id,
+                }
+            ],
+        }
+    ).encode()
+    endpoint = ADMISSION_URL.removesuffix("/llm/admission") + "/backend-errors"
+
+    def post() -> None:
+        req = Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Cheese-Token": SCOPED_SECRET,
+            },
+        )
+        with urlopen(req, timeout=3) as response:
+            response.read(1024)
+
+    async def report() -> None:
+        try:
+            await asyncio.to_thread(post)
+        except Exception:
+            # Do not print an HTTP error body: it may echo credentials.
+            logger.warning("model failure report could not reach backend")
+
+    task = asyncio.create_task(report())
+    _failure_reports.add(task)
+    task.add_done_callback(_failure_reports.discard)
 
 
 def error(flow: http.HTTPFlow) -> None:
@@ -847,6 +965,7 @@ def error(flow: http.HTTPFlow) -> None:
 def response(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+        _report_gateway_failure(flow)
         return
     if (
         flow.metadata.get("cheese_rc_flags")

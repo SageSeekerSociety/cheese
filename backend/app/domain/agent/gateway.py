@@ -39,6 +39,46 @@ logger = logging.getLogger(__name__)
 _TIMEOUT = 8.0
 
 
+@dataclass(frozen=True)
+class GatewayModel:
+    """One model the gateway will route, as the gateway itself reports it.
+
+    ``selectable`` and ``priced`` are the two things cheese needs that routing
+    alone does not answer — see ``LlmGateway.models``."""
+
+    id: str
+    label: str
+    selectable: bool
+    priced: bool
+
+
+def _price_is_set(*sources: object) -> bool:
+    """Will the gateway bill this model at a non-zero rate?
+
+    Both directions must carry a rate. A model priced on one side only bills
+    half its traffic at zero, which is the same silent-brake failure as no price
+    at all, arriving at half speed.
+
+    Two sources because a deployment may put the rates in either place:
+    LiteLLM reads ``input_cost_per_token`` from ``litellm_params`` AND from
+    ``model_info``, and this repo's own gateway config uses both (the GLM
+    entries the former, ``deepseek-flash`` the latter). Reading one would
+    report every GLM model as unpriced and drop it from the catalogue.
+    """
+
+    def rate(field: str) -> float:
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            value = src.get(field)
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                if value > 0:
+                    return float(value)
+        return 0.0
+
+    return bool(rate("input_cost_per_token") and rate("output_cost_per_token"))
+
+
 @dataclass
 class DailySpend:
     """One project's gateway spend for one UTC day (cumulative)."""
@@ -71,6 +111,78 @@ class LlmGateway:
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport)
+
+    async def models(self) -> list[GatewayModel] | None:
+        """Every model the gateway is routing right now, from ``/model/info``.
+
+        This is the ONE place a gateway model is declared: the gateway needs its
+        route and price to serve it at all, so a second list in cheese could
+        only ever drift out of step with it, and nothing would report the
+        disagreement — a model dropped here stays in the picker, and the person
+        who selects it finds out when their turn fails to route.
+
+        Returns ``None`` when the gateway cannot be asked. That is NOT an empty
+        catalogue: the caller must keep serving what it last knew (see
+        ``gateway_catalog``), because a picker that empties on a network blip
+        stops every agent on the deployment.
+
+        Reads the response LiteLLM documents at ``/model/info``: ``data`` rows of
+        ``model_name`` + ``model_info`` + ``litellm_params`` (credentials already
+        stripped gateway-side). Two keys under ``model_info`` are cheese's, and
+        both are optional metadata LiteLLM passes through untouched:
+
+          - ``cheese_selectable``: offer this to people. Opt-in, because the
+            gateway also routes models that are NOT menu items — ``glm-4.5``
+            is where the subagent alias points, and listing it would invite
+            someone to pick a model we route to on their behalf.
+          - ``cheese_label``: what to call it; the id when absent.
+
+        A model added to the gateway at RUNTIME (``db_model``, via its admin API
+        rather than ``config.yaml``) is never offered, whatever it is marked.
+        That path is open on this deployment — ``STORE_MODEL_IN_DB=True`` — and
+        it is the only way to put a model in front of people without a release,
+        which is exactly why it waits: a model's price is the one field nobody
+        can check by looking at the model, and going through config.yaml is what
+        puts a second pair of eyes on it. Deleting the ``db_model`` clause below
+        opens it.
+        """
+        try:
+            async with self._client() as client:
+                r = await client.get(f"{self._base}/model/info", headers=self._headers)
+                r.raise_for_status()
+                payload = r.json()
+            rows = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                raise ValueError("gateway /model/info carries no data list")
+        except Exception:  # noqa: BLE001 — an unreachable gateway is not an empty one
+            logger.warning("gateway models failed", exc_info=True)
+            return None
+
+        out: list[GatewayModel] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("model_name")
+            if not isinstance(name, str) or not name or name in seen:
+                continue
+            seen.add(name)
+            info = row.get("model_info")
+            params = row.get("litellm_params")
+            info = info if isinstance(info, dict) else {}
+            label = info.get("cheese_label")
+            declared_in_config = info.get("db_model") is not True
+            out.append(
+                GatewayModel(
+                    id=name,
+                    label=label if isinstance(label, str) and label else name,
+                    selectable=(
+                        info.get("cheese_selectable") is True and declared_in_config
+                    ),
+                    priced=_price_is_set(params, info),
+                )
+            )
+        return out
 
     async def mint_project_key(self, project_id: uuid.UUID) -> str | None:
         """Create a project-scoped virtual key (no expiry; attributed via

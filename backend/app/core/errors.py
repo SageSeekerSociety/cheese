@@ -378,14 +378,14 @@ def register_exception_handlers(app: FastAPI) -> None:
             method=request.method,
             error=str(exc),
         )
-        return JSONResponse(
+        content = format_error_response(
             status_code=HTTP_502_BAD_GATEWAY,
-            content=format_error_response(
-                status_code=HTTP_502_BAD_GATEWAY,
-                message=str(exc),
-                name="DeviceCallError",
-            ),
+            message=str(exc),
+            name="DeviceCallError",
         )
+        if exc.failure_code is not None:
+            content["error"]["failure_code"] = exc.failure_code
+        return JSONResponse(status_code=HTTP_502_BAD_GATEWAY, content=content)
 
     async def _handle_client_disconnect(
         request: Request, _: ClientDisconnect
