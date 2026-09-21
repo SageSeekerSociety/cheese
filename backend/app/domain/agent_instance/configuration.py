@@ -107,6 +107,18 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "tier": TIER_INCLUDED,
             }
         )
+    # 项目级默认模型：项目 settings 里显式写一个**目录里有的**名字，就把对应的
+    # 那条标 default=True，其余全部清掉。没写、或写了个目录里没有的名字（历史
+    # 数据），就保留上面按部署兜底算出来的 default（订阅部署→订阅 sonnet；否则
+    # →settings.agent_model）。这条是 #1365 之后主线唯一能拿到「项目想用哪个模型」
+    # 的地方——主线不是一条活，它读 binding.resolve(None, …)，后者拿 catalog 里
+    # default=True 的那条。写进来的名字不在目录里就按没设处理，而不是让目录空掉：
+    # 空目录会让 resolve 抛「没有可用的默认模型」，把一条只是配错了的项目整条堵死。
+    chosen = (project_settings or {}).get("default_model")
+    known_ids = {item["id"] for item in choices}
+    if isinstance(chosen, str) and chosen in known_ids:
+        for item in choices:
+            item["default"] = item["id"] == chosen
     return choices
 
 
