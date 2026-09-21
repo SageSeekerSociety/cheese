@@ -139,8 +139,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.6 记忆（项目 / 个人）  ✅ 基础 / 🟡
 
 - **行为**：项目记忆（章程/决策/进展，任何话题可引用）+ 个人记忆（跨项目，记录"芝士眼中的 TA"）。私聊里 `remember` 写个人记忆。
-- **实现**：`MemoryEntry`（scope=project/user）、`DbMemoryStore`（`backend/app/domain/memory/`）。当前是 DB 全量加载（spec 的 OpenViking 分层加载为后续）。
-- 🟡 剩余：会话收尾自动提取、项目话题里给个人记忆、L0/L1/L2 分层。
+- **实现**：`MemoryEntry`（scope=project/user）、`DbMemoryStore`（`backend/app/domain/memory/`）。
+- 🟡 剩余：项目话题里给个人记忆。
 
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 

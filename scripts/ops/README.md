@@ -81,7 +81,7 @@ systemctl start cheesex
 # 1) 前端本地构建
 cd frontend && npm run build && cd ..
 # 2) rsync 代码 + dist（注意 exclude 列表，服务器端 ops/ 不在源里所以要排除）
-rsync -az --delete --exclude='.git' --exclude='.workspaces' --exclude='.viking' \
+rsync -az --delete --exclude='.git' --exclude='.workspaces' \
   --exclude='node_modules' --exclude='dist' --exclude='tmp_*' --exclude='logs' \
   --exclude='.env' --exclude='.porkbun-state.json' --exclude='.venv' \
   --exclude='ops' --exclude='uploads' --exclude='preview.db' \
