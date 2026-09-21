@@ -244,7 +244,7 @@ function comment(spec: {
   }
 }
 
-const ROWS: FeedbackDetail[] = [
+const HANDWRITTEN: FeedbackDetail[] = [
   row({
     id: 'fb-1042',
     display: 'FB-1042',
@@ -657,6 +657,309 @@ function visibleToMe(item: FeedbackCard): boolean {
   return IS_ADMIN || item.author_handle === ME || item.submitted_by_handle === ME
 }
 
+/** 补白行：让队列真的长过一屏。
+ *
+ *  **为什么要有**：上面那十二条在 620 高的视口里只溢出 24px，于是「表头常驻」
+ *  「只有表格自己滚」「一屏十七行」这几条在预览里**一条都演不出来** —— 量出来是
+ *  「滚动量足够了 = false」。四个栏位也各要有十几条，否则点进去三两条，看着像没做完。
+ *
+ *  **不冒充真实工单**：正文比上面那几条短、没有评论线程、没有内部备注；id 从
+ *  FB-1029 往下排。上面那十二条是照着真事写的，这下面是形状。 */
+const FILLER: {
+  kind: FeedbackKind
+  title: string
+  summary: string
+  status: FeedbackStatus
+  author: string
+  supports: number
+  /** 多少小时前提的。 */
+  h: number
+  vis?: 'private'
+  sec?: boolean
+  agent?: boolean
+  who?: string
+}[] = [
+  {
+    kind: 'bug',
+    title: '消息列表滚到底之后不再加载',
+    summary: '翻到最后一页就不动了，得刷新整页才继续。',
+    status: 'in_progress',
+    author: 'ligan',
+    supports: 3,
+    h: 30,
+    who: 'andy',
+  },
+  {
+    kind: 'bug',
+    title: '深色模式下引用块和正文一个颜色',
+    summary: '引用看不出来是引用，得对着格式工具栏猜。',
+    status: 'received',
+    author: 'chiruotong',
+    supports: 1,
+    h: 34,
+  },
+  {
+    kind: 'suggestion',
+    title: '话题列表想按最近活动排序',
+    summary: '现在只能按创建时间，聊得最热的那几个沉在底下。',
+    status: 'received',
+    author: 'maxiaoyu',
+    supports: 4,
+    h: 40,
+    who: 'pengwenbo',
+  },
+  {
+    kind: 'bug',
+    title: '换头像之后要刷新才变',
+    summary: '换完还是旧的那张，刷新一次才对。',
+    status: 'resolved',
+    author: 'caisongyang',
+    supports: 2,
+    h: 52,
+    who: 'andylizf',
+  },
+  {
+    kind: 'bug',
+    title: '手机上弹起键盘后输入框跑到屏幕外',
+    summary: '键盘一出来整页上移，光标看不见了。',
+    status: 'in_progress',
+    author: 'n1ctheboy',
+    supports: 6,
+    h: 58,
+    who: 'andy',
+  },
+  {
+    kind: 'other',
+    title: '想一次导出话题里的全部文档',
+    summary: '打包成 markdown 下载，现在只能一篇篇复制。',
+    status: 'received',
+    author: 'pengwenbo',
+    supports: 5,
+    h: 66,
+  },
+  {
+    kind: 'bug',
+    title: '任务卡里的代码块没有复制按钮',
+    summary: '每次都要手动选中一大段。',
+    status: 'deployed',
+    author: 'ligan',
+    supports: 1,
+    h: 72,
+    who: 'andylizf',
+  },
+  {
+    kind: 'suggestion',
+    title: '侧栏的项目想能拖拽排序',
+    summary: '项目一多就要从头找。',
+    status: 'received',
+    author: 'chiruotong',
+    supports: 3,
+    h: 80,
+  },
+  {
+    kind: 'bug',
+    title: '点通知进去有时候是空页面',
+    summary: '通知里带的那条链接偶尔指向已经不在的东西。',
+    status: 'received',
+    author: 'maxiaoyu',
+    supports: 2,
+    h: 90,
+    who: 'andy',
+  },
+  {
+    kind: 'bug',
+    title: '长文档写到大半会卡',
+    summary: '三千字以上输入有明显延迟，一段字要等一下才出。',
+    status: 'in_progress',
+    author: 'caisongyang',
+    supports: 7,
+    h: 96,
+    who: 'n1ctheboy',
+  },
+  {
+    kind: 'suggestion',
+    title: '想订阅某一条反馈',
+    summary: '有动静的时候推给我，不想天天回来看。',
+    status: 'received',
+    author: 'ligan',
+    supports: 8,
+    h: 104,
+  },
+  {
+    kind: 'bug',
+    title: '输入法组字时把拼音当查询发出去了',
+    summary: '中文打字的时候列表一直闪，组完才稳。',
+    status: 'resolved',
+    author: 'chiruotong',
+    supports: 4,
+    h: 112,
+    who: 'andy',
+  },
+  {
+    kind: 'other',
+    title: '想看到每个项目用了多少额度',
+    summary: '现在只有一个总数，不知道是哪个项目在烧。',
+    status: 'received',
+    author: 'pengwenbo',
+    supports: 6,
+    h: 120,
+  },
+  {
+    kind: 'bug',
+    title: '表格里的数字没对齐',
+    summary: '千分位之后列宽一直在跳。',
+    status: 'deployed',
+    author: 'maxiaoyu',
+    supports: 1,
+    h: 130,
+    who: 'caisongyang',
+  },
+  {
+    kind: 'suggestion',
+    title: '评论里想能 @ 人',
+    summary: '现在只能手打 handle，还得记住拼写。',
+    status: 'received',
+    author: 'n1ctheboy',
+    supports: 9,
+    h: 140,
+  },
+  {
+    kind: 'bug',
+    title: '定时巡检连着两轮没跑',
+    summary: '日志里干脆没有那一轮，只能等下一轮。',
+    status: 'resolved',
+    author: 'andy',
+    supports: 5,
+    h: 150,
+    who: 'ligan',
+  },
+  {
+    kind: 'bug',
+    title: '从详情页复制代码会带上行号',
+    summary: '粘到编辑器里还得一行行删。',
+    status: 'received',
+    author: 'caisongyang',
+    supports: 2,
+    h: 160,
+    who: 'andylizf',
+  },
+  {
+    kind: 'bug',
+    title: '深色模式下透明图片是一块白',
+    summary: '截图贴进来之后背景没跟着变。',
+    status: 'in_progress',
+    author: 'pengwenbo',
+    supports: 3,
+    h: 170,
+    who: 'andy',
+  },
+  {
+    kind: 'suggestion',
+    title: '机器列表想能按团队筛',
+    summary: '几十台机器混在一起，找人借一台要翻半天。',
+    status: 'received',
+    author: 'ligan',
+    supports: 4,
+    h: 180,
+  },
+  {
+    kind: 'bug',
+    title: '登出之后还能看见上一个账号的草稿',
+    summary: '共享电脑上换人登录，抽屉里还是上一个人的字。',
+    status: 'received',
+    author: 'chiruotong',
+    supports: 10,
+    h: 190,
+    who: 'andy',
+  },
+  {
+    kind: 'bug',
+    title: 'agent 提的反馈在列表里看不出是 agent',
+    summary: '得点进去看来源那一栏。',
+    status: 'received',
+    author: 'cheese-c82aeb40',
+    agent: true,
+    supports: 2,
+    h: 200,
+  },
+  {
+    kind: 'suggestion',
+    title: 'agent 想能自己认领一条反馈',
+    summary: '现在只能在聊天里说一声让人去改。',
+    status: 'received',
+    author: 'cheese-9f31d7c2',
+    agent: true,
+    supports: 3,
+    h: 210,
+  },
+  {
+    kind: 'bug',
+    title: '私密反馈在管理端要一眼看得出来',
+    summary: '和公开的挤在同一栏里长得一样。',
+    status: 'received',
+    author: 'maxiaoyu',
+    vis: 'private',
+    supports: 1,
+    h: 220,
+    who: 'andy',
+  },
+  {
+    kind: 'bug',
+    title: '有一条写接口可以被匿名调用',
+    summary: '没登录也能把它触发一遍。',
+    status: 'in_progress',
+    author: 'chiruotong',
+    vis: 'private',
+    sec: true,
+    supports: 2,
+    h: 230,
+    who: 'andy',
+  },
+  {
+    kind: 'bug',
+    title: '日志里出现了会话凭证',
+    summary: '排查的时候在前置机的日志里看到了。',
+    status: 'received',
+    author: 'n1ctheboy',
+    vis: 'private',
+    sec: true,
+    supports: 4,
+    h: 240,
+  },
+]
+
+const ROWS: FeedbackDetail[] = [
+  ...HANDWRITTEN,
+  ...FILLER.map((f, i) =>
+    row({
+      id: `fb-${1029 - i}`,
+      display: `FB-${1029 - i}`,
+      kind: f.kind,
+      title: f.title,
+      summary: f.summary,
+      status: f.status,
+      author: f.author,
+      authorIsAgent: f.agent,
+      visibility: f.vis ?? 'public',
+      security: f.sec ?? false,
+      assignee: f.who,
+      supports: f.supports,
+      minutesAgo: f.h * 60,
+      problem: f.summary,
+    })
+  ),
+]
+
+/** 反馈中心那份列表的可见性：后端 `PUBLIC_ONLY` = **公开且不是安全问题**，对谁都一样。
+ *
+ *  **管理员在反馈中心也看不到私密条目** —— 私密只在「我的反馈」和管理端出现。
+ *  预览原来写的是「预览一律当管理员，所以私密原样显示」，那比真环境宽松，而它错在
+ *  一个最容易被信的地方：照这个预览去判断，会得出「我提的私密反馈在反馈中心里看得见」，
+ *  线上却是看不见的。 */
+function inPublicList(item: FeedbackCard): boolean {
+  return item.visibility === 'public' && !item.security
+}
+
 /** 「办完了」= 已修复 **和** 已上线，和 `repositories.CLOSED_STATUSES` 同一份口径。 */
 const CLOSED: FeedbackStatus[] = ['resolved', 'deployed']
 
@@ -688,7 +991,7 @@ function matchesQuery(item: FeedbackDetail, q: string): boolean {
 
 /** 计数与列表用**同一个**谓词算，免得预览里的 Tab 数字和点进去看到的条数对不上。 */
 function counts(): FeedbackCounts {
-  const open = ROWS.filter(visibleToMe)
+  const open = ROWS.filter(inPublicList)
   return {
     all: open.filter((item) => matchesTab(item, 'all')).length,
     hot: open.filter((item) => matchesTab(item, 'hot')).length,
@@ -704,20 +1007,31 @@ function displayNo(item: FeedbackCard): number {
   return Number(item.display_id.replace(/\D/g, '')) || 0
 }
 
-function sorted(list: FeedbackDetail[]): FeedbackCard[] {
+function sorted(list: FeedbackDetail[], sort = 'new'): FeedbackCard[] {
   // 真接口在后端排序，见 `backend/app/domain/feedback/repositories.py` 的 `_list_stmt`：
-  // 默认口径是 `ORDER BY created_at DESC, display_no DESC`。前端从来不传 `sort`，
-  // 所以这条就是实际口径。`last_activity_at` **不参与排序**（后端只把它当展示字段挂在卡上），
-  // 这里排它是错的；改成 `created_at` 再比一遍编号兜底（同一秒提交的两条才有这个需要）。
-  return [...list].sort((a, b) =>
+  // 默认口径是 `ORDER BY created_at DESC, display_no DESC`。`last_activity_at`
+  // **不参与排序**（后端只把它当展示字段挂在卡上），这里排它是错的。
+  //
+  // `sort=supports`（管理台的「最热」）是那支语句里唯一一条非默认分支，三档照抄：
+  // `count(supports) DESC, created_at DESC, display_no DESC`。**后两档不是装饰**：
+  // 只按支持数排的话，两条同数的行谁在前是数据库说了算，页面上「换了排序但看着没变」
+  // 和小批翻页时行重复/漏行都是它。
+  //
+  // 预览里必须真的按 `sort` 排，否则最热那一栏点了和没点一样，而**界面上看不出**
+  // 是不是假后端没实现 —— 这正是这块假数据最容易骗过自己的地方。
+  const byNew = (a: FeedbackCard, b: FeedbackCard) =>
     a.created_at === b.created_at ? displayNo(b) - displayNo(a) : a.created_at < b.created_at ? 1 : -1
-  )
+  const copy = [...list]
+  if (sort === 'supports') {
+    return copy.sort((a, b) => (a.supports === b.supports ? byNew(a, b) : b.supports - a.supports))
+  }
+  return copy.sort(byNew)
 }
 
 function listPage(url: URL, tab: string): { data: FeedbackCard[]; total: number; counts: FeedbackCounts } {
   const q = url.searchParams.get('q') ?? ''
   const data = sorted(
-    ROWS.filter(visibleToMe)
+    ROWS.filter(inPublicList)
       .filter((item) => matchesTab(item, tab))
       .filter((item) => matchesQuery(item, q))
   )
@@ -735,10 +1049,19 @@ function adminPage(url: URL, tab: string): { data: FeedbackCard[]; total: number
       case 'security':
         return item.security
       default:
-        return item.visibility === 'public'
+        // 管理端的「公开」栏用的也是 `PUBLIC_ONLY`（公开**且不是安全问题**），和反馈中心
+        // 同一份谓词 —— 少一个条件就是「管理端说这条是公开的、公开列表里却没有它」的来源。
+        return item.visibility === 'public' && !item.security
     }
   }
-  const data = sorted(ROWS.filter(pick).filter((item) => matchesQuery(item, q)))
+  // 管理台的「最新 / 最热」是同一个接口换 `sort`（`GET /admin/feedback?sort=`），
+  // 所以假后端也得认这一档，不然那一栏点了没反应。（真接口的 `sort` 词表在
+  // `backend/app/domain/feedback/services.py` 的 `SORTS`，默认 `new`。）
+  const sort = url.searchParams.get('sort') ?? 'new'
+  const data = sorted(
+    ROWS.filter(pick).filter((item) => matchesQuery(item, q)),
+    sort
+  )
   return { data, total: data.length, counts: counts() }
 }
 

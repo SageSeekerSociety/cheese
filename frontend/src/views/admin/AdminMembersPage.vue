@@ -420,12 +420,13 @@ onMounted(load)
   background: var(--fill-2);
 }
 
+/* 组头那一格的**内边距和行高都不另写**：表壳给 8px 上下 × 12px 左右，行高也由它
+   钉成和数据行一样。原来这里写的是 `padding: 0 12px` + `height: 32px` —— 表壳的
+   规则压得过它，那两条从来没生效过，留着只会误导。 */
 .am__groupcell {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 32px;
-  padding: 0 12px;
 }
 
 .am__grouplabel {
@@ -442,14 +443,11 @@ onMounted(load)
   line-height: var(--lh-12);
 }
 
-.am__row {
-  transition: background-color 0.12s ease;
-}
-
-.am__row:hover {
-  background: var(--fill);
-}
-
+/* 行的内边距、下边线、悬停底色、圆角都由表壳给
+   （`components/admin/AdminGrid.vue` 的 `.agrid__body :deep(td)` 那一段），
+   这里只写「这一格里的字怎么排」。**别在这里重复写内边距**：表壳那条规则按
+   `tbody td` 选，压得过这一层的 `.am__cell`，写了也是白写 —— 反而会让下一个人
+   以为行高是从这儿来的（第一版就是这样，页面里写着 4px、页面上跑的是 8px）。 */
 .am__cell {
   overflow: hidden;
   color: var(--text);
@@ -459,11 +457,7 @@ onMounted(load)
   white-space: nowrap;
 }
 
-/* 操作格上下收到 4px：里面那颗按钮是 32，加上两头就是 40 的行高（8/4 都在间距阶梯
-   上），比默认的 8px 内边距挤出来的 48 矮一档。 */
 .am__cell--actions {
-  padding-top: 4px;
-  padding-bottom: 4px;
   text-align: right;
 }
 
@@ -478,7 +472,10 @@ onMounted(load)
   color: var(--muted);
 }
 
-.am__none {
+/* 空态那一格想要比一行高一点，所以**真的需要**压过表壳那 8px —— 多写一层 `.am`
+   （三个类 `(0,3,0)` > 表壳的 `(0,2,1)`，理由写在 `AdminGrid.vue` 顶上那段注释里）。
+   这是这个写法在本仓库的实例，照着写就行。 */
+.am .am__none {
   padding: 20px 12px;
   color: var(--faint);
   text-align: center;

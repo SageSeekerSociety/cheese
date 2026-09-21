@@ -65,13 +65,13 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
         <tbody class="agrid__body">
           <template v-if="loading">
             <tr v-for="i in skeletonRows" :key="`skel-${i}`" class="agrid__row">
-              <td v-for="(_, c) in cols" :key="c" class="agrid__cell">
+              <td v-for="(_, c) in cols" :key="c">
                 <span class="agrid__bone" :style="{ width: bone(c) }" />
               </td>
             </tr>
           </template>
           <tr v-else-if="empty" class="agrid__row">
-            <td :colspan="cols.length" class="agrid__cell agrid__none">{{ empty }}</td>
+            <td :colspan="cols.length" class="agrid__none">{{ empty }}</td>
           </tr>
           <slot v-else />
         </tbody>
@@ -130,14 +130,27 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
   white-space: nowrap;
 }
 
-.agrid__cell {
+/* 下面这一整段**必须**走 `:deep()`，按结构选，不能按类选。
+   原因：真正的数据行是**页面**的模板画的（表壳只提供 `<slot>`），那些 `<tr>`/`<td>`
+   身上带的是**页面**的 scope 属性 —— `.agrid__cell[data-v-<表壳>]` 一条都匹配不到，
+   只有表壳自己画的骨架行匹配得到。第一版就是按类选的，结果是**骨架有内边距、真行没有**：
+   数据到货那一刻整张表重排（实测行高 22px 而不是 36px），骨架存在的唯一理由当场作废；
+   更糟的是这件事在 jsdom 里量不出来（没有布局引擎），单测一样是绿的。
+
+   `:deep()` 编译成 `.agrid__body[data-v-<表壳>] td` —— 前缀那一截仍然是表壳自己的，
+   所以限定范围没丢，页面里别处的 `<td>` 不受影响。
+
+   页面要覆盖这里给的几何（比如某一列想收紧内边距），写够三个类就压得过
+   （`(0,3,0)` > 这里的 `(0,2,1)`）：`.am__cell.am__cell--actions` 不够，
+   `.am .am__cell--actions` 才够。 */
+.agrid__body :deep(td) {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
 
 /* 表头那一条线属于表头，最后一行不画线 —— 画了会和卡片自己的描边挤成两条。 */
-.agrid__body > tr:last-child > .agrid__cell {
+.agrid__body :deep(tr:last-child > td) {
   border-bottom: 0;
 }
 
@@ -150,23 +163,31 @@ const bone = (column: number): string => props.boneWidths?.[column] ?? BONE_FALL
 .agrid__table > thead > tr:first-child > :deep(th:last-child) {
   border-top-right-radius: var(--radius-lg);
 }
-.agrid__body > tr:last-child > .agrid__cell:first-child {
+.agrid__body :deep(tr:last-child > td:first-child) {
   border-bottom-left-radius: var(--radius-lg);
 }
-.agrid__body > tr:last-child > .agrid__cell:last-child {
+.agrid__body :deep(tr:last-child > td:last-child) {
   border-bottom-right-radius: var(--radius-lg);
 }
 
-.agrid__row {
+.agrid__body :deep(tr) {
+  /* 行的**高度钉死**。骨架行里只有一根 12px 的骨头，真行里有头像、状态标记和
+     按钮，两边内容高度本来不一样 —— 不钉的话数据到货那一刻每一行都往下长几像素，
+     一页十几行就是整屏跳一次，而骨架的全部意义就是**不跳**。
+     39px 是量出来的（内容 20px + 上下 8px 内边距 + 1px 下边线 + 内联块落在基线上
+     多出来的那 3px），不是拍的。内容更高的行照旧被撑开 —— 表行上的 `height`
+     是下限，成员管理那一格的按钮（32px）会把那一行撑到 48。 */
+  height: 39px;
   /* 悬停只换底色、不位移（`.claude/rules/frontend.md`）。 */
   transition: background-color 0.12s ease;
 }
 
-.agrid__row:hover {
+.agrid__body :deep(tr:hover) {
   background: var(--fill);
 }
 
-.agrid__none {
+/* 空态那一格要压过上面 `td` 的内边距（`(0,3,1)` > `(0,2,1)`），所以带着自己的类写。 */
+.agrid__body :deep(td.agrid__none) {
   padding: 32px 12px;
   color: var(--faint);
   font-size: 13px;

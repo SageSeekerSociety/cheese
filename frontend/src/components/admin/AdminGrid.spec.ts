@@ -111,4 +111,23 @@ describe('管理台表格壳', () => {
     // 表头就跟着卡片一起滚走了。
     expect(rule('.agrid')).not.toContain('overflow')
   })
+
+  it('真行的几何按结构选（`:deep`），不按「页面得记得加的那个类」选', () => {
+    const src = readFileSync(join(here, 'AdminGrid.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (selector: string) => {
+      const at = src.indexOf(`${selector} {`)
+      if (at < 0) throw new Error(`AdminGrid.vue 里找不到 ${selector}`)
+      return src.slice(at, src.indexOf('}', at))
+    }
+
+    // 真行是**页面**的模板画的（表壳只提供槽），它们带的 scope 属性是页面的，
+    // 所以 `.agrid__cell[data-v-表壳]` 一条都匹配不到 —— 只有表壳自己画的骨架行
+    // 匹配得到。第一版就是按类选的，症状是**骨架有内边距、真行没有**：数据到货那
+    // 一刻整张表重排，骨架存在的唯一理由当场作废。而且 jsdom 没有布局引擎，
+    // 这件事在单测里量不出来，只能这样钉源码。**别改回按类选。**
+    expect(rule('.agrid__body :deep(td)')).toContain('padding: 8px 12px')
+    expect(rule('.agrid__body :deep(td)')).toContain('border-bottom')
+    expect(rule('.agrid__body :deep(tr:hover)')).toContain('background: var(--fill)')
+    expect(src).not.toContain('agrid__cell')
+  })
 })
