@@ -6,10 +6,7 @@
 # ghcr — and both times it was found by hand, days later, while the fix everyone
 # believed was live was not.
 #
-# Deliberately on the SELF-HOSTED runner: GitHub-hosted jobs in this repo are
-# refused while the org's Actions billing is unpaid, so a watcher there would be
-# a watcher that never runs. This one also has to reach the box, which only the
-# self-hosted runner can.
+# Runs on the self-hosted runner to inspect the deployment and gateway locally.
 #
 # Detection alone proved not enough (#188): the build/deploy chain is
 # edge-triggered — every push is a trigger, and a lost edge (a build cancelled
@@ -95,19 +92,16 @@ jobs:
           gh workflow run build.yml --ref main
           exit 0
 
-      # The gateway became a hard dependency of every turn the moment traffic was
-      # pointed at it, and it is a hand-started stack outside the deploy — so
-      # nothing else would notice it stopping. A dead gateway is not "metering is
-      # off", it is "no turn can reach a model".
-      - name: Gateway is answering
+      # A failed deployment check must not hide an independent gateway failure.
+      # Credentials stay inside the container; the default probe generates no tokens.
+      # Cancellation may still run this read-only check, bounded to one minute.
+      - name: Gateway database and authenticated catalog are ready
+        if: ${{ always() }}
+        timeout-minutes: 1
         run: |
           set -euo pipefail
-          code="$(curl -s -o /dev/null -w '%{http_code}' -m 8 \
-            http://172.17.0.1:4000/health/liveliness || true)"
-          if [ "$code" != "200" ]; then
-            echo "::error::LLM gateway is not answering (got '${code}'). Every turn \
-            routes through it, so turns are failing. Restart: docker compose -f \
-            ~/gateway/compose/docker-compose.gateway.yml -p cheese-gateway up -d"
+          if ! docker exec -i cheese-gateway-litellm-1 python - \
+            < backend/scripts/gateway_supply_probe.py; then
+            echo '::error::Gateway readiness failed. Inspect the classified probe result; use the Release gateway workflow for code or configuration recovery.'
             exit 1
           fi
-          echo "gateway ok"

@@ -26,6 +26,15 @@ class RequiredCITest(unittest.TestCase):
     def test_gate_edit_exercises_all_suites(self):
         self.assertTrue(all(gate.select([".github/workflows/required-ci.yml"]).values()))
 
+    def test_gateway_health_changes_select_their_behavior_suite(self):
+        for path in (
+            "backend/scripts/gateway_supply_probe.py",
+            "backend/scripts/test_gateway_supply_probe.py",
+            ".github/workflows/deploy-drift.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["deploy"])
+
     def test_shared_wire_fixture_checks_both_languages(self):
         selected = gate.select(["backend/tests/fixtures/wire/frame.json"])
         self.assertTrue(selected["backend"] and selected["cli"])
