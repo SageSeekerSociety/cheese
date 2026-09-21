@@ -1,5 +1,6 @@
 [
   "questions.detail.bountyTip",
+  "spaces.detail.memberTasks.identity.team",
   "tasks.form.team",
   "tasks.form.teamLockingPolicy",
   "tasks.form.teamLockingPolicyLockOnApproval",

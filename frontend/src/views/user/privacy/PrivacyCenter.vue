@@ -8,9 +8,9 @@
             <v-icon icon="mdi-shield-lock" size="32" color="primary"></v-icon>
           </v-avatar>
         </div>
-        <h1 class="text-h4 font-weight-medium mb-2">隐私与安全中心</h1>
+        <h1 class="text-h4 font-weight-medium mb-2">{{ t('users.privacy.center.title') }}</h1>
         <p class="text-body-2 text-medium-emphasis mx-auto" style="max-width: 600px">
-          在这里您可以查看和管理与隐私安全相关的所有设置，了解我们如何保护您的数据安全
+          {{ t('users.privacy.center.subtitle') }}
         </p>
       </div>
 
@@ -28,17 +28,17 @@
         >
           <v-tab value="overview" :to="{ name: 'PrivacyCenter' }" exact>
             <v-icon icon="mdi-view-dashboard-outline" size="small" class="mr-1"></v-icon>
-            概览
+            {{ t('users.privacy.center.tabOverview') }}
           </v-tab>
 
           <v-tab value="real-name" :to="{ name: 'PrivacyCenterRealNameInfo' }">
             <v-icon icon="mdi-account-card-outline" size="small" class="mr-1"></v-icon>
-            实名信息
+            {{ t('users.privacy.center.tabRealName') }}
           </v-tab>
 
           <v-tab value="access-logs" :to="{ name: 'PrivacyCenterAccessLogs' }">
             <v-icon icon="mdi-history" size="small" class="mr-1"></v-icon>
-            访问记录
+            {{ t('users.privacy.center.tabAccessLogs') }}
           </v-tab>
 
           <!-- <v-tab value="data-sharing" :to="{ name: 'PrivacyCenterDataSharing' }">
@@ -48,7 +48,7 @@
 
           <v-tab value="policy" :to="{ name: 'PrivacyCenterPolicy' }">
             <v-icon icon="mdi-file-document-outline" size="small" class="mr-1"></v-icon>
-            隐私政策
+            {{ t('users.privacy.center.tabPolicy') }}
           </v-tab>
         </v-tabs>
       </v-card>
@@ -65,11 +65,11 @@
         <v-card-text class="pa-4">
           <div class="d-flex flex-column flex-md-row align-md-center">
             <div class="mb-3 mb-md-0 mr-md-4">
-              <div class="text-subtitle-1 font-weight-medium mb-1">需要帮助？</div>
-              <p class="text-body-2 mb-0">如有隐私方面的问题或疑虑，请联系我们的隐私支持团队</p>
+              <div class="text-subtitle-1 font-weight-medium mb-1">{{ t('users.privacy.center.helpTitle') }}</div>
+              <p class="text-body-2 mb-0">{{ t('users.privacy.center.helpBody') }}</p>
             </div>
             <v-btn variant="flat" size="small" class="ml-md-auto" prepend-icon="mdi-email-outline">
-              联系支持团队
+              {{ t('users.privacy.center.contactSupport') }}
             </v-btn>
           </div>
         </v-card-text>
@@ -80,7 +80,10 @@
 
 <script lang="ts" setup>
 import { ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
+
+const { t } = useI18n()
 
 // 路由相关
 const route = useRoute()

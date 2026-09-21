@@ -2,8 +2,11 @@
 import type { ResourceLimits } from '@/api'
 
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { getResourceLimits } from '@/api'
+
+const { t } = useI18n()
 
 const limits = ref<ResourceLimits | null>(null)
 const failed = ref(false)
@@ -23,14 +26,14 @@ onMounted(load)
 <template>
   <div class="text-body-2 text-medium-emphasis my-3" role="status">
     <template v-if="limits">
-      <div>项目数量：当前未设置上限</div>
-      <div>运行环境按需创建；新项目默认最多同时运行 {{ limits.max_concurrent_turns }} 个 AI 任务，超出后排队</div>
-      <div>云虚拟机：团队默认共享 {{ limits.max_machines_per_team }} 台名额，实际额度与用量可在团队算力页查看</div>
+      <div>{{ t('global.resourceLimits.projectCount') }}</div>
+      <div>{{ t('global.resourceLimits.runtime', { count: limits.max_concurrent_turns }) }}</div>
+      <div>{{ t('global.resourceLimits.machines', { count: limits.max_machines_per_team }) }}</div>
     </template>
     <template v-else-if="failed">
-      资源限制加载失败
-      <v-btn size="small" variant="text" @click="load">重试</v-btn>
+      {{ t('global.resourceLimits.loadFailed') }}
+      <v-btn size="small" variant="text" @click="load">{{ t('global.retry') }}</v-btn>
     </template>
-    <template v-else>正在加载资源限制…</template>
+    <template v-else>{{ t('global.loading') }}</template>
   </div>
 </template>

@@ -6,14 +6,40 @@
 //
 // 所以这里问的是「哪一块在哪一组下面」，这是模板本身的事实：扫源文件，而不是把
 // 整页挂起来（那要拖进 Vuetify 和十几个请求，才能断言一件标记直接写着的事）。
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
 const SRC = dirname(fileURLToPath(import.meta.url))
+
+// 页面上每一句可见的话都走了词表，源码里因此是键名而不是中文。这里问的是「人看到
+// 的那句话」，所以先把键换回中文再扫——换的是渲染这一步，不是判据。
+const MESSAGES = join(SRC, 'i18n/messages/zh-CN')
+
+function flatten(value: unknown, prefix: string, into: Map<string, string>): void {
+  if (typeof value === 'string') {
+    into.set(prefix, value)
+    return
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    flatten(child, `${prefix}.${key}`, into)
+  }
+}
+
+const catalog = new Map<string, string>()
+for (const file of readdirSync(MESSAGES)) {
+  if (!file.endsWith('.json')) continue
+  const ns = file.slice(0, -'.json'.length)
+  flatten(JSON.parse(readFileSync(join(MESSAGES, file), 'utf8')), ns, catalog)
+}
+
 const view = readFileSync(join(SRC, 'views/ProjectSettingsView.vue'), 'utf8')
+  // 先收整条插值——标签之间的换行会让 `>中文<` 这种判据落空。
+  .replace(/\{\{\s*t\('([^']+)'\)\s*\}\}/g, (whole, key: string) => catalog.get(key) ?? whole)
+  // 再收剩下那些当属性用的。
+  .replace(/\bt\('([^']+)'\)/g, (whole, key: string) => catalog.get(key) ?? whole)
 
 /** 组标题按它们在页面上出现的顺序。 */
 function groups(): string[] {

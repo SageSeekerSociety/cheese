@@ -15,6 +15,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '@/i18n'
+
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
@@ -116,6 +118,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // tab 名现在走词表（`workspace.tabs.*`），而默认语言是 en——happy-dom 的
+  // navigator.language 是 en-US。这份用例按中文认 tab，所以先把语言钉住。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   listFiles.mockResolvedValue({ data: [{ path: '合同.docx', bytes: 38705 }], total: 1 })
   readFile.mockResolvedValue(binaryFile('合同.docx'))

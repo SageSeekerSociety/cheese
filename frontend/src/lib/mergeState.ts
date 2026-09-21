@@ -6,6 +6,8 @@
 // 颜色在回答「现在轮到谁」，卡上再造一套，看的人就得在脑子里做一次翻译。
 import type { BoardColumn, MergeReason, MergeStateInfo } from '@/cx_types'
 
+import { t } from '@/i18n'
+
 export interface MergeBadge {
   label: string
   /** 圈的样式键，喂给 lib/board.ts 的 columnDotStyle。 */
@@ -22,28 +24,28 @@ export function mergeBadgeOf(ms: MergeStateInfo): MergeBadge {
     case 'clean':
       // 绿勾 + 采纳亮；圈是「等你」—— 下一步真的在人手上。平台 lane（没绑
       // GitHub）的卡恒是这一档或 dirty（#363 拍板：没有检查可读，卡直接 CLEAN）。
-      return { label: '可以合并', column: 'needs_you' }
+      return { label: t('acceptCard.merge.clean'), column: 'needs_you' }
     case 'dirty':
-      return { label: '芝士处理中', column: 'building' }
+      return { label: t('acceptCard.merge.dirty'), column: 'building' }
     case 'behind':
-      return { label: '平台更新分支', column: 'delivering' }
+      return { label: t('acceptCard.merge.behind'), column: 'delivering' }
     case 'unknown':
       // 绑了 GitHub 的卡 unknown 是「还没看过，下一拍收敛」。
-      return { label: '状态更新中', column: 'delivering' }
+      return { label: t('acceptCard.merge.unknown'), column: 'delivering' }
     default:
       break
   }
   // unstable / blocked：按后端下发的「谁的活」分。
   switch (ms.who) {
     case 'agent':
-      return { label: '芝士处理中', column: 'building' }
+      return { label: t('acceptCard.merge.agent'), column: 'building' }
     case 'ci':
-      return { label: '等 CI', column: 'delivering' }
+      return { label: t('acceptCard.merge.ci'), column: 'delivering' }
     case 'human':
       // 采纳被新提交作废，或机器看不出细节 —— 球在人手上。
-      return { label: '等采纳', column: 'needs_you' }
+      return { label: t('acceptCard.merge.human'), column: 'needs_you' }
     default:
-      return { label: '平台处理中', column: 'delivering' }
+      return { label: t('acceptCard.merge.platform'), column: 'delivering' }
   }
 }
 

@@ -19,6 +19,8 @@ vi.mock('../api', () => ({
 
 import WorkPanel from './WorkPanel.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = WorkPanel as unknown as Component
 
 const topic = {
@@ -47,6 +49,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 这一格的名字走词表了，而这里按名字找角色（/对话/、/现场/）——不钉语言的话
+  // （happy-dom 报 en-US）找的是 Chat / Activity，一条都找不到。
+  setLocale('zh-CN')
   vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({}), text: async () => '' }))
 })
 

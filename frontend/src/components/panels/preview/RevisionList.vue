@@ -18,6 +18,8 @@ import { computed, ref, watch } from 'vue'
 import { decideDocumentRevisions, documentRevisions } from '../../../api'
 import { isLibraryPath } from '../../../lib/library'
 
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topicId: string | null
@@ -70,7 +72,7 @@ async function load() {
     // 读不到修订不该把文档也弄没：文档本身还好好地显示着。
     revisions.value = []
     listedVersion = ''
-    error.value = e instanceof Error ? e.message : '未能读取修订'
+    error.value = e instanceof Error ? e.message : t('workspace.revisions.loadFailed')
   }
 }
 
@@ -89,7 +91,7 @@ async function decide(decision: { accept?: number[]; reject?: number[] }) {
     emit('decided')
     await load()
   } catch (e) {
-    const said = e instanceof Error ? e.message : '未能处理这处修订'
+    const said = e instanceof Error ? e.message : t('workspace.revisions.decideFailed')
     // 写不进去多半是文件已经变了：先把清单换成现在这份，再说刚才那下没生效。
     listedKey = ''
     await load()
@@ -100,9 +102,9 @@ async function decide(decision: { accept?: number[]; reject?: number[] }) {
 }
 
 function reads(row: DocumentRevision): string {
-  if (row.kind === 'replace') return `把「${row.removed}」改成「${row.added}」`
-  if (row.kind === 'insert') return `加了「${row.added}」`
-  return `删了「${row.removed}」`
+  if (row.kind === 'replace') return t('workspace.revisions.replaced', { removed: row.removed, added: row.added })
+  if (row.kind === 'insert') return t('workspace.revisions.inserted', { added: row.added })
+  return t('workspace.revisions.deleted', { removed: row.removed })
 }
 
 watch(
@@ -123,7 +125,9 @@ defineExpose({ reload: load })
     <v-alert v-if="error" type="warning" density="compact" class="mb-2">{{ error }}</v-alert>
 
     <div v-if="revisions.length" class="revs__bar">
-      <span class="revs__count t-eyebrow">修订 {{ revisions.length }} 处</span>
+      <span class="revs__count t-eyebrow">{{
+        t('workspace.revisions.count', { count: revisions.length }, revisions.length)
+      }}</span>
       <v-spacer />
       <v-btn
         v-if="!readOnly"
@@ -133,7 +137,7 @@ defineExpose({ reload: load })
         :disabled="deciding > 0"
         @click="decide({ accept: revisions.map((r) => r.number) })"
       >
-        全部接受
+        {{ t('workspace.revisions.acceptAll') }}
       </v-btn>
       <v-btn
         v-if="!readOnly"
@@ -143,25 +147,28 @@ defineExpose({ reload: load })
         :disabled="deciding > 0"
         @click="decide({ reject: revisions.map((r) => r.number) })"
       >
-        全部拒绝
+        {{ t('workspace.revisions.rejectAll') }}
       </v-btn>
     </div>
 
     <p v-if="readOnly && revisions.length" class="revs__note t-meta">
-      {{
-        isLibraryPath(path ?? '')
-          ? '资料库里的原件不改。要改这份文档，让芝士基于它做一份新的'
-          : '这个版本只读，不能处理修订。'
-      }}
+      {{ t(isLibraryPath(path ?? '') ? 'workspace.revisions.libraryReadOnly' : 'workspace.revisions.readOnlyNote') }}
     </p>
 
     <ul v-if="revisions.length" class="revs__list">
       <li v-for="row in revisions" :key="row.number" class="revs__item">
         <div class="revs__what">{{ reads(row) }}</div>
-        <div class="revs__who t-meta">第 {{ row.paragraph }} 段 · {{ row.author || '未署名' }}</div>
+        <div class="revs__who t-meta">
+          {{
+            t('workspace.revisions.where', {
+              paragraph: row.paragraph,
+              author: row.author || t('workspace.revisions.anonymous'),
+            })
+          }}
+        </div>
         <div v-if="!readOnly" class="revs__acts">
           <v-btn size="x-small" variant="text" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
-            接受
+            {{ t('workspace.revisions.accept') }}
           </v-btn>
           <v-btn
             size="x-small"
@@ -170,7 +177,7 @@ defineExpose({ reload: load })
             :disabled="deciding > 0"
             @click="decide({ reject: [row.number] })"
           >
-            拒绝
+            {{ t('workspace.revisions.reject') }}
           </v-btn>
         </div>
       </li>

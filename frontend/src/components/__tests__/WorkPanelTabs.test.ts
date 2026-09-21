@@ -61,6 +61,7 @@ vi.mock('../../api', async () => {
   }
 })
 
+import { setLocale } from '../../i18n'
 import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
@@ -118,6 +119,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 这一份按 tab 的名字点它（`openTab(container, '改动')`），名字走词表了，得把
+  // 语言钉在中文那一边——happy-dom 报 en-US，默认渲染出来的是 Changes。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   getDoc.mockResolvedValue({ content: '' })
   listFiles.mockResolvedValue({

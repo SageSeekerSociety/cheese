@@ -10,7 +10,7 @@
             </v-avatar>
           </div>
         </template>
-        <v-card-title class="text-h5 ps-0">基本信息</v-card-title>
+        <v-card-title class="text-h5 ps-0">{{ t('tasks.form.basicInfo') }}</v-card-title>
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -59,7 +59,7 @@
           <v-col cols="12" md="6">
             <v-text-field
               v-model.number="participantLimit"
-              :label="submitterType === 'TEAM' ? '队伍数量限制' : '参与者人数限制'"
+              :label="submitterType === 'TEAM' ? '队伍数量限制' : t('tasks.form.participantLimit')"
               type="number"
               min="1"
               v-bind="participantLimitProps"
@@ -177,7 +177,7 @@
             </v-avatar>
           </div>
         </template>
-        <v-card-title class="text-h5 ps-0">时间设置</v-card-title>
+        <v-card-title class="text-h5 ps-0">{{ t('tasks.form.schedule') }}</v-card-title>
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -198,7 +198,7 @@
               v-model="deadline"
               :label="t('tasks.form.deadline')"
               clearable
-              hint="留空表示不设置报名截止时间"
+              :hint="t('tasks.form.deadlineHint')"
               density="comfortable"
               v-bind="deadlineProps"
               :allowed-dates="isAllowedDates"
@@ -210,8 +210,8 @@
               :label="t('tasks.form.defaultDeadline')"
               type="number"
               required
-              prefix="领取赛题后"
-              suffix="天"
+              :prefix="t('tasks.form.defaultDeadlinePrefix')"
+              :suffix="t('tasks.form.defaultDeadlineSuffix')"
               min="1"
               v-bind="defaultDeadlineProps"
             ></v-text-field>
@@ -230,7 +230,7 @@
             </v-avatar>
           </div>
         </template>
-        <v-card-title class="text-h5 ps-0">分类标签</v-card-title>
+        <v-card-title class="text-h5 ps-0">{{ t('tasks.form.classification') }}</v-card-title>
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -277,7 +277,7 @@
             </v-avatar>
           </div>
         </template>
-        <v-card-title class="text-h5 ps-0">实名信息要求</v-card-title>
+        <v-card-title class="text-h5 ps-0">{{ t('tasks.form.realNameTitle') }}</v-card-title>
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -289,12 +289,12 @@
                 :color="requireRealName ? 'primary' : 'medium-emphasis'"
                 class="mr-2"
               ></v-icon>
-              <span>要求参与者提供实名信息</span>
+              <span>{{ t('tasks.form.requireRealName') }}</span>
               <v-tooltip location="top">
                 <template #activator="{ props }">
                   <v-icon size="small" color="primary" class="ml-2" v-bind="props">mdi-information-outline</v-icon>
                 </template>
-                <span>实名信息包括学生的真实姓名、学号、年级等信息</span>
+                <span>{{ t('tasks.form.requireRealNameHint') }}</span>
               </v-tooltip>
             </div>
           </template>
@@ -314,11 +314,11 @@
               <v-icon icon="mdi-shield-check" color="surface" size="18"></v-icon>
             </v-avatar>
             <div>
-              <div class="text-subtitle-2 font-weight-medium mb-1">您已选择要求实名信息</div>
+              <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.realNameChosen.title') }}</div>
               <p class="text-body-2 mb-0">
-                • 参与者需完成实名认证方可参与此赛题<br />
-                • 所有信息经过加密存储，访问受到严格控制<br />
-                • 系统会记录所有对实名信息的访问行为
+                • {{ t('tasks.form.realNameChosen.line1') }}<br />
+                • {{ t('tasks.form.realNameChosen.line2') }}<br />
+                • {{ t('tasks.form.realNameChosen.line3') }}
               </p>
             </div>
           </div>
@@ -326,7 +326,7 @@
 
         <div v-else class="d-flex align-center mt-3">
           <v-icon color="medium-emphasis" icon="mdi-information-outline" class="mr-2"></v-icon>
-          <span class="text-body-2 text-medium-emphasis">未启用实名认证要求，参与者可匿名参与此赛题</span>
+          <span class="text-body-2 text-medium-emphasis">{{ t('tasks.form.realNameNotRequired') }}</span>
         </div>
       </v-card-text>
     </v-card>
@@ -438,7 +438,7 @@
           v-if="descriptionFormat === 'markdown'"
           v-model="markdownDescription"
           autocomplete="off"
-          label="赛题详情（Markdown 格式）"
+          :label="t('tasks.form.markdownDescription')"
           :rows="10"
           :max-rows="30"
           rounded
@@ -468,7 +468,7 @@
             </v-avatar>
           </div>
         </template>
-        <v-card-title class="text-h5 ps-0">视频链接</v-card-title>
+        <v-card-title class="text-h5 ps-0">{{ t('tasks.form.videoTitle') }}</v-card-title>
       </v-card-item>
 
       <v-card-text class="pt-2">
@@ -476,9 +476,9 @@
           v-model="videoUrl"
           autocomplete="off"
           v-bind="videoUrlProps"
-          label="视频链接（选填）"
+          :label="t('tasks.form.video.label')"
           placeholder="https://..."
-          hint="支持 Bilibili 视频链接"
+          :hint="t('tasks.form.video.hint')"
           persistent-hint
         >
           <template #prepend-inner>
@@ -491,8 +491,12 @@
     <div class="d-flex justify-end">
       <slot name="buttons" :is-submitting="isSubmitting">
         <div class="d-flex gap-4">
-          <v-btn v-if="isEditing" variant="text" :disabled="isSubmitting" @click="handleCancel">取消</v-btn>
-          <v-btn type="submit" color="primary" size="large" :loading="isSubmitting">{{ submitButtonText }}</v-btn>
+          <v-btn v-if="isEditing" variant="text" :disabled="isSubmitting" @click="handleCancel">{{
+            t('global.cancel')
+          }}</v-btn>
+          <v-btn type="submit" color="primary" size="large" :loading="isSubmitting">{{
+            submitButtonText || t('global.submit')
+          }}</v-btn>
         </div>
       </slot>
     </div>
@@ -502,12 +506,12 @@
       <v-card rounded="lg">
         <v-card-title class="d-flex align-center px-4 pt-4 pb-2">
           <v-icon color="primary" class="mr-3" size="28">mdi-shield-check</v-icon>
-          <span class="text-h5 font-weight-medium">实名信息隐私保护</span>
+          <span class="text-h5 font-weight-medium">{{ t('tasks.form.privacy.title') }}</span>
         </v-card-title>
 
         <v-card-text class="px-4 pb-2">
           <p class="text-subtitle-2 font-weight-medium mb-4">
-            为保护参与者隐私，我们对需要实名信息的赛题采取了多重保护措施：
+            {{ t('tasks.form.privacy.intro') }}
           </p>
 
           <!-- 信息保护卡片 -->
@@ -520,9 +524,11 @@
                       <v-icon icon="mdi-eye-off" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">匿名参与</div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.anonymousTitle') }}
+                      </div>
                       <p class="text-body-2 text-medium-emphasis mb-0">
-                        平台上的日常活动保持匿名，其他用户无法看到参与者的真实身份信息
+                        {{ t('tasks.form.privacy.anonymousBody') }}
                       </p>
                     </div>
                   </div>
@@ -534,9 +540,11 @@
                       <v-icon icon="mdi-file-document-outline" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">用途限制</div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.purposeTitle') }}
+                      </div>
                       <p class="text-body-2 text-medium-emphasis mb-0">
-                        实名信息仅用于身份验证、学分认定和评优评奖等必要场景
+                        {{ t('tasks.form.privacy.purposeBody') }}
                       </p>
                     </div>
                   </div>
@@ -548,9 +556,11 @@
                       <v-icon icon="mdi-shield-lock" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">加密存储</div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.encryptionTitle') }}
+                      </div>
                       <p class="text-body-2 text-medium-emphasis mb-0">
-                        采用端到端加密技术存储和传输实名信息，防止未授权访问
+                        {{ t('tasks.form.privacy.encryptionBody') }}
                       </p>
                     </div>
                   </div>
@@ -562,9 +572,11 @@
                       <v-icon icon="mdi-history" size="20" color="primary"></v-icon>
                     </v-avatar>
                     <div>
-                      <div class="text-subtitle-2 font-weight-medium mb-1">访问记录</div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.accessTitle') }}
+                      </div>
                       <p class="text-body-2 text-medium-emphasis mb-0">
-                        所有对实名信息的访问都被记录，参与者可随时查看访问记录
+                        {{ t('tasks.form.privacy.accessBody') }}
                       </p>
                     </div>
                   </div>
@@ -575,7 +587,7 @@
 
           <!-- 使用场景 -->
           <div class="mb-4">
-            <div class="text-subtitle-2 font-weight-medium mb-3">信息使用场景</div>
+            <div class="text-subtitle-2 font-weight-medium mb-3">{{ t('tasks.form.privacy.scenariosTitle') }}</div>
             <v-row dense>
               <v-col cols="12" md="4">
                 <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
@@ -585,8 +597,12 @@
                         <v-icon icon="mdi-account-check" size="20" color="primary"></v-icon>
                       </v-avatar>
                       <div>
-                        <div class="text-subtitle-2 font-weight-medium mb-1">身份验证</div>
-                        <p class="text-body-2 text-medium-emphasis mb-0">验证参与者身份，帮助导师了解学生背景</p>
+                        <div class="text-subtitle-2 font-weight-medium mb-1">
+                          {{ t('tasks.form.privacy.verificationTitle') }}
+                        </div>
+                        <p class="text-body-2 text-medium-emphasis mb-0">
+                          {{ t('tasks.form.privacy.verificationBody') }}
+                        </p>
                       </div>
                     </div>
                   </v-card-text>
@@ -601,8 +617,12 @@
                         <v-icon icon="mdi-certificate-outline" size="20" color="primary"></v-icon>
                       </v-avatar>
                       <div>
-                        <div class="text-subtitle-2 font-weight-medium mb-1">项目认证</div>
-                        <p class="text-body-2 text-medium-emphasis mb-0">用于赛题结题后的证书发放和学分认定</p>
+                        <div class="text-subtitle-2 font-weight-medium mb-1">
+                          {{ t('tasks.form.privacy.certificationTitle') }}
+                        </div>
+                        <p class="text-body-2 text-medium-emphasis mb-0">
+                          {{ t('tasks.form.privacy.certificationBody') }}
+                        </p>
                       </div>
                     </div>
                   </v-card-text>
@@ -617,8 +637,10 @@
                         <v-icon icon="mdi-trophy" size="20" color="primary"></v-icon>
                       </v-avatar>
                       <div>
-                        <div class="text-subtitle-2 font-weight-medium mb-1">评奖评优</div>
-                        <p class="text-body-2 text-medium-emphasis mb-0">用于赛题结题后的奖项评定与项目评选</p>
+                        <div class="text-subtitle-2 font-weight-medium mb-1">
+                          {{ t('tasks.form.privacy.awardsTitle') }}
+                        </div>
+                        <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.form.privacy.awardsBody') }}</p>
                       </div>
                     </div>
                   </v-card-text>
@@ -629,18 +651,19 @@
 
           <!-- 合规承诺 -->
           <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
-            <div class="text-subtitle-2 font-weight-medium mb-1">合规承诺</div>
+            <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.commitmentTitle') }}</div>
             <p class="text-body-2 mb-0">
-              作为赛题发布者，您应当严格遵守隐私保护规范，只有在必要的场景下才能查看参与者的实名信息。
-              平台会记录每次查看行为，并对滥用行为采取相应处罚。
+              {{ t('tasks.form.privacy.commitmentBody') }}
             </p>
           </v-alert>
         </v-card-text>
 
         <v-card-actions class="pa-4 pt-2">
           <v-spacer></v-spacer>
-          <v-btn color="secondary" variant="text" @click="cancelSubmitWithRealName">取消</v-btn>
-          <v-btn color="primary" variant="flat" @click="confirmSubmitWithRealName">了解并接受</v-btn>
+          <v-btn color="secondary" variant="text" @click="cancelSubmitWithRealName">{{ t('global.cancel') }}</v-btn>
+          <v-btn color="primary" variant="flat" @click="confirmSubmitWithRealName">{{
+            t('tasks.form.privacy.understood')
+          }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -648,16 +671,18 @@
     <!-- 视频链接无法解析确认 -->
     <v-dialog v-model="videoUrlDialogOpen" max-width="450" persistent>
       <v-card>
-        <v-card-title class="text-h6">视频链接提示</v-card-title>
+        <v-card-title class="text-h6">{{ t('tasks.form.video.dialogTitle') }}</v-card-title>
         <v-card-text>
           <v-alert type="warning" variant="tonal" class="mb-0">
-            无法解析该视频链接，视频链接可能有误。当前仅支持 Bilibili 视频嵌入播放，是否继续保存？
+            {{ t('tasks.form.video.dialogBody') }}
           </v-alert>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer></v-spacer>
-          <v-btn variant="text" @click="cancelVideoUrlDialog">取消</v-btn>
-          <v-btn color="primary" variant="flat" @click="confirmVideoUrlDialog">继续保存</v-btn>
+          <v-btn variant="text" @click="cancelVideoUrlDialog">{{ t('global.cancel') }}</v-btn>
+          <v-btn color="primary" variant="flat" @click="confirmVideoUrlDialog">{{
+            t('tasks.form.video.dialogContinue')
+          }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -690,7 +715,7 @@ const isAllowedDates = (date: unknown) => {
 const props = withDefaults(
   defineProps<{
     initialData?: Partial<TaskFormSubmitData> | null
-    submitButtonText: string
+    submitButtonText?: string
     isEditing?: boolean
     classificationTopics: Topic[]
     categories?: SpaceCategory[]
@@ -702,7 +727,9 @@ const props = withDefaults(
   }>(),
   {
     initialData: null,
-    submitButtonText: '提交',
+    // 不传就按默认那一个来（模板里是 submitButtonText || t('global.submit')）。
+    // 从前这里是 '提交'，改成空缺省之后，按钮上的字才跟着语言走。
+    submitButtonText: undefined,
     isEditing: false,
     classificationTopics: () => [],
     categories: () => [],
@@ -740,7 +767,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
         defaultDeadline: z.number().int().default(30),
         rank: z.number().int().min(1).max(3),
         topics: z.array(z.number()).optional(),
-        categoryId: z.number().int().min(1, '请选择所属分类'),
+        categoryId: z.number().int().min(1, t('tasks.form.validation.categoryRequired')),
         minTeamSize: z.number().int().min(1).optional(),
         maxTeamSize: z.number().int().min(1).optional(),
         requireRealName: z.boolean().optional().default(false),
@@ -761,7 +788,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
                 return false
               }
             },
-            { message: '请输入有效的 HTTPS 链接' }
+            { message: t('tasks.form.validation.httpsRequired') }
           ),
       })
       .refine((arg) => !arg.maxTeamSize || !arg.minTeamSize || arg.maxTeamSize >= arg.minTeamSize, {
@@ -771,7 +798,7 @@ const { handleSubmit, defineField, isSubmitting } = useForm({
   ),
   initialValues: {
     ...(props.initialData ?? {}),
-    name: props.initialData?.name ?? (props.parametersOnly ? 'PDF 批量发布参数' : ''),
+    name: props.initialData?.name ?? (props.parametersOnly ? t('tasks.form.pdfParametersName') : ''),
     registrationStartAt: props.initialData?.registrationStartAt
       ? new Date(props.initialData.registrationStartAt)
       : null,

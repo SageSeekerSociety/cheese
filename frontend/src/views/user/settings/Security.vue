@@ -4,7 +4,7 @@
       <v-card-item>
         <v-card-title class="text-h6 font-weight-medium">
           <v-icon icon="mdi-shield-account" class="mr-2"></v-icon>
-          账户安全
+          {{ t('users.settings.security.title') }}
         </v-card-title>
       </v-card-item>
 
@@ -18,10 +18,12 @@
             </v-avatar>
           </template>
 
-          <v-list-item-title class="font-weight-medium">登录密码</v-list-item-title>
-          <v-list-item-subtitle class="text-caption"
-            >最后修改时间：{{ formatDate(passwordLastUpdated) }}</v-list-item-subtitle
-          >
+          <v-list-item-title class="font-weight-medium">{{
+            t('users.settings.security.loginPassword')
+          }}</v-list-item-title>
+          <v-list-item-subtitle class="text-caption">{{
+            t('users.settings.security.lastUpdated', { date: formatDate(passwordLastUpdated) })
+          }}</v-list-item-subtitle>
 
           <template #append>
             <v-btn
@@ -30,7 +32,7 @@
               prepend-icon="mdi-key-change"
               @click="showChangePasswordDialog = true"
             >
-              修改密码
+              {{ t('users.settings.security.changePassword') }}
             </v-btn>
           </template>
         </v-list-item>
@@ -41,8 +43,10 @@
       <v-card-item>
         <v-card-title class="text-h6 font-weight-medium">
           <v-icon icon="mdi-key-chain" class="mr-2"></v-icon>
-          通行密钥
-          <v-chip v-if="!webAuthnSupported" label size="small" color="warning" class="ml-2"> 浏览器不支持 </v-chip>
+          {{ t('users.settings.security.passkeys') }}
+          <v-chip v-if="!webAuthnSupported" label size="small" color="warning" class="ml-2">
+            {{ t('users.settings.security.browserUnsupported') }}
+          </v-chip>
         </v-card-title>
       </v-card-item>
 
@@ -59,8 +63,10 @@
               </template>
 
               <v-list-item-title class="font-weight-medium">
-                {{ getPasskeyTitle(passkey) || '未命名密钥' }}
-                <span class="text-caption text-medium-emphasis ml-2"> {{ formatDate(passkey.createdAt) }} 添加 </span>
+                {{ getPasskeyTitle(passkey) || t('users.settings.security.unnamedPasskey') }}
+                <span class="text-caption text-medium-emphasis ml-2">
+                  {{ t('users.settings.security.addedOn', { date: formatDate(passkey.createdAt) }) }}
+                </span>
               </v-list-item-title>
 
               <template #append>
@@ -77,7 +83,7 @@
           </transition-group>
 
           <v-alert v-if="passkeys.length === 0" variant="text" color="info" icon="mdi-information-outline" class="my-2">
-            尚未添加任何通行密钥
+            {{ t('users.settings.security.noPasskeys') }}
           </v-alert>
 
           <div class="d-flex justify-end mt-4">
@@ -88,7 +94,7 @@
               :disabled="!webAuthnSupported"
               @click="handleAddPasskey"
             >
-              添加新密钥
+              {{ t('users.settings.security.addPasskey') }}
             </v-btn>
           </div>
         </div>
@@ -99,9 +105,9 @@
       <v-card-item>
         <v-card-title class="text-h6 font-weight-medium">
           <v-icon icon="mdi-two-factor-authentication" class="mr-2"></v-icon>
-          双重验证
+          {{ t('users.settings.security.twoFactor') }}
           <v-chip :color="totp2FAEnabled ? 'success' : 'surface-variant'" label size="small" class="ml-2">
-            {{ totp2FAEnabled ? '已启用' : '未激活' }}
+            {{ totp2FAEnabled ? t('users.settings.security.enabled') : t('users.settings.security.inactive') }}
           </v-chip>
         </v-card-title>
       </v-card-item>
@@ -113,7 +119,7 @@
           <template #prepend>
             <v-icon :icon="totp2FAEnabled ? 'mdi-shield-check' : 'mdi-shield-alert'"></v-icon>
           </template>
-          当前账户安全等级：{{ securityLevel }}
+          {{ t('users.settings.security.securityLevel', { level: securityLevel }) }}
         </v-alert>
 
         <div class="d-flex flex-column gap-4">
@@ -130,9 +136,11 @@
                 <template #prepend>
                   <v-icon icon="mdi-backup-restore" color="primary"></v-icon>
                 </template>
-                <v-list-item-title>备用验证码</v-list-item-title>
+                <v-list-item-title>{{ t('users.settings.security.backupCodes') }}</v-list-item-title>
                 <template #append>
-                  <v-btn variant="tonal" color="primary" @click="handleGenerateBackupCodes"> 生成新代码 </v-btn>
+                  <v-btn variant="tonal" color="primary" @click="handleGenerateBackupCodes">
+                    {{ t('users.settings.security.generateCodes') }}
+                  </v-btn>
                 </template>
               </v-list-item>
             </v-list>
@@ -145,7 +153,7 @@
               class="text-capitalize"
               @click="totp2FAEnabled ? (showDisableDialog = true) : handleInitTOTP()"
             >
-              {{ totp2FAEnabled ? '禁用双重验证' : '启用双重验证' }}
+              {{ totp2FAEnabled ? t('users.settings.security.disable2fa') : t('users.settings.security.enable2fa') }}
             </v-btn>
           </div>
         </div>
@@ -156,7 +164,7 @@
       <v-card style="max-height: 80vh">
         <v-card-text class="overflow-y-auto">
           <v-toolbar density="compact" color="surface">
-            <v-toolbar-title class="text-h6">修改登录密码</v-toolbar-title>
+            <v-toolbar-title class="text-h6">{{ t('users.settings.security.changePasswordTitle') }}</v-toolbar-title>
             <v-btn icon="mdi-close" @click="handleCancelChangePassword" />
           </v-toolbar>
 
@@ -166,13 +174,13 @@
               v-model="newPassword"
               autocomplete="new-password"
               name="newPassword"
-              label="新密码"
+              :label="t('users.settings.security.newPassword')"
               type="password"
               variant="outlined"
               :rules="[
-                (v) => !!v || '密码不能为空',
-                (v) => (v && v.length >= 8) || '至少8个字符',
-                (v) => REGEX_PASSWORD.test(v) || '需包含字母、数字和符号',
+                (v) => !!v || t('users.settings.security.newPasswordRequired'),
+                (v) => (v && v.length >= 8) || t('users.settings.security.newPasswordMin'),
+                (v) => REGEX_PASSWORD.test(v) || t('users.settings.security.newPasswordCharset'),
               ]"
             >
             </v-text-field>
@@ -182,15 +190,18 @@
               v-model="confirmPassword"
               autocomplete="new-password"
               name="confirmPassword"
-              label="确认新密码"
+              :label="t('users.settings.security.confirmPassword')"
               type="password"
               variant="outlined"
-              :rules="[(v) => !!v || '请确认密码', (v) => v === newPassword || '两次输入密码不一致']"
+              :rules="[
+                (v) => !!v || t('users.settings.security.confirmRequired'),
+                (v) => v === newPassword || t('users.settings.security.confirmMismatch'),
+              ]"
             ></v-text-field>
 
             <div class="d-flex justify-end gap-2 mt-6">
-              <v-btn variant="text" @click="handleCancelChangePassword">取消</v-btn>
-              <v-btn color="primary" type="submit">确认修改</v-btn>
+              <v-btn variant="text" @click="handleCancelChangePassword">{{ t('global.cancel') }}</v-btn>
+              <v-btn color="primary" type="submit">{{ t('users.settings.security.confirmChange') }}</v-btn>
             </div>
           </v-form>
         </v-card-text>
@@ -201,7 +212,7 @@
       <v-card class="d-flex flex-column" color="surface">
         <v-toolbar density="compact">
           <v-btn icon="mdi-close" @click="handleCancelSetup" />
-          <v-toolbar-title>设置两步验证</v-toolbar-title>
+          <v-toolbar-title>{{ t('users.settings.security.setupTitle') }}</v-toolbar-title>
           <v-spacer />
           <v-progress-circular :model-value="setupProgress" :size="32" color="primary" class="me-2">
             {{ setupStepIndex + 1 }}/3
@@ -212,25 +223,25 @@
           v-model="setupStep"
           class="elevation-0"
           :items="[
-            { title: '扫描二维码', value: 'qr' },
-            { title: '验证代码', value: 'verify' },
-            { title: '备份代码', value: 'backup' },
+            { title: t('users.settings.security.stepQr'), value: 'qr' },
+            { title: t('users.settings.security.stepVerify'), value: 'verify' },
+            { title: t('users.settings.security.stepBackup'), value: 'backup' },
           ]"
           show-actions
         >
           <v-stepper-window>
             <v-stepper-window-item value="qr">
               <div class="d-flex flex-column align-center pa-8">
-                <div class="text-h5 mb-2">设置验证器</div>
+                <div class="text-h5 mb-2">{{ t('users.settings.security.setupAuthenticator') }}</div>
                 <div class="text-body-1 text-medium-emphasis text-center mb-8">
-                  使用验证器应用扫描二维码或手动输入密钥
+                  {{ t('users.settings.security.scanHint') }}
                 </div>
 
                 <v-card variant="outlined" rounded="xl" class="pa-4 mb-6">
                   <v-img :src="qrCodeData" width="240" height="240" />
                 </v-card>
 
-                <div class="text-body-1 font-weight-medium mb-2">手动输入密钥</div>
+                <div class="text-body-1 font-weight-medium mb-2">{{ t('users.settings.security.manualKey') }}</div>
                 <div class="d-flex align-center gap-2 mb-8">
                   <code class="text-h6">{{ totpSecret }}</code>
                   <v-btn icon="mdi-content-copy" size="small" variant="text" @click="copyToClipboard(totpSecret)" />
@@ -240,8 +251,10 @@
 
             <v-stepper-window-item value="verify">
               <div class="d-flex flex-column align-center pa-8">
-                <div class="text-h5 mb-2">验证代码</div>
-                <div class="text-body-1 text-medium-emphasis text-center mb-8">请输入验证器应用生成的6位代码</div>
+                <div class="text-h5 mb-2">{{ t('users.settings.security.verifyCode') }}</div>
+                <div class="text-body-1 text-medium-emphasis text-center mb-8">
+                  {{ t('users.settings.security.verifyCodeHint') }}
+                </div>
 
                 <v-otp-input
                   v-model="verificationCode"
@@ -256,9 +269,9 @@
 
             <v-stepper-window-item value="backup">
               <div class="d-flex flex-column align-center pa-8">
-                <div class="text-h5 mb-2">备份验证码</div>
+                <div class="text-h5 mb-2">{{ t('users.settings.security.backupTitle') }}</div>
                 <div class="text-body-1 text-medium-emphasis text-center mb-8">
-                  这些备份码仅会显示一次，请务必将它们保存在安全的地方。每个备份码只能使用一次。
+                  {{ t('users.settings.security.backupHint') }}
                 </div>
 
                 <v-card variant="outlined" rounded="lg" class="w-100 pa-4 mb-8">
@@ -274,13 +287,17 @@
 
           <template #actions="{ prev, next }">
             <v-card-actions class="justify-end gap-2">
-              <v-btn v-if="setupStep !== 'qr'" variant="outlined" @click="prev"> 上一步 </v-btn>
+              <v-btn v-if="setupStep !== 'qr'" variant="outlined" @click="prev">
+                {{ t('users.settings.security.previousStep') }}
+              </v-btn>
               <v-btn
                 color="primary"
                 :disabled="setupStep === 'verify' && verificationCode.length !== 6"
                 @click="handleStepAction(next)"
               >
-                {{ setupStep === 'backup' ? '完成' : '下一步' }}
+                {{
+                  setupStep === 'backup' ? t('users.settings.security.finish') : t('users.settings.security.nextStep')
+                }}
               </v-btn>
             </v-card-actions>
           </template>
@@ -291,15 +308,17 @@
     <v-dialog v-model="showDisableDialog" max-width="500">
       <v-card>
         <v-toolbar density="compact" color="surface">
-          <v-toolbar-title class="text-h6">确认禁用双重验证</v-toolbar-title>
+          <v-toolbar-title class="text-h6">{{ t('users.settings.security.disableTitle') }}</v-toolbar-title>
           <v-btn icon="mdi-close" @click="showDisableDialog = false" />
         </v-toolbar>
 
         <v-card-text class="pa-4">
-          <div class="text-body-1 mb-4">禁用双重验证会降低账户安全性，确定要继续吗？</div>
+          <div class="text-body-1 mb-4">{{ t('users.settings.security.disableConfirm') }}</div>
           <div class="d-flex justify-end gap-2">
-            <v-btn variant="text" @click="showDisableDialog = false">取消</v-btn>
-            <v-btn color="error" @click="handleDisableTOTP">确认禁用</v-btn>
+            <v-btn variant="text" @click="showDisableDialog = false">{{ t('global.cancel') }}</v-btn>
+            <v-btn color="error" @click="handleDisableTOTP">
+              {{ t('users.settings.security.disableConfirmButton') }}
+            </v-btn>
           </div>
         </v-card-text>
       </v-card>
@@ -311,6 +330,7 @@
 import type { PasskeyInfo } from '@/network/api/users/types'
 
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
@@ -324,6 +344,7 @@ import { useDialog } from '@/plugins/dialog'
 import { currentUserId, currentUserName } from '@/services/account'
 import { useSudoStore } from '@/stores/sudo'
 
+const { t, locale } = useI18n()
 const router = useRouter()
 const dialogs = useDialog()
 const loading = ref(false)
@@ -364,10 +385,10 @@ const passwordLastUpdated = ref(new Date()) // 从API获取实际值
 
 // 安全等级计算属性
 const securityLevel = computed(() => {
-  if (totp2FAEnabled.value && passkeys.value.length > 0) return '极高'
-  if (totp2FAEnabled.value) return '高'
-  if (passkeys.value.length > 0) return '中'
-  return '低'
+  if (totp2FAEnabled.value && passkeys.value.length > 0) return t('users.settings.security.levelVeryHigh')
+  if (totp2FAEnabled.value) return t('users.settings.security.levelHigh')
+  if (passkeys.value.length > 0) return t('users.settings.security.levelMedium')
+  return t('users.settings.security.levelLow')
 })
 
 // 添加状态管理
@@ -391,8 +412,13 @@ const fetchPasskeys = async () => {
 
 // 格式化设备类型显示
 const getPasskeyTitle = (passkey: PasskeyInfo) => {
-  const deviceName = passkey.deviceType === 'platform' ? '设备' : '安全密钥'
-  const backupStatus = passkey.backedUp ? '(已备份)' : '(未备份)'
+  const deviceName =
+    passkey.deviceType === 'platform'
+      ? t('users.settings.security.devicePlatform')
+      : t('users.settings.security.deviceSecurityKey')
+  const backupStatus = passkey.backedUp
+    ? t('users.settings.security.backedUp')
+    : t('users.settings.security.notBackedUp')
   return `${deviceName} ${backupStatus}`
 }
 
@@ -401,9 +427,10 @@ const getDeviceIcon = (deviceType: string) => {
   return deviceType === 'platform' ? 'mdi-laptop' : 'mdi-key-variant'
 }
 
-// 格式化日期
+// 格式化日期。跟着界面语言走：写死 'zh-CN' 的话，切到英文这一页仍会打印
+// 「2026年9月17日」——日期也是要翻的。
 const formatDate = (date: Date) => {
-  return new Date(date).toLocaleDateString('zh-CN', {
+  return new Date(date).toLocaleDateString(locale.value === 'en' ? 'en' : 'zh-CN', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -418,7 +445,7 @@ const showError = (message: string) => {
 
 const handleAddPasskey = async () => {
   if (!currentUserId.value) {
-    showError('用户未登录')
+    showError(t('users.settings.security.notLoggedIn'))
     return
   }
 
@@ -448,11 +475,11 @@ const handleAddPasskey = async () => {
 
     // 处理特定错误
     if (error.name === 'InvalidStateError') {
-      showError('该通行密钥已被注册')
+      showError(t('users.settings.security.passkeyAlreadyRegistered'))
     } else if (error.name === 'NotAllowedError') {
-      showError('操作被取消')
+      showError(t('users.settings.security.cancelled'))
     } else {
-      showError(error.message || '添加通行密钥失败')
+      showError(error.message || t('users.settings.security.addPasskeyFailed'))
     }
   } finally {
     addingPasskey.value = false
@@ -464,8 +491,8 @@ const handleDeletePasskey = async (credentialId: string) => {
   if (!currentUserId.value) return
 
   const confirmed = await dialogs
-    .confirm('确定要删除该通行密钥吗？', {
-      title: '删除通行密钥',
+    .confirm(t('users.settings.security.deletePasskeyConfirm'), {
+      title: t('users.settings.security.deletePasskeyTitle'),
     })
     .wait()
 
@@ -477,14 +504,14 @@ const handleDeletePasskey = async (credentialId: string) => {
       async () => {
         await UserApi.deletePasskey(currentUserId.value!, credentialId)
         await fetchPasskeys()
-        toast.success('密钥已删除')
+        toast.success(t('users.settings.security.passkeyDeleted'))
       },
       'deletePasskey',
       null,
       router
     )
   } catch (error: any) {
-    showError(error.message || '删除密钥失败')
+    showError(error.message || t('users.settings.security.deletePasskeyFailed'))
   } finally {
     deletingPasskey.value = false
   }
@@ -501,7 +528,7 @@ const fetch2FAStatus = async () => {
     alwaysRequired.value = response.data.always_required
   } catch (error: any) {
     console.error('Failed to fetch 2FA status:', error)
-    showError(error.message || '获取两步验证状态失败')
+    showError(error.message || t('users.settings.security.loadStatusFailed'))
   } finally {
     loading.value = false
   }
@@ -547,10 +574,10 @@ onMounted(async () => {
               srpSalt,
               srpVerifier,
             })
-            toast.success('密码修改成功')
+            toast.success(t('users.settings.security.passwordChanged'))
           } catch (error: any) {
             console.error('Failed to change password:', error)
-            toast.error(error.message || '密码修改失败')
+            toast.error(error.message || t('users.settings.security.passwordChangeFailed'))
           }
         }
       },
@@ -583,7 +610,7 @@ const handleInitTOTP = async () => {
       router
     )
   } catch (error: any) {
-    showError(error.message || '初始化失败')
+    showError(error.message || t('users.settings.security.initFailed'))
   } finally {
     loading.value = false
   }
@@ -603,7 +630,7 @@ const handleEnableTOTP = async () => {
     await fetch2FAStatus()
     return true // 返回成功状态
   } catch (error: any) {
-    showError(error.message || '验证失败')
+    showError(error.message || t('users.settings.security.verifyFailed'))
     return false // 返回失败状态
   } finally {
     loading.value = false
@@ -644,14 +671,14 @@ const handleDisableTOTP = async () => {
         await UserApi.disableTOTP(currentUserId.value!, sudoTicket)
         await fetch2FAStatus() // 确保状态更新
         showDisableDialog.value = false
-        toast.success('双重验证已禁用，通知已发送到你的邮箱')
+        toast.success(t('users.settings.security.disabledNotice'))
       },
       'disableTOTP',
       null,
       router
     )
   } catch (error: any) {
-    showError(error.message || '禁用失败')
+    showError(error.message || t('users.settings.security.disableFailed'))
     showDisableDialog.value = false // 关闭对话框
   } finally {
     loading.value = false
@@ -661,8 +688,8 @@ const handleDisableTOTP = async () => {
 // 生成新的备份码
 const handleGenerateBackupCodes = async () => {
   const confirmed = await dialogs
-    .confirm('确定要生成新的备份码吗？', {
-      title: '生成备份码',
+    .confirm(t('users.settings.security.generateCodesConfirm'), {
+      title: t('users.settings.security.generateCodesTitle'),
     })
     .wait()
   if (confirmed) handleConfirmGenerateBackupCodes()
@@ -687,7 +714,7 @@ const handleConfirmGenerateBackupCodes = async () => {
       router
     )
   } catch (error: any) {
-    showError(error.message || '生成备份码失败')
+    showError(error.message || t('users.settings.security.generateCodesFailed'))
   } finally {
     loading.value = false
   }
@@ -708,7 +735,7 @@ const handleUpdateSettings = async (value: boolean) => {
       router
     )
   } catch (error: any) {
-    showError(error.message || '更新设置失败')
+    showError(error.message || t('users.settings.security.updateSettingsFailed'))
     // 如果更新失败，恢复原来的值
     alwaysRequired.value = !value
   } finally {
@@ -727,7 +754,7 @@ const handleCancelSetup = () => {
 // 复制到剪贴板
 const copyToClipboard = (text: string) => {
   navigator.clipboard.writeText(text)
-  toast.success('已复制到剪贴板')
+  toast.success(t('users.settings.security.copied'))
 }
 
 // 处理修改密码
@@ -751,7 +778,7 @@ const handleChangePassword = async () => {
           srpVerifier,
         })
 
-        toast.success('密码修改成功')
+        toast.success(t('users.settings.security.passwordChanged'))
         handleCancelChangePassword()
       },
       'changePassword',
@@ -760,7 +787,7 @@ const handleChangePassword = async () => {
     )
   } catch (error: any) {
     console.error('Failed to change password:', error)
-    passwordError.value = error.message || '密码修改失败'
+    passwordError.value = error.message || t('users.settings.security.passwordChangeFailed')
   } finally {
     isChangingPassword.value = false
   }

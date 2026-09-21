@@ -12,6 +12,8 @@ import { previewDocumentPdf, previewFileBytes, PreviewRendererUnavailable } from
 
 import { NEEDS_CONVERSION, suffixOf } from './fileKind'
 
+import { t } from '@/i18n'
+
 export interface DocumentSource {
   /** 房间。 */
   topicId: () => string | null
@@ -63,7 +65,7 @@ export function useDocumentBytes(source: DocumentSource) {
       // 文档，换来一句错误——而这份文档仍然是这个文件最新的可见状态。
       loadedKey = ''
       rendererMissing.value = e instanceof PreviewRendererUnavailable
-      error.value = e instanceof Error ? e.message : '无法显示这个文件'
+      error.value = e instanceof Error ? e.message : t('workspace.preview.cantDisplay')
     } finally {
       if (mine === generation) loading.value = false
     }

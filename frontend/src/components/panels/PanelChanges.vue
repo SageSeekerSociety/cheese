@@ -34,6 +34,12 @@ import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
 
+// `t` 从模块里来，不是 `useI18n()`：这块面板是 WorkPanel 四个子面板之一，而挂
+// WorkPanel 的用例（WorkPanel.chatTab.spec.ts）不装 i18n 插件——`useI18n()` 在
+// 没有插件的树上会当场抛异常。模块导出的 `t` 不依赖插件，在模板里照样跟着 locale
+// 走。同一个理由写在 WorkPanel.vue 里，别「顺手改成规范写法」。
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topicId: string | null
@@ -63,9 +69,13 @@ let sourceEpoch = 0
 let fileRequest = 0
 let taskRequest = 0
 const currentTask = computed(() => taskOptions.value.find((task) => task.id === selectedTask.value))
-const sourceTitle = computed(() => (selectedTask.value ? currentTask.value?.title ?? '任务不可用' : '项目当前代码'))
+const sourceTitle = computed(() =>
+  selectedTask.value
+    ? currentTask.value?.title ?? t('workspace.changes.sourceUnavailable')
+    : t('workspace.changes.projectCode')
+)
 const sourceStatus = computed(() =>
-  selectedTask.value ? currentTask.value?.presentation.display_status ?? '' : '只读'
+  selectedTask.value ? currentTask.value?.presentation.display_status ?? '' : t('global.readOnly')
 )
 const sourceUnavailable = computed(() => tasksLoaded.value && !!selectedTask.value && !currentTask.value)
 const requestedSource = ref<FileSource>('live')
@@ -87,7 +97,8 @@ async function loadOverview() {
         delete overviewErrors.value[task.id]
       } catch (error) {
         if (props.topicId !== room || sourceEpoch !== epoch) return
-        overviewErrors.value[task.id] = error instanceof Error ? error.message : '改动加载失败'
+        overviewErrors.value[task.id] =
+          error instanceof Error ? error.message : t('workspace.changes.loadChangesFailed')
         delete overviewDiffs.value[task.id]
       }
     })
@@ -114,7 +125,7 @@ async function loadTasks() {
     if (overview.value) await loadOverview()
   } catch (error) {
     if (props.topicId === room && request === taskRequest) {
-      taskLoadError.value = error instanceof Error ? error.message : '任务加载失败'
+      taskLoadError.value = error instanceof Error ? error.message : t('workspace.changes.loadTasksFailed')
     }
   }
 }
@@ -140,7 +151,7 @@ async function downloadOpenFile() {
   try {
     await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '下载失败'
+    errorMsg.value = e instanceof Error ? e.message : t('global.downloadFailed')
   }
 }
 
@@ -172,7 +183,7 @@ async function loadGit(opts: { silent?: boolean } = {}) {
     gitCommits.value = log.data
     gitDiff.value = diff.diff
   } catch (e) {
-    if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : '加载失败'
+    if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : t('global.loadFailed')
   } finally {
     if (props.topicId === tid && selectedTask.value === task && sourceEpoch === epoch) {
       loading.value = false
@@ -492,7 +503,7 @@ async function doLoadFiles() {
     }
   } catch (e) {
     if (sourceEpoch !== epoch) return
-    errorMsg.value = e instanceof Error ? e.message : '加载失败'
+    errorMsg.value = e instanceof Error ? e.message : t('global.loadFailed')
   } finally {
     if (props.topicId === tid && selectedTask.value === task && sourceEpoch === epoch) loading.value = false
   }
@@ -551,7 +562,7 @@ async function selectFile(path: string) {
     revealInTree(path)
   } catch (e) {
     if (props.topicId !== tid || selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
-    errorMsg.value = e instanceof Error ? e.message : '读取文件失败'
+    errorMsg.value = e instanceof Error ? e.message : t('workspace.changes.readFileFailed')
   }
 }
 
@@ -583,7 +594,7 @@ async function writeOpenFile(expected: string | null) {
       // show the conflict and let the human reload or overwrite on purpose.
       fileConflict.value = true
     } else {
-      errorMsg.value = e instanceof Error ? e.message : '保存失败'
+      errorMsg.value = e instanceof Error ? e.message : t('global.saveFailed')
     }
   } finally {
     if (props.topicId === tid && selectedTask.value === task && sourceEpoch === epoch) fileSaving.value = false
@@ -607,7 +618,8 @@ async function overwriteFile() {
     if (epoch !== sourceEpoch || openPath.value !== path) return
     await writeOpenFile(current.version)
   } catch (error) {
-    if (epoch === sourceEpoch) errorMsg.value = error instanceof Error ? error.message : '读取文件失败'
+    if (epoch === sourceEpoch)
+      errorMsg.value = error instanceof Error ? error.message : t('workspace.changes.readFileFailed')
   }
 }
 
@@ -790,17 +802,21 @@ defineExpose({ openFile })
     <div class="source-bar">
       <div class="source-heading">
         <v-btn v-if="!overview" variant="text" size="small" prepend-icon="mdi-arrow-left" @click="openOverview">
-          房间改动
+          {{ t('workspace.changes.roomChanges') }}
         </v-btn>
-        <h3 class="t-title">{{ overview ? '房间改动' : sourceTitle }}</h3>
+        <h3 class="t-title">{{ overview ? t('workspace.changes.roomChanges') : sourceTitle }}</h3>
         <span v-if="!overview" class="source-status">{{ sourceStatus }}</span>
       </div>
-      <v-btn v-if="overview" variant="outlined" size="small" @click="navigateSource(null)">项目当前代码</v-btn>
+      <v-btn v-if="overview" variant="outlined" size="small" @click="navigateSource(null)">
+        {{ t('workspace.changes.projectCode') }}
+      </v-btn>
       <v-menu v-else v-model="sourceMenu">
         <template #activator="{ props: menuProps }">
-          <v-btn v-bind="menuProps" variant="outlined" size="small" append-icon="mdi-chevron-down">切换来源</v-btn>
+          <v-btn v-bind="menuProps" variant="outlined" size="small" append-icon="mdi-chevron-down">
+            {{ t('workspace.changes.switchSource') }}
+          </v-btn>
         </template>
-        <v-list density="compact" aria-label="文件来源">
+        <v-list density="compact" :aria-label="t('workspace.changes.fileSource')">
           <v-list-item
             v-for="task in taskOptions"
             :key="task.id"
@@ -811,8 +827,8 @@ defineExpose({ openFile })
           />
           <v-divider />
           <v-list-item
-            title="项目当前代码"
-            subtitle="只读"
+            :title="t('workspace.changes.projectCode')"
+            :subtitle="t('global.readOnly')"
             :active="selectedTask === null"
             @click="navigateSource(null)"
           />
@@ -821,19 +837,33 @@ defineExpose({ openFile })
     </div>
     <v-alert v-if="taskLoadError" type="error" density="compact" class="ma-4">{{ taskLoadError }}</v-alert>
     <div v-if="overview" class="room-changes">
-      <p v-if="requestedPath" class="source-note">选择任务以查看 {{ requestedPath }}</p>
-      <p v-if="!tasksLoaded && !taskLoadError" class="source-note">正在加载任务</p>
-      <p v-else-if="tasksLoaded && !taskOptions.length" class="source-note">暂无任务改动</p>
+      <p v-if="requestedPath" class="source-note">
+        {{ t('workspace.changes.pickTaskToView', { path: requestedPath }) }}
+      </p>
+      <p v-if="!tasksLoaded && !taskLoadError" class="source-note">
+        {{ t('workspace.changes.loadingTasks') }}
+      </p>
+      <p v-else-if="tasksLoaded && !taskOptions.length" class="source-note">
+        {{ t('workspace.changes.noTaskChanges') }}
+      </p>
       <article v-for="task in taskOptions" :key="task.id" class="task-change-group" :aria-label="task.title">
         <button type="button" class="task-change-heading" @click="navigateSource(task.id, requestedPath ?? undefined)">
           <span class="t-title">{{ task.title }}</span>
           <span class="source-status">{{ task.presentation.display_status }}</span>
-          <span v-if="overviewDiffs[task.id]" class="task-file-count">{{ overviewDiffs[task.id].length }} 个文件</span>
+          <span v-if="overviewDiffs[task.id]" class="task-file-count">
+            {{
+              t('workspace.changes.fileCount', { count: overviewDiffs[task.id].length }, overviewDiffs[task.id].length)
+            }}
+          </span>
           <v-icon size="18">mdi-chevron-right</v-icon>
         </button>
         <p v-if="overviewErrors[task.id]" class="source-note" role="alert">{{ overviewErrors[task.id] }}</p>
-        <p v-else-if="!overviewDiffs[task.id]" class="source-note">正在加载改动</p>
-        <p v-else-if="!overviewDiffs[task.id].length" class="source-note">暂无改动</p>
+        <p v-else-if="!overviewDiffs[task.id]" class="source-note">
+          {{ t('workspace.changes.loadingChanges') }}
+        </p>
+        <p v-else-if="!overviewDiffs[task.id].length" class="source-note">
+          {{ t('workspace.changes.noChanges') }}
+        </p>
         <button
           v-for="file in overviewDiffs[task.id] ?? []"
           :key="file.path"
@@ -849,22 +879,31 @@ defineExpose({ openFile })
         </button>
       </article>
     </div>
-    <v-alert v-else-if="sourceUnavailable" type="warning" density="compact" class="ma-4"
-      >任务不可用，请选择其他来源</v-alert
-    >
+    <v-alert v-else-if="sourceUnavailable" type="warning" density="compact" class="ma-4">
+      {{ t('workspace.changes.sourceUnavailableHint') }}
+    </v-alert>
     <template v-else>
+      <!-- 两句拼在一起，但「· 任务已结束，只读」那半句的**前导空格写在词条里**——
+          这里不放跨节点的空白文本节点，所以英文那句该有的空格既不会多也不会被
+          Vue 的 blank-node 压缩吃掉。 -->
       <p class="source-note source-current">
-        当前查看：{{ sourceTitle
-        }}<span v-if="selectedTask && currentTask?.status !== 'open'"> · 任务已结束，只读</span>
+        {{ t('workspace.changes.viewing', { title: sourceTitle })
+        }}<span v-if="selectedTask && currentTask?.status !== 'open'">{{
+          t('workspace.changes.finishedReadOnly')
+        }}</span>
       </p>
-      <div v-if="selectedTask && currentTask?.status === 'open'" class="seg ma-3" aria-label="文件版本">
+      <div
+        v-if="selectedTask && currentTask?.status === 'open'"
+        class="seg ma-3"
+        :aria-label="t('workspace.changes.versionLabel')"
+      >
         <button
           type="button"
           class="seg__btn"
           :class="{ 'seg__btn--on': fileSource === 'live' }"
           @click="selectVersion('live')"
         >
-          机器实时文件
+          {{ t('workspace.changes.liveFile') }}
         </button>
         <button
           type="button"
@@ -872,24 +911,22 @@ defineExpose({ openFile })
           :class="{ 'seg__btn--on': fileSource === 'committed' }"
           @click="selectVersion('committed')"
         >
-          已提交版本
+          {{ t('workspace.changes.committedVersion') }}
         </button>
       </div>
       <p class="source-note">
-        {{
-          fileSource === 'live' ? '机器实时文件包含尚未提交的修改。' : '已提交版本只读，不包含机器上尚未提交的修改。'
-        }}
+        {{ fileSource === 'live' ? t('workspace.changes.liveNote') : t('workspace.changes.committedNote') }}
       </p>
       <div class="changes-bar">
         <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
            是为了顺手看一眼旁边那个没动过的文件。 -->
         <div class="seg">
           <button type="button" class="seg__btn" :class="{ 'seg__btn--on': !showAll }" @click="showAll = false">
-            改动
+            {{ t('workspace.changes.scopeChanged') }}
             <span v-if="fileDiffs.length" class="seg__count">{{ fileDiffs.length }}</span>
           </button>
           <button type="button" class="seg__btn" :class="{ 'seg__btn--on': showAll }" @click="showAll = true">
-            全部文件
+            {{ t('workspace.changes.scopeAll') }}
           </button>
         </div>
         <v-spacer />
@@ -898,7 +935,7 @@ defineExpose({ openFile })
           size="small"
           variant="text"
           class="c-muted"
-          title="刷新"
+          :title="t('global.refresh')"
           :loading="refreshing"
           @click="loadAll({ silent: true })"
         />
@@ -912,16 +949,20 @@ defineExpose({ openFile })
       </div>
       <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4 file-load-error">
         {{ errorMsg }}
-        <v-btn v-if="fileSource === 'live'" variant="text" size="small" @click="selectVersion('committed')"
-          >切换到已提交版本</v-btn
-        >
+        <v-btn v-if="fileSource === 'live'" variant="text" size="small" @click="selectVersion('committed')">{{
+          t('workspace.changes.switchToCommitted')
+        }}</v-btn>
       </v-alert>
 
       <div v-else class="file-tool">
         <!-- chip 指来的文件不在这个来源里。列表照常显示：读者本来就可以换一个
              来源，或者在树上挑别的文件。 -->
         <v-alert v-if="missing" type="info" variant="tonal" density="compact" class="ma-2" data-testid="missing-file">
-          {{ missing }} 不在{{ selectedTask ? '这个任务' : '项目当前代码' }}里
+          {{
+            selectedTask
+              ? t('workspace.changes.missingInTask', { path: missing })
+              : t('workspace.changes.missingInProject', { path: missing })
+          }}
         </v-alert>
         <div class="file-bar">
           <v-btn
@@ -930,15 +971,15 @@ defineExpose({ openFile })
             variant="text"
             class="file-icon-btn"
             :class="{ 'file-icon-btn--on': fileListOpen }"
-            title="文件列表"
+            :title="t('workspace.changes.fileList')"
             @click="fileListOpen = !fileListOpen"
           >
             <v-icon size="18">mdi-format-list-bulleted</v-icon>
           </v-btn>
           <span class="file-bar__path" :title="openPath || ''">
-            {{ openPath || '未打开文件' }}
+            {{ openPath || t('workspace.changes.noFileOpen') }}
           </span>
-          <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
+          <span v-if="fileDirty" class="file-bar__dot" :title="t('workspace.changes.unsaved')" />
           <v-spacer />
           <v-btn
             v-if="openPath"
@@ -947,7 +988,7 @@ defineExpose({ openFile })
             prepend-icon="mdi-download-outline"
             @click="downloadOpenFile"
           >
-            下载
+            {{ t('global.download') }}
           </v-btn>
           <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
                这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
@@ -958,7 +999,7 @@ defineExpose({ openFile })
               :class="{ 'seg__btn--on': effectiveView === 'diff' }"
               @click="fileView = 'diff'"
             >
-              差异
+              {{ t('workspace.changes.diffView') }}
             </button>
             <button
               type="button"
@@ -966,12 +1007,12 @@ defineExpose({ openFile })
               :class="{ 'seg__btn--on': effectiveView === 'edit' }"
               @click="fileView = 'edit'"
             >
-              {{ fileReadOnly ? '全文' : '编辑' }}
+              {{ fileReadOnly ? t('global.fullText') : t('global.edit') }}
             </button>
           </div>
           <!-- Read-only files (binary / oversized / images) get no 保存 button at
              all: saving one is what corrupted them. -->
-          <span v-if="fileReadOnly && openPath" class="file-bar__ro">只读</span>
+          <span v-if="fileReadOnly && openPath" class="file-bar__ro">{{ t('global.readOnly') }}</span>
           <v-btn
             v-else-if="effectiveView === 'edit'"
             size="x-small"
@@ -981,7 +1022,7 @@ defineExpose({ openFile })
             :disabled="!fileDirty"
             @click="saveFile"
           >
-            保存
+            {{ t('global.save') }}
           </v-btn>
         </div>
         <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
@@ -989,17 +1030,19 @@ defineExpose({ openFile })
         <div v-if="fileConflict" class="file-conflict">
           <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
           <span class="file-conflict__text">
-            这个文件在你编辑期间被改过，多半是芝士写的。直接保存会覆盖那些改动。
+            {{ t('workspace.changes.conflictNotice') }}
           </span>
-          <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的改动，载入最新版本</v-btn>
+          <v-btn size="x-small" variant="text" @click="reloadOpenFile">{{
+            t('workspace.changes.discardAndReload')
+          }}</v-btn>
           <v-btn size="x-small" variant="text" color="error" :loading="fileSaving" @click="overwriteFile">
-            仍然覆盖保存
+            {{ t('workspace.changes.overwriteAnyway') }}
           </v-btn>
         </div>
         <div class="file-body">
           <div v-if="fileListOpen" ref="fileListEl" class="file-list">
             <div v-if="fileRows.length === 0" class="text-center c-faint py-6" style="font-size: 0.8rem">
-              {{ showAll ? '暂无文件' : '暂无改动' }}
+              {{ showAll ? t('workspace.changes.noFiles') : t('workspace.changes.noChanges') }}
             </div>
             <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
               <!-- folder row: click toggles expand/collapse -->
@@ -1032,8 +1075,12 @@ defineExpose({ openFile })
                 <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
                 <span class="file-item__name">{{ row.name }}</span>
                 <!-- 变更标记: 新增 / 删除 说的是这个文件本身的去留，改过的给增删行数。 -->
-                <span v-if="row.diff?.status === 'added'" class="file-mark file-mark--add">新增</span>
-                <span v-else-if="row.diff?.status === 'removed'" class="file-mark file-mark--del">删除</span>
+                <span v-if="row.diff?.status === 'added'" class="file-mark file-mark--add">{{
+                  t('workspace.changes.fileAdded')
+                }}</span>
+                <span v-else-if="row.diff?.status === 'removed'" class="file-mark file-mark--del">{{
+                  t('workspace.changes.fileRemoved')
+                }}</span>
                 <template v-else-if="row.diff">
                   <span v-if="row.diff.added" class="file-mark file-mark--add">+{{ row.diff.added }}</span>
                   <span v-if="row.diff.removed" class="file-mark file-mark--del">−{{ row.diff.removed }}</span>
@@ -1050,19 +1097,19 @@ defineExpose({ openFile })
               </div>
               <div v-else-if="docRendererMissing && !docBytes" class="file-blob">
                 <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
-                <div class="file-blob__title">文档预览未启用</div>
+                <div class="file-blob__title">{{ t('workspace.preview.docPreviewDisabled') }}</div>
                 <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
                   <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                  下载原文件
+                  {{ t('workspace.changes.downloadOriginal') }}
                 </v-btn>
               </div>
               <div v-else-if="docError && !docBytes" class="file-blob">
                 <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-                <div class="file-blob__title">无法显示这个文件</div>
+                <div class="file-blob__title">{{ t('workspace.preview.cantDisplay') }}</div>
                 <div class="file-blob__note">{{ docError }}</div>
                 <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
                   <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                  下载原文件
+                  {{ t('workspace.changes.downloadOriginal') }}
                 </v-btn>
               </div>
               <div v-else class="doc-view__body">
@@ -1097,15 +1144,17 @@ defineExpose({ openFile })
                 {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
               </v-icon>
               <div class="file-blob__title">
-                {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能按文本编辑' }}
+                {{ fileTooLarge ? t('workspace.changes.fileTooLarge') : t('workspace.changes.fileBinary') }}
               </div>
+              <!-- 「 —— 只读 」那半句只在文件不大的时候出现；它和前面那半句之间的
+                   空格由这里的换行（Vue 压成一个空格）给，词条里不带前后空格。 -->
               <div class="file-blob__note">
                 {{ openPath }} · {{ fmtBytes(fileBytes) }}
-                <template v-if="!fileTooLarge"> —— 按文本打开会损坏它，因此这里只读 </template>
+                <template v-if="!fileTooLarge">{{ t('workspace.changes.binaryNote') }}</template>
               </div>
               <v-btn size="small" variant="tonal" class="mt-3" @click="downloadOpenFile">
                 <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                下载原文件
+                {{ t('workspace.changes.downloadOriginal') }}
               </v-btn>
             </div>
             <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
@@ -1121,8 +1170,10 @@ defineExpose({ openFile })
                它配一个位置，但不配一个和文件并列的入口。 -->
             <div v-else class="changes-scroll">
               <div class="pa-3">
-                <div class="t-eyebrow mb-2">提交记录</div>
-                <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2">暂无提交</div>
+                <div class="t-eyebrow mb-2">{{ t('workspace.changes.commits') }}</div>
+                <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2">
+                  {{ t('workspace.changes.noCommits') }}
+                </div>
                 <v-list v-else density="compact" class="py-0">
                   <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
                     <template #prepend>
@@ -1142,7 +1193,7 @@ defineExpose({ openFile })
         </div>
       </div>
     </template>
-    <p v-if="drafts.size" class="source-note source-drafts">未保存的修改已保留在当前页面，切回对应文件可继续编辑</p>
+    <p v-if="drafts.size" class="source-note source-drafts">{{ t('workspace.changes.draftsKept') }}</p>
   </div>
 </template>
 

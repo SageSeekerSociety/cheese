@@ -104,6 +104,90 @@
     "analytics": {
       "title": "Analytics"
     },
+    "memberTasks": {
+      "viewAllChallenges": "View all challenges",
+      "filter": "Filter",
+      "clearFilters": "Clear filters",
+      "all": "All",
+      "sortBy": "Sort by",
+      "sortOrder": "Sort order",
+      "sortDesc": "Descending",
+      "sortAsc": "Ascending",
+      "notAvailable": "N/A",
+      "approval": {
+        "pending": "Pending review",
+        "approved": "Approved",
+        "notApproved": "Not approved"
+      },
+      "completion": {
+        "status": "Completion status",
+        "notSubmitted": "Not submitted",
+        "pendingReview": "Awaiting review",
+        "resubmittable": "Can resubmit",
+        "failed": "Not completed",
+        "success": "Succeeded"
+      },
+      "visibility": {
+        "ended": "Ended",
+        "approvedVisible": "Approved and visible",
+        "approvedHidden": "Approved but hidden",
+        "rejected": "Rejected"
+      },
+      "identity": {
+        "label": "Participation type",
+        "individual": "Individual"
+      },
+      "deadline": {
+        "none": "No deadline",
+        "passed": "Closed on {date}",
+        "today": "Closes today",
+        "tomorrow": "Closes tomorrow",
+        "inDays": "Closes in {days} days",
+        "onDate": "Closes {date}"
+      },
+      "participating": {
+        "approvalStatus": "Registration approval",
+        "emptyTitle": "Nothing joined yet",
+        "emptyText": "You haven't joined a challenge in this space yet. Browse all challenges and pick one to get started.",
+        "overview": {
+          "pendingApproval": "Your registration is waiting for a teacher or admin to confirm it",
+          "awaitingSubmission": "Your registration is approved, but you haven't submitted yet",
+          "pendingReview": "Your work is submitted and waiting for a teacher's review",
+          "resubmittable": "Sent back, but you can still revise and resubmit it"
+        },
+        "sort": {
+          "joinedAt": "Recently joined",
+          "deadline": "Deadline",
+          "latestSubmission": "Recently submitted"
+        },
+        "loadOverviewFailed": "Couldn't load your participation overview",
+        "loadFailed": "Couldn't load the challenges you joined"
+      },
+      "publishing": {
+        "approvalStatus": "Challenge approval",
+        "category": "Category",
+        "emptyTitle": "Nothing published yet",
+        "emptyText": "You haven't published a challenge in this space yet. Once you do, its review and participation status will show up here.",
+        "goPublish": "Publish a challenge",
+        "overview": {
+          "pendingTaskApproval": "Challenges awaiting approval",
+          "pendingTaskApprovalHint": "Challenges still waiting for a space admin to review them",
+          "pendingParticipantApproval": "Participants awaiting approval",
+          "pendingParticipantApprovalHint": "Participants waiting for your confirmation",
+          "pendingReviewSubmission": "Submissions awaiting review",
+          "pendingReviewSubmissionHint": "Work that is submitted but not yet reviewed",
+          "successfulParticipants": "Successful participants",
+          "successfulParticipantsHint": "Participants who passed your challenges in this space"
+        },
+        "sort": {
+          "participantCount": "Participants",
+          "pendingReview": "Awaiting review",
+          "successRate": "Success rate"
+        },
+        "loadOverviewFailed": "Couldn't load your publishing overview",
+        "loadFailed": "Couldn't load the challenges you published"
+      }
+    },
     "publishTask": {
       "createSuccess": "Challenge created",
       "createSuccessAndWaitingAudit": "Challenge created — awaiting review",

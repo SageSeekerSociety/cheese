@@ -2,10 +2,10 @@
   <div class="real-name-info">
     <div class="d-flex justify-space-between align-center mb-6">
       <div class="d-flex align-center">
-        <h2 class="text-h5 font-weight-medium mb-0">实名信息</h2>
+        <h2 class="text-h5 font-weight-medium mb-0">{{ t('users.privacy.realNameInfo.title') }}</h2>
         <v-chip class="ml-3" size="small" color="primary" variant="outlined">
           <v-icon start icon="mdi-eye-off-outline" size="small"></v-icon>
-          已模糊处理
+          {{ t('users.privacy.realNameInfo.masked') }}
         </v-chip>
       </div>
       <v-chip
@@ -15,12 +15,12 @@
         class="status-chip"
         :prepend-icon="hasRealNameInfo ? 'mdi-check-circle' : 'mdi-alert-circle'"
       >
-        {{ hasRealNameInfo ? '已完成认证' : '未完成认证' }}
+        {{ hasRealNameInfo ? t('users.privacy.realNameInfo.verified') : t('users.privacy.realNameInfo.unverified') }}
       </v-chip>
     </div>
 
     <p class="text-body-2 text-medium-emphasis mb-6">
-      您的实名信息用于身份认证、评优评奖等场景。所有信息都经过加密存储，访问受到严格控制，且每次访问都会被记录。
+      {{ t('users.privacy.realNameInfo.intro') }}
     </p>
 
     <!-- 信息卡片 -->
@@ -32,58 +32,68 @@
             <div class="d-flex align-start mb-6">
               <v-icon icon="mdi-shield-lock" size="24" color="primary" class="mr-3 mt-1"></v-icon>
               <div>
-                <div class="text-subtitle-1 font-weight-medium">您的加密实名信息</div>
-                <div class="text-caption text-medium-emphasis">此信息已加密存储，仅在必要时由授权人员访问</div>
+                <div class="text-subtitle-1 font-weight-medium">{{ t('users.privacy.realNameInfo.cardTitle') }}</div>
+                <div class="text-caption text-medium-emphasis">{{ t('users.privacy.realNameInfo.cardHint') }}</div>
               </div>
             </div>
 
             <v-row>
               <v-col cols="12" sm="6">
                 <div class="info-field mb-4">
-                  <div class="text-caption text-medium-emphasis mb-1">真实姓名</div>
+                  <div class="text-caption text-medium-emphasis mb-1">{{ t('users.settings.realName.realName') }}</div>
                   <div class="d-flex align-center">
                     <v-icon icon="mdi-account" size="small" color="primary" class="mr-2"></v-icon>
-                    <span class="text-body-1 font-weight-medium">{{ realNameInfo?.realName || '未填写' }}</span>
+                    <span class="text-body-1 font-weight-medium">{{
+                      realNameInfo?.realName || t('users.privacy.realNameInfo.notProvided')
+                    }}</span>
                   </div>
                 </div>
               </v-col>
 
               <v-col cols="12" sm="6">
                 <div class="info-field mb-4">
-                  <div class="text-caption text-medium-emphasis mb-1">学号</div>
+                  <div class="text-caption text-medium-emphasis mb-1">{{ t('users.settings.realName.studentId') }}</div>
                   <div class="d-flex align-center">
                     <v-icon icon="mdi-card-account-details" size="small" color="primary" class="mr-2"></v-icon>
-                    <span class="text-body-1 font-weight-medium">{{ realNameInfo?.studentId || '未填写' }}</span>
+                    <span class="text-body-1 font-weight-medium">{{
+                      realNameInfo?.studentId || t('users.privacy.realNameInfo.notProvided')
+                    }}</span>
                   </div>
                 </div>
               </v-col>
 
               <v-col cols="12" sm="4">
                 <div class="info-field mb-4">
-                  <div class="text-caption text-medium-emphasis mb-1">年级</div>
+                  <div class="text-caption text-medium-emphasis mb-1">{{ t('users.settings.realName.grade') }}</div>
                   <div class="d-flex align-center">
                     <v-icon icon="mdi-school" size="small" color="primary" class="mr-2"></v-icon>
-                    <span class="text-body-1 font-weight-medium">{{ realNameInfo?.grade || '未填写' }}</span>
+                    <span class="text-body-1 font-weight-medium">{{
+                      realNameInfo?.grade || t('users.privacy.realNameInfo.notProvided')
+                    }}</span>
                   </div>
                 </div>
               </v-col>
 
               <v-col cols="12" sm="4">
                 <div class="info-field mb-4">
-                  <div class="text-caption text-medium-emphasis mb-1">专业</div>
+                  <div class="text-caption text-medium-emphasis mb-1">{{ t('users.settings.realName.major') }}</div>
                   <div class="d-flex align-center">
                     <v-icon icon="mdi-book-education" size="small" color="primary" class="mr-2"></v-icon>
-                    <span class="text-body-1 font-weight-medium">{{ realNameInfo?.major || '未填写' }}</span>
+                    <span class="text-body-1 font-weight-medium">{{
+                      realNameInfo?.major || t('users.privacy.realNameInfo.notProvided')
+                    }}</span>
                   </div>
                 </div>
               </v-col>
 
               <v-col cols="12" sm="4">
                 <div class="info-field mb-4">
-                  <div class="text-caption text-medium-emphasis mb-1">班级</div>
+                  <div class="text-caption text-medium-emphasis mb-1">{{ t('users.settings.realName.className') }}</div>
                   <div class="d-flex align-center">
                     <v-icon icon="mdi-account-group" size="small" color="primary" class="mr-2"></v-icon>
-                    <span class="text-body-1 font-weight-medium">{{ realNameInfo?.className || '未填写' }}</span>
+                    <span class="text-body-1 font-weight-medium">{{
+                      realNameInfo?.className || t('users.privacy.realNameInfo.notProvided')
+                    }}</span>
                   </div>
                 </div>
               </v-col>
@@ -96,15 +106,21 @@
               <v-card-text>
                 <div class="d-flex flex-column justify-space-between h-100">
                   <div>
-                    <div class="text-subtitle-2 font-weight-medium mb-4">信息安全状态</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-4">
+                      {{ t('users.privacy.realNameInfo.securityStatus') }}
+                    </div>
 
                     <div class="status-item d-flex align-start mb-3">
                       <v-avatar size="24" color="success" class="mr-2">
                         <v-icon icon="mdi-lock" size="14"></v-icon>
                       </v-avatar>
                       <div>
-                        <div class="text-body-2 font-weight-medium">端到端加密</div>
-                        <div class="text-caption text-medium-emphasis">信息以加密形式安全存储</div>
+                        <div class="text-body-2 font-weight-medium">
+                          {{ t('users.privacy.realNameInfo.encryptedTitle') }}
+                        </div>
+                        <div class="text-caption text-medium-emphasis">
+                          {{ t('users.privacy.realNameInfo.encryptedDesc') }}
+                        </div>
                       </div>
                     </div>
 
@@ -113,8 +129,12 @@
                         <v-icon icon="mdi-account-key" size="14"></v-icon>
                       </v-avatar>
                       <div>
-                        <div class="text-body-2 font-weight-medium">访问控制</div>
-                        <div class="text-caption text-medium-emphasis">严格的访问权限管理</div>
+                        <div class="text-body-2 font-weight-medium">
+                          {{ t('users.privacy.realNameInfo.accessControlTitle') }}
+                        </div>
+                        <div class="text-caption text-medium-emphasis">
+                          {{ t('users.privacy.realNameInfo.accessControlDesc') }}
+                        </div>
                       </div>
                     </div>
 
@@ -123,8 +143,12 @@
                         <v-icon icon="mdi-history" size="14"></v-icon>
                       </v-avatar>
                       <div>
-                        <div class="text-body-2 font-weight-medium">访问记录</div>
-                        <div class="text-caption text-medium-emphasis">记录所有对信息的访问</div>
+                        <div class="text-body-2 font-weight-medium">
+                          {{ t('users.privacy.realNameInfo.accessLogTitle') }}
+                        </div>
+                        <div class="text-caption text-medium-emphasis">
+                          {{ t('users.privacy.realNameInfo.accessLogDesc') }}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -138,7 +162,7 @@
                       block
                       class="mb-2"
                     >
-                      查看访问记录
+                      {{ t('users.privacy.realNameInfo.viewAccessLog') }}
                     </v-btn>
                   </div>
                 </div>
@@ -152,11 +176,11 @@
 
       <v-card-actions class="px-4 pb-4">
         <v-btn color="primary" variant="flat" :to="{ name: 'UserSettingsRealName' }" prepend-icon="mdi-pencil">
-          编辑实名信息
+          {{ t('users.privacy.realNameInfo.editRealName') }}
         </v-btn>
         <v-spacer></v-spacer>
         <v-btn color="primary" variant="text" prepend-icon="mdi-eye" :to="{ name: 'PrivacyCenterAccessLogs' }">
-          查看访问记录
+          {{ t('users.privacy.realNameInfo.viewAccessLog') }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -165,7 +189,7 @@
     <v-card v-else class="loading-card mb-8" rounded="lg" variant="flat">
       <v-card-text class="d-flex justify-center align-center py-8">
         <v-progress-circular indeterminate color="primary" class="mr-3"></v-progress-circular>
-        <span>正在加载实名信息...</span>
+        <span>{{ t('users.privacy.realNameInfo.loading') }}</span>
       </v-card-text>
     </v-card>
 
@@ -175,14 +199,14 @@
         <div class="d-flex align-start mb-4">
           <v-icon icon="mdi-shield-lock-outline" size="24" color="primary" class="mr-3 mt-1"></v-icon>
           <div>
-            <div class="text-subtitle-1 font-weight-medium">实名信息的使用场景与保护</div>
-            <div class="text-caption text-medium-emphasis">我们如何使用和保护您的实名信息</div>
+            <div class="text-subtitle-1 font-weight-medium">{{ t('users.privacy.realNameInfo.usageTitle') }}</div>
+            <div class="text-caption text-medium-emphasis">{{ t('users.privacy.realNameInfo.usageSubtitle') }}</div>
           </div>
         </div>
 
         <!-- 使用场景说明 -->
         <div class="mb-6">
-          <h3 class="text-subtitle-2 font-weight-medium mb-3">实名信息使用场景</h3>
+          <h3 class="text-subtitle-2 font-weight-medium mb-3">{{ t('users.privacy.realNameInfo.scenariosTitle') }}</h3>
           <v-row>
             <v-col cols="12" md="6">
               <v-card class="usage-scenario-card h-100" variant="flat" rounded="lg">
@@ -191,9 +215,11 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-account-check" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">身份验证与导师匹配</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.scenario1Title') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis flex-grow-1">
-                      验证参与者身份，帮助导师了解学生背景并匹配合适的项目。
+                      {{ t('users.privacy.realNameInfo.scenario1Desc') }}
                     </p>
                   </div>
                 </v-card-text>
@@ -207,8 +233,12 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-certificate" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">项目结题认证</div>
-                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于赛题结题后的项目认证与证书发放流程。</p>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.scenario2Title') }}
+                    </div>
+                    <p class="text-body-2 text-medium-emphasis flex-grow-1">
+                      {{ t('users.privacy.realNameInfo.scenario2Desc') }}
+                    </p>
                   </div>
                 </v-card-text>
               </v-card>
@@ -221,8 +251,12 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-trophy" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">评奖评优</div>
-                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于赛题结题后的奖项评定与优秀项目评选。</p>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.scenario3Title') }}
+                    </div>
+                    <p class="text-body-2 text-medium-emphasis flex-grow-1">
+                      {{ t('users.privacy.realNameInfo.scenario3Desc') }}
+                    </p>
                   </div>
                 </v-card-text>
               </v-card>
@@ -235,8 +269,12 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-school" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">学分认定</div>
-                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于赛题结题后的学分认证与课程成绩登记。</p>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.scenario4Title') }}
+                    </div>
+                    <p class="text-body-2 text-medium-emphasis flex-grow-1">
+                      {{ t('users.privacy.realNameInfo.scenario4Desc') }}
+                    </p>
                   </div>
                 </v-card-text>
               </v-card>
@@ -248,9 +286,9 @@
         <v-divider class="my-5"></v-divider>
 
         <div class="mb-4">
-          <h3 class="text-subtitle-2 font-weight-medium mb-3">我们如何保护您的实名信息</h3>
+          <h3 class="text-subtitle-2 font-weight-medium mb-3">{{ t('users.privacy.realNameInfo.protectionTitle') }}</h3>
           <p class="text-body-2 mb-4">
-            我们采用多层保护机制，在满足赛题对实名信息的需求的同时，确保您的隐私安全与平台匿名性。
+            {{ t('users.privacy.realNameInfo.protectionIntro') }}
           </p>
 
           <v-row>
@@ -261,9 +299,11 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-incognito" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">匿名参与</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.protection1Title') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis flex-grow-1">
-                      平台上的日常活动保持匿名，其他用户无法看到您的真实身份信息。
+                      {{ t('users.privacy.realNameInfo.protection1Desc') }}
                     </p>
                   </div>
                 </v-card-text>
@@ -277,9 +317,11 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-key-variant" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">加密存储</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.protection2Title') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis flex-grow-1">
-                      使用行业标准的加密技术保护您的个人资料，防止未授权访问。
+                      {{ t('users.privacy.realNameInfo.protection2Desc') }}
                     </p>
                   </div>
                 </v-card-text>
@@ -293,9 +335,11 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-file-document-outline" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">用途限制</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.protection3Title') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis flex-grow-1">
-                      您的实名信息仅在必要的赛题报名环节使用，不用于其他目的。
+                      {{ t('users.privacy.realNameInfo.protection3Desc') }}
                     </p>
                   </div>
                 </v-card-text>
@@ -309,9 +353,11 @@
                     <v-avatar size="42" class="primary-soft mb-3" rounded>
                       <v-icon icon="mdi-eye-off-outline" size="24" color="primary"></v-icon>
                     </v-avatar>
-                    <div class="text-subtitle-2 font-weight-medium mb-1">身份隔离</div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('users.privacy.realNameInfo.protection4Title') }}
+                    </div>
                     <p class="text-body-2 text-medium-emphasis flex-grow-1">
-                      严格隔离您的实名信息与平台账号，确保两者无法被关联。
+                      {{ t('users.privacy.realNameInfo.protection4Desc') }}
                     </p>
                   </div>
                 </v-card-text>
@@ -323,11 +369,13 @@
         <div class="d-flex align-center bg-surface-light pa-3 rounded">
           <v-icon icon="mdi-information-outline" color="primary" class="mr-2"></v-icon>
           <p class="text-body-2 mb-0">
-            所有对您实名信息的访问都会被记录，您可以随时在<router-link
-              :to="{ name: 'PrivacyCenterAccessLogs' }"
-              class="text-decoration-none"
-              >访问记录</router-link
-            >中查看这些记录。
+            <i18n-t keypath="users.privacy.realNameInfo.footerNote" scope="global" tag="span">
+              <template #accessLog>
+                <router-link :to="{ name: 'PrivacyCenterAccessLogs' }" class="text-decoration-none">
+                  {{ t('users.privacy.realNameInfo.footerAccessLog') }}
+                </router-link>
+              </template>
+            </i18n-t>
           </p>
         </div>
       </v-card-text>
@@ -339,9 +387,12 @@
 import type { RealNameInfo } from '@/network/api/users/types'
 
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import { UserApi } from '@/network/api/users'
 import { currentUserId } from '@/services/account'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const hasRealNameInfo = ref(false)

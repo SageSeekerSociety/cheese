@@ -17,6 +17,8 @@ vi.mock('../../api', () => ({
 
 import PanelPreview from './PanelPreview.vue'
 
+import { setLocale } from '@/i18n'
+
 const url = 'https://preview-topic-a.example/'
 const artifact = (kind: 'app' | 'file' = 'app', id = 'artifact-a'): PreviewInfo => ({
   kind,
@@ -46,6 +48,9 @@ function mount() {
 }
 
 beforeEach(() => {
+  // 这一份断言的是中文界面（按钮的 title 也在内）。默认语言是 en，所以先钉住语言：
+  // 面板的文字进了词表之后，屏幕上出现哪一版词不再由写死的中文决定。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   submissions = []
   getPreview.mockResolvedValue(artifact())

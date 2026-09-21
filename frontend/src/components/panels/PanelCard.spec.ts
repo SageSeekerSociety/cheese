@@ -37,6 +37,8 @@ vi.mock('@/api', async () => {
 
 import PanelCard from './PanelCard.vue'
 
+import { setLocale } from '@/i18n'
+
 const Panel = PanelCard as unknown as Component
 
 function block(over: Partial<Block> = {}): Block {
@@ -93,6 +95,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 「去验收」那几个字现在走词表（`acceptCard.*`），而默认语言是 en——happy-dom 的
+  // navigator.language 是 en-US。这份用例按中文认按钮，所以先把语言钉住。
+  setLocale('zh-CN')
   getRoomTask.mockReset()
   sayOnRoomTask.mockReset()
   getAcceptCards.mockReset()

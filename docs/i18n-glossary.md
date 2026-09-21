@@ -81,6 +81,72 @@
 | 成功 | **success** | 名词是 success，形容词/副词看组合：`发布成功 = Published` 而不是 `Publish success`，见 §3 |
 | 失败 | **failure** / **failed** | 名词是 failure，状态是 failed：`加载失败 = Couldn't load`。允许用缩写 `Couldn't`，比 `Failed to load` 短 |
 
+## 2.2 工作台（房间右侧面板）与看板
+
+这一节按**代码标识符**分组，因为屏幕上的词都挂在它们身上：面板的五个页签是 `TabKey`
+（`components/WorkPanel.vue`），板上的列是 `BoardColumn`（`cx_types.ts`），话题头的状态是
+`TopicPhase` / `CardPhase`（`lib/topicState.ts`），路由标题是 `router/workspaceRoutes.ts` 里的
+`meta.titleKey`。
+
+**`workspace.status.*` 是一张表，不是四张。** 施工中 / 交付中 / 已完成 同时出现在看板列名
+（`lib/board.ts` 的 `columnLabel()`）、话题状态徽章（`topicStateBadge()` / `topicPhaseBadge()`）和
+房间总览的计数条（`RunningWorkView.vue`）上；各写一份的话，改一边就会在两个屏幕上看到两种叫法。
+
+**面板页签（`TabKey`）**
+
+| 中文 | 英文 | 依据 / 不采用什么 |
+|---|---|---|
+| 对话 | **Chat** | `TabKey = 'chat'`，这一个页签就是聊天本身。不用 Conversation：那是「一段会话」的名词，页签上是动作性的入口 |
+| 总览 | **Overview** | `TabKey = 'overview'`、`views/OverviewView.vue`。路由标题同词（`workspace.routes.overview`） |
+| 现场 | **Activity** | `TabKey = 'site'`。**键名不采用**：site 脱离产品语境会被读成「网站」。**Scene 不采用**：那是「一场戏」的场面。**Transcript 不采用**：那是「一份可回看的文字稿」，而这个页签底下是**芝士正在做的事的实时流水**，是正在发生的事，不是事后的记录。选 Activity 是因为它描述「正在发生」，与 §1「活跃 = active」同源 |
+| 改动 | **Changes** | 键名就是 `changes`。不用 Diff：那是格式不是内容（页签里既有文件列表也有新改动提示）。不用 Files：那只是列表里的东西，说不了「有新改动」那层意思 |
+| 预览 | **Preview** | `TabKey = 'preview'`、API `getPreview`。不用 View / Output |
+
+**看板列（`BoardColumn`）**
+
+| 中文 | 英文 | 依据 / 不采用什么 |
+|---|---|---|
+| 施工中 | **Building** | `BoardColumn = 'building'`，与话题状态共用 `workspace.status.building`。不用 Working / In progress：那一列说的是芝士在动手，Building 是标识符里的原词 |
+| 交付中 | **Delivering** | `BoardColumn = 'delivering'`，§2「交付」= deliver 一族 |
+| 待处理 | **Needs you** | `BoardColumn = 'needs_you'`。这一列是**整块板上唯一要人动手的**，直译成 Pending / To do 会被读成「还没轮到」，而它要说的正是「现在轮到你了」。第二人称、句末不加标点 |
+| 已完成 | **Done** | `BoardColumn = 'done'`，与话题状态共用 `workspace.status.done`。不用 Completed：更长，且界面里没有先例 |
+| 已归档 | **Archived** | `BoardColumn = 'archived'`，§2「归档」= archive。板上现在没有这一列（活不归档，只有房间会），词先留着，等真出现时不必再定一次。**注意这个是「已归档」，和话题状态里那个 `archived` 不是一个东西——见下面的命名陷阱** |
+
+**话题状态（`TopicPhase` / `CardPhase`）**
+
+| 中文 | 英文 | 依据 / 不采用什么 |
+|---|---|---|
+| 已采纳 | **Accepted** | `TopicPhase = 'archived'`（房间那一档）。§2「采纳 = accept」，与验收卡的 accept 同源。**不采用 Archived**，见陷阱 |
+| 已完成 | **Done** | `TopicPhase = 'closed'`（支线收工），与看板列名共用 `workspace.status.done` |
+| 草稿 | **Draft** | `TopicPhase = 'draft'`，与 git 的 draft PR 同词 |
+| 施工中 | **Building** | `TopicPhase = 'working'`。这一档是「芝士此刻在跑」压过纸面状态（`topicPhase()` 里 `working` 先于采纳卡），所以用同表的 building，不用 In progress——「进行中」留给 `open` |
+| 交付中 | **Delivering** | `TopicPhase = 'delivering'`（也是 `CardPhase = 'delivering'`：采纳卡正在交付） |
+| 待验收 | **In review** | `TopicPhase = 'reviewing'`（采纳卡非空的那两档），§2「审核」= review。不用 Pending review：这个徽章要说的是「东西在你这边」，不是「排在一个队列里」 |
+| 进行中 | **In progress** | `TopicPhase = 'open'`，依据既有 `publicSite.inProgress = "In progress"`。不用 Ongoing：界面里没有先例 |
+
+**路由标题（`meta.titleKey`，本轮只抽已拍板的三条）**
+
+| 中文 | 英文 | 依据 / 不采用什么 |
+|---|---|---|
+| 项目工作台 | **Project workspace** | `workspace.routes.project`，§1「工作台」= workspace、「项目」= project。不用 Workbench：那是木工台 |
+| 总览 | **Overview** | `workspace.routes.overview`，与面板页签同词 |
+| 看板 | **Board** | `workspace.routes.board`、`lib/board.ts`。不用 Kanban：那是具体某种看板方法的名字，这里只是「一块板」 |
+
+两条落地规则：
+
+- **陷阱：`archived` 在代码里指两件不同的事。** 看板的 `BoardColumn = 'archived'` 是**已归档 / Archived**；
+  话题状态的 `TopicPhase = 'archived'` 是**已采纳 / Accepted**（批准过、收工了的房间，`topicStateBadge()`
+  里 status 为 `'archived'` 落的就是这一档）。同一个字面量、两个意思，所以是**两个键**
+  （`workspace.status.archived` 与 `workspace.status.accepted`）。照代码里的 `archived` 取词，会把一间
+  已经采纳的房间头写成「已归档」。
+- **两个占位符的串写不了多形态，只能用 `(s)` 兜。** `总览（{count} 件任务，{open} 件进行中）` 按 §3
+  只能写一条，于是用词表允许的写法：`Overview ({count} task(s), {open} in progress)`。
+  单个 `{count}` 的（`总览（{count} 件任务）`、`改动（{count} 个文件）` 等）照 §3 的形态表写足 3 条。
+
+`workspaceRoutes.ts` 里还有七条路由标题（私聊 / 项目文档 / 日历 / AI 队友 / 项目设置 / 导出与发布 /
+成员）**中英对照未定**，这次不臆造英文、保持中文；候选译法列在本次 PR 正文的「待 owner 定」表里，
+定下来之后补进本节。
+
 ## 3. 形态约定
 
 - **大小写：句子式（sentence case）。** 只大写第一个词和专有名词：`Create account`、`New project`、

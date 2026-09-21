@@ -35,7 +35,10 @@ export const workspaceRoutes: RouteRecordRaw = {
   // 从项目外面走进来的（是才记入口），以及现在还在不在同一个框里（在就别覆盖）。
   // 用标记而不是比对 URL 前缀：`/project/<id>` 的旧链接会先经过一次重定向，比
   // 前缀会把重定向前后判成两个不同的地方。
-  meta: { title: '项目工作台', isFullPage: true, projectFrame: true },
+  //
+  // 标题写 `titleKey` 而不是 `title`：`usePageTitle` 在 computed 里按它取词，切
+  // 语言时顶栏那条标题跟着换；`title` 是硬编码中文，在这里只会是同一句话的第二份。
+  meta: { titleKey: 'workspace.routes.project', isFullPage: true, projectFrame: true },
   children: [
     {
       name: 'workspace-project',
@@ -68,7 +71,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'running',
       component: () => import('@/views/workspace/RunningWorkView.vue'),
       props: true,
-      meta: { title: '看板', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.board', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'workspace-dm',
@@ -91,7 +94,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'overview',
       component: () => import('@/views/OverviewView.vue'),
       props: true,
-      meta: { title: '总览', hideTabs: true, backTo: 'workspace-project' },
+      meta: { titleKey: 'workspace.routes.overview', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'calendar',

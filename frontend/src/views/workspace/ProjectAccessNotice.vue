@@ -9,24 +9,28 @@
 // 合成一句「无权访问」等于对两种人都说不出他该干什么。
 import { computed } from 'vue'
 
+import { t } from '@/i18n'
+
 defineOptions({ name: 'ProjectAccessNotice' })
 
 const props = defineProps<{ reason: 'unauthenticated' | 'forbidden' }>()
 
+// 取词在 computed 里做，切语言时这句跟着变：模块级取词函数读的是 locale 这个
+// ref，computed 就把它当依赖收下了。
 const said = computed(() =>
   props.reason === 'unauthenticated'
     ? {
-        title: '需要登录才能查看这个项目',
+        title: t('workspace.access.signedOutTitle'),
         // 说清楚登录不一定就够——他可能登录完还是进不来，先说了才不算骗人。
-        body: '登录后，如果你是这个项目的成员，就能看到这里的内容',
-        action: { label: '登录', to: '/account/signin' },
+        body: t('workspace.access.signedOutBody'),
+        action: { label: t('workspace.access.signedOutAction'), to: '/account/signin' },
       }
     : {
-        title: '你不是这个项目的成员',
+        title: t('workspace.access.forbiddenTitle'),
         // 不写「联系管理员」：这个产品里没有管理员这个角色，指过去等于让人
         // 去找一个不存在的人。
-        body: '只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单',
-        action: { label: '回到我的项目', to: '/' },
+        body: t('workspace.access.forbiddenBody'),
+        action: { label: t('workspace.access.forbiddenAction'), to: '/' },
       }
 )
 </script>

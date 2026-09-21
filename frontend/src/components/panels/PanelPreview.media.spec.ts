@@ -33,6 +33,8 @@ vi.mock('../../lib/previewSession', () => ({
 
 import PanelPreview from './PanelPreview.vue'
 
+import { setLocale } from '@/i18n'
+
 const PREVIEW = 'https://preview-abc.cheeseusercontent.com/'
 
 function artifact(path: string, mime: string): PreviewInfo {
@@ -55,6 +57,9 @@ function mount() {
 }
 
 beforeEach(() => {
+  // 这一份断言的是中文界面。默认语言是 en，所以先钉住语言：面板的文字进了词表
+  // 之后，屏幕上出现哪一版词不再由写死的中文决定。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   attachmentRawUrl.mockReturnValue('/api/topics/topic-a/attachments/raw?path=x')
   downloadFile.mockResolvedValue(undefined)

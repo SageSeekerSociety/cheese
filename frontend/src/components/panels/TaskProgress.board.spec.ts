@@ -25,6 +25,7 @@ vi.mock('@/api', async () => {
 
 import TaskProgress from './TaskProgress.vue'
 
+import { setLocale } from '@/i18n'
 import { BOARD_COLUMNS } from '@/lib/board'
 
 const Panel = TaskProgress as unknown as Component
@@ -60,6 +61,8 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 列名走词表了，这一份断言的是中文那一边（happy-dom 报 en-US，不钉就是英文）。
+  setLocale('zh-CN')
   listRoomTasks.mockResolvedValue({ data: [task()], total: 1 })
 })
 

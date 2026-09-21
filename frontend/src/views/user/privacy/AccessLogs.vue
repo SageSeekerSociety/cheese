@@ -1,15 +1,14 @@
 <template>
   <div class="access-logs">
     <div class="d-flex justify-space-between align-center mb-6">
-      <h2 class="text-h5 font-weight-medium mb-0">实名信息访问记录</h2>
+      <h2 class="text-h5 font-weight-medium mb-0">{{ t('users.privacy.accessLogs.title') }}</h2>
       <v-chip color="info" variant="tonal" size="small" class="privacy-status-chip" prepend-icon="mdi-history">
-        {{ paging.customParams.value.total || 0 }} 条访问记录
+        {{ t('users.privacy.accessLogs.count', { count: paging.customParams.value.total || 0 }) }}
       </v-chip>
     </div>
 
     <p class="text-body-2 text-medium-emphasis mb-6">
-      在这里您可以查看所有访问过您实名信息的记录，包括谁在何时出于什么目的查看了您的信息。
-      我们记录每一次对您信息的访问，确保完全透明。
+      {{ t('users.privacy.accessLogs.intro') }}
     </p>
 
     <!-- 数据表格 -->
@@ -26,11 +25,11 @@
         <div class="custom-table">
           <!-- 表头 -->
           <div class="table-header d-flex">
-            <div class="table-cell accessor">访问者</div>
-            <div class="table-cell access-time">访问时间</div>
-            <div class="table-cell access-type">访问类型</div>
-            <div class="table-cell access-entity">访问目的</div>
-            <div class="table-cell ip-address">IP地址</div>
+            <div class="table-cell accessor">{{ t('users.privacy.accessLogs.colAccessor') }}</div>
+            <div class="table-cell access-time">{{ t('users.privacy.accessLogs.colAccessTime') }}</div>
+            <div class="table-cell access-type">{{ t('users.privacy.accessLogs.colAccessType') }}</div>
+            <div class="table-cell access-entity">{{ t('users.privacy.accessLogs.colAccessEntity') }}</div>
+            <div class="table-cell ip-address">{{ t('users.privacy.accessLogs.colIpAddress') }}</div>
           </div>
 
           <!-- 表格内容 -->
@@ -84,7 +83,7 @@
         <template #loading>
           <div class="d-flex justify-center py-3">
             <v-progress-circular indeterminate size="24" width="2" color="primary"></v-progress-circular>
-            <span class="text-body-2 ml-2">加载更多记录...</span>
+            <span class="text-body-2 ml-2">{{ t('users.privacy.accessLogs.loadingMore') }}</span>
           </div>
         </template>
 
@@ -92,7 +91,7 @@
         <template #no-more>
           <div class="d-flex justify-center py-3">
             <v-icon icon="mdi-check-circle" size="small" color="success" class="mr-1"></v-icon>
-            <span class="text-body-2 text-medium-emphasis">已加载全部记录</span>
+            <span class="text-body-2 text-medium-emphasis">{{ t('users.privacy.accessLogs.allLoaded') }}</span>
           </div>
         </template>
 
@@ -100,8 +99,8 @@
         <template #empty>
           <div class="d-flex flex-column align-center py-8">
             <v-icon icon="mdi-shield-check" size="56" color="success" class="mb-3"></v-icon>
-            <span class="text-h6 mb-1">暂无访问记录</span>
-            <span class="text-body-2 text-medium-emphasis">您的实名信息未被任何人访问过</span>
+            <span class="text-h6 mb-1">{{ t('users.privacy.accessLogs.empty') }}</span>
+            <span class="text-body-2 text-medium-emphasis">{{ t('users.privacy.accessLogs.emptyHint') }}</span>
           </div>
         </template>
 
@@ -109,7 +108,7 @@
         <template #skeleton>
           <div class="d-flex flex-column align-center py-8">
             <v-progress-circular indeterminate color="primary" size="48" class="mb-3"></v-progress-circular>
-            <div class="text-body-1">正在加载访问记录...</div>
+            <div class="text-body-1">{{ t('users.privacy.accessLogs.loading') }}</div>
           </div>
         </template>
       </infinite-scroll>
@@ -124,11 +123,13 @@
       density="comfortable"
       icon="mdi-information-outline"
     >
-      <div class="text-subtitle-2 font-weight-medium mb-1">关于实名信息访问</div>
+      <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('users.privacy.accessLogs.noticeTitle') }}</div>
       <p class="text-body-2 mb-0">
-        我们严格限制对您实名信息的访问，只有在赛题认证、评优评奖等特定场景下，指定的工作人员才能查看这些信息。
-        所有访问都会被记录并可以在此页面查看。如果您发现任何可疑的访问记录，请立即
-        <a href="#" class="text-decoration-none">联系我们</a>。
+        <i18n-t keypath="users.privacy.accessLogs.noticeBody" scope="global" tag="span">
+          <template #contact>
+            <a href="#" class="text-decoration-none">{{ t('users.privacy.accessLogs.contactUs') }}</a>
+          </template>
+        </i18n-t>
       </p>
     </v-alert>
   </div>
@@ -142,6 +143,7 @@ import type {
 } from '@/network/api/users/types'
 
 import { onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -150,6 +152,8 @@ import { usePaging } from '@/utils/paging'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { UserApi } from '@/network/api/users'
 import { currentUserId } from '@/services/account'
+
+const { t } = useI18n()
 
 const pageSize = 10
 
@@ -199,11 +203,11 @@ const formatDate = (date: string | Date | number) => {
 const accessTypeText = (type: UserIdentityAccessType) => {
   switch (type) {
     case 'VIEW':
-      return '查看'
+      return t('users.privacy.accessLogs.typeView')
     case 'EXPORT':
-      return '导出'
+      return t('users.privacy.accessLogs.typeExport')
     default:
-      return '未知'
+      return t('users.privacy.accessLogs.typeUnknown')
   }
 }
 
@@ -247,9 +251,9 @@ const accessEntityText = (log: UserIdentityAccessLog) => {
 
   switch (log.accessModuleType) {
     case 'TASK':
-      return '赛题认证需要'
+      return t('users.privacy.accessLogs.entityTask')
     default:
-      return '身份验证'
+      return t('users.privacy.accessLogs.entityVerify')
   }
 }
 

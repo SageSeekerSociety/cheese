@@ -1,0 +1,86 @@
+{
+  "gate": {
+    "failedTitle": "平台检查未通过",
+    "failedBody": "这张验收卡没有送出。芝士已收到检查结果，会修复后重新提交。",
+    "blockedTitle": "平台检查未能执行",
+    "blockedBody1": "检查程序未能启动，因此它对这次改动",
+    "blockedVerdict": "没有结论",
+    "blockedBody2": "——既不是通过，也不是未通过。这张验收卡没有送出。芝士已收到通知，会先恢复检查环境再重新提交；如果反复启动失败，需要人工介入。",
+    "showOutput": "查看输出",
+    "hideOutput": "收起输出",
+    "noOutput": "暂无输出"
+  },
+  "pending": {
+    "conflictTitle": "合并冲突 · 芝士处理中",
+    "title": "成果待采纳",
+    "conflictFallback": "采纳时出现合并冲突，芝士正在解决。",
+    "conflictRetry": "它完成后可重试采纳。",
+    "waitingBefore": "等",
+    "waitingAfter": "验收",
+    "reassign": "改派",
+    "reassignTitle": "改派验收人",
+    "noMembers": "暂无可选成员",
+    "routingReason": "推荐理由：{reason}",
+    "changeSubject": "合并后的提交标题",
+    "gatePassed": "平台检查已通过：只检查了代码规范和类型，未运行测试",
+    "approvedCount": "{done}/{total} 已批准",
+    "approve": "批准",
+    "youApproved": "你已批准",
+    "review": "去验收",
+    "createPr": "创建 PR",
+    "retryAccept": "重试采纳",
+    "accept": "采纳",
+    "reject": "退回",
+    "rejectNotePlaceholder": "退回说明（可选）",
+    "confirmReject": "确认退回",
+    "blockedTitle": "现在采纳不会合并",
+    "reasonSeparator": "：",
+    "listSeparator": "、"
+  },
+  "autoMerge": {
+    "label": "通过后自动合并",
+    "armedBy": "由 {who} 开启"
+  },
+  "forceMerge": {
+    "open": "人工放行并合并",
+    "warning": "在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。",
+    "reasonLabel": "理由",
+    "confirm": "确认放行并合并"
+  },
+  "delivering": {
+    "title": "已采纳，未完成合并",
+    "by": "已由 ",
+    "body": " 采纳，但合并没有完成。这是一张旧卡，需要人工处理"
+  },
+  "accepted": {
+    "title": "已采纳",
+    "by": "由 ",
+    "body": " 采纳",
+    "revoke": "撤回采纳"
+  },
+  "merge": {
+    "clean": "可以合并",
+    "dirty": "芝士处理中",
+    "behind": "平台更新分支",
+    "unknown": "状态更新中",
+    "agent": "芝士处理中",
+    "ci": "等 CI",
+    "human": "等采纳",
+    "platform": "平台处理中"
+  },
+  "checks": {
+    "inProgress": "进行中",
+    "conflictsWithMain": "与主分支冲突"
+  },
+  "errors": {
+    "approveFailed": "批准失败",
+    "reassignFailed": "改验收人失败",
+    "mergeConflict": "采纳时出现合并冲突，本次未合并。芝士正在解决，完成后可重试采纳。",
+    "createPrFailed": "创建 PR 未完成",
+    "acceptFailed": "采纳失败",
+    "revokeFailed": "撤回采纳失败",
+    "forceMergeFailed": "人工放行失败",
+    "autoMergeFailed": "设置自动合并失败",
+    "rejectFailed": "退回失败"
+  }
+}

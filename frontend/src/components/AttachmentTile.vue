@@ -15,6 +15,8 @@ import { fileIcon, hasPagePreview } from '../lib/fileKind'
 import AttachmentDocThumb from './AttachmentDocThumb.vue'
 import AttachmentImage from './AttachmentImage.vue'
 
+import { t } from '@/i18n'
+
 const props = defineProps<{
   topicId: string | null
   attachment: PendingAttachment
@@ -22,7 +24,9 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'remove'): void }>()
 
 // 上传中那一格还没有工作区路径，名字只有它自己记着的那一份。
-const name = computed(() => props.attachment.name ?? props.attachment.path.split('/').pop() ?? '附件')
+const name = computed(
+  () => props.attachment.name ?? props.attachment.path.split('/').pop() ?? t('workspace.attachment.unnamed')
+)
 const isImage = computed(() => props.attachment.mime.startsWith('image/'))
 // 按后缀问，不按 mime：平台那个转换服务也是照后缀决定转不转的，两边用同一个判据。
 const isDocument = computed(() => hasPagePreview(name.value))
@@ -45,7 +49,12 @@ const isDocument = computed(() => hasPagePreview(name.value))
          以为没有。 -->
     <v-tooltip activator="parent" location="top" :text="name" />
     <!-- × 自己说得清，标签只给读屏软件；给它 title 的话，这里会同时冒出两个气泡。 -->
-    <button type="button" class="att-card__remove" aria-label="移除" @click="emit('remove')">
+    <button
+      type="button"
+      class="att-card__remove"
+      :aria-label="t('workspace.attachment.remove')"
+      @click="emit('remove')"
+    >
       <v-icon size="12">mdi-close</v-icon>
     </button>
   </div>

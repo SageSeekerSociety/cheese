@@ -4,7 +4,11 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { setLocale } from '@/i18n'
+
+const CJK = /[㐀-䶿一-鿿豈-﫿]/
 
 const getPreview = vi.fn()
 const readPreviewFile = vi.fn()
@@ -85,6 +89,10 @@ function mount() {
 }
 
 beforeEach(() => {
+  // 这一份断言的是中文界面（每处修订那句话、序号、接受/拒绝都在内）。默认语言是
+  // en，所以先钉住语言：清单的文字进了词表之后，屏幕上出现哪一版词不再由写死的
+  // 中文决定。
+  setLocale('zh-CN')
   vi.clearAllMocks()
   getPreview.mockResolvedValue(artifact(PATH, DOCX))
   readPreviewFile.mockResolvedValue(fileContent(PATH))
@@ -237,4 +245,39 @@ it('处理失败时说一句，清单留在原地', async () => {
   expect(screen.getByText('把「30 天」改成「60 天」')).toBeTruthy()
   // 写不进去多半是文件已经变了，所以清单要换成现在这份——而那句话得留着。
   expect(documentRevisions).toHaveBeenCalledTimes(2)
+})
+
+describe('讲英文', () => {
+  it('清单整块一个汉字都不剩：三种形态、序号、没署名的作者、四个按钮', async () => {
+    setLocale('en')
+    // 这一条走的是英文界面，所以来回改的文字和作者名都用 ASCII——它们是**用户
+    // 的内容**，会和界面自己的字一起落进 textContent，用中文就分不清是谁漏翻的。
+    documentRevisions.mockResolvedValue({
+      path: PATH,
+      version: 'doc-1',
+      revisions: [
+        revision({ removed: '30 days', added: '60 days', author: 'Zhang Wei' }),
+        revision({ number: 2, kind: 'insert', added: 'Deposit', paragraph: 7, author: 'Li Na' }),
+        revision({ number: 3, kind: 'delete', removed: 'draft', paragraph: 9, author: '' }),
+      ],
+    })
+
+    mount()
+
+    const list = await screen.findByTestId('revisions')
+    expect(screen.getByText('Changed "30 days" to "60 days"')).toBeTruthy()
+    expect(screen.getByText('Inserted "Deposit"')).toBeTruthy()
+    expect(screen.getByText('Deleted "draft"')).toBeTruthy()
+    expect(screen.getByText('3 revisions')).toBeTruthy()
+    expect(screen.getByText('Paragraph 4 · Zhang Wei')).toBeTruthy()
+    // 没署名的作者落到词表里那一个词：留空看不出是谁改的，漏回中文又只在这一档露馅。
+    expect(screen.getByText('Paragraph 9 · Unnamed')).toBeTruthy()
+    expect(screen.getByText('Accept all')).toBeTruthy()
+    expect(screen.getByText('Reject all')).toBeTruthy()
+    expect(screen.getAllByText('Accept')).toHaveLength(3)
+    expect(screen.getAllByText('Reject')).toHaveLength(3)
+
+    const said = (list.textContent ?? '').replace(/\s+/g, ' ')
+    expect(CJK.test(said), said).toBe(false)
+  })
 })

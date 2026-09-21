@@ -12,6 +12,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import RevisionList from './RevisionList.vue'
 
+import { setLocale } from '@/i18n'
+
 vi.mock('../../../api', () => ({
   documentRevisions: vi.fn(),
   decideDocumentRevisions: vi.fn(),
@@ -24,6 +26,8 @@ const vuetify = createVuetify({ components, directives })
 afterEach(cleanup)
 
 beforeEach(() => {
+  // 文案现在从词表来；断言写的是中文，所以语言钉死——不钉就跟着环境走。
+  setLocale('zh-CN')
   vi.mocked(documentRevisions).mockResolvedValue({
     path: 'x',
     version: 'v7',

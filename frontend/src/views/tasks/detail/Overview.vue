@@ -6,12 +6,12 @@
       type="error"
       class="mb-4"
       rounded="lg"
-      title="审核未通过"
-      text="您的赛题未通过审核"
+      :title="t('tasks.status.rejected')"
+      :text="t('tasks.detail.overview.rejectedText')"
     >
       <template #text>
         <div class="mt-2">
-          <div class="font-weight-medium">驳回理由：</div>
+          <div class="font-weight-medium">{{ t('tasks.detail.overview.rejectReason') }}</div>
           <div>{{ taskData.rejectReason }}</div>
         </div>
       </template>
@@ -29,23 +29,23 @@
       type="warning"
       class="mb-4"
       rounded="lg"
-      title="暂时无法参与"
+      :title="t('tasks.detail.overview.cannotJoinTitle')"
     >
       <template #text>
         <div class="mt-2">
-          <div class="font-weight-medium">{{ userReasons[0]?.message || '您当前无法参与此赛题' }}</div>
+          <div class="font-weight-medium">{{ userReasons[0]?.message || t('tasks.detail.overview.cannotJoin') }}</div>
 
           <!-- 等级不足提示 -->
           <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
-            完成更多基础题目来提升您的等级，解锁更高难度的挑战。
+            {{ t('tasks.detail.overview.rankNotHighEnough') }}
           </div>
 
           <!-- 缺少实名信息提示 -->
           <div v-if="userReasons[0]?.code === 'USER_MISSING_REAL_NAME'" class="mt-2 text-medium-emphasis">
             <div class="d-flex align-center gap-2">
-              <span>此赛题需要提供实名信息才能参与。</span>
+              <span>{{ t('tasks.detail.overview.needRealName') }}</span>
               <v-btn color="primary" variant="tonal" size="small" :to="{ name: 'UserSettingsRealName' }">
-                前往填写
+                {{ t('tasks.detail.overview.goFillIn') }}
                 <v-icon end>mdi-arrow-right</v-icon>
               </v-btn>
             </div>
@@ -53,7 +53,7 @@
 
           <!-- 人数已满提示 -->
           <div v-if="userReasons[0]?.code === 'PARTICIPANT_LIMIT_REACHED'" class="mt-2 text-medium-emphasis">
-            该赛题参与名额已满，请关注其他赛题。
+            {{ t('tasks.detail.overview.participantLimitReached') }}
           </div>
         </div>
       </template>
@@ -65,16 +65,16 @@
       type="warning"
       class="mb-4"
       rounded="lg"
-      title="小队不满足参与条件"
+      :title="t('tasks.detail.overview.teamNotEligibleTitle')"
     >
       <template #text>
         <div class="mt-2">
           <!-- 没有小队的情况 -->
           <div v-if="noTeams" class="font-weight-medium">
-            您需要创建或加入一个小队才能参与此赛题
+            {{ t('tasks.detail.overview.needTeam') }}
             <div class="mt-2 d-flex align-center">
               <v-btn color="primary" variant="tonal" size="small" :to="{ name: 'HomeTeamsMine' }">
-                前往管理我的小队
+                {{ t('tasks.detail.overview.manageMyTeams') }}
                 <v-icon end>mdi-arrow-right</v-icon>
               </v-btn>
             </div>
@@ -82,7 +82,7 @@
 
           <!-- 有小队但都不符合条件的情况 -->
           <div v-else-if="hasTeamsButNoneEligible" class="font-weight-medium">
-            您有 {{ teamCount }} 个小队，但没有符合条件的小队可以参与此赛题
+            {{ t('tasks.detail.overview.teamsNoneEligible', { count: teamCount }) }}
 
             <v-expansion-panels variant="accordion" class="mt-3">
               <v-expansion-panel v-for="teamEligibility in teamEligibilityList" :key="teamEligibility.team.id">
@@ -92,7 +92,7 @@
                       <v-img
                         v-if="teamEligibility.team.avatarId"
                         :src="getAvatarUrl(teamEligibility.team.avatarId)"
-                        alt="小队头像"
+                        :alt="t('tasks.detail.overview.teamAvatar')"
                       ></v-img>
                       <v-icon v-else>mdi-account-group</v-icon>
                     </v-avatar>
@@ -108,16 +108,16 @@
 
                     <!-- 团队人数不满足要求 -->
                     <div v-if="reason.code === 'TEAM_SIZE_MIN_NOT_MET'" class="mt-1 text-medium-emphasis">
-                      此赛题要求小队最少 {{ taskData.minTeamSize }} 人，请邀请更多成员加入您的小队。
+                      {{ t('tasks.detail.overview.teamTooSmall', { count: taskData.minTeamSize }) }}
                     </div>
                     <div v-if="reason.code === 'TEAM_SIZE_MAX_EXCEEDED'" class="mt-1 text-medium-emphasis">
-                      此赛题要求小队最多 {{ taskData.maxTeamSize }} 人，您的小队人数超出限制。
+                      {{ t('tasks.detail.overview.teamTooBig', { count: taskData.maxTeamSize }) }}
                     </div>
 
                     <!-- 团队成员缺少实名信息 -->
                     <div v-if="reason.code === 'TEAM_MEMBER_MISSING_REAL_NAME'" class="mt-1">
                       <p class="text-medium-emphasis mb-2">
-                        小队中有成员尚未提供实名信息，请通知相关成员完成实名验证。
+                        {{ t('tasks.detail.overview.memberMissingRealName') }}
                       </p>
 
                       <v-list
@@ -125,9 +125,9 @@
                         density="compact"
                         class="bg-surface-light rounded-lg pa-0 mb-2"
                       >
-                        <v-list-subheader class="text-caption font-weight-medium"
-                          >未完成实名验证的成员：</v-list-subheader
-                        >
+                        <v-list-subheader class="text-caption font-weight-medium">{{
+                          t('tasks.detail.overview.notVerifiedMembers')
+                        }}</v-list-subheader>
                         <v-list-item
                           v-for="member in teamEligibility.team.memberRealNameStatus.filter((m) => !m.hasRealNameInfo)"
                           :key="member.memberId"
@@ -144,7 +144,7 @@
 
                     <!-- 团队成员等级不足 -->
                     <div v-if="reason.code === 'TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH'" class="mt-1 text-medium-emphasis">
-                      小队中有成员等级不足，无法参与此难度的赛题。
+                      {{ t('tasks.detail.overview.memberRankNotHighEnough') }}
                     </div>
                   </div>
 
@@ -155,7 +155,7 @@
                     class="mt-2"
                     :to="{ name: 'TeamsDetailMembers', params: { teamId: teamEligibility.team.id } }"
                   >
-                    管理此小队
+                    {{ t('tasks.detail.overview.manageThisTeam') }}
                     <v-icon end>mdi-arrow-right</v-icon>
                   </v-btn>
                 </v-expansion-panel-text>
@@ -165,15 +165,15 @@
 
           <!-- 非小队原因导致的限制 -->
           <div v-else-if="userReasons.length > 0" class="font-weight-medium">
-            {{ userReasons[0]?.message || '您当前无法参与此赛题' }}
+            {{ userReasons[0]?.message || t('tasks.detail.overview.cannotJoin') }}
 
             <!-- 根据不同原因显示不同提示 -->
             <div v-if="userReasons[0]?.code === 'USER_RANK_NOT_HIGH_ENOUGH'" class="mt-2 text-medium-emphasis">
-              完成更多基础题目来提升您的等级，解锁更高难度的挑战。
+              {{ t('tasks.detail.overview.rankNotHighEnough') }}
             </div>
 
             <div v-if="userReasons[0]?.code === 'PARTICIPANT_LIMIT_REACHED'" class="mt-2 text-medium-emphasis">
-              该赛题参与名额已满，请关注其他赛题。
+              {{ t('tasks.detail.overview.participantLimitReached') }}
             </div>
           </div>
         </div>
@@ -191,14 +191,14 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">赛题详情</v-card-title>
+            <v-card-title class="text-h5 ps-0">{{ t('tasks.detail.overview.detailTitle') }}</v-card-title>
           </v-card-item>
 
           <v-card-text>
             <div class="task-description">
               <TipTapViewer v-if="isTipTapJson" :value="tipTapContent" />
               <div v-else-if="renderedMarkdown" class="markdown-body" v-html="renderedMarkdown" />
-              <p v-else class="text-medium-emphasis">暂无赛题详情</p>
+              <p v-else class="text-medium-emphasis">{{ t('tasks.detail.overview.noDescription') }}</p>
             </div>
           </v-card-text>
         </v-card>
@@ -213,7 +213,7 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">赛题视频</v-card-title>
+            <v-card-title class="text-h5 ps-0">{{ t('tasks.detail.overview.videoTitle') }}</v-card-title>
           </v-card-item>
           <v-card-text>
             <div class="video-container">
@@ -226,7 +226,7 @@
               />
               <div v-else>
                 <v-alert type="warning" variant="tonal" density="compact" class="mb-3">
-                  视频链接错误或暂不支持该平台，仅支持 Bilibili 视频嵌入播放
+                  {{ t('tasks.detail.overview.videoUnsupported') }}
                 </v-alert>
                 <div class="d-flex align-center gap-2 text-body-2">
                   <v-icon color="primary" size="small">mdi-open-in-new</v-icon>
@@ -248,7 +248,7 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">赛题信息</v-card-title>
+            <v-card-title class="text-h5 ps-0">{{ t('tasks.detail.overview.infoTitle') }}</v-card-title>
           </v-card-item>
 
           <v-divider class="mx-6"></v-divider>
@@ -256,20 +256,30 @@
           <v-card-text class="px-6 py-4">
             <div class="d-flex flex-column gap-3">
               <div class="d-flex justify-space-between align-center">
-                <div class="text-subtitle-1">提交类型</div>
+                <div class="text-subtitle-1">{{ t('tasks.detail.overview.submitType') }}</div>
                 <v-chip color="primary" variant="flat">
-                  {{ taskData?.submitterType === 'USER' ? '个人任务' : '小队任务' }}
+                  {{
+                    taskData?.submitterType === 'USER'
+                      ? t('tasks.detail.overview.individualTask')
+                      : t('tasks.detail.overview.teamTask')
+                  }}
                 </v-chip>
               </div>
 
               <v-divider></v-divider>
 
               <div class="d-flex justify-space-between align-center">
-                <div class="text-subtitle-1">难度等级</div>
+                <div class="text-subtitle-1">{{ t('tasks.detail.overview.difficulty') }}</div>
                 <div v-if="taskData?.space?.name?.includes('eTrip')">
                   <!-- 如果赛题属于 eTrip，则按照初级、中级、高级显示（分别对应 1,2,3） -->
                   <v-chip color="primary" variant="flat">
-                    {{ taskData?.rank === 1 ? '初级' : taskData?.rank === 2 ? '中级' : '高级' }}
+                    {{
+                      taskData?.rank === 1
+                        ? t('tasks.form.beginner')
+                        : taskData?.rank === 2
+                          ? t('tasks.form.intermediate')
+                          : t('tasks.form.advanced')
+                    }}
                   </v-chip>
                 </div>
                 <div v-else>
@@ -286,9 +296,13 @@
               <v-divider></v-divider>
 
               <div class="d-flex justify-space-between align-center">
-                <div class="text-subtitle-1">提交次数</div>
+                <div class="text-subtitle-1">{{ t('tasks.detail.overview.submitCount') }}</div>
                 <v-chip :color="taskData?.resubmittable ? 'success' : 'warning'" variant="flat">
-                  {{ taskData?.resubmittable ? '可多次提交' : '仅可提交一次' }}
+                  {{
+                    taskData?.resubmittable
+                      ? t('tasks.detail.overview.multipleSubmissions')
+                      : t('tasks.detail.overview.singleSubmission')
+                  }}
                 </v-chip>
               </div>
 
@@ -296,13 +310,21 @@
 
               <div class="d-flex justify-space-between align-center">
                 <div class="text-subtitle-1">
-                  {{ taskData?.submitterType === 'TEAM' ? '队伍数量限制' : '参与者人数限制' }}
+                  {{
+                    taskData?.submitterType === 'TEAM'
+                      ? t('tasks.detail.overview.teamLimitLabel')
+                      : t('tasks.detail.overview.personLimitLabel')
+                  }}
                 </div>
                 <div class="d-flex align-center">
                   <v-chip v-if="taskData?.participantLimit" color="primary" variant="flat">
-                    {{ taskData.participantLimit }} {{ taskData?.submitterType === 'TEAM' ? '队' : '人' }}
+                    {{
+                      taskData?.submitterType === 'TEAM'
+                        ? t('tasks.detail.overview.teamLimit', { count: taskData.participantLimit })
+                        : t('tasks.detail.overview.personLimit', { count: taskData.participantLimit })
+                    }}
                   </v-chip>
-                  <span v-else class="text-primary font-weight-medium">不限</span>
+                  <span v-else class="text-primary font-weight-medium">{{ t('tasks.detail.overview.noLimit') }}</span>
                 </div>
               </div>
             </div>
@@ -320,7 +342,7 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">时间信息</v-card-title>
+            <v-card-title class="text-h5 ps-0">{{ t('tasks.detail.overview.timeInfo') }}</v-card-title>
           </v-card-item>
 
           <v-divider class="mx-6"></v-divider>
@@ -328,13 +350,13 @@
           <v-card-text class="px-6 py-4">
             <div class="d-flex flex-column gap-3">
               <div class="d-flex justify-space-between align-center">
-                <div class="text-subtitle-1">报名截止时间</div>
+                <div class="text-subtitle-1">{{ t('tasks.form.deadline') }}</div>
                 <div class="d-flex align-center">
                   <span class="text-primary font-weight-medium">
                     {{ formatTaskDate(taskData?.deadline) }}
                   </span>
                   <v-chip v-if="isDeadlineSoon(taskData?.deadline)" color="error" size="small" class="ms-2">
-                    即将截止
+                    {{ t('tasks.detail.overview.closingSoon') }}
                   </v-chip>
                 </div>
               </div>
@@ -342,15 +364,17 @@
               <v-divider></v-divider>
 
               <div class="d-flex justify-space-between align-center">
-                <div class="text-subtitle-1">默认提交期限</div>
-                <div class="text-primary font-weight-medium">{{ taskData?.defaultDeadline || 0 }} 天</div>
+                <div class="text-subtitle-1">{{ t('tasks.form.defaultDeadline') }}</div>
+                <div class="text-primary font-weight-medium">
+                  {{ t('tasks.detail.overview.days', { count: taskData?.defaultDeadline || 0 }) }}
+                </div>
               </div>
 
               <div v-if="taskData?.joined && taskUserDeadline" class="mt-2">
                 <v-alert type="info" variant="tonal" density="comfortable" rounded="lg">
                   <template #text>
                     <div class="d-flex align-center justify-space-between">
-                      <span>您的提交截止时间：</span>
+                      <span>{{ t('tasks.detail.overview.yourDeadline') }}</span>
                       <CountdownTimer :deadline="taskUserDeadline" label="" class="text-right" />
                     </div>
                   </template>
@@ -370,16 +394,16 @@
                 </v-avatar>
               </div>
             </template>
-            <v-card-title class="text-h5 ps-0">项目</v-card-title>
+            <v-card-title class="text-h5 ps-0">{{ t('tasks.detail.overview.projectsTitle') }}</v-card-title>
           </v-card-item>
 
           <v-divider class="mx-6"></v-divider>
 
           <v-card-text class="px-6 py-4">
-            <div v-if="taskProjectsLoading" class="text-medium-emphasis">加载中…</div>
+            <div v-if="taskProjectsLoading" class="text-medium-emphasis">{{ t('global.loading') }}</div>
             <div v-else-if="taskProjectsError" class="text-medium-emphasis">
               {{ taskProjectsError }}
-              <v-btn variant="text" size="small" @click="loadTaskProjects">重试</v-btn>
+              <v-btn variant="text" size="small" @click="loadTaskProjects">{{ t('global.retry') }}</v-btn>
             </div>
             <div v-else-if="taskProjects.length" class="d-flex flex-column gap-2">
               <a
@@ -392,11 +416,11 @@
                 <span>{{ p.name }}</span>
               </a>
             </div>
-            <div v-else class="text-medium-emphasis">还没有人从这道赛题开始做。</div>
+            <div v-else class="text-medium-emphasis">{{ t('tasks.detail.overview.noProjects') }}</div>
 
             <v-btn color="primary" variant="tonal" rounded="pill" class="mt-4" @click="createProjectFromTask">
               <v-icon start>mdi-plus</v-icon>
-              从这道赛题创建项目
+              {{ t('tasks.detail.overview.createProject') }}
             </v-btn>
             <ResourceLimitsNotice />
           </v-card-text>
@@ -411,9 +435,11 @@
 
               <div class="flex-grow-1">
                 <div class="text-h5 font-weight-bold d-flex flex-wrap align-center gap-2">
-                  <span>启星研导 <span class="text-primary">Navigator AI</span></span>
+                  <i18n-t keypath="tasks.detail.overview.aiName" scope="global" tag="span">
+                    <template #brand><span class="text-primary">Navigator AI</span></template>
+                  </i18n-t>
                 </div>
-                <div class="text-medium-emphasis">为您解析赛题核心，推荐学习路径，助力科研探索</div>
+                <div class="text-medium-emphasis">{{ t('tasks.detail.overview.aiDescription') }}</div>
               </div>
 
               <v-btn
@@ -423,7 +449,7 @@
                 :to="{ name: 'TasksAIAdvice', params: { spaceId: taskData?.space?.id, taskId: taskData?.id } }"
                 class="px-4"
               >
-                查看建议
+                {{ t('tasks.detail.overview.viewAdvice') }}
                 <v-icon end>mdi-arrow-right</v-icon>
               </v-btn>
             </div>
@@ -441,6 +467,7 @@ import type { Project as CheesexProject } from '@/cx_types'
 import type { Task } from '@/types'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { VBtn } from 'vuetify/components'
 import dayjs from 'dayjs'
@@ -469,6 +496,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const { t } = useI18n()
 
 // 从赛题创建 2.0 项目（git 仓库 + 根话题 + 芝士）。1.0 的「团队项目」是另一种
 // 东西，同名不同物，这里要的是前者。
@@ -486,7 +514,7 @@ async function loadTaskProjects() {
     taskProjects.value = (await listProjectsForTask(id)).data
   } catch {
     taskProjects.value = []
-    taskProjectsError.value = '项目列表加载失败，暂时无法确认是否已有项目。'
+    taskProjectsError.value = t('tasks.detail.overview.projectsLoadFailed')
   } finally {
     taskProjectsLoading.value = false
   }
@@ -503,7 +531,7 @@ function createProjectFromTask() {
 watch(() => props.taskData?.id, loadTaskProjects, { immediate: true })
 
 const formatTaskDate = (date: number | string | Date | null | undefined) => {
-  if (!date) return '未设置'
+  if (!date) return t('tasks.detail.overview.notSet')
   return dayjs(date).format('YYYY-MM-DD HH:mm')
 }
 

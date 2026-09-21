@@ -12,15 +12,15 @@
             prepend-icon="mdi-account-plus"
             size="small"
           >
-            邀请成员
+            {{ t('teams.members.invite') }}
           </v-btn>
         </template>
 
         <template #default="{ isActive }">
           <v-form @submit.prevent="confirmInvite">
-            <v-card title="邀请成员">
+            <v-card :title="t('teams.members.invite')">
               <v-card-text>
-                <div class="text-caption mb-2">当前只支持通过 UID 邀请，UID 在对方的头像菜单里</div>
+                <div class="text-caption mb-2">{{ t('teams.members.inviteUidHint') }}</div>
                 <v-text-field
                   v-model.number="inviteUidInput"
                   autocomplete="off"
@@ -33,7 +33,7 @@
                   v-model="inviteRoleInput"
                   autocomplete="off"
                   :items="roleOptions"
-                  label="角色"
+                  :label="t('teams.members.roleLabel')"
                   variant="outlined"
                   hide-details
                   class="mb-4"
@@ -41,9 +41,9 @@
                 <v-textarea
                   v-model="inviteMessageInput"
                   autocomplete="off"
-                  label="邀请消息（可选）"
+                  :label="t('teams.members.inviteMessageLabel')"
                   variant="outlined"
-                  placeholder="请输入邀请说明..."
+                  :placeholder="t('teams.members.inviteMessagePlaceholder')"
                   rows="3"
                   auto-grow
                   hide-details
@@ -52,8 +52,10 @@
 
               <v-card-actions>
                 <v-spacer></v-spacer>
-                <v-btn type="button" variant="text" @click="isActive.value = false">取消</v-btn>
-                <v-btn type="submit" color="primary" variant="tonal">邀请</v-btn>
+                <v-btn type="button" variant="text" @click="isActive.value = false">{{
+                  t('teams.members.cancel')
+                }}</v-btn>
+                <v-btn type="submit" color="primary" variant="tonal">{{ t('teams.members.invite') }}</v-btn>
               </v-card-actions>
             </v-card>
           </v-form>
@@ -63,9 +65,9 @@
 
     <!-- 标签页 -->
     <v-tabs v-model="activeTab" color="primary" class="mb-4">
-      <v-tab value="members">成员列表</v-tab>
+      <v-tab value="members">{{ t('teams.members.tabMembers') }}</v-tab>
       <v-tab v-if="isSelfAdmin" value="requests">
-        加入申请
+        {{ t('teams.members.tabRequests') }}
         <v-badge
           v-if="pendingRequests.length > 0"
           :content="pendingRequests.length"
@@ -73,7 +75,7 @@
           class="ml-2"
         ></v-badge>
       </v-tab>
-      <v-tab v-if="isSelfAdmin" value="invitations">已发送邀请</v-tab>
+      <v-tab v-if="isSelfAdmin" value="invitations">{{ t('teams.members.tabInvitations') }}</v-tab>
     </v-tabs>
 
     <v-window v-model="activeTab">
@@ -89,11 +91,16 @@
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ member.user.nickname }}
-                <v-chip v-if="member.role === 'OWNER'" color="primary" size="small" variant="tonal" class="ml-2"
-                  >队长</v-chip
-                >
-                <v-chip v-else-if="member.role === 'ADMIN'" color="secondary" size="small" variant="tonal" class="ml-2"
-                  >管理员</v-chip
+                <v-chip v-if="member.role === 'OWNER'" color="primary" size="small" variant="tonal" class="ml-2">{{
+                  t('teams.members.roleOwner')
+                }}</v-chip>
+                <v-chip
+                  v-else-if="member.role === 'ADMIN'"
+                  color="secondary"
+                  size="small"
+                  variant="tonal"
+                  class="ml-2"
+                  >{{ t('teams.members.roleAdmin') }}</v-chip
                 >
               </v-list-item-title>
               <template #append>
@@ -109,7 +116,7 @@
                         @click="promoteToAdmin(member.user.id)"
                       ></v-btn>
                     </template>
-                    <span>提升为管理员</span>
+                    <span>{{ t('teams.members.promote') }}</span>
                   </v-tooltip>
                   <v-tooltip v-if="isSelfOwner && member.role === 'ADMIN'" location="bottom">
                     <template #activator="{ props: activatorProps }">
@@ -122,7 +129,7 @@
                         @click="demoteToMember(member.user.id)"
                       ></v-btn>
                     </template>
-                    <span>降级为成员</span>
+                    <span>{{ t('teams.members.demote') }}</span>
                   </v-tooltip>
                   <v-tooltip v-if="isSelfAdmin && member.role !== 'OWNER'" location="bottom">
                     <template #activator="{ props: activatorProps }">
@@ -135,7 +142,7 @@
                         @click="removeMember(member.user.id)"
                       ></v-btn>
                     </template>
-                    <span>移除成员</span>
+                    <span>{{ t('teams.members.remove') }}</span>
                   </v-tooltip>
                 </div>
               </template>
@@ -146,8 +153,8 @@
         <!-- 无成员时的提示 -->
         <div v-if="teamMembers.length === 0" class="text-center py-12">
           <v-icon icon="mdi-account-group" size="64" class="mb-4 empty-state-icon"></v-icon>
-          <h3 class="text-h6 font-weight-medium mb-2">暂无成员</h3>
-          <p class="text-body-2 text-medium-emphasis mb-6">邀请成员加入小队，开始协作</p>
+          <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyMembersTitle') }}</h3>
+          <p class="text-body-2 text-medium-emphasis mb-6">{{ t('teams.members.emptyMembersHint') }}</p>
         </div>
       </v-window-item>
 
@@ -159,8 +166,8 @@
 
         <v-card v-else-if="joinRequests.length === 0" flat class="text-center py-12">
           <v-icon icon="mdi-account-arrow-right" size="64" class="mb-4 empty-state-icon"></v-icon>
-          <h3 class="text-h6 font-weight-medium mb-2">暂无加入申请</h3>
-          <p class="text-body-2 text-medium-emphasis">没有用户申请加入小队</p>
+          <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyRequestsTitle') }}</h3>
+          <p class="text-body-2 text-medium-emphasis">{{ t('teams.members.emptyRequestsHint') }}</p>
         </v-card>
 
         <v-card v-else flat rounded="lg">
@@ -186,7 +193,7 @@
                 {{ request.message }}
               </v-list-item-subtitle>
               <v-list-item-subtitle class="text-caption">
-                申请时间: {{ formatDate(request.createdAt) }}
+                {{ t('teams.members.requestedAt', { time: formatDate(request.createdAt) }) }}
               </v-list-item-subtitle>
 
               <template #append>
@@ -199,7 +206,7 @@
                     class="mr-2"
                     @click="approveRequest(request.id)"
                   >
-                    批准
+                    {{ t('teams.members.approve') }}
                   </v-btn>
                   <v-btn
                     variant="text"
@@ -208,14 +215,18 @@
                     prepend-icon="mdi-close"
                     @click="rejectRequest(request.id)"
                   >
-                    拒绝
+                    {{ t('teams.members.reject') }}
                   </v-btn>
                 </div>
                 <div
                   v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'"
                   class="text-caption text-medium-emphasis"
                 >
-                  {{ request.processedBy?.nickname ? `由 ${request.processedBy.nickname} 处理` : '已处理' }}
+                  {{
+                    request.processedBy?.nickname
+                      ? t('teams.members.processedBy', { name: request.processedBy.nickname })
+                      : t('teams.members.processed')
+                  }}
                 </div>
               </template>
             </v-list-item>
@@ -231,8 +242,8 @@
 
         <v-card v-else-if="teamInvitations.length === 0" flat class="text-center py-12">
           <v-icon icon="mdi-email-outline" size="64" class="mb-4 empty-state-icon"></v-icon>
-          <h3 class="text-h6 font-weight-medium mb-2">暂无发出的邀请</h3>
-          <p class="text-body-2 text-medium-emphasis">点击右上角的"邀请成员"发送邀请</p>
+          <h3 class="text-h6 font-weight-medium mb-2">{{ t('teams.members.emptyInvitationsTitle') }}</h3>
+          <p class="text-body-2 text-medium-emphasis">{{ t('teams.members.emptyInvitationsHint') }}</p>
         </v-card>
 
         <v-card v-else flat rounded="lg">
@@ -258,7 +269,7 @@
                 {{ invitation.message }}
               </v-list-item-subtitle>
               <v-list-item-subtitle class="text-caption">
-                邀请时间: {{ formatDate(invitation.createdAt) }}
+                {{ t('teams.members.invitedAt', { time: formatDate(invitation.createdAt) }) }}
               </v-list-item-subtitle>
 
               <template #append>
@@ -283,6 +294,7 @@
 import type { TeamMember, TeamMembershipApplication } from '@/types'
 
 import { computed, inject, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
@@ -294,6 +306,7 @@ import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 
 const route = useRoute()
+const { t, locale } = useI18n()
 const isInviteDialogActive = ref(false)
 const teamMembers = ref<TeamMember[]>([])
 const teamData = inject(teamDataInjectionKey, ref())
@@ -376,10 +389,10 @@ const loadingRequests = ref(false)
 const teamInvitations = ref<TeamMembershipApplication[]>([])
 const loadingInvitations = ref(false)
 
-const roleOptions = [
-  { title: '普通成员', value: 'MEMBER' },
-  { title: '管理员', value: 'ADMIN' },
-]
+const roleOptions = computed(() => [
+  { title: t('teams.members.roleMember'), value: 'MEMBER' },
+  { title: t('teams.members.roleAdmin'), value: 'ADMIN' },
+])
 
 const fetchTeamMembers = async (teamId: number) => {
   const {
@@ -395,7 +408,7 @@ const fetchJoinRequests = async (teamId: number) => {
     joinRequests.value = response.data.applications
   } catch (error) {
     console.error('获取加入申请失败', error)
-    toast.error('获取加入申请失败')
+    toast.error(t('teams.members.loadRequestsFailed'))
   } finally {
     loadingRequests.value = false
   }
@@ -408,7 +421,7 @@ const fetchTeamInvitations = async (teamId: number) => {
     teamInvitations.value = response.data.invitations
   } catch (error) {
     console.error('获取已发送邀请失败', error)
-    toast.error('获取已发送邀请失败')
+    toast.error(t('teams.members.loadInvitationsFailed'))
   } finally {
     loadingInvitations.value = false
   }
@@ -432,7 +445,7 @@ const confirmInvite = async () => {
   })
 
   if (result) {
-    toast.success('邀请已发送')
+    toast.success(t('teams.members.inviteSent'))
     inviteUidInput.value = undefined
     inviteRoleInput.value = 'MEMBER'
     inviteMessageInput.value = ''
@@ -450,11 +463,11 @@ const promoteToAdmin = async (userId: number) => {
     async () => {
       return await TeamsApi.updateMember(teamData.value!.id, userId, { role: 'ADMIN' })
     },
-    { defaultMessage: '提升为管理员失败' }
+    { defaultMessage: t('teams.members.promoteFailed') }
   )
 
   if (result) {
-    toast.success('提升为管理员成功')
+    toast.success(t('teams.members.promoteDone'))
     await fetchTeamMembers(Number(route.params.teamId))
   }
 }
@@ -468,11 +481,11 @@ const demoteToMember = async (userId: number) => {
     async () => {
       return await TeamsApi.updateMember(teamData.value!.id, userId, { role: 'MEMBER' })
     },
-    { defaultMessage: '降级为成员失败' }
+    { defaultMessage: t('teams.members.demoteFailed') }
   )
 
   if (result) {
-    toast.success('降级为成员成功')
+    toast.success(t('teams.members.demoteDone'))
     await fetchTeamMembers(Number(route.params.teamId))
   }
 }
@@ -486,11 +499,11 @@ const removeMember = async (userId: number) => {
     async () => {
       return await TeamsApi.removeMember(teamData.value!.id, userId)
     },
-    { defaultMessage: '移除成员失败' }
+    { defaultMessage: t('teams.members.removeFailed') }
   )
 
   if (result) {
-    toast.success('移除成员成功')
+    toast.success(t('teams.members.removeDone'))
     await fetchTeamMembers(Number(route.params.teamId))
   }
 }
@@ -502,11 +515,11 @@ const approveRequest = async (requestId: number) => {
     async () => {
       return await TeamsApi.approveJoinRequest(teamData.value!.id, requestId)
     },
-    { defaultMessage: '批准申请失败' }
+    { defaultMessage: t('teams.members.approveFailed') }
   )
 
   if (result) {
-    toast.success('已批准申请')
+    toast.success(t('teams.members.approveDone'))
     // 刷新数据
     await Promise.all([fetchJoinRequests(teamData.value!.id), fetchTeamMembers(teamData.value!.id)])
   }
@@ -519,11 +532,11 @@ const rejectRequest = async (requestId: number) => {
     async () => {
       return await TeamsApi.rejectJoinRequest(teamData.value!.id, requestId)
     },
-    { defaultMessage: '拒绝申请失败' }
+    { defaultMessage: t('teams.members.rejectFailed') }
   )
 
   if (result) {
-    toast.success('已拒绝申请')
+    toast.success(t('teams.members.rejectDone'))
     // 刷新数据
     await fetchJoinRequests(teamData.value!.id)
   }
@@ -536,18 +549,18 @@ const cancelInvitation = async (invitationId: number) => {
     async () => {
       return await TeamsApi.cancelInvitation(teamData.value!.id, invitationId)
     },
-    { defaultMessage: '取消邀请失败' }
+    { defaultMessage: t('teams.members.cancelFailed') }
   )
 
   if (result) {
-    toast.success('已取消邀请')
+    toast.success(t('teams.members.cancelDone'))
     // 刷新数据
     await fetchTeamInvitations(teamData.value!.id)
   }
 }
 
 const formatDate = (timestamp: number) => {
-  return new Date(timestamp).toLocaleString('zh-CN', {
+  return new Date(timestamp).toLocaleString(locale.value === 'en' ? 'en' : 'zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -572,24 +585,17 @@ const getStatusColor = (status: string) => {
   }
 }
 
-const getStatusText = (status: string) => {
-  switch (status) {
-    case 'PENDING':
-      return '待处理'
-    case 'APPROVED':
-      return '已批准'
-    case 'ACCEPTED':
-      return '已接受'
-    case 'REJECTED':
-      return '已拒绝'
-    case 'DECLINED':
-      return '已拒绝'
-    case 'CANCELED':
-      return '已取消'
-    default:
-      return '未知'
-  }
-}
+// 状态文案跟语言走，所以是一张 computed 表；未知状态兜底也不再是硬编码。
+const statusText = computed<Record<string, string>>(() => ({
+  PENDING: t('teams.members.statusPending'),
+  APPROVED: t('teams.members.statusApproved'),
+  ACCEPTED: t('teams.members.statusAccepted'),
+  REJECTED: t('teams.members.statusRejected'),
+  DECLINED: t('teams.members.statusRejected'),
+  CANCELED: t('teams.members.statusCanceled'),
+}))
+
+const getStatusText = (status: string) => statusText.value[status] ?? t('teams.members.statusUnknown')
 </script>
 
 <style scoped lang="scss">

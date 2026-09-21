@@ -15,8 +15,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import ProjectAccessNotice from './ProjectAccessNotice.vue'
 
+import { setLocale } from '@/i18n'
+
+const CJK = /[㐀-䶿一-鿿豈-﫿]/
+
 afterEach(cleanup)
-beforeEach(() => setActivePinia(createPinia()))
+beforeEach(() => {
+  // 两档文案现在走词表，这里断言的是中文那一边。默认语言是 en（happy-dom 的
+  // navigator.language 是 en-US），不钉住的话渲染出来是英文。
+  setLocale('zh-CN')
+  setActivePinia(createPinia())
+})
 
 function show(reason: 'unauthenticated' | 'forbidden') {
   const router = createRouter({
@@ -61,6 +70,19 @@ describe('打不开这个项目的时候', () => {
     for (const reason of ['unauthenticated', 'forbidden'] as const) {
       const { container } = show(reason)
       expect(container.textContent).not.toContain('管理员')
+      cleanup()
+    }
+  })
+})
+
+describe('讲英文', () => {
+  it('两档都是英文，屏幕上不留汉字', () => {
+    setLocale('en')
+    for (const reason of ['unauthenticated', 'forbidden'] as const) {
+      const { container, getByText } = show(reason)
+      getByText(reason === 'unauthenticated' ? 'Sign in to view this project' : "You're not a member of this project")
+      const said = (container.textContent ?? '').replace(/\s+/g, ' ')
+      expect(CJK.test(said), said).toBe(false)
       cleanup()
     }
   })

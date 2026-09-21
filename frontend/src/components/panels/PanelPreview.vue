@@ -23,6 +23,10 @@ import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
 import RoomOutputs from './preview/RoomOutputs.vue'
 
+// `t` 从模块里来，不是 `useI18n()`。理由同 WorkPanel.vue / PanelChanges.vue：
+// 这块面板会被不装 i18n 插件的用例挂起来，`useI18n()` 在没有插件的树上当场抛。
+import { t } from '@/i18n'
+
 const props = withDefaults(
   defineProps<{
     topicId: string | null
@@ -146,20 +150,32 @@ function onQuote(payload: { text: string; page: number }) {
   // 一整页的选中没有指向性，当作没指。
   const quote = payload.text.replace(/\s+/g, ' ').trim()
   if (quote.length < 2) return
-  openLocator(`第 ${payload.page} 页`, quote.slice(0, 200), `第 ${payload.page} 页`)
+  openLocator(
+    t('workspace.preview.page', { page: payload.page }),
+    quote.slice(0, 200),
+    t('workspace.preview.page', { page: payload.page })
+  )
 }
 
 function onCell(payload: { address: string; value: string; sheet: string }) {
   // CSV 没有工作表名，`!B7` 会让读者以为前面漏了个名字。
   const where = payload.sheet ? `${payload.sheet}!${payload.address}` : payload.address
-  openLocator(where, payload.value || '（空）', where)
+  openLocator(where, payload.value || t('workspace.preview.emptyCell'), where)
 }
 
 function sendLocator() {
   const target = locator.value
   const note = locatorNote.value.trim()
   if (!target || !note) return
-  emit('locate', `在 ${previewFile.value?.path ?? ''} 的 ${target.address}（「${target.quote}」）：${note}`)
+  emit(
+    'locate',
+    t('workspace.preview.locateMessage', {
+      path: previewFile.value?.path ?? '',
+      address: target.address,
+      quote: target.quote,
+      note,
+    })
+  )
   clearLocator()
 }
 
@@ -170,7 +186,7 @@ async function downloadArtifact() {
   try {
     await downloadFile(attachmentRawUrl(props.topicId, path), documentName.value || 'file')
   } catch (e) {
-    downloadError.value = e instanceof Error ? e.message : '下载失败'
+    downloadError.value = e instanceof Error ? e.message : t('global.downloadFailed')
   }
 }
 
@@ -180,7 +196,7 @@ async function fullscreen() {
     // Fullscreen keeps the same browsing context, including unsaved app state.
     await toggleFullscreen()
   } catch {
-    fullscreenError.value = '无法进入全屏，请在新标签页打开'
+    fullscreenError.value = t('workspace.preview.fullscreenFailed')
   }
 }
 
@@ -244,7 +260,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     } catch (e) {
       if (!stillCurrent()) return
       previewUrl.value = null
-      previewError.value = e instanceof Error ? e.message : '加载失败'
+      previewError.value = e instanceof Error ? e.message : t('workspace.preview.loadFailed')
       return
     }
     if (!stillCurrent()) return
@@ -281,7 +297,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
         if (!stillCurrent()) return
         previewUrl.value = null
         previewFile.value = null
-        previewReadError.value = e instanceof Error ? e.message : '读不到这个文件'
+        previewReadError.value = e instanceof Error ? e.message : t('workspace.preview.readFailed')
         return
       }
       if (!stillCurrent()) return
@@ -305,7 +321,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     if (unchanged && !opts.reload) return
     if (!art.url) {
       previewUrl.value = null
-      previewError.value = '预览地址暂不可用'
+      previewError.value = t('workspace.preview.urlUnavailable')
       return
     }
     try {
@@ -321,7 +337,7 @@ async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     } catch (e) {
       if (!stillCurrent()) return
       previewUrl.value = null
-      previewError.value = e instanceof Error ? e.message : '预览授权失败'
+      previewError.value = e instanceof Error ? e.message : t('workspace.preview.authFailed')
     }
   } finally {
     if (stillCurrent()) {
@@ -394,7 +410,7 @@ watch(
         variant="text"
         class="c-muted"
       >
-        导出与发布
+        {{ t('workspace.routes.delivery') }}
       </v-btn>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
@@ -403,7 +419,7 @@ watch(
           size="small"
           variant="text"
           class="c-muted"
-          title="在新标签页打开"
+          :title="t('workspace.preview.openInNewTab')"
           @click="openPreviewInNewTab"
         />
         <v-btn
@@ -412,7 +428,7 @@ watch(
           size="small"
           variant="text"
           class="c-muted"
-          :title="previewFull ? '退出全屏' : '全屏预览'"
+          :title="previewFull ? t('workspace.preview.exitFullscreen') : t('workspace.preview.fullscreen')"
           @click="fullscreen"
         />
       </template>
@@ -421,7 +437,7 @@ watch(
         size="small"
         variant="text"
         class="c-muted"
-        title="刷新"
+        :title="t('global.refresh')"
         :loading="refreshing"
         @click="load({ silent: true, reload: true })"
       />
@@ -432,8 +448,10 @@ watch(
     <!-- 读者点开的是房间里某一份文件，不是芝士点名的那一份。说清现在看的是哪一份，
          并留一条回去的路——否则这一格看起来像是交付物被换掉了。 -->
     <div v-if="asked" class="asked px-3 py-2" data-testid="asked">
-      <span class="t-meta c-muted">正在看 {{ asked.split('/').pop() }}</span>
-      <v-btn variant="text" size="x-small" @click="backToArtifact">回到当前预览</v-btn>
+      <span class="t-meta c-muted">{{ t('workspace.preview.viewingAsked', { name: asked.split('/').pop() }) }}</span>
+      <v-btn variant="text" size="x-small" @click="backToArtifact">
+        {{ t('workspace.preview.backToArtifact') }}
+      </v-btn>
     </div>
 
     <div v-if="loading" class="d-flex justify-center py-8">
@@ -443,27 +461,36 @@ watch(
     <div v-else-if="previewUrl" class="preview-wrap">
       <div class="preview-bar text-caption px-3 pt-2">
         <span class="text-medium-emphasis">{{ previewAppNote || previewFile?.path }}</span>
-        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+        <v-chip v-if="previewAppNote" size="x-small" variant="tonal" class="ms-2">
+          {{ t('workspace.preview.runningApp') }}
+        </v-chip>
         <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ previewMime }}</v-chip>
       </div>
       <!-- The form supplies a scoped grant; neither src nor srcdoc carries content. -->
       <iframe
         :name="frameName"
         class="preview-frame"
-        title="话题预览"
+        :title="t('workspace.preview.frameTitle')"
         sandbox="allow-scripts allow-forms allow-same-origin"
       />
     </div>
     <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
-      <div>预览加载失败</div>
-      <div class="text-caption mt-1">平台没能返回这个话题的预览：{{ previewError }}</div>
+      <div>{{ t('workspace.preview.loadFailed') }}</div>
+      <div class="text-caption mt-1">
+        {{ t('workspace.preview.loadFailedDetail', { reason: previewError }) }}
+      </div>
     </div>
     <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>指定的文件读不到</div>
+      <div>{{ t('workspace.preview.specifiedFileUnreadable') }}</div>
       <div class="text-caption mt-1">
-        芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
+        {{
+          t('workspace.preview.specifiedFileUnreadableDetail', {
+            path: previewNamedPath || t('workspace.preview.someFile'),
+            reason: previewReadError,
+          })
+        }}
       </div>
     </div>
     <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
@@ -472,22 +499,22 @@ watch(
            gone. Collapsing them told people to summon 芝士 again for a tunnel
            that no summon brings back. -->
       <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
-      <div>应用暂时不在线</div>
+      <div>{{ t('workspace.preview.appOffline') }}</div>
       <div v-if="previewTunnelUp" class="text-caption mt-1">
-        那台机器还连着，但登记的端口上没有服务在应答。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
+        {{ t('workspace.preview.appOfflineTunnelUp') }}
       </div>
       <div v-else class="text-caption mt-1">
-        跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
+        {{ t('workspace.preview.appOfflineNoTunnel') }}
       </div>
     </div>
     <div v-else-if="documentType && previewFile" class="doc">
       <div class="doc__bar">
         <v-icon size="16" class="doc__icon">{{ documentType.icon }}</v-icon>
         <span class="doc__name">{{ documentName }}</span>
-        <span class="doc__type t-meta">{{ documentType.label }}</span>
+        <span class="doc__type t-meta">{{ documentType.label() }}</span>
         <v-spacer />
         <v-btn size="small" variant="text" class="c-muted" prepend-icon="mdi-download" @click="downloadArtifact">
-          下载
+          {{ t('global.download') }}
         </v-btn>
       </div>
 
@@ -496,7 +523,7 @@ watch(
       </v-alert>
       <!-- 刷新失败但屏幕上还留着上一版：说清楚看到的不是最新的。 -->
       <v-alert v-else-if="docError && docBytes" type="warning" density="compact" class="mx-3 mb-2">
-        这是上一次生成的内容，刷新未能完成：{{ docError }}
+        {{ t('workspace.preview.staleDoc', { reason: docError }) }}
       </v-alert>
 
       <!-- Markdown 排在最前面：它不走 docBytes 那条路（loadDocument 直接跳过），
@@ -521,11 +548,11 @@ watch(
            这个文件转换不了（别的文件仍然能看）。 -->
       <div v-else-if="rendererMissing && !docBytes" class="doc__state doc__state--text">
         <v-icon size="28" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-        <div>文档预览未启用</div>
+        <div>{{ t('workspace.preview.docPreviewDisabled') }}</div>
       </div>
       <div v-else-if="docError && !docBytes" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-        <div>无法显示这个文件</div>
+        <div>{{ t('workspace.preview.cantDisplay') }}</div>
         <div class="t-meta mt-1">{{ docError }}</div>
       </div>
       <div v-else class="doc__body">
@@ -555,29 +582,36 @@ watch(
             v-model="locatorNote"
             class="locator__input"
             autocomplete="off"
-            placeholder="说明要改什么"
+            :placeholder="t('workspace.preview.locatorPlaceholder')"
             @keydown.enter.prevent="sendLocator"
             @keydown.esc.prevent="clearLocator"
           />
           <v-btn size="small" color="primary" variant="flat" :disabled="!locatorNote.trim()" @click="sendLocator">
-            发送
+            {{ t('workspace.preview.send') }}
           </v-btn>
-          <v-btn icon="mdi-close" size="small" variant="text" class="c-muted" title="取消" @click="clearLocator" />
+          <v-btn
+            icon="mdi-close"
+            size="small"
+            variant="text"
+            class="c-muted"
+            :title="t('global.cancel')"
+            @click="clearLocator"
+          />
         </div>
       </Transition>
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-      <div>这个文件不是文本</div>
-      <div class="text-caption mt-1">{{ previewFile.path }} 无法作为网页显示，可以在新窗口打开</div>
+      <div>{{ t('workspace.preview.notText') }}</div>
+      <div class="text-caption mt-1">{{ t('workspace.preview.notTextDetail', { path: previewFile.path }) }}</div>
       <v-btn class="mt-3" size="small" variant="tonal" prepend-icon="mdi-open-in-new" @click="openPreviewInNewTab">
-        在新窗口打开
+        {{ t('workspace.preview.openInNewWindow') }}
       </v-btn>
     </div>
     <div v-else class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-      <div>暂无预览</div>
-      <div class="text-caption mt-1">芝士做出网页、图表等可看的成果时，会放到这里。</div>
+      <div>{{ t('workspace.preview.empty') }}</div>
+      <div class="text-caption mt-1">{{ t('workspace.preview.emptyHint') }}</div>
     </div>
 
     <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结

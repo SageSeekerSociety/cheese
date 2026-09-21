@@ -7,7 +7,7 @@
             <v-icon color="primary" size="28">mdi-account-group</v-icon>
           </div>
         </template>
-        <v-card-title class="text-h6 ps-0">参与者管理</v-card-title>
+        <v-card-title class="text-h6 ps-0">{{ t('tasks.detail.participants.title') }}</v-card-title>
         <template #append>
           <div class="d-flex align-center gap-2">
             <v-btn-group density="comfortable">
@@ -16,7 +16,7 @@
                 variant="text"
                 @click="filterStatus = 'all'"
               >
-                全部
+                {{ t('tasks.detail.participants.all') }}
                 <v-chip class="ml-2" size="x-small" color="primary" variant="flat">{{ participants.length }}</v-chip>
               </v-btn>
               <v-btn
@@ -24,7 +24,7 @@
                 variant="text"
                 @click="filterStatus = 'pending'"
               >
-                待审核
+                {{ t('tasks.detail.participants.pending') }}
                 <v-chip class="ml-2" size="x-small" color="warning" variant="flat">{{ pendingCount }}</v-chip>
               </v-btn>
               <v-btn
@@ -32,7 +32,7 @@
                 variant="text"
                 @click="filterStatus = 'approved'"
               >
-                已通过
+                {{ t('tasks.detail.participants.approved') }}
                 <v-chip class="ml-2" size="x-small" color="success" variant="flat">{{ approvedCount }}</v-chip>
               </v-btn>
               <v-btn
@@ -40,7 +40,7 @@
                 variant="text"
                 @click="filterStatus = 'rejected'"
               >
-                已驳回
+                {{ t('tasks.detail.participants.rejected') }}
                 <v-chip class="ml-2" size="x-small" color="error" variant="flat">{{ rejectedCount }}</v-chip>
               </v-btn>
             </v-btn-group>
@@ -56,8 +56,16 @@
 
       <v-card-text v-else-if="filteredParticipants.length === 0" class="py-12">
         <v-empty-state
-          :title="participants.length === 0 ? '暂无参与者' : '没有符合条件的参与者'"
-          :text="participants.length === 0 ? '等待用户报名参与赛题' : '尝试调整筛选条件'"
+          :title="
+            participants.length === 0
+              ? t('tasks.detail.participants.noParticipants')
+              : t('tasks.detail.participants.noMatches')
+          "
+          :text="
+            participants.length === 0
+              ? t('tasks.detail.participants.noParticipantsHint')
+              : t('tasks.detail.participants.noMatchesHint')
+          "
           icon="mdi-account-group"
         ></v-empty-state>
       </v-card-text>
@@ -104,7 +112,7 @@
                   size="small"
                   class="my-1"
                 >
-                  团队
+                  {{ t('tasks.detail.participants.team') }}
                 </v-chip>
                 <v-chip
                   v-if="participant.approved === 'NONE'"
@@ -113,7 +121,7 @@
                   size="small"
                   class="my-1"
                 >
-                  待审核
+                  {{ t('tasks.detail.participants.pending') }}
                 </v-chip>
                 <v-chip
                   v-else-if="participant.approved === 'DISAPPROVED'"
@@ -122,7 +130,7 @@
                   size="small"
                   class="my-1"
                 >
-                  已驳回
+                  {{ t('tasks.detail.participants.rejected') }}
                 </v-chip>
                 <v-chip
                   v-else-if="participant.approved === 'APPROVED'"
@@ -131,7 +139,7 @@
                   size="small"
                   class="my-1"
                 >
-                  已通过
+                  {{ t('tasks.detail.participants.approved') }}
                 </v-chip>
               </div>
             </v-list-item-title>
@@ -144,7 +152,12 @@
                     class="d-inline-flex align-center"
                   >
                     <v-icon size="16" class="me-1">mdi-school</v-icon>
-                    {{ participant.realNameInfo.grade }}级 {{ participant.realNameInfo.className }}
+                    {{
+                      t('tasks.detail.participants.gradeClass', {
+                        grade: participant.realNameInfo.grade,
+                        className: participant.realNameInfo.className,
+                      })
+                    }}
                   </span>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-1">
@@ -159,18 +172,18 @@
                 </div>
                 <div v-if="participant.applyReason" class="mt-1">
                   <v-icon size="16" class="me-1">mdi-text-box</v-icon>
-                  申请理由：{{ participant.applyReason }}
+                  {{ t('tasks.detail.participants.applyReason', { reason: participant.applyReason }) }}
                 </div>
                 <div v-if="participant.personalAdvantage" class="mt-1">
                   <v-icon size="16" class="me-1">mdi-star</v-icon>
-                  个人优势：{{ participant.personalAdvantage }}
+                  {{ t('tasks.detail.participants.personalAdvantage', { advantage: participant.personalAdvantage }) }}
                 </div>
               </template>
               <template v-if="taskData?.submitterType === 'TEAM'">
                 <div v-if="participant.teamMembers?.length" class="d-flex flex-wrap gap-1 mt-1">
                   <span class="d-inline-flex align-center">
                     <v-icon size="16" class="me-1">mdi-account-multiple</v-icon>
-                    团队成员：
+                    {{ t('tasks.detail.participants.teamMembers') }}
                   </span>
                   <v-chip
                     v-for="(member, index) in participant.teamMembers"
@@ -200,17 +213,17 @@
                 </div>
                 <div v-if="participant.applyReason" class="mt-1">
                   <v-icon size="16" class="me-1">mdi-text-box</v-icon>
-                  申请理由：{{ participant.applyReason }}
+                  {{ t('tasks.detail.participants.applyReason', { reason: participant.applyReason }) }}
                 </div>
                 <div v-if="participant.personalAdvantage" class="mt-1">
                   <v-icon size="16" class="me-1">mdi-star</v-icon>
-                  团队优势：{{ participant.personalAdvantage }}
+                  {{ t('tasks.detail.participants.teamAdvantage', { advantage: participant.personalAdvantage }) }}
                 </div>
               </template>
               <template v-if="participant.deadline">
                 <div class="d-flex align-center text-primary mt-1">
                   <v-icon size="16" class="me-1">mdi-clock</v-icon>
-                  截止时间：{{ formatDate(participant.deadline) }}
+                  {{ t('tasks.detail.participants.deadline', { date: formatDate(participant.deadline) }) }}
                 </div>
               </template>
             </v-list-item-subtitle>
@@ -225,7 +238,7 @@
                     size="small"
                     @click="showDeadlineDialog(participant)"
                   >
-                    设置截止时间
+                    {{ t('tasks.detail.participants.setDeadline') }}
                   </v-btn>
                   <v-btn
                     prepend-icon="mdi-eye"
@@ -234,7 +247,7 @@
                     size="small"
                     @click="showSubmissions(participant)"
                   >
-                    查看提交
+                    {{ t('tasks.detail.participants.viewSubmissions') }}
                   </v-btn>
                 </template>
                 <template v-else-if="participant.approved === 'NONE'">
@@ -246,7 +259,7 @@
                       size="small"
                       @click="approveParticipant(participant)"
                     >
-                      通过
+                      {{ t('tasks.detail.participants.approve') }}
                     </v-btn>
                     <v-btn
                       prepend-icon="mdi-close"
@@ -255,7 +268,7 @@
                       size="small"
                       @click="rejectParticipant(participant)"
                     >
-                      驳回
+                      {{ t('tasks.detail.participants.reject') }}
                     </v-btn>
                   </div>
                 </template>
@@ -271,16 +284,16 @@
       <v-card rounded="lg">
         <v-card-title class="text-h6 pa-4">
           <v-icon left color="primary" class="mr-2">mdi-calendar-clock</v-icon>
-          设置提交截止时间
+          {{ t('tasks.detail.participants.deadlineDialogTitle') }}
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
-          <p class="mb-4">
-            为
-            <span class="font-weight-medium">{{
-              selectedParticipant ? getParticipantDisplayName(selectedParticipant) : ''
-            }}</span>
-            设置提交截止时间
-          </p>
+          <i18n-t keypath="tasks.detail.participants.deadlineDialogBody" scope="global" tag="p" class="mb-4">
+            <template #name>
+              <span class="font-weight-medium">{{
+                selectedParticipant ? getParticipantDisplayName(selectedParticipant) : ''
+              }}</span>
+            </template>
+          </i18n-t>
           <v-form ref="deadlineFormRef">
             <v-date-picker
               v-model="newDeadlineDate"
@@ -291,7 +304,7 @@
             ></v-date-picker>
             <v-text-field
               v-model="newDeadlineTime"
-              label="时间"
+              :label="t('tasks.detail.participants.timeLabel')"
               variant="outlined"
               type="time"
               class="mb-2"
@@ -300,8 +313,8 @@
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer></v-spacer>
-          <v-btn variant="outlined" @click="deadlineDialog = false">取消</v-btn>
-          <v-btn color="primary" @click="setDeadline">确定</v-btn>
+          <v-btn variant="outlined" @click="deadlineDialog = false">{{ t('tasks.detail.participants.cancel') }}</v-btn>
+          <v-btn color="primary" @click="setDeadline">{{ t('tasks.detail.participants.confirm') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -313,9 +326,11 @@
           <v-btn icon @click="submissionsDialog = false">
             <v-icon>mdi-close</v-icon>
           </v-btn>
-          <v-toolbar-title
-            >{{ selectedParticipant ? getParticipantDisplayName(selectedParticipant) : '' }} 的提交记录</v-toolbar-title
-          >
+          <v-toolbar-title>
+            <i18n-t keypath="tasks.detail.participants.submissionsTitle" scope="global" tag="span">
+              <template #name>{{ selectedParticipant ? getParticipantDisplayName(selectedParticipant) : '' }}</template>
+            </i18n-t>
+          </v-toolbar-title>
           <v-spacer></v-spacer>
         </v-toolbar>
         <v-card-text class="pa-6">
@@ -327,8 +342,8 @@
             :is-dialog="true"
             :outlined="true"
             :highlight-latest="true"
-            title="最新提交内容"
-            history-title="历史提交记录"
+            :title="t('tasks.detail.participants.latestSubmission')"
+            :history-title="t('tasks.detail.participants.submissionHistory')"
           />
         </v-card-text>
       </v-card>
@@ -339,21 +354,21 @@
       <v-card rounded="lg">
         <v-card-title class="text-h6 pa-4">
           <v-icon left color="error" class="mr-2">mdi-close-circle</v-icon>
-          驳回申请
+          {{ t('tasks.detail.participants.rejectDialogTitle') }}
         </v-card-title>
         <v-card-text class="pa-4 pt-0">
-          <p class="mb-4">
-            您正在驳回
-            <span class="font-weight-medium">{{
-              selectedParticipant ? getParticipantDisplayName(selectedParticipant) : ''
-            }}</span>
-            的参与申请
-          </p>
+          <i18n-t keypath="tasks.detail.participants.rejectDialogBody" scope="global" tag="p" class="mb-4">
+            <template #name>
+              <span class="font-weight-medium">{{
+                selectedParticipant ? getParticipantDisplayName(selectedParticipant) : ''
+              }}</span>
+            </template>
+          </i18n-t>
           <v-textarea
             v-model="rejectReason"
             autocomplete="off"
-            label="驳回原因（选填）"
-            placeholder="请填写驳回原因，帮助申请者了解问题所在"
+            :label="t('tasks.detail.participants.rejectReasonLabel')"
+            :placeholder="t('tasks.detail.participants.rejectReasonPlaceholder')"
             variant="outlined"
             rows="3"
             counter="200"
@@ -363,8 +378,8 @@
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer></v-spacer>
-          <v-btn variant="outlined" @click="rejectDialog = false">取消</v-btn>
-          <v-btn color="error" @click="confirmReject">确认驳回</v-btn>
+          <v-btn variant="outlined" @click="rejectDialog = false">{{ t('tasks.detail.participants.cancel') }}</v-btn>
+          <v-btn color="error" @click="confirmReject">{{ t('tasks.detail.participants.confirmReject') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -375,6 +390,7 @@
 import type { Task, TaskMembership } from '@/types'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 
@@ -383,6 +399,8 @@ import { getAvatarUrl } from '@/utils/materials'
 import { TasksApi } from '@/network/api/tasks'
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
+
+const { t } = useI18n()
 
 const props = defineProps<{
   taskData: Task | null
@@ -444,7 +462,7 @@ const formatDate = (date: string | Date | number) => {
 const getParticipantDisplayName = (participant: TaskMembership) => {
   // 对于团队类型的参与者，显示团队名称
   if (props.taskData?.submitterType === 'TEAM') {
-    return participant.member?.name || '未知团队'
+    return participant.member?.name || t('tasks.detail.participants.unknownTeam')
   }
 
   // 对于个人类型的参与者
@@ -452,7 +470,7 @@ const getParticipantDisplayName = (participant: TaskMembership) => {
     return `${participant.realNameInfo.realName}${participant.realNameInfo.studentId ? ` (${participant.realNameInfo.studentId})` : ''}`
   }
 
-  return participant.member?.name || '未知用户'
+  return participant.member?.name || t('tasks.detail.participants.unknownUser')
 }
 
 const fetchParticipants = async () => {
@@ -467,7 +485,7 @@ const fetchParticipants = async () => {
 
     participants.value = data.participants
   } catch (error) {
-    toast.error('获取参与者列表失败')
+    toast.error(t('tasks.detail.participants.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -491,11 +509,11 @@ const setDeadline = async () => {
 
   try {
     await TasksApi.updateParticipant(props.taskData.id, selectedParticipant.value.id, { deadline })
-    toast.success('截止时间设置成功')
+    toast.success(t('tasks.detail.participants.deadlineSetSuccess'))
     deadlineDialog.value = false
     await fetchParticipants()
   } catch (error) {
-    toast.error('设置截止时间失败')
+    toast.error(t('tasks.detail.participants.deadlineSetFailed'))
   }
 }
 
@@ -513,10 +531,10 @@ const approveParticipant = async (participant: TaskMembership) => {
 
   try {
     await TasksApi.updateParticipant(props.taskData.id, participant.id, { approved: 'APPROVED', deadline })
-    toast.success('已通过申请')
+    toast.success(t('tasks.detail.participants.approvedSuccess'))
     await fetchParticipants()
   } catch (error) {
-    toast.error(`操作失败: ${error}`)
+    toast.error(t('tasks.detail.participants.operationFailed', { error }))
   }
 }
 
@@ -534,11 +552,11 @@ const confirmReject = async () => {
       approved: 'DISAPPROVED',
       rejectReason: rejectReason.value || undefined,
     })
-    toast.success('已驳回申请')
+    toast.success(t('tasks.detail.participants.rejectedSuccess'))
     rejectDialog.value = false
     await fetchParticipants()
   } catch (error) {
-    toast.error(`操作失败: ${error}`)
+    toast.error(t('tasks.detail.participants.operationFailed', { error }))
   }
 }
 

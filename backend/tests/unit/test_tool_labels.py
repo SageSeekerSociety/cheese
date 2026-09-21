@@ -1,4 +1,9 @@
-"""现场那一行的中文动词，和真正会被调用的那些工具名，钉在一起。
+"""现场那一行用的词，和真正会被调用的那些工具名，钉在一起。
+
+表里的值现在是**词表的键**（`toolLabels.cheeseAcceptRequest`），不再是中文动词本身：
+这里因此只问「这个工具名在表里有没有一条」，而「键在词表里有没有词条」由
+`frontend/src/lib/toolLabels.spec.ts` 逐条对着两个语言的词表问。两半合起来才是
+「现场那一行读得通」；少了后一半，漏一条词条的后果是渲染出内部键名。
 
 The verb table lives in the frontend because translation happens at display
 time — a name missing from today's table is then never frozen untranslated in a
@@ -29,9 +34,9 @@ CLI = ROOT / "backend/sandbox/cheese"
 EXTENSION = ROOT / "backend/app/domain/agent/harness/pi/platform.ts"
 LABELS = ROOT / "frontend/src/lib/toolLabels.ts"
 
-#: `  cheese_doc_set: '更新实况文档',` — the table is a plain object literal, and
-#: reading it with a regex is what keeps this test from needing a TypeScript
-#: toolchain to answer a question about a dictionary.
+#: `  cheese_doc_set: 'toolLabels.cheeseDocSet',` — the table is a plain object
+#: literal, and reading it with a regex is what keeps this test from needing a
+#: TypeScript toolchain to answer a question about a dictionary.
 _ENTRY = re.compile(r"^\s{2}([A-Za-z_][A-Za-z0-9_]*):\s*'([^']+)'", re.MULTILINE)
 
 

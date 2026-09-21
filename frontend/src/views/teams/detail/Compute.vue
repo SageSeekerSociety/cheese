@@ -6,6 +6,7 @@ import type { TeamResourceQuotas } from '@/api'
 import type { MyDevice, Project, ProjectMachine } from '@/cx_types'
 
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
 import {
@@ -24,6 +25,7 @@ import { teamDataInjectionKey } from '@/keys'
 type CloudMachine = ProjectMachine & { projectName: string }
 
 const route = useRoute()
+const { t } = useI18n()
 const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => Number(route.params.teamId))
 const canManage = computed(() => ['OWNER', 'ADMIN'].includes(teamData.value?.role ?? ''))
@@ -72,17 +74,18 @@ const cloudMoving = computed(() =>
   )
 )
 
-const statusLabel: Record<ProjectMachine['status'], string> = {
-  provisioning: '正在创建',
-  starting: '正在启动',
-  running: '运行中',
-  stopping: '正在停止',
-  stopped: '已停止',
-  deleting: '正在释放',
-  deleted: '已释放',
-  error: '创建失败',
-  unknown: '状态未知',
-}
+// 状态文案要跟着界面语言走，所以是 computed，不是模块级常量表。
+const statusLabels = computed<Record<ProjectMachine['status'], string>>(() => ({
+  provisioning: t('teams.compute.statusProvisioning'),
+  starting: t('teams.compute.statusStarting'),
+  running: t('teams.compute.statusRunning'),
+  stopping: t('teams.compute.statusStopping'),
+  stopped: t('teams.compute.statusStopped'),
+  deleting: t('teams.compute.statusDeleting'),
+  deleted: t('teams.compute.statusDeleted'),
+  error: t('teams.compute.statusError'),
+  unknown: t('teams.compute.statusUnknown'),
+}))
 
 function errorMessage(value: unknown, fallback: string): string {
   return value instanceof Error ? value.message : fallback
@@ -96,7 +99,7 @@ async function loadCloud() {
         const result = await listProjectMachines(project.id)
         return result.data.map((machine) => ({ ...machine, projectName: project.name }))
       } catch (cause) {
-        const message = errorMessage(cause, '加载云算力失败')
+        const message = errorMessage(cause, t('teams.compute.loadCloudFailed'))
         if (message.includes('not configured')) {
           configured = false
           return []
@@ -127,7 +130,7 @@ async function load() {
     selectedProject.value = selectedProject.value ?? projects.value[0]?.id ?? null
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '加载团队算力失败')
+    error.value = errorMessage(cause, t('teams.compute.loadTeamFailed'))
   } finally {
     loading.value = false
     schedulePoll()
@@ -138,7 +141,7 @@ async function refreshCloud() {
   try {
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '刷新云算力状态失败')
+    error.value = errorMessage(cause, t('teams.compute.refreshFailed'))
   } finally {
     schedulePoll()
   }
@@ -157,21 +160,21 @@ async function addMachine(device: MyDevice) {
     await registerDeviceForTeam(device.device_id, teamId.value)
     await load()
   } catch (cause) {
-    error.value = errorMessage(cause, '添加机器失败')
+    error.value = errorMessage(cause, t('teams.compute.addMachineFailed'))
   } finally {
     busy.value = null
   }
 }
 
 async function removeMachine(device: MyDevice) {
-  if (!window.confirm(`确定把「${device.name}」移出这个团队的算力池吗？`)) return
+  if (!window.confirm(t('teams.compute.removeDeviceConfirm', { name: device.name }))) return
   busy.value = device.device_id
   error.value = null
   try {
     await unregisterDeviceFromTeam(device.device_id, teamId.value)
     await load()
   } catch (cause) {
-    error.value = errorMessage(cause, '移出机器失败')
+    error.value = errorMessage(cause, t('teams.compute.removeMachineFailed'))
   } finally {
     busy.value = null
   }
@@ -190,7 +193,7 @@ async function provisionCloud() {
     createDialog.value = false
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '开通云算力失败')
+    error.value = errorMessage(cause, t('teams.compute.provisionFailed'))
   } finally {
     creating.value = false
     schedulePoll()
@@ -198,14 +201,14 @@ async function provisionCloud() {
 }
 
 async function destroyCloud(machine: CloudMachine) {
-  if (!window.confirm(`确定释放云机器「${machine.hostname}」吗？释放后数据不可恢复。`)) return
+  if (!window.confirm(t('teams.compute.destroyConfirm', { hostname: machine.hostname }))) return
   busy.value = machine.id
   error.value = null
   try {
     await deleteProjectMachine(machine.project_id, machine.id)
     await loadCloud()
   } catch (cause) {
-    error.value = errorMessage(cause, '释放云算力失败')
+    error.value = errorMessage(cause, t('teams.compute.destroyFailed'))
   } finally {
     busy.value = null
     schedulePoll()
@@ -224,9 +227,9 @@ onBeforeUnmount(() => {
   <v-container class="px-6 py-5" fluid>
     <div class="mb-5 d-flex align-start flex-wrap ga-3">
       <div>
-        <h2 class="text-h6 font-weight-medium mb-1">算力</h2>
+        <h2 class="text-h6 font-weight-medium mb-1">{{ t('teams.compute.title') }}</h2>
         <p class="text-body-2 text-medium-emphasis mb-0">
-          团队统一管理云额度和自有设备。项目设置默认与常用配置，房间可直接使用。
+          {{ t('teams.compute.subtitle') }}
         </p>
       </div>
       <v-spacer />
@@ -238,7 +241,7 @@ onBeforeUnmount(() => {
         :disabled="!cloudConfigured || !projects.length"
         @click="createDialog = true"
       >
-        开通云算力
+        {{ t('teams.compute.provision') }}
       </v-btn>
     </div>
 
@@ -252,51 +255,65 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <section v-if="quotas" class="compute-section mb-7">
-        <h3 class="text-subtitle-1 font-weight-medium mb-3">配额与用量</h3>
+        <h3 class="text-subtitle-1 font-weight-medium mb-3">{{ t('teams.compute.quotaSection') }}</h3>
         <v-row>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">团队云虚拟机</div>
-              <div class="text-h6">{{ quotas.machines.used }} / {{ quotas.machines.limit }} 台</div>
+              <div class="text-body-2 mb-2">{{ t('teams.compute.teamMachines') }}</div>
+              <div class="text-h6">
+                {{ t('teams.compute.machineQuotaCount', { used: quotas.machines.used, limit: quotas.machines.limit }) }}
+              </div>
               <v-progress-linear
                 class="my-3"
                 :model-value="Math.min(100, (quotas.machines.used / quotas.machines.limit) * 100)"
                 :color="quotaFull ? 'warning' : 'primary'"
               />
-              <div class="text-caption text-medium-emphasis">所有项目共享；停止机器仍占用名额，释放后归还</div>
+              <div class="text-caption text-medium-emphasis">{{ t('teams.compute.machinesSharedHint') }}</div>
             </v-card>
           </v-col>
           <v-col cols="12" md="6">
             <v-card variant="outlined" rounded="lg" class="pa-4 fill-height">
-              <div class="text-body-2 mb-2">团队 tokens 额度</div>
-              <div v-if="quotas.credits.unlimited" class="text-h6">未设置上限</div>
+              <div class="text-body-2 mb-2">{{ t('teams.compute.creditsTitle') }}</div>
+              <div v-if="quotas.credits.unlimited" class="text-h6">{{ t('teams.compute.creditsUnlimited') }}</div>
               <template v-else>
-                <div class="text-h6">剩余 {{ quotas.credits.credits_remaining.toLocaleString() }} 额度</div>
+                <div class="text-h6">
+                  {{
+                    t('teams.compute.creditsRemaining', { count: quotas.credits.credits_remaining.toLocaleString() })
+                  }}
+                </div>
                 <div class="text-body-2 my-2">
-                  已使用 {{ quotas.credits.credits_used.toLocaleString() }} /
-                  {{ quotas.credits.credits_total.toLocaleString() }} 额度
+                  {{
+                    t('teams.compute.creditsUsed', {
+                      used: quotas.credits.credits_used.toLocaleString(),
+                      total: quotas.credits.credits_total.toLocaleString(),
+                    })
+                  }}
                 </div>
               </template>
               <div class="text-caption text-medium-emphasis mt-2">
-                所有项目共享；1 额度 = {{ quotas.credits.tokens_per_credit.toLocaleString() }} tokens，使用后扣减
+                {{
+                  t('teams.compute.creditsSharedHint', {
+                    per: quotas.credits.tokens_per_credit.toLocaleString(),
+                  })
+                }}
               </div>
             </v-card>
           </v-col>
         </v-row>
-        <p class="text-caption text-medium-emphasis mt-3 mb-2">额度由平台或发放方调整；机构定向额度仅供指定项目使用</p>
+        <p class="text-caption text-medium-emphasis mt-3 mb-2">{{ t('teams.compute.creditsFootnote') }}</p>
         <v-table v-if="quotas.projects.length" density="comfortable">
           <thead>
             <tr>
-              <th>项目</th>
-              <th>占用云机器</th>
-              <th>累计 tokens</th>
-              <th>定向额度剩余</th>
+              <th>{{ t('teams.compute.projectCol') }}</th>
+              <th>{{ t('teams.compute.machinesUsedCol') }}</th>
+              <th>{{ t('teams.compute.tokensUsedCol') }}</th>
+              <th>{{ t('teams.compute.restrictedCreditsCol') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="project in quotas.projects" :key="project.id">
               <td>{{ project.name }}</td>
-              <td>{{ project.machines_used }} 台</td>
+              <td>{{ t('teams.compute.machinesUsed', { count: project.machines_used }) }}</td>
               <td>{{ project.total_tokens.toLocaleString() }}</td>
               <td>{{ project.restricted_credits_remaining.toLocaleString() }}</td>
             </tr>
@@ -307,23 +324,23 @@ onBeforeUnmount(() => {
       <section class="compute-section mb-7">
         <div class="section-heading mb-3">
           <div>
-            <h3 class="text-subtitle-1 font-weight-medium">云算力</h3>
-            <p class="text-caption text-medium-emphasis mb-0">由平台创建并自动接入团队算力池，费用归属所选项目。</p>
+            <h3 class="text-subtitle-1 font-weight-medium">{{ t('teams.compute.cloudSection') }}</h3>
+            <p class="text-caption text-medium-emphasis mb-0">{{ t('teams.compute.cloudSubtitle') }}</p>
           </div>
         </div>
 
         <v-alert v-if="!cloudConfigured" type="info" variant="tonal" density="comfortable">
-          当前部署尚未接入云算力供应方；自有设备仍可正常使用。
+          {{ t('teams.compute.cloudNotConfigured') }}
         </v-alert>
         <v-alert v-else-if="!projects.length" type="info" variant="tonal" density="comfortable">
-          先在团队里创建一个项目，云机器会以该项目作为费用与审计归属。
+          {{ t('teams.compute.cloudNoProjects') }}
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
           <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
           <div>
-            <div class="text-body-2 font-weight-medium">还没有云机器</div>
+            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.cloudEmptyTitle') }}</div>
             <div class="text-caption text-medium-emphasis">
-              管理员可按需开通，创建完成后会自动出现在话题算力选择器里。
+              {{ t('teams.compute.cloudEmptyHint') }}
             </div>
           </div>
         </div>
@@ -346,23 +363,30 @@ onBeforeUnmount(() => {
                   :color="machine.status === 'running' ? 'success' : machine.status === 'error' ? 'error' : undefined"
                   variant="tonal"
                 >
-                  {{ statusLabel[machine.status] }}
+                  {{ statusLabels[machine.status] }}
                 </v-chip>
               </div>
               <div class="machine-meta">
-                <span>{{ machine.cores }} 核</span>
-                <span>{{ Math.round(machine.memory_mb / 1024) }} GB 内存</span>
-                <span>{{ machine.disk_gb }} GB 磁盘</span>
+                <span>{{ t('teams.compute.cores', { count: machine.cores }) }}</span>
+                <span>{{ t('teams.compute.memory', { size: Math.round(machine.memory_mb / 1024) }) }}</span>
+                <span>{{ t('teams.compute.disk', { size: machine.disk_gb }) }}</span>
               </div>
-              <div class="text-caption text-medium-emphasis mt-2">费用归属：{{ machine.projectName }}</div>
-              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">地址：{{ machine.ip }}</div>
+              <div class="text-caption text-medium-emphasis mt-2">
+                {{ t('teams.compute.billedTo', { project: machine.projectName }) }}
+              </div>
+              <div v-if="machine.ip" class="text-caption text-medium-emphasis mt-1">
+                {{ t('teams.compute.address', { ip: machine.ip }) }}
+              </div>
               <div class="text-caption mt-1" :class="machine.device_id ? 'text-success' : 'text-medium-emphasis'">
                 {{
                   machine.device_id
-                    ? '已接入团队算力池'
+                    ? t('teams.compute.enrolled')
                     : machine.enroll_error
-                      ? `接入失败（${machine.enroll_attempts}/${machine.enroll_max_attempts}）`
-                      : '等待自动接入'
+                      ? t('teams.compute.enrollFailed', {
+                          attempts: machine.enroll_attempts,
+                          max: machine.enroll_max_attempts,
+                        })
+                      : t('teams.compute.enrollPending')
                 }}
               </div>
               <v-alert v-if="machine.enroll_error" type="error" variant="tonal" density="compact" class="mt-3">
@@ -376,7 +400,7 @@ onBeforeUnmount(() => {
                   :loading="busy === machine.id"
                   @click="destroyCloud(machine)"
                 >
-                  释放
+                  {{ t('teams.compute.release') }}
                 </v-btn>
               </div>
             </v-card>
@@ -387,12 +411,14 @@ onBeforeUnmount(() => {
       <section class="compute-section">
         <div class="section-heading mb-3">
           <div>
-            <h3 class="text-subtitle-1 font-weight-medium">自有设备</h3>
-            <p class="text-caption text-medium-emphasis mb-0">把成员已接入的机器注册给团队，工作树与数据留在机器上。</p>
+            <h3 class="text-subtitle-1 font-weight-medium">{{ t('teams.compute.selfHostedSection') }}</h3>
+            <p class="text-caption text-medium-emphasis mb-0">{{ t('teams.compute.selfHostedSubtitle') }}</p>
           </div>
           <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" variant="outlined" prepend-icon="mdi-plus">添加自有设备</v-btn>
+              <v-btn v-bind="menuProps" variant="outlined" prepend-icon="mdi-plus">{{
+                t('teams.compute.addDevice')
+              }}</v-btn>
             </template>
             <v-list density="compact" min-width="280">
               <v-list-item
@@ -406,8 +432,16 @@ onBeforeUnmount(() => {
                   <v-icon :color="device.online ? 'success' : 'grey'" size="12" class="mr-2">mdi-circle</v-icon>
                 </template>
               </v-list-item>
-              <v-list-item v-if="!addable.length && myDevices.length" disabled title="你的设备都已在这个团队中" />
-              <v-list-item v-if="!myDevices.length" :to="{ name: 'my-devices' }" title="先去「我的设备」接入机器">
+              <v-list-item
+                v-if="!addable.length && myDevices.length"
+                disabled
+                :title="t('teams.compute.allDevicesAdded')"
+              />
+              <v-list-item
+                v-if="!myDevices.length"
+                :to="{ name: 'my-devices' }"
+                :title="t('teams.compute.goToMyDevices')"
+              >
                 <template #prepend><v-icon size="18" class="mr-2">mdi-laptop-account</v-icon></template>
               </v-list-item>
             </v-list>
@@ -417,13 +451,13 @@ onBeforeUnmount(() => {
         <div v-if="!selfHostedDevices.length" class="empty-panel">
           <v-icon size="38" class="empty-panel-icon">mdi-laptop-off</v-icon>
           <div>
-            <div class="text-body-2 font-weight-medium">还没有自有设备</div>
-            <div class="text-caption text-medium-emphasis">接入后，团队内所有项目都可以使用。</div>
+            <div class="text-body-2 font-weight-medium">{{ t('teams.compute.selfHostedEmptyTitle') }}</div>
+            <div class="text-caption text-medium-emphasis">{{ t('teams.compute.selfHostedEmptyHint') }}</div>
           </div>
         </div>
         <template v-else>
           <div class="text-caption text-medium-emphasis mb-3">
-            {{ selfHostedDevices.length }} 台机器 · {{ onlineCount }} 台在线
+            {{ t('teams.compute.deviceSummary', { count: selfHostedDevices.length, online: onlineCount }) }}
           </div>
           <v-row>
             <v-col v-for="device in selfHostedDevices" :key="device.device_id" cols="12" sm="6" lg="4">
@@ -437,7 +471,7 @@ onBeforeUnmount(() => {
                     :class="device.online ? 'text-success font-weight-medium' : 'text-medium-emphasis'"
                   >
                     <span class="status-dot" :class="device.online ? 'status-dot--on' : ''" />
-                    {{ device.online ? '在线' : '离线' }}
+                    {{ device.online ? t('teams.compute.online') : t('teams.compute.offline') }}
                   </span>
                 </div>
                 <div class="text-caption text-medium-emphasis machine-id">{{ device.device_id }}</div>
@@ -450,7 +484,7 @@ onBeforeUnmount(() => {
                     color="primary"
                   >
                     <v-icon start size="12">mdi-monitor-eye</v-icon>
-                    运行中 · @{{ screen.agent_handle }}
+                    {{ t('teams.compute.screenRunning', { handle: screen.agent_handle }) }}
                   </v-chip>
                 </div>
                 <div v-if="myDeviceIds.has(device.device_id)" class="mt-2 d-flex justify-end">
@@ -461,7 +495,7 @@ onBeforeUnmount(() => {
                     :loading="busy === device.device_id"
                     @click="removeMachine(device)"
                   >
-                    移出团队
+                    {{ t('teams.compute.removeFromTeam') }}
                   </v-btn>
                 </div>
               </v-card>
@@ -473,16 +507,16 @@ onBeforeUnmount(() => {
 
     <v-dialog v-model="createDialog" max-width="520">
       <v-card rounded="lg">
-        <v-card-title class="pt-5 px-5">开通云算力</v-card-title>
+        <v-card-title class="pt-5 px-5">{{ t('teams.compute.provisionTitle') }}</v-card-title>
         <v-card-text class="px-5">
           <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            创建后会持续占用云资源；释放机器会删除其本地数据。
+            {{ t('teams.compute.provisionWarning') }}
           </v-alert>
           <v-select
             v-model="selectedProject"
             autocomplete="off"
             :items="projectOptions"
-            label="费用与审计归属项目"
+            :label="t('teams.compute.billedProject')"
             variant="outlined"
             density="comfortable"
           />
@@ -493,18 +527,28 @@ onBeforeUnmount(() => {
             density="compact"
             class="mb-3"
           >
-            团队云虚拟机已使用 {{ selectedQuota.used }} / {{ selectedQuota.limit }} 台
-            <div>本项目占用 {{ selectedProjectUsage }} 台；团队内所有项目共享名额</div>
+            {{ t('teams.compute.quotaUsed', { used: selectedQuota.used, limit: selectedQuota.limit }) }}
+            <div>{{ t('teams.compute.projectUsage', { count: selectedProjectUsage }) }}</div>
             <div v-if="!quotaFull">
-              本次创建后，团队占用 {{ selectedQuota.used + 1 }} / {{ selectedQuota.limit }} 台
+              {{
+                t('teams.compute.afterCreate', {
+                  used: selectedQuota.used + 1,
+                  limit: selectedQuota.limit,
+                })
+              }}
             </div>
-            <div>停止机器不会腾出名额，释放后归还</div>
-            <div v-if="quotaFull">已达到上限，请先释放不再使用的机器</div>
+            <div>{{ t('teams.compute.stopKeepsSlot') }}</div>
+            <div v-if="quotaFull">{{ t('teams.compute.quotaFull') }}</div>
           </v-alert>
-          <div v-else class="text-body-2 text-medium-emphasis mb-3">暂未获取团队资源用量，请刷新后重试</div>
+          <div v-else class="text-body-2 text-medium-emphasis mb-3">{{ t('teams.compute.quotaUnavailable') }}</div>
           <v-row dense>
             <v-col cols="4"
-              ><v-text-field v-model.number="cores" type="number" min="1" label="CPU 核" variant="outlined"
+              ><v-text-field
+                v-model.number="cores"
+                type="number"
+                min="1"
+                :label="t('teams.compute.coresLabel')"
+                variant="outlined"
             /></v-col>
             <v-col cols="4"
               ><v-text-field
@@ -512,24 +556,31 @@ onBeforeUnmount(() => {
                 type="number"
                 min="512"
                 step="512"
-                label="内存 MB"
+                :label="t('teams.compute.memoryLabel')"
                 variant="outlined"
             /></v-col>
             <v-col cols="4"
-              ><v-text-field v-model.number="diskGb" type="number" min="10" label="磁盘 GB" variant="outlined"
+              ><v-text-field
+                v-model.number="diskGb"
+                type="number"
+                min="10"
+                :label="t('teams.compute.diskLabel')"
+                variant="outlined"
             /></v-col>
           </v-row>
         </v-card-text>
         <v-card-actions class="px-5 pb-5">
           <v-spacer />
-          <v-btn variant="text" :disabled="creating" @click="createDialog = false">取消</v-btn>
+          <v-btn variant="text" :disabled="creating" @click="createDialog = false">{{
+            t('teams.compute.cancel')
+          }}</v-btn>
           <v-btn
             color="primary"
             variant="flat"
             :loading="creating"
             :disabled="!selectedProject || !selectedQuota || quotaFull"
             @click="provisionCloud"
-            >确认开通</v-btn
+            >{{ t('teams.compute.confirmProvision') }}</v-btn
           >
         </v-card-actions>
       </v-card>

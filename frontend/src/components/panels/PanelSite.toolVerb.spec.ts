@@ -27,7 +27,10 @@ vi.mock('../../api', async () => {
 
 import PanelSite from './PanelSite.vue'
 
+import { setLocale } from '@/i18n'
+
 const Site = PanelSite as unknown as Component
+const CJK = /[㐀-䶿一-鿿豈-﫿]/
 
 const topic = {
   id: 't1',
@@ -65,6 +68,10 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  // 下面断言的是中文界面。动词现在从词表取，默认语言是 en（happy-dom 的
+  // navigator.language 是 en-US），不钉住的话这一份会拿到英文——那是「讲英文」
+  // 那组的事。
+  setLocale('zh-CN')
   getTranscript.mockReset()
   getTerminal.mockReset()
   getTerminal.mockResolvedValue({ available: false })
@@ -113,5 +120,34 @@ describe('现场的动作行说的是干了什么', () => {
 
     expect(verb).toBe('写入文件')
     expect(arg).toBe('docs/design-system.md')
+  })
+})
+
+describe('讲英文', () => {
+  it('meta 算出来的动词是英文，「执行命令」不会因为它是后端给的就漏过去', async () => {
+    setLocale('en')
+    // 这一段正文里烤好的中文是**入库当时**写下的，面板自己不去翻它——它只借第一行
+    // 认出这是哪一步。所以这里断言的是动词那一格，不是整行。
+    const { verb, arg } = await verbOf(
+      toolEvent('执行命令\nsed -n 1,40p backend/app/main.py', {
+        tool: 'Bash',
+        as_tool: 'Read',
+        arg: 'backend/app/main.py',
+      })
+    )
+
+    expect(verb).toBe('Read file')
+    expect(CJK.test(verb), verb).toBe(false)
+    expect(arg).toBe('backend/app/main.py')
+  })
+
+  it('没有 meta 的老记录也认得出是哪一步，念的是英文', async () => {
+    // 老记录只有正文第一行那几个字。它是认路的凭据（数据），不是要显示的词（文案）——
+    // 所以认出来之后仍然从词表取词，英文界面上不会冒出一个中文动词。
+    setLocale('en')
+    const { verb } = await verbOf(toolEvent('写入文件\ndocs/design-system.md'))
+
+    expect(verb).toBe('Write file')
+    expect(CJK.test(verb), verb).toBe(false)
   })
 })

@@ -1,8 +1,12 @@
 // 一个文件「是哪种类型」只能有一个答案。预览面板用它挑阅读器，输入栏的附件块用
 // 它挑图标：两份表各自演进的结果是同一个 .docx 在两处显示成不同的东西。
 
+import { t } from '@/i18n'
+
 export interface FileKind {
-  label: string
+  /** 取词函数，不是字符串：这张表在模块加载时就建好了，写死的字符串会停在本次
+   *  locale 上（模块级常量里 `t()` 只算一次）。取词留到渲染时，切语言当场跟着换。 */
+  label: () => string
   icon: string
   /** 预览面板把它交给哪个阅读器。 */
   view: 'pages' | 'sheet' | 'markdown'
@@ -10,19 +14,23 @@ export interface FileKind {
 
 /** 认得出的文档类型。读者能指着什么决定了 view，见 PanelPreview 的说明。 */
 export const DOCUMENT_TYPES: Record<string, FileKind> = {
-  pdf: { label: 'PDF', icon: 'mdi-file-pdf-box', view: 'pages' },
-  docx: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  doc: { label: 'Word 文档', icon: 'mdi-file-word-outline', view: 'pages' },
-  odt: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  rtf: { label: '文档', icon: 'mdi-file-document-outline', view: 'pages' },
-  pptx: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  ppt: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  odp: { label: '幻灯片', icon: 'mdi-file-powerpoint-outline', view: 'pages' },
-  xlsx: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  xls: { label: '表格', icon: 'mdi-file-excel-outline', view: 'sheet' },
-  csv: { label: 'CSV 表格', icon: 'mdi-file-delimited-outline', view: 'sheet' },
-  md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
-  markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
+  pdf: { label: () => t('workspace.preview.typePdf'), icon: 'mdi-file-pdf-box', view: 'pages' },
+  docx: { label: () => t('workspace.preview.typeWord'), icon: 'mdi-file-word-outline', view: 'pages' },
+  doc: { label: () => t('workspace.preview.typeWord'), icon: 'mdi-file-word-outline', view: 'pages' },
+  odt: { label: () => t('workspace.preview.typeDocument'), icon: 'mdi-file-document-outline', view: 'pages' },
+  rtf: { label: () => t('workspace.preview.typeDocument'), icon: 'mdi-file-document-outline', view: 'pages' },
+  pptx: { label: () => t('workspace.preview.typeSlides'), icon: 'mdi-file-powerpoint-outline', view: 'pages' },
+  ppt: { label: () => t('workspace.preview.typeSlides'), icon: 'mdi-file-powerpoint-outline', view: 'pages' },
+  odp: { label: () => t('workspace.preview.typeSlides'), icon: 'mdi-file-powerpoint-outline', view: 'pages' },
+  xlsx: { label: () => t('workspace.preview.typeSheet'), icon: 'mdi-file-excel-outline', view: 'sheet' },
+  xls: { label: () => t('workspace.preview.typeSheet'), icon: 'mdi-file-excel-outline', view: 'sheet' },
+  csv: { label: () => t('workspace.preview.typeCsv'), icon: 'mdi-file-delimited-outline', view: 'sheet' },
+  md: { label: () => t('workspace.preview.typeMarkdown'), icon: 'mdi-language-markdown-outline', view: 'markdown' },
+  markdown: {
+    label: () => t('workspace.preview.typeMarkdown'),
+    icon: 'mdi-language-markdown-outline',
+    view: 'markdown',
+  },
 }
 
 /** 浏览器自己画不出来、要平台先转成 PDF 的那些。转换走的是 LibreOffice，一份约
