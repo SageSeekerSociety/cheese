@@ -31,13 +31,13 @@ from app.domain.room_task.presentation import Column
 @pytest.mark.parametrize(
     "event",
     [
-        Event(),
         Event(reviewers=("alice",)),
         Event(reporter="bob"),
         Event(asked="carol"),
         Event(reviewers=("alice",), reporter="bob", asked="carol"),
+        Event(),
     ],
-    ids=["空事件", "点了验收人", "点了提需求的人", "点了被问的人", "三种都点了"],
+    ids=["点了验收人", "点了提需求的人", "点了被问的人", "三种都点了", "空事件"],
 )
 def test_nobody_is_told_while_the_next_step_is_the_platforms(event):
     """连名字都点了也不发 —— 这一档在结构上拿不出收件人。"""
@@ -141,10 +141,12 @@ def test_every_column_is_in_the_table():
     "event,next_hand,expected",
     [
         # #1128 一台机器这一分钟关着，平台在等它 —— 那是一个没人在用的平台的常态。
-        # 当时五条一分钟、来自五个话题，一直发到机器开机为止。
-        (Event(), Hand.platform, ()),
-        # #1063 房间的运行环境还在准备，平台自己在等 —— 等待本身不是要谁动手。
-        (Event(), Hand.platform, ()),
+        # 当时五条一分钟、来自五个话题，一直发到机器开机为止。房间里有个验收人在，
+        # 点了他的名也一样不发：在等的是平台，不是他。
+        (Event(reviewers=("alice",)), Hand.platform, ()),
+        # #1063 房间的运行环境还在准备，平台自己在等 —— 等待本身不是要谁动手，哪怕
+        # 这个房间的活有人报过需求。
+        (Event(reporter="bob"), Hand.platform, ()),
         # #1058 闸门收走了房间的屏幕，卡停在那儿等验收人。
         (
             Event(reviewers=("alice",)),
