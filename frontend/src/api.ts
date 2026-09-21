@@ -18,6 +18,7 @@ import type {
   EnvironmentStatus,
   FeedbackCard,
   FeedbackComment,
+  FeedbackCommentLikeResult,
   FeedbackCounts,
   FeedbackCreateBody,
   FeedbackDetail,
@@ -236,8 +237,23 @@ export async function refreshNow(): Promise<void> {
   await refreshInFlight
 }
 
+// Room chrome, chat and the work panel request the same roster/task summary
+// on mount. Share only pending reads; the next refresh always goes to the server.
+const pendingRoomReads = new Map<string, Promise<unknown>>()
+function roomRead<T>(path: string): Promise<T> {
+  const key = `${authToken()}:${path}`
+  const pending = pendingRoomReads.get(key)
+  if (pending) return pending as Promise<T>
+  const started = request<T>(path).finally(() => {
+    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
+  })
+  pendingRoomReads.set(key, started)
+  return started
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -306,6 +322,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
+    if (method !== 'GET') pendingRoomReads.clear()
     return envelope.data
   }
 }
@@ -621,7 +638,7 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
@@ -809,10 +826,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),
@@ -867,6 +893,30 @@ export type AgentTypeOptions = Record<string, AgentFieldOptions>
 
 export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
   return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
+}
+
+// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
+// 旧 UI 是 agent 上选模型反推池；现在主线读项目默认，agent 上的模型只在派子 agent
+// 时用。这条端点给项目默认一个真正的写入口（之前只能手改数据库）。
+export interface ProjectDefaultModel {
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
+  choices: AgentFieldChoice[]
+  can_manage: boolean
+}
+
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
+
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
 }
 
 // Built-in starting configurations, copied only when creating an agent.
@@ -1108,6 +1158,8 @@ export function deleteLibraryFile(projectId: string, path: string): Promise<{ de
 export interface ProjectArtifact {
   id: string
   name: string
+  /** 一句话：这是什么东西、给谁的。交付时写下，没人写过时是空串。 */
+  about: string
   /** 交付过几次。0 = 有一张卡正在交付它，但还没有哪一次落地。 */
   version: number
   /** 最近一次交付被采纳的时刻（ISO），一次都还没有时为 null。 */
@@ -1735,6 +1787,12 @@ export function getPrChecks(topicId: string, taskId?: string | null): Promise<Pr
   )
 }
 
+/** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
+ *  到——他要审的正是这一份。 */
+export function cardDeliverableUrl(cardId: string): string {
+  return `${BASE}/accept-cards/${encodeURIComponent(cardId)}/deliverable`
+}
+
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
 // 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
 // head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
@@ -1878,7 +1936,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
@@ -2017,6 +2075,27 @@ export function getFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/feedback/${encodeURIComponent(feedbackId)}`)
 }
 
+/** 一页评论。不给 `parentId` 是顶层评论那一页（一页若干栋楼，每栋跟着它的前若干条
+ *  回复走），给了就是**那一栋楼里**从 `after` 往后的一段回复。
+ *
+ *  两个取法共用一条路由、一套游标，客户端不记第二种形状。`after` 是服务端发出来的
+ *  **不透明**串，原样带回来 —— 自己拼一个（「最后一条的时间戳 + id」）拼得出来，
+ *  但那是把服务端的排序规则抄了第二份，改排序的那天两边会漂开，症状是翻页漏行。
+ *
+ *  `next_cursor` 为 null 表示这一层取完了（顶层评论取完了 / 这栋楼取完了）。 */
+export function listFeedbackComments(
+  feedbackId: string,
+  opts: { after?: string | null; parentId?: string | null } = {}
+): Promise<{ items: FeedbackComment[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.after) params.set('after', opts.after)
+  if (opts.parentId) params.set('parent_id', opts.parentId)
+  const query = params.toString()
+  return request<{ items: FeedbackComment[]; next_cursor: string | null }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments${query ? `?${query}` : ''}`
+  )
+}
+
 /** 提一条反馈。**agent 不能走这条路** —— 服务端会 403；agent 的入口是提案卡。
  *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
 export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {
@@ -2050,11 +2129,27 @@ export function createFeedbackComment(
   })
 }
 
+/** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
+ *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
+ *  遍历，多算一次就会和服务端的答案漂开。 */
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
     { method: 'DELETE' }
   )
+}
+
+const commentLikeUrl = (feedbackId: string, commentId: string) =>
+  `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}/likes`
+
+/** 点赞一条评论。和 `supportFeedback` 同一个形状：回的是**写完之后的计数**，
+ *  不是增量。重复点是幂等的，所以「双击」这件事不需要客户端去防。 */
+export function likeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'POST' })
+}
+
+export function unlikeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'DELETE' })
 }
 
 /* ---- 管理端 (`/admin/feedback`) ---- */

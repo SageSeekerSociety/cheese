@@ -240,11 +240,15 @@ if [ -d /proc ] && [ -r /proc/self/environ ]; then
       candidate = (part=="claude" || index(part,"/claude/") || part ~ /\/claude$/)
     close(path)
     if (candidate) {
+      matched=0; input=0
       sub(/cmdline$/,"environ",path)
       while ((getline part < path)>0) {
-        if (part=="CHEESE_TOPIC="topic) { alive=1; print "alive"; exit }
+        if (part=="CHEESE_TOPIC="topic) matched=1
+        if (part ~ /^CLAUDE_BG_RENDEZVOUS_SOCK=.+/) input=1
       }
       close(path)
+      # A headless child can inherit the topic without hosting its input.
+      if (matched && input) { alive=1; print "alive"; exit }
     }
     RS="\n"
   }
@@ -259,8 +263,13 @@ if [ "$(uname -s)" = Darwin ]; then
   pids="$(printf '%s\n' "$processes" | awk '
     $2 == "claude" || $0 ~ /\/claude\/versions\// || $0 ~ /\/claude$/ {print $1}')"
   for pid in $pids; do
-    if ps eww -p "$pid" -o command= 2>/dev/null \
-      | grep -Eq "(^| )CHEESE_TOPIC=$topic( |$)"; then
+    if ps eww -p "$pid" -o command= 2>/dev/null | awk -v topic="$topic" '
+      { for (i=1; i<=NF; i++) {
+          if ($i=="CHEESE_TOPIC="topic) matched=1
+          if ($i ~ /^CLAUDE_BG_RENDEZVOUS_SOCK=.+/) input=1
+      } }
+      END { exit !(matched && input) }
+    '; then
       echo alive; exit 0
     fi
   done

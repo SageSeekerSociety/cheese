@@ -384,7 +384,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def ensure_topic_agent_user(self, _topic_id):
+        async def ensure_room_agent_user(self, _topic_id):
             return SimpleNamespace(id=41)
 
     class _Topics:
@@ -483,7 +483,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
         def __init__(self, _session):
             pass
 
-        async def ensure_topic_agent_user(self, _topic_id):
+        async def ensure_room_agent_user(self, _topic_id):
             return SimpleNamespace(id=41)
 
     service._session = _Session()

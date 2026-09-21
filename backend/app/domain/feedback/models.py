@@ -288,6 +288,40 @@ class FeedbackComment(UuidPk, Base):
     prototype's `stores/feedback.ts::addComment` does (`parent?.parentId ??
     parent?.id`). That keeps reads non-recursive and keeps the three comment
     layouts (flat / threaded / 楼中楼) agreeing about the same tree.
+
+    **`reply_to_handle` is second, and it exists because the fold loses it.**
+    The moment a reply-to-a-reply is re-parented onto the grandparent, the
+    browser can no longer tell whether a reply is answering the top-level
+    comment or the reply under it — 「回复 X」 is unanswerable from the tree
+    alone, and guessing it client-side means guessing per reader. So the service
+    records the handle of the comment the person actually clicked 回复 on, at
+    write time, from the row it loaded — the client never sends a name it could
+    have made up.
+
+    **Only when the thing replied to is itself a reply.** A reply aimed at the
+    楼主 already renders directly under them, so the prefix would be on every
+    single 楼内回复 and say nothing; B站 and 小红书 — the two the reviewer named
+    — draw it exactly where the flattening creates the ambiguity, and nowhere
+    else. NULL therefore means 「没有指代对象」: the comment is top-level, or it
+    answers the top-level one. Both render the same way, so the client does not
+    need to tell them apart. (Rows written before this column existed are NULL
+    for a third reason — nobody recorded their target and it cannot be
+    recovered, because `parent_id` was already folded. Also rendered the same
+    way. If a 「跳到被回复的那条」 ever ships, that is the day to add an id
+    column, and the day the third case has to become distinguishable.)
+
+    A handle rather than that id, deliberately:
+
+    * The only question anyone asks of this field is 「这条在回谁」, and the
+      answer is a name. A pointer to a comment would need that comment to still
+      be readable to say anything at all.
+    * Comment deletion is a **soft** delete (`deleted_at`), and the fold above
+      means the target may be filtered out of the thread while the reply stays
+      in it. A pointer would then be dangling exactly when the reply is most
+      confusing — 「回复 (已删除)」 — while the snapshot goes on saying who it
+      was, which is still true and still the useful half.
+    * It matches the column beside it: `author_handle` is a snapshot too, for
+      the same reason (`Feedback.session_id`'s docstring argues the same case).
     """
 
     __tablename__ = "feedback_comments"
@@ -308,11 +342,62 @@ class FeedbackComment(UuidPk, Base):
     author_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     author_is_agent: Mapped[bool] = mapped_column(Boolean, default=False)
     body: Mapped[str] = mapped_column(Text, default="")
+    #: 楼内回复回答的那个人。顶层评论恒为 NULL（它没有回复对象）。见类说明。
+    reply_to_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class FeedbackCommentLike(UuidPk, Base):
+    """One person, one like on one comment. `FeedbackSupport`, one level down.
+
+    The shape is deliberately identical to `FeedbackSupport`'s —
+    `UniqueConstraint(comment_id, author_handle)` and nothing else — because a
+    like is the same kind of fact as a support: a person, a thing, a time, and
+    repeat taps that must fold into one row. Two tables that mean the same thing
+    should be readable as the same thing.
+
+    **Why a table and not a counter column on the comment.** A counter is one
+    integer that has to be kept in step with `INSERT`/`DELETE` on a table that
+    would exist anyway, since the reader's own state (「我点过没有」) is
+    per-person and cannot be a counter. Add the per-person rows and the counter
+    becomes a second copy of a number the rows already know — the same trade
+    `FeedbackSupport` refused. `BlockReaction` is the precedent one domain over.
+
+    **Why not the emoji reactions that already exist** (`BlockReaction` carries
+    an `emoji` column): the question a comment answers is 「这条说得对不对」,
+    which has one bit. An emoji picker turns a scan of a thread into a row of
+    little pictures, and this product's accent-colour budget is one button per
+    screen (`docs/design-system.md` §0).
+
+    The unique constraint is also the concurrency answer, not just a dedupe:
+    two taps racing each other both try to insert, the database refuses the
+    loser, and the write path swallows that into the same answer a repeat tap
+    gets (`repositories.add_comment_like`).
+    """
+
+    __tablename__ = "feedback_comment_likes"
+    __table_args__ = (
+        UniqueConstraint(
+            "comment_id", "author_handle", name="uq_feedback_comment_like"
+        ),
+    )
+
+    #: Covered by `uq_feedback_comment_like`, which leads with this column: every
+    #: query that reads it (the page's counts, the viewer's own state) constrains
+    #: it, and a bare single-column index beside the constraint is a second index
+    #: for the same reader.
+    comment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("feedback_comments.id", ondelete="CASCADE")
+    )
+    #: Same reason, second column of the same constraint.
+    author_handle: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
 

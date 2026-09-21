@@ -28,7 +28,7 @@ import {
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import { agentKey, memoryCountsByHandle } from '@/lib/projectAgents'
+import { memoryCountsByHandle } from '@/lib/projectAgents'
 import { relTime } from '@/lib/relTime'
 
 defineOptions({ name: 'AgentTeamSettings' })
@@ -145,8 +145,8 @@ function openEdit(agent: ProjectAgent) {
 const settingDefault = ref<string | null>(null)
 
 async function makeDefault(agent: ProjectAgent) {
-  if (agent.is_default || !agent.id) return
-  settingDefault.value = agentKey(agent)
+  if (agent.is_default) return
+  settingDefault.value = agent.id
   actionError.value = null
   try {
     await setProjectDefaultAgent(props.projectId, { instance_id: agent.id })
@@ -164,7 +164,7 @@ async function makeDefault(agent: ProjectAgent) {
 
 async function confirmDeactivate() {
   const agent = deactivateTarget.value
-  if (!agent?.id) return
+  if (!agent) return
   deactivating.value = true
   actionError.value = null
   try {
@@ -238,7 +238,7 @@ async function confirmDeactivate() {
         <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">新建队友</v-btn>
       </div>
 
-      <v-card v-for="a in agents" :key="agentKey(a)" class="mb-3 pa-4" variant="outlined">
+      <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="d-flex align-center">
           <UserAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
           <div class="min-w-0">
@@ -254,21 +254,13 @@ async function confirmDeactivate() {
             v-if="!a.is_default && a.is_active !== false"
             variant="text"
             size="small"
-            :loading="settingDefault === agentKey(a)"
-            :disabled="!a.id"
+            :loading="settingDefault === a.id"
             @click="makeDefault(a)"
           >
             设为默认
           </v-btn>
           <v-btn variant="text" size="small" @click="openEdit(a)">编辑</v-btn>
-          <v-btn
-            v-if="a.is_active !== false"
-            variant="text"
-            size="small"
-            color="error"
-            :disabled="!a.id"
-            @click="deactivateTarget = a"
-          >
+          <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
             停用
           </v-btn>
         </div>
@@ -277,8 +269,8 @@ async function confirmDeactivate() {
           <button
             type="button"
             class="stat-link"
-            :aria-expanded="expanded === agentKey(a)"
-            @click="expanded = expanded === agentKey(a) ? null : agentKey(a)"
+            :aria-expanded="expanded === a.id"
+            @click="expanded = expanded === a.id ? null : a.id"
           >
             <v-icon size="14" class="mr-1">mdi-book-open-variant-outline</v-icon>
             {{ memoryCounts[a.handle] ?? 0 }} 条记忆
@@ -286,7 +278,7 @@ async function confirmDeactivate() {
         </div>
 
         <v-expand-transition>
-          <div v-if="expanded === agentKey(a)" class="memory-list mt-3">
+          <div v-if="expanded === a.id" class="memory-list mt-3">
             <div v-if="memoriesOf(a).length === 0" class="t-meta c-muted">暂无记忆</div>
             <div v-for="m in memoriesOf(a)" :key="m.id" class="memory-row">
               <span class="t-body">{{ m.content }}</span>

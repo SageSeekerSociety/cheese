@@ -222,16 +222,16 @@ async def lifespan(_: FastAPI):
             listen(scheduler, async_session_factory), name="forge events"
         )
 
-    # The openviking backend's whole failure mode is silence: a rejected key
-    # leaves extraction writing nothing, recall answering empty, and no other
-    # symptom anywhere — indistinguishable from the db backend, which also
-    # never learns on its own. So somebody has to actually call the endpoints,
-    # and boot is when: whoever just flipped MEMORY_BACKEND is reading this log
-    # right now. No-op on the db backend, and it never raises — a model vendor
-    # outage must not keep the rest of the platform from starting.
-    from app.domain.memory import endpoint_probe as memory_endpoint_probe
+    # What the platform pool offers is the gateway's answer, kept warm here so
+    # that asking for it never becomes a network call on the path that starts a
+    # turn. Until the first pass lands the catalogue serves its floor.
+    from app.api.deps import get_llm_gateway
+    from app.domain.agent import gateway_catalog
 
-    await memory_endpoint_probe.check_on_startup()
+    spawn(
+        gateway_catalog.keep_fresh(get_llm_gateway()),
+        name="gateway model catalogue",
+    )
 
     from app.core.storage import reuse_s3_connections
     from app.domain.machine.microcloud import reuse_connections
@@ -247,20 +247,6 @@ async def lifespan(_: FastAPI):
                 await job.stop()
             if hasattr(hub_runtime, "close"):
                 await hub_runtime.close()
-            # The openviking backend keeps the whole memory tree in one embedded
-            # instance (AGFS + vector index) under openviking_data_dir. Nothing
-            # else owns its lifecycle, so a redeploy would tear the process down
-            # mid-write; closing it here is what makes the data on that volume a
-            # consistent thing to come back to. No-op on the db backend.
-            if settings.memory_backend == "openviking":
-                try:
-                    from app.domain.memory.openviking_store import get_runtime
-
-                    await get_runtime().close()
-                except Exception:  # noqa: BLE001 — shutdown must still finish
-                    get_logger("cheesex.runtime").exception(
-                        "openviking shutdown failed"
-                    )
 
 
 # Route modules that failed to import this boot. Read by /healthz so a partially
@@ -404,9 +390,6 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
-    # 记忆整理: the topic is the turn that is SPEAKING; which pools it may
-    # reorganize is derived from it server-side (memory/dream.py::dream_pools).
-    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/memory/dream$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.

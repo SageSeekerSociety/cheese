@@ -12,7 +12,11 @@ import uuid
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import session_auth_headers, session_token
+from tests.integration.conftest import (
+    room_agent_seat,
+    session_auth_headers,
+    session_token,
+)
 
 
 def _project(client, name: str = "Mailbox") -> str:
@@ -515,7 +519,12 @@ def test_creating_with_a_scoped_token_works(client):
     tid = _topic(client, pid)
     for token, body in (
         (
-            mint_scoped_token(project_id=pid, topic_id=tid, access_scope="project"),
+            mint_scoped_token(
+                project_id=pid,
+                topic_id=tid,
+                access_scope="project",
+                agent_handle=room_agent_seat(client, tid),
+            ),
             _create_body(),
         ),
         (

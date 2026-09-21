@@ -81,6 +81,16 @@ class Notification(Base):
     )
     finalized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+    #: 这一行是哪一笔投递送来的（`delivery/ledger.py` 的去重键，全表唯一）。
+    #:
+    #: 「恰好一次」靠的就是它：一次发送在回写 `sent_at` 之前崩掉，补发会把同一笔再
+    #: 发一遍，插入撞上这个唯一约束，收件人手里仍然只有一条。NULL 是还没走账本的那
+    #: 些调用点（社交通知），Postgres 的唯一索引不认为两个 NULL 相等，所以它们之间
+    #: 互不排斥。
+    delivery_key: Mapped[str | None] = mapped_column(
+        String(length=160), nullable=True, unique=True
+    )
+
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(

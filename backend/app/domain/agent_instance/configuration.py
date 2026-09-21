@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import (
     DEFAULT_HARNESS,
     HARNESSES,
@@ -23,7 +24,11 @@ from app.domain.agent.harness import (
     harness_name,
     known_harness,
 )
-from app.domain.agent.market import subscription_model_ids, subscription_model_listings
+from app.domain.agent.market import (
+    TIER_INCLUDED,
+    subscription_model_ids,
+    subscription_model_listings,
+)
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 
@@ -62,21 +67,24 @@ def model_choices(project_settings: dict | None) -> list[dict]:
         if settings.subscription_enabled
         else []
     )
+    # The pool's models come from the gateway, which is the only thing that
+    # knows: it needs a route and a price to serve one at all, so a list kept
+    # here could only ever be a second copy drifting out of step with the first.
     choices.extend(
         {
-            "id": model,
-            "label": label,
+            "id": item.id,
+            "label": item.label,
             "description": "平台模型池",
-            "default": not subscription_default and model == settings.agent_model,
+            "default": not subscription_default and item.id == settings.agent_model,
             "supply": GATEWAY,
+            # The pool's models are 档位 `included`: the gateway only offers what
+            # it can bill (`gateway_catalog.offerable`), and what they cost the
+            # project is already capped by the project key's `max_budget`. The
+            # tiers a policy gates on are about spend a budget does NOT cap —
+            # subscription quota, and a machine that belongs to somebody else.
+            "tier": TIER_INCLUDED,
         }
-        for model, label in dict.fromkeys(
-            [
-                (settings.agent_model, settings.agent_model),
-                ("deepseek-flash", "DeepSeek V4.1 Flash"),
-                ("glm-5.2", "GLM-5.2"),
-            ]
-        )
+        for item in gateway_catalog.offerable()
     )
     choices = list({item["id"]: item for item in choices}.values())
     # Models an operator named for a harness that brings its own list, and that
@@ -96,8 +104,21 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "description": "平台模型池",
                 "default": False,
                 "supply": GATEWAY,
+                "tier": TIER_INCLUDED,
             }
         )
+    # 项目级默认模型：项目 settings 里显式写一个**目录里有的**名字，就把对应的
+    # 那条标 default=True，其余全部清掉。没写、或写了个目录里没有的名字（历史
+    # 数据），就保留上面按部署兜底算出来的 default（订阅部署→订阅 sonnet；否则
+    # →settings.agent_model）。这条是 #1365 之后主线唯一能拿到「项目想用哪个模型」
+    # 的地方——主线不是一条活，它读 binding.resolve(None, …)，后者拿 catalog 里
+    # default=True 的那条。写进来的名字不在目录里就按没设处理，而不是让目录空掉：
+    # 空目录会让 resolve 抛「没有可用的默认模型」，把一条只是配错了的项目整条堵死。
+    chosen = (project_settings or {}).get("default_model")
+    known_ids = {item["id"] for item in choices}
+    if isinstance(chosen, str) and chosen in known_ids:
+        for item in choices:
+            item["default"] = item["id"] == chosen
     return choices
 
 

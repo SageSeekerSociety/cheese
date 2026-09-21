@@ -47,6 +47,19 @@ class DeviceOffline(RuntimeError):
         self.device_id = device_id
 
 
+class DeviceUnreachable(DeviceOffline):
+    """链路根本不在，所以这一帧一个字节都没有写出去。
+
+    和 ``DeviceOffline`` 本身的差别只有一个，而那一个决定平台事后敢不敢重做这件事：
+    这一档是**发出之前**就失败的，那台机器没见过这次调用。一次已经写进 socket 的调用
+    在等结果的时候链路断了，也是 ``DeviceOffline``（``drop_transport`` 把在飞的
+    future 全置成它）—— 那一档里那件事做没做过，这一侧不知道。
+
+    所以只有这一档能被记成 ``failed``「确定没发生」（``agent/dispatch_log.py``）。
+    一个子类，因为除此之外它和链路不在是同一件事：所有 ``except DeviceOffline`` 照旧。
+    """
+
+
 class DeviceCallError(RuntimeError):
     """The machine answered a call with a failure of its own.
 
@@ -62,6 +75,10 @@ class DeviceCallError(RuntimeError):
     A subclass, so every ``except RuntimeError`` that already waits one of
     these out keeps doing so.
     """
+
+    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
 
 
 class DeviceNotReady(DeviceCallError):
@@ -608,7 +625,8 @@ class DeviceHub:
     ) -> dict:
         device = self._device(device_id)
         if device.transport is None:
-            raise DeviceOffline(device_id)
+            # 发出之前。往下每一步都可能是「已经出去了」，所以这条分界只在这里。
+            raise DeviceUnreachable(device_id)
         identifier = trace_id or "execution-" + uuid.uuid4().hex
         if not device.executor:
             raise DeviceNotReady(
@@ -779,7 +797,12 @@ class DeviceHub:
             fut = device.call_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(DeviceCallError(msg.error))
+                    code = (
+                        msg.value.get("failure_code")
+                        if isinstance(msg.value, dict)
+                        else None
+                    )
+                    fut.set_exception(DeviceCallError(msg.error, failure_code=code))
                 else:
                     fut.set_result(msg.value)
             return

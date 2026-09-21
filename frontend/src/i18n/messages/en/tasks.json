@@ -1,4 +1,9 @@
 {
+  "preview": {
+    "unavailable": "App preview unavailable",
+    "appUnavailable": "The preview connection is active, but the app is not responding. Ask Cheese to check whether the app is running.",
+    "connectionUnavailable": "The preview connection has not been established or has disconnected. Cheese may still be working. Check its status in Live; this panel updates automatically when the connection returns."
+  },
   "artifactComparison": {
     "title": "Compare versions",
     "before": "Base version",

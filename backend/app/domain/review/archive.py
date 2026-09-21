@@ -139,7 +139,7 @@ async def close_cards_for_archived_topic(
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="cheese",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=f"话题归档，平台停止跟进 PR #{card.pr_number}",
             kind=BlockKind.event,
             meta={
