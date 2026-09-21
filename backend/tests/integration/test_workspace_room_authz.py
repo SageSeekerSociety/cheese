@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.workspace.textfile import content_version
+from app.domain.textfile import content_version
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_file_panel_safety import _put, _worktree

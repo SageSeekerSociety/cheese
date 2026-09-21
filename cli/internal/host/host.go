@@ -6,7 +6,8 @@
 //     rides),
 //   - through the screen's own rendezvous socket, where a prompt is enqueued as
 //     human-origin input without passing through the terminal at all,
-//   - and by staging files into the screen's workspace.
+//   - and by staging files under the platform's own footprint on this machine,
+//     which is where a server-sent file goes and the only place it may go.
 //
 // The host wires those together and ascribes no meaning to any of it; all
 // behavior lives in the server.
@@ -31,6 +32,7 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
@@ -236,8 +238,10 @@ func (h *Host) onMsg(m link.Msg) {
 			go h.serveCall(m, s)
 		}
 	case "file.put":
+		// The screen still has to exist: the ack is what keeps the prompt from
+		// racing the bytes, and there is nothing to keep it behind otherwise.
 		if s := h.session(m.Sid); s != nil {
-			go h.putFile(m, s)
+			go h.putFile(m)
 		} else {
 			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
 		}
@@ -500,19 +504,25 @@ const maxScreenFileBytes = 10 << 20
 // putFile stages an uploaded image before its @path is submitted over rendezvous.
 // The acknowledgement is the ordering boundary: the prompt cannot race ahead of
 // the bytes on a remote device.
-func (h *Host) putFile(m link.Msg, s *sess) {
+//
+// It lands under the platform's footprint on this machine and nowhere else. The
+// server sends an absolute, $HOME-anchored destination rather than a path
+// relative to the screen's work directory, because that work directory is the
+// user's own checkout and the platform does not put files in it: one staged
+// there is an untracked file in a repository whose owner never added it, and
+// which `cheese uninstall` would walk past. The reply carries the resolved
+// absolute path, which is what the prompt @-mentions — this machine's $HOME is
+// the server's to ask for, never to guess.
+func (h *Host) putFile(m link.Msg) {
 	reply := func(value any, errStr string) {
 		_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
 	}
-	workDir, err := resolveScreenWorkDir(s.workDir)
-	if err == nil {
-		err = writeScreenFile(workDir, m.Path, m.Data)
-	}
+	landed, err := writeFootprintFile(m.Path, m.Data)
 	if err != nil {
 		reply(nil, fmt.Sprintf("file.put: %v", err))
 		return
 	}
-	reply(map[string]any{"ok": true, "path": m.Path}, "")
+	reply(map[string]any{"ok": true, "path": landed}, "")
 }
 
 func resolveScreenWorkDir(workDir string) (string, error) {
@@ -534,46 +544,56 @@ func resolveScreenWorkDir(workDir string) (string, error) {
 	return filepath.Clean(workDir), nil
 }
 
-func writeScreenFile(workDir, wirePath, encoded string) error {
+// writeFootprintFile writes one server-sent file under this machine's footprint
+// root and answers with where it landed.
+//
+// The wire path is $HOME-anchored and must name something inside
+// $HOME/<place.Root>/ — the one directory the platform owns here, and the
+// one `cheese uninstall` removes. Anything else is refused rather than written:
+// the destination the server builds is checked on its side too, and a writer
+// that trusts the sender is a writer that will one day put a file in a user's
+// repository because some caller built the path wrong.
+func writeFootprintFile(wirePath, encoded string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
 	clean := path.Clean(wirePath)
-	if path.IsAbs(clean) || clean == "." || clean == "uploads" ||
-		!strings.HasPrefix(clean, "uploads/") || strings.HasPrefix(clean, "../") {
-		return fmt.Errorf("path must be a file under uploads/")
+	prefix := "$HOME/" + place.Root + "/"
+	if !strings.HasPrefix(clean, prefix) || strings.Contains(clean, "/../") {
+		return "", fmt.Errorf("path must be under $HOME/%s/", place.Root)
 	}
 	if len(encoded) > base64.StdEncoding.EncodedLen(maxScreenFileBytes) {
-		return fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
+		return "", fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
 	}
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return fmt.Errorf("invalid base64: %w", err)
+		return "", fmt.Errorf("invalid base64: %w", err)
 	}
 	if len(raw) == 0 || len(raw) > maxScreenFileBytes {
-		return fmt.Errorf("invalid file size %d", len(raw))
+		return "", fmt.Errorf("invalid file size %d", len(raw))
 	}
-	root, err := filepath.Abs(workDir)
-	if err != nil {
-		return err
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return fmt.Errorf("resolve work directory: %w", err)
-	}
-	target := filepath.Join(root, filepath.FromSlash(clean))
+	root := filepath.Join(home, place.Root)
+	target := filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(clean, "$HOME/")))
 	parent := filepath.Dir(target)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return err
+		return "", err
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve footprint root: %w", err)
 	}
 	realParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
-		return err
+		return "", err
 	}
-	rel, err := filepath.Rel(root, realParent)
+	rel, err := filepath.Rel(realRoot, realParent)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("upload path escapes screen workspace")
+		return "", fmt.Errorf("upload path escapes the platform footprint")
 	}
 	tmp, err := os.CreateTemp(realParent, ".cheese-upload-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
@@ -585,9 +605,10 @@ func writeScreenFile(workDir, wirePath, encoded string) error {
 		err = closeErr
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.Rename(tmpPath, filepath.Join(realParent, filepath.Base(target)))
+	landed := filepath.Join(realParent, filepath.Base(target))
+	return landed, os.Rename(tmpPath, landed)
 }
 
 // deliverPrompt hands one turn's prompt to the session over its rendezvous

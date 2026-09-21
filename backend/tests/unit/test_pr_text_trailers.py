@@ -11,9 +11,9 @@ person. `pr_text` is pure, so the caller resolves the humans
 
 import uuid
 
+from app.domain.repository import identity
 from app.domain.review import pr_text
 from app.domain.topic.models import Topic
-from app.domain.workspace import identity
 
 ALICE = identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")
 BOB = identity.GitIdentity("Bob", "42+bob@users.noreply.github.com")

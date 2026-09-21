@@ -76,6 +76,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
+from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
 from app.domain.preview.office import (
@@ -98,6 +99,7 @@ from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
+from app.domain.textfile import content_version
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
@@ -117,8 +119,6 @@ from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.webhook import service as webhook_service
-from app.domain.workspace import service as ws
-from app.domain.workspace.textfile import content_version
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -2211,13 +2211,13 @@ async def _source_bytes(
     had no view but a raw binary diff.
     """
     if task is not None or source == "committed":
-        if ws.library_name(path) is not None:
+        if library.library_name(path) is not None:
             raise ValidationError("资料库里的文件不属于某个任务分支")
-        from app.domain.workspace.forge_files import ProjectFiles
+        from app.domain.repository.forge_files import ProjectFiles
 
         data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
         return data
-    return ws.read_attachment(project_id, room_id, path)
+    return library.read_attachment(project_id, room_id, path)
 
 
 async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
@@ -2292,7 +2292,7 @@ async def show_in_room(
             raise ValidationError(
                 f"产物太大（上限 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB）"
             )
-        ws.write_room_file(place.project_id, topic_id, path, raw)
+        library.write_room_file(place.project_id, topic_id, path, raw)
     block = await BlockRepository(db).add(
         project_id=place.project_id,
         topic_id=topic_id,  # the place; `add` splits it
@@ -2497,7 +2497,7 @@ async def decide_document_revisions(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     clean = _clean_artifact_path(body.get("path") or "")
-    if ws.library_name(clean) is not None:
+    if library.library_name(clean) is not None:
         # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
@@ -2525,13 +2525,13 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
     if task is not None:
-        from app.domain.workspace.forge_files import ProjectFiles
+        from app.domain.repository.forge_files import ProjectFiles
 
         await ProjectFiles(db, topic.project_id, task).write_bytes(
             clean, made, expected
         )
     else:
-        ws.write_room_file(topic.project_id, topic_id, clean, made)
+        library.write_room_file(topic.project_id, topic_id, clean, made)
     return ok(
         {
             "path": clean,
@@ -2570,7 +2570,7 @@ def _document_bytes(
         except (ValueError, binascii.Error) as exc:
             raise ValidationError("content_b64 不是合法的 base64") from exc
     else:
-        raw = ws.read_room_file(project_id, topic_id, path)
+        raw = library.read_room_file(project_id, topic_id, path)
     if len(raw) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，处理不了"
@@ -2618,7 +2618,7 @@ async def get_preview(
             "kind": "file",
             "url": preview_origin(topic_id) + "/",
             "version": await asyncio.to_thread(
-                ws.preview_file_version, place.project_id, topic_id, art.content
+                library.preview_file_version, place.project_id, topic_id, art.content
             ),
             "path": art.content,
             "mime": art.mime_type,
@@ -2649,20 +2649,22 @@ async def preview_file(
     await _actor_in_place(resolver, place)
     if path:
         return ok(
-            ws.read_attachment_text(
+            library.read_attachment_text(
                 place.project_id, topic_id, _clean_artifact_path(path)
             )
         )
     art = await BlockRepository(db).latest_artifact(place.room_id)
     if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
         raise NotFoundError("No file preview")
-    return ok(ws.read_room_text_file(place.project_id, topic_id, art.content))
+    return ok(library.read_room_text_file(place.project_id, topic_id, art.content))
 
 
 # ---- Chat attachments -----------------------------------------------------
-# 用户挑出来或拖进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，
+# 用户挑出来或拖进来的文件落进项目的资料库 (`library.write_library_file`)，按原名寻址，
 # 所有房间都能引用。消息里带的就是它自己那个地址 `library/<名字>`——**不拷贝**：
-# 一份资料在这个项目里只有一份字节，芝士 在工作目录的 library/ 下 Read 它。
+# 一份资料在这个项目里只有一份字节。送上机器的那一份落在会话 home 的
+# `attachments/` 下（`agent/place.py`），不落在检出目录里，芝士 收到的是机器报回来
+# 的绝对路径。
 #
 # 剪贴板里贴进来的那张图**不进资料库**：资料库的前提是「名字就是身份」，而剪贴板里
 # 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
@@ -2718,10 +2720,10 @@ async def upload_attachment(
     if library_path is not None:
         name = _clean_artifact_path(library_path)
         # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
-        data = ws.read_library_file(topic.project_id, name)
+        data = library.read_library_file(topic.project_id, name)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
-        return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
+        return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
     else:
         assert file is not None
         mime = (
@@ -2745,11 +2747,11 @@ async def upload_attachment(
             name += ext
         if origin == "clipboard":
             path = f"uploads/{uuid.uuid4().hex}/{name}"
-            ws.write_room_file(topic.project_id, topic_id, path, data)
+            library.write_room_file(topic.project_id, topic_id, path, data)
             return ok({"path": path, "mime": mime, "bytes": len(data)})
         # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
-        name = ws.write_library_file(topic.project_id, name, data)
-    return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
+        name = library.write_library_file(topic.project_id, name, data)
+    return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
 
 
 @router.get("/{topic_id}/attachments/raw")

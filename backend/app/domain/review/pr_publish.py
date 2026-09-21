@@ -549,9 +549,9 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     upstream, and — the ordinary case, on every tick — a branch with nothing on
     it. A newly created task has no changes to review until its first commit.
     """
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
 
     project_id = task.project_id
     client = await proposal_client(project_id, session)
@@ -624,10 +624,10 @@ async def _pr_text(
     验收卡即合并本 PR" — is gone. It described the platform's workflow to people
     who were already inside it, while the reviewer opening the PR on GitHub
     wanted to know what changed and why."""
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
 
     place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)

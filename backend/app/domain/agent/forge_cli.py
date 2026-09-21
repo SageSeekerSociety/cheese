@@ -273,6 +273,8 @@ def fj_path_transport(destination):
                         "content-type",
                         "content-length",
                         "content-encoding",
+                        # fj requires this header even for a one-page list.
+                        "x-total-count",
                     ):
                         self.send_header(key, value)
                 self.end_headers()

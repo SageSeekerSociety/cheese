@@ -15,9 +15,9 @@ import uuid
 import pytest
 
 from app.domain.identity.handles import topic_agent_handle
+from app.domain.repository import identity
 from app.domain.review import pr_text
 from app.domain.topic.models import Topic
-from app.domain.workspace import identity
 
 
 def _parse(message: str) -> list[str]:

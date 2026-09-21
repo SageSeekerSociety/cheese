@@ -440,7 +440,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     """
     from app.domain.project import forge
     from app.domain.project.models import Project, ProjectForge
-    from app.domain.workspace import forge_files
+    from app.domain.repository import forge_files
     from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))

@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 
 @pytest.fixture(autouse=True)

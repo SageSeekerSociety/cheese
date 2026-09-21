@@ -263,7 +263,13 @@ async def forge_transport(
             **{
                 key: value
                 for key, value in upstream.headers.items()
-                if key in ("content-type", "content-encoding", "content-length")
+                if key
+                in (
+                    "content-type",
+                    "content-encoding",
+                    "content-length",
+                    "x-total-count",
+                )
             },
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",

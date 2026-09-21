@@ -3551,7 +3551,7 @@ class ChatService:
             return None
 
         async def _collect() -> _Changeset | None:
-            from app.domain.workspace.forge_files import ProjectFiles
+            from app.domain.repository.forge_files import ProjectFiles
 
             fresh = [h for h in commits if h not in known_commits]
             if not fresh:
@@ -3587,8 +3587,8 @@ class ChatService:
         summary is measured against. None when it cannot be read (see
         _HookWorkState.known_commits)."""
         try:
+            from app.domain.repository.forge_files import ProjectFiles
             from app.domain.room_task.services import TaskService
-            from app.domain.workspace.forge_files import ProjectFiles
 
             async with self._sessions() as session:
                 tasks = await TaskService(session).list_in_room(topic_id)

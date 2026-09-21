@@ -17,7 +17,6 @@ Per request:
 """
 
 import asyncio
-import base64
 import hashlib
 import inspect
 import json
@@ -37,7 +36,7 @@ from app.core.sandbox_auth import (
     scoped_token_claims,
     token_agent_handle,
 )
-from app.domain.agent import machine_launcher, provider_env
+from app.domain.agent import machine_launcher, place, provider_env
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceHub,
@@ -55,7 +54,11 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent.place import footprint_root, session_platform_dirs
+from app.domain.agent.place import (
+    CHECKOUT_DIR,
+    footprint_root,
+    session_platform_dirs,
+)
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -70,9 +73,9 @@ from app.domain.device.supply import (
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
+from app.domain.library import service as library
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
-from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
@@ -857,7 +860,7 @@ class DeviceChannel(Channel):
         changes this boundary: files cross it through git or `file.put`, never by
         translating a backend path into the device's namespace.
         """
-        return f"{device_home_dir(project_id, topic_id)}/room"
+        return f"{device_home_dir(project_id, topic_id)}/{CHECKOUT_DIR}"
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself
@@ -1855,9 +1858,16 @@ class DeviceChannel(Channel):
     ) -> tuple[list[dict], list[dict]]:
         """Copy each uploaded image onto the machine this screen runs on.
 
-        The upload landed in the backend's own worktree; a device is a different
-        filesystem, so without this the prompt's `@uploads/x.png` points at
-        nothing and 芝士 is handed a mention that resolves to no image.
+        The upload landed on the platform's own disk; a device is a different
+        filesystem, so without this the prompt's mention points at nothing and
+        芝士 is handed an @path that resolves to no image.
+
+        It lands in the session's home, NOT in the checkout the screen works in
+        (结论 49，不变量 I21b): an attachment is something the platform puts on
+        the machine, and a file the platform put in somebody's repository shows
+        up in their `git status` as an untracked file they did not add. The
+        mention is therefore the absolute path the machine answers with —
+        `place.write` is the one place that knows where that is.
 
         Per image, and never fatal. One that cannot be staged — the connector
         predates the file frame (this is real: the binary deployed on the dev
@@ -1869,36 +1879,26 @@ class DeviceChannel(Channel):
         """
         if screen.project_id is None or screen.topic_id is None:
             # A screen adopted without its coordinates cannot be told which
-            # worktree the file came from. Say so rather than send a mention
-            # that resolves to nothing.
+            # room the file came from. Say so rather than send a mention that
+            # resolves to nothing.
             return [], list(images)
+        home = device_home_dir(screen.project_id, screen.resource_id or screen.topic_id)
         staged: list[dict] = []
         lost: list[dict] = []
         for image in images:
             path = str(image.get("path") or "")
             try:
-                data = ws.read_attachment(screen.project_id, screen.topic_id, path)
-                await self._hub.put_file(
-                    screen.device_id,
-                    screen.sid,
-                    path,
+                data = library.read_attachment(screen.project_id, screen.topic_id, path)
+                landed = await place.write(
                     data,
+                    home=home,
+                    name=path,
+                    hub=self._hub,
+                    device_id=screen.device_id,
+                    screen=screen.sid,
+                    execution_target=screen.execution_target,
                     timeout=_FILE_STAGE_TIMEOUT_S,
                 )
-                if screen.execution_target:
-                    from app.domain.agent import private_chat
-
-                    target = screen.execution_target
-                    if target:
-                        await private_chat.control(
-                            target,
-                            {
-                                "subtype": "stage_file",
-                                "path": path,
-                                "data": base64.b64encode(data).decode(),
-                            },
-                            hub=self._hub,
-                        )
             except Exception as exc:  # noqa: BLE001 — an image is not the message
                 # `str(exc)` is EMPTY for the failure this actually hits — a bare
                 # `TimeoutError` from a connector too old to know `file.put`, which
@@ -1914,7 +1914,7 @@ class DeviceChannel(Channel):
                 )
                 lost.append(image)
             else:
-                staged.append(image)
+                staged.append({**image, "path": landed})
         return staged, lost
 
     async def send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:

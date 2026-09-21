@@ -157,8 +157,8 @@ async def task_workspace(
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError("这个项目还没有代码仓库")
+    from app.domain.repository import identity
     from app.domain.topic.services import TopicService
-    from app.domain.workspace import identity
 
     room = await TopicService(db).get_or_404(task.room_id)
     who = await identity.attribution(db, room, task_id=task.id)

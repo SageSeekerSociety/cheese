@@ -45,7 +45,7 @@ from app.api.deps import get_chat_service  # noqa: E402
 from app.api.routes import sandbox as sandbox_routes  # noqa: E402
 from app.core.sandbox_auth import mint_scoped_token  # noqa: E402
 from app.domain.agent.harness.claude_code import append_event, hook_router  # noqa: E402
-from app.domain.workspace import service as ws  # noqa: E402
+from app.domain.repository import service as ws  # noqa: E402
 
 # What a Bash tool call sends — the hook shape that dominates a turn.
 HOOK = {
