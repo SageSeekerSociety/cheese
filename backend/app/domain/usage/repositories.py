@@ -121,6 +121,10 @@ class UsageRepository:
 
         空 `model` 的行跳过 —— 那种行说的是「有活动，但不知道花了多少」
         （`add(metered=False)`），它不足以说出用的是哪个模型。
+
+        `DISTINCT ON` 让库只发回每条活一行。计量代理是每一次 `/v1/messages` 写
+        一行（见本文件开头），一条跑了半天的活就是上千行；把整个房间的用量行全
+        取回内存、再靠字典覆盖留下最后一条，刷一次看板就要搬一遍这些行然后扔掉。
         """
         if not task_ids:
             return {}
@@ -131,7 +135,8 @@ class UsageRepository:
                     ResourceUsage.task_id.in_(task_ids),
                     ResourceUsage.model != "",
                 )
-                .order_by(ResourceUsage.task_id, ResourceUsage.created_at)
+                .distinct(ResourceUsage.task_id)
+                .order_by(ResourceUsage.task_id, ResourceUsage.created_at.desc())
             )
         ).all()
         return {task_id: model for task_id, model in rows if task_id is not None}

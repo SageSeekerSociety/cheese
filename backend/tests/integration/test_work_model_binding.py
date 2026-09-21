@@ -1,11 +1,17 @@
 """模型绑在活上：一轮怎么解析，卡上怎么显示。
 
-这里是不变量 I17 的 ①②③ 三条（④ 在 `unit/test_device_provider.py`）：
+不变量 I17 的 ②③ 在这里（④ 在 `unit/test_device_provider.py`）：
 
-  ① 改一条活的绑定，下一轮生效而当前轮不变
   ② 房间主线的模型在一轮里改不动
   ③ 卡上显示的模型 = 这条活 `usage` 里最后一行的 `model`，而 `tasks` 上没有
      任何一列存「显示什么」
+
+**① 「改一条活的绑定，下一轮生效」今天没有落点，本 PR 不声称验过它。**「这条活的
+绑定」要生效，得有一个「派这条活」的时刻去读它，而平台今天根本没有派活的路径：
+一条活是房间会话里的一个子 agent，由 agent 自己起。那个时刻在 P33（骨架的子
+agent 四条硬性要求，依赖本条）出生，读侧跟着它一起落。写侧同理 —— 今天没有任何
+接口或界面能改一条活的绑定，下面的 `_rebind` 直接改 ORM 对象。所以这里验的是
+**读**这一级：绑定是读的时候解析的，没有一处把它写死。
 """
 
 import uuid
@@ -131,17 +137,16 @@ async def test_editing_the_agent_does_not_move_the_rooms_main_line(
     assert later["model"] == in_flight["model"]
 
 
-# —— ① 改一条活的绑定，下一轮生效而当前轮不变 ————————————————————
+# —— 绑定是读的时候解析的，没有一处把它写死 ————————————————————
 
 
 @pytest.mark.anyio
-async def test_rebinding_a_work_reaches_the_next_read_not_the_turn_in_flight(
+async def test_rebinding_a_work_shows_on_the_next_read_of_its_card(
     client, tmp_path, subscribed
 ):
-    """绑定是**读的时候**解析的，没有一处把它写死。
+    """改一条活的绑定，下一次读它的卡就换了 —— 没有一处把解析结果写下来。
 
-    所以改一条活的绑定，下一次读它就换了；而已经开跑的那一轮拿的是开轮那一刻的
-    快照，改不动。
+    而房间主线已经开跑的那一轮拿的是开轮那一刻的快照，改不动。
     """
     ids = await _room(client)
     in_flight, _route = await _chat(client, tmp_path)._model_kwargs(
@@ -157,16 +162,30 @@ async def test_rebinding_a_work_reaches_the_next_read_not_the_turn_in_flight(
 
 
 @pytest.mark.anyio
-async def test_a_work_bound_to_a_model_the_project_cannot_use_is_refused(
+async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(
     client, subscribed
 ):
-    """答不出就拒绝并说出来，不悄悄退回项目默认（I27）。"""
+    """一条活绑了本项目用不了的模型，卡上照原样写出那个名字，整屏照常读得出来。
+
+    在渲染里拒绝，坏掉的不是那一张卡，是这个房间的所有卡一起 422 —— 而这一屏正是
+    唯一能看见、进而改掉这条绑定的地方，等于把出口一起关上。触发它不需要有人手写
+    数据库：项目把供给从订阅改成网关，或者运维从目录里摘掉一个型号，先前绑上去的
+    那批活立刻全部解析不出来。拒绝留在执行路径上（`binding.resolve`，I27）。
+    """
     ids = await _room(client)
+    async with client.test_factory() as session:
+        session.add(
+            Task(project_id=ids["project"], room_id=ids["room"], title="另一条活")
+        )
+        await session.commit()
     await _rebind(client, ids, "no-such-model")
 
-    response = client.get(f"/topics/{ids['room']}/tasks/{ids['work']}")
-    assert response.status_code == 422, response.text
-    assert "no-such-model" in response.text
+    board = client.get(f"/topics/{ids['room']}/tasks")
+    assert board.status_code == 200, board.text
+    shown = {item["title"]: item["model"] for item in board.json()["data"]["data"]}
+    assert shown == {"一条活": "no-such-model", "另一条活": "sonnet"}
+
+    assert _card(client, ids)["model"] == "no-such-model"
 
 
 # —— ③ 卡上的模型从用量算，不存状态列 ————————————————————————————

@@ -89,7 +89,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task import presentation
+from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
@@ -561,7 +561,10 @@ async def list_room_tasks(
     # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
     # `tasks` 上没有一列存它。
     spent = await UsageRepository(db).last_model_by_task(thread_ids)
+    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
+    # 构造几百遍。
     project = await ProjectRepository(db).get(topic.project_id)
+    choices = binding.catalog(project.settings if project else None)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -574,9 +577,7 @@ async def list_room_tasks(
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
                 "model": presentation.card_model(
-                    task,
-                    spent=spent.get(task.id),
-                    project_settings=project.settings if project else None,
+                    task, spent=spent.get(task.id), choices=choices
                 ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
@@ -656,7 +657,7 @@ async def get_room_task(
     out["model"] = presentation.card_model(
         task,
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        project_settings=project.settings if project else None,
+        choices=binding.catalog(project.settings if project else None),
     )
     card = cards.get(task.id)
     out["card"] = (

@@ -429,6 +429,15 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
 
     RC ownership comes from the verified token's place, never the attribution
     header (which may select another topic for metering).
+
+    Claude Code's non-model control endpoints (`/api/oauth/profile`,
+    `/api/claude_code/settings`, `/api/claude_code/policy_limits`) are NOT
+    answered here: they go upstream like any other request, so a sandbox
+    running someone else's code learns the platform subscription account's uuid
+    and email and its org uuid from the reply. Answering them locally for every
+    RC session is decision 46's second half, and that decision asks for it to be
+    measured against a real Claude Code process first (P34's acceptance), which
+    is why it is not a line added here in passing.
     """
     pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
     token, claims = pinned if pinned else ("", None)

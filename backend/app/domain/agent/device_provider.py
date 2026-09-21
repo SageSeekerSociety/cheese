@@ -1385,18 +1385,27 @@ class DeviceChannel(Channel):
             # for a model it does not serve. Dropped, not overridden, because
             # subscription_provider only ADDS keys.
             #
-            # And nothing here puts one back. Which model a request runs on is
-            # decided at one control point — admission, when the request
-            # reaches the metering proxy (结论 46) — reading the binding on the
-            # card. A model nailed in here would be a second declaration of the
-            # same thing, written once at process birth and never revisited,
-            # with nothing anywhere saying which of the two wins.
+            # Which model a request runs on is decided at one control point —
+            # admission, when the request reaches the metering proxy (结论 46)
+            # — reading the binding. What the launch env still carries is not a
+            # second declaration of that: it is how the resolved model reaches
+            # the REQUEST BODY, which is the only place LiteLLM reads a model
+            # name from, and the proxy leaves the body alone (`_route_to_gateway`
+            # swaps the host and the credential, nothing else).
             #
-            # `claude --model` (the harness's own CLAUDE_MODEL, further down
-            # this launch) is not that second declaration: it is what the CLI
-            # puts in the request body, which is how a gateway-pool project
-            # reaches the model it picked. It leaves when the proxy rewrites
-            # that name on the way to LiteLLM.
+            # So a gateway-pool project needs the name in the body, and the CLI
+            # writes it from two sources: `claude --model` (CLAUDE_MODEL, set
+            # further down this launch) for the main reply, and the three alias
+            # defaults below for everything the CLI addresses by family instead
+            # — title generation, file suggestions, and every subagent, which
+            # is every piece of work. Drop those three and a gateway project's
+            # subagents ask LiteLLM for `claude-3-5-haiku-*`, which it does not
+            # serve.
+            #
+            # All four say the same thing and leave together, on the day the
+            # proxy rewrites the model name in the body on its way to LiteLLM
+            # (结论 46「要做的两件」, P34). Until then, four keys carrying one
+            # answer beats three deleted and one kept.
             merged = {**(env or {})}
             for k in (
                 "ANTHROPIC_BASE_URL",
@@ -1407,6 +1416,12 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            if launch.model and not launch.model.startswith("claude-"):
+                # A subscription model arrives here as its full Claude name, and
+                # the CLI's own alias defaults already point at Claude models,
+                # so only the gateway case has anything to say.
+                for family in ("HAIKU", "SONNET", "OPUS"):
+                    merged[f"ANTHROPIC_DEFAULT_{family}_MODEL"] = launch.model
             merged["CHEESE_REMOTE_CONTROL"] = "1"
             # The tunnel's CONNECT credential must carry the same place and RC
             # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.

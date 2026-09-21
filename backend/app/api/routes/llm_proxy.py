@@ -34,6 +34,7 @@ from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
     NotFoundError,
+    ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
@@ -154,7 +155,16 @@ async def admission(
     # whose model cannot be resolved is refused and told so, never quietly
     # served from the other pool.
     project = await ProjectRepository(db).get(project_uuid)
-    pool = binding.resolve(None, project.settings if project else None).supply
+    try:
+        pool = binding.resolve(
+            None, binding.catalog(project.settings if project else None)
+        ).supply
+    except ValidationError as exc:
+        # 答不出就拒绝并说出来（I27），而不是把这个异常变成一个 422。准入只答
+        # allow / refuse：代理对 admission 的 HTTP 错误 fail-open，而 fail-open
+        # 有方向 —— 它回落到订阅池。一个网关池的项目解析不出模型时收到 422，等于
+        # 被悄悄送去订阅池跑，正是这条路径存在的理由要杀掉的那次静默换池。
+        return ok({"allow": False, "reason": str(exc), "supply": {}})
     supply: dict = {"pool": pool}
     if pool == GATEWAY and decision.allow:
         # Minted lazily and cached on the project; the proxy never holds a

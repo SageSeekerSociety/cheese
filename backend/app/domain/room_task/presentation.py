@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import resolve
 from app.domain.room_task.models import Task, TaskStatus
@@ -262,7 +263,7 @@ def facts_for_room(
     )
 
 
-def card_model(task: Task, *, spent: str | None, project_settings: dict | None) -> str:
+def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> str:
     """卡上写哪个模型。
 
     **花过就写它真花的那个** —— `spent` 是 `usage` 里这条活最后一行的 `model`，
@@ -274,10 +275,22 @@ def card_model(task: Task, *, spent: str | None, project_settings: dict | None) 
     上是 B，没有任何地方能说出是谁写错的。和这一层其余所有显示状态同一条规矩
     —— 读的时候从已有事实算。
 
-    `spent` 从外面喂进来，和 `awaiting_answer` 一样：它要查一次库，而这一层不碰
-    I/O（见模块开头）。
+    **绑坏了的照原样写出来，不在这里拒绝。** 一条活可以绑上一个项目后来用不了的
+    模型 —— 项目把供给从订阅改成网关，或者运维从目录里摘掉一个型号，都会让先前
+    绑上去的那批活解析不出来。这一屏是整个房间的看板，也是唯一能看见、进而改掉
+    这条绑定的地方：在这里抛出去，坏掉的不是那一张卡，是这个房间的所有卡一起读
+    不出来，连带把改回来的入口也关上。拒绝留在执行路径上（`binding.resolve` 自己，
+    I27）。
+
+    `spent` 和 `choices` 都从外面喂进来，和 `awaiting_answer` 一样：一个要查库，
+    一个按项目算一次就够，而这一层不碰 I/O（见模块开头）。
     """
-    return spent or resolve(task, project_settings).model
+    if spent:
+        return spent
+    try:
+        return resolve(task, choices).model
+    except ValidationError:
+        return (task.model or "").strip()
 
 
 # —— 卡 ————————————————————————————————————————————————————————

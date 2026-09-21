@@ -3974,7 +3974,7 @@ class ChatService:
         #
         # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
         # 而主线正是最长、最吃缓存的那条对话。
-        bound = binding.resolve(None, project.settings)
+        bound = binding.resolve(None, binding.catalog(project.settings))
         supply = bound.supply
         model = (
             subscription_model_alias(bound.model)

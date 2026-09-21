@@ -1640,25 +1640,45 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     assert env["SOME_OTHER"] == "kept"
 
 
+# CLI 把模型名写进请求体的全部通道：主回复走 `claude --model`，标题 / 文件建议 /
+# 每一个子 agent 走 family 别名。
+_BODY_MODEL_KEYS = [
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "CLAUDE_MODEL",
+]
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2", "claude-sonnet-5"])
-async def test_the_launch_env_pins_no_model_of_its_own(monkeypatch, tmp_path, model):
-    """一个控制点（结论 46）：模型在请求经计量代理问准入的那一刻解析。
+@pytest.mark.parametrize(
+    ("model", "keys"),
+    [
+        # 走网关池：四个键说的是同一件事，所以要么都在，要么都不在。
+        ("deepseek-flash", _BODY_MODEL_KEYS),
+        ("glm-5.2", _BODY_MODEL_KEYS),
+        # 订阅模型到这里已经是 Claude 的全名，CLI 自带的别名默认本来就指着 Claude
+        # 的型号，没有要说的。
+        ("claude-sonnet-5", ["CLAUDE_MODEL"]),
+    ],
+)
+async def test_the_launch_env_says_the_model_once_and_only_into_the_body(
+    monkeypatch, tmp_path, model, keys
+):
+    """一个控制点（结论 46）：走哪个池、用哪个模型，在请求到计量代理问准入的那
+    一刻解析。启动环境里这几个键不是第二份声明，它们是**把解析出来的那个名字送
+    进请求体**的唯一通道 —— LiteLLM 只从请求体读模型名，而代理今天不改写请求体
+    （`_route_to_gateway` 只换 host 和凭据）。
 
-    启动环境里再钉一个型号，就是同一件事的第二份声明 —— 一份在卡的绑定上，随时
-    可以改；一份在进程出生时写死，之后谁也够不着。两份不一致的时候，没有任何地方
-    说得出谁赢。
-
-    唯一剩下的 `CLAUDE_MODEL` 不是这里钉的，它就是 `claude --model` 本身：走网关
-    池的项目要靠它让 LiteLLM 知道该服务哪个模型，而代理今天不改写请求体里的模型
-    名。这一句和那次改写一起走（结论 46 「要做的两件」）；在此之前这条断言锁住的
-    是「不会再多出第二个」。
+    这条断言锁的是「一共就这几个，一个不多」。它们一起消失在代理改写请求体模型名
+    的那一天（结论 46「要做的两件」，P34）。
     """
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model=model)
     assert "ANTHROPIC_BASE_URL" not in hub.env
     assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
-    assert [key for key in hub.env if key.endswith("_MODEL")] == ["CLAUDE_MODEL"]
+    assert sorted(key for key in hub.env if key.endswith("_MODEL")) == keys
+    assert all(hub.env[key] == model for key in keys)
 
 
 @pytest.mark.anyio
