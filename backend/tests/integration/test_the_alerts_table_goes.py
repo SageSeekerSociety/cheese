@@ -5,13 +5,16 @@
 遍：再搬一次接住它们，逐行核对每一条都在 `notification` 里有同一份内容，然后才
 `DROP TABLE`。
 
-三条判据，对应迁移的三步：
+四条判据，对应迁移的四步：
 
 1. **搬家前后同一个收件人看到的条数与内容一致** —— 上一次已经到手的一条不少、
    一字不差，窗口里写的那一条这一次到了。
-2. **对不上就停在那儿，不是把表删掉** —— 造一条搬完之后被改过的 alert，迁移抛错
+2. **窗口里留在已经搬过的那些行上的读、拍板、反馈，跟着过来** —— 那批行第一遍
+   搬过，所以第二遍按原 uuid 整条跳过；跳过就等于把那几笔留在原表上跟着 `DROP
+   TABLE` 一起没，而一条拍过板的决策请求会因此回到收件箱里显示待答，被再拍一次。
+3. **对不上就停在那儿，不是把表删掉** —— 造一条搬完之后被改过的 alert，迁移抛错
    点名它，表和行原样留着，收件箱一行没动。
-3. **一个收件人也算不出来的广播不算对不上** —— 它谁也没送到过，删表之后照旧没人
+4. **一个收件人也算不出来的广播不算对不上** —— 它谁也没送到过，删表之后照旧没人
    读得到，所以写进迁移日志、不挡删表；这一行随表一起消失，日志里连项目、房间、
    标题、写下的时刻一起留着，事后拿一个 uuid 是查不回来的。
 
@@ -22,6 +25,7 @@
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -29,6 +33,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from tests.integration.conftest import session_auth_headers
 from tests.integration.test_alerts_move_into_the_one_notification_table import (
     _inbox,
     _recipients_of,
@@ -79,6 +84,54 @@ def test_the_window_row_lands_and_then_the_table_goes(client):
         assert kept == rows, handle
         assert after[0]["title"] == "窗口里写的", handle
         assert len(after) == len(rows) + 1, handle
+    assert not _alerts_exists(client)
+
+
+def test_what_the_window_left_on_an_already_moved_row_comes_over(client):
+    """窗口里旧镜像在**已经搬过**的行上拍的板、按的赞、读掉的那一条，跟着过来。
+
+    这批行第一遍搬家搬过了，所以第二遍按原 uuid 整条跳过，核对那一步又只比内容
+    不比状态 —— 两道都拦不住，删表就把它们带走了。代价不是少一个已读标记：那条
+    决策请求在新那一侧 `resolved_at` 还是空的，于是它回到「等你处理的事」里显示
+    待答，人再拍一次板，房间里落第二条【决策】块。
+    """
+    pid, tid = _room(client)
+    _seed_alerts(
+        client,
+        pid,
+        tid,
+        [
+            {
+                "target": "alice",
+                "title": "要不要上",
+                "kind": "decision_request",
+                "level": "strong",
+                "payload": {"options": ["上", "再等等"]},
+                "topic": True,
+            },
+            {"target": "bob", "title": "看一眼", "topic": True},
+        ],
+    )
+    _upgrade(client)  # 上一次部署：第一遍搬家，这两条都搬过去了
+    # 窗口里旧镜像还在 `alerts` 上服务 `/alerts/{id}/resolve` 与 `/feedback`
+    _the_old_image_writes(
+        client,
+        "要不要上",
+        resolved={"options": ["上", "再等等"], "resolved_choice": "上"},
+    )
+    _the_old_image_writes(client, "看一眼", feedback="up")
+
+    _upgrade(client, DROP_MIGRATION)
+
+    decided = {row["title"]: row for row in _inbox(client, pid, "alice")}["要不要上"]
+    assert decided["resolved_at"] is not None
+    assert decided["payload"]["resolved_choice"] == "上"
+    assert decided["read"] is True
+    # 拍过板的不再挂在「等你处理的事」里 —— 挂着就会被再拍一次
+    assert "要不要上" not in [row["title"] for row in _pending(client, pid, "alice")]
+
+    seen = {row["title"]: row for row in _inbox(client, pid, "bob")}["看一眼"]
+    assert seen["feedback"] == "up"
     assert not _alerts_exists(client)
 
 
@@ -150,6 +203,46 @@ def _empty_room(client) -> tuple[str, str]:
 
     asyncio.run(_run())
     return pid, tid
+
+
+def _pending(client, pid: str, handle: str) -> list[dict]:
+    """「等你处理的事」：决策请求挂到拍板为止。"""
+    r = client.get(f"/projects/{pid}/inbox", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def _the_old_image_writes(
+    client,
+    title: str,
+    *,
+    resolved: dict | None = None,
+    feedback: str | None = None,
+) -> None:
+    """旧镜像在窗口里动了这条 alert —— 拍板写 `resolved_at` 加 `read_at` 加
+    `payload.resolved_choice`（并往房间里丢一条【决策】），按赞写 `feedback`。
+    搬过去的那一份不知道。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            if resolved is not None:
+                await s.execute(
+                    text(
+                        "UPDATE alerts SET resolved_at = now(),"
+                        " read_at = coalesce(read_at, now()),"
+                        " payload = CAST(:payload AS json)"
+                        " WHERE title = :title"
+                    ),
+                    {"payload": json.dumps(resolved), "title": title},
+                )
+            if feedback is not None:
+                await s.execute(
+                    text("UPDATE alerts SET feedback = :f WHERE title = :title"),
+                    {"f": feedback, "title": title},
+                )
+            await s.commit()
+
+    asyncio.run(_run())
 
 
 def _rewrite_body(client, title: str, body: str) -> uuid.UUID:
