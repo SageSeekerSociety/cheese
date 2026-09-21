@@ -26,6 +26,11 @@ export default [
       '**/eslint.config.mjs',
       'node_modules/*',
       'dist/*',
+      // 反馈原型那一版打包（`vite.feedback-proto.config.mts`）。它**不叫 dist**，
+      // 所以上面那条通配管不到：产物是内联成一个文件的 7MB CSS + 500KB JS，
+      // `eslint .` 会连着它一起扫，本机实测十几分钟不返回。构建产物一律不看，
+      // 不管它叫什么名字。
+      'dist-*/*',
       'asset/*',
       '**/*.d.ts',
       '**/commitlint.config.ts',
