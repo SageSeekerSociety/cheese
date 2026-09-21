@@ -25,7 +25,6 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
@@ -142,26 +141,35 @@ async def test_editing_the_agent_does_not_move_the_rooms_main_line(
 
 @pytest.mark.anyio
 async def test_changing_the_projects_default_model_retires_the_running_screen(
-    client, tmp_path, subscribed
+    client, tmp_path, monkeypatch
 ):
     """把项目默认模型换掉，房间那块正在跑的屏幕在下一个 task boundary 被收掉。
 
     一块屏幕是一个已经起好的 `claude` 进程：`--model` 在它的 argv 里，三个 family
-    别名在它的启动环境里，两样都是出生那一刻钉死的，没有任何代码比 argv。唯一比
-    较「这块屏幕还配不配得上现在的选择」的地方是 `CHEESE_AGENT_CONFIG` 这个哈希
+    别名在它的启动环境里，两样都是出生那一刻钉死的，而没有任何代码比 argv。唯一
+    比较「这块屏幕还配不配得上现在的选择」的地方是 `CHEESE_AGENT_CONFIG` 这个哈希
     （`device_provider._ensure_screen`），所以选择里有什么，就得哈希什么。
 
     模型从前住在 agent 的 configuration 里，跟着那个 dict 一起被哈希；它搬到项目
-    设置上之后，不显式放进来就漏了。漏掉的样子是：项目从订阅改成网关，屏幕带着
-    旧的 `--model` 继续跑，而准入已经按新绑定把每个请求送去另一个池 —— 这个房间
-    此后每一轮都死，直到有人手动重启屏幕。
+    设置上之后，不显式放进来就漏了。漏掉的样子是：屏幕带着旧的 `--model` 和三个
+    旧别名继续跑，而准入已经按新绑定解析每一个请求 —— 这个房间此后每一轮都死在
+    「LiteLLM 收到它不认识的名字」上，直到有人手动重启屏幕。
+
+    换的只有模型，池没动：这样这条测试断的就只是「模型在不在哈希里」。池本来就
+    另有一处进哈希（订阅形状才加的原生 RC 参数），拿换池来测会被那一处兜住。
     """
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", False)
+    monkeypatch.setattr(app_settings, "agent_model", "glm-5.2")
     ids = await _room(client)
     chat = _chat(client, tmp_path)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
 
     async def screen_for(kwargs):
+        # 只带这一个键：环境准备那一支会去问机器状态，而这里没有真机器，也不是这
+        # 条测试要问的事 —— 要问的是这个哈希变没变，以及变了之后屏幕怎么办。
         return await provider._ensure_screen(
             device_id="dev1",
             agent_user_id=1,
@@ -169,27 +177,22 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
             project_id=ids["project"],
             topic_id=ids["room"],
             token="tok",
-            env=kwargs["env"],
+            env={"CHEESE_AGENT_CONFIG": kwargs["env"]["CHEESE_AGENT_CONFIG"]},
             launch=ClaudeLaunch(system_prompt="", model=kwargs["model"]),
         )
 
-    before, _route = await chat._model_kwargs(
+    before, before_pool = await chat._model_kwargs(
         ids["project"], _on_a_machine(), ids["room"]
     )
     running = await screen_for(before)
     assert await screen_for(before) is running, "什么都没改，屏幕当然接着用"
 
-    async with client.test_factory() as session:
-        project = await ProjectRepository(session).get(ids["project"])
-        project.settings = {**(project.settings or {}), "supply": "gateway"}
-        await session.commit()
-
-    after, _route = await chat._model_kwargs(
+    monkeypatch.setattr(app_settings, "agent_model", "deepseek-flash")
+    after, after_pool = await chat._model_kwargs(
         ids["project"], _on_a_machine(), ids["room"]
     )
-    assert after["model"] != before["model"], (
-        "项目默认模型确实换了，否则这条测试没在测东西"
-    )
+    assert (before["model"], after["model"]) == ("glm-5.2", "deepseek-flash")
+    assert before_pool == after_pool, "池没动，动的只有模型"
 
     restarted = await screen_for(after)
     assert restarted.sid != running.sid

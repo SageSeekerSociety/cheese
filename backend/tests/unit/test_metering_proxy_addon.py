@@ -432,8 +432,7 @@ def test_a_subscription_sessions_profile_still_goes_to_its_own_account(
     )
     _admission_pool(mod, monkeypatch, "subscription")
     token = _scoped_token("test-secret", rc=True)
-    mod.http_connect(_make_connect_flow(_basic(token)))
-    flow = _make_flow(path="/api/oauth/profile", caller_bearer="machine-ticket")
+    flow = _make_flow(path="/api/oauth/profile", caller_bearer=token)
     asyncio.run(mod.requestheaders(flow))
     assert flow.response is None
     assert flow.request.headers["authorization"] == "Bearer provider-secret"
