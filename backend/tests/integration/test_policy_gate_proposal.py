@@ -21,7 +21,7 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _seed_user(client, handle: str) -> int:
@@ -226,3 +226,116 @@ def test_an_unknown_disposition_is_refused(client):
         headers=session_auth_headers("andyl"),
     )
     assert response.status_code == 422
+
+
+# --- 轮次这一侧：决定一个房间占谁的机器、用哪个模型的那段代码 ------------------
+#
+# 上面几条走的是「人主动去点算力选择器」。下面这几条走的是默认路径：没人碰过选择
+# 器的房间，第一轮由轮次组装自己解析出机器和模型。闸门必须也在那里，否则被闸住的
+# 只剩少数手动情形，而项目设了策略之后随便 @ 一句芝士照样把机器占掉。
+
+
+def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") -> list:
+    """在房间里说一句并 @ 芝士，收完这一轮的帧。"""
+    with client.websocket_connect(chat_ws_url(topic_id, who)) as ws:
+        ws.send_json({"type": "message", "content": text, "summon": True})
+        frames = []
+        while True:
+            frames.append(ws.receive_json())
+            if frames[-1]["type"] in ("done", "error"):
+                break
+    return frames
+
+
+def _proposals(client, topic_id: str) -> list[Block]:
+    return [
+        block
+        for block in _room_events(client, topic_id)
+        if (block.meta or {}).get("event_type") == EVENT_POLICY_PROPOSAL
+    ]
+
+
+def _gated(client, *, allowed: list[str], over_tier: str) -> tuple[str, str, int]:
+    owner_id = _seed_user(client, "andyl")
+    pid = _project(client)
+    tid = _topic(client, pid)
+    saved = client.put(
+        f"/projects/{pid}/tier-policy",
+        json={"allowed_tiers": allowed, "over_tier": over_tier},
+        headers=session_auth_headers("andyl"),
+    )
+    assert saved.status_code == 200, saved.text
+    return pid, tid, owner_id
+
+
+def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
+    """没人打开过算力选择器的房间：占机器的那一刻照样撞闸门。
+
+    `included` 之外一档都不许，而机器无论解析成自有设备（byo）还是 Cloud
+    （premium）都在档外 —— 于是第一轮把机器占下来之前就变成了一条提议。
+    """
+    _pid, tid, owner_id = _gated(client, allowed=["included"], over_tier="propose")
+
+    _say(client, tid)
+
+    proposals = _proposals(client, tid)
+    assert len(proposals) == 1
+    assert "算力" in proposals[0].content
+    # 这一轮没有发生：没有请求发出去，机器也没有被绑走。
+    assert stub_hooks.last_prompt is None
+    assert _topic_binding(client, tid) is None
+    assert _inbox(client, owner_id) != []
+
+
+def test_a_turn_whose_model_is_over_tier_sends_no_request(client, stub_hooks):
+    """判据②：超档且处置为变提议时，产物是一条提议，一个请求也没发出去。
+
+    机器那两档都放行，撞闸门的只剩模型 —— 项目默认模型是 `included` 档，而这里恰
+    好不允许这一档自己发生。
+    """
+    _pid, tid, owner_id = _gated(
+        client, allowed=["byo", "premium", "frontier"], over_tier="propose"
+    )
+
+    _say(client, tid)
+
+    proposals = _proposals(client, tid)
+    assert len(proposals) == 1
+    assert "模型" in proposals[0].content
+    assert stub_hooks.last_prompt is None
+    assert _inbox(client, owner_id) != []
+
+
+def test_a_refused_model_is_not_quietly_swapped_for_a_cheaper_one(client, stub_hooks):
+    """判据③ / I27：处置为拒绝时是一次看得见的拒绝，不是悄悄降档。"""
+    _pid, tid, _owner_id = _gated(
+        client, allowed=["byo", "premium", "frontier"], over_tier="deny"
+    )
+
+    frames = _say(client, tid)
+
+    # 说得出口：这句话到了发消息的人眼前。
+    refusals = [f for f in frames if f["type"] == "error"]
+    assert refusals and "档" in refusals[0]["message"]
+    # 而且真的没跑：没有换一个档内的模型接着跑完这一轮。
+    assert stub_hooks.last_prompt is None
+    # 拒绝不是提议，房间里不该多出一条等人点头的事件。
+    assert _proposals(client, tid) == []
+
+
+def test_the_same_proposal_is_made_once_no_matter_how_often_it_is_asked(
+    client, stub_hooks
+):
+    """结论 15 / I11「一次」：同一条提议不随每一轮重发。
+
+    撞上策略的调用会反复发生——房间里每来一条消息就解析一次。人要收到的只有一条。
+    """
+    _pid, tid, owner_id = _gated(client, allowed=["included"], over_tier="propose")
+
+    _say(client, tid, "第一句")
+    _say(client, tid, "第二句")
+    _say(client, tid, "第三句")
+
+    assert len(_proposals(client, tid)) == 1
+    assert len(_inbox(client, owner_id)) == 1
+    assert stub_hooks.last_prompt is None

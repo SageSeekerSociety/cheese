@@ -810,10 +810,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),

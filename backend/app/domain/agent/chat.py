@@ -45,7 +45,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.market import COMPUTE_TIERS, subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -139,6 +139,7 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.user.models import User as UserRow
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "chat"]
@@ -646,6 +647,62 @@ def _resolve_compute_id(
     from app.domain.agent.compute_configs import project_configs
 
     return topic_compute_profile or project_configs(project_settings).default.profile
+
+
+def _model_policy_call(project) -> gate.Call:
+    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
+
+    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
+    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
+
+    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
+    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
+    给一个猜出来的人。
+    """
+    choices = binding.catalog(project.settings)
+    bound = binding.resolve(None, choices)
+    return gate.Call(
+        resource=gate.Resource.model,
+        subject=bound.model,
+        label=choices[bound.model]["label"],
+        tier=choices[bound.model]["tier"],
+        approver=project.owner_handle or "",
+    )
+
+
+async def _machine_policy_call(
+    session: AsyncSession, topic, project, compute_id: str | None
+) -> "gate.Call | None":
+    """这一轮要占的那台机器，写成闸门认得的那一次调用（结论 40 后半）。
+
+    点头的人：房间点了名的那台自托管机器，点头的是**机主本人**——它花的是他的电和
+    带宽，不是项目的钱。没点名（「系统挑一台」）时平台还没挑出那一台，点头的就是
+    项目的主人，这条策略本来也是他定的。
+
+    目录不认识的池返回 `None`：那样的房间连 provider 都选不出来，下面那一步会把它
+    说出口；闸门不替它报这个错，也不拿一个猜出来的档位去比。
+    """
+    tier = COMPUTE_TIERS.get(compute_id or "")
+    if tier is None:
+        return None
+    from app.domain.agent.compute_configs import room_choice
+    from app.domain.device.wiring import sql_device_service
+
+    choice = room_choice(topic, project.settings)
+    approver = project.owner_handle or ""
+    if choice.device_id:
+        device = await sql_device_service(session).get_device(choice.device_id)
+        if device is not None:
+            owner = await session.get(UserRow, device.owner_user_id)
+            if owner is not None:
+                approver = owner.username
+    return gate.Call(
+        resource=gate.Resource.machine,
+        subject=compute_id or "",
+        label=choice.name,
+        tier=tier,
+        approver=approver,
+    )
 
 
 def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
@@ -4074,27 +4131,17 @@ class ChatService:
         #
         # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
         # 而主线正是最长、最吃缓存的那条对话。
-        choices = binding.catalog(project.settings)
-        bound = binding.resolve(None, choices)
-        # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门在这里，
-        # 不在 `binding.resolve` 里：那个函数只答「用哪个模型」，「超档怎么办」是
-        # 另一个问题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
+        bound = binding.resolve(None, binding.catalog(project.settings))
+        # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
+        # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
+        # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
         #
-        # 位置选在**这一轮真的要发请求之前**：超档变提议时这一轮不开始，所以一个
-        # 请求也没发出去；超档而项目的处置是拒绝时，抛出来的是一次看得见的拒绝，
-        # 和「这条活绑的模型用不了」在调用点是同一种东西（I27）。
+        # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
+        # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
+        # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
         await self._pass_policy_gate(
             topic_id,
-            gate.Call(
-                resource=gate.Resource.model,
-                subject=bound.model,
-                label=choices[bound.model]["label"],
-                tier=choices[bound.model]["tier"],
-                # 模型花的是项目的额度，所以点头的是项目的主人。空 handle
-                # （建库早期留下的项目）在寻址那一层被丢掉：房间里照样有这条提
-                # 议，只是没有人被单独通知——好过把它投给一个猜出来的人。
-                approver=project.owner_handle or "",
-            ),
+            _model_policy_call(project),
             project.settings,
             actor=acting_agent or agent.handle,
         )
@@ -4600,6 +4647,33 @@ class ChatService:
                 project.settings if project else None,
                 topic.compute_profile,
             )
+            # 这一轮要占的两样东西 —— 哪台机器、哪个模型 —— 在这里一起过项目的档位
+            # 策略（结论 3 后半、结论 40 后半）。位置是**解析之后、占用之前**：再
+            # 往下就是写绑定、开机器、发请求，撞上策略的调用一旦走到那里，「这一轮
+            # 没有发生」就不再是真的 —— 而那正是提议与拒绝共同的前提。
+            #
+            # 房间从没打开过算力选择器也照样过闸门：决定一个房间占谁的机器的是这
+            # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
+            # 少数情形，它和这里问的是同一个闸门。
+            if project is not None:
+                actor_handle = acting_agent or agent.handle
+                if needs_place:
+                    machine_call = await _machine_policy_call(
+                        session, topic, project, compute_id
+                    )
+                    if machine_call is not None:
+                        await self._pass_policy_gate(
+                            topic_id,
+                            machine_call,
+                            project.settings,
+                            actor=actor_handle,
+                        )
+                await self._pass_policy_gate(
+                    topic_id,
+                    _model_policy_call(project),
+                    project.settings,
+                    actor=actor_handle,
+                )
             if needs_place and compute_id == "device" and topic.compute_config is None:
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,

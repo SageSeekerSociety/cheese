@@ -1368,6 +1368,7 @@ async def set_topic_compute_profile(
 
     from app.domain.agent.compute_configs import (
         ComputeChoice,
+        room_choice,
         standard_choice,
         validate_choice,
     )
@@ -1459,13 +1460,18 @@ async def set_topic_compute_profile(
         # 条提议，下一步在 approver 手上。
         await propose(db, verdict, place_id=topic_id)
         await db.flush()
+        # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
+        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前的房
+        # 间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力选择」，
+        # 而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说法，先信谁？
+        current = room_choice(topic, project.settings)
         return ok(
             {
-                "current": topic.compute_profile,
-                "choice": (topic.compute_config or {}),
-                "device_id": None,
+                "current": current.profile,
+                "choice": current.model_dump(),
+                "device_id": current.device_id,
                 "locked": False,
-                "inherited": False,
+                "inherited": topic.compute_profile is None,
                 "proposal": {
                     "approver": verdict.approver,
                     "tier": verdict.call.tier,
