@@ -11,15 +11,16 @@
 而 ``author_type.value in {"human": 0, "ai": 0}`` 里旧值是一个**字符串字面量**，
 名字从来没出现过 —— 活跃度统计就是这样漏过去的，它不会报错，只会安静地把两个数
 字都算成 0。所以第二条不去追字面量（``"human"``/``"ai"`` 在别的地方有别的意思），
-而是追**没把档位当成一个枚举成员来读**这件事本身：``author_type.value``，以及
-拿 ``author_type``（或 ``block["author_type"]``）去和一个不是 ``AuthorType.<成员>``
-的东西比。档位是一个两档枚举，除了和成员比，剩下的比法问的一定是它答不了的那个
-问题。
+而是追**没把档位当成一个枚举成员来读**这件事本身：``author_type.value``，以及拿
+这一列去和一个不是 ``AuthorType.<成员>`` 的东西比。档位是一个两档枚举，除了和成员
+比，剩下的比法问的一定是它答不了的那个问题。
 
-**另一侧是个变量也算**，这是这条判据第一版漏掉的那种写法：
-``sim_real.py`` 的 ``count_blocks(topic_id, author_type, kind)`` 里比的是
-``b["author_type"] != author_type``，字面量在调用点（``"ai"``、``"human"``），两边
-各自看都干净，合起来就是三个计数恒为 0。
+这一条有两处是踩着 ``sim_real.py`` 的真实写法长出来的，两处都是它当初漏过去的
+原因：``count_blocks(topic_id, author_type, kind)`` 里比的是
+``b.get("author_type") != author_type`` —— **取列的写法是 ``.get()``**，不是下标也
+不是属性；**另一侧是个形参**，字面量（``"ai"``、``"human"``）在调用点。两边各自看
+都干净，合起来就是三个计数恒为 0。所以取列认 ``block["author_type"]`` 和
+``block.get("author_type")``，另一侧认的是成员、不是字面量。
 
 和 ``test_no_adhoc_auth_helpers.py`` 一样，第二条是一条**静态**测试 —— 被测的东
 西本身就是源码树的一个性质，属于 CLAUDE.md 那条「测行为、不读源码」的例外。
@@ -54,13 +55,24 @@ def _sources() -> list[tuple[pathlib.Path, str]]:
 def _author_type_read_as_something_else_lines(tree: ast.AST) -> list[int]:
     """把档位读成字符串、或者拿它和一个不是枚举成员的东西比的那几行。"""
 
+    def names_the_key(node: ast.AST) -> bool:
+        return isinstance(node, ast.Constant) and node.value == "author_type"
+
     def names_the_column(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
             return node.id == "author_type"
         if isinstance(node, ast.Subscript):
             # `block["author_type"]`：JSON 那一侧读的是同一列，问的是同一个问题。
-            key = node.slice
-            return isinstance(key, ast.Constant) and key.value == "author_type"
+            return names_the_key(node.slice)
+        if isinstance(node, ast.Call):
+            # `block.get("author_type")` —— 同一列，写法不同而已。
+            func = node.func
+            return (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and bool(node.args)
+                and names_the_key(node.args[0])
+            )
         return isinstance(node, ast.Attribute) and node.attr == "author_type"
 
     def names_a_member(node: ast.AST) -> bool:
