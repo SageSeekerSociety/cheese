@@ -1088,10 +1088,12 @@ export interface AgentType {
   // The system prompt this type runs under (角色设定).
   body: string
   skills: string[]
+  // 零读者、零写者：一个类型说的是角色，不说用哪个模型、哪个骨架、想多深。
+  // 后端在 P15b 随迁移删掉这三个字段，这里跟着一起走。
   mcp_servers: string[]
-  model: string | null
-  effort: string | null
-  harness: string | null
+  model?: string | null
+  effort?: string | null
+  harness?: string | null
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1100,13 +1102,15 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+// 一个 agent 存着的**角色**。模型绑在活上（卡是用户接触模型的唯一地方），
+// 运行方式是部署的开发者选项 —— 两样都不在这里。
 export interface AgentConfiguration {
   body: string
-  model: string
-  harness: string
   skills: string[]
   mcp_servers: string[]
-  effort: string | null
+  model?: string | null
+  harness?: string | null
+  effort?: string | null
 }
 
 export interface ProjectAgent {

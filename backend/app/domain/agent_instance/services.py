@@ -7,12 +7,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.agent.harness import harness_name
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    initial_model,
-    validate_configuration,
-)
+from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import preset_types
@@ -48,6 +43,22 @@ class ResolvedAgent:
     type_name: str | None
     display_name: str
     configuration: dict = field(default_factory=dict)
+
+
+def initial_configuration(type_name: str | None = None) -> AgentConfiguration:
+    """一个新 agent 的出厂设置：这个类型的人设、技能、外部工具。
+
+    不带项目，因为它不再需要一个——它曾经要项目是为了替这个 agent 挑一个模型，
+    而模型不是 agent 的属性了（结论 3）。
+    """
+    preset = preset_types().get(type_name) if type_name else None
+    if preset is None:
+        return AgentConfiguration()
+    return AgentConfiguration(
+        body=preset.body,
+        skills=list(preset.skills),
+        mcp_servers=list(preset.mcp_servers),
+    )
 
 
 def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:
@@ -159,14 +170,6 @@ class AgentInstanceService:
         """The role instructions saved on this agent."""
         return agent.configuration.get("body") or None
 
-    async def harness(self, agent: ResolvedAgent) -> str:
-        """The execution harness saved on this agent."""
-        return harness_name(agent.configuration.get("harness"))
-
-    async def model(self, agent: ResolvedAgent) -> str | None:
-        """The explicit model saved on this agent."""
-        return agent.configuration.get("model")
-
     # --- management ---------------------------------------------------------
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[AgentInstance]:
@@ -207,9 +210,7 @@ class AgentInstanceService:
         if await self._repo.get_by_handle(project_id=project_id, handle=handle):
             raise ValidationError(f"这个项目里已经有 handle 为 {handle!r} 的 agent")
         await self._require_known_type(type_name)
-        project = await self._project(project_id)
-        config = configuration or await self.initial_configuration(project, type_name)
-        validate_configuration(config, project.settings)
+        config = configuration or initial_configuration(type_name)
         instance = await self._repo.create(
             project_id=project_id,
             handle=handle,
@@ -242,37 +243,13 @@ class AgentInstanceService:
         self, instance: AgentInstance, type_name: str | None
     ) -> AgentInstance:
         await self._require_known_type(type_name)
-        project = await self._project(instance.project_id)
-        config = await self.initial_configuration(project, type_name)
-        validate_configuration(config, project.settings)
-        instance.configuration = config.model_dump()
+        instance.configuration = initial_configuration(type_name).model_dump()
         instance.type_name = type_name or None
         return instance
-
-    async def initial_configuration(
-        self, project: Project, type_name: str | None = None
-    ) -> AgentConfiguration:
-        preset = preset_types().get(type_name) if type_name else None
-        harness = harness_name(preset.harness if preset else None)
-        return AgentConfiguration(
-            body=preset.body if preset else "",
-            # The harness first, and the model chosen for it: a preset that asks
-            # to run on something other than the default would otherwise start
-            # pointed at a model that harness cannot drive, and fail validation
-            # on the way in for a combination nobody chose.
-            model=(preset.model if preset else None)
-            or initial_model(project.settings, harness),
-            harness=harness,
-            skills=list(preset.skills) if preset else [],
-            mcp_servers=list(preset.mcp_servers) if preset else [],
-            effort=preset.effort if preset else None,
-        )
 
     async def configure(
         self, instance: AgentInstance, config: AgentConfiguration
     ) -> None:
-        project = await self._project(instance.project_id)
-        validate_configuration(config, project.settings)
         instance.configuration = config.model_dump()
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:
@@ -346,7 +323,7 @@ class AgentInstanceService:
             handle=CHEESE_HANDLE,
             type_name=None,
             display_name=CHEESE_NAME,
-            configuration=(await self.initial_configuration(project)).model_dump(),
+            configuration=initial_configuration().model_dump(),
         )
         # An agent gets its identity when it comes into being, and the project's
         # 芝士 comes into being here rather than in create(). Without it the
@@ -370,12 +347,6 @@ class AgentInstanceService:
     async def _require_known_type(self, type_name: str | None) -> None:
         if type_name and type_name not in preset_types():
             raise ValidationError(f"agent 类型 {type_name!r} 不存在")
-
-    async def _project(self, project_id: uuid.UUID) -> Project:
-        # Project creation also creates its first agent, so import at call time.
-        from app.domain.project.services import ProjectService
-
-        return await ProjectService(self._session).get_or_404(project_id)
 
     @staticmethod
     def resolved(instance: AgentInstance) -> ResolvedAgent:

@@ -107,13 +107,7 @@ STAND_INS = """
 
 
 def upgrade() -> None:
-    # Deployment defaults are read once here, exactly as agent creation reads
-    # them, so a backfilled 芝士 starts on the same model as a new one.
-    from app.domain.agent.harness import harness_name
-    from app.domain.agent_instance.configuration import initial_model
-
     bind = op.get_bind()
-    harness = harness_name(None)
     unseeded = (
         bind.execute(
             sa.text(
@@ -131,15 +125,9 @@ def upgrade() -> None:
         .all()
     )
     for project in unseeded:
-        model = initial_model(project["settings"] or {}, harness)
-        configuration = {
-            "body": "",
-            "model": model,
-            "harness": harness,
-            "skills": [],
-            "mcp_servers": [],
-            "effort": None,
-        }
+        # 一个 agent 存的是角色。它用哪个模型、跑哪个骨架不在这一行上（结论
+        # 3、28），所以补种出来的芝士和新建出来的一样，只有角色这几栏。
+        configuration = {"body": "", "skills": [], "mcp_servers": []}
         bind.execute(
             sa.text(
                 """

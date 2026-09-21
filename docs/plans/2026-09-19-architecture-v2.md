@@ -1047,10 +1047,10 @@ Forge 记录代码、检查和合并结果；外部合并会同步为任务已�
 **结论：它不是第四个提供者接口。** 理由是它的决定变量里没有「在哪跑」：
 [已定] 他 2026-09-09T21:44「model」「和harness」「是分开的吧」——
 **供给按 `(骨架, 模型)` 决定，不按机器形状决定**。
-今天 `agent_instance/configuration.py` 的模块 docstring 已经把这个方向写对了：
-「**a harness is what can drive a model**, never the other way round……
-`model_choices` 答『这个项目能跑什么』，`harness_choices` 答『每个 harness 能被指向哪些模型』」。
-这句里的 `model_choices` 就是结论 44 那份**启用列表**在代码里的位置——项目级只有它和默认模型两样（1.1）。
+方向只能是这一个：**a harness is what can drive a model**, never the other way round
+（`agent/harness/__init__.py` 写了它，`agent_instance/configuration.py` 的 `model_choices`
+按这套部署跑的那个骨架筛出这个项目能用的模型）。`model_choices` 就是结论 44 那份
+**启用列表**在代码里的位置——项目级只有它和默认模型两样（1.1）。
 
 所以它分成三块，各归各的主人：
 
