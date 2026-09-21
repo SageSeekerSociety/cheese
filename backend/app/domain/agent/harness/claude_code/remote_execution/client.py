@@ -200,10 +200,17 @@ def prepare(
             )
     helper = [sys.executable, str(Path(__file__).resolve())]
     guard = shlex.join([*helper, "guard", str(target_path)])
+    # `TaskStop` 不在这道闸门后面。闸门拒的是「插件没接住的原生调用」，而
+    # `proxy.js` 对一个执行器不认得的 `TaskStop` id 是**故意**放手的：那条 id 属于
+    # 这条会话里的一条子线程，父线程停它靠的就是 harness 自己这一手（结论 43）。
+    # 放在名单里，那次放手会被当成「没处理」一律拒掉，这条硬性要求在房间里就不成
+    # 立。漏出去的只有一次停在中心机上的 `TaskStop`——它不动文件、不跑命令，正是这
+    # 道闸门要挡的两样都不沾。
+    guarded = tuple(tool for tool in NATIVE_TOOLS if tool != "TaskStop")
     hooks.setdefault("PreToolUse", []).insert(
         0,
         {
-            "matcher": "|".join((*NATIVE_TOOLS, "EnterWorktree", "ExitWorktree")),
+            "matcher": "|".join((*guarded, "EnterWorktree", "ExitWorktree")),
             "hooks": [{"type": "command", "command": guard}],
         },
     )

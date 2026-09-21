@@ -45,6 +45,8 @@ SESSION = SessionRef(
 )
 OPENING = Opening(system_prompt="CONTRACT")
 LABEL = thread_label(uuid.UUID("00000000-0000-4000-8000-000000000003"))
+#: 同一条会话里的第二条活，用来看「停掉一条」停的是不是只有那一条。
+SIBLING = thread_label(uuid.UUID("00000000-0000-4000-8000-000000000004"))
 
 #: 一句答案里反引号引起来的东西。
 _CITED = re.compile(r"`([A-Za-z0-9_./]+)`")
@@ -177,19 +179,36 @@ async def _session() -> ContractHarness:
     return runtime
 
 
+def _stream(runtime: ContractHarness) -> list[tuple[str, str | None]]:
+    backlog = runtime.backlog(SESSION)
+    return [
+        (e.text, e.thread_label)
+        for entry in backlog.unread()
+        for e in backlog.assemble(entry)
+    ]
+
+
 async def test_a_parent_thread_spawns_a_worker_and_names_its_model() -> None:
+    """跑的是被指定的那个模型，从它干出来的活上读。
+
+    断言 ``worker.model == "opus"`` 只是把构造参数读回来：一个收下模型名再去跑另
+    一个模型的骨架照样绿，而那正是这条要求要挡掉的东西。所以模型和指令一样，读者
+    是 ``works()``——它说出来的那句活里带着当前跑的是哪个。
+    """
     runtime = await _session()
     worker = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
     assert worker.running
     assert runtime.workers(SESSION) == [worker]
 
+    worker.works()
+    assert _stream(runtime) == [("在做（opus）：查分页", LABEL)]
+
 
 async def test_a_worker_spawned_without_a_model_is_not_spawned_at_all() -> None:
-    """「并指定模型」那半，要有一天能红。
+    """「并指定模型」的另一半：不说跑哪个，就不是一条起得出来的子线程。
 
-    断言 ``worker.model == "opus"`` 只是把构造参数读回来：那个字段再没有第二个读
-    者，谁也不校验它，把它从那次调用里删掉测试照绿。所以不指定模型这件事本身就是
-    个错——一条起不出来的子线程，而不是一条跑着不知道什么模型的子线程。
+    上一条守「起出来的跑的是被指定的那个」，这一条守「必须指定」。两条都要在，因
+    为它们各自能单独变假：只有上一条时，不给模型可以悄悄落到一个默认值上。
     """
     runtime = await _session()
     with pytest.raises(ValueError, match="模型"):
@@ -208,9 +227,7 @@ async def test_everything_a_worker_says_carries_its_thread_label() -> None:
     worker.says("查到了")
     worker.says("顺带还有一处")
 
-    backlog = runtime.backlog(SESSION)
-    events = [e for entry in backlog.unread() for e in backlog.assemble(entry)]
-    assert [(e.text, e.thread_label) for e in events] == [
+    assert _stream(runtime) == [
         ("我来看看", None),
         ("查到了", LABEL),
         ("顺带还有一处", LABEL),
@@ -237,29 +254,58 @@ async def test_a_parent_thread_retasks_its_worker() -> None:
     assert worker.instruction == "先只改后端"
     worker.works()
 
-    backlog = runtime.backlog(SESSION)
-    events = [e for entry in backlog.unread() for e in backlog.assemble(entry)]
-    assert [(e.text, e.thread_label) for e in events] == [
-        ("在做：查分页", LABEL),
-        ("在做：先只改后端", LABEL),
+    assert _stream(runtime) == [
+        ("在做（opus）：查分页", LABEL),
+        ("在做（opus）：先只改后端", LABEL),
     ]
 
 
-async def test_a_parent_thread_stops_its_worker() -> None:
-    """停掉之后说不出话来。一个停不住、还在往房间里写的 worker，在时间线上和没停
-    是同一个样子。"""
+async def test_a_parent_thread_stops_one_worker_and_leaves_the_others_running() -> None:
+    """停的是**一条**子线程，和改指令一样是父线程自己那一手（结论 43）。
+
+    负向对照就是那条同胞：拿会话级的停（``interrupt`` / ``close``）来答这一条，同
+    一条会话里的两条 worker 会一起停——这条断言红。而那是结论 43 的另一句「子
+    agent 与父进程同生同死」，拿它来答这一条，这条要求就恒真：任何一个会话杀得掉
+    的骨架都通过，「停不掉单条子线程」那一档正好被放行。
+
+    另一半是停掉之后什么都做不了：一个停不住、还在往房间里写的 worker，在时间线
+    上和没停是同一个样子。
+    """
     runtime = await _session()
-    worker = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
+    stopped = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
+    sibling = runtime.spawn(SESSION, label=SIBLING, model="opus", instruction="写用例")
+
+    stopped.stop()
+
+    assert not stopped.running
+    with pytest.raises(SubagentStopped):
+        stopped.says("我还在说")
+    # 停掉的子线程也接不了新指令。
+    with pytest.raises(SubagentStopped):
+        stopped.retask("再改一版")
+
+    # 同胞照跑，会话照在。
+    assert sibling.running
+    sibling.works()
+    assert runtime.workers(SESSION) == [stopped, sibling]
+    assert runtime.holds(SESSION.topic_id)
+    assert _stream(runtime) == [("在做（opus）：写用例", SIBLING)]
+
+
+async def test_stopping_the_session_is_a_different_sentence() -> None:
+    """``interrupt`` 停的是整条会话的活，不是某一条子线程。
+
+    这一条在这里，是为了让上一条没法拿它蒙混过去：两条 worker 一起停，说明这个动
+    词的粒度是会话。``interrupt`` 比 ``close`` 弱，会话还在，下一个 send 接着走。
+    """
+    runtime = await _session()
+    one = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
+    two = runtime.spawn(SESSION, label=SIBLING, model="opus", instruction="写用例")
 
     assert await runtime.interrupt(SESSION) is True
 
-    assert not worker.running
-    with pytest.raises(SubagentStopped):
-        worker.says("我还在说")
-    # 停掉的子线程也接不了新指令——负向对照：停不住的话，改指令会照常成功。
-    with pytest.raises(SubagentStopped):
-        worker.retask("再改一版")
-    # interrupt 比 close 弱：会话还在，下一个 send 接着走。
+    assert not one.running
+    assert not two.running
     assert runtime.holds(SESSION.topic_id)
 
 

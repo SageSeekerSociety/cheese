@@ -574,10 +574,19 @@ HARNESSES: dict[str, Harness] = {
                 "子线程，也不直接对它说话。"
             ),
             SubagentRequirement.PARENT_STOPS_IT: (
-                "`agent/harness/__init__.py` 上的 `AgentRuntime.interrupt` 停的是父"
-                "线程；一条会话就是机器上的一个 claude 进程"
-                "（`agent/harness/claude_code/hooks_substrate.py`），子线程跑在它里"
-                "面，与它同生同死。"
+                "停的是**一条**子线程，做法和改指令写在同一处 "
+                "`agent/skill_library/stage_delegating.md`：父线程调 TaskStop，按起"
+                "它时给的那个名字停那一条，同一条会话里的其他分身照跑。平台这一侧"
+                "的 `agent/harness/__init__.py` 上 `AgentRuntime.interrupt` 与 "
+                "`AgentRuntime.close` 停的都是整条会话——那是结论 43 的另一句「子 "
+                "agent 与父进程同生同死」，不是这一条，拿它来答这一条等于这条要求"
+                "恒真。这一手在房间里落不落得了地由 "
+                "`agent/harness/claude_code/remote_execution/proxy.js` 决定：一个停"
+                "任务的 id 有两个主人，转给执行器的那条路只认执行机上后台跑着的命"
+                "令，执行器答「不认识」的那个 id 就是一条子线程，放手让骨架自己停；"
+                "`agent/harness/claude_code/remote_execution/client.py` 的 `guarded`"
+                " 把它从那道「插件没接住就拒掉」的闸门里摘出来，这次放手才到得了骨"
+                "架。"
             ),
         },
         carries_subscription=True,
