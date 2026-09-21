@@ -31,13 +31,8 @@ def _offered(project_settings: dict | None = None) -> set[str]:
     return {item["id"] for item in model_choices(project_settings)}
 
 
-def _running(monkeypatch, name: str, **bits: bool) -> None:
-    """这套部署跑的是哪个骨架。它是部署设置，不是谁的属性（结论 28）。
-
-    骨架当场造一个注册上去：注册表里今天只有 Claude Code（结论 43，答不出四条硬性
-    要求的骨架留着代码不注册），而下面这几条问的是「跑着一个指不到订阅、或者不说
-    网关那套话的骨架时，列出来的是哪一批」——那件事跟谁答得出四条无关。
-    """
+def _registered(monkeypatch, name: str, **bits: bool) -> None:
+    """把一个替身骨架注册进这套部署（结论 43：注册表今天只有 Claude Code）。"""
     stand_in = Harness(
         name,
         name,
@@ -45,6 +40,16 @@ def _running(monkeypatch, name: str, **bits: bool) -> None:
         **bits,
     )
     monkeypatch.setitem(harness_module.HARNESSES, name, stand_in)
+
+
+def _running(monkeypatch, name: str, **bits: bool) -> None:
+    """这套部署跑的是哪个骨架。它是部署设置，不是谁的属性（结论 28）。
+
+    骨架当场造一个注册上去：注册表里今天只有 Claude Code（结论 43，答不出四条硬性
+    要求的骨架留着代码不注册），而下面这几条问的是「跑着一个指不到订阅、或者不说
+    网关那套话的骨架时，列出来的是哪一批」——那件事跟谁答得出四条无关。
+    """
+    _registered(monkeypatch, name, **bits)
     monkeypatch.setattr(settings, "agent_harness", name)
 
 
@@ -163,6 +168,7 @@ def test_a_project_that_switched_harness_is_filtered_by_that_one(monkeypatch):
     # 部署跑的是 claude-code，没动它——动的只有一个项目的设置。
     assert {"sonnet", "codex-fixture"} <= _offered({})
 
+    _registered(monkeypatch, CODEX, speaks_gateway=False)
     switched = {HARNESS_SETTING: CODEX}
     assert "sonnet" not in _offered(switched)
     assert "codex-fixture" in _offered(switched)
