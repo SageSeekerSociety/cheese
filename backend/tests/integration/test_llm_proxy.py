@@ -284,7 +284,6 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     from app.core.config import settings as app_settings
     from app.domain.project.repositories import ProjectRepository
 
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)
     headers = {"Authorization": f"Bearer {token}"}
@@ -292,7 +291,10 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     # Default: the deployment's own supply, and no key travels for it — the
     # subscription credential lives on the proxy, never in a control-plane body.
     body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["supply"] == {"pool": "subscription"}
+    assert body["supply"]["pool"] == "subscription"
+    # And which model, because the launch environment names none: the binding
+    # resolved here is what the proxy writes into the request body.
+    assert body["supply"]["model"] == "claude-sonnet-5"
     assert body["allow"] is True
 
     async with client.test_factory() as session:
@@ -303,9 +305,45 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
 
     body = client.post("/llm/admission", headers=headers).json()["data"]
     assert body["supply"]["pool"] == "gateway"
+    assert body["supply"]["model"] == app_settings.agent_model
     # No gateway configured in this harness → no key. The proxy refuses on an
     # empty key rather than serving the project from a pool it did not choose.
     assert body["supply"].get("key") is None
+
+
+@pytest.mark.anyio
+async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
+    client, monkeypatch
+):
+    """答不出就拒绝，不换池（I27）。The launch environment carries no fallback
+    model any more, so this is the whole exit: a request whose model cannot be
+    resolved is refused, in the resolver's own words, and never quietly served
+    from the other pool."""
+    from app.domain.agent import gateway_catalog
+    from app.domain.project.repositories import ProjectRepository
+
+    pid = _make_project(client)
+    token = mint_scoped_token(project_id=pid)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with client.test_factory() as session:
+        project = await ProjectRepository(session).get(uuid.UUID(pid))
+        assert project is not None
+        # A project on the pool, on a deployment whose pool serves nothing —
+        # an operator pulling the last model out of the catalogue does this.
+        project.settings = {"supply": "gateway"}
+        await session.commit()
+    monkeypatch.setattr(gateway_catalog, "offerable", lambda: [])
+
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["allow"] is False
+    assert "默认模型" in body["reason"]
+    assert body["supply"] == {}
+    # Named as its own kind of refusal. The proxy renders every `allow=false`
+    # it cannot tell apart as a 429 "cheese project budget: …", so without this
+    # the user of a project whose catalogue serves nothing is told their quota
+    # ran out — and sent to top up an account that is fine.
+    assert body["reason_kind"] == "binding"
 
 
 # --- which ccproxy identity a turn goes out as ------------------------------
@@ -365,9 +403,6 @@ async def _pin_topic_to_machine(
 async def test_admission_names_the_machine_identity_a_topics_turns_go_out_as(
     client, monkeypatch
 ):
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     topic_id = uuid.uuid4()
     headers = {
@@ -377,7 +412,7 @@ async def test_admission_names_the_machine_identity_a_topics_turns_go_out_as(
 
     # Nothing pinned yet: there is no machine, so there is no identity to name.
     body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["supply"] == {"pool": "subscription"}
+    assert "upstream" not in body["supply"]
 
     await _pin_topic_to_machine(
         client, project_id=pid, topic_id=topic_id, machine_id=516, upstream="m516:pw516"
@@ -393,9 +428,6 @@ async def test_a_machine_without_a_recorded_identity_names_none(client, monkeypa
     before this existed keep NULL forever. NULL must read as "use the
     deployment-wide identity" — never as an empty string the proxy would then
     try to authenticate with."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     topic_id = uuid.uuid4()
     await _pin_topic_to_machine(
@@ -447,9 +479,6 @@ async def test_admission_names_a_self_hosted_devices_own_identity(client, monkey
     row), and admission must surface it the same way — one credential model for
     every compute form, or the box stays chained to the platform-credential
     swap path that #393 is about."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     topic_id = uuid.uuid4()
     await _pin_topic_to_self_hosted_device(
@@ -468,9 +497,6 @@ async def test_admission_names_a_self_hosted_devices_own_identity(client, monkey
 async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
     """Every laptop-class self-hosted device: NULL means "platform pool", never
     an empty identity the proxy would try to authenticate with."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     topic_id = uuid.uuid4()
     await _pin_topic_to_self_hosted_device(
@@ -493,13 +519,11 @@ async def test_placed_room_uses_session_identity_not_executor(
 ):
     from datetime import UTC, datetime
 
-    from app.core.config import settings as app_settings
     from app.domain.agent.harness import deployment_harness
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.device.models import DeviceRow
     from app.domain.project.repositories import ProjectRepository
 
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     room_id = client.post(
         "/topics",
@@ -590,9 +614,6 @@ async def test_admission_names_the_machine_the_room_is_pinned_to(client, monkeyp
     查不到不是「无所谓」：带着自己 ccproxy 票的调用方在解析不出身份时会被**拒绝**，
     而不是记到平台账上。所以这个查询答错一次，那台机器上的每一轮都被拒。
     """
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     room_id, _card_id = await _room_with_a_thread(client, pid)
     await _pin_topic_to_machine(
@@ -615,9 +636,6 @@ async def test_admission_still_names_nothing_for_a_room_that_owns_no_machine(
     client, monkeypatch
 ):
     """没 pin 过的房间还是「用部署级那一个」—— 今天每一轮没落位的都是这样。"""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
     room_id, _card_id = await _room_with_a_thread(client, pid)
 

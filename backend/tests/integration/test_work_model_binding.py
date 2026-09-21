@@ -25,6 +25,7 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
@@ -75,20 +76,19 @@ async def _rebind(client, ids, model: str) -> None:
         await session.commit()
 
 
-@pytest.fixture
-def subscribed(monkeypatch):
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+async def _use_the_pool(client, ids) -> None:
+    """把这个项目挪到网关池 —— 供给是项目自己的设置，不是部署的开关。"""
+    async with client.test_factory() as session:
+        project = await session.get(Project, ids["project"])
+        project.settings = {**(project.settings or {}), "supply": "gateway"}
+        await session.commit()
 
 
 # —— ② 房间主线的模型在一轮里改不动 ————————————————————————————————
 
 
 @pytest.mark.anyio
-async def test_the_rooms_main_line_runs_on_the_project_default(
-    client, tmp_path, subscribed
-):
+async def test_the_rooms_main_line_runs_on_the_project_default(client, tmp_path):
     ids = await _room(client)
 
     kwargs, _route = await _chat(client, tmp_path)._model_kwargs(
@@ -99,9 +99,7 @@ async def test_the_rooms_main_line_runs_on_the_project_default(
 
 
 @pytest.mark.anyio
-async def test_editing_the_agent_does_not_move_the_rooms_main_line(
-    client, tmp_path, subscribed
-):
+async def test_editing_the_agent_does_not_move_the_rooms_main_line(client, tmp_path):
     """模型不是参与者的属性（结论 3、44）。把这个 agent 存着的模型改掉，房间主线
     照旧走项目默认 —— 「想换模型就再建一个 agent」正是这次拆掉的形状。
 
@@ -145,24 +143,25 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
 ):
     """把项目默认模型换掉，房间那块正在跑的屏幕在下一个 task boundary 被收掉。
 
-    一块屏幕是一个已经起好的 `claude` 进程：`--model` 在它的 argv 里，三个 family
-    别名在它的启动环境里，两样都是出生那一刻钉死的，而没有任何代码比 argv。唯一
-    比较「这块屏幕还配不配得上现在的选择」的地方是 `CHEESE_AGENT_CONFIG` 这个哈希
-    （`device_provider._ensure_screen`），所以选择里有什么，就得哈希什么。
+    一块屏幕是一个已经起好的 `claude` 进程，出生那一刻钉死的东西它一样也换不掉。
+    唯一比较「这块屏幕还配不配得上现在的选择」的地方是 `CHEESE_AGENT_CONFIG` 这个
+    哈希（`device_provider._ensure_screen`），所以选择里有什么，就得哈希什么。
 
     模型从前住在 agent 的 configuration 里，跟着那个 dict 一起被哈希；它搬到项目
-    设置上之后，不显式放进来就漏了。漏掉的样子是：屏幕带着旧的 `--model` 和三个
-    旧别名继续跑，而准入已经按新绑定解析每一个请求 —— 这个房间此后每一轮都死在
-    「LiteLLM 收到它不认识的名字」上，直到有人手动重启屏幕。
+    设置上之后，不显式放进来就漏了。漏掉的样子是：屏幕带着旧的系统提示词和旧的
+    缓存继续跑，而准入已经按新绑定解析每一个请求。
 
     换的只有模型，池没动：这样这条测试断的就只是「模型在不在哈希里」。池本来就
     另有一处进哈希（订阅形状才加的原生 RC 参数），拿换池来测会被那一处兜住。
     """
     from app.core.config import settings as app_settings
 
-    monkeypatch.setattr(app_settings, "subscription_enabled", False)
+    ca = tmp_path / "proxy-ca.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
+    monkeypatch.setattr(app_settings, "subscription_ca_backend_path", str(ca))
     monkeypatch.setattr(app_settings, "agent_model", "glm-5.2")
     ids = await _room(client)
+    await _use_the_pool(client, ids)
     chat = _chat(client, tmp_path)
     hub = ReuseGateHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
@@ -203,9 +202,7 @@ async def test_changing_the_projects_default_model_retires_the_running_screen(
 
 
 @pytest.mark.anyio
-async def test_rebinding_a_work_shows_on_the_next_read_of_its_card(
-    client, tmp_path, subscribed
-):
+async def test_rebinding_a_work_shows_on_the_next_read_of_its_card(client, tmp_path):
     """改一条活的绑定，下一次读它的卡就换了 —— 没有一处把解析结果写下来。
 
     而房间主线已经开跑的那一轮拿的是开轮那一刻的快照，改不动。
@@ -224,9 +221,7 @@ async def test_rebinding_a_work_shows_on_the_next_read_of_its_card(
 
 
 @pytest.mark.anyio
-async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(
-    client, subscribed
-):
+async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(client):
     """一条活绑了本项目用不了的模型，卡上照原样写出那个名字，整屏照常读得出来。
 
     在渲染里拒绝，坏掉的不是那一张卡，是这个房间的所有卡一起 422 —— 而这一屏正是
@@ -254,9 +249,7 @@ async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(
 
 
 @pytest.mark.anyio
-async def test_the_card_shows_the_last_model_the_work_actually_spent_on(
-    client, subscribed
-):
+async def test_the_card_shows_the_last_model_the_work_actually_spent_on(client):
     ids = await _room(client)
     await _rebind(client, ids, "opus")
 
@@ -293,9 +286,7 @@ async def test_the_card_shows_the_last_model_the_work_actually_spent_on(
 
 
 @pytest.mark.anyio
-async def test_spending_does_not_change_the_word_the_card_uses_for_one_model(
-    client, subscribed
-):
+async def test_spending_does_not_change_the_word_the_card_uses_for_one_model(client):
     """同一个模型，花钱前后卡上是同一个字。
 
     绑定说的是目录里的 id（`sonnet`），用量行记的是真发出去的名字

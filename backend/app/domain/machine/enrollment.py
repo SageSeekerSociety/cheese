@@ -127,15 +127,18 @@ def bootstrap_script(
     pi_script = pi_launch.install(home="$HOME", base=origin_clean)
     preparation_script = ""
     if prepare_native_session:
-        ca_pem = ""
-        if settings.subscription_enabled:
-            if not settings.subscription_ca_backend_path.strip():
-                raise EnrollmentError(
-                    "SUBSCRIPTION_CA_BACKEND_PATH is required for native preparation"
-                )
-            ca_pem = Path(settings.subscription_ca_backend_path).read_text()
-            if not ca_pem.strip():
-                raise EnrollmentError("Subscription proxy CA is empty")
+        # Every machine talks to a model through the metering proxy, so the
+        # warm session has to trust its CA — there is no second shape that
+        # would not need it. Refusing here names the missing piece; the
+        # alternative is a machine that enrols cleanly and fails every turn
+        # with an opaque TLS error.
+        if not settings.subscription_ca_backend_path.strip():
+            raise EnrollmentError(
+                "SUBSCRIPTION_CA_BACKEND_PATH is required for native preparation"
+            )
+        ca_pem = Path(settings.subscription_ca_backend_path).read_text()
+        if not ca_pem.strip():
+            raise EnrollmentError("Subscription proxy CA is empty")
         preparation_script = build_startup_cache_prepare(pinned_version)
         preparation_script += build_warm_session_prepare(pinned_version, ca_pem=ca_pem)
     return f"""set -eu

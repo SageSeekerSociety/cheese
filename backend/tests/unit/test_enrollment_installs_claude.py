@@ -111,7 +111,6 @@ def test_claude_is_fatal_at_enrollment_like_tmux_and_git():
 def test_native_preparation_receives_the_subscription_proxy_ca(monkeypatch, tmp_path):
     certificate = tmp_path / "meter-ca.pem"
     certificate.write_text("fixture deployment CA\n")
-    monkeypatch.setattr(enrollment.settings, "subscription_enabled", True)
     monkeypatch.setattr(
         enrollment.settings, "subscription_ca_backend_path", str(certificate)
     )
@@ -129,7 +128,6 @@ def test_native_preparation_receives_the_subscription_proxy_ca(monkeypatch, tmp_
 
 
 def test_native_preparation_refuses_a_missing_subscription_ca(monkeypatch):
-    monkeypatch.setattr(enrollment.settings, "subscription_enabled", True)
     monkeypatch.setattr(enrollment.settings, "subscription_ca_backend_path", "")
     with pytest.raises(
         enrollment.EnrollmentError, match="SUBSCRIPTION_CA_BACKEND_PATH"

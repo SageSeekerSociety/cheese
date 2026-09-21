@@ -113,6 +113,11 @@ func startMockAPI(t *testing.T, markFile, mark string) string {
   "httpLlmResponse": { "provider": "ANTHROPIC", "model": "claude-sonnet-4-5",
     "completion": { "text": "done", "streaming": true, "stopReason": "end_turn",
                     "usage": { "inputTokens": 30, "outputTokens": 3 } } } }`)
+	// Everything that is NOT the model is answered the way the metering proxy
+	// answers it in production, from the same rows — so a real boot here is a
+	// boot under the real answer table, and a path the table has no row for
+	// shows up as the 404 it would have been. See control_table_e2e_test.go.
+	installControlTable(t, base, loadControlTable(t))
 	return base
 }
 
