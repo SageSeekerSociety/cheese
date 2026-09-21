@@ -18,11 +18,17 @@ on:
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/plan-image-builds.sh'
+      - '.github/scripts/test-plan-image-builds.sh'
   pull_request:
     branches: [main]
     paths:
       - 'deploy/**'
       - '.github/workflows/deploy-scripts-test.yml'
+      - '.github/workflows/build.yml'
+      - '.github/scripts/plan-image-builds.sh'
+      - '.github/scripts/test-plan-image-builds.sh'
 
 permissions:
   contents: read
@@ -96,4 +102,3 @@ jobs:
 
       - name: CI runner provisioning
         run: bash deploy/tests/test-ci-runner-provision.sh
-
