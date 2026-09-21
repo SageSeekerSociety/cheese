@@ -6,13 +6,6 @@
 import type { AgentFieldChoice, MemoryEntryOut } from '../api'
 import type { AgentType, ProjectAgent } from '../cx_types'
 
-// 一个队友在列表里的稳定键。项目从没配过队友时那条隐式的「芝士」没有 id
-// （configured: false），拿 id 当 key 会让它和后来真建出来的第一个队友撞在一起，
-// 所以退回 handle —— handle 在一个项目里本来就是唯一的。
-export function agentKey(agent: Pick<ProjectAgent, 'id' | 'handle'>): string {
-  return agent.id ?? `handle:${agent.handle}`
-}
-
 // 每个队友攒下了多少条记忆，按 handle 归。
 //
 // 记忆存的是一个扁平的 `{项目}:{handle}` 字符串，所以只能把 handle 切回来认领；

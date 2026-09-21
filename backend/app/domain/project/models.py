@@ -67,9 +67,10 @@ class Project(UuidPk, Timestamps, Base):
         BigInteger, nullable=True, index=True
     )
     # The agent a new topic in this project gets, and the one project-wide work
-    # acts as. NULL = the implicit 芝士 (handle `cheese`, no type) — which is
-    # what every project had before agents were pickable, so nothing has to be
-    # backfilled for a project to resolve.
+    # acts as. A project is created with it (结论 4), so NULL means only that
+    # this project was made by an image that predates that — the next read seeds
+    # the row through `AgentInstanceService.materialize_default`. Nullable stays
+    # for exactly that window.
     # use_alter: projects↔agent_instances is a circular FK; add this one via ALTER.
     default_agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(

@@ -31,7 +31,8 @@ def native_binary(name):
     wrapper = Path(__file__).resolve()
     with wrapper.open("rb") as stream:
         signature = stream.read(128)
-    for directory in os.get_exec_path():
+    # fj must use the patched distribution, including when an old fj is on PATH.
+    for directory in os.get_exec_path() if name == "gh" else ():
         candidate = Path(directory) / name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             with candidate.open("rb") as stream:
@@ -43,7 +44,7 @@ def native_binary(name):
     arch = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "x64"}.get(machine)
     if arch is None:
         raise RuntimeError(f"No {name} distribution for {machine}")
-    version = {"fj": "0.6.0", "gh": "2.62.0"}[name]
+    version = {"fj": "0.6.0-cheese.2", "gh": "2.62.0"}[name]
     directory = Path.home() / f".cheese/native/{name}-{version}"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / name

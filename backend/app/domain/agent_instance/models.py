@@ -2,6 +2,9 @@
 
 Built-in presets initialize the configuration once at creation. The stable
 handle keys memory within the project; room identities still key authorship.
+
+A project always has at least this one row: it is created with its 芝士 and a
+seat for it in the project's own room (结论 4).
 """
 
 import uuid
@@ -22,10 +25,9 @@ class AgentInstance(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # The memory pool key within the project. A project's implicit default agent
-    # uses ``cheese`` without a row here at all, so a project that never
-    # configured anything keeps writing to — and reading — the pool it already
-    # had.
+    # The memory pool key within the project. A project is created with its 芝士
+    # under the ``cheese`` handle, so every agent acting in a project — its 芝士
+    # included — has a row here, and every pool has an owner.
     handle: Mapped[str] = mapped_column(String(64))
     # Which agent type backs it. NULL = 芝士 with no specialization, which is
     # what every project got before types existed.
