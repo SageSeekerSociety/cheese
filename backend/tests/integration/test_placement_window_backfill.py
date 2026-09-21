@@ -48,7 +48,14 @@ def test_the_window_placement_lands_on_the_session_that_owns_it(
 
     摊给两条会话，那条 pi 的屏会被中心通道当成自己的去 restore。已经有位置的会话
     一律不碰——`settled` 的骨架和它房间那条旧位置是对得上的，挡住它的只剩「已经
-    有位置了」这一条，所以这段 SQL 连跑两遍，三行的结果一个字都不差。
+    有位置了」这一条，所以这段 SQL 连跑两遍，四行的结果一个字都不差。
+
+    连跑两遍还不等于跑第二遍认领不到东西：`settled` 那间房里另坐着 `late`，骨架
+    一样是 pi、`agent_handle` 不同（唯一索引是 (房间, agent, 骨架)，换过队友的房间
+    就长这样）、还没有位置。按行判「我有没有位置」的话，它就是上一遍漏下的那个
+    次一名，会把 `settled` 手上那一份位置原样再写一份到自己身上——同一个
+    resource_id、同一份 work_lease，`placed_at` 还比真的那条新，按 `placed_at DESC`
+    选屏的几处会一起改判给这条死会话。所以判据是按房间的，`late` 两遍之后都还是空的。
     """
 
     async def _run() -> None:
@@ -85,7 +92,9 @@ def test_the_window_placement_lands_on_the_session_that_owns_it(
             runtime_location=settled_location,
             work_lease=settled_lease,
         )
-        db_session.add_all([pi, claude, settled])
+        # 和 `settled` 同房、同骨架、不同 agent：上一遍认领之后剩下的次一名。
+        late = AgentSession(topic_id=already.id, agent_handle="rho", harness="pi")
+        db_session.add_all([pi, claude, settled, late])
         await db_session.flush()
 
         resource = str(uuid.uuid4())
@@ -140,7 +149,10 @@ def test_the_window_placement_lands_on_the_session_that_owns_it(
         # 已经有位置的不碰：它手上的还是它自己那一份。
         assert first[settled.id][:2] == (settled_lease, settled_location)
 
-        # 重跑一遍，三行一个字都不差——这才是「跑几遍结果都一样」被测到。
+        # 房间里已经有一条真位置，同房的次一名就不该顶上来认领同一份。
+        assert first[late.id][:2] == (None, None)
+
+        # 重跑一遍，四行一个字都不差——这才是「跑几遍结果都一样」被测到。
         assert await _claim_once() == first
 
     _portal.call(_run)
