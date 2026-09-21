@@ -24,7 +24,7 @@ partial index 改叫 `uq_agent_sessions_room_task_null` 之后它照样推断得
 plain unique index，下一条迁移只需删，不需要再改一次名。
 
 Revision ID: c3b9e41f75a2
-Revises: c9f41b7a2e08
+Revises: 6c3f0a1d92b7
 """
 
 import logging
@@ -35,7 +35,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c3b9e41f75a2"
-down_revision: str | Sequence[str] | None = "c9f41b7a2e08"
+down_revision: str | Sequence[str] | None = "6c3f0a1d92b7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

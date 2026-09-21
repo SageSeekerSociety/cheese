@@ -20,10 +20,15 @@ _SANDBOX = Path(__file__).resolve().parents[2] / "sandbox"
 _CHEESE = _SANDBOX / "cheese"
 _SKILL = _SANDBOX / "skills" / "cheese" / "SKILL.md"
 
-# A tool-table row: `| \`cheese_<name>(...)\` | 说明 |`, where the tool name is
-# the subcommand with `-` folded to `_` (`cheese_doc_set` documents `doc`). Two
-# tools stand in for subcommands under their own names.
-_ROW = re.compile(r"^\|\s*`(cheese_[a-z_]+|chat_send|platform_request)\(")
+# SKILL.md 的工具一节有两张表，两种写法，这里两种都认：
+#
+# - MCP 工具那张写工具签名 —— `| \`cheese_note(thread, content)\` | 说明 |`。它们
+#   在 CLI 上各有一条同名子命令（`cheese_deliver_at` → `deliver-at`、
+#   `cheese_feedback_propose` → `feedback`），由 `_command_for` 折回去；
+# - 子命令那张左列写的就是命令行本身 —— `| \`cheese doc set <文件>\` | 说明 |`，
+#   第一个词就是子命令，不用猜。
+_TOOL_ROW = re.compile(r"^\|\s*`(cheese_[a-z_]+|chat_send|platform_request)\(")
+_COMMAND_ROW = re.compile(r"^\|\s*`cheese ([a-z][a-z-]*)")
 _TOOL_TO_COMMAND = {"chat_send": "chat", "platform_request": "api"}
 
 
@@ -60,14 +65,15 @@ def _command_for(tool: str) -> str:
 def _documented() -> set[str]:
     names: set[str] = set()
     for line in _SKILL.read_text(encoding="utf-8").splitlines():
-        m = _ROW.match(line)
-        if not m:
+        command = _COMMAND_ROW.match(line)
+        if command:
+            names.add(command.group(1))
             continue
-        tool = m.group(1)
-        if tool in _TOOL_TO_COMMAND:
-            names.add(_TOOL_TO_COMMAND[tool])
+        tool = _TOOL_ROW.match(line)
+        if not tool:
             continue
-        names.add(_command_for(tool))
+        name = tool.group(1)
+        names.add(_TOOL_TO_COMMAND.get(name) or _command_for(name))
     return names
 
 

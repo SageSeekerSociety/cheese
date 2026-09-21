@@ -50,7 +50,7 @@ def build_system_prompt(
             "## 本轮第一件事：先给本话题起名（先于一切）\n"
             "本话题还叫「新话题」（未命名）。**本轮的第一个动作**——在说开场白、"
             "回复任何内容、调用任何其他工具之前——先根据用户的需求执行 "
-            '`cheese_title(text="<标题>")` 起个 ≤12 字简短标题，'
+            "`cheese title <标题>` 起个 ≤12 字简短标题，"
             "然后再照常回应、干活。"
             "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
             "（只起一次，定了别反复改。）"
@@ -175,7 +175,7 @@ def build_system_prompt(
                 f"\n\n> 📚 记忆池里另有 **{memories_omitted} 条**，"
                 "**不会自动出现在这里**——核心记忆之外的都要自己查。"
                 "开工前、话题拐弯时、要用到某条旧约定或踩过的坑时，"
-                '用 `cheese_recall(query="<关键词>")` 查一次。'
+                "用 `cheese recall --query <关键词>` 查一次。"
                 "**一次没查到不等于没有**：换个说法、或只用其中一两个关键词再试一次。"
             )
         if memories_core_omitted:
@@ -184,7 +184,7 @@ def build_system_prompt(
             block += (
                 f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
                 "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
-                "了——挑几条降级成普通记忆（`cheese_remember` 不带 `core`）。"
+                "了——挑几条降级成普通记忆（`cheese remember` 不带 `--core`）。"
             )
         parts.append(block)
     if session_opening:
@@ -213,9 +213,9 @@ def thread_relay_prompt(
         f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
         f"---\n[{author}] {message}\n---\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
-        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f'`cheese_bind(task_id="{task_id}", agent_id=<新的 agent_id>)`。'
-        "回话说在这条活上（`cheese_tell` 到它），别只在房间里说，"
+        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身，新分身的"
+        "prompt 里照旧写这条活的线程标识。"
+        "回话说在这条活上（`cheese tell <这条活> <说明>`），别只在房间里说，"
         "问话的人看的是那边。"
     )
 
