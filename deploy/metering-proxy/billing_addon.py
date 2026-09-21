@@ -71,6 +71,7 @@ from mitmproxy import http, tls
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
+    BINDING,
     GATEWAY,
     TELEMETRY_HOSTS,
     AdmissionGate,
@@ -300,12 +301,20 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     return True
 
 
-def _write_bound_model(flow: http.HTTPFlow, model: str) -> None:
+def _write_bound_model(
+    flow: http.HTTPFlow, model: str, *, keep_haiku: bool = False
+) -> None:
     """Put the admitted model name into this request's body, on the way past.
 
     The one control point ends here: the launch environment names no model, so
     the binding resolved at admission has to reach the request body, which is
     the only place either pool reads a model name from.
+
+    ``keep_haiku`` leaves alone what the CLI addressed to the small, fast family
+    — session titles, file-path suggestions, the work it does on its own account
+    rather than the turn's. See `ModelRewrite`/`_is_haiku`: on the subscription
+    those never carried the binding, and a project bound to opus should not
+    start writing its session titles with it.
 
     Re-framed as chunked because the rewrite changes the body's length and the
     headers have already been decided by the time the first chunk arrives —
@@ -315,7 +324,7 @@ def _write_bound_model(flow: http.HTTPFlow, model: str) -> None:
     """
     if not model:
         return
-    rewrite = ModelRewrite(model)
+    rewrite = ModelRewrite(model, keep_haiku=keep_haiku)
     flow.request.headers.pop("content-length", None)
     flow.request.headers["transfer-encoding"] = "chunked"
 
@@ -453,19 +462,52 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
         data.ignore_connection = True
 
 
-def _answer_here(flow: http.HTTPFlow, project: str, topic: str) -> bool:
+def _scoped_claims(flow: http.HTTPFlow) -> tuple[str, dict | None]:
+    """The caller's scoped token and its verified claims, or ``("", None)``.
+
+    Pinned at CONNECT time where there is one (the proxy password carries the
+    token on that listener); otherwise read off this request's own bearer.
+    """
+    pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
+    if pinned:
+        return pinned
+    token = _caller_bearer(flow)
+    claims = verify_scoped_token(token, SCOPED_SECRET) if SCOPED_SECRET else None
+    return token, claims
+
+
+def _answer_here(flow: http.HTTPFlow, claims: dict | None) -> bool:
     """Answer a non-model endpoint from the table, or leave it to go upstream.
 
-    Unconditional. Which pool the project runs on used to decide who may answer
-    these, and a session admission had positively placed on the subscription was
-    let through to Anthropic — a real account asking about itself. That is the
-    second half of 结论 46, and it is gone: a machine has ONE launch shape now,
-    and that shape has to boot on a deployment that owns no subscription at all.
-    Asking who may answer would put the boot back behind an admission call that
-    can fail open, on a path whose wrong answer hands a sandbox the platform
-    account's uuid and email.
+    Unconditional, and before ANY upstream credential is attached — not behind
+    the RC check, not behind admission. Which pool the project runs on used to
+    decide who may answer these, and a session admission had positively placed
+    on the subscription was let through to Anthropic — a real account asking
+    about itself. That is the second half of 结论 46, and it is gone: a machine
+    has ONE launch shape now, and that shape has to boot on a deployment that
+    owns no subscription at all. Asking anything first would put the boot behind
+    a call that can fail open, on a path whose wrong answer hands a sandbox the
+    platform account's uuid and email.
+
+    The VERIFIED place is what the answer asserts — `_attribution` lets the
+    per-request header pick the topic inside an already-proven project, which is
+    right for billing and wrong for identity. A caller that proved no place gets
+    the same empty-identity answer rather than Anthropic's.
     """
-    answer = control_answer(flow.request.host, flow.request.path, project, topic)
+    claims = claims or {}
+    answer = control_answer(
+        flow.request.host,
+        flow.request.path,
+        str(claims.get("p") or ""),
+        str(claims.get("t") or ""),
+        # The RC bridge flags describe a transport this session has only if its
+        # token says so. Answering them on is what makes Claude Code open
+        # `/v1/code/…`, and for a session with no RC claim `_rc_route` has
+        # nowhere to send those — they would go upstream on the platform's
+        # credential, carrying control-session identifiers. Off is the honest
+        # answer, and it is the same one an unflagged session gets today.
+        rc=bool(claims.get("rc") and claims.get("p") and claims.get("t")),
+    )
     if answer is None:
         return False
     flow.server_conn.via = None
@@ -476,33 +518,19 @@ def _answer_here(flow: http.HTTPFlow, project: str, topic: str) -> bool:
     return True
 
 
-def _rc_route(flow: http.HTTPFlow) -> bool:
+def _rc_route(flow: http.HTTPFlow, token: str, claims: dict | None) -> bool:
     """Route RC before any upstream credential is attached.
 
     RC ownership comes from the verified token's place, never the attribution
     header (which may select another topic for metering).
 
-    Claude Code's non-model startup endpoints — identity, settings, policy,
-    feature flags, telemetry — are answered right here, from the table in
-    `cheese_billing_core.control_answer`, before any upstream credential is
-    attached and without asking admission anything. That is what lets a machine
-    boot in the one launch shape on a deployment that owns no subscription
-    (结论 46).
+    The non-model startup endpoints are NOT here: they are answered by
+    `_answer_here`, which runs whether or not this session has RC.
     """
-    pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
-    token, claims = pinned if pinned else ("", None)
-    if not claims:
-        token = _caller_bearer(flow)
-        claims = verify_scoped_token(token, SCOPED_SECRET) if SCOPED_SECRET else None
     rc = bool(claims and claims.get("rc") and claims.get("p") and claims.get("t"))
     path = flow.request.path.split("?", 1)[0]
     if not rc:
         return False
-    # The VERIFIED place is what the answer asserts — `_attribution` lets the
-    # per-request header pick the topic inside an already-proven project, which
-    # is right for billing and wrong for identity (the first line above).
-    if _answer_here(flow, str(claims.get("p") or ""), str(claims.get("t") or "")):
-        return True
     if flow.request.host in RC_EXTRA_HOSTS and not path.startswith("/v1/code/"):
         _refuse(
             flow,
@@ -537,6 +565,23 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
     return True
 
 
+def _refuse_verdict(flow: http.HTTPFlow, verdict) -> None:
+    """Send the backend's refusal back as the KIND of refusal it is.
+
+    Both exits used to read "cheese project budget: …" with a 429, from the days
+    when a spent budget was the only way a turn was ever refused. It is not any
+    more: a card bound to a model this project's catalogue cannot serve is
+    refused at admission too (I27 — answer or refuse, never swap the pool), and
+    dressing that as an exhausted quota sends the user to top up an account that
+    is fine while the card stays broken. A 429 also tells the client to back
+    off and try again, which for a binding is a retry that can only fail.
+    """
+    if verdict.reason_kind == BINDING:
+        _refuse(flow, 400, "invalid_request_error", verdict.reason)
+        return
+    _refuse(flow, 429, "rate_limit_error", f"cheese project budget: {verdict.reason}")
+
+
 async def requestheaders(flow: http.HTTPFlow) -> None:
     # Runs at HEADER time, before the body arrives — and everything below reads
     # only headers/metadata, never the request body — so the request body can be
@@ -562,7 +607,13 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         and flow.request.host in ANTHROPIC_HOSTS | RC_EXTRA_HOSTS
     ):
         flow.request.stream = True
-        if _rc_route(flow):
+        # Before RC, before admission, before any credential: Claude Code's
+        # identity / settings / policy / feature-flag / telemetry calls are
+        # answered from the table and never leave this process (结论 46).
+        token, claims = _scoped_claims(flow)
+        if _answer_here(flow, claims):
+            return
+        if _rc_route(flow, token, claims):
             return
         flow.request.headers["host"] = sni
 
@@ -644,12 +695,7 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
             return
         if verdict is not None:
             if not verdict.allow:
-                _refuse(
-                    flow,
-                    429,
-                    "rate_limit_error",
-                    f"cheese project budget: {verdict.reason}",
-                )
+                _refuse_verdict(flow, verdict)
                 return
             # Supply decision (#243): the same answer says WHERE this project's
             # traffic goes. The subscription is the default and keeps every
@@ -679,7 +725,9 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
             )
             return
         if verdict is not None:
-            _write_bound_model(flow, verdict.model)
+            # The subscription pool serves the haiku family itself, so the
+            # CLI's own background requests stay on it.
+            _write_bound_model(flow, verdict.model, keep_haiku=True)
 
     # A stale x-api-key would override whatever bearer goes upstream, on either
     # path below — so it is dropped before the branch, not inside one.
@@ -708,16 +756,11 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # here turns that into one line that names the missing piece.
     if carries_own_credential:
         if verdict is not None and not verdict.allow:
-            # An exhausted budget also produces no identity (admission only
-            # resolves one for a turn it is allowing), so it would otherwise be
-            # reported as the misconfiguration below — pointing whoever reads it
-            # at the box's env instead of at the project's balance.
-            _refuse(
-                flow,
-                429,
-                "rate_limit_error",
-                f"cheese project budget: {verdict.reason}",
-            )
+            # A refusal also produces no identity (admission only resolves one
+            # for a turn it is allowing), so it would otherwise be reported as
+            # the misconfiguration below — pointing whoever reads it at the
+            # box's env instead of at the project's balance or its card.
+            _refuse_verdict(flow, verdict)
             return
         # Which of the three it was, on the box, at the moment it happened. The
         # refusal body has to name all three because the caller cannot see the

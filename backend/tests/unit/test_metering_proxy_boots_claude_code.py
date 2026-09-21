@@ -35,8 +35,8 @@ PROJECT = "11111111-1111-1111-1111-111111111111"
 TOPIC = "22222222-2222-2222-2222-222222222222"
 
 
-def _answer(path: str, host: str = "api.anthropic.com"):
-    return core.control_answer(host, path, PROJECT, TOPIC)
+def _answer(path: str, host: str = "api.anthropic.com", rc: bool = True):
+    return core.control_answer(host, path, PROJECT, TOPIC, rc=rc)
 
 
 # —— 应答表：每条路径一条断言（状态码 + 必需字段）————————————————————
@@ -75,6 +75,16 @@ def test_feature_evaluation_turns_on_the_bridge_cheese_needs():
     assert features["tengu_ccr_v2_session_crud_cli"]["defaultValue"] is True
 
 
+def test_a_session_without_rc_is_still_answered_here_but_told_nothing_is_on():
+    """Answered either way — the table is what boots the process, and nothing
+    on it may reach Anthropic. What differs is the content: the bridge flags
+    are what make Claude Code open `/v1/code/…`, and a session whose token
+    carries no rc claim has no Cheese route for those to take."""
+    answer = _answer("/api/eval/anything?client=cli", rc=False)
+    assert answer.status == 200
+    assert json.loads(answer.body)["features"] == {}
+
+
 def test_telemetry_is_consumed_here_whichever_host_it_was_sent_to():
     """RC payloads carry control-session identifiers; forwarding them would take
     both the payload and an upstream credential past this boundary."""
@@ -83,7 +93,7 @@ def test_telemetry_is_consumed_here_whichever_host_it_was_sent_to():
         ("api.statsig.com", "/v1/rgstr"),
         ("statsig.anthropic.com", "/v1/initialize"),
     ):
-        answer = core.control_answer(host, path, PROJECT, TOPIC)
+        answer = core.control_answer(host, path, PROJECT, TOPIC, rc=True)
         assert answer is not None, (host, path)
         assert answer.status == 200
         assert json.loads(answer.body) == {}
@@ -100,8 +110,13 @@ def test_a_model_request_is_not_in_the_table():
 # —— 绑定解析出来的模型进到请求体 ————————————————————————————————
 
 
-def _rewrite(body: bytes, model: str = "claude-opus-5", chunk: int = 1 << 20) -> bytes:
-    rewrite = core.ModelRewrite(model)
+def _rewrite(
+    body: bytes,
+    model: str = "claude-opus-5",
+    chunk: int = 1 << 20,
+    keep_haiku: bool = False,
+) -> bytes:
+    rewrite = core.ModelRewrite(model, keep_haiku=keep_haiku)
     out = b"".join(
         rewrite.feed(body[i : i + chunk]) for i in range(0, len(body), chunk)
     )
@@ -206,3 +221,63 @@ def test_the_model_travels_on_the_admission_answer(monkeypatch, supply):
 def test_an_admission_answer_that_names_no_model_leaves_the_body_alone():
     """A backend too old to say, or one that refused: nothing is invented here."""
     assert core.Verdict(True, "ok").model == ""
+
+
+def test_the_subscription_leaves_the_clis_own_background_requests_on_haiku():
+    """Claude Code names the haiku family for work it does on its own account —
+    session titles, file-path suggestions — and the subscription pool serves
+    that family. Rewriting those to the binding means a project bound to opus
+    writes its session titles with opus, for work nobody bound to anything."""
+    body = json.dumps({"model": "claude-3-5-haiku-20241022", "messages": []}).encode()
+    assert json.loads(_rewrite(body, keep_haiku=True))["model"] == (
+        "claude-3-5-haiku-20241022"
+    )
+    # The turn itself still gets the binding.
+    turn = json.dumps({"model": "claude-sonnet-4-5", "messages": []}).encode()
+    assert json.loads(_rewrite(turn, keep_haiku=True))["model"] == "claude-opus-5"
+
+
+def test_the_gateway_rewrites_a_haiku_request_too():
+    """The opposite case, and why this is a flag rather than a rule: LiteLLM
+    does not serve `claude-3-5-haiku-*` at all, so a request left naming it
+    fails outright."""
+    body = json.dumps({"model": "claude-3-5-haiku-20241022", "messages": []}).encode()
+    assert json.loads(_rewrite(body, model="glm-5.2"))["model"] == "glm-5.2"
+
+
+def test_a_refusal_says_what_kind_it_is_so_it_can_be_rendered_as_itself():
+    """Every `allow=false` used to be rendered "cheese project budget: …" with a
+    429. A card bound to a model the catalogue cannot serve is refused too now
+    (I27), and reporting that as a spent quota points the user at the one thing
+    that is fine."""
+    import io
+    from unittest import mock
+
+    captured = json.dumps(
+        {
+            "data": {
+                "allow": False,
+                "reason": "这条活绑的模型 'gpt-9' 在当前项目里用不了，请改绑",
+                "reason_kind": "binding",
+                "supply": {},
+            }
+        }
+    ).encode()
+
+    class _Resp:
+        def __enter__(self):
+            return io.BytesIO(captured)
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
+        verdict = core._post_admission("http://backend/llm/admission", "tok", 3.0)
+
+    assert verdict.allow is False
+    assert verdict.reason_kind == core.BINDING
+
+
+def test_a_backend_that_names_no_kind_is_read_as_a_budget_refusal():
+    """The kind a proxy older than this field always assumed."""
+    assert core.Verdict(False, "budget spent").reason_kind == core.BUDGET

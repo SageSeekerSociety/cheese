@@ -221,6 +221,12 @@ class Meter:
 SUBSCRIPTION = "subscription"
 GATEWAY = "gateway"
 
+# Why a turn was refused. The proxy renders each as itself: a budget refusal is
+# a 429 the client should back off from, a binding refusal is a 400 nobody
+# should retry until the card changes.
+BUDGET = "budget"
+BINDING = "binding"
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -233,6 +239,13 @@ class Verdict:
 
     allow: bool
     reason: str
+    # What KIND of refusal this is, so it can be rendered as itself. Everything
+    # used to become "cheese project budget: …" with a 429, because a spent
+    # budget was the only way a turn was ever refused; a card bound to a model
+    # the catalogue cannot serve is now the other way, and telling that user
+    # their quota ran out points them at the one thing that is fine.
+    # "budget" (the default) keeps a backend too old to say behaving as before.
+    reason_kind: str = BUDGET
     pool: str = SUBSCRIPTION
     key: str | None = None
     # The model name to write into the request body. It comes from the binding
@@ -270,9 +283,11 @@ def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
     pool = supply.get("pool")
     upstream = supply.get("upstream")
     model = supply.get("model")
+    kind = data.get("reason_kind")
     return Verdict(
         allow=bool(data.get("allow", True)),
         reason=str(data.get("reason", "")),
+        reason_kind=kind if kind in (BUDGET, BINDING) else BUDGET,
         pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
         key=supply.get("key") or None,
         model=model if isinstance(model, str) else "",
@@ -398,11 +413,19 @@ class Answer:
     body: bytes
 
 
-def control_answer(host: str, path: str, project: str, topic: str) -> Answer | None:
+def control_answer(
+    host: str, path: str, project: str, topic: str, rc: bool = False
+) -> Answer | None:
     """The proxy's own answer for a non-model endpoint, or None to forward.
 
     ``project``/``topic`` are the VERIFIED place from the caller's scoped token:
     the identity Cheese asserts is Cheese's own, never an Anthropic account's.
+
+    ``rc`` says whether that token grants this session the Cheese RC transport.
+    Every path below is answered either way — the point is that none of them
+    reaches Anthropic — but only an RC session is told the bridge is on, because
+    those flags are what make Claude Code open `/v1/code/…`, and a session
+    without the claim has no RC route for them to take.
     """
     path = path.split("?", 1)[0]
     if path == _PROFILE:
@@ -431,7 +454,7 @@ def control_answer(host: str, path: str, project: str, topic: str) -> Answer | N
                 {
                     "features": {
                         name: {"defaultValue": value}
-                        for name, value in RC_FLAGS.items()
+                        for name, value in (RC_FLAGS if rc else {}).items()
                     }
                 }
             ).encode(),
@@ -460,11 +483,24 @@ class ModelRewrite:
     Parsed, not searched. ``"model":`` also occurs inside message text, and a
     naive first-match would rewrite a user's own words. This tracks string and
     escape state and only accepts the member at depth 1 of the top-level object.
+
+    ``limit`` is 64KiB and that number is NOT yet backed by a captured request:
+    where the client serializes its top-level ``model`` member is the client's
+    choice, and Claude Code's ``tools`` + ``system`` alone run to tens of KB, so
+    a body that puts ``model`` after ``messages`` would miss on every turn of a
+    long conversation. A miss is loud (`missed`, and the caller logs it) but it
+    is not free: on the subscription the turn falls back to the CLI's own
+    choice, and on the gateway it fails outright because LiteLLM does not serve
+    the Claude names. Raise it against a real capture, not by guesswork — the
+    buffer is held in RAM and unbounded buffering is the #654 OOM.
     """
 
-    def __init__(self, model: str, limit: int = 1 << 16) -> None:
+    def __init__(
+        self, model: str, limit: int = 1 << 16, keep_haiku: bool = False
+    ) -> None:
         self._model = model
         self._limit = limit
+        self._keep_haiku = keep_haiku
         self._buf = b""
         self._done = False
         # True once the head went past without a top-level `model` member. The
@@ -486,7 +522,14 @@ class ModelRewrite:
         span = top_level_model_span(self._buf)
         if span is not None:
             start, end = span
-            out = self._buf[:start] + json.dumps(self._model).encode() + self._buf[end:]
+            if self._keep_haiku and _is_haiku(self._buf[start:end]):
+                out = self._buf
+            else:
+                out = (
+                    self._buf[:start]
+                    + json.dumps(self._model).encode()
+                    + self._buf[end:]
+                )
             self._done = True
             self._buf = b""
             return out
@@ -496,6 +539,24 @@ class ModelRewrite:
             out, self._buf = self._buf, b""
             return out
         return b""
+
+
+def _is_haiku(value: bytes) -> bool:
+    """Did the CLI address this request to the small, fast family?
+
+    Claude Code sends more than the conversation: it names the haiku family for
+    session titles, file-path suggestions and other background work it does on
+    its own account. On the SUBSCRIPTION pool those requests kept going to haiku
+    before the launch environment stopped naming a model — only the main reply
+    ever carried the binding — and rewriting them to the bound model means a
+    project on opus generates its session titles on opus, for work nobody bound
+    to anything.
+
+    The gateway pool is the opposite case and does not pass this flag: LiteLLM
+    does not serve `claude-3-5-haiku-*` at all, so a request left naming it
+    fails outright.
+    """
+    return b"haiku" in value.lower()
 
 
 def top_level_model_span(data: bytes) -> tuple[int, int] | None:

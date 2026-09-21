@@ -32,17 +32,6 @@ from app.domain.device.supply import Supply, Visibility
 
 
 @pytest.fixture(autouse=True)
-def _metering_proxy_ca(monkeypatch, tmp_path_factory):
-    """A machine has one launch shape, and it reaches a model only through the
-    metering proxy — so a backend that cannot read the proxy's CA cannot open a
-    screen at all. Tests about something else get one and move on; the test that
-    is about the missing CA takes it away again."""
-    ca = tmp_path_factory.mktemp("meter-ca") / "proxy-ca.pem"
-    ca.write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
-    monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca))
-
-
-@pytest.fixture(autouse=True)
 def _no_device_identity(monkeypatch):
     """Default every test to a device that brings no ccproxy identity.
 

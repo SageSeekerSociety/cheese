@@ -518,24 +518,6 @@ def test_rc_telemetry_is_consumed_without_attaching_provider_credential(
     assert flow.request.headers["authorization"] != "Bearer provider-secret"
 
 
-def test_rc_flags_preserve_other_feature_values(monkeypatch, tmp_path):
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    flow = _make_flow(
-        path="/api/eval/test", caller_bearer=_scoped_token("test-secret", rc=True)
-    )
-    asyncio.run(mod.requestheaders(flow))
-    flow.response = mod.http.Response.make(
-        200, json.dumps({"features": {"unrelated": {"defaultValue": 7}}}).encode()
-    )
-    mod.responseheaders(flow)
-    mod.response(flow)
-    features = json.loads(flow.response.content)["features"]
-    assert features["unrelated"] == {"defaultValue": 7}
-    assert features["tengu_ccr_bridge"] == {"defaultValue": True}
-
-
 def _make_connect_flow(proxy_auth: str | None = None, *, conn: str = "client-1"):
     """A CONNECT as the regular-mode listener sees it: the caller's scoped token
     rides as the Basic password of its HTTPS_PROXY URL.
@@ -1138,38 +1120,69 @@ def test_failed_gateway_request_keeps_timing_without_error_details(
     assert "private-" not in caplog.records[-1].message
 
 
-def test_gateway_account_requests_retain_the_credential_route(monkeypatch, tmp_path):
-    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
-    mod.ADMISSION_URL = "http://backend/llm/admission"
-    mod.ALLOW_HEADER_ATTR = True
-    mod.UPSTREAM_VIA = "subscription-proxy:3128"
-    mod.ADMISSION.check = lambda *args: SimpleNamespace(
-        allow=True, pool="gateway", upstream=None
-    )
-    for path in (
-        "/api/claude_code/settings",
-        "/api/claude_code/policy_limits",
-        "/api/oauth/profile",
-    ):
-        flow = _make_flow(path=path)
-        flow.request.headers["x-cheese-attr"] = "project/topic"
-        asyncio.run(mod.requestheaders(flow))
-        assert flow.response is None
-        assert flow.request.stream is True
-        assert flow.server_conn.via is not None
-        assert flow.request.headers["authorization"] == "Bearer subscription-secret"
+_BOOT_PATHS = (
+    "/api/oauth/profile",
+    "/api/claude_code/settings",
+    "/api/claude_code/policy_limits",
+    "/api/eval/sdk-client",
+    "/api/event_logging/v2/batch",
+)
 
-    flow = _make_flow(path="/api/eval/sdk-client")
-    flow.request.headers["x-cheese-attr"] = "project/topic"
-    flow.metadata["cheese_rc_flags"] = True
+
+def test_the_boot_endpoints_are_answered_here_without_an_rc_claim(
+    monkeypatch, tmp_path
+):
+    """一台机器只有一种启动环境（结论 46），所以开机不能取决于这个会话有没有 RC。
+
+    The caller below proves no place at all — no scoped secret, no rc claim, the
+    weakest caller the proxy ever serves. Every startup path still has to be
+    answered from the table: the alternative is Anthropic answering "who am I"
+    for a sandbox running someone else's code, with the platform subscription's
+    own uuid and email in the reply.
+    """
+    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
+    mod.UPSTREAM_VIA = "subscription-proxy:3128"
+
+    for path in _BOOT_PATHS:
+        flow = _make_flow(path=path)
+        asyncio.run(mod.requestheaders(flow))
+        assert flow.response is not None, path
+        assert flow.response.status_code in (200, 204), path
+        # Nothing went out: no upstream hop, and no credential attached to one.
+        assert flow.server_conn.via is None, path
+        assert flow.request.headers["authorization"] != "Bearer subscription-secret"
+        assert flow.request.stream is False, path
+
+
+def test_the_identity_answered_here_is_cheeses_own(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject="subscription-secret")
+    flow = _make_flow(path="/api/oauth/profile")
     asyncio.run(mod.requestheaders(flow))
-    mod.responseheaders(flow)
-    mod.response(flow)
-    assert flow.response.status_code == 200
-    assert flow.server_conn.via is None
-    assert json.loads(flow.response.content)["features"]["tengu_ccr_bridge"] == {
-        "defaultValue": True
-    }
+    body = json.loads(flow.response.content)
+    assert "anthropic.com" not in body["account"]["email"]
+
+
+def test_the_rc_bridge_is_announced_only_to_a_session_that_has_rc(
+    monkeypatch, tmp_path
+):
+    """The flags are what make Claude Code open `/v1/code/…`. A session whose
+    token carries no rc claim has no route for those, so announcing the bridge
+    to it would send control traffic upstream on the platform's credential."""
+    secret = "scoped-secret"
+    mod = _load_addon(monkeypatch, tmp_path, inject="x", scoped_secret=secret)
+
+    plain = _make_flow(path="/api/eval/sdk-client")
+    asyncio.run(mod.requestheaders(plain))
+    assert json.loads(plain.response.content)["features"] == {}
+
+    rc_flow = _make_flow(
+        path="/api/eval/sdk-client",
+        caller_bearer=_scoped_token(secret, rc=True),
+    )
+    asyncio.run(mod.requestheaders(rc_flow))
+    features = json.loads(rc_flow.response.content)["features"]
+    assert features["tengu_ccr_bridge"] == {"defaultValue": True}
+    assert rc_flow.server_conn.via is None
 
 
 # --- a refusal has to REACH the caller --------------------------------------

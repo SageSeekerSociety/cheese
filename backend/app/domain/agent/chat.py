@@ -45,7 +45,6 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -4048,11 +4047,7 @@ class ChatService:
         # 而主线正是最长、最吃缓存的那条对话。
         bound = binding.resolve(None, binding.catalog(project.settings))
         supply = bound.supply
-        model = (
-            subscription_model_alias(bound.model)
-            if supply == SUBSCRIPTION
-            else bound.model
-        )
+        model = bound.wire_model
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.

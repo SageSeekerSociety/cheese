@@ -42,8 +42,7 @@ from app.core.errors import (
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
-from app.domain.agent.market import subscription_model_alias
-from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
+from app.domain.agent.supply import GATEWAY
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -169,20 +168,29 @@ async def admission(
             None, binding.catalog(project.settings if project else None)
         )
     except ValidationError as exc:
-        return ok({"allow": False, "reason": exc.message, "supply": {}})
+        # `reason_kind` is what stops the proxy dressing this up as a budget
+        # refusal: it renders every `allow=false` it has ever seen as a 429
+        # `rate_limit_error` prefixed "cheese project budget: …", and a project
+        # whose card names a model the catalogue cannot serve would be told its
+        # quota ran out. The refusal has to say the true reason to satisfy I27
+        # at all — a refusal nobody can act on is the silent swap wearing a
+        # different hat.
+        return ok(
+            {
+                "allow": False,
+                "reason": exc.message,
+                "reason_kind": "binding",
+                "supply": {},
+            }
+        )
     pool = bound.supply
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
-    # is catalogued under a short id (`sonnet`) and served under its full name.
-    supply: dict = {
-        "pool": pool,
-        "model": (
-            subscription_model_alias(bound.model)
-            if pool == SUBSCRIPTION
-            else bound.model
-        ),
-    }
+    # is catalogued under a short id (`sonnet`) and served under its full name;
+    # the catalogue is the only thing that knows, so the translation lives on
+    # the binding (`WorkBinding.wire_model`) rather than here.
+    supply: dict = {"pool": pool, "model": bound.wire_model}
     if pool == GATEWAY and decision.allow:
         # Minted lazily and cached on the project; the proxy never holds a
         # provider key of its own, so a project whose key cannot be provisioned
@@ -214,7 +222,14 @@ async def admission(
                 if upstream:
                     supply["upstream"] = upstream
 
-    return ok({"allow": decision.allow, "reason": decision.reason, "supply": supply})
+    return ok(
+        {
+            "allow": decision.allow,
+            "reason": decision.reason,
+            "reason_kind": "budget",
+            "supply": supply,
+        }
+    )
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)

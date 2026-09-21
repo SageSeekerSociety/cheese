@@ -58,6 +58,21 @@ class WorkBinding:
     supply: str
     effort: str | None = None
 
+    @property
+    def wire_model(self) -> str:
+        """真发到上游、也真记进 `usage` 的那个名字。
+
+        目录 id 和上游名不是一套词：订阅模型的 id 是 `sonnet` 这样的短名，上游
+        收的是 `claude-sonnet-5`；网关模型的 id 就是它自己那个名字。`catalog_id`
+        是这一道翻译的反向，它们俩挨着放是因为知道两边互为表里的只有目录 ——
+        把翻译摊到调用方，就是每个读绑定的地方各写一次「这是不是订阅」。
+        """
+        return (
+            subscription_model_alias(self.model)
+            if self.supply == SUBSCRIPTION
+            else self.model
+        )
+
 
 def catalog(project_settings: dict | None) -> dict[str, dict]:
     """这个项目能用的模型，按 id 排好。

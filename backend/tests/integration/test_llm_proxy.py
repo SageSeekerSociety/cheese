@@ -339,6 +339,11 @@ async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
     assert body["allow"] is False
     assert "默认模型" in body["reason"]
     assert body["supply"] == {}
+    # Named as its own kind of refusal. The proxy renders every `allow=false`
+    # it cannot tell apart as a 429 "cheese project budget: …", so without this
+    # the user of a project whose catalogue serves nothing is told their quota
+    # ran out — and sent to top up an account that is fine.
+    assert body["reason_kind"] == "binding"
 
 
 # --- which ccproxy identity a turn goes out as ------------------------------
