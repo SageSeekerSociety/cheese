@@ -46,7 +46,7 @@ def upgrade() -> None:
         project_settings = project["settings"] or {}
         supply = project_settings.get("supply")
         if supply not in {"subscription", "gateway"}:
-            supply = "subscription" if settings.subscription_enabled else "gateway"
+            supply = "subscription"
         agents = (
             bind.execute(
                 sa.text(

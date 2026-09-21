@@ -454,7 +454,6 @@ def _screen_launch(
     hook_token="tok",
     home_dir="/dev/home",
     work_dir="/dev/work",
-    model=None,
     resume_session_id=None,
     extra_env=None,
     topic_id="",
@@ -481,9 +480,7 @@ def _screen_launch(
         remote_control=remote_control,
         ca_pem=ca_pem,
     )
-    plan = ClaudeLaunch(
-        system_prompt="", model=model, resume_session_id=resume_session_id
-    )
+    plan = ClaudeLaunch(system_prompt="", resume_session_id=resume_session_id)
     command, env = machine_launcher.screen_launch(
         place, plan.on(place), hook_url=hook_url, token=hook_token
     )
@@ -497,7 +494,6 @@ def test_build_screen_launch_shapes_command_and_env():
         hook_token="scoped-tok",
         home_dir="/dev/home",
         work_dir="/dev/work",
-        model="glm-5.2",
         extra_env={"ANTHROPIC_BASE_URL": "http://gw"},
     )
     assert command[0] == "bash" and command[1] == "-lc"
@@ -514,11 +510,12 @@ def test_build_screen_launch_shapes_command_and_env():
     # picker as the local pane is — same deny, carried on the launch line.
     assert "--disallowedTools AskUserQuestion" in script
     assert "CHEESE_HOOK_SPOOL" in script
-    # Env carries the hook wiring, home/work, model, and the gateway var.
+    # Env carries the hook wiring and home/work — no model (结论 46: the binding
+    # is resolved at admission and written into the request body by the proxy).
     assert env["CHEESE_HOOK_URL"] == "http://h/sandbox/hooks/T"
     assert env["CHEESE_TOKEN"] == "scoped-tok"
     assert env["CHEESE_HOME"] == "/dev/home" and env["CHEESE_WORK"] == "/dev/work"
-    assert env["CLAUDE_MODEL"] == "glm-5.2"
+    assert "CLAUDE_MODEL" not in env
     assert env["ANTHROPIC_BASE_URL"] == "http://gw"
     assert "CHEESE_CLAUDE_GATES" not in env
 
@@ -532,7 +529,6 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
         hook_token="test",
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
-        model="test",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -1221,7 +1217,6 @@ def _launch_with_tunnel(**overrides):
         hook_token="scoped-tok",
         home_dir="/dev/home",
         work_dir="/dev/work",
-        model="",
         extra_env=env,
     )
     return command[2]
@@ -1969,7 +1964,6 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     script = device_launch.build_launch_script(
         remote_execution=True,
         system_prompt="x",
-        model=None,
         resume_session_id=None,
         topic_id="t",
     )

@@ -39,9 +39,10 @@ class CloudChannel(DeviceChannel):
     Everything overridden below answers one question — WHICH machine, and is it
     up yet. None of it touches the model environment: ``builds_model_env`` is
     inherited because ``_ensure_screen`` is, so a leased machine takes the same
-    supply route and the same --model alias an enrolled one takes. Code that
-    asks which of the two a turn is on in order to answer THAT is asking the
-    wrong question.
+    launch shape an enrolled one takes — and that shape names no model at all,
+    because which model a turn runs on is resolved at admission. Code that asks
+    which of the two a turn is on in order to answer THAT is asking the wrong
+    question.
 
     The machine is the ROOM's, and a room is the only thing that runs a turn:
     work inside a room is a 分身 in that room's own session, on that room's

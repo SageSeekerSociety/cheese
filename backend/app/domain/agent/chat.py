@@ -49,7 +49,6 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -4270,24 +4269,23 @@ class ChatService:
                 # 议已经落进房间，这一轮到此为止，抛出去的是同一句话。
                 raise gate.OverTier(proposed.proposal.content)
         supply = bound.supply
-        model = (
-            subscription_model_alias(bound.model)
-            if supply == SUBSCRIPTION
-            else bound.model
-        )
+        model = bound.wire_model
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
             #
-            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
-            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
-            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
-            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
-            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
-            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
-            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
-            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
-            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
+            # 模型和它的池也在里面，而这里的 model 只为容器那条路存在：
+            # `session_launch.py` 仍然把它拼进 `claude --model` 的 argv，那是启动
+            # 那一刻钉进进程、此后没有任何代码再比对的东西，而这个哈希是唯一比较
+            # 「屏幕是不是还配得上现在的选择」的地方。device 启动环境里已经没有模型
+            # 了（结论 46）：`device_provider.py` 既不传 `--model`，也不留那三个
+            # family 别名，每个请求的模型在计量代理问准入时解析、由代理写进请求体。
+            #
+            # 代价说清楚：model 留在哈希里，意味着改项目默认模型在两条路上都要到
+            # 下一个 task boundary 收屏重开一次，哪怕 device 上的下一个请求本来就
+            # 会拿到新绑定。容器那条路必须这样 —— 不放进来就是屏幕带着
+            # `--model glm-5.2` 继续跑而准入已经解析成订阅池，此后每一轮都死在
+            # 「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
             (
                 json.dumps(
                     {
