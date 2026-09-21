@@ -17,8 +17,8 @@ from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRunti
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
-    AgentSessionInfo,
     AgentResult,
+    AgentSessionInfo,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
