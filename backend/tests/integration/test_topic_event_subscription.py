@@ -37,6 +37,9 @@ from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
 
+#: 一张卡的线程标识，平台开卡时算出来的那个样子。
+_THREAD_LABEL = "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
+
 
 class _ImmediateScreen(StubChannel):
     """A session that answers the moment it is spoken to."""
@@ -536,6 +539,22 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
 
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
+        # 先是房间起分身的那次调用——标识写在给分身的 prompt 里，骨架这边没有
+        # 别的字段装得下它（hook_events.SubThreads）。
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Agent",
+                "tool_use_id": "call-1",
+                "tool_input": {
+                    "description": "查一下 TODO",
+                    "prompt": f"简报……线程标识：{_THREAD_LABEL}",
+                    "subagent_type": "general-purpose",
+                },
+                "_eid": "subagent-spawn-1",
+            },
+        )
         assert router.push(
             str(topic_id),
             {
@@ -577,28 +596,30 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
                 "_eid": "stop-subagent-1",
             },
         )
-        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(6)]
 
     kinds = [frame["type"] for frame in frames]
     assert kinds == [
         "turn_started",
         "event_block",
         "event_block",
+        "event_block",
         "done",
         "turn_finished",
     ]
-    assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
-    assert frames[2]["block"]["content"] == "会话答完了"
+    assert frames[1]["block"]["meta"]["eid"] == "subagent-spawn-1"
+    assert frames[2]["block"]["meta"]["eid"] == "subagent-tool-1"
+    assert frames[3]["block"]["content"] == "会话答完了"
 
     started = [e for e in handed if isinstance(e, AgentSubagentStart)]
     stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
     assert [(e.agent_id, e.thread_label) for e in started] == [
-        ("worker-1", "general-purpose")
+        ("worker-1", _THREAD_LABEL)
     ]
     assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
     # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
-    tool = next(e for e in handed if isinstance(e, AgentToolUse))
-    assert tool.thread_label == "general-purpose"
+    tool = next(e for e in handed if isinstance(e, AgentToolUse) and e.name == "Bash")
+    assert tool.thread_label == _THREAD_LABEL
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)

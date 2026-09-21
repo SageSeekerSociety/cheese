@@ -114,11 +114,11 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
+    stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     stub_hooks.hook(
         uuid.UUID(room_id),
         hook_event_name="SubagentStop",
         agent_id="worker-1",
-        agent_type=task["thread_label"],
         last_assistant_message="索引加好了，慢查询从 2.1s 降到 40ms",
     )
     _pump(client, room_id)
@@ -205,13 +205,8 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
-    # 分身开工：带着这张卡的线程标识，平台因此知道是谁在做。
-    stub_hooks.hook(
-        uuid.UUID(room_id),
-        hook_event_name="SubagentStart",
-        agent_id="worker-1",
-        agent_type=task["thread_label"],
-    )
+    # 分身开工：标识写在起它的那次调用里，平台因此知道是谁在做。
+    stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     _pump(client, room_id)
     assert _shown(client, room_id, task["id"])["display_status"] == "运行中"
 
@@ -219,7 +214,6 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
         uuid.UUID(room_id),
         hook_event_name="SubagentStop",
         agent_id="worker-1",
-        agent_type=task["thread_label"],
         last_assistant_message="我这边跑完了",
     )
     _pump(client, room_id)
@@ -246,10 +240,10 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
     Both halves are measured behaviour, not preference. A worker stops more than
     once — parking a long command in its own background reads as finishing —
     so an early "跑起来了" must not stand as the answer. And after the session's
-    own Stop, a SubagentStop arrives from something inside Claude Code, carrying
-    Claude Code's own word for a subagent kind where a card's label would be,
-    and a fragment of a prompt where the closing message should be. Letting that
-    land would put a stranger's half-sentence on somebody's card.
+    own Stop, a SubagentStop arrives from something inside Claude Code,
+    and a fragment of a prompt where the closing message should be — a worker
+    this session never spawned. Letting that land would put a stranger's
+    half-sentence on somebody's card.
     """
     _, room_id = _room(client)
     task = _split(client, room_id)
@@ -259,12 +253,12 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
             pass
     _wait_work_idle()
 
+    stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     for message in ("测试跑起来了，我等它", "全绿，3617 passed"):
         stub_hooks.hook(
             uuid.UUID(room_id),
             hook_event_name="SubagentStop",
             agent_id="worker-1",
-            agent_type=task["thread_label"],
             last_assistant_message=message,
         )
         _pump(client, room_id)

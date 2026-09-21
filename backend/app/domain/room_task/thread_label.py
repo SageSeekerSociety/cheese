@@ -12,6 +12,7 @@
 每一个 hook 事件都会问一次的那个问题。
 """
 
+import re
 import uuid
 
 #: 标识的前缀。有它才认：各个骨架用来带标识的那个字段本来另有用途（骨架自带的
@@ -37,3 +38,22 @@ def task_of_thread_label(label: str | None) -> uuid.UUID | None:
         return uuid.UUID(label[len(PREFIX) :])
     except ValueError:
         return None
+
+
+#: 标识长什么样。认它是骨架适配层的活：agent 起子 agent 时把标识写进交给它的那段
+#: prompt（骨架没有一个自由字段能带它，见 `harness/claude_code/hook_events.py` 的
+#: `SubThreads`），所以得从一段话里按形状把它挑出来。
+_IN_TEXT = re.compile(rf"{PREFIX}[0-9a-f]{{32}}")
+
+
+def label_in_text(text: str | None) -> str | None:
+    """一段话里的第一个标识；一个都没有就是 None。
+
+    取第一个：简报里顺带提到别的卡是常事（「接着 work-… 那条往下做」），而 agent
+    要它做的那张写在最前面。形状卡到全长 hex —— 认错一张卡比认不出更糟，所以半截
+    标识、带同样前缀的别的词都不算。
+    """
+    if not text:
+        return None
+    found = _IN_TEXT.search(text)
+    return found.group(0) if found else None

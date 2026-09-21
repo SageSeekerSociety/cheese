@@ -12,7 +12,7 @@
 例:
   cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
   cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 在本房间开一条活(返回线程标识,起分身时带上它)
+  cheese split "数据清洗"           # 在本房间开一条活(返回线程标识,写进分身的 prompt)
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
@@ -1966,9 +1966,9 @@ def main() -> None:
             f"验收人：{r.get('reviewer_handle') or '待指定'}"
         )
         print(
-            "进入工作目录后执行任务。交给原生分身时，把任务简报和此目录放进它的 "
-            "prompt，并把上面那个线程标识当作它的类型传进去：带了它，分身干的每件事"
-            "自己落在这张卡上；不带，这条活看着就是没人做。"
+            "进入工作目录后执行任务。交给原生分身时，把任务简报、此目录和上面那个"
+            "线程标识一起放进它的 prompt：平台从 prompt 上读出标识，分身干的每件事"
+            "才落在这张卡上；不写，这条活看着就是没人做。"
         )
     elif a.cmd == "worktree":
         print(_task_worktree(a.task_id))

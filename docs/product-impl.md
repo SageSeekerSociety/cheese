@@ -118,7 +118,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 实现：`TopicService.upgrade_block_to_place / dispatch_task / return_conclusion`、
 `app/domain/topic/relay.py`（留话；为什么不能用 `/comments` 见该模块 docstring）。
-升级出一条活时叫醒的是**房间**（起分身并带上这条活的线程标识、给活起名字），不是那条活——
+升级出一条活时叫醒的是**房间**（起分身、把这条活的线程标识写进它的 prompt、给活起名字），不是那条活——
 活没有自己的会话，朝它开一轮就是给它起一整个容器。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡

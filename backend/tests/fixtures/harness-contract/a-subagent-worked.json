@@ -1,10 +1,21 @@
 {
   "verb": "backlog",
-  "why": "结论 43: a background thread is part of the contract, and what makes it usable is that its events can be attributed to the card they belong to — by the `thread_label` the agent gave the sub-thread, which every harness must carry through unchanged. A subagent that starts and dies having called nothing is invisible unless the start is an event of its own — which is exactly the case a reader needs told. Its closing words are asserted too: the spawner's context is where they otherwise stay, so a harness that reports the stop but loses the text has not said the same thing as one that reports both, and a cell that only had to agree on the id could differ there in silence.",
+  "why": "结论 43: a background thread is part of the contract, and what makes it usable is that its events can be attributed to the card they belong to — by the `thread_label` the agent gave the sub-thread, which every harness must carry through unchanged. Where that label is given is the spawning call, and each harness answers from its own records: Claude Code has nothing on a subagent's own payloads that can hold a platform string (its `agent_type` is a choice among agents defined at startup), so its cell states the spawn too — the tool's own return names the worker, and from there every record of that worker is the card's. A subagent that starts and dies having called nothing is invisible unless the start is an event of its own — which is exactly the case a reader needs told. Its closing words are asserted too: the spawner's context is where they otherwise stay, so a harness that reports the stop but loses the text has not said the same thing as one that reports both, and a cell that only had to agree on the id could differ there in silence.",
   "readers": ["python"],
   "harnesses": {
     "claude-code": {
       "records": [
+        {
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Agent",
+          "tool_use_id": "toolu_01",
+          "tool_input": {
+            "description": "查一下分页",
+            "prompt": "简报见下。线程标识：work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912",
+            "subagent_type": "general-purpose"
+          },
+          "tool_response": { "agentId": "sub-1", "status": "running" }
+        },
         {
           "hook_event_name": "SubagentStart",
           "agent_id": "sub-1",
@@ -27,7 +38,7 @@
             "thread": {
               "id": "sub-1",
               "parentThreadId": "session-1",
-              "agentRole": "general-purpose"
+              "agentRole": "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
             }
           }
         },
@@ -51,13 +62,13 @@
     {
       "kind": "subagent_start",
       "agent_id": "sub-1",
-      "thread_label": "general-purpose"
+      "thread_label": "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
     },
     {
       "kind": "subagent_stop",
       "agent_id": "sub-1",
       "text": "查到了",
-      "thread_label": "general-purpose"
+      "thread_label": "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
     }
   ]
 }

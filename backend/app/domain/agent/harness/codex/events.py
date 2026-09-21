@@ -25,6 +25,11 @@ class Assembler:
         Codex 把起子线程时给的那个名字放在 `agentRole` 上，每条记录都带着它回来，
         所以这个骨架的标识绑在它上面（`agentRole` 这个名字不出这个包）。父线程的
         记录不在 `children` 里，返回空 dict，也就是「房间自己说的」。
+
+        `agentRole` 能不能装下一张卡的标识，没有实测过：codex-cli 0.155.1 的
+        `spawn_agent` 里自由文本的那个参数叫 `task_name`，而 role 那一侧有
+        `core/src/agent/role.rs` 的 `unknown agent_type '…'` —— 看着和 Claude
+        Code 的 `subagent_type` 一样是个封闭集合。真要落到哪个字段上是 P33 的事。
         """
         child = self.children.get(thread_id)
         return {"thread_label": child[1]} if child else {}
