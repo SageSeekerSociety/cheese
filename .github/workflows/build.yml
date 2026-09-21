@@ -64,6 +64,7 @@ jobs:
       frontend: ${{ steps.plan.outputs.frontend }}
       office_render: ${{ steps.plan.outputs.office_render }}
       browser_render: ${{ steps.plan.outputs.browser_render }}
+      gateway: ${{ steps.plan.outputs.gateway }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -125,7 +126,8 @@ jobs:
           steps.plan.outputs.sandbox == 'false' ||
           steps.plan.outputs.frontend == 'false' ||
           steps.plan.outputs.office_render == 'false' ||
-          steps.plan.outputs.browser_render == 'false'
+          steps.plan.outputs.browser_render == 'false' ||
+          steps.plan.outputs.gateway == 'false'
         uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
         with:
           timeout_minutes: 3
@@ -141,13 +143,15 @@ jobs:
           steps.plan.outputs.sandbox == 'false' ||
           steps.plan.outputs.frontend == 'false' ||
           steps.plan.outputs.office_render == 'false' ||
-          steps.plan.outputs.browser_render == 'false'
+          steps.plan.outputs.browser_render == 'false' ||
+          steps.plan.outputs.gateway == 'false'
         env:
           BUILD_BACKEND: ${{ steps.plan.outputs.backend }}
           BUILD_SANDBOX: ${{ steps.plan.outputs.sandbox }}
           BUILD_FRONTEND: ${{ steps.plan.outputs.frontend }}
           BUILD_OFFICE_RENDER: ${{ steps.plan.outputs.office_render }}
           BUILD_BROWSER_RENDER: ${{ steps.plan.outputs.browser_render }}
+          BUILD_GATEWAY: ${{ steps.plan.outputs.gateway }}
           BASE_TAG: ${{ steps.plan.outputs.base_tag }}
           CURRENT_TAG: ${{ steps.plan.outputs.current_tag }}
         run: |
@@ -181,10 +185,89 @@ jobs:
           [ "$BUILD_FRONTEND" = true ] || promote frontend
           [ "$BUILD_OFFICE_RENDER" = true ] || promote office-render
           [ "$BUILD_BROWSER_RENDER" = true ] || promote browser-render
+          [ "$BUILD_GATEWAY" = true ] || promote gateway
 
       - name: Remove registry credentials
         if: always()
         run: docker logout "$REGISTRY" >/dev/null 2>&1 || true
+
+  build-gateway:
+    needs: plan
+    if: needs.plan.outputs.gateway == 'true'
+    runs-on: [self-hosted, cheese-dev]
+    # No step-level profiling for this job; sized to comfortably cover a
+    # cold-cache docker build+push while killing the kind of wedged run that
+    # measured 681m in the wild (would otherwise pin the box's one runner for
+    # half a day).
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          # A stable builder name: the default is per-run, which would throw away
+          # the box's layer cache between builds — the very cache that replaces
+          # the removed type=gha export.
+          name: cheese-box-builder
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+          buildkitd-config-inline: |
+            # The runner's UDP resolver returns fake IPs; TCP reaches public DNS.
+            [dns]
+              nameservers = ["1.1.1.1", "1.0.0.1"]
+              options = ["use-vc"]
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+          # This is a persistent, single-runner box. Preserve the named
+          # builder's state volume so unchanged dependency layers survive jobs.
+          keep-state: true
+
+      - name: Retain the BuildKit image
+        run: |
+          docker rm -f cheese-buildkit-image-retainer >/dev/null 2>&1 || true
+          docker create --name cheese-buildkit-image-retainer \
+            --label com.cheese.image-retainer=buildkit \
+            "$BUILDKIT_IMAGE" >/dev/null
+
+      # Retry: the box reaches ghcr through ghg's egress, which resets
+      # connections often enough to have failed a build on the login step alone
+      # ("read: connection reset by peer"). A hosted runner never saw this.
+      - name: Log in to Container Registry
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3
+        with:
+          timeout_minutes: 3
+          max_attempts: 4
+          retry_wait_seconds: 15
+          command: >-
+            echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ${{ env.REGISTRY }} -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/gateway
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Build and push gateway image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        id: gateway_build
+        with:
+          context: ./deploy/gateway
+          file: ./deploy/gateway/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
   build-backend:
     needs: plan
