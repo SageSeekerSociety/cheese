@@ -138,7 +138,10 @@ it('carries what the person said into the create request', async () => {
     expect(vi.mocked(api.createProject)).toHaveBeenCalledTimes(1)
     const args = vi.mocked(api.createProject).mock.calls[0]
     expect(args[0]).toBe('这学期的课')
-    expect(args[4]).toBe('帮我把这学期的课程材料整理成一份大纲')
+    // createProject(name, ownerHandle, teamId, externalTaskId, forgeKind, intent)
+    // ——「你打算做什么」是最后一个参数。forgeKind 是主分支后加的，排在它前面，
+    // 所以这个下标跟着参数表走，别把它当成「第几个参数」的巧合。
+    expect(args[5]).toBe('帮我把这学期的课程材料整理成一份大纲')
   } finally {
     harness.dispose()
   }
@@ -154,7 +157,7 @@ it('creates the project with an empty answer when the question was skipped', asy
     await settle()
 
     expect(vi.mocked(api.createProject)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(api.createProject).mock.calls[0][4]).toBe('')
+    expect(vi.mocked(api.createProject).mock.calls[0][5]).toBe('')
   } finally {
     harness.dispose()
   }
@@ -177,7 +180,7 @@ it('does not let one project inherit the previous answer', async () => {
     button('创建').click()
     await settle()
 
-    expect(vi.mocked(api.createProject).mock.calls[0][4]).toBe('')
+    expect(vi.mocked(api.createProject).mock.calls[0][5]).toBe('')
   } finally {
     harness.dispose()
   }

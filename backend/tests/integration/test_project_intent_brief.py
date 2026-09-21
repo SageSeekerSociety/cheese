@@ -13,9 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import AuthorType
 
+# 建项目现在还会顺手把代码托管仓库准备好（主分支的 forge 逻辑），所以服务层的用
+# 例也要装上 ``stub_project_forge``：不装，create 会去够一个测试环境里不存在的
+# Forgejo，报的是「此部署尚未配置项目代码托管服务」，和这一问毫无关系。
+
 
 def test_intent_becomes_the_newborn_rooms_brief(
-    db_session: AsyncSession, _portal: BlockingPortal
+    db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
     async def _run() -> None:
         from app.domain.block.repositories import BlockRepository
@@ -30,7 +34,10 @@ def test_intent_becomes_the_newborn_rooms_brief(
         assert project.root_topic_id is not None
         doc = await BlockRepository(db_session).doc_root(project.root_topic_id)
         assert doc is not None, "说了要做什么的项目，房间该带着这句话开门"
-        assert doc.author_type == AuthorType.system
+        # 署名两层都要对：档位说它是平台产的（主分支把这个值从 `system` 改叫
+        # `platform`），handle 说具体是「system」——不是芝士，也不是某个人。
+        assert doc.author_type == AuthorType.platform
+        assert doc.author == "system"
         assert said in doc.content
         assert "下一步" in doc.content, "光有那句话，人还是不知道接下来该做什么"
 
@@ -38,7 +45,7 @@ def test_intent_becomes_the_newborn_rooms_brief(
 
 
 def test_no_intent_leaves_the_room_without_a_document(
-    db_session: AsyncSession, _portal: BlockingPortal
+    db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
     """不答这一问是允许的：空房间照常，没有半份空简报。"""
 
@@ -56,7 +63,7 @@ def test_no_intent_leaves_the_room_without_a_document(
 
 
 def test_whitespace_only_intent_is_not_an_intent(
-    db_session: AsyncSession, _portal: BlockingPortal
+    db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
     """空格不是答案。滑过输入框敲了个空格的人，不该得到一个空白的房间。
 
