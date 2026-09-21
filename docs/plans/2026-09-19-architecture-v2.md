@@ -416,8 +416,8 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 #### 活是平的
 
 [已定] 结论 33。**房间里的活没有子卡；谁能开活不受限。**
-`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`（今天 `harness/claude_code/device_launch.py:403` 写死 `"1"`）
-是**骨架设置**，不是设计约束——它管的是一个骨架进程里能起几层子进程，不是产品里活能嵌几层。
+`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` 是**骨架设置**，不是设计约束——它管的是一个骨架
+进程里能起几层子进程，不是产品里活能嵌几层，所以它从部署配置里读（`core/config.py`）。
 
 #### 活用做它的那个 agent 的手
 

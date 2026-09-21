@@ -554,16 +554,15 @@ class AgentWorkRunner:
         """The HUMAN whose turn is running on this topic right now — who is
         actually driving the work — or None when nobody identifiable is.
 
-        The answer a sandbox-side action cannot supply for itself: 芝士 calls
-        `cheese split` under her own `cheese-<hex12>` handle, so the endpoint sees
-        the robot and not the person who asked. That person is right here in the
-        turn record, next to the continuation id the split endpoint already reads.
+        The answer a sandbox-side action cannot supply for itself: 芝士 opens a
+        piece of work under her own agent handle, so the endpoint sees the robot
+        and not the person who asked. That person is right here in the turn
+        record, next to the continuation id the split endpoint already reads.
 
-        None covers three cases the caller must treat identically — fall back to
-        whatever it did before: no turn of ours is running; the turn was started
-        by the platform itself (`author="system"` — gate verdicts, scheduled
-        wake-ups, conflict nudges); or it was started by
-        a 分身 working autonomously. Only a real person's handle comes back."""
+        None covers two cases the caller must treat identically — fall back to
+        whatever it did before: no turn of ours is running, or the turn was
+        started by the platform itself (`author="system"` — gate verdicts,
+        conflict nudges). Only a real person's handle comes back."""
         rec = self._current_turn_record(topic_id)
         author = rec.get("author") if rec is not None else None
         if not isinstance(author, str) or not names_a_person(author):

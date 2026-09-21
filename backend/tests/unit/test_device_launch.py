@@ -560,11 +560,25 @@ def test_the_room_bounds_how_deep_and_how_wide_its_work_can_go():
         home_dir="/dev/home",
         work_dir="/dev/work",
     )
-    # Work does not split further: a grandchild binds to no card and no person
-    # can address it.
+    # 深度的默认值。
     assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "1"
-    # How many pieces of work a room runs at once, sharing one worktree.
+    # How many pieces of work a room runs at once, sharing one tree.
     assert env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "4"
+
+
+def test_how_deep_a_session_may_spawn_is_a_deployment_setting(monkeypatch):
+    """深度是部署设的，不是写死的设计约束（结论 33）。
+
+    活在房间里是平的、谁都能开活，所以这个数字挡的只是一台机器上的进程层数。部署
+    把它抬高，启动环境里就该是抬高后的那个值 —— 写死的时候，改它得改代码。
+    """
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "claude_code_max_subagent_spawn_depth", 3)
+
+    _, env = _screen_launch()
+
+    assert env["CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH"] == "3"
 
 
 def test_forwarder_posts_hook_json_with_token():

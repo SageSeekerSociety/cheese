@@ -7,10 +7,11 @@ learned there, and a **session** is one conversation that may be thrown away.
 Until now the third layer was a single ``topics.session_id`` column, which said —
 structurally, not by policy — that a place hosts at most one agent.
 
-Keyed by ``(where, agent_handle, harness)`` — where being a room's main line
-(``task_id IS NULL``) or one thread in it — so a room can host several agents at
-once, each keeps its own conversation, and a piece of work gets a fresh one
-rather than inheriting whatever the room was in the middle of. ``agent_handle`` is
+Keyed by ``(room, agent_handle, harness)`` — so a room can host several agents at
+once and each keeps its own conversation. A ROOM and nothing smaller: 开一条活
+留下的是一个分支、一张卡和一个负责人（结论 31），做它的是这个房间某条会话里的一个
+原生子 agent，用的是父进程的那双手（结论 43），所以一条活既不开第二条会话，也不
+另租一份地点。``agent_handle`` is
 :attr:`~app.domain.agent_instance.services.ResolvedAgent.handle`, the same key the
 agent's memory pool is named by — not the instance's uuid, because a project that
 never configured an agent has no instance row at all and NULL does not compare
@@ -38,7 +39,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -68,11 +69,8 @@ class SessionPlace:
 
 class AgentSession(UuidPk, Timestamps, Base):
     __tablename__ = "agent_sessions"
-    # One session per agent per PLACE, and a place is a room's main line or one
-    # thread in it. Two partial indexes rather than one over
-    # (topic_id, task_id, agent_handle): `task_id` is NULL on every room row and
-    # NULL is not equal to NULL in a unique index, so the wider index would let
-    # a room grow a second session per agent without complaining.
+    # One session per agent per ROOM. A plain unique index: every row here is a
+    # room's own, so there is no predicate left for it to carry.
     __table_args__ = (
         Index(
             "uq_agent_sessions_room",
@@ -80,28 +78,12 @@ class AgentSession(UuidPk, Timestamps, Base):
             "agent_handle",
             "harness",
             unique=True,
-            postgresql_where=text("task_id IS NULL"),
-        ),
-        Index(
-            "uq_agent_sessions_thread",
-            "task_id",
-            "agent_handle",
-            "harness",
-            unique=True,
-            postgresql_where=text("task_id IS NOT NULL"),
         ),
     )
 
-    # THE ROOM. Always a room — a thread names its room here and itself below,
-    # so anything that wants "where can a person read this" has one answer.
+    # THE ROOM this conversation happens in — the only address a session has.
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
-    )
-    # Which thread in that room, NULL for the room's own main line. A thread
-    # gets its own session because a clean context is most of what pulling work
-    # out of the room was for.
-    task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # ResolvedAgent.handle — the agent's key inside its project.
     agent_handle: Mapped[str] = mapped_column(String(64))
