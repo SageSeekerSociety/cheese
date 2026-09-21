@@ -6,6 +6,7 @@ from typing import Literal
 
 from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import (
     ColumnElement,
     SQLColumnExpression,
@@ -22,7 +23,13 @@ from app.domain.identity.handles import (
 )
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
+from app.domain.topic.models import (
+    Topic,
+    TopicKind,
+    TopicMembership,
+    TopicProgress,
+    TopicReadState,
+)
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 SortOrder = Literal["asc", "desc"]
@@ -219,12 +226,23 @@ class TopicRepository:
 
         Who the two are — two people in canonical order, or a person and an AI
         teammate's seat — is the service's decision; here a DM is two handles.
+
+        Found by its two seats, because that is where they live (结论 19): the
+        private room of this project that seats both handles. Two memberships,
+        each asked for on its own, so which of the two opens the conversation
+        does not decide whether it is found.
         """
+
+        def seats(handle: str) -> Select[tuple[uuid.UUID]]:
+            return select(TopicMembership.topic_id).where(
+                TopicMembership.member_handle == handle
+            )
+
         stmt = select(Topic).where(
             Topic.project_id == project_id,
             Topic.is_private.is_(True),
-            Topic.private_owner == owner,
-            Topic.private_peer == peer,
+            Topic.id.in_(seats(owner)),
+            Topic.id.in_(seats(peer)),
         )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:
@@ -237,6 +255,9 @@ class TopicRepository:
             kind=TopicKind.topic,
             created_by=owner,
             is_private=True,
+            # 两席的出处是名册（建完这间房 `TopicMemberService.seed_private`
+            # 写的那两行）。这两列写而不读，留着只为让上一版镜像在换容器之前还
+            # 答得出私聊；P13 连同它们一起删。
             private_owner=owner,
             private_peer=peer,
         )
@@ -314,8 +335,11 @@ class TopicRepository:
                 Topic.project_id == project_id,
                 or_(
                     Topic.is_private.is_(False),
-                    Topic.private_owner == user_handle,
-                    Topic.private_peer == user_handle,
+                    Topic.id.in_(
+                        select(TopicMembership.topic_id).where(
+                            TopicMembership.member_handle == user_handle
+                        )
+                    ),
                 ),
                 Block.kind == BlockKind.message,
                 Block.task_id.is_(None),
@@ -349,6 +373,10 @@ class TopicRepository:
         is not a saved teammate's (a room-derived seat from before teammates had
         seats of their own) is answered by the project's default and counts
         against it.
+
+        「哪些私聊是我的」和「对面是谁」都从名册上取（结论 19）：我的那一席把房间
+        选出来，另一席就是对面。两席都在同一张表上，所以这是一次自连接，不是第二
+        张表。
         """
         seats = {
             agent_instance_handle(row.id): row.handle
@@ -366,13 +394,22 @@ class TopicRepository:
             )
             if default is not None:
                 default_handle = default.handle
+        mine = aliased(TopicMembership)
+        theirs = aliased(TopicMembership)
         stmt = (
-            select(
-                Topic.private_owner,
-                Topic.private_peer,
-                func.count(),
-            )
+            select(theirs.member_handle, func.count())
             .select_from(Topic)
+            .join(
+                mine,
+                and_(mine.topic_id == Topic.id, mine.member_handle == user_handle),
+            )
+            .join(
+                theirs,
+                and_(
+                    theirs.topic_id == Topic.id,
+                    theirs.member_handle != user_handle,
+                ),
+            )
             .join(Block, Block.topic_id == Topic.id)
             .outerjoin(
                 TopicReadState,
@@ -384,10 +421,6 @@ class TopicRepository:
             .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(True),
-                or_(
-                    Topic.private_owner == user_handle,
-                    Topic.private_peer == user_handle,
-                ),
                 Block.kind == BlockKind.message,
                 # A private room has threads too — resolving an upstream
                 # conflict opens one there — and the same rule applies: the
@@ -399,12 +432,11 @@ class TopicRepository:
                     Block.created_at > TopicReadState.last_read_at,
                 ),
             )
-            .group_by(Topic.id, Topic.private_owner, Topic.private_peer)
+            .group_by(theirs.member_handle)
         )
         rows = (await self._session.execute(stmt)).all()
         counts: dict[str, int] = {}
-        for owner, peer, count in rows:
-            other = peer if owner == user_handle else owner
+        for other, count in rows:
             if looks_like_agent_handle(other):
                 key = agent_dm_key(seats.get(other, default_handle))
             else:
