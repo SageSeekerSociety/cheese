@@ -8,8 +8,12 @@ from the UI.
 """
 
 from tests.conftest import seed_task_with_protocol
-from tests.delivery import delivery_headers, delivery_task_id
+from tests.delivery import delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import _make_card
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 OWNER = "owner-1"
 
@@ -43,15 +47,7 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
 
 
 def _card(client, topic_id: str, reviewer: str) -> str:
-    return client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
-        headers=delivery_headers(client, topic_id),
-        json={
-            "new_artifact": "报告",
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": reviewer,
-        },
-    ).json()["data"]["id"]
+    return _make_card(client, topic_id, reviewer)
 
 
 def test_non_mentor_cannot_accept_protocol_topic(client):
@@ -62,7 +58,7 @@ def test_non_mentor_cannot_accept_protocol_topic(client):
     card = _card(client, tid, "user-1")
     r = client.post(
         f"/accept-cards/{card}/accept",
-        json={"decided_by": "user-1"},
+        json={"decided_by": "user-1", "head_sha": _rendered_head(client, card)},
         headers=session_auth_headers("user-1"),
     )
     assert r.status_code == 422  # 须导师验收
@@ -73,7 +69,7 @@ def test_mentor_can_accept(client):
     card = _card(client, tid, "mentor-1")
     r = client.post(
         f"/accept-cards/{card}/accept",
-        json={"decided_by": "mentor-1"},
+        json={"decided_by": "mentor-1", "head_sha": _rendered_head(client, card)},
         headers=session_auth_headers("mentor-1"),
     )
     assert r.status_code == 200

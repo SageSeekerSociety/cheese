@@ -219,7 +219,8 @@ async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
     )
     monkeypatch.setattr(retire.ws, "_repo", lambda _: repo)
     if pointer != "absolute":
-        retire.ws._point_at_the_store_relatively(repo, work)
+        admin = repo / ".git" / "worktrees" / "work"
+        (work / ".git").write_text(f"gitdir: {os.path.relpath(admin, work)}\n")
     if pointer == "moved-relative":
         parked.parent.mkdir(parents=True)
         subprocess.run(

@@ -1,6 +1,6 @@
 import asyncio
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,37 @@ _NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
 
 async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
+
+
+async def chosen_avatars_by_handle(
+    session: AsyncSession, handles: Iterable[str]
+) -> dict[str, int]:
+    """handle -> 这个人**自己选过**的头像，没选过的不在里面。
+
+    Two queries for a whole page (handles -> users, users -> profiles), never one
+    per row: a list, its comments and its notes are all drawn at once, so a
+    per-row lookup would be twenty round-trips for twenty faces.
+
+    Lives beside ``user_by_handle`` rather than in the calling domain because
+    "which avatar did this person pick" is a fact about `UserProfile`. A caller
+    that copied this in would also have to copy the one rule that is easy to get
+    wrong — a person who never picked one is **absent from the mapping**, not
+    mapped to the global default, since every registration path hardcodes that
+    default and returning it would hand twenty people the same face. The
+    criterion itself is ``UserProfileRepository.chosen_avatar_ids``; it
+    recognises the default row by ``avatar_type``, which is seed data and so
+    differs per environment.
+    """
+    wanted = {h for h in handles if h}
+    if not wanted:
+        return {}
+    users = await UserRepository(session).get_by_handles(sorted(wanted))
+    chosen = await UserProfileRepository(session).chosen_avatar_ids(
+        [u.id for u in users.values()]
+    )
+    return {
+        handle: chosen[user.id] for handle, user in users.items() if user.id in chosen
+    }
 
 
 def normalize_nickname(raw: str) -> str:

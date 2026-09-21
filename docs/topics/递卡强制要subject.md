@@ -37,6 +37,6 @@
 
 简报写「返回 400」，但仓库里 `ValidationError.code = 422`，而且**现有的「格式非法」拒绝本来就是 422**。我按 422 实现——和现有行为一致、不改已有测试的语义。要改 400 是把 `ValidationError` 换成 `BadRequestError` 一行的事，但那样「缺 subject」和「格式非法」会分成两个码。
 
-## 查出来但故意没做
+## 相关历史
 
-`docs/topics/提交与PR规范.md`（#497 那个话题自己的实况文档）里还写着「不给 `--subject` 就回落成 `chore: <话题标题>`」，现在和实际行为相反。**没动它**——那是别人话题的历史记录，不在这张卡的范围里，但谁去翻会被带偏，值得单独处理。
+提交标题规范的早期讨论见[历史记录](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/topics/提交与PR规范.md)。

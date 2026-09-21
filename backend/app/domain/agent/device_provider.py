@@ -41,6 +41,7 @@ from app.domain.agent.device_hub import (
     HubScreen,
     device_hub,
 )
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
@@ -748,13 +749,16 @@ class DeviceChannel(Channel):
             place = await TopicService(session).place_or_404(topic_id)
             if place.room.is_private:
                 from app.domain.agent.private_chat import execution_target
+                from app.domain.agent_session.services import AgentSessionService
                 from app.domain.device.supply import Visibility
 
-                placement = place.room.session_placement
+                # A private chat seats one agent, so its room has at most one
+                # placed session; whichever it is, its machine is this chat's.
+                placed = await AgentSessionService(session).places_in_room(topic_id)
                 device_id = execution_target(
                     project_id,
                     topic_id,
-                    device_id=placement["device_id"] if placement else None,
+                    device_id=placed[0].machine if placed else None,
                 )["device_id"]
                 if not self._hub.is_online(device_id):
                     raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
@@ -1492,8 +1496,6 @@ class DeviceChannel(Channel):
             project_id=str(project_id),
             topic_id=str(topic_id),
             agent_handle=agent_handle,
-            # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{api_base}/projects/{project_id}/git",
             execution_target=execution_target,
             remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
             ca_pem=ca_pem,
@@ -1509,7 +1511,6 @@ class DeviceChannel(Channel):
         if execution_target is not None:
             # The assigned executor already owns the checkout and its environment.
             for name in (
-                "CHEESE_GIT_REMOTE",
                 "CHEESE_GIT_BRANCH",
                 "CHEESE_BRANCH_URL",
                 "CHEESE_ENVIRONMENT",
@@ -1650,14 +1651,14 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
-    async def precheck(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str]:
+    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
         Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
-        resolved = await self._resolve_device_agent(project_id, topic_id)
+        resolved = await self._resolve_device_agent(
+            session.project_id, session.topic_id
+        )
         if resolved is None:
             raise ScreenSetupError(
                 "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
@@ -1667,8 +1668,7 @@ class DeviceChannel(Channel):
     async def ensure_ready(
         self,
         *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         token: str,
         env: dict[str, str] | None,
         memory_scope: str | None,
@@ -1686,6 +1686,7 @@ class DeviceChannel(Channel):
         This channel says where — the home, the workdir, the state directory the
         connector will resolve — and merges the two environments."""
         assert isinstance(precheck, tuple)  # from our precheck
+        project_id, topic_id = session.project_id, session.topic_id
         device_id, agent_user_id, agent_handle = precheck
         if memory_scope == "personal":
             env = dict(
@@ -1701,30 +1702,36 @@ class DeviceChannel(Channel):
             from app.core.db import async_session_factory
 
             factory = self._session_factory or async_session_factory
+            # Read which generation of the room this is, then let the connection
+            # go: nothing below writes, and every path into `ensure_ready` runs
+            # under ChatService's per-topic lock (`_prompt_lock`), so the row
+            # lock serialized nothing this process was not serializing already.
+            # Held across the device work it cost a pool connection, and the
+            # room's own row, for as long as starting an agent on a remote
+            # machine takes — which queued every writer of that row (a title, an
+            # archive, a read mark) behind it, each holding a connection of its
+            # own until the start finished.
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-                before = (
-                    await environment_status(
-                        self._hub, device_id, project_id, resource_id
-                    )
-                    if prepares_environment
-                    else {}
-                )
-                prior_screen = self._existing_screen(device_id, topic_id, resource_id)
-                screen = await self._ensure_screen(
-                    device_id=device_id,
-                    agent_user_id=agent_user_id,
-                    agent_handle=agent_handle,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    env=env,
-                    launch=launch,
-                    environment_before=before,
-                )
-                await room_session.commit()
+            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+            before = (
+                await environment_status(self._hub, device_id, project_id, resource_id)
+                if prepares_environment
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+            screen = await self._ensure_screen(
+                device_id=device_id,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                env=env,
+                launch=launch,
+                environment_before=before,
+            )
             self._subscription_devices[topic_id] = device_id
             if prepares_environment:
                 # A process started before this feature keeps its environment

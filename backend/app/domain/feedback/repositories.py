@@ -87,6 +87,30 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     return or_(*arms)
 
 
+def matching(q: str) -> Any:
+    """What a search term is matched against, written once for both lists.
+
+    Four columns. The public centre matched two of them (标题 + 摘要) and the
+    missing pair is the pair a reader is most likely to remember: **正文**
+    (`problem` — the text the submitter actually typed) and **作者**. The summary
+    is generated from the body's first 60 characters, so a phrase from the middle
+    of a report matched neither column and the row was unreachable by the one
+    word its author would have used to find it again.
+
+    The admin queue and the public centre are one search box over overlapping
+    rows, so they take the same predicate: a second spelling is how "it comes up
+    in the admin queue but not on the centre" gets invented, and the person who
+    reports that bug is comparing two screens they believe ask the same question.
+    """
+    pattern = f"%{q}%"
+    return or_(
+        Feedback.title.ilike(pattern),
+        Feedback.summary.ilike(pattern),
+        Feedback.problem.ilike(pattern),
+        Feedback.author_handle.ilike(pattern),
+    )
+
+
 class FeedbackRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -237,10 +261,7 @@ class FeedbackRepository:
         where: list[Any] = list(PUBLIC_ONLY)
         where.extend(self._tab_where(tab))
         if q:
-            pattern = f"%{q}%"
-            where.append(
-                or_(Feedback.title.ilike(pattern), Feedback.summary.ilike(pattern))
-            )
+            where.append(matching(q))
         # `hot` means 「支持数 >= 5」 AND sorted by supports — the filter is part
         # of the tab's definition, not just its ordering.
         if tab == "hot":
@@ -331,10 +352,7 @@ class FeedbackRepository:
         if assignee:
             where.append(Feedback.assignee_handle == assignee)
         if q:
-            pattern = f"%{q}%"
-            where.append(
-                or_(Feedback.title.ilike(pattern), Feedback.summary.ilike(pattern))
-            )
+            where.append(matching(q))
         rows = list(
             (
                 await self._session.execute(

@@ -85,17 +85,21 @@ async def _cards(
     *,
     handle: str,
 ) -> list[dict]:
+    # The same page-wide pass the public list does — see `feedback._cards`. The
+    # admin queue draws the same cards, so it needs the same faces.
     ids = [r.id for r in rows]
     supports = await service.support_counts(ids)
     comments = await service.comment_counts(ids)
     supported = await service.supported_ids(ids, handle)
     activity = await service.last_activity(ids)
+    avatars = await service.chosen_avatars([r.author_handle for r in rows])
     return [
         FeedbackCard.from_row(
             row,
             supports=supports.get(row.id, 0),
             comments=comments.get(row.id, 0),
             supported=row.id in supported,
+            avatars=avatars,
             last_activity_at=activity.get(row.id),
         ).model_dump(mode="json")
         for row in rows

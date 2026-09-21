@@ -6,6 +6,7 @@ from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 
 def delivery_task(client, room_id, *, new=False, commit=True):
@@ -37,6 +38,13 @@ def delivery_task(client, room_id, *, new=False, commit=True):
     if task is None:
         return None
     cache[room_id] = task
+    # This fixture's local repository represents the executor/remote Git store.
+    git_store.bind_task(
+        task.id,
+        branch=task.branch_name,
+        directory=task.workspace_name,
+        base=task.base_branch,
+    )
     if commit:
         machine_commits(
             task.project_id, task.id, {f"deliveries/{task.id}.txt": "Test delivery\n"}

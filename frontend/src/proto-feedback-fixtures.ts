@@ -39,6 +39,25 @@ const HOT_SUPPORTS = 5
 /** 预览一律按管理员看：私密条目、安全标记、管理端那一屏都要能点到。 */
 const IS_ADMIN = true
 
+/**
+ * 「谁挑过头像」——接口的 `author_avatar_id` 在真实现里来自 `UserProfile.avatar_id`，
+ * 而且**只装真的挑过的人**：注册时会给人人都写上那张全局默认头像，所以「有 avatar_id」
+ * 不等于「挑过」，后端专门有一处把这两种分开（`chosen_avatar_ids`）。
+ *
+ * 这份假数据照同一件事造：名单里没有的返回 null，界面就画那个按 handle 派生的彩色
+ * 首字母。**不要**图省事一律给个 id —— 那正是「所有没挑过头像的人共用同一张脸」，
+ * 而区分人正是头像唯一的活。
+ */
+const CHOSEN_AVATARS: Record<string, number> = {
+  andy: 3,
+  andylizf: 2,
+  chiruotong: 4,
+}
+
+function avatarOf(handle: string): number | null {
+  return CHOSEN_AVATARS[handle] ?? null
+}
+
 /** 相对时间按**打开页面的那一刻**算：预览是拿来看「长什么样」的，把一个日期写死，
  *  过几天再打开就全是「8 天前」，而那不是任何人的真实体验。 */
 const BASE_MS = Date.now()
@@ -101,6 +120,7 @@ function row(spec: {
     security: spec.security ?? false,
     author_handle: spec.author,
     author_is_agent: spec.authorIsAgent ?? false,
+    author_avatar_id: avatarOf(spec.author),
     submitted_by_handle: spec.submittedBy ?? null,
     assignee_handle: spec.assignee ?? null,
     tags: spec.tags ?? [],
@@ -167,6 +187,7 @@ const ROWS: FeedbackDetail[] = [
         parent_id: null,
         author_handle: 'andylizf',
         author_is_agent: false,
+        author_avatar_id: avatarOf('andylizf'),
         body: '复现了。`interactive-widget=resizes-content` 那条 meta 只在部分浏览器认，Safari 走的是 JS 那条路，抽屉那层没接。',
         created_at: ago(280),
       },
@@ -175,6 +196,7 @@ const ROWS: FeedbackDetail[] = [
         parent_id: 'c-1',
         author_handle: ME,
         author_is_agent: false,
+        author_avatar_id: avatarOf(ME),
         body: '那就把抽屉底部改成跟着 `dvh` 走，别再用 vh。',
         created_at: ago(240),
       },
@@ -218,6 +240,7 @@ const ROWS: FeedbackDetail[] = [
       {
         id: 'n-1',
         author_handle: 'andy',
+        author_avatar_id: avatarOf('andy'),
         body: '先别公开：里面可能带着别的项目的数据量信息。等定位完再看要不要合并回普通条目。',
         created_at: ago(1400),
       },
@@ -398,6 +421,7 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       parent_id: (payload.parent_id as string | null) ?? null,
       author_handle: ME,
       author_is_agent: false,
+      author_avatar_id: avatarOf(ME),
       body: String(payload.body ?? ''),
       created_at: new Date(BASE_MS).toISOString(),
     }
@@ -422,7 +446,13 @@ function routes(url: URL, method: string, body: unknown): MockReply {
     if (!item) return { missing: true }
     item.notes = [
       ...item.notes,
-      { id: `n-${item.notes.length + 10}`, author_handle: ME, body: String(payload.body ?? ''), created_at: ago(0) },
+      {
+        id: `n-${item.notes.length + 10}`,
+        author_handle: ME,
+        author_avatar_id: avatarOf(ME),
+        body: String(payload.body ?? ''),
+        created_at: ago(0),
+      },
     ]
     return { data: item }
   }

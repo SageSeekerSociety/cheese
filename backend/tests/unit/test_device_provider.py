@@ -149,6 +149,7 @@ def _provider(
 
 
 async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
+    kw.setdefault("session_agent", "agent")
     events: list = []
 
     async def consume():
@@ -331,23 +332,31 @@ async def test_screen_inventory_failure_does_not_skip_the_next_device():
 async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     monkeypatch,
 ):
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, patch
 
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_hub import DeviceHub
+    from app.domain.agent_session.models import SessionPlace
+    from app.domain.agent_session.services import AgentSessionService
     from app.domain.identity.services import IdentityService
 
     project_id, topic_id, resource_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    room = SimpleNamespace(
-        id=topic_id,
-        project_id=project_id,
-        resource_id=resource_id,
-        session_placement={
-            "device_id": "center",
-            "channel": "device",
-            "resource_id": str(resource_id),
-        },
-    )
+    room = SimpleNamespace(id=topic_id, project_id=project_id, resource_id=resource_id)
+    placed = [
+        (
+            project_id,
+            topic_id,
+            "agent",
+            "claude-code",
+            SessionPlace(
+                machine="center",
+                channel="device",
+                resource_id=str(resource_id),
+                runtime={},
+                lease=None,
+            ),
+        )
+    ]
     metadata = {
         "sid": "survivor",
         "screen": "birth-token",
@@ -409,7 +418,8 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     executor = DeviceChannel(hub=hub, session_factory=Session)
     executor.discover = AsyncMock(return_value=[])
     central = CentralChannel(executor)
-    result = await central.discover("center")
+    with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
+        result = await central.discover("center")
     screen = hub.screen("survivor")
     assert result == [(project_id, topic_id, screen, None)]
     assert screen.resource_id == resource_id
@@ -1018,6 +1028,7 @@ async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=uuid.uuid4(),
             prompt="hi",
@@ -1041,6 +1052,7 @@ async def test_no_topic_is_a_clean_error():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=None,
             prompt="hi",
@@ -1069,6 +1081,7 @@ async def test_no_online_device_is_a_clean_error():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=uuid.uuid4(),
             prompt="hi",
@@ -1232,26 +1245,20 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
         launch=ClaudeLaunch(system_prompt=""),
     )
 
-    for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
+    for key in ("CHEESE_API", "CHEESE_HOOK_URL"):
         url = hub.env[key]
         assert url.startswith(base), f"{key}={url} does not extend {base}"
         remainder = url[len(base) :]
         if not remainder:  # CHEESE_API is the base itself
             continue
-        # The git remote is a PREFIX — git appends the dumb/smart-HTTP paths
-        # itself — so ask about the one it fetches first.
-        if key == "CHEESE_GIT_REMOTE":
-            remainder += "/info/refs"
         assert served(remainder), (
             f"{key}={url} leaves {remainder!r}, which this app does not serve"
         )
 
 
 @pytest.mark.anyio
-async def test_every_device_is_told_where_to_clone_from():
-    """The launcher's clone/push block is inert without these two env vars, so the
-    wiring is the thing that has to be tested — the block itself can be perfect
-    and the machine still starts in an empty dir."""
+async def test_every_device_gets_the_context_for_task_repository_lookup():
+    """The CLI resolves the forge remote from authenticated task metadata."""
 
     class RecordingHub(FakeHub):
         def __init__(self) -> None:
@@ -1276,7 +1283,10 @@ async def test_every_device_is_told_where_to_clone_from():
         launch=ClaudeLaunch(system_prompt=""),
     )
 
-    assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
+    assert hub.env["CHEESE_API"] == "http://cheese.test"
+    assert hub.env["CHEESE_PROJECT"] == str(project)
+    assert hub.env["CHEESE_TOKEN"] == "tok"
+    assert "CHEESE_GIT_REMOTE" not in hub.env
     assert "CHEESE_GIT_BRANCH" not in hub.env
     assert hub.env["CHEESE_TOPIC"] == str(topic)
 

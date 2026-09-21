@@ -565,6 +565,8 @@ export interface WorkspaceFile {
 }
 
 // GET /projects/{id}/file?path=
+export type FileSource = 'live' | 'committed'
+
 export interface FileContent {
   path: string
   // null when the file must not be edited as text: `binary` (a text editor would
@@ -576,6 +578,8 @@ export interface FileContent {
   bytes: number
   binary: boolean
   too_large: boolean
+  source?: FileSource
+  editable?: boolean
 }
 
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
@@ -680,7 +684,7 @@ export interface AutoMergeInfo {
 export interface ForgeInfo {
   // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
   // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
-  kind: 'github_app' | 'external_remote' | 'platform' | 'unknown'
+  kind: 'github_app' | 'forgejo' | 'unknown'
   reports_checks: boolean
   hosts_proposals: boolean
   can_write_remote: boolean
@@ -987,11 +991,6 @@ export interface ProjectComputeConfigs {
 export interface UpstreamInfo {
   url: string | null
 }
-export interface UpstreamSyncResult {
-  synced: boolean
-  commits?: number
-  reason?: string
-}
 
 // GitHub App install flow (#192): a project connects to one repo via
 // cheesex-app, replacing the classic 上游仓库 URL entry for repos it manages.
@@ -999,6 +998,19 @@ export interface GithubConnection {
   connected: boolean
   repo?: string
   account?: string
+}
+
+export interface ForgeConnection {
+  kind: 'forgejo' | 'github_app'
+  connected: boolean
+  repo: string | null
+  url: string | null
+}
+
+export interface ForgeAttribution {
+  requester_coauthor: boolean | null
+  effective: boolean
+  deployment_default: boolean
 }
 
 // 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。
@@ -1175,6 +1187,11 @@ export interface FeedbackCard {
   security: boolean
   author_handle: string
   author_is_agent: boolean
+  /** 作者**自己挑过**的头像素材 id，前端用 `getAvatarUrl` 拼成 `/avatars/{id}`。
+   *  没挑过是 null —— 后端已经判掉了全局默认头像那一种（`chosen_avatar_ids`），
+   *  所以 null 的含义就是「画彩色首字母」，**不要**退回 `/avatars/default`：
+   *  那会让所有没挑过头像的人共用同一张脸。 */
+  author_avatar_id: number | null
   /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
   submitted_by_handle: string | null
   assignee_handle: string | null
@@ -1200,6 +1217,8 @@ export interface FeedbackComment {
   parent_id: string | null
   author_handle: string
   author_is_agent: boolean
+  /** 同 `FeedbackCard.author_avatar_id`。 */
+  author_avatar_id: number | null
   body: string
   created_at: string
 }
@@ -1208,6 +1227,8 @@ export interface FeedbackComment {
 export interface FeedbackNote {
   id: string
   author_handle: string
+  /** 同 `FeedbackCard.author_avatar_id`。 */
+  author_avatar_id: number | null
   body: string
   created_at: string
 }

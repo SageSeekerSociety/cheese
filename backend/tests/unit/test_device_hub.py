@@ -147,12 +147,11 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     app = FastAPI()
     app.include_router(connector.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
-    service = SimpleNamespace(
-        verify_token=AsyncMock(
-            return_value=SimpleNamespace(device_id="dev", name="fixture")
-        )
+    monkeypatch.setattr(
+        connector.owner_reads,
+        "device_for_token",
+        AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )
-    app.dependency_overrides[connector.get_device_service] = lambda: service
     with (
         TestClient(app) as client,
         client.websocket_connect("/connector/agent?token=fixture") as ws,
@@ -187,12 +186,11 @@ def test_connection_owner_attaches_without_running_business_recovery(monkeypatch
     app = FastAPI()
     app.include_router(connector.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
-    service = SimpleNamespace(
-        verify_token=AsyncMock(
-            return_value=SimpleNamespace(device_id="dev", name="fixture")
-        )
+    monkeypatch.setattr(
+        connector.owner_reads,
+        "device_for_token",
+        AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )
-    app.dependency_overrides[connector.get_device_service] = lambda: service
 
     with (
         TestClient(app) as client,

@@ -63,21 +63,26 @@ async def _cards(
 ) -> list[dict]:
     """Turn a page of rows into JSON.
 
-    Four queries for the whole page — support counts, comment counts, who
-    already supported, last activity — instead of four per row. The `hot` tab is
-    *sorted by* the number a per-row fetch would be re-reading twenty times.
+    Every counter and every face on the page costs one query for the page, never
+    one per row: support counts, comment counts, who already supported, last
+    activity, and the authors' avatars — the last of those is two queries
+    (handles → users → profiles) because the avatar hangs off the profile and
+    not off the user. The `hot` tab is *sorted by* the number a per-row fetch
+    would be re-reading twenty times.
     """
     ids = [r.id for r in rows]
     supports = await service.support_counts(ids)
     comments = await service.comment_counts(ids)
     supported = await service.supported_ids(ids, handle)
     activity = await service.last_activity(ids)
+    avatars = await service.chosen_avatars([r.author_handle for r in rows])
     return [
         FeedbackCard.from_row(
             row,
             supports=supports.get(row.id, 0),
             comments=comments.get(row.id, 0),
             supported=row.id in supported,
+            avatars=avatars,
             last_activity_at=activity.get(row.id),
         ).model_dump(mode="json")
         for row in rows
@@ -277,7 +282,14 @@ async def list_feedback_comments(
         feedback_id, handle=handle, is_admin=service.is_admin(handle)
     )
     thread = await service.thread(row.id)
-    return ok([CommentOut.model_validate(c).model_dump(mode="json") for c in thread])
+    # Same page-wide pass the card list does: the thread is a column of faces.
+    avatars = await service.chosen_avatars([c.author_handle for c in thread])
+    return ok(
+        [
+            CommentOut.from_row(c, avatars=avatars).model_dump(mode="json")
+            for c in thread
+        ]
+    )
 
 
 @router.post("/{feedback_id}/comments")
@@ -298,7 +310,10 @@ async def create_feedback_comment(
         actor_user_id=who.user_id,
         is_admin=service.is_admin(who.handle),
     )
-    return ok(CommentOut.model_validate(comment).model_dump(mode="json"))
+    # One handle, one lookup: the freshly posted comment renders in the thread
+    # immediately, and it must carry its author's face like the rows around it.
+    avatars = await service.chosen_avatars([comment.author_handle])
+    return ok(CommentOut.from_row(comment, avatars=avatars).model_dump(mode="json"))
 
 
 @router.delete("/{feedback_id}/comments/{comment_id}")

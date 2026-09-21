@@ -26,7 +26,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.models import RoomCleanup
+from app.domain.topic.models import RoomCleanup, TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from tests.conftest import seed_user
@@ -338,8 +338,17 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
 def test_direct_and_cascading_archive_retain_machines_during_grace(client):
     async def _seed():
         async with client.test_factory() as session:
-            project = await ProjectRepository(session).add(name="Archive Cloud")
+            projects = ProjectRepository(session)
+            project = await projects.add(name="Archive Cloud")
             topics = TopicRepository(session)
+            # 项目总览：归档一个房间是项目的事，落在总览上，所以这条 fixture 得
+            # 有一个总览——真实项目从 `ProjectService.create` 出来时总是有的。
+            root = await topics.add(
+                project_id=project.id,
+                title="Archive Cloud · 项目总览",
+                kind=TopicKind.root,
+            )
+            await projects.set_root_topic(project, root.id)
             direct = await topics.add(project_id=project.id, title="Direct")
             parent = await topics.add(project_id=project.id, title="Parent")
             child = await topics.add(

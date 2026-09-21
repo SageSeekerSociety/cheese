@@ -28,9 +28,6 @@ from uuid import uuid4
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.remote_execution import (
-    client as execution_client,
-)
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
@@ -62,6 +59,23 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
+#
+# 这是这个骨架**唯一**的 pin：行为声明（``behaviour.py``）引用它，
+# ``scripts/test_harness_contracts.py`` 装二进制时问的也是它。另外这几处写着同一
+# 个版本号，每一处都 import 不到这里，所以它们是复制品而不是第二个答案——升级要
+# 改的就是这张单子，守卫在测试里，改漏一处就红：
+#   * ``remote_execution/client.py`` 的 ``PINNED_VERSION``、
+#     ``remote_execution/bootstrap.py`` 的 ``VERSION``（机器上单独跑的两个脚本）
+#   * ``sandbox/Dockerfile.private`` 里装的那个 claude，以及镜像 tag 的三处写法：
+#     ``remote_execution/private.py`` 的 ``IMAGE``、``core/config.py`` 的
+#     ``private_chat_executor_image`` 默认值、
+#     ``.github/workflows/remote-execution.yml`` build 时打的 tag
+#     —— 以上都由 ``tests/unit/test_capability_matrix.py`` 钉住
+#   * ``.github/workflows/cli.yml`` 装的那个 claude 与 ``sandbox/Dockerfile`` 的
+#     ``ARG CLAUDE_CODE_VERSION``，由 ``tests/unit/test_device_rendezvous.py`` 钉住
+# ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
+# 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
+# 红得见。
 CLAUDE_PINNED_VERSION = "2.1.277"
 CLAUDE_MIN_VERSION = "2.1.277"
 
@@ -369,10 +383,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         else CLAUDE_BASE_ARGS
     )
     execution_setup = ""
-    pinned_version = (
-        execution_client.PINNED_VERSION if remote_execution else CLAUDE_PINNED_VERSION
-    )
-    minimum_version = pinned_version if remote_execution else CLAUDE_MIN_VERSION
+    pinned_version = CLAUDE_PINNED_VERSION
+    minimum_version = CLAUDE_PINNED_VERSION if remote_execution else CLAUDE_MIN_VERSION
     if remote_execution:
         helper_sources = release.sources()
         execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
@@ -757,8 +769,8 @@ def on_machine(
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
 
-    ``place`` states facts; what they mean is decided here. A room with a git
-    remote syncs at turn end (a Stop hook), one with an execution target ships
+    ``place`` states facts; what they mean is decided here. A project room
+    syncs at turn end (a Stop hook), one with an execution target ships
     the executor client and hands ``claude`` to it, one whose operator may drive
     it directly runs without the permission prompt, and a CA to trust is a file
     only the script can name an absolute path for.
@@ -766,7 +778,7 @@ def on_machine(
     return launch_holes(
         # A room whose work is done on an executor has nothing of its own to
         # hand back; the executor owns the checkout.
-        sync_on_stop=bool(place.git_remote) and place.execution_target is None,
+        sync_on_stop=bool(place.project_id) and place.execution_target is None,
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         remote_control=place.remote_control,

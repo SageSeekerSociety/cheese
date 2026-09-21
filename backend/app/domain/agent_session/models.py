@@ -26,17 +26,44 @@ for the memory pool.
 
 Handing a topic to a different agent therefore destroys nothing — the new agent
 looks up a key that has no row and starts fresh, and handing it back finds the
-old row still there. A row is written only once a real session exists, so "this
-topic has run" is exactly "a row exists for it".
+old row still there.
+
+A row also carries WHERE this conversation is: the machine it rented hands with
+and the machine its process runs on. Both belong here rather than on the room
+(结论 60) — hands are the agent's, and a room seating two teammates seats two
+sessions that can sit on different machines and migrate without each other.
 """
 
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+
+
+@dataclass(frozen=True, slots=True)
+class SessionPlace:
+    """一条会话解析出来的地点——它自己的，不是房间的。
+
+    两件事，一条会话上各占一列，因为它们各自会变：进程可以从一台会话机搬到另一台，
+    而手上那棵工作树不动；工作机器可以换，而进程不动。混成一列的那些年里，"换机器"
+    只能整条一起换，同一个房间的第二个 agent 连开都开不起来。
+    """
+
+    #: 会话机：这条会话的进程在哪台机器上。
+    machine: str
+    #: 哪条通道开的这个进程——通道自己认领会话时按它过滤。
+    channel: str
+    #: 这一代资源。房间重开会换代，旧代的凭证与残留进程一律不再当作本会话的。
+    resource_id: str
+    #: 骨架自己要记的运行状态（状态目录、agent handle 之类），平台不解析。
+    runtime: dict
+    #: 工作机器租约：这条会话的手。私聊这类"手就在会话机上"的路子没有单独的租约。
+    lease: dict | None
 
 
 class AgentSession(UuidPk, Timestamps, Base):
@@ -84,4 +111,47 @@ class AgentSession(UuidPk, Timestamps, Base):
     # What the harness resumes this conversation by. Opaque to the platform: it
     # is Claude Code's session id today and whatever the next harness hands back
     # tomorrow, so nothing here may parse it.
-    resume_token: Mapped[str] = mapped_column(String(128))
+    #
+    # NULL until the harness has handed one back. A row now appears the moment
+    # this session takes a machine — which is before its first turn has said
+    # anything — so "has this place run" is `resume_token IS NOT NULL`, not the
+    # bare existence of a row.
+    resume_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 这条会话的工作机器租约：手在哪、这一代的工作区在哪、装到了什么程度。
+    # 房间不租手（结论 60）——同一个房间里的两个队友各租各的，各自迁移互不影响。
+    #
+    # ``none_as_null=True``：没租到手要落成 SQL NULL。默认那一档会把 Python 的
+    # ``None`` 序列化成 JSON ``'null'`` 存进去，于是 ``work_lease IS NOT NULL``
+    # 对「手就在会话机上」的 pi 会话也为真，读的人拿到的却是 ``None``。
+    work_lease: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+    # 这条会话的进程在哪台会话机上，连同开它的通道与骨架的运行状态。
+    runtime_location: Mapped[dict | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
+    # 这条会话上一次落位是什么时候。房间只有一块屏，归最后开屏的那条会话——
+    # 排这个先后要的就是落位的时刻，不是这一行上任何一列的写入时刻。
+    # ``updated_at`` 排不了：每轮跑完存 ``resume_token`` 也在动同一行，于是「最后
+    # 开屏的」会变成「最后说过话的」，屏就归错了会话。
+    placed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def place(self) -> SessionPlace | None:
+        """这条会话在哪——地点解析的唯一入口。
+
+        入口在会话上，不在房间上：同一条会话的每一轮解析出同一个句柄，同一个房间
+        里的两条会话解析出各自的句柄。没有 ``runtime_location`` 就是还没有地点，
+        下一轮重新租，而不是去猜房间上记着什么。
+        """
+        location = self.runtime_location
+        if not location:
+            return None
+        return SessionPlace(
+            machine=location["device_id"],
+            channel=location["channel"],
+            resource_id=location["resource_id"],
+            runtime=location.get("runtime") or {},
+            lease=self.work_lease,
+        )

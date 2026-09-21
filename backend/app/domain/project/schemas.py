@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,6 +22,7 @@ class ProjectCreate(BaseModel):
     team_id: int | None = None
     # The 赛题 this project comes from, when it was created from one.
     external_task_id: int | None = None
+    forge_kind: Literal["forgejo", "github_app"] = "forgejo"
 
 
 class ProjectOut(BaseModel):
@@ -35,6 +37,10 @@ class ProjectOut(BaseModel):
     summary: str
     root_topic_id: uuid.UUID | None
     created_at: datetime
+
+
+class ForgeAttributionUpdate(BaseModel):
+    requester_coauthor: bool | None
 
 
 class TaskLinkCreate(BaseModel):

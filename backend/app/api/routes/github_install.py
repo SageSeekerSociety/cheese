@@ -4,7 +4,6 @@ The setup URL's installation_id is caller-controlled. The signed state identifie
 who started the flow; GitHub's user-token API proves which repos they can connect.
 """
 
-import asyncio
 import logging
 import uuid
 from urllib.parse import urlencode
@@ -46,7 +45,6 @@ from app.domain.project.repositories import (
 from app.domain.project.services import ProjectService
 from app.domain.review.github_pr import parse_github_repo
 from app.domain.user.repositories import UserRepository
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["github"])
@@ -99,8 +97,9 @@ async def _install_url(project_id: uuid.UUID, actor: Actor, user_id: int) -> str
     return f"https://github.com/apps/{settings.github_app_slug}/installations/new?state={state}"
 
 
-async def _upstream_repo(project_id: uuid.UUID) -> str | None:
-    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
+async def _upstream_repo(project_id: uuid.UUID, db: AsyncSession) -> str | None:
+    project = await ProjectService(db).get_or_404(project_id)
+    upstream = (project.settings or {}).get("github_repository_url")
     parsed = parse_github_repo(upstream) if upstream else None
     return f"{parsed[0]}/{parsed[1]}".lower() if parsed else None
 
@@ -159,7 +158,7 @@ async def connect_github_repo(
             {"connected": True, "repo": existing.repo, "account": existing.account}
         )
     user_id, token = await _user_token(db, actor)
-    target = await _upstream_repo(project_id)
+    target = await _upstream_repo(project_id, db)
     if target:
         try:
             for installation in await list_user_installations(token):
@@ -234,7 +233,7 @@ async def github_app_install_callback(
         repos = await fetch_user_installation_repos(token, installation_id)
         if not repos:
             return failure("no_accessible_repos")
-        target = await _upstream_repo(project_id)
+        target = await _upstream_repo(project_id, db)
         if target:
             repo = next(
                 (r for r in repos if str(r.get("full_name", "")).lower() == target),

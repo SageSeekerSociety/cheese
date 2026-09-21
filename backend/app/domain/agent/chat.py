@@ -110,6 +110,7 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
@@ -143,7 +144,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "chat"]
@@ -2590,10 +2590,16 @@ class ChatService:
                     state.project_id,
                     usage_to_credits(usage, spend_priced=state.route == "gateway"),
                 )
+            landed = landing(
+                EventAbout.room,
+                project_id=state.project_id,
+                room_id=state.topic_id,
+            )
             for resource in state.actions:
                 block = await blocks.add(
-                    project_id=state.project_id,
-                    topic_id=state.topic_id,
+                    project_id=landed.project_id,
+                    topic_id=landed.topic_id,
+                    task_id=landed.task_id,
                     author=state.acting_agent,
                     author_type=AuthorType.system,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
@@ -3208,10 +3214,19 @@ class ChatService:
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
-            block = await blocks.add(
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
+            landed = landing(
+                EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
-                topic_id=topic_id,
+                room_id=topic_id,
                 task_id=task_id,
+            )
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=author,
                 author_type=AuthorType.participant,
                 content=text,
@@ -3234,12 +3249,12 @@ class ChatService:
                     block.refs = refs
                 for bad in unresolved:
                     warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
+                    # Beside the message it is about, not in the room the
+                    # message did not go to — same landing as the message.
                     await blocks.add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        # Beside the message it is about, not in the room the
-                        # message did not go to.
-                        task_id=task_id,
+                        project_id=landed.project_id,
+                        topic_id=landed.topic_id,
+                        task_id=landed.task_id,
                         author=author,
                         author_type=AuthorType.participant,
                         content=warn,
@@ -3383,10 +3398,19 @@ class ChatService:
             blocks = BlockRepository(session)
             if eid and await blocks.has_eid(topic_id, eid):
                 return None
-            block = await blocks.add(
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
+            landed = landing(
+                EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
-                topic_id=topic_id,
+                room_id=topic_id,
                 task_id=task_id,
+            )
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=await self._agent_handle(session, topic_id),
                 author_type=author_type,
                 content=content,
@@ -3523,19 +3547,23 @@ class ChatService:
         if commits is None:
             return None
 
-        def _collect() -> _Changeset | None:
+        async def _collect() -> _Changeset | None:
+            from app.domain.workspace.forge_files import ProjectFiles
+
             fresh = [h for h in commits if h not in known_commits]
             if not fresh:
                 return None
             totals: dict[str, dict] = {}
-            for sha in fresh:
-                for entry in _diff_file_stats(ws.git_diff(project_id, ref=sha)):
-                    acc = totals.setdefault(
-                        entry["path"],
-                        {"path": entry["path"], "added": 0, "removed": 0},
-                    )
-                    acc["added"] += entry["added"]
-                    acc["removed"] += entry["removed"]
+            async with self._sessions() as session:
+                files = ProjectFiles(session, project_id, None)
+                for sha in fresh:
+                    for entry in _diff_file_stats(await files.commit_diff(sha)):
+                        acc = totals.setdefault(
+                            entry["path"],
+                            {"path": entry["path"], "added": 0, "removed": 0},
+                        )
+                        acc["added"] += entry["added"]
+                        acc["removed"] += entry["removed"]
             files = sorted(
                 totals.values(), key=lambda f: (-(f["added"] + f["removed"]), f["path"])
             )
@@ -3544,7 +3572,7 @@ class ChatService:
             return _Changeset(commits=fresh, files=files)
 
         try:
-            return await asyncio.to_thread(_collect)
+            return await _collect()
         except Exception:  # noqa: BLE001 — never fail a turn over its summary
             logger.warning("change summary failed for topic %s", topic_id)
             return None
@@ -3557,23 +3585,20 @@ class ChatService:
         _HookWorkState.known_commits)."""
         try:
             from app.domain.room_task.services import TaskService
+            from app.domain.workspace.forge_files import ProjectFiles
 
             async with self._sessions() as session:
                 tasks = await TaskService(session).list_in_room(topic_id)
-                task_ids = []
+                commits = set()
                 for task in tasks:
                     if task.branch_name:
-                        TaskService._bind_workspace(task)
-                        task_ids.append(task.id)
-            return await asyncio.to_thread(
-                lambda: {
-                    row["hash"]
-                    for task_id in task_ids
-                    for row in ws.git_log(
-                        project_id, limit=_CHANGE_COMMIT_WALK, topic_id=task_id
-                    )
-                }
-            )
+                        history = await ProjectFiles(
+                            session, project_id, task.id
+                        ).history()
+                        commits.update(
+                            row["sha"] for row in history[-_CHANGE_COMMIT_WALK:]
+                        )
+                return commits
         except Exception:  # noqa: BLE001 — no baseline just means no summary
             logger.warning("commit baseline unreadable for topic %s", topic_id)
             return None
@@ -3982,7 +4007,15 @@ class ChatService:
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
-        kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
+        kwargs: dict = {
+            "model": model,
+            "env": {"CHEESE_AGENT_CONFIG": config_hash},
+            # Which conversation the turn belongs to, and so which session's
+            # machines it runs on. Separate from `agent_handle` below, which is
+            # the SEAT the turn authors under — the two are different strings
+            # and the place is recorded under this one.
+            "session_agent": agent.handle,
+        }
         if acting_agent is not None:
             kwargs["agent_handle"] = acting_agent
         if environment is not None:
@@ -4213,9 +4246,11 @@ class ChatService:
         """A system event for a turn that ends before it starts, committed with
         the rest of the assembling transaction. A room that shows nothing has no
         way to tell 「没开始」 from 「还在想」."""
+        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
         block = await BlockRepository(session).add(
-            project_id=project_id,
-            topic_id=topic_id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="system",
             author_type=AuthorType.system,
             content=text,
@@ -4487,9 +4522,15 @@ class ChatService:
                         not cloud_events
                         or (cloud_events[-1].meta or {}).get("state") != "waiting"
                     ):
-                        waiting_block = await blocks.add(
+                        landed = landing(
+                            EventAbout.room,
                             project_id=project_id,
-                            topic_id=topic_id,
+                            room_id=topic_id,
+                        )
+                        waiting_block = await blocks.add(
+                            project_id=landed.project_id,
+                            topic_id=landed.topic_id,
+                            task_id=landed.task_id,
                             author="system",
                             author_type=AuthorType.system,
                             content=waiting_text,
@@ -4865,9 +4906,18 @@ class ChatService:
                 topic_id, prompt_text, [user_block_id], by=acting_agent
             )
         try:
-            await self._compute.activate(SessionRef(project_id, topic_id), runtime)
+            # The same key `_assemble_turn` read this turn's resume token under
+            # — where this conversation runs is recorded under it too, and a ref
+            # built from anything else resolves somebody else's machine.
+            session_ref = SessionRef(
+                project_id,
+                topic_id,
+                prepared.agent.handle,
+                harness_name(prepared.agent.configuration.get("harness")),
+            )
+            await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
-                SessionRef(project_id, topic_id),
+                session_ref,
                 prompt_text,
                 Opening(
                     system_prompt=system_prompt,
@@ -5028,9 +5078,11 @@ class ChatService:
                 kind=TopicKind.topic,
                 created_by=author,
             )
+            landed = landing(EventAbout.room, project_id=project_id, room_id=topic.id)
             await blocks.add(
-                project_id=project_id,
-                topic_id=topic.id,
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=author,
                 author_type=AuthorType.participant,
                 content=text,
@@ -5188,9 +5240,15 @@ class ChatService:
 
         # Decision log → a block in the root topic (审计/施工现场).
         async with self._sessions() as session:
-            await BlockRepository(session).add(
+            landed = landing(
+                EventAbout.project,
                 project_id=project_id,
-                topic_id=root_topic_id,
+                room_id=root_topic_id,
+            )
+            await BlockRepository(session).add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=await self._agent_handle(session, root_topic_id),
                 author_type=AuthorType.participant,
                 content=f"【巡检决策日志】\n{final_text}",

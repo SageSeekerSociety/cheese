@@ -39,6 +39,19 @@ class TaskStatus(enum.StrEnum):
     closed = "closed"
 
 
+class TaskSnapshot(UuidPk, Timestamps, Base):
+    """An immutable backup of uncommitted work, separate from the review branch."""
+
+    __tablename__ = "task_snapshots"
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
+    )
+    head_sha: Mapped[str] = mapped_column(String(64))
+    snapshot_sha: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(1024))
+
+
 class LockKind(enum.StrEnum):
     heavy = "heavy"
 
@@ -121,6 +134,9 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Recorded when an authenticated agent opens the task's worktree. Dispatch
+    # and room membership do not establish who performs the work.
+    author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Historical tasks have no branch of their own. Their original shared
     # delivery is retained as a task, with the original branch and PR.
     branch_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
