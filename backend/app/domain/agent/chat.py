@@ -2873,21 +2873,25 @@ class ChatService:
                 if agent_handles
                 else {}
             )
+            # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
+            # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
+            # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
+            # 服务端算（I13），所以这里自己认下私聊这一档。
+            #
+            # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的私聊
+            # 也是私聊，而它没有 agent 可点名 —— 认成「点了名」就等于把芝士叫进两
+            # 个人的私密对话里说话。对面是谁只有名册一个出处（`private_seats`，
+            # 它答的 owner 那一席恒是人，所以只看 peer）；名册不是恰好两席时它答
+            # None，这条消息就不点名，和这间房其余各处的退路同向。
+            seats = (
+                await TopicMemberService(session).private_seats(topic.id)
+                if _is_dm(topic)
+                else None
+            )
             recipient = {
                 "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
-                # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
-                # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
-                # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
-                # 服务端算（I13），所以这里自己认下私聊这一档。
-                #
-                # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的
-                # 私聊也是 `is_private`，而它没有 agent 可点名 —— 认成「点了名」就
-                # 等于把芝士叫进两个人的私密对话里说话。`private_owner` 恒是人，所
-                # 以只看 peer；它既覆盖存下来的队友席位，也覆盖历史上 room-derived
-                # 的那种席位。
-                "mentioned": topic.is_private
-                and looks_like_agent_handle(topic.private_peer or ""),
+                "mentioned": seats is not None and looks_like_agent_handle(seats[1]),
             }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id

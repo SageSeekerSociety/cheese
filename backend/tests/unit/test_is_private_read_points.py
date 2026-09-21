@@ -39,18 +39,36 @@ BASELINE = {
 _APP = pathlib.Path(__file__).resolve().parents[2] / "app"
 
 
-def _names_it(tree: ast.AST) -> int:
-    count = 0
+def _naming_it(tree: ast.AST) -> list[ast.AST]:
+    found: list[ast.AST] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr == "is_private":
-            count += 1
+            found.append(node)
         elif isinstance(node, ast.Name) and node.id == "is_private":
-            count += 1
+            found.append(node)
         elif isinstance(node, ast.keyword) and node.arg == "is_private":
-            count += 1
+            found.append(node)
         elif isinstance(node, ast.arg) and node.arg == "is_private":
-            count += 1
-    return count
+            found.append(node)
+    return found
+
+
+def _names_it(tree: ast.AST) -> int:
+    return len(_naming_it(tree))
+
+
+def _enclosing_function(tree: ast.AST, node: ast.AST) -> str | None:
+    """包着 ``node`` 的最近一层函数叫什么名字。"""
+    parent: dict[ast.AST, ast.AST] = {}
+    for holder in ast.walk(tree):
+        for child in ast.iter_child_nodes(holder):
+            parent[child] = holder
+    current = node
+    while current in parent:
+        current = parent[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+    return None
 
 
 def _counts() -> dict[str, int]:
@@ -86,10 +104,16 @@ def test_is_private_is_asked_no_more_often_than_the_baseline():
 
 
 def test_a_turn_asks_it_once_and_derives_the_rest():
-    """整个文件只读一次那个布尔，两类答案都从它推出来。"""
+    """整个文件只读一次那个布尔，而且是在 ``_is_dm`` 里读的。"""
     source = (_APP / "domain" / "agent" / "chat.py").read_text()
-    assert _names_it(ast.parse(source)) == 1
-    # 逐字点名，这样换掉那一处而总数不变的改法也会被看见。
-    assert "def _is_dm(topic: Topic) -> bool:" in source, "唯一的读点"
+    tree = ast.parse(source)
+    naming = _naming_it(tree)
+    assert len(naming) == 1
+    # 光数个数拦不住「把这一处搬到别的函数里、总数还是 1」的改法：那样一来判据又
+    # 散回轮次组装里去了，而两类读点（名册两席、不租地点）本该都从这一个函数推出
+    # 来。所以问的是「包着它的那个函数叫什么」。
+    assert _enclosing_function(tree, naming[0]) == "_is_dm", (
+        "``is_private`` 在 chat.py 只能在 ``_is_dm`` 里读一次"
+        "（结论 19，ARCH §9.1 判据②）：名册两席和不租地点两类答案都从它推出来。"
+    )
     assert "private_seats" in source, "名册两席那一类走 TopicMemberService"
-    assert "needs_place = not _is_dm(topic)" in source, "不租地点那一类"

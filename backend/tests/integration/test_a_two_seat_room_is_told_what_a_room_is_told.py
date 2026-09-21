@@ -7,6 +7,12 @@
 
 它们从前各问一次 ``topic.is_private``：私聊拿不到实况文档、验收卡查都不查、阶段是
 None。于是一间递了卡在等人采纳的私聊，提示词里一个字都不提这件事。
+
+**那张卡是手工种下去的，产品路径今天到不了私聊。**建卡要求活的分支上有可交付的提交
+（``review/services.py`` 的 ``create_card``），而私聊这一轮不租地点（``needs_place``
+为假），没有工作目录也就没有提交。种它是为了把 ``resolve_stage`` 推到 ``awaiting``，
+好让「验收卡」和「阶段」这两处有东西可比 —— 比的是轮次组装读不读这张卡，不是私聊今
+天怎么拿到一张卡。真要让私聊也能递卡，得先给它一个地点，那是另一件事。
 """
 
 import uuid
@@ -65,7 +71,8 @@ async def _prompt_of(client, tmp_path, *, private: bool) -> tuple[str, int]:
             content=DOC,
             kind=BlockKind.doc,
         )
-        # 一张等人采纳的卡：阶段由它推出来（stages.resolve_stage）。
+        # 一张等人采纳的卡：阶段由它推出来（stages.resolve_stage）。手工种下去
+        # 的，为什么见模块 docstring。
         await AcceptCardRepository(session).add(
             topic_id=topic_id, reviewer_handle="u", routing_reason="最懂"
         )
