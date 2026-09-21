@@ -101,6 +101,10 @@ that its changes were merged, and does not automatically close its children.
 While a task targets an unaccepted parent, acceptance and manual merge overrides
 wait. Rejecting the parent's latest card also clears the child's approvals and
 auto-merge authorization, even if the parent task remains open. The child agent
-receives the rejection reason and decides how to revise its work. If it retargets
-the pull request to the project's default branch, reconciliation clears the
-recorded dependency and requires a new review.
+receives the rejection reason and decides how to revise its work. To remove the
+dependency, the agent first rebases its own changes onto the project's default
+branch and verifies that the rejected changes are absent. It then runs
+`cheese push-fix --drop-dependency`, which retargets the existing pull request,
+confirms the target with the forge, clears the recorded dependency and old
+approvals, and refreshes the existing card. It does not merge the request.
+Reconciliation also recognizes a native CLI retarget to the default branch.

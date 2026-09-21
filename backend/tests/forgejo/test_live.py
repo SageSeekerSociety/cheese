@@ -31,13 +31,13 @@ from app.domain.project.forge import (
     reconcile_repository_webhooks,
 )
 from app.domain.project.models import ForgeToken, Project
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
 from app.domain.review.models import AcceptCard
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
-from app.domain.workspace.forge_files import ProjectFiles
 
 pytestmark = [
     pytest.mark.anyio,
@@ -544,7 +544,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         assert metadata["data"]["coauthors"] == (
             ["requester <requester@zhishi.local>"] if requester_credit else []
         )
-        from app.domain.workspace.identity import attribution
+        from app.domain.repository.identity import attribution
 
         author = (await attribution(session, room, task_id=task.id)).author
         assert author is not None

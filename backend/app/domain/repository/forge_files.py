@@ -25,13 +25,13 @@ from app.domain.project.forge import (
     tokens_for_project,
 )
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.topic.models import Topic
-from app.domain.workspace.textfile import (
+from app.domain.textfile import (
     MAX_TEXT_BYTES,
     compare_bytes,
     content_version,
     decode_text,
 )
+from app.domain.topic.models import Topic
 
 
 def clean_path(path: str) -> str:

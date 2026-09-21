@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
-from app.domain.workspace.forge_files import ProjectFiles
-from app.domain.workspace.textfile import compare_bytes, content_version
+from app.domain.repository.forge_files import ProjectFiles
+from app.domain.textfile import compare_bytes, content_version
 
 
 def test_version_identifies_content_not_the_moment_it_was_written():

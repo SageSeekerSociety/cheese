@@ -1,4 +1,9 @@
-"""Text/binary discrimination and content versioning for workspace file IO.
+"""Text/binary discrimination, content versioning, and the panel's read payload.
+
+Shared by the two halves the workspace split into — the project's git source
+(:mod:`app.domain.repository.service`) and the library
+(:mod:`app.domain.library.service`) — which is why it sits beside them rather
+than inside either.
 
 The 文件 panel edits worktree files in Monaco, and two questions have to be
 answered from the file's CONTENT rather than from its name:
@@ -16,6 +21,9 @@ daemon (cheesed) can share them instead of drifting apart.
 
 import hashlib
 from difflib import unified_diff
+from pathlib import Path
+
+from app.core.errors import ValidationError
 
 # Above this, the panel offers download instead of an editor. The old unbounded
 # read turned a 52MB executable into a 127MB JSON body that froze the browser.
@@ -88,3 +96,30 @@ def content_version(data: bytes) -> str:
     id survives a worktree being re-materialised.
     """
     return hashlib.sha256(data).hexdigest()[:16]
+
+
+def text_payload(target: Path, path: str) -> dict:
+    """One file read the way the 文件 panel wants it, or the reason it cannot be.
+
+    Three answers, and the caller does not get to tell them apart by guessing:
+    the text plus its version; binary (`content` is None, and the version is
+    still there so a later write can be rejected); and too large to build a
+    body for at all, which is decided from the stat and never from a read.
+    """
+    if not target.is_file():
+        raise ValidationError("file not found")
+    size = target.stat().st_size
+    meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
+    if size > MAX_TEXT_BYTES:
+        # Deliberately not read: the point is to not build the giant body.
+        return {**meta, "content": None, "version": None, "too_large": True}
+    data = target.read_bytes()
+    text = decode_text(data)
+    if text is None:
+        return {
+            **meta,
+            "content": None,
+            "version": content_version(data),
+            "binary": True,
+        }
+    return {**meta, "content": text, "version": content_version(data)}

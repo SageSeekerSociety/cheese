@@ -23,10 +23,10 @@ from app.core.errors import (
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.services import ProjectService
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.site.models import Site, SiteRelease
 from app.domain.team.services import team_service
 from app.domain.user.services import user_by_handle
-from app.domain.workspace.forge_files import ProjectFiles
 
 # Publication copies untrusted repository files into platform storage, so bound
 # the allocation before reading blobs. These are bundle limits, not upload limits.

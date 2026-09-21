@@ -12,7 +12,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 if TYPE_CHECKING:
     from app.domain.topic.models import Topic
 
-logger = logging.getLogger("cheesex.workspace.identity")
+logger = logging.getLogger("cheesex.repository.identity")
 
 #: The platform identity used for mechanical commit operations.
 CHEESE_NAME = "芝士"

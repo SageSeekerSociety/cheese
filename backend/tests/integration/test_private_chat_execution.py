@@ -1,4 +1,8 @@
-"""Private chats use sessions with tools, independently of the project's machine."""
+"""私聊和房间走同一条轮次路径，区别只在它不租手（结论 19）。
+
+算力照房间的选择解析，私聊不改写它；「要不要一双手」才是私聊真正不同的地方，
+那一问在 ``test_turn_without_files_rents_no_hands`` 里。
+"""
 
 import uuid
 
@@ -38,7 +42,8 @@ class PrivateScreen(StubChannel):
 async def test_chat_runs_through_a_session(client, tmp_path, private):
     factory = client.test_factory
     central, project_machine = PrivateScreen("device"), PrivateScreen("cloud")
-    screen = central if private else project_machine
+    # 房间选了哪条通道，私聊也走哪条——房间的选择是房间的，不因为私聊而改写。
+    screen = project_machine
     svc = ChatService(
         session_factory=factory,
         compute=ComputePool([central.runtime, project_machine.runtime], "cloud"),
@@ -71,7 +76,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
     # prompt like any room, and still told what is particular to a private chat.
     assert "chat_send" in screen.last_system_prompt
     assert ("cheese_remember" in screen.last_system_prompt) is private
-    assert not (project_machine if private else central).prompts
+    assert not central.prompts
     assert screen.openings[0]["memory_scope"] == ("personal" if private else None)
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)

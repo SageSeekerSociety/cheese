@@ -247,8 +247,8 @@ def test_comparison_only_reads_accepted_versions_of_this_artifact(client):
 def test_comparison_of_source_deliveries_uses_the_two_accepted_commits(
     client, monkeypatch
 ):
+    from app.domain.repository.forge_files import ProjectFiles
     from app.domain.review.models import AcceptCard
-    from app.domain.workspace.forge_files import ProjectFiles
 
     project_id = _project(client)
     room_id = _room(client, project_id)

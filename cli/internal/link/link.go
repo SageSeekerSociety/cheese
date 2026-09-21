@@ -58,7 +58,9 @@ type Msg struct {
 	// Data carries base64-encoded raw terminal bytes for the direct screen
 	// channel (screen.data downstream, screen.input upstream).
 	Data string `json:"data,omitempty"`
-	// Path is a screen-workspace-relative destination for file.put.
+	// Path is a file.put destination under the platform's footprint on the
+	// machine, spelled "$HOME/<footprint root>/...". Not the screen's work
+	// directory: that is the user's checkout, which the platform never writes.
 	Path string `json:"path,omitempty"`
 	// One-shot command execution: exec (request) / exec.cancel / exec.result.
 	Cwd       string `json:"cwd,omitempty"`
