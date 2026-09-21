@@ -41,6 +41,7 @@ from app.domain.device.repository import (
     TopicDevice,
     Visibility,
 )
+from app.domain.device.supply import binding_visibility
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,19 @@ class DeviceService:
     async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
         """Topics whose durable affinity points at ``device_id``."""
         return await self._repo.list_topic_bindings(device_id)
+
+    async def binding_visibility(self, device_id: str) -> Visibility:
+        """这台机器上一条新绑定该登记成哪个档。
+
+        每个绑定点都问这一句，没有一个自己挑：档由机器的供给决定（见
+        ``device.supply.binding_visibility``），而绑定点知道的只是「我要绑这一
+        台」。找不到这台机器时按人接入的那一档答——不存在的机器绑不上，真正的拒绝
+        在 ``bind_topic_device`` 之后的解析里，这里不替它多造一种失败。
+        """
+        device = await self._repo.get_device(device_id)
+        return binding_visibility(
+            device.supply if device is not None else Supply.self_hosted
+        )
 
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility

@@ -38,7 +38,7 @@ function msg(id: string, author: string, at: Date, content = id): Block {
     project_id: 'p1',
     topic_id: 't1',
     kind: 'message',
-    author_type: author === 'cheese' ? 'ai' : 'human',
+    author_type: 'participant',
     author,
     content,
     reply_to: null,

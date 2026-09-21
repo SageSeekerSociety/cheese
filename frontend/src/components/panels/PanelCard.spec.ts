@@ -44,7 +44,7 @@ function block(over: Partial<Block> = {}): Block {
     id: 'b1',
     topic_id: 'room-1',
     author: 'alice',
-    author_type: 'human',
+    author_type: 'participant',
     content: '这条先别动 routes',
     kind: 'message',
     created_at: '2026-09-06T01:00:00Z',

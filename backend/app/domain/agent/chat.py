@@ -1817,8 +1817,8 @@ class ChatService:
 
         Room-only: every caller here reports something about the room itself
         (a turn that failed, an environment that was rebuilt), which nobody was
-        named for. A notice that knows whose turn it now is passes `recipients`
-        to `announce` directly."""
+        named for. A notice that knows whom it points at passes `points_at`
+        to `announce` directly (`points_at=Event(...)`)."""
         async with self._sessions() as session:
             block = await announce(
                 session,
@@ -3473,7 +3473,7 @@ class ChatService:
             return None
         if isinstance(event, AgentSubagentStart):
             # The platform's own sentence about a worker, not anybody's words —
-            # so `system`, the same as every other line the platform says out
+            # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
             # a remark 芝士 never made.
             content, author_type = "分身开工", AuthorType.system

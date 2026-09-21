@@ -54,7 +54,6 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.documents.convert import (
     ConvertFailed,
@@ -1413,7 +1412,9 @@ async def set_topic_compute_profile(
         binding = None
     if name == COMPUTE_DEVICE and device_id is not None and binding is None:
         await device_service.bind_topic_device(
-            topic_id, device_id, visibility=Visibility.host
+            topic_id,
+            device_id,
+            visibility=await device_service.binding_visibility(device_id),
         )
 
     topic.compute_profile = name
@@ -1557,7 +1558,7 @@ async def ask_options(
         block_id=blk.id,
         question=question,
         asker=blk.author,
-        recipients=() if waiting_for in (None, "system") else (waiting_for,),
+        asked=None if waiting_for == "system" else waiting_for,
     )
     await db.commit()
     payload = BlockOut.model_validate(blk).model_dump(mode="json")

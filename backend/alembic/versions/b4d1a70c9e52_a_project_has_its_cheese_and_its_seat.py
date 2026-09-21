@@ -1,7 +1,7 @@
 """every project has its 芝士 and a seat for it in its own room
 
 Revision ID: b4d1a70c9e52
-Revises: a7f1c0d4e2b9
+Revises: c1a7e05d4b83
 Create Date: 2026-09-20 11:00:00
 
 A project used to be able to have no agent row at all: 「项目的芝士」 was an
@@ -54,7 +54,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b4d1a70c9e52"
-down_revision: str | Sequence[str] | None = "a7f1c0d4e2b9"
+down_revision: str | Sequence[str] | None = "c1a7e05d4b83"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

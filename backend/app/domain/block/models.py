@@ -58,28 +58,36 @@ class BlockKind(enum.StrEnum):
 class AuthorType(enum.StrEnum):
     """谁写下了这条事件：一个参与者，还是平台自己。
 
-    人和 agent 是同一种参与者（结论 1），所以这一列不再回答「是人还是 AI」——
+    人和 agent 是同一种参与者（结论 1），所以这一列不回答「是人还是 AI」——
     那个问题由署名（``Block.author``，一个 handle）回答，而且只有它回答得了：
-    一个房间里坐着好几个人和好几个 agent，三档里的一档说不出是哪一个。
+    一个房间里坐着好几个人和好几个 agent，一个档位说不出是哪一个。
 
     读这一列的唯一落点是 ``app.domain.block.authorship``。
     """
 
     participant = "participant"
-    # 平台自己产的事件：部署提醒、闸门结论、自动重发。这一档改叫 platform 要连着
-    # 一次存量行改写（SQLAlchemy 的 Enum 存的是成员名），所以和旧值的删除一起在
-    # P8b 做，这里先留着它今天的名字。**改名的那一次，存量行改写除了 human/ai
-    # 还得把 system 一并改成 platform**：库里存的是 "system" 这个成员名，枚举里
-    # 没有它之后，旧行一读就是 LookupError。
-    system = "system"
 
-    # —— P8 之前写下的存量行的两个旧值，都是参与者 ——
-    # 没有一处代码再写它们；读它们的只有 block/authorship.py。P8b 把这些行改写成
-    # participant，然后把这两档删掉。分两次发布是因为 Enum(native_enum=False) 绑的
-    # 是 Python 枚举：上一版镜像读到 participant 会抛 LookupError，所以「加值」和
-    # 「改数据」不能同一次上线。
-    human = "human"
-    ai = "ai"
+    # 平台自己产的事件：部署提醒、闸门结论、自动重发。**这一档今天写下的是
+    # `system`**（下面那个成员），`platform` 先空着——它要比第一个写它的人早一次
+    # 发布进到枚举里。
+    #
+    # 为什么要早一次：`Enum(AuthorType, native_enum=False)` 绑的是 Python 枚举，
+    # 而 `deploy/deploy-docker.sh` 换容器有先后——`rollout_backend` 之后才轮到
+    # `rollout_frontend`，而且已经开着的标签页跑的还是上一版 bundle。改名于是要
+    # 三次发布，每一次都只动一头：
+    #
+    #   这一次：`platform` 进枚举、前端换成「不是 participant 就是平台」，写入端
+    #           不动，库里一行不变——旧 bundle 读到的仍是它认得的 `system`。
+    #   下一次：写入端改写 `platform`。窗口里的那一版就是这一版，枚举和 bundle
+    #           两头都已经认得这个名字。
+    #   再下次：`UPDATE ... SET 'platform' WHERE author_type='system'` 并删掉
+    #           `system` 这一档。改写跑在换容器之前，服务的是上一版镜像；它读得懂
+    #           `platform`，而且不再写 `system`，所以这一遍改完就不用补跑。
+    platform = "platform"
+
+    # 上一档今天的名字，也是存量行里的名字。读它的只有 `block/authorship.py`
+    # （它不是 participant，于是照样判成平台自己写的）和前端的 `lib/authorship.ts`。
+    system = "system"
 
 
 # `meta` key carried by every new message/attachment that arrives as an input.

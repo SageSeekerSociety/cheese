@@ -67,7 +67,6 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
     Supply,
-    default_visibility,
     has_runnable_transport,
 )
 from app.domain.device.wiring import sql_device_service
@@ -182,7 +181,9 @@ async def resolve_pinned_device(
         # bind. Today that resolves to `host`, because `isolated` has no transport;
         # when #358 step 2 supplies one, this and the catalogue move together.
         await service.bind_topic_device(
-            topic_id, device.device_id, visibility=default_visibility()
+            topic_id,
+            device.device_id,
+            visibility=await service.binding_visibility(device.device_id),
         )
         return device.device_id
     return None
@@ -526,6 +527,9 @@ class DeviceChannel(Channel):
     ``ClaudeCodeRuntime``."""
 
     name = "device"
+    # 人接入的机器：平台只能停止使用它，不能销毁它。「谁开的」是一个常量，不从机器
+    # 长什么样推 (#282 决定 2)。基类的 `owns` 读的就是这一位。
+    supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
     # — the metering-proxy env under a subscription, the backend's /llm route and
     # a scoped token without one. Either way the machine holds no provider
@@ -561,17 +565,6 @@ class DeviceChannel(Channel):
         """Whether any device is currently connected (online). Project-level checks
         happen per turn, in ``precheck``."""
         return bool(self._hub.online_device_ids())
-
-    def owns(self, supply: Supply) -> bool:
-        """Is a machine that entered this way THIS channel's to listen to?
-
-        Both channels bind their topics into the same table, so a pin does not
-        say which of them made it — the machine does, and ``Supply`` is the axis
-        that separates them (the platform opened it → Cloud's; a human enrolled
-        it → this one's). ``_resolve_device_agent`` on the Cloud side already
-        refuses a machine of the wrong supply for the same reason.
-        """
-        return supply is not Supply.cloud
 
     async def discover(
         self, device_id: str | None = None
