@@ -42,6 +42,7 @@ HARNESS_PACKAGE = DOMAIN / "agent/harness"
 SESSION = SessionRef(
     project_id=uuid.UUID("00000000-0000-4000-8000-000000000001"),
     topic_id=uuid.UUID("00000000-0000-4000-8000-000000000002"),
+    harness="claude-code",
 )
 OPENING = Opening(system_prompt="CONTRACT")
 LABEL = thread_label(uuid.UUID("00000000-0000-4000-8000-000000000003"))
