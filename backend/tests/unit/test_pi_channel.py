@@ -166,7 +166,7 @@ class Rooms:
             *,
             topic_id,
             agent_handle,
-            harness="claude-code",
+            harness,
             work_lease,
             runtime_location,
         ):
