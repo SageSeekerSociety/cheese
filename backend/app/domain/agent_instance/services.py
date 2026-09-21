@@ -325,8 +325,8 @@ class AgentInstanceService:
         行的项目。若这里变成一次「必然命中」的纯查询，那些项目换容器后直接炸。
 
         席位和实例一起播：一行实例没有席位，就是一个进不了房间的参与者，授权也就
-        没有可读的那一行。根房间还不存在时（建项目的调用顺序里只可能出现一次）不
-        播席位，`ProjectService.create` 在根房间建好之后才调这里。
+        没有可读的那一行。`ProjectService.create` 先建总览房间再调这里，所以正常
+        路径上总有一个房间可坐；直接拼出来、还没有总览房间的 Project 只拿到实例。
         """
         if project.default_agent_instance_id is not None:
             instance = await self._repo.get(project.default_agent_instance_id)
