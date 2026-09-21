@@ -183,16 +183,13 @@ def test_adding_a_shell_touches_no_component() -> None:
     road to 「比两套前端更难维护」, which is the whole reason 壳 is data. The
     frontend therefore must not know any 壳's name: it receives the resolved
     declaration over the API and renders it.
-
-    测试桩不算：``Shell.name`` 是必填字段，一份构造壳的用例总得给它起个名字，那不是
-    组件里长出来的 ``if``。这条守的是**渲染代码**，所以扫的时候跳过 ``.spec`` /
-    ``.test``——生产代码那半一分不减。
     """
     offenders: list[str] = []
     for path in (REPO_ROOT / "frontend" / "src").rglob("*"):
         if path.suffix not in {".ts", ".vue", ".js"} or not path.is_file():
             continue
-        if ".spec." in path.name or ".test." in path.name:
+        # Fixtures name the shells they exercise; they are not shipped components.
+        if path.name.endswith(".spec.ts"):
             continue
         text = path.read_text(encoding="utf-8")
         for name in SHELL_NAMES:
