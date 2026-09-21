@@ -34,6 +34,7 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'|
   // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
@@ -650,7 +651,9 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
               size="x-small"
               variant="tonal"
               color="primary"
-              title="新建话题"
+              :title="creatingTopic ? '正在创建话题' : '新建话题'"
+              :loading="creatingTopic"
+              :disabled="creatingTopic"
               @click="newTopic()"
             />
           </div>

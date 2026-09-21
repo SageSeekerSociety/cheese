@@ -15,11 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.identity.handles import (
+    AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
-    TOPIC_AGENT_PREFIX,
     agent_instance_handle,
     looks_like_agent_handle,
-    topic_agent_handle,
 )
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
@@ -132,15 +131,14 @@ class TopicMemberService:
         duplicates a row. Called at topic-create time, outside the actor check
         (the platform, not a user, seeds).
 
-        芝士 joins as THIS topic's 分身 (its own agent-user), not as the shared
-        platform account — that seat is what makes the room's agent attributable
-        and individually revocable."""
+        芝士 joins under its own handle, not the shared platform account — that
+        seat is what makes the room's agent attributable and individually
+        revocable. Unnamed, it is the project's own 芝士."""
         if owner_handle and not self._is_agent_handle(owner_handle):
             await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
-        if agent_handle:
-            await self.ensure_agent_seat(topic_id, agent_handle)
-        else:
-            await self.ensure_topic_agent_seat(topic_id)
+        seat = agent_handle or await self._project_agent_seat(topic_id)
+        if seat is not None:
+            await self.ensure_agent_seat(topic_id, seat)
 
     async def seed_root(
         self,
@@ -175,6 +173,30 @@ class TopicMemberService:
         """
         await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
         await self._ensure_member(topic_id, peer_handle, role=TopicRole.member)
+
+    async def private_seats(self, topic_id: uuid.UUID) -> tuple[str, str] | None:
+        """一间私聊的两席：房主那一席，和对面那一席。不是恰好两席时 None。
+
+        私聊是项目内名册两席的房间（结论 19），所以「这间房里的另一位是谁」只有
+        名册一个出处。以前还有第二个出处，就是 ``topics.private_owner`` 与
+        ``private_peer`` 两列；同一件事有两份声明，而加人、换席位、撤席位改的
+        只有名册那一份。
+
+        人这一席是 ``owner``：建私聊的人是房主，人对人的私聊里房主是规范化之后
+        排在前面的那一位（``TopicService.get_or_create_private``），AI 队友按它
+        自己的席位坐在对面。
+
+        不是恰好两席就答 None，席位被撤掉的房间说不出「对面是谁」。调用方走它本
+        来就有的那条退路（项目默认的芝士、不读个人记忆池），而不是从别处猜一个。
+        """
+        members = await self._repo.list_for_topic(topic_id)
+        if len(members) != 2:
+            return None
+        owner = next((m for m in members if m.role == TopicRole.owner), None)
+        if owner is None:
+            return None
+        peer = next(m for m in members if m.id != owner.id)
+        return owner.member_handle, peer.member_handle
 
     async def seed_split(
         self,
@@ -324,29 +346,19 @@ class TopicMemberService:
         question stays 「这个房间认不认它」 and does not widen to
         「这个项目认不认它」.
 
-        One handle answers without a seat here, and it is one handle rather than
-        a second roster: ``ProjectAgentCredentialService.agent_handle`` — i.e.
-        ``topic_agent_handle(root_topic_id)`` — is what a project credential
-        authenticates as, derived from the project's root room and borrowing no
-        room's seat by definition. An off-platform 芝士 (local agent, bot, CI)
-        holds exactly that credential and acts in every room of its project, so
-        asking only the destination room's roster would answer "not an agent"
-        for it in every room but the root one: a 403 instead of a published
-        message, and a turn that reads its own question back as unread input.
-        Reading the root room's whole roster instead of this one handle is what
-        would widen the check back to the project — 总览's roster is every
-        project member, so any agent seated there would pass everywhere.
+        The roster is the whole answer, with no handle excepted. There used to be
+        one: a project credential authenticated as a name derived from the
+        project's root room, which by construction sat on no other room's
+        roster, so an off-platform 芝士 (local agent, bot, CI) holding that
+        credential had to be waved through everywhere. It authenticates as the
+        project's own 芝士 now, and that 芝士 is seated in every room it belongs
+        to — so the exception bought nothing and cost the capability this check
+        exists to provide: while it stood, revoking that seat in one room left
+        the credential writing there anyway.
 
-        Pass the ROOM: threads have no roster of their own, and the project the
-        room belongs to is where that credential handle is derived from.
+        Pass the ROOM: threads have no roster of their own.
         """
-        if handle in await self.agent_handles(room.id):
-            return True
-        project = await ProjectRepository(self._session).get(room.project_id)
-        root_id = project.root_topic_id if project is not None else None
-        if root_id is None or root_id == room.id:
-            return False
-        return handle == topic_agent_handle(root_id)
+        return handle in await self.agent_handles(room.id)
 
     async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
         """Seat THIS agent in this room, and return the handle it acts under.
@@ -364,15 +376,20 @@ class TopicMemberService:
             )
         return handle
 
-    async def ensure_topic_agent_seat(self, topic_id: uuid.UUID) -> str:
-        """Seat the room-derived 分身. Reached only where no agent has been named
-        yet — a room seeded before an agent could hold an identity of its own —
-        and kept until every seat is an agent's own."""
-        handle = topic_agent_handle(topic_id)
-        from app.domain.identity.services import IdentityService
+    async def _project_agent_seat(self, topic_id: uuid.UUID) -> str | None:
+        """这间房所属项目的芝士，在名册上的那一行 handle。
 
-        await IdentityService(self._session).ensure_topic_agent_user(topic_id)
-        return await self.ensure_agent_seat(topic_id, handle)
+        身份从 agent 自己派生（``agent_instance_handle``），不从房间派生：一间房
+        可以坐好几个 agent，从房间派生会给它们同一个名字，也会给同一个 agent 在
+        两间房里两个名字。项目还没有芝士时为 None——建项目就播种它，所以这只在
+        一个拼出来的、没有芝士的 Project 上成立。"""
+        topic = await self._topics.get(topic_id)
+        if topic is None:
+            return None
+        project = await ProjectRepository(self._session).get(topic.project_id)
+        if project is None or project.default_agent_instance_id is None:
+            return None
+        return agent_instance_handle(project.default_agent_instance_id)
 
     async def migrate_shared_agent_seat(self, topic_id: uuid.UUID) -> None:
         """Retire a pre-分身独立身份 room's shared ``cheese`` seat in favour of its
@@ -386,21 +403,22 @@ class TopicMemberService:
         change exists to provide. Blocks already authored under the shared handle
         keep it; history is history.
 
-        And the 分身 is seated only where the shared seat was this room's LAST
-        agent. 总览 seats the project's own 芝士 now (`b4d1a70c9e52` retired the
-        stand-in that used to sit there), so seating one here on the way past
-        would put a second 芝士 back on that roster — and with it the hole the
-        retirement closed: revoke the instance's seat and the stand-in goes on
-        answering 「这里有个 agent」, because it carries an execution binding of
-        its own. The question 「这个房间还有别的 agent 吗」 is the right one for
-        every room, not just 总览, and it costs one roster read.
+        And the project's 芝士 is seated only where the shared seat was this
+        room's LAST agent. 总览 already seats it (`b4d1a70c9e52`), so doing it
+        here is a no-op there; in a room that has since chosen another agent it
+        would be a second 芝士 nobody asked for. The question 「这个房间还有别的
+        agent 吗」 is the right one for every room, not just 总览, and it costs
+        one roster read.
         """
         legacy = await self._repo.get(topic_id=topic_id, member_handle=CHEESE_HANDLE)
         if legacy is None:
             return
         await self._repo.delete(legacy)
-        if not await self.agent_handles(topic_id):
-            await self.ensure_topic_agent_seat(topic_id)
+        if await self.agent_handles(topic_id):
+            return
+        own = await self._project_agent_seat(topic_id)
+        if own is not None:
+            await self.ensure_agent_seat(topic_id, own)
 
     async def resolve_agent_handle(
         self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
@@ -409,36 +427,30 @@ class TopicMemberService:
         keying its memory. Read-only.
 
         The roster decides: a room hosting some other agent attributes to that
-        one. With no agent seated at all, fall back to the handle this place's
-        sandbox token names (``cheese-<place hex>``) — a turn still has to answer
-        "who am I", and answering with the shared account would put the collapsed
-        identity back into the audit trail.
+        one. With no agent seated at all, fall back to the project's own 芝士 —
+        a turn still has to answer "who am I", and answering with the shared
+        ``cheese`` account would put the collapsed identity back into the audit
+        trail.
 
         Several agents seated: the project's default answers for the room when
-        it is one of them — the room-scoped credentials and the room's own git
-        identity all mean the same one — else the first on the roster.
+        it is one of them — the room-scoped credentials and the room's own
+        commit identity all mean the same one — else the first on the roster.
 
         Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
-        the room's (threads do not have one), but the fallback has to stay the
-        thread's own, because that is the handle its sandbox was started with.
-        Collapsing the two would give one 分身 two names — one on the blocks it
-        writes, another on the token it writes them with.
+        the room's (threads do not have one). A thread and its room fall back to
+        the same 芝士, because an agent's name comes from the agent and not from
+        where it happens to be standing.
         """
-        handles = await self.agent_handles(room_id or topic_id)
+        room = room_id or topic_id
+        handles = await self.agent_handles(room)
+        if len(handles) == 1:
+            return handles[0]
+        own = await self._project_agent_seat(room)
         if not handles:
-            return topic_agent_handle(topic_id)
-        if len(handles) > 1:
-            topic = await self._topics.get(room_id or topic_id)
-            project = (
-                await ProjectRepository(self._session).get(topic.project_id)
-                if topic is not None
-                else None
-            )
-            if project is not None and project.default_agent_instance_id is not None:
-                own = agent_instance_handle(project.default_agent_instance_id)
-                if own in handles:
-                    return own
-        return handles[0]
+            if own is None:
+                raise NotFoundError("这个项目还没有芝士，答不出这间房里「我是谁」")
+            return own
+        return own if own in handles else handles[0]
 
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
@@ -447,7 +459,7 @@ class TopicMemberService:
         if topic is None:
             raise NotFoundError("Topic not found")
         await self._require_manager(topic_id, actor)
-        if handle.startswith(TOPIC_AGENT_PREFIX):
+        if handle.startswith(AGENT_HANDLE_PREFIX):
             # A teammate's seat is derived from its instance, and an instance
             # keys a memory pool inside ITS project — so another project's
             # teammate must not be seated here: nothing in this project would

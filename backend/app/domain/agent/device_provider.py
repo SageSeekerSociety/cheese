@@ -75,7 +75,6 @@ from app.domain.device.supply import (
     has_runnable_transport,
 )
 from app.domain.device.wiring import sql_device_service
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.library import service as library
 from app.domain.topic.services import TopicService
@@ -89,6 +88,8 @@ logger = logging.getLogger(__name__)
 # How long the launcher file write may go unanswered. The hub adds 5s of grace
 # on top for the exec.result frame itself.
 _LAUNCHER_SHIP_TIMEOUT_S = 30
+_SESSION_RECONNECT_GRACE_S = 10.0
+_SESSION_RECONNECT_POLL_S = 0.25
 
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
@@ -179,19 +180,19 @@ async def resolve_pinned_device(
     # does; a machine judged dead is named in the room (``agent.host_failure``)
     # and waited for, because a pin that can quietly change is the original drift
     # bug.
-    healthy = await service.healthy_devices_for_project(project_id, is_online)
-    for device in healthy:
-        # The same fact the market catalogue publishes as `default=True`, read from
-        # one place so the picker can never advertise a 档 the resolver does not
-        # bind. Today that resolves to `host`, because `isolated` has no transport;
-        # when #358 step 2 supplies one, this and the catalogue move together.
-        await service.bind_topic_device(
-            topic_id,
-            device.device_id,
-            visibility=await service.binding_visibility(device.device_id),
-        )
-        return device.device_id
-    return None
+    device = await service.first_healthy_device(project_id, is_online)
+    if device is None:
+        return None
+    # The same fact the market catalogue publishes as `default=True`, read from
+    # one place so the picker can never advertise a 档 the resolver does not
+    # bind. Today that resolves to `host`, because `isolated` has no transport;
+    # when #358 step 2 supplies one, this and the catalogue move together.
+    await service.bind_topic_device(
+        topic_id,
+        device.device_id,
+        visibility=await service.binding_visibility(device.device_id),
+    )
+    return device.device_id
 
 
 # Addresses that only mean something ON the box. Routing the box's own turns
@@ -658,7 +659,7 @@ class DeviceChannel(Channel):
                 ]
                 identity: tuple = ()
                 if entries:
-                    agent = await IdentityService(session).ensure_topic_agent_user(
+                    agent = await IdentityService(session).ensure_room_agent_user(
                         topic_id
                     )
                     identity = (agent.id, agent.username)
@@ -758,10 +759,11 @@ class DeviceChannel(Channel):
             )
             if device_id is None:
                 return None
-            # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
-            # run on a self-hosted box is attributable to the same identity as one
-            # run locally — the device stays pure compute either way.
-            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
+            # The screen acts as the agent that answers this room (its own
+            # agent-user), so a turn run on a self-hosted box is attributable to the
+            # same identity as one run locally — the device stays pure compute
+            # either way.
+            agent = await IdentityService(session).ensure_room_agent_user(topic_id)
             # Persist the pin created above (first turn) before the turn proceeds, so a
             # concurrent/next turn sees the same device.
             await session.commit()
@@ -1022,22 +1024,10 @@ class DeviceChannel(Channel):
             return False
         from app.domain.agent.remote_control import store
 
-        agent_handle = screen.agent_handle
-        if screen.topic_id is not None and agent_handle == topic_agent_handle(
-            screen.topic_id
-        ):
-            # RC launch credentials resolve a room stand-in to its seated agent.
-            # A surviving screen still records the stand-in it was born with.
-            from app.core.db import async_session_factory
-            from app.domain.topic_membership.services import TopicMemberService
-
-            factory = self._session_factory or async_session_factory
-            async with factory() as db:
-                agent_handle = await TopicMemberService(db).resolve_agent_handle(
-                    screen.topic_id
-                )
+        # A screen is launched as one named agent and records it, so this is
+        # the agent whose control session to look for — no second answer.
         control = store()
-        session = await control.current(str(screen.topic_id), agent_handle)
+        session = await control.current(str(screen.topic_id), screen.agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
@@ -1357,10 +1347,8 @@ class DeviceChannel(Channel):
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
                 resource_id=str(resource_id),
-                # WHO acts with it. The launcher has known this all along and
-                # let the minter fall back to a handle derived from the room —
-                # which is the one thing a room cannot answer once it may seat
-                # more than one agent.
+                # WHO acts with it — a room cannot answer that once it may seat
+                # more than one agent, so the launcher, which knows, says it.
                 agent_handle=agent_handle,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
@@ -1662,7 +1650,7 @@ class DeviceChannel(Channel):
         return factory()
 
     async def _resolve_session_host(self, db, session: SessionRef) -> str:
-        """这条会话自己的机器，确认它在线。只读，不写，不提交。
+        """读取这条会话自己的机器。在线等待由调用方在归还数据库连接后完成。
 
         机器从会话行上读，不是项目钉住的那台工作机。问的是这条会话而不是这个房间：
         一间房里的两个队友各有一条会话，可能坐在两台机器上。
@@ -1674,22 +1662,61 @@ class DeviceChannel(Channel):
             session.topic_id, session.agent_handle, harness=session.harness
         )
         host = place.machine if place else settings.agent_session_device_id
-        if not host or not self._hub.is_online(host):
+        if not host:
+            logger.error("session_host_unconfigured topic=%s", session.topic_id)
             raise ScreenSetupError("这条会话的机器尚未配置或未连接")
         return host
 
-    async def _session_host_agent(self, session: SessionRef) -> Placement:
-        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上这个
-        房间的 分身。
+    async def _wait_for_session_host(self, host: str, session: SessionRef) -> None:
+        """Give the pinned connector time to reconnect after an ingress reload.
 
-        分身不是从执行机上取的，所以所有工作机离线时它照样答得出来。三条通道问的
+        Call after releasing the database session: simultaneous room starts
+        must leave the connection pool available while transport recovers.
+        """
+        if self._hub.is_online(host):
+            return
+        logger.info(
+            "session_host_reconnecting topic=%s host=%s", session.topic_id, host
+        )
+        deadline = time.monotonic() + _SESSION_RECONNECT_GRACE_S
+        while not self._hub.is_online(host):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "session_host_offline topic=%s host=%s", session.topic_id, host
+                )
+                raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+            await asyncio.sleep(min(_SESSION_RECONNECT_POLL_S, remaining))
+
+    async def _session_agent(self, db, session: SessionRef):
+        """Resolve the selected conversation's project handle to its author."""
+        from app.domain.agent_instance.services import AgentInstanceService
+        from app.domain.project.services import ProjectService
+
+        if not session.agent_handle:
+            return await IdentityService(db).ensure_room_agent_user(session.topic_id)
+        project = await ProjectService(db).get_or_404(session.project_id)
+        agents = AgentInstanceService(db)
+        instance = await agents.for_handle(project, session.agent_handle)
+        handle = await agents.ensure_identity(instance)
+        user = await user_by_handle(db, handle)
+        assert user is not None
+        return user
+
+    async def _session_host_agent(self, session: SessionRef) -> Placement:
+        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上答
+        这间房的那个 agent。
+
+        身份不是从执行机上取的，所以所有工作机离线时它照样答得出来。三条通道问的
         是同一个问题，答案就只有这一份。
         """
         async with self._sessions() as db:
             host = await self._resolve_session_host(db, session)
-            agent = await IdentityService(db).ensure_topic_agent_user(session.topic_id)
+            agent = await self._session_agent(db, session)
             await db.commit()
-            return Placement(host, agent.id, agent.username, rented=False)
+            placement = Placement(host, agent.id, agent.username, rented=False)
+        await self._wait_for_session_host(host, session)
+        return placement
 
     async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
@@ -1709,7 +1736,12 @@ class DeviceChannel(Channel):
         )
         if resolved is None:
             raise ScreenSetupError(self.no_machine_message)
-        return Placement(*resolved, rented=True)
+        if self._device_resolver is not None:
+            return Placement(*resolved, rented=True)
+        async with self._sessions() as db:
+            agent = await self._session_agent(db, session)
+            await db.commit()
+            return Placement(resolved[0], agent.id, agent.username, rented=True)
 
     async def ensure_ready(
         self,
@@ -1761,11 +1793,11 @@ class DeviceChannel(Channel):
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                # Use the same actor for Git and tools, including a non-default
-                # teammate whose identity differs from the machine precheck.
-                # A room-scoped legacy token keeps the precheck identity.
+                # Use the same actor for the repository and for tools, including
+                # a non-default teammate whose identity differs from the machine
+                # precheck. A token that names nobody keeps the precheck identity.
                 actor = token_agent_handle(token)
-                if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+                if actor and actor != agent_handle:
                     user = await user_by_handle(room_session, actor)
                     if user is None:
                         raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")

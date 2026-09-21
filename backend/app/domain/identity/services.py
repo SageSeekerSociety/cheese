@@ -23,12 +23,11 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.handles import (
+    AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
     CHEESE_NAME,
-    TOPIC_AGENT_PREFIX,
     agent_instance_handle,
     looks_like_agent_handle,
-    topic_agent_handle,
 )
 from app.domain.identity.models import AgentBindingKind
 from app.domain.identity.repositories import AgentBindingRepository
@@ -38,12 +37,12 @@ from app.domain.user.repositories import UserProfileRepository, UserRepository
 # Handle naming lives in the dependency-free ``handles`` module (the token minter
 # imports it); re-exported here so every existing import keeps working.
 __all__ = [
+    "AGENT_HANDLE_PREFIX",
     "CHEESE_HANDLE",
     "CHEESE_NAME",
-    "TOPIC_AGENT_PREFIX",
     "IdentityService",
+    "agent_instance_handle",
     "looks_like_agent_handle",
-    "topic_agent_handle",
 ]
 
 
@@ -76,7 +75,7 @@ class IdentityService:
         if await self._bindings.get_for_user(user.id) is None:
             await self._bindings.add(user_id=user.id, kind=AgentBindingKind.platform)
         # The display name lives on the profile (the User row only carries the
-        # handle). Without it every 分身 would render as its raw
+        # handle). Without it every agent would render as its raw
         # ``cheese-<hex>`` handle instead of 芝士 — identity forks, display does not.
         if await self._profiles.get_profile_by_user_id(user.id) is None:
             await self._profiles.create_profile(
@@ -84,15 +83,19 @@ class IdentityService:
             )
         return user
 
-    async def ensure_topic_agent_user(self, topic_id: uuid.UUID) -> User:
-        """Ensure the agent-user row for THIS topic's 分身 (identity, not display).
+    async def ensure_room_agent_user(self, topic_id: uuid.UUID) -> User:
+        """The agent-user row of whoever answers this room (identity, not display).
 
-        Handle is derived from the topic id, so the sandbox token can name the
-        acting 分身 without a DB lookup at mint time (``sandbox_auth``).
+        Every caller of this wants the same thing — a numeric user id to hang a
+        session, a lease or a machine on — and the answer is the agent, never the
+        room: a room may seat several, and the same agent keeps one identity
+        across all of them. The roster says which one (its seat is the grant),
+        and a room with no agent seated falls back to the project's own 芝士.
         """
-        return await self.ensure_agent_user(
-            handle=topic_agent_handle(topic_id), name=CHEESE_NAME
-        )
+        from app.domain.topic_membership.services import TopicMemberService
+
+        handle = await TopicMemberService(self._session).resolve_agent_handle(topic_id)
+        return await self.ensure_agent_user(handle=handle, name=CHEESE_NAME)
 
     async def ensure_instance_agent_user(
         self, instance_id: uuid.UUID, display_name: str
