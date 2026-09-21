@@ -1,16 +1,7 @@
 name: Harness request contracts
 
 on:
-  pull_request:
-    paths:
-      - "backend/app/domain/agent/**"
-      - "backend/tests/**"
-      - "backend/scripts/test_harness_contracts.py"
-      # The gate this job now ends on lives here, so a change to it alone must
-      # still run the job it gates.
-      - "backend/scripts/assert_suite_ran.py"
-      - "backend/uv.lock"
-      - ".github/workflows/harness-contract.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
