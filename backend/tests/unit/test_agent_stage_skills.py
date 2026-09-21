@@ -129,8 +129,8 @@ def test_the_pre_card_stage_covers_when_to_hand_off_and_the_github_channel():
 
 def test_awaiting_stage_tells_the_agent_how_prs_move_now():
     guide = load_scenario(stage_scenario(TopicStage.awaiting))
-    assert "push_fix" in guide  # 提交不会自己上 PR，得说怎么上
-    assert "实际授权" in guide
+    assert "push-fix" in guide  # 提交不会自己上 PR，得说怎么上
+    assert "权限随项目连接而变" in guide
     assert "token 是只读的" not in guide
 
 
