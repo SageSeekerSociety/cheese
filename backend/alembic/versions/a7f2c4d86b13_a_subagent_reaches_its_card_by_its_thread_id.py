@@ -6,7 +6,7 @@
 (room_id, subagent_id) 这个索引只剩下每次写卡时要维护的成本。
 
 Revision ID: a7f2c4d86b13
-Revises: d5c48f1a6b73
+Revises: f1a9c3e07b42
 """
 
 from collections.abc import Sequence
@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "a7f2c4d86b13"
-down_revision: str | Sequence[str] | None = "d5c48f1a6b73"
+down_revision: str | Sequence[str] | None = "f1a9c3e07b42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

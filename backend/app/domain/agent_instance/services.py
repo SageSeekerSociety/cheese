@@ -25,6 +25,7 @@ from app.domain.identity.handles import (
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
+from app.domain.topic_membership.services import TopicMemberService
 
 # An instance handle keys a memory pool (``{project}:{handle}``), so it may not
 # contain the separator, and it travels through URLs and prompts.
@@ -71,8 +72,8 @@ class AgentInstanceService:
         A room does not have an agent: it seats members, and which of its agents
         answers is decided by who a message addresses. What a room falls back to
         is the project's default. A private 1:1 with a teammate is the one place
-        the topic itself names its other party — its `private_peer` is that
-        teammate's seat, the way a DM with a person names the person.
+        nobody has to address anybody: the room holds two seats, so the teammate
+        is the seat that is not the person's.
         """
         peer = await self._dm_teammate(topic, project)
         if peer is not None:
@@ -84,13 +85,22 @@ class AgentInstanceService:
     ) -> ResolvedAgent | None:
         """The teammate a private 1:1 is with, when it is with a saved one.
 
+        Read off the roster, which is where a private chat's two seats live
+        (结论 19): 「谁被点名」 follows from the room holding exactly two of
+        them, so a DM needs no @ and no second place recording who its other
+        party is.
+
         A DM whose peer is a room-derived seat (opened before teammates had
-        seats of their own, in a project that had no saved default to name)
-        returns None and is answered by the project's default, as it always was.
+        seats of their own, in a project that had no saved default to name),
+        and one whose roster is no longer two seats, return None and are
+        answered by the project's default, as they always were.
         """
         if not topic.is_private:
             return None
-        return await self.for_seat_handle(project, topic.private_peer)
+        seats = await TopicMemberService(self._session).private_seats(topic.id)
+        if seats is None:
+            return None
+        return await self.for_seat_handle(project, seats[1])
 
     async def for_seat_handle(
         self, project: Project, handle: str | None
@@ -341,9 +351,6 @@ class AgentInstanceService:
         instance.is_active = True
         project.default_agent_instance_id = instance.id
         if project.root_topic_id is not None:
-            # 建项目时 ProjectService 就在这条链上，按调用时导入。
-            from app.domain.topic_membership.services import TopicMemberService
-
             await TopicMemberService(self._session).ensure_agent_seat(
                 project.root_topic_id, agent_instance_handle(instance.id)
             )
