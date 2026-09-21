@@ -1,7 +1,7 @@
 """平台侧的执行记录：发出去过什么，哪些结果未知
 
 Revision ID: b9e4c17d0a52
-Revises: c1a7e05d4b83
+Revises: e3a7c15d80b4
 Create Date: 2026-09-21 09:00:00
 
 结论 57。执行器自己已经记了一份同样的东西 —— ``requests`` 表里 ``result`` 为空的
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b9e4c17d0a52"
-down_revision = "e5b31c07af28"
+down_revision = "e3a7c15d80b4"
 branch_labels = None
 depends_on = None
 

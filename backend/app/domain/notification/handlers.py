@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from redis.asyncio import Redis
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.notification.config import notification_config
-from app.domain.notification.dedup import NotificationDeduplicator
 from app.domain.notification.events import NotificationTriggerEvent
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.repositories import NotificationRepository
@@ -23,6 +23,11 @@ class NotificationDelivery:
     type: NotificationType
     payload: dict[str, Any]
     is_aggregated_finalization: bool = False
+    #: 这一笔投递的身份（`delivery/ledger.py` 的去重键）。落在收件箱那一行上，所以
+    #: 补发撞上唯一约束什么也不发生 —— 「恰好一次」由它保证。None = 没走账本的调用
+    #: 点（社交那 8 处直接调 `publish_notification_event`，既不记账也不去重），那种
+    #: 行之间不互斥。
+    delivery_key: str | None = None
 
 
 class NotificationChannelHandler(Protocol):
@@ -35,38 +40,53 @@ class InAppNotificationHandler:
     name = "in-app"
 
     def __init__(self, session: AsyncSession) -> None:
-        self._repo = NotificationRepository(session=session)
+        self._session = session
 
     async def send_batch(self, deliveries: Sequence[NotificationDelivery]) -> None:
         if not deliveries:
             return
 
         now = datetime.now(UTC)
-        to_persist: list[Notification] = []
+        rows: list[dict[str, Any]] = []
         for delivery in deliveries:
             if delivery.is_aggregated_finalization:
                 # Aggregated rows already exist in DB; finalization just flips the flag.
                 continue
-            notification = Notification(
-                receiver_id=delivery.recipient_id,
-                type=delivery.type,
-                metadata_payload=delivery.payload,
-                read=False,
-                is_aggregatable=False,
-                aggregation_key=None,
-                aggregate_until=None,
-                finalized=True,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
+            rows.append(
+                {
+                    "receiver_id": delivery.recipient_id,
+                    "type": delivery.type,
+                    "metadata_payload": delivery.payload,
+                    "read": False,
+                    "is_aggregatable": False,
+                    "aggregation_key": None,
+                    "aggregate_until": None,
+                    "finalized": True,
+                    "delivery_key": delivery.delivery_key,
+                    "version": 0,
+                    # 入库的时刻，不是事件发生的时刻：收件箱按 `created_at DESC`
+                    # 翻页，落一个旧时间戳会把这一条插进二十分钟前的位置 —— 未读数
+                    # 加一，人打开收件箱却看不到新东西。事件发生的时刻记在账本的
+                    # `deliveries.event_at` 上。
+                    "created_at": now,
+                    "updated_at": now,
+                    "deleted_at": None,
+                }
             )
-            to_persist.append(notification)
 
-        if not to_persist:
+        if not rows:
             return
 
-        self._repo._session.add_all(to_persist)
-        await self._repo._session.flush()
+        # 带去重键的那一行插不进去就是它已经在了 —— 上一次发送在回写 `sent_at` 之
+        # 前崩掉，补发再来一次，收件人仍然只看到一条。`delivery_key` 为 NULL 的行
+        # 之间不互斥（Postgres 的唯一索引不认为两个 NULL 相等），所以还没走账本的
+        # 那些调用点照旧每次都插入。
+        await self._session.execute(
+            pg_insert(Notification)
+            .values(rows)
+            .on_conflict_do_nothing(index_elements=["delivery_key"])
+        )
+        await self._session.flush()
 
 
 class RedisEmailQueueNotificationHandler:
@@ -126,12 +146,10 @@ class NotificationEventHandler:
         self,
         session: AsyncSession,
         *,
-        deduplicator: NotificationDeduplicator | None = None,
         channel_handlers: Sequence[NotificationChannelHandler] | None = None,
     ) -> None:
         self._session = session
         self._repo = NotificationRepository(session=session)
-        self._deduplicator = deduplicator
         self._channel_handlers: tuple[NotificationChannelHandler, ...]
         if channel_handlers:
             self._channel_handlers = tuple(channel_handlers)
@@ -139,16 +157,6 @@ class NotificationEventHandler:
             self._channel_handlers = (InAppNotificationHandler(session=session),)
 
     async def handle(self, event: NotificationTriggerEvent) -> None:
-        if self._deduplicator is not None:
-            dedup = await self._deduplicator.should_process(event)
-            if not dedup.should_process:
-                logger.debug(
-                    "Skip duplicate notification event %s (cache=%s)",
-                    event.type,
-                    dedup.cache_key,
-                )
-                return
-
         if notification_config.is_aggregatable(event.type):
             for recipient_id in event.recipient_ids:
                 await self._handle_aggregatable(recipient_id, event.type, event.payload)
@@ -162,7 +170,7 @@ class NotificationEventHandler:
                 )
                 for recipient_id in event.recipient_ids
             ]
-            await self._dispatch_to_handlers(deliveries)
+            await self.dispatch(deliveries)
 
     async def _handle_aggregatable(
         self,
@@ -173,7 +181,7 @@ class NotificationEventHandler:
         now = datetime.now(UTC)
         aggregation_key = self._generate_aggregation_key(type_, payload)
         if aggregation_key is None:
-            await self._dispatch_to_handlers(
+            await self.dispatch(
                 [
                     NotificationDelivery(
                         recipient_id=recipient_id,
@@ -236,14 +244,18 @@ class NotificationEventHandler:
             )
             for n in finalized
         ]
-        await self._dispatch_to_handlers(deliveries)
+        await self.dispatch(deliveries)
         return finalized
 
-    async def _dispatch_to_handlers(
-        self, deliveries: Sequence[NotificationDelivery]
-    ) -> None:
+    async def dispatch(self, deliveries: Sequence[NotificationDelivery]) -> bool:
+        """把这一批交给每个渠道。返回值是「每个渠道都收下了」。
+
+        投递账本靠这个返回值决定回不回写 `sent_at`：吞掉一个渠道的异常还报成功，
+        账本就会记下一笔根本没发出去的投递，而那正是补发要救的那一档。
+        """
         if not deliveries:
-            return
+            return True
+        accepted = True
         for handler in self._channel_handlers:
             try:
                 # A savepoint, not just a try/except: a DB-writing handler
@@ -255,8 +267,10 @@ class NotificationEventHandler:
                 # handler's writes, so the caller's transaction stays usable.
                 async with self._session.begin_nested():
                     await handler.send_batch(deliveries)
-            except Exception:  # pragma: no cover - defensive guardrail
+            except Exception:
                 logger.exception("Notification handler %s failed", handler.name)
+                accepted = False
+        return accepted
 
     def _generate_aggregation_key(
         self,

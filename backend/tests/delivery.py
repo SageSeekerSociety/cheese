@@ -58,13 +58,20 @@ def delivery_task_id(client, room_id, *, commit=True):
     return task.id if task else uuid.UUID(int=0)
 
 
-def delivery_artifact(client, room_id, name="报告"):
-    """递卡时声明的那一项产物 (#1085 结论三)。
+def delivery_artifact(client, room_id, name="报告", *, hands_over=False):
+    """递卡时要不要声明产物，以及声明什么 (#1085 结论三)。
 
-    清单上已经有这个名字就按 id 沿用它，没有就用名字声明一项新的 —— 和真正的调用
-    方做的是同一个判断（它读系统提示里那份清单，那里名字和 id 都有）。一个项目里递
-    第二张卡的测试因此不需要知道第一张卡把它建出来了。
+    `hands_over`：这次交出去的是一份文件或一个地址。**默认是假**，因为大多数交付
+    交出去的是这次合并本身 —— 那一种交出去的是项目的仓库，平台自己认得出是清单上
+    哪一项，谁都不用声明，说了反而会被打回。
+
+    交文件、交地址的那一种才要声明：清单上已经有这个名字就按 id 沿用它，没有就用
+    名字声明一项新的 —— 和真正的调用方做的是同一个判断（它读系统提示里那份清单，
+    那里名字和 id 都有）。一个项目里递第二张卡的测试因此不需要知道第一张卡把它建
+    出来了。
     """
+    if not hands_over:
+        return {}
     room_id = uuid.UUID(str(room_id))
     room = client.get(f"/topics/{room_id}").json()["data"]
     listed = client.get(f"/projects/{room['project_id']}/artifacts")
@@ -72,7 +79,7 @@ def delivery_artifact(client, room_id, name="报告"):
     found = next((row for row in rows if row["name"] == name), None)
     if found is not None:
         return {"artifact": found["id"]}
-    return {"new_artifact": name}
+    return {"new_artifact": name, "about": f"交给甲方的那份{name}"}
 
 
 def delivery_headers(client, room_id):

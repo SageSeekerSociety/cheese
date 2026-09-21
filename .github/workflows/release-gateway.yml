@@ -1,0 +1,52 @@
+name: Release gateway
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full main commit with a successful image build
+        required: true
+      interrupt:
+        description: Acknowledge that replacing the gateway interrupts active model streams
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+concurrency:
+  group: gateway-dev
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && inputs.interrupt
+    environment: dev
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify the release commit and image build
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(gh run list --workflow build.yml --commit "$RELEASE_SHA" --status success --json conclusion --jq 'length')" -gt 0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: false
+      - name: Release the CI-built gateway and verify health
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          GATEWAY_ALLOW_INTERRUPT: '1'
+        run: bash deploy/release-gateway.sh "$RELEASE_SHA"
