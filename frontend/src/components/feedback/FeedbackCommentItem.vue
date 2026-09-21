@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { FeedbackComment } from '@/cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { relTime } from '@/lib/relTime'
@@ -25,6 +25,13 @@ import { relTime } from '@/lib/relTime'
 //   （服务端同事务软删，否则那些回复会变成查不到父亲的孤儿），所以确认那一句
 //   必须带上条数 —— 只说「删掉这条评论」而实际删掉一栋楼，是在骗按按钮的人。
 //   按钮本身出不出来由服务端的 `can_delete` 说了算，前端不自己判一遍。
+//
+// **焦点跟着界面走**。这一条里有三处「点一下就地换掉整块界面」：开回复框（输入框
+// 出现）、删除前确认（三个按钮换成两个）、确认撤回（换回来）。每一次都有人正拿着
+// 键盘站在那个刚被拿掉的元素上，焦点于是掉回 `<body>`，读屏和键盘用户要从页头
+// 重新找回来。规则三条：开框时焦点进输入框，确认时进「确认删除」，撤回来时回到
+// 「删除」；发完或收起时回到「回复」。这不是锦上添花 —— 掉焦点是键盘用户唯一
+// 会真的卡住的那类问题。
 const props = defineProps<{
   comment: FeedbackComment
   /** 这一条是不是正在被回复。同一个时刻线程只让一条为真（见 FeedbackCommentsThread）。 */
@@ -38,7 +45,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 请线程把回复框开在这一条上（再点一次是收起来）。开在谁身上是线程的决定。 */
   'toggle-reply': [commentId: string]
-  reply: [commentId: string, body: string]
+  /** 发一条回复。**结果用回调带回来**：`emit` 不能 await 也没有返回值，而「发失败了
+   *  就把草稿留着」需要知道结果 —— 回调是这个形状里唯一能拿到它的地方。父级在
+   *  真的发成功之后才调 `done(true)`。 */
+  reply: [commentId: string, body: string, done: (ok: boolean) => void]
   like: [commentId: string]
   remove: [commentId: string]
 }>()
@@ -49,19 +59,48 @@ const confirming = ref(false)
 
 const draft = ref('')
 
+/** 这一条正在发。挡住连点两下发出一条重复的回复 —— 那是一条真的会多出来的评论。 */
+const sending = ref(false)
+
+const replyBox = ref<{ focus?: () => void } | null>(null)
+const replyToggle = ref<HTMLButtonElement | null>(null)
+const removeButton = ref<HTMLButtonElement | null>(null)
+const confirmButton = ref<HTMLButtonElement | null>(null)
+
 // 回复框被线程关掉（点了别的评论的「回复」、或者这一条刚被删）时把草稿丢掉，
 // 否则下次打开还留着上一次的半句话，看着像自己写的又没发出去。
+//
+// **只在真的收起来时才丢**：发失败的那一次框是留着的（见 `send`），草稿当然也留着 ——
+// 写了两段话、服务端一句 500、字全没了，是这一版要修掉的东西之一。
 watch(
   () => props.replying,
-  (on) => {
-    if (!on) draft.value = ''
+  async (on, was) => {
+    if (!on) {
+      draft.value = ''
+      if (was) replyToggle.value?.focus()
+      return
+    }
+    await nextTick()
+    replyBox.value?.focus?.()
   }
 )
 
+// 确认换上去的时候焦点跟着走，撤回来的时候回到「删除」—— 两个按钮是就地换的，
+// 不搬焦点的话，按下去的那一个连同它身上的焦点一起消失了。
+watch(confirming, async (on) => {
+  await nextTick()
+  if (on) confirmButton.value?.focus()
+  else removeButton.value?.focus()
+})
+
 function send() {
-  if (!draft.value.trim()) return
-  emit('reply', props.comment.id, draft.value)
-  draft.value = ''
+  const body = draft.value.trim()
+  if (!body || sending.value) return
+  sending.value = true
+  emit('reply', props.comment.id, body, (ok) => {
+    sending.value = false
+    if (ok) draft.value = ''
+  })
 }
 
 /** 点赞按钮上的字。**文案本身是三个非颜色信号之一**，所以点过和没点过是两个词。
@@ -72,6 +111,9 @@ const removeQuestion = computed(() =>
   props.replyCount > 0 ? `删掉这条评论，连同它下面的 ${props.replyCount} 条回复一起？` : '删掉这条评论？'
 )
 
+/** 回复框的 id，给「回复」按钮的 `aria-controls` 用。 */
+const replyFormId = computed(() => `fb-reply-form-${props.comment.id}`)
+
 function confirmRemove() {
   confirming.value = false
   emit('remove', props.comment.id)
@@ -79,7 +121,7 @@ function confirmRemove() {
 </script>
 
 <template>
-  <div class="fb-ci" :class="{ 'fb-ci--reply': isReply }">
+  <div class="fb-ci">
     <div class="fb-ci__head">
       <FeedbackAuthorAvatar
         :handle="comment.author_handle"
@@ -102,7 +144,9 @@ function confirmRemove() {
 
     <div v-if="confirming" class="fb-ci__actions">
       <span class="fb-ci__confirm-q">{{ removeQuestion }}</span>
-      <button type="button" class="fb-ci__act fb-ci__act--danger" @click="confirmRemove">确认删除</button>
+      <button ref="confirmButton" type="button" class="fb-ci__act fb-ci__act--danger" @click="confirmRemove">
+        确认删除
+      </button>
       <button type="button" class="fb-ci__act" @click="confirming = false">取消</button>
     </div>
 
@@ -120,18 +164,32 @@ function confirmRemove() {
         <span v-if="comment.likes > 0" class="fb-ci__count">{{ comment.likes }}</span>
       </button>
 
-      <button type="button" class="fb-ci__act" @click="emit('toggle-reply', comment.id)">
+      <button
+        ref="replyToggle"
+        type="button"
+        class="fb-ci__act"
+        :aria-expanded="replying"
+        :aria-controls="replying ? replyFormId : undefined"
+        @click="emit('toggle-reply', comment.id)"
+      >
         <v-icon size="14">mdi-reply-outline</v-icon>
         {{ replying ? '收起' : '回复' }}
       </button>
 
-      <button v-if="comment.can_delete" type="button" class="fb-ci__act fb-ci__act--danger" @click="confirming = true">
+      <button
+        v-if="comment.can_delete"
+        ref="removeButton"
+        type="button"
+        class="fb-ci__act fb-ci__act--danger"
+        @click="confirming = true"
+      >
         删除
       </button>
     </div>
 
-    <div v-if="replying" class="fb-ci__form">
+    <div v-if="replying" :id="replyFormId" class="fb-ci__form">
       <v-textarea
+        ref="replyBox"
         v-model="draft"
         autocomplete="off"
         :placeholder="`回复 ${comment.author_handle}`"
@@ -143,7 +201,16 @@ function confirmRemove() {
            琥珀一次只能出现在一个地方（docs/design-system.md §0）。 -->
       <div class="fb-ci__form-actions">
         <v-btn variant="text" color="secondary" size="x-small" @click="emit('toggle-reply', comment.id)"> 取消 </v-btn>
-        <v-btn variant="tonal" color="secondary" size="x-small" :disabled="!draft.trim()" @click="send"> 回复 </v-btn>
+        <v-btn
+          variant="tonal"
+          color="secondary"
+          size="x-small"
+          :disabled="!draft.trim()"
+          :loading="sending"
+          @click="send"
+        >
+          回复
+        </v-btn>
       </div>
     </div>
   </div>
@@ -166,6 +233,11 @@ function confirmRemove() {
   font-weight: 600;
   line-height: var(--lh-13);
   color: var(--ink);
+  /* 一个 60 个字符、中间不带空格的 handle 在 flex 行里不会断行，于是把整行撑到
+     横向溢出、把上面那个时间戳推出屏幕。`min-width: 0` 放开 flex 项的最小尺寸，
+     `overflow-wrap` 才真的能在这两个字上断开。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .fb-ci__re {
   font-size: 12px;
@@ -175,10 +247,16 @@ function confirmRemove() {
 .fb-ci__re-name {
   font-weight: 600;
   color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .fb-ci__body {
   margin: 0;
   white-space: pre-wrap;
+  /* 正文里的长串（一条堆栈、一个 URL、一串没空格的 id）不会自己断行，`pre-wrap`
+     只在换行符处断。结果是这一条评论横向溢出去，把整页撑宽 —— 手机上表现为
+     整页可以左右拖动。 */
+  overflow-wrap: anywhere;
 }
 /* 动作行。三个都是文字按钮不是链接：点赞就地变、回复就地展开输入框、删除就地
    换成确认，谁都不跳转。 */
@@ -187,13 +265,13 @@ function confirmRemove() {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 .fb-ci__act {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
   font-size: 12px;
   line-height: var(--lh-12);
@@ -225,9 +303,11 @@ function confirmRemove() {
   background: var(--danger-wash);
   color: var(--danger-ink);
 }
+/* 确认那一句是**要读的话**，不是元信息：13px 是正文的可读下限（`--muted` 那两档
+   是 12px 的元信息用的）。 */
 .fb-ci__confirm-q {
-  font-size: 12px;
-  line-height: var(--lh-12);
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--text);
 }
 .fb-ci__form {

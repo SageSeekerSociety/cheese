@@ -257,8 +257,38 @@ class FeedbackService:
         """
         return await chosen_avatars_by_handle(self._session, handles)
 
-    async def thread(self, feedback_id: uuid.UUID) -> list[FeedbackComment]:
-        return await self._repo.list_comments(feedback_id)
+    async def thread_page(
+        self,
+        feedback_id: uuid.UUID,
+        *,
+        after: str | None = None,
+        limit: int = repo.THREAD_PAGE,
+        replies_limit: int = repo.REPLIES_PAGE,
+    ) -> repo.CommentPage:
+        """一页评论。分页口径（楼为单位、回复另有一层上限）在仓储那一层。"""
+        return await self._repo.page_comments(
+            feedback_id, after=after, limit=limit, replies_limit=replies_limit
+        )
+
+    async def replies_page(
+        self,
+        feedback_id: uuid.UUID,
+        parent_id: uuid.UUID,
+        *,
+        after: str | None = None,
+        limit: int = repo.REPLIES_PAGE,
+    ) -> tuple[list[FeedbackComment], str | None]:
+        """一栋楼里的下一段回复。
+
+        `feedback_id` 不是多余的：可见性是**按帖子**判的（`visible_row`），而这条路
+        按 `parent_id` 取回复 —— 少了这一步，把别人私密报告里某条评论的 id 填进
+        自己这条公开帖子的 URL，取回来的就是那份私密报告里的对话。所以父亲必须属于
+        被点名的那条反馈，否则 404（和别处同一个口径：藏起来的帖子不确认存在）。
+        """
+        parent = await self._repo.get_comment(parent_id)
+        if parent is None or parent.feedback_id != feedback_id:
+            raise NotFoundError("评论不存在")
+        return await self._repo.page_replies(parent_id, after=after, limit=limit)
 
     async def comments_out(
         self,
@@ -267,6 +297,8 @@ class FeedbackService:
         handle: str | None,
         is_admin: bool,
         avatars: Mapping[str, int] | None = None,
+        reply_counts: Mapping[uuid.UUID, int] | None = None,
+        reply_cursors: Mapping[uuid.UUID, str] | None = None,
     ) -> list[CommentOut]:
         """The thread as the wire shape — the one place a comment becomes JSON.
 
@@ -278,6 +310,19 @@ class FeedbackService:
           reply, so a per-comment lookup is N+1 on a page of replies;
         * `can_delete`, from `may_delete_comment`, so the client cannot draw a
           delete button the server would refuse.
+
+        ``reply_counts`` is the server's own count of how many replies each
+        top-level comment has, which is **not** the same as how many arrived in
+        this page: the thread is paged, so a building can carry the first page of
+        its replies and the client has to know there is more to ask for. Absent
+        from the map means zero.
+
+        ``reply_cursors`` is the other half of that pair: the cursor to ask for
+        the *next* page **inside** one building. It is empty for a building whose
+        replies all came with this page, which is why the two are read together
+        rather than the client comparing counts alone — 「count > how many I hold」
+        answers "is there more", but only the cursor answers "from where".
+        Absent from the map means there is no next page.
 
         ``avatars`` exists so the detail screen resolves faces **once**. It draws
         the report, every comment and every admin note on one page, and it
@@ -293,12 +338,16 @@ class FeedbackService:
             avatars = await self.chosen_avatars([row.author_handle for row in rows])
         like_counts = await self._repo.comment_like_counts(ids)
         liked = await self._repo.comment_liked_by(ids, handle) if handle else set()
+        counts = reply_counts or {}
+        cursors = reply_cursors or {}
         return [
             CommentOut.from_row(
                 row,
                 avatars=avatars,
                 likes=like_counts.get(row.id, 0),
                 liked=row.id in liked,
+                reply_count=counts.get(row.id, 0),
+                replies_next_cursor=cursors.get(row.id),
                 can_delete=self.may_delete_comment(
                     row, handle=handle, is_admin=is_admin
                 ),
@@ -328,7 +377,7 @@ class FeedbackService:
         one shape, and it is the service that empties it. The empty list is the
         absence, not a redaction the client is trusted to honour.
         """
-        thread = await self._repo.list_comments(row.id)
+        page = await self._repo.page_comments(row.id)
         activity = await self._repo.latest_activity_of([row.id])
         # Notes are admin-only, so resolving faces for them is not extra work a
         # non-admin pays for: the list is empty and contributes no handles.
@@ -339,7 +388,7 @@ class FeedbackService:
         avatars = await self.chosen_avatars(
             [
                 row.author_handle,
-                *[c.author_handle for c in thread],
+                *[c.author_handle for c in page.rows],
                 *[n.author_handle for n in notes],
             ]
         )
@@ -349,14 +398,23 @@ class FeedbackService:
             supported=(
                 await self._repo.has_support(row.id, handle) if handle else False
             ),
-            comments=len(thread),
+            # 真总数，不是这一页的条数：评论分页之后 `len(thread)` 会变成一页的
+            # 大小，卡片上那个数字就会随翻页往下掉。服务端自己数得出来，所以客户端
+            # 拿到的永远是「这条反馈一共有多少条评论」。
+            comments=(await self._repo.comment_counts([row.id])).get(row.id, 0),
             avatars=avatars,
             last_activity_at=activity.get(row.id),
             # The page-wide map goes straight back in: the comment authors are a
             # subset of the handles resolved above, so this costs nothing.
             thread=await self.comments_out(
-                thread, handle=handle, is_admin=is_admin, avatars=avatars
+                page.rows,
+                handle=handle,
+                is_admin=is_admin,
+                avatars=avatars,
+                reply_counts=page.reply_counts,
+                reply_cursors=page.reply_cursors,
             ),
+            thread_next_cursor=page.next_cursor,
             timeline=await self._repo.list_timeline(row.id),
             notes=notes,
         )

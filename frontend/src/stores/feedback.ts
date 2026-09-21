@@ -53,6 +53,7 @@ import {
   likeFeedbackComment,
   listAdminFeedback,
   listFeedback,
+  listFeedbackComments,
   listFeedbackProposals,
   listMyFeedback,
   markFeedbackRead,
@@ -179,6 +180,13 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 详情页正在看哪一条。用来判断「这次回来的详情是不是我要的那条」—— 慢响应
      *  后到时，先到的那条已经渲染了，后到的会把页面换成另一条。 */
     detailId: null as string | null,
+    /** 顶层评论正在取下一页。 */
+    moreCommentsLoading: false,
+    /** 哪几栋楼正在取楼内的下一页回复，按顶层评论 id。
+     *  **这不只是给按钮画个转圈的**：同一个游标取两遍会把同一段回复追加两遍，屏幕上
+     *  是两条一模一样的回复（`key` 还会撞）。所以真正的门在 action 里，这个状态是
+     *  给按钮看的。 */
+    moreRepliesLoading: {} as Record<string, boolean>,
     /* ---- 抽屉：open 控制显隐，draft 是那一份表单。两处入口共用。 ---- */
     submitOpen: false,
     draft: emptyDraft(),
@@ -314,6 +322,10 @@ export const useFeedbackStore = defineStore('feedback', {
     async loadDetail(id: string): Promise<void> {
       this.detailId = id
       this.detail = null
+      // 翻页的进度跟着这一条走：换一条反馈之后，上一条的「还剩几页」和「哪几栋楼
+      // 正在取回复」都不成立了，留着只会让新页面上的按钮一进来就是转圈状态。
+      this.moreCommentsLoading = false
+      this.moreRepliesLoading = {}
       this.detailLoading = true
       this.error = null
       try {
@@ -371,19 +383,86 @@ export const useFeedbackStore = defineStore('feedback', {
 
     /** 发一条评论。`parentId` 指向**任意**一条评论：层级由服务端折上去，前端不判断。
      *  「这条在回谁」（`reply_to_handle`）也是服务端写下来的 —— 折到顶层之后前端再也
-     *  推不出来，猜一个的结果是每个人看到的指代都不一样。 */
-    async addComment(id: string, body: string, parentId?: string): Promise<void> {
+     *  推不出来，猜一个的结果是每个人看到的指代都不一样。
+     *
+     *  **返回成功与否**，调用方靠它决定「草稿留着还是清掉」：一次 500 之后把用户写了
+     *  两段的话清掉，是这一版要修掉的东西之一。 */
+    async addComment(id: string, body: string, parentId?: string): Promise<boolean> {
       const text = body.trim()
-      if (!text) return
+      if (!text) return false
       try {
         const created = await createFeedbackComment(id, text, parentId ?? null)
         const detail = this._detailIfCurrent(id)
         if (detail) {
           detail.thread = [...detail.thread, created]
           detail.comments += 1
+          // 新回复要把它那一栋的**总数**也加一。那个数是「这栋楼一共几条回复」，
+          // 客户端拿它和手上条数比较来决定「展开更多」是摊开还是去取下一页 ——
+          // 少加这一个，刚发出去的回复会让这两个数对不上。
+          //
+          // 认的是**服务端折过的**目标（`created.parent_id`），不是这里的 `parentId`：
+          // 回一条回复时，服务端会把它折到那栋楼的顶层，而 `parentId` 指的是一条
+          // 回复（它自己没有楼，`reply_count` 恒为 0）。按 `parentId` 找就会加到
+          // 一条没有楼的回复上，屏幕上那栋楼的总数永远差一条。
+          if (created.parent_id) {
+            const top = detail.thread.find((c) => c.id === created.parent_id)
+            if (top) top.reply_count += 1
+          }
         }
+        return true
       } catch (error) {
         this.error = message(error, '评论发送失败')
+        return false
+      }
+    },
+
+    /** 往下翻**顶层评论**那一层。游标来自详情（`thread_next_cursor`），取完就没有了。
+     *
+     *  这里挡重复点击不是优化：同一个游标取两遍，同一个 `items` 会被追加两遍 ——
+     *  屏幕上出现两条一模一样的评论，`:key` 也撞。 */
+    async loadMoreComments(id: string): Promise<void> {
+      const detail = this._detailIfCurrent(id)
+      const cursor = detail?.thread_next_cursor
+      if (!detail || !cursor || this.moreCommentsLoading) return
+      this.moreCommentsLoading = true
+      this.error = null
+      try {
+        const page = await listFeedbackComments(id, { after: cursor })
+        const current = this._detailIfCurrent(id)
+        if (!current) return
+        current.thread = [...current.thread, ...page.items]
+        current.thread_next_cursor = page.next_cursor
+      } catch (error) {
+        this.error = message(error, '评论加载失败')
+      } finally {
+        this.moreCommentsLoading = false
+      }
+    },
+
+    /** 取**某一栋楼里**的下一段回复。游标挂在顶层评论那一行上（`replies_next_cursor`），
+     *  和上面那条一样由服务端发、客户端原样送回去。 */
+    async loadMoreReplies(id: string, parentId: string): Promise<void> {
+      const detail = this._detailIfCurrent(id)
+      const anchor = detail?.thread.find((c) => c.id === parentId)
+      const cursor = anchor?.replies_next_cursor
+      if (!detail || !anchor || !cursor || this.moreRepliesLoading[parentId]) return
+      this.moreRepliesLoading = { ...this.moreRepliesLoading, [parentId]: true }
+      this.error = null
+      try {
+        const page = await listFeedbackComments(id, { parentId, after: cursor })
+        const current = this._detailIfCurrent(id)
+        // 请求在飞的时候可能已经换了详情；换了就什么都不做（`_detailIfCurrent` 会
+        // 挡住）。也可能这一栋楼整个被删了 —— 那 `kept` 里找不到锚点，同样收手。
+        const kept = current?.thread.find((c) => c.id === parentId)
+        if (!current || !kept) return
+        current.thread = [...current.thread, ...page.items]
+        kept.replies_next_cursor = page.next_cursor
+      } catch (error) {
+        this.error = message(error, '回复加载失败')
+      } finally {
+        const next = { ...this.moreRepliesLoading }
+        delete next[parentId]
+        this.moreRepliesLoading = next
       }
     },
 
@@ -424,8 +503,19 @@ export const useFeedbackStore = defineStore('feedback', {
         await deleteFeedbackComment(id, commentId)
         const detail = this._detailIfCurrent(id)
         if (!detail) return
+        const gone = detail.thread.filter((c) => c.id === commentId || c.parent_id === commentId)
         const kept = detail.thread.filter((c) => c.id !== commentId && c.parent_id !== commentId)
-        detail.comments -= detail.thread.length - kept.length
+        detail.comments -= gone.length
+        // 被删掉的是楼里的回复，那一栋的总数也要减。这只对**手上已经有的**那几条
+        // 生效：回复分页之后，删掉一条还没取回来的回复（理论上做不到，屏幕上没有
+        // 就没有按钮）这里数不到，那一栋的总数会偏高一条。偏高只会让「加载更多
+        // 回复」多一次必然取到空页的点击，然后游标到底、按钮消失，不会留下一个
+        // 少显示的回复。
+        for (const row of gone) {
+          if (!row.parent_id) continue
+          const top = kept.find((c) => c.id === row.parent_id)
+          if (top) top.reply_count = Math.max(0, top.reply_count - 1)
+        }
         detail.thread = kept
       } catch (error) {
         this.error = message(error, '删除失败')

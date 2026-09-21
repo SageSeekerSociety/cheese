@@ -23,6 +23,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
+from app.domain.feedback import repositories as feedback_repo
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
     Feedback,
@@ -275,22 +276,58 @@ async def list_feedback_comments(
     feedback_id: uuid.UUID,
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
+    after: Annotated[str | None, Query(max_length=128)] = None,
+    parent_id: Annotated[uuid.UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = feedback_repo.THREAD_PAGE,
 ) -> dict:
+    """一页评论。
+
+    两个取法同一个门：不给 `parent_id` 就是往下翻**顶层评论**（一页 `limit` 栋楼，
+    每栋跟着它的回复走），给了就是取**那一栋楼里的下一段回复**。「展开更多评论」和
+    「展开更多回复」于是共用一条路由、一套游标，客户端不用记两种形状。
+
+    `parent_id` 指的那条评论**必须属于 `feedback_id` 这条反馈**：可见性是按帖子判
+    的，不查这一下，别人私密报告里某条评论的 id 填进公开帖子的 URL 就能把那段对话
+    取出来（`services.replies_page` 里的那一句就是为此）。
+
+    游标 `after` 是服务端发出去的不透明字符串（`cursor_of`），客户端原样带回来；
+    看不懂的游标是 400 而不是 500 —— 它是调用方递进来的东西，坏在它那一侧。
+
+    一批取整页：脸、点赞数、调用者点过没有、每一条能不能删，`comments_out` 是评论
+    变成 JSON 的唯一一处。分页之后这一批的 id 数由 `limit × (1 + replies_limit)`
+    封顶 —— 在那之前它跟着整条线程走，是这条主路径上真正的上限（见 `_IN_BATCH`）。
+    """
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
-    row = await service.visible_row(
-        feedback_id, handle=handle, is_admin=service.is_admin(handle)
+    is_admin = service.is_admin(handle)
+    row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
+    try:
+        if parent_id is not None:
+            replies, next_cursor = await service.replies_page(
+                row.id, parent_id, after=after, limit=limit
+            )
+            comments = await service.comments_out(
+                replies, handle=handle, is_admin=is_admin
+            )
+        else:
+            page = await service.thread_page(row.id, after=after, limit=limit)
+            comments = await service.comments_out(
+                page.rows,
+                handle=handle,
+                is_admin=is_admin,
+                reply_counts=page.reply_counts,
+                reply_cursors=page.reply_cursors,
+            )
+            next_cursor = page.next_cursor
+    except ValueError as exc:
+        # 游标解不出来（不是我们发的那种字符串）。400：坏的是调用方递进来的东西。
+        raise BadRequestError("游标看不懂，从头取一次") from exc
+    return ok(
+        {
+            "items": [c.model_dump(mode="json") for c in comments],
+            "next_cursor": next_cursor,
+        }
     )
-    # One batch for the whole thread: the faces, the like counts, the viewer's
-    # own likes, and whether each one may be deleted. `comments_out` is the only
-    # place a comment becomes JSON, so those four are assembled once rather than
-    # re-decided here — and the thread is a column of replies, so a per-comment
-    # lookup would be N+1 on the very page that draws all of them.
-    thread = await service.thread(row.id)
-    comments = await service.comments_out(
-        thread, handle=handle, is_admin=service.is_admin(handle)
-    )
-    return ok([c.model_dump(mode="json") for c in comments])
 
 
 @router.post("/{feedback_id}/comments")

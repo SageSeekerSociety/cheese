@@ -47,6 +47,8 @@ function c(id: string, extra: Partial<FeedbackComment> = {}): FeedbackComment {
     likes: 0,
     liked: false,
     can_delete: true,
+    reply_count: 0,
+    replies_next_cursor: null,
     created_at: '2026-09-20T00:00:00Z',
     ...extra,
   }

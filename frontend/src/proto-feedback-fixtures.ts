@@ -108,6 +108,7 @@ function row(spec: {
   notes?: FeedbackNote[]
 }): FeedbackDetail {
   const created = ago(spec.minutesAgo)
+  const thread = threadOf(spec.thread ?? [])
   return {
     id: spec.id,
     display_id: spec.display,
@@ -125,7 +126,7 @@ function row(spec: {
     assignee_handle: spec.assignee ?? null,
     tags: spec.tags ?? [],
     supports: spec.supports,
-    comments: spec.thread?.length ?? 0,
+    comments: thread.length,
     supported: spec.supported ?? false,
     last_activity_at: created,
     created_at: created,
@@ -141,9 +142,57 @@ function row(spec: {
     topic_id: null,
     project_id: null,
     timeline: ladderUpTo(spec.status, created),
-    thread: spec.thread ?? [],
+    thread,
+    // 详情默认给第一页；下一页的游标由 `detailPage` 按当时那一条算 —— 写死在这里
+    // 就等于「谁都一页装得下」，那个按钮在预览里根本不会出现。
+    thread_next_cursor: null,
     notes: spec.notes ?? [],
   }
+}
+
+/** 预览里每一页**顶层评论**给几条。真实现是 `THREAD_PAGE = 50`，一屏放不下 50 条，
+ *  于是「加载更多评论」这个按钮在预览里永远不出现 —— 而它正是这一版新加的东西之一。
+ *  压到 2 条是为了让人点得到它。**分页的边界是这份假数据自己的事**，store 那边一行
+ *  都不知道（它只认服务端发下来的那个游标）。
+ *
+ *  一栋楼里的回复**一次给全**，所以 `replies_next_cursor` 恒为 null、楼内那个「加载
+ *  更多回复（还有 N 条）」在预览里点不出来；「展开更多 N 条回复」那一个是本地折的，
+ *  和它无关，照常能点。 */
+const PROTO_THREAD_PAGE = 2
+
+/** 顶层评论带上「这一栋一共几条回复」。服务端那个数是 `page_comments` 一次查出来
+ *  的（不是这一页里有几条），客户端靠它决定「展开更多」是摊开手上这几条、还是去取
+ *  下一页。假数据这边整条线程都在手上，数一遍就行。 */
+function threadOf(thread: FeedbackComment[]): FeedbackComment[] {
+  const replies = new Map<string, number>()
+  for (const c of thread) {
+    if (c.parent_id) replies.set(c.parent_id, (replies.get(c.parent_id) ?? 0) + 1)
+  }
+  for (const c of thread) {
+    if (c.parent_id === null) c.reply_count = replies.get(c.id) ?? 0
+  }
+  return thread
+}
+
+/** 一页顶层评论 + **它们各自那一栋的全部回复**（和 `page_comments` 同一个形状：
+ *  回复跟着它那栋楼走，不单独分页）。游标在这一份里就是顶层评论的下标 —— 真实实现
+ *  是一对「时间戳 + uuid」，那是为了让翻页在时间戳相同时仍然有序；假数据不需要。
+ *  游标带着值（而不是「第几页」）这一点是一样的：数到哪就是哪，中间删了也不会跳。 */
+function threadPage(item: FeedbackDetail, after: string | null): { thread: FeedbackComment[]; next: string | null } {
+  const tops = item.thread.filter((c) => c.parent_id === null)
+  const start = Math.max(0, Number(after) || 0)
+  const page = tops.slice(start, start + PROTO_THREAD_PAGE)
+  const ids = new Set(page.map((c) => c.id))
+  const thread = [...page, ...item.thread.filter((c) => c.parent_id !== null && ids.has(c.parent_id))]
+  const more = start + PROTO_THREAD_PAGE < tops.length
+  return { thread, next: more ? String(start + PROTO_THREAD_PAGE) : null }
+}
+
+/** 详情响应：正文是整条，评论只给一页。`comments` 仍然是**总数**（`row` 里按整条
+ *  线程算的）—— 分页不许让卡片上那个计数变小，那正是这一版修掉的一个错。 */
+function detailPage(item: FeedbackDetail, after: string | null): FeedbackDetail {
+  const { thread, next } = threadPage(item, after)
+  return { ...item, thread, thread_next_cursor: next }
 }
 
 /** 时间线：从提交到当前状态每一步都留一条，和真实实现一样是 append-only。 */
@@ -187,6 +236,10 @@ function comment(spec: {
     // 预览里就是「我写的能删、别人的不能」：服务端的规则是作者本人或管理员，
     // 这里按同一个规则抄一份，别演成「谁都能删」。
     can_delete: spec.canDelete ?? spec.author === ME,
+    // 这两个都由 `threadOf` 在整条线程拿齐之后补上：它们是「这一栋有多少条」和
+    // 「下一页从哪开始」，单条评论自己算不出来。
+    reply_count: 0,
+    replies_next_cursor: null,
     created_at: ago(spec.minutesAgo),
   }
 }
@@ -294,6 +347,23 @@ const ROWS: FeedbackDetail[] = [
         author: ME,
         body: '好，那就分开跟。',
         minutesAgo: 20,
+      }),
+      // 第三栋楼存在的唯一理由是**让「加载更多评论」出现**：假数据一页给 2 条顶层
+      // 评论（`PROTO_THREAD_PAGE`），有三栋才翻得出第二页。它自己只有一条回复，
+      // 顺手也摆出「一栋只有一两条时不折」的样子 —— 折起来的是回复，不是楼。
+      comment({
+        id: 'c-10',
+        author: 'chiruotong',
+        body: '另外提一句：抽屉里那个「选择文件」按不动，旁边还写着「上传还没接」——那是给我们看的，不是给用户看的。',
+        minutesAgo: 10,
+      }),
+      comment({
+        id: 'c-11',
+        parent: 'c-10',
+        author: ME,
+        body: '已经拿掉了，附件是这一版之外的事。',
+        minutesAgo: 5,
+        replyTo: 'chiruotong',
       }),
     ],
   }),
@@ -493,9 +563,15 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   if (adminList && method === 'GET') return { data: adminPage(url, url.searchParams.get('tab') ?? 'public') }
 
   const detail = /^\/feedback\/([^/]+)$/.exec(path)
-  if (detail && method === 'GET') return { data: find(detail[1]) }
+  if (detail && method === 'GET') {
+    const item = find(detail[1])
+    return { data: item && detailPage(item, url.searchParams.get('after')) }
+  }
   const adminDetail = /^\/admin\/feedback\/([^/]+)$/.exec(path)
-  if (adminDetail && method === 'GET') return { data: find(adminDetail[1]) }
+  if (adminDetail && method === 'GET') {
+    const item = find(adminDetail[1])
+    return { data: item && detailPage(item, url.searchParams.get('after')) }
+  }
 
   const supports = /^\/feedback\/([^/]+)\/supports$/.exec(path)
   if (supports && (method === 'POST' || method === 'DELETE')) {
@@ -513,6 +589,16 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   }
 
   const comments = /^\/feedback\/([^/]+)\/comments$/.exec(path)
+  if (comments && method === 'GET') {
+    const item = find(comments[1])
+    if (!item) return { missing: true }
+    // 楼内那一页：这一份假数据一次把一栋楼的回复给全了，所以 `replies_next_cursor`
+    // 恒为 null、这个分支走不到。真走到了（比如以后给某栋楼造更多回复）回一页空的，
+    // 而不是把已经给过的那几条再发一遍 —— 那会在屏幕上变成一人两条。
+    if (url.searchParams.get('parent_id')) return { data: { items: [], next_cursor: null } }
+    const { thread, next } = threadPage(item, url.searchParams.get('after'))
+    return { data: { items: thread, next_cursor: next } }
+  }
   if (comments && method === 'POST') {
     const item = find(comments[1])
     if (!item) return { missing: true }
@@ -530,6 +616,11 @@ function routes(url: URL, method: string, body: unknown): MockReply {
     })
     item.thread = [...item.thread, created]
     item.comments += 1
+    // 新回复要把它那一栋的**总数**也加一。客户端在本地做同一件事（`addComment`），
+    // 但那是为了让眼前这一屏对得上；这里改的是「数据本身」，下次重新拉详情时
+    // 才不会回退成少一条。
+    const top = item.thread.find((c) => c.id === created.parent_id)
+    if (top) top.reply_count += 1
     return { data: created }
   }
 
@@ -559,9 +650,21 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       // 按钮，正是「看着能点、真机上点了报错」那类 bug。
       return { forbidden: '只能删除自己的评论' }
     }
-    const kept = item.thread.filter((c) => c.id !== id && c.parent_id !== id)
-    item.comments -= item.thread.length - kept.length
+    // 级联：删一条顶层评论，它那一栋的回复跟着一起走（服务端同一个形状）。
+    const goneRows = item.thread.filter((c) => c.id === id || c.parent_id === id)
+    const gone = new Set(goneRows.map((c) => c.id))
+    const kept = item.thread.filter((c) => !gone.has(c.id))
+    item.comments -= gone.size
     item.thread = kept
+    // 删掉的那几条回复，如果它那一栋还在（删的是一条楼内回复），那一栋的总数要跟着
+    // 减：那个数是「展开更多 N 条回复」上写的字，少了这一步，删完之后按钮上写的
+    // 数字和展开出来能看到的条数就对不上了。（`goneRows` 是删之前那一份 —— 上面
+    // 已经把 `item.thread` 换成 `kept` 了，回头再按 id 找是找不到的。）
+    for (const removed of goneRows) {
+      if (!removed.parent_id) continue
+      const top = kept.find((c) => c.id === removed.parent_id)
+      if (top) top.reply_count = Math.max(0, top.reply_count - 1)
+    }
     return { data: { ok: true } }
   }
 

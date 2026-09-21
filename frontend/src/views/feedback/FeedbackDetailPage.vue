@@ -40,6 +40,7 @@ const restricted = computed(() => !!item.value && (isPrivate.value || item.value
 const supportable = computed(() => !!item.value && !isClosed(item.value.status))
 
 const commentDraft = ref('')
+const posting = ref(false)
 const showCopied = ref(false)
 
 function reload() {
@@ -50,20 +51,34 @@ onMounted(reload)
 // 从「相关反馈」跳到另一条时组件不会重建（同一个路由，只换参数），所以要自己跟。
 watch(id, reload)
 
-async function submitComment(body: string, parentId?: string) {
-  if (!item.value) return
-  await store.addComment(item.value.id, body, parentId)
+async function submitComment(body: string, parentId?: string): Promise<boolean> {
+  if (!item.value) return false
+  return await store.addComment(item.value.id, body, parentId)
 }
 
-/** 底部那个输入框用完要清空，清空是调用方的事（submitComment 只管一条评论的正文）。 */
+/** 楼内的一条回复。结果用回调带回给评论条（`emit` 不能 await，所以结果是这么过去的）：
+ *  发失败了框和草稿都留着，人按一下就能重试。 */
+function submitReply(parentId: string, body: string, done: (ok: boolean) => void) {
+  void submitComment(body, parentId).then(done)
+}
+
+/** 底部那个输入框发成功了才清空 —— 发失败还清掉，等于把刚写的两段话丢掉。
+ *  清空是调用方的事（`submitComment` 只管一条评论的正文）。
+ *
+ *  `posting` 是这一页自己的重入闸：store 的 `addComment` 没有（也不该有）——
+ *  它按「一次调用一条评论」办事，而这里连按两下会发两条一模一样的出去。 */
 async function postComment() {
-  const body = commentDraft.value
-  commentDraft.value = ''
-  await submitComment(body)
+  if (posting.value) return
+  posting.value = true
+  try {
+    if (await submitComment(commentDraft.value)) commentDraft.value = ''
+  } finally {
+    posting.value = false
+  }
 }
 
 /** 点赞 / 删除一条评论。走 store，和这一页其余部分一样；评论条只 emit，不发请求。
- *  这里两个包装只做一件事：把「当前这条反馈的 id」补上（详情可能在请求在飞的
+ *  这里三个包装只做一件事：把「当前这条反馈的 id」补上（详情可能在请求在飞的
  *  时候被换掉，store 自己会挡住那种情况，见 `_detailIfCurrent`）。 */
 function toggleCommentLike(commentId: string) {
   if (!item.value) return
@@ -73,6 +88,16 @@ function toggleCommentLike(commentId: string) {
 function removeComment(commentId: string) {
   if (!item.value) return
   void store.deleteComment(item.value.id, commentId)
+}
+
+function loadMoreComments() {
+  if (!item.value) return
+  void store.loadMoreComments(item.value.id)
+}
+
+function loadMoreReplies(parentId: string) {
+  if (!item.value) return
+  void store.loadMoreReplies(item.value.id, parentId)
 }
 
 async function share() {
@@ -219,14 +244,23 @@ async function share() {
               <div class="t-eyebrow">评论 {{ item.comments }}</div>
             </div>
 
-            <!-- 三个动作都走 store，和页面其余部分一样（评论条自己不发请求）。
+            <!-- 所有动作都走 store，和页面其余部分一样（评论条自己不发请求）。
                  点赞不刷新任何 Tab 的计数，删除会同时把楼里的回复从本地摘掉 ——
-                 两件事的理由都写在 store 里那两条 action 上。 -->
+                 两件事的理由都写在 store 里那两条 action 上。
+
+                 `has-more` 问的是**服务端**那一页取完没有：本地还剩几条说明不了
+                 「后面还有没有」，两者是不同的东西。两个 `loading-*` 是这一页
+                 唯一的重入闸，理由写在 store 上那两条 action 里。 -->
             <FeedbackCommentsThread
               :comments="item.thread"
-              @reply="(parentId, body) => submitComment(body, parentId)"
+              :has-more="!!item.thread_next_cursor"
+              :loading-more="store.moreCommentsLoading"
+              :loading-replies="store.moreRepliesLoading"
+              @reply="submitReply"
               @like="toggleCommentLike"
               @remove="removeComment"
+              @load-more="loadMoreComments"
+              @load-replies="loadMoreReplies"
             />
 
             <div class="fb-comment-form">
@@ -238,7 +272,14 @@ async function share() {
                 hide-details
               />
               <div class="d-flex justify-end mt-2">
-                <v-btn color="primary" :disabled="!commentDraft.trim()" size="small" @click="postComment">
+                <!-- 一屏只有一个琥珀色主操作：这一页那个就是它。 -->
+                <v-btn
+                  color="primary"
+                  size="small"
+                  :disabled="!commentDraft.trim()"
+                  :loading="posting"
+                  @click="postComment"
+                >
                   发表评论
                 </v-btn>
               </div>
@@ -272,8 +313,19 @@ async function share() {
         </aside>
       </div>
 
-      <!-- 服务端的原话（412 的「已经办完了，不再接受支持」也走这里）。 -->
-      <v-alert v-if="store.error" type="error" density="compact" variant="tonal" class="mt-4">
+      <!-- 服务端的原话（412 的「已经办完了，不再接受支持」也走这里）。
+           可关：这一页上的失败大多是可重试的一次性失败（评论没发出去、下一页没
+           取到），一句话挂在页面底部陪着你看完剩下三条评论，读的人只会以为页面
+           坏了。关掉它不影响任何状态 —— 没成的操作本来就没改任何东西。 -->
+      <v-alert
+        v-if="store.error"
+        type="error"
+        density="compact"
+        variant="tonal"
+        closable
+        class="mt-4"
+        @click:close="store.clearError()"
+      >
         {{ store.error }}
       </v-alert>
     </div>

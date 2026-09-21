@@ -39,6 +39,10 @@ function c(extra: Partial<FeedbackComment> = {}): FeedbackComment {
     likes: 0,
     liked: false,
     can_delete: false,
+    // 分页那两列是服务端随每条评论一起发下来的：这一条自己那一栋有几条回复、以及
+    // 它那一栋的下一页从哪开始。用不到它们的用例不必各写一遍。
+    reply_count: 0,
+    replies_next_cursor: null,
     created_at: '2026-09-20T00:00:00Z',
     ...extra,
   }

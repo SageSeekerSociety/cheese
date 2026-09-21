@@ -2018,6 +2018,27 @@ export function getFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/feedback/${encodeURIComponent(feedbackId)}`)
 }
 
+/** 一页评论。不给 `parentId` 是顶层评论那一页（一页若干栋楼，每栋跟着它的前若干条
+ *  回复走），给了就是**那一栋楼里**从 `after` 往后的一段回复。
+ *
+ *  两个取法共用一条路由、一套游标，客户端不记第二种形状。`after` 是服务端发出来的
+ *  **不透明**串，原样带回来 —— 自己拼一个（「最后一条的时间戳 + id」）拼得出来，
+ *  但那是把服务端的排序规则抄了第二份，改排序的那天两边会漂开，症状是翻页漏行。
+ *
+ *  `next_cursor` 为 null 表示这一层取完了（顶层评论取完了 / 这栋楼取完了）。 */
+export function listFeedbackComments(
+  feedbackId: string,
+  opts: { after?: string | null; parentId?: string | null } = {}
+): Promise<{ items: FeedbackComment[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.after) params.set('after', opts.after)
+  if (opts.parentId) params.set('parent_id', opts.parentId)
+  const query = params.toString()
+  return request<{ items: FeedbackComment[]; next_cursor: string | null }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments${query ? `?${query}` : ''}`
+  )
+}
+
 /** 提一条反馈。**agent 不能走这条路** —— 服务端会 403；agent 的入口是提案卡。
  *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
 export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {

@@ -13,18 +13,25 @@
 """
 
 import asyncio
+import time
 import uuid
 from datetime import UTC, datetime
 
 import pytest
 from anyio.from_thread import BlockingPortal
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import HubScreen, device_hub
-from app.domain.feedback.models import Feedback, FeedbackKind, FeedbackVisibility
+from app.domain.feedback import repositories as feedback_repo
+from app.domain.feedback.models import (
+    Feedback,
+    FeedbackComment,
+    FeedbackKind,
+    FeedbackVisibility,
+)
 from app.domain.feedback.repositories import FeedbackRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from tests.integration.conftest import session_auth_headers
@@ -35,6 +42,14 @@ ADMIN = "fb-admin"
 
 STRANGER = "fb-stranger"
 REPORTER = "fb-reporter"
+
+#: 竞态用例把删除的锁拿满这么久才提交，窗口就是这么撑开的。长到「排队等锁」
+#: （约等于这一整段）和「根本没排」（毫秒）之间差三个数量级，短到整个用例还能忍受。
+_HOLD_SECONDS = 2.0
+
+#: 让删除先拿到锁再插回复。不等一下的话，这条用例测的可能是「谁先跑」，
+#: 而不是「两者冲不冲突」。
+_HEAD_START_SECONDS = 0.3
 
 
 @pytest.fixture
@@ -361,11 +376,13 @@ def _comment(
 
 
 def _thread(client, handle: str, feedback_id: str) -> list[dict]:
+    """一页评论的 **items**。评论分页之后响应是个信封（`items` + `next_cursor`），
+    而这些用例问的是「楼里有什么」，不是「还有没有下一页」—— 那条另有专门的用例。"""
     r = client.get(
         f"/feedback/{feedback_id}/comments", headers=session_auth_headers(handle)
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    return r.json()["data"]["items"]
 
 
 def test_a_reply_to_a_reply_lands_on_the_top_level_parent(client):
@@ -744,7 +761,7 @@ async def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
 
     async with factory() as session:
         repo = FeedbackRepository(session)
-        assert await repo.list_comments(feedback_id) == []
+        assert (await repo.page_comments(feedback_id)).rows == []
         assert await repo.comment_counts([feedback_id]) == {}
 
     # 三条读路径说的是同一件事：帖子、详情里的评论数、帖子里的那一条。
@@ -754,6 +771,359 @@ async def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
     detail = r.json()["data"]
     assert detail["thread"] == []
     assert detail["comments"] == 0
+
+
+async def test_a_reply_that_arrives_while_its_parent_is_being_deleted(client):
+    """把竞态**跑一遍**，而且拿时间去量它 —— 不是从文档里抄一句「不冲突」。
+
+    上一条用例钉的是「孤儿长什么样、三条读路径挡不挡得住」，它自己的 docstring 写明
+    形状是手工造的。这一条钉的是另一半：**同一瞬间真的会生出一只孤儿**。少了它，
+    「竞态会产生孤儿」就只是从 Postgres 的锁语义推出来的一个结论，没有任何一次执行
+    支持它 —— 而这一批的可见性正确性恰恰架在这句话上面。
+
+    窗口是这么撑开的：删除那条事务拿软删的 `UPDATE` 之后**故意不提交** `_HOLD_SECONDS`，
+    回复就在这段时间里插进来。判据是**插入等了多久**：
+
+    * 不排队（毫秒级）→ 外键检查对父行要的 `FOR KEY SHARE` 和软删要的
+      `FOR NO KEY UPDATE` 确实不冲突，B 直着落地，A 提交时那遍级联 `UPDATE` 早就
+      跑完了 —— 表里留下一条 `deleted_at IS NULL`、父亲却已经软删的行。
+      `live_comment_clause()` 就是为它存在的。
+    * 排队（等满约 `_HOLD_SECONDS`）→ 两者开始抢锁了，那么「读侧必须挡孤儿」的
+      整个理由要重新审一遍：拦住它的会变成数据库，而不是那条 where。
+
+    拿时间去量而不是只断言「表里有那一行」，是因为后者的两种情况看着一模一样 ——
+    排队之后照样落地，于是这条用例会在锁语义变了的当天，安静地退化成「什么都没测」。
+
+    **不变式与走哪条分支无关**：看不见的父亲带不出看得见的儿子。所以读路径验的是
+    三个入口的一致性，而不是某一行在不在。
+    """
+    factory = client.test_factory
+    feedback_id, top_id = await _seed_thread(factory)
+
+    async def delete_and_hold() -> None:
+        async with factory() as session:
+            parent = await FeedbackRepository(session).get_comment(top_id)
+            assert parent is not None
+            await FeedbackRepository(session).soft_delete_comment(parent)
+            # 锁还攥在这条没提交的事务里，回复要在这段时间里进来。
+            await asyncio.sleep(_HOLD_SECONDS)
+            await session.commit()
+
+    async def reply_into_the_window() -> float:
+        await asyncio.sleep(_HEAD_START_SECONDS)
+        async with factory() as session:
+            started = time.monotonic()
+            await FeedbackRepository(session).add_comment(
+                feedback_id=feedback_id,
+                author_handle=STRANGER,
+                author_user_id=None,
+                author_is_agent=False,
+                body="父亲正在被删，我这个时候进来",
+                parent_id=top_id,
+                reply_to_handle=None,
+            )
+            await session.commit()
+            return time.monotonic() - started
+
+    async with asyncio.timeout(_HOLD_SECONDS * 5):
+        _, waited = await asyncio.gather(delete_and_hold(), reply_into_the_window())
+
+    assert waited < _HOLD_SECONDS / 2, (
+        f"插入等了 {waited:.2f}s，而删除把锁攥了 {_HOLD_SECONDS}s：外键检查和软删"
+        "开始抢锁了。`live_comment_clause()` 的理由（数据库挡不住，所以读侧挡）"
+        "要重新审一遍再改这里的判据。"
+    )
+
+    async with factory() as session:
+        # 表里到底留下了什么。说明这次测量，不参与不变式。
+        survivors = list(
+            (
+                await session.execute(
+                    select(FeedbackComment.id).where(
+                        FeedbackComment.parent_id == top_id,
+                        FeedbackComment.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # 数据库没挡住，活下来的那一条就在表里 —— 读侧必须挡住它。
+        assert survivors, "竞态在窗口里落地了，表里却没有那一行"
+
+        repo = FeedbackRepository(session)
+        visible = (await repo.page_comments(feedback_id)).rows
+        # 不变式：返回的每一条，父亲都在返回里。
+        top_ids = {c.id for c in visible if c.parent_id is None}
+        assert all(c.parent_id in top_ids for c in visible if c.parent_id is not None)
+        assert await repo.comment_counts([feedback_id]) == {}
+
+    # 三条读路径说的是同一件事：帖子、详情里的评论数、楼里的那一条。
+    assert _thread(client, STRANGER, str(feedback_id)) == []
+    r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(STRANGER))
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["thread"] == []
+    assert r.json()["data"]["comments"] == 0
+
+
+# --- 评论分页 ---------------------------------------------------------------
+
+
+async def _seed_comments(
+    factory, *, tops: int = 0, replies: int = 0
+) -> tuple[uuid.UUID, list[uuid.UUID], list[uuid.UUID]]:
+    """直接落库造一条反馈：`tops` 条顶层评论，第一条下面挂 `replies` 条回复。
+
+    不走 HTTP，因为这几个用例要的是**条数**（跨过一页的上限、跨过分批的块），一条
+    一次请求往返在这里只是把时间花在网络上。返回 `(反馈 id, 顶层 id, 回复 id)`，
+    顺序都是插入顺序（也就是服务端排的那个顺序）。
+    """
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        row = await repo.add(
+            title="分页",
+            summary="分页",
+            kind=FeedbackKind.bug,
+            visibility=FeedbackVisibility.public,
+            problem="分页",
+            author_handle=REPORTER,
+            author_user_id=None,
+            author_is_agent=False,
+        )
+        top_ids = []
+        for i in range(tops):
+            top = await repo.add_comment(
+                feedback_id=row.id,
+                author_handle=REPORTER,
+                author_user_id=None,
+                author_is_agent=False,
+                body=f"顶楼 {i}",
+                parent_id=None,
+                reply_to_handle=None,
+            )
+            top_ids.append(top.id)
+        reply_ids = []
+        for i in range(replies):
+            reply = await repo.add_comment(
+                feedback_id=row.id,
+                author_handle=STRANGER,
+                author_user_id=None,
+                author_is_agent=False,
+                body=f"回复 {i}",
+                parent_id=top_ids[0],
+                reply_to_handle=None,
+            )
+            reply_ids.append(reply.id)
+        ids = (row.id, top_ids, reply_ids)
+        await session.commit()
+    return ids
+
+
+async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(client):
+    """翻页不漏不重 —— 包括 `created_at` 全撞在一起的时候。
+
+    同一时间戳不是硬造出来的角落：`NOW()` 在一条语句里对每一行是同一个值，批量导入
+    和种子数据一页全是同一个时间戳。只按 `created_at` 排序时，同一时刻的几条在两次
+    查询里的先后可以不一样，翻页于是漏行、或者把同一行发两遍；把 `id` 并进游标才是
+    全序。这个用例把所有顶层评论的时间戳**钉成同一个值**，再一页一页翻到底。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, _ = await _seed_comments(factory, tops=7)
+    same_instant = datetime(2026, 1, 1, tzinfo=UTC)
+    async with factory() as session:
+        await session.execute(
+            update(FeedbackComment)
+            .where(FeedbackComment.feedback_id == feedback_id)
+            .values(created_at=same_instant)
+        )
+        await session.commit()
+
+    seen: list[uuid.UUID] = []
+    after: str | None = None
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        for _ in range(10):
+            page = await repo.page_comments(feedback_id, after=after, limit=3)
+            seen.extend(row.id for row in page.rows)
+            if page.next_cursor is None:
+                break
+            after = page.next_cursor
+        else:  # pragma: no cover - 只有翻页不收敛才会走到这里
+            pytest.fail("游标没有翻到底：同一时刻的那几条没有全序")
+
+    # 七条各来一次。漏掉一条是「翻页丢行」，多一条是「游标把边界又发了一遍」。
+    assert sorted(seen) == sorted(top_ids)
+
+
+async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(client):
+    """楼内回复自己一页，而**一页带了几条**和**这栋楼一共有几条**是两件事。
+
+    `reply_counts` 是后者，`reply_cursors` 是「还有的话从哪儿接着取」。两个都对着
+    「正好取完」的边界：`page_comments` 每栋楼多取一条只为回答「还有没有下一页」，
+    少了那一条，一栋正好 2 条的楼会被判成还有下一页，客户端于是发一次必然取到空页
+    的请求。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, reply_ids = await _seed_comments(factory, tops=1, replies=5)
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        page = await repo.page_comments(feedback_id, replies_limit=2)
+        assert page.reply_counts == {top_ids[0]: 5}
+        assert [row.id for row in page.rows if row.parent_id] == reply_ids[:2]
+        cursor: str | None = page.reply_cursors[top_ids[0]]
+        assert cursor is not None
+        rest: list[uuid.UUID] = []
+        for _ in range(10):
+            rows, cursor = await repo.page_replies(top_ids[0], after=cursor, limit=2)
+            rest.extend(row.id for row in rows)
+            if cursor is None:
+                break
+        else:  # pragma: no cover
+            pytest.fail("楼内的游标没有翻到底")
+        assert rest == reply_ids[2:]
+
+    # 正好取完：不留一个「下一页是空的」游标。
+    async with factory() as session:
+        exact = await FeedbackRepository(session).page_comments(
+            feedback_id, replies_limit=5
+        )
+    assert exact.reply_counts == {top_ids[0]: 5}
+    assert exact.reply_cursors == {}
+
+
+def test_the_thread_tells_the_client_how_many_replies_a_building_has(client):
+    """这两个数必须真的**到得了线上**。
+
+    `CommentOut.from_row` 收下 `reply_count` 却忘了往构造器里传，是这条路上真实发生
+    过一次的事故形状：字段在 schema 里、注释写得很清楚、测试也全绿（没有一条断言
+    它），而每一个响应里它都是 0 —— 客户端拿到的「这栋楼有 0 条回复」和屏幕上那
+    三条回复对不上，「展开更多」于是永远不发第二次请求。
+    """
+    row = _report(client, REPORTER)
+    top = _comment(client, REPORTER, row["id"], "顶楼")
+    for i in range(3):
+        _comment(client, STRANGER, row["id"], f"回复 {i}", parent_id=top["id"])
+
+    r = client.get(
+        f"/feedback/{row['id']}/comments", headers=session_auth_headers(REPORTER)
+    )
+    assert r.status_code == 200, r.text
+    payload = r.json()["data"]
+    by_id = {c["id"]: c for c in payload["items"]}
+    assert by_id[top["id"]]["reply_count"] == 3
+    # 三条都跟着这一页回来了，所以楼内没有下一页 —— 游标只在真有下一页时有值，
+    # 客户端据此知道「展开更多」是摊开手上这些，还是去取下一页。
+    assert by_id[top["id"]]["replies_next_cursor"] is None
+    # 顶层评论这一页也只有一页。
+    assert payload["next_cursor"] is None
+    # 回复自己不带这两个字段的含义：恒为 0 / 恒为 None（它们没有楼）。
+    replies = [c for c in payload["items"] if c["parent_id"]]
+    assert [c["reply_count"] for c in replies] == [0, 0, 0]
+    assert [c["replies_next_cursor"] for c in replies] == [None, None, None]
+
+    # 楼内那一页走的也是这条路由，只是给了 `parent_id`。
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        params={"parent_id": top["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    assert [c["body"] for c in r.json()["data"]["items"]] == [
+        "回复 0",
+        "回复 1",
+        "回复 2",
+    ]
+
+
+async def test_paging_the_thread_does_not_shrink_the_count_on_the_card(client):
+    """卡片上那个数字是**这条反馈一共有几条评论**，不是这一页有几条。
+
+    分页之前 `comments` 是 `len(thread)`；分页之后那就是一页的大小，卡片上的数字会
+    随翻页往下掉 —— 屏幕上是「评论 50」，翻一次变成「评论 21」，而一条评论都没少。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, _ = await _seed_comments(
+        factory, tops=feedback_repo.THREAD_PAGE + 1
+    )
+    r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(REPORTER))
+    assert r.status_code == 200, r.text
+    detail = r.json()["data"]
+    assert len(detail["thread"]) == feedback_repo.THREAD_PAGE
+    assert detail["comments"] == feedback_repo.THREAD_PAGE + 1
+    assert detail["thread_next_cursor"] is not None
+
+
+def test_a_cursor_that_is_not_ours_is_a_400_not_a_500(client):
+    """坏游标是调用方递进来的东西，坏在它那一侧。"""
+    row = _report(client, REPORTER)
+    _comment(client, REPORTER, row["id"], "顶楼")
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        params={"after": "昨天下午"},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_replies_cannot_be_pulled_across_reports(client):
+    """一栋楼里的回复，只能从**它自己那条反馈**的地址里取。
+
+    可见性是按帖子判的（`visible_row`），而楼内那一页是按 `parent_id` 取的。少了
+    「父亲必须属于被点名的那条反馈」这一步，把自己这条公开帖子的地址配上别人私密
+    报告里某条评论的 id，取回来的就是那份私密报告里的对话。
+    """
+    mine = _report(client, REPORTER)
+    my_top = _comment(client, REPORTER, mine["id"], "我这边的顶楼")
+
+    secret = _report(client, STRANGER, visibility="private")
+    secret_top = _comment(client, STRANGER, secret["id"], "私密楼")
+    _comment(
+        client, STRANGER, secret["id"], "只该被自己人看见", parent_id=secret_top["id"]
+    )
+
+    r = client.get(
+        f"/feedback/{mine['id']}/comments",
+        params={"parent_id": secret_top["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    # 404 而不是 403：连「这条评论存在」都不确认。
+    assert r.status_code == 404, r.text
+    assert "只该被自己人看见" not in r.text
+
+    # 同一个地址配自己的楼，照常出结果 —— 挡住的是跨帖，不是这个参数。
+    r = client.get(
+        f"/feedback/{mine['id']}/comments",
+        params={"parent_id": my_top["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["items"] == []
+
+
+async def test_chunked_in_queries_answer_the_same_as_one_big_one(client, monkeypatch):
+    """分批之后**合起来**的答案和一次问完一样。
+
+    `_IN_BATCH` 的由来是 asyncpg 把参数个数编进 int16，超过 32767 条直接抛
+    `InterfaceError` —— 那条线不该靠造三万条评论去验证。把批大小压到 2，走的是同一
+    条回路：切、逐批查、合并。合并写错（覆盖而不是并集）在真实规模下只会表现为
+    「一大片评论的点赞数突然都是 0」，很难从现象倒回来。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, _ = await _seed_comments(factory, tops=5)
+    monkeypatch.setattr(feedback_repo, "_IN_BATCH", 2)
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        assert await repo.add_comment_like(top_ids[0], STRANGER)
+        assert await repo.add_comment_like(top_ids[3], STRANGER)
+        await session.commit()
+
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        counts = await repo.comment_like_counts(top_ids)
+        liked = await repo.comment_liked_by(top_ids, STRANGER)
+
+    assert counts == {top_ids[0]: 1, top_ids[3]: 1}
+    assert liked == {top_ids[0], top_ids[3]}
 
 
 # --- agent 通道 -------------------------------------------------------------

@@ -202,6 +202,17 @@ class CommentOut(BaseModel):
     #: 客户端自己拼一遍 `handle == mine || isAdmin` 就是这个仓库已经吃过一次
     #: 的亏（`deployed` 那次：按钮亮着、服务端回 412）。
     can_delete: bool
+    #: **服务端数得出来的**回复总数（顶层评论才有意义；回复恒为 0）。
+    #: 评论是分页取的，所以「手上这几条回复」和「这栋楼一共有几条回复」是两件事 ——
+    #: 少了这个数，客户端只能拿已经取回来的条数当全部，「展开更多」就永远不知道该
+    #: 去取下一页、还是只把已经拿到的摊开。
+    reply_count: int = 0
+    #: 这一栋楼**楼内**的下一页游标，`None` 表示楼里的回复已经带全了。
+    #:
+    #: 只有顶层评论有值（回复恒为 `None`）—— 「这栋楼还有没有下一段」挂在回复上没有
+    #: 任何一条读路径会去看它。字符串不透明：客户端原样带回
+    #: `GET /feedback/{id}/comments?parent_id=…&after=…`，不解析、不自己拼。
+    replies_next_cursor: str | None = None
     created_at: datetime
 
     @classmethod
@@ -213,6 +224,8 @@ class CommentOut(BaseModel):
         likes: int,
         liked: bool,
         can_delete: bool,
+        reply_count: int = 0,
+        replies_next_cursor: str | None = None,
     ) -> CommentOut:
         return cls(
             id=row.id,
@@ -225,6 +238,8 @@ class CommentOut(BaseModel):
             likes=likes,
             liked=liked,
             can_delete=can_delete,
+            reply_count=reply_count,
+            replies_next_cursor=replies_next_cursor,
             created_at=row.created_at,
         )
 
@@ -335,6 +350,10 @@ class FeedbackDetail(FeedbackCard):
     project_id: uuid.UUID | None
     timeline: list[TimelineOut]
     thread: list[CommentOut]
+    #: 顶层评论还有下一页时，这里是下一页的游标（不透明字符串，原样带回来即可）；
+    #: `None` 表示这条反馈的评论已经全在这一页里了。「还有没有」由服务端回答，
+    #: 客户端按条数猜（比如「取满一页就还有」）在最后一页正好是整页时会多要一次空页。
+    thread_next_cursor: str | None = None
     #: Admin-only; empty for everyone else. The field is present either way so
     #: the frontend has one shape, and the service is what empties it.
     notes: list[NoteOut] = Field(default_factory=list)
@@ -351,6 +370,7 @@ class FeedbackDetail(FeedbackCard):
         last_activity_at: datetime | None = None,
         timeline: list[FeedbackTimeline] | None = None,
         thread: list[CommentOut] | None = None,
+        thread_next_cursor: str | None = None,
         notes: list[FeedbackNote] | None = None,
     ) -> FeedbackDetail:
         card = FeedbackCard.from_row(
@@ -386,6 +406,7 @@ class FeedbackDetail(FeedbackCard):
             # does: the author's face is not on their row, and this is the one
             # place that already has the page-wide map.
             thread=list(thread or []),
+            thread_next_cursor=thread_next_cursor,
             notes=[NoteOut.from_row(x, avatars=avatars) for x in notes or []],
         )
 
