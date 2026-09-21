@@ -109,6 +109,10 @@ jobs:
 
   e2e:
     needs: scope
+    env:
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      DOCKER_CONTEXT: default
     # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
     # it answers "did this exact commit already pass CI on its PR, so can the
     # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
@@ -162,6 +166,10 @@ jobs:
           echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
           echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
           echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_PORT=$((33100 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_S3_PORT=$((33200 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_PROJECT=cheese-e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_TOKEN_FILE=$RUNNER_TEMP/e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-token" >> "$GITHUB_ENV"
           root="postgresql+asyncpg://postgres:postgres@localhost:5442"
           echo "DATABASE_URL=$root/cheese_e2e_$slot" >> "$GITHUB_ENV"
           # Redis keys are scoped by user id, and user ids restart from 1 in each
@@ -235,6 +243,9 @@ jobs:
         working-directory: backend
         run: uv run alembic upgrade head
 
+      - name: Start the isolated project forge
+        run: bash backend/tests/forgejo/start.sh
+
       # alice (seeded by the migration above) owns no project until this runs;
       # the app-shell / topic / chat specs need her to land on a real project
       # rail tile. This is the same fusion demo the dev box is seeded with.
@@ -305,3 +316,7 @@ jobs:
         run: |
           docker volume prune -f >/dev/null 2>&1 || true
           df -h / | tail -1
+
+      - name: Remove the isolated project forge
+        if: always()
+        run: docker compose -p "$FORGEJO_TEST_PROJECT" -f backend/tests/forgejo/compose.yml down --volumes

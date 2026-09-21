@@ -129,24 +129,24 @@ def test_default_is_todays_interface_verbatim() -> None:
     """The parity contract, written down where it can fail.
 
     A project that declares no 壳 has to be indistinguishable from the product
-    before 壳 existed. If someone reorders the sidebar for everyone by editing
-    this declaration, this is the test that says so.
+    as it is. If someone reorders the sidebar for everyone by editing this
+    declaration, this is the test that says so.
+
+    「今天」 is not frozen: main moved it on 2026-09-21 (#1330/#1339 narrowed the
+    project sidebar to 资料库, sent 日历/成员 into the ⋯ menu and retired 总览 /
+    导出与发布 as pages), and this declaration moved with it. What must not move
+    is a project that declares nothing seeing something other than what a
+    project without 壳 sees today.
     """
     default = CATALOG[DEFAULT_SHELL_NAME]
     assert default.home == "workspace-running"
-    assert default.hidden == ()
+    # 侧栏那一面：资料库是常驻那一格，日历与名册默认收进项目名旁边那个 ⋯ 菜单。
+    # 看板不在里面 —— 它就是 home，项目名那一行点下去就到。
+    assert default.nav.project == ("calendar", "project-library", "project-members")
+    assert default.hidden == ("calendar", "project-members")
     assert default.terms == {}
     assert default.nav.rail == ("home", "projects", "add")
     assert default.nav.tabs == ("spaces", "workspace", "inbox")
-    assert default.nav.project == (
-        "overview",
-        "workspace-running",
-        "calendar",
-        "project-library",
-        "project-delivery",
-        "project-agents",
-        "project-members",
-    )
 
 
 def test_every_shell_names_only_known_keys() -> None:
@@ -155,12 +155,9 @@ def test_every_shell_names_only_known_keys() -> None:
     known_tabs = {"spaces", "workspace", "inbox"}
     # The project pages a 壳 may name — the route names of `workspaceRoutes.ts`.
     known_project = {
-        "overview",
         "workspace-running",
         "calendar",
         "project-library",
-        "project-delivery",
-        "project-agents",
         "project-members",
     }
     for name, shell in CATALOG.items():
@@ -228,6 +225,5 @@ def test_the_frontends_fallback_is_the_backend_default() -> None:
         "hidden": list(default.hidden),
         "terms": dict(default.terms),
     }
-    # default 的含义就是「今天这样」：一个字都不许藏起来，否则老项目会凭空少一格。
-    assert raw["hidden"] == []
+    # default 不换任何词。
     assert raw["terms"] == {}

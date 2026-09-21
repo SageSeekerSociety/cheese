@@ -1,22 +1,18 @@
 {
   "home": "Home",
   "inbox": "Inbox",
-  "more": "More",
   "newProject": "New {project}",
+  "project": {
+    "board": "Board",
+    "calendar": "Calendar",
+    "library": "Library",
+    "members": "Members"
+  },
   "spaces": "Spaces",
   "teams": "Teams",
   "term": {
     "project": "project",
     "topic": "topic"
   },
-  "workspace": "Workspace",
-  "project": {
-    "agents": "AI teammates",
-    "board": "Board",
-    "calendar": "Calendar",
-    "delivery": "Export and publish",
-    "library": "Library",
-    "members": "Members",
-    "overview": "Overview"
-  }
+  "workspace": "Workspace"
 }

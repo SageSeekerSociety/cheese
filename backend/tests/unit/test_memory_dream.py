@@ -22,7 +22,9 @@ pytestmark = pytest.mark.anyio
 
 
 async def _project_topic(session, name="P"):
-    project = await ProjectService(session).create(name=name, owner_handle="u")
+    project = await ProjectService(session).create(
+        name=name, owner_handle="u", forge_kind="github_app"
+    )
     topic = await TopicService(session).create(
         project_id=project.id, title="T", created_by="u"
     )

@@ -212,6 +212,7 @@ async def download_toolchain(tool: str, platform: str) -> Response:
         path,
         media_type="application/octet-stream",
         filename=f"{tool}{artifact.suffix}",
+        headers={"X-Checksum-SHA256": artifact.sha256},
     )
 
 

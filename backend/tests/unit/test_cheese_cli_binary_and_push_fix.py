@@ -110,6 +110,27 @@ def test_push_fix_reports_where_it_pushed(monkeypatch, capsys):
     assert "615" in out
 
 
+def test_push_fix_forwards_explicit_drop_dependency(monkeypatch):
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(cli, "_task_id", lambda _: "task")
+    calls = []
+    monkeypatch.setattr(cli, "_sync_task", lambda task: calls.append(("sync", task)))
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda method, path: (
+            calls.append((method, path)) or {"data": {"pushed": True, "pr_number": 1}}
+        ),
+    )
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "push-fix", "--drop-dependency"])
+    cli.main()
+    assert calls == [
+        ("sync", "task"),
+        ("POST", "/topics/room/tasks/task/push-fix?drop_dependency=true"),
+    ]
+
+
 def test_push_fix_says_why_when_there_was_nothing_to_push(monkeypatch, capsys):
     """Not an error. An agent that gets an exception for "already pushed"
     learns to stop calling this, which is the opposite of what it is for."""

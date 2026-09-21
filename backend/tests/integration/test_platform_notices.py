@@ -23,11 +23,7 @@ author_type=system`，前端一行灰字）。另一条更糟：`runner.submit(a
 里，因为历史行带着它们，得渲染得出来。
 """
 
-import asyncio
-import uuid
-
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
-from app.domain.workspace import service as ws
 from tests.conftest import wait_work_idle
 
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
@@ -165,8 +161,8 @@ def test_ci_failure_still_hands_the_agent_the_whole_instruction(
     assert f"cheese worktree {tasks[0]['id']}" in prompt
     assert "cheese push-fix" in prompt
     assert "采纳由人决定" in prompt
-    # The credentials command and repository path make the full logs reachable.
-    assert "cheese gh-token" in prompt
+    # The native CLI supplies credentials when fetching the full logs.
+    assert "gh api repos/acme/widgets/actions/jobs/" in prompt
     assert "repos/acme/widgets/actions/jobs/" in prompt
 
 
@@ -202,58 +198,3 @@ def test_merge_refused_lands_as_one_line_event(client, app_world):
 # --------------------------------------------------------------------------
 # 只记不跑的 runner（被下面几组用例共用）
 # --------------------------------------------------------------------------
-
-
-class _RecordingRunner:
-    """只记录 submit 调用、不真正驱动一轮的 runner。"""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    def submit(self, chat_service, topic_id, **kw):
-        self.calls.append({"topic_id": topic_id, **kw})
-        return uuid.uuid4()
-
-
-# --------------------------------------------------------------------------
-# 同步上游冲突
-# --------------------------------------------------------------------------
-
-
-def test_upstream_conflict_lands_as_one_line_event(client, monkeypatch):
-    """冲突文件清单进 `meta.detail`，而且是**完整**清单 —— 给芝士的正文为了可读
-    只列前 15 个，展开区不该跟着缩水。"""
-    from app.domain.workspace import upstream_conflict
-
-    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
-    files = [f"pkg/mod_{i}.py" for i in range(20)]
-    monkeypatch.setattr(
-        ws, "prepare_upstream_conflict_resolution", lambda *_a, **_kw: files
-    )
-    runner = _RecordingRunner()
-
-    async def _do() -> dict | None:
-        async with client.test_factory() as session:
-            out = await upstream_conflict.dispatch(
-                session,
-                uuid.UUID(pid),
-                requested_by="alice",
-                chat=object(),  # type: ignore[arg-type] — the runner records only
-                runner=runner,  # type: ignore[arg-type]
-            )
-            await session.commit()
-            return out
-
-    assert asyncio.run(_do()) is not None
-    assert len(runner.calls) == 1
-    call = runner.calls[0]
-    assert "\n" not in call["nudge_event"]
-    assert len(call["nudge_event"]) <= 40
-    assert "20" in call["nudge_event"]  # 几个文件，扫一眼就知道
-    meta = call["nudge_meta"]
-    assert meta["event_type"] == "upstream_conflict"
-    assert meta["severity"] == "warn"
-    assert meta["who"] == "cheese"
-    # 完整 20 个，不是正文里那 15 个。
-    assert meta["detail"].splitlines() == files
-    assert files[19] not in call["nudge_event"]

@@ -40,11 +40,6 @@ def _resolver(monkeypatch, *, cheese_token: str):
     )
     monkeypatch.setattr(
         auth_mod,
-        "IdentityService",
-        lambda _session: SimpleNamespace(is_agent=AsyncMock(return_value=True)),
-    )
-    monkeypatch.setattr(
-        auth_mod,
         "UserRepository",
         lambda _session: SimpleNamespace(
             get_by_id=AsyncMock(return_value=None),
@@ -94,9 +89,21 @@ async def test_in_scope_token_still_acts_as_this_topics_agent(monkeypatch):
     )
 
     assert actor.via == "cheese"
-    assert actor.is_agent
     assert actor.handle != "anonymous"
     assert actor.handle.startswith("cheese-")
+
+
+async def test_an_expired_sandbox_token_is_still_refused(monkeypatch):
+    """The authentication path answers one question — is this credential real —
+    and an expired one is not. Pinned separately from the scope tests because
+    they fail at a different gate: a mismatched token is refused for naming
+    somewhere else, an expired one for having run out, and a change that keeps
+    either verdict says nothing about the other."""
+    token = mint_scoped_token(project_id=str(PROJECT), topic_id=str(TOPIC), ttl_s=-1)
+    resolver = _resolver(monkeypatch, cheese_token=token)
+
+    with pytest.raises(AuthenticationRequiredError):
+        await resolver.resolve(fallback_handle=None, topic_id=TOPIC, project_id=PROJECT)
 
 
 async def test_capability_without_identity_cannot_act_in_a_topic(monkeypatch):

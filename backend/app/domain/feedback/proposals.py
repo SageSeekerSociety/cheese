@@ -155,8 +155,8 @@ class ProposalService:
         turn that into a 500 instead of the 200 it should be. A lock serializes
         exactly the window that needs it and nothing longer.
 
-        Same shape as `agent.execution.lock_release`; the key is namespaced with a
-        string so two features cannot collide on the hash of one uuid.
+        The key is namespaced with a string so two features cannot collide on
+        the hash of one uuid.
         """
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),

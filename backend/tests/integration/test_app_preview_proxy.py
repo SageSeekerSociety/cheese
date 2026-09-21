@@ -143,7 +143,7 @@ def app_preview(client, preview_config):
     machine = EchoingMachine().attach(topic_id)
     try:
         response = client.post(
-            f"/topics/{topic_id}/artifact",
+            f"/topics/{topic_id}/shown",
             json={"path": "http://localhost:5173", "as": "app"},
             headers=session_auth_headers("alice"),
         )

@@ -32,7 +32,7 @@ function message(id: string, turn: string | null): Block {
     project_id: 'p',
     topic_id: 't',
     kind: 'message',
-    author_type: 'ai',
+    author_type: 'participant',
     author: 'cheese',
     content: '我改完了',
     reply_to: null,

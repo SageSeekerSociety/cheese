@@ -155,7 +155,7 @@ class SqlDeviceRepository:
         ).all()
         return [await self._to_device(r) for r in rows]
 
-    async def _device_ids_by_project(self, project_id: uuid.UUID) -> list[str]:
+    async def device_ids_by_project(self, project_id: uuid.UUID) -> list[str]:
         """Machines a project may run on = explicit per-project assignments UNION the
         devices bound to the project's TEAM (execution-architecture v4: compute
         belongs to the team — 为团队注册设备). Bind a machine to a team once and every
@@ -197,7 +197,7 @@ class SqlDeviceRepository:
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
         """Human-hosted machines assigned directly or through the project's team."""
         out: list[Device] = []
-        for did in await self._device_ids_by_project(project_id):
+        for did in await self.device_ids_by_project(project_id):
             device = await self.get_hosted_device(did)
             if device is not None:
                 out.append(device)

@@ -96,7 +96,7 @@ describe('对话栏的接线', () => {
         project_id: 'p1',
         topic_id: topic.id,
         kind: 'message',
-        author_type: 'human',
+        author_type: 'participant',
         author: 'other',
         content: '你没看过的一条',
         reply_to: null,

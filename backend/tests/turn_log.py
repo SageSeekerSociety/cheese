@@ -18,7 +18,10 @@ from app.domain.topic.services import TopicService
 async def a_topic(factory, *, title: str = "T") -> uuid.UUID:
     """A real project + topic to hang turns off."""
     async with factory() as session:
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        # Turn lifecycle tests need a room, not a provisioned code repository.
+        project = await ProjectService(session).create(
+            name="P", owner_handle="u", forge_kind="github_app"
+        )
         topic = await TopicService(session).create(
             project_id=project.id, title=title, created_by="u"
         )

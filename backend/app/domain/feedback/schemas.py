@@ -12,6 +12,15 @@ from the row (they live in other tables), so a plain ``model_validate`` would
 silently emit 0 for them; making the counters required arguments means a caller
 that forgot them fails at the type checker instead.
 
+Author avatars are the same kind of fact and take the same route. They live on
+``UserProfile``, not on the feedback row, so ``from_row`` demands a page-wide
+``avatars`` map (handle → avatar id) and a caller that forgot it fails at the
+type checker the same way. The map holds **only the people who actually picked
+an avatar**: registration hardcodes the global default, so "has an avatar_id" is
+not the question, and filling the gap with the default would draw every
+never-chooser as the one shared face. Absent means the UI draws its coloured
+initial — see `UserProfileRepository.chosen_avatar_ids`.
+
 There is deliberately no schema with a ``status`` field on the write side: status
 only ever moves through ``PATCH /admin/feedback/{id}``, where the service writes
 the timeline row in the same transaction. A client cannot set it directly, so a
@@ -21,6 +30,7 @@ schema that accepted it would be a lie.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -154,6 +164,13 @@ class NoteCreate(BaseModel):
 
 
 class TimelineOut(BaseModel):
+    """One rung of the ladder: who moved the status, to what, when.
+
+    No avatar on purpose. Nothing draws a face on the ladder — it reads as a
+    line of 「谁在什么时候改成了什么」 — so carrying one would buy a second
+    handle→avatar pass over the detail page for a picture no view renders.
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     status: FeedbackStatus
@@ -162,23 +179,48 @@ class TimelineOut(BaseModel):
 
 
 class CommentOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     parent_id: uuid.UUID | None
     author_handle: str
     author_is_agent: bool
+    #: 作者挑过的头像 id，没挑过就是 None（客户端画首字母）。和卡片的
+    #: `author_avatar_id` 是同一份契约，理由也一样。
+    author_avatar_id: int | None
     body: str
     created_at: datetime
+
+    @classmethod
+    def from_row(
+        cls, row: FeedbackComment, *, avatars: Mapping[str, int]
+    ) -> CommentOut:
+        return cls(
+            id=row.id,
+            parent_id=row.parent_id,
+            author_handle=row.author_handle,
+            author_is_agent=row.author_is_agent,
+            author_avatar_id=avatars.get(row.author_handle),
+            body=row.body,
+            created_at=row.created_at,
+        )
 
 
 class NoteOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     author_handle: str
+    #: 同 `CommentOut.author_avatar_id`。
+    author_avatar_id: int | None
     body: str
     created_at: datetime
+
+    @classmethod
+    def from_row(cls, row: FeedbackNote, *, avatars: Mapping[str, int]) -> NoteOut:
+        return cls(
+            id=row.id,
+            author_handle=row.author_handle,
+            author_avatar_id=avatars.get(row.author_handle),
+            body=row.body,
+            created_at=row.created_at,
+        )
 
 
 class FeedbackCounts(BaseModel):
@@ -205,6 +247,9 @@ class FeedbackCard(BaseModel):
     security: bool
     author_handle: str
     author_is_agent: bool
+    #: 作者挑过的头像 id，没挑过就是 None —— 客户端画首字母，不拿默认头像顶替。
+    #: 判据见模块顶部和 `UserProfileRepository.chosen_avatar_ids`。
+    author_avatar_id: int | None
     submitted_by_handle: str | None
     assignee_handle: str | None
     tags: list[str]
@@ -222,6 +267,7 @@ class FeedbackCard(BaseModel):
         supports: int,
         comments: int,
         supported: bool,
+        avatars: Mapping[str, int],
         last_activity_at: datetime | None = None,
     ) -> FeedbackCard:
         return cls(
@@ -236,6 +282,7 @@ class FeedbackCard(BaseModel):
             security=row.security,
             author_handle=row.author_handle,
             author_is_agent=row.author_is_agent,
+            author_avatar_id=avatars.get(row.author_handle),
             submitted_by_handle=row.submitted_by_handle,
             assignee_handle=row.assignee_handle,
             tags=list(row.tags or []),
@@ -275,6 +322,7 @@ class FeedbackDetail(FeedbackCard):
         supports: int,
         comments: int,
         supported: bool,
+        avatars: Mapping[str, int],
         last_activity_at: datetime | None = None,
         timeline: list[FeedbackTimeline] | None = None,
         thread: list[FeedbackComment] | None = None,
@@ -285,6 +333,7 @@ class FeedbackDetail(FeedbackCard):
             supports=supports,
             comments=comments,
             supported=supported,
+            avatars=avatars,
             last_activity_at=last_activity_at,
         )
         return cls(
@@ -301,8 +350,11 @@ class FeedbackDetail(FeedbackCard):
             topic_id=row.topic_id,
             project_id=row.project_id,
             timeline=[TimelineOut.model_validate(x) for x in timeline or []],
-            thread=[CommentOut.model_validate(x) for x in thread or []],
-            notes=[NoteOut.model_validate(x) for x in notes or []],
+            # Comments and notes go through their own `from_row` for the same
+            # reason the card does: the author's face is not on their row, and
+            # this is the one place that already has the page-wide map.
+            thread=[CommentOut.from_row(x, avatars=avatars) for x in thread or []],
+            notes=[NoteOut.from_row(x, avatars=avatars) for x in notes or []],
         )
 
 

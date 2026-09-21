@@ -101,6 +101,11 @@ avoid a white flash before first paint. Change the storage key
   `.t-meta` utility classes. Hand-written sizes are limited to 12/13/14/15/18/23
   px, and **13px is the floor for anything readable** — there are 29 sites at
   10–11px and they are not a precedent to follow.
+- Line height: `--lh-12` 18 / `--lh-13` 19 / `--lh-14` 20 / `--lh-15` 21 /
+  `--lh-18` 26 / `--lh-23` 33 — one per font size, and the size picks it. The
+  utility classes already carry it, so a bare `line-height` in new CSS is almost
+  always the mistake: the tree holds 21 hand-picked values (1.2 → 1.9) and none
+  of them is a ladder. Token, never a ratio.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
 ## A field's label sits OUTSIDE its box, and that is what collides

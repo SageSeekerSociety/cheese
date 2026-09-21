@@ -69,7 +69,7 @@ from app.domain.agent.service import (
     AgentToolUse,
     proves_output,
 )
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 logger = logging.getLogger(__name__)
 
@@ -590,6 +590,12 @@ def _prompt_with_native_images(
     rendezvous socket, enqueued where a keystroke lands, and the mention has not
     been re-verified on that path. Either way the mention is the delivery, and it
     only works for a file that is actually on the machine the screen runs on.
+
+    The paths are absolute now, and outside the checkout: the platform stages an
+    attachment in the session's home rather than in the repository the agent is
+    working in (结论 49，不变量 I21b), and only the machine can spell that
+    directory, so `place.write` hands back what the machine answered and this
+    mentions it verbatim.
 
     ``missing`` is for the ones that are not. They get a sentence instead of a
     mention, because the alternative shapes are both worse: @-mentioning a path
@@ -1453,7 +1459,9 @@ class ClaudeCodeRuntime:
         be a cold start, and no caller can know in advance which one that is.
         """
         started = time.monotonic()
-        precheck = await self._channel.precheck(session)
+        precheck = await self._channel.precheck(
+            session, needs_place=opening.needs_place
+        )
         logger.info(
             "session setup phase=precheck topic=%s elapsed_ms=%d",
             session.topic_id,
@@ -1603,7 +1611,11 @@ class ClaudeCodeRuntime:
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
         try:
-            precheck = await self._channel.precheck(session)
+            # 平台自己起的那几轮（活动消化、定期巡检、一页纸总结）今天照旧租手：
+            # 它们跑在项目那台工作机的根话题沙箱里，不租手会把它们搬到会话机的草
+            # 稿区去，那是另一件事，不在 P21 里。写出来是为了让它看得见——这里没
+            # 有默认值可继承。
+            precheck = await self._channel.precheck(session, needs_place=True)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc),

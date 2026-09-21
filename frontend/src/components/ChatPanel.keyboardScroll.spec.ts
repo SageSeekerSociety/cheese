@@ -46,7 +46,7 @@ const block: Block = {
   id: 'm1',
   topic_id: topic.id,
   kind: 'message',
-  author_type: 'ai',
+  author_type: 'participant',
   author: 'cheese-keyboard',
   content: '一条消息',
   created_at: '2026-09-17T00:00:01Z',
