@@ -1,8 +1,18 @@
 {
   "home": "首页",
   "inbox": "待办",
-  "newProject": "新建项目",
+  "newProject": "新建{project}",
+  "project": {
+    "board": "看板",
+    "calendar": "日历",
+    "library": "资料库",
+    "members": "成员"
+  },
   "spaces": "空间",
   "teams": "小队",
+  "term": {
+    "project": "项目",
+    "topic": "话题"
+  },
   "workspace": "工作区"
 }
