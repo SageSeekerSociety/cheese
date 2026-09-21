@@ -3122,7 +3122,7 @@ class ChatService:
 
     @staticmethod
     async def _private_owner(session: AsyncSession, topic: Topic) -> str | None:
-        """私聊里那位人类——名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
+        """私聊里那位人类，名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
 
         个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
         一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。

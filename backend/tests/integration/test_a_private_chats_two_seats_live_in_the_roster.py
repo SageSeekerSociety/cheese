@@ -1,6 +1,6 @@
 """私聊的两席在名册上：「谁被点名」由此推出，不需要 @（结论 19、20）。
 
-一间私聊就是项目内名册两席的房间。所以「对面是谁」只有名册一个出处——谁答这间房、
+一间私聊就是项目内名册两席的房间。所以「对面是谁」只有名册一个出处：谁答这间房、
 个人记忆记在谁名下、未读按谁归类、再打开是不是同一间，四个问题问的都是这两席。
 
 每个用例都先把 ``topics.private_owner`` / ``private_peer`` 两列清空再断言。那两列记
@@ -61,7 +61,7 @@ def _dm(client, project_id: str, user: str, **params) -> str:
 
 
 def _forget_the_columns(client, topic_id: str) -> None:
-    """把两列清空——P13 会把它们删掉，这里先让它们说不出话。"""
+    """把两列清空。P13 会把它们删掉，这里先让它们说不出话。"""
 
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -86,7 +86,7 @@ def _seats(client, topic_id: str) -> tuple[str, str] | None:
 
 
 def _who_answers(client, topic_id: str) -> str:
-    """这一轮没人被 @ 的时候，答这间房的是谁——它的 handle。"""
+    """这一轮没人被 @ 的时候，答这间房的是谁，它的 handle。"""
 
     async def _run() -> str:
         async with client.test_factory() as session:
@@ -109,7 +109,7 @@ def _badge(client, project_id: str, user: str) -> dict:
 
 
 def _seat_by_hand(client, topic_id: str, handle: str) -> None:
-    """名册上直接加一行——存量三席的私聊就是这么来的：``e7d2b91a4c06`` 补上了队友
+    """名册上直接加一行，存量三席的私聊就是这么来的：``e7d2b91a4c06`` 补上了队友
     那一席，``d5c48f1a6b73`` 因为房里坐着别的实例把替身留了下来。"""
 
     async def _run() -> None:
@@ -128,7 +128,7 @@ def _seat_by_hand(client, topic_id: str, handle: str) -> None:
 
 
 def _unseat_by_hand(client, topic_id: str, handle: str) -> None:
-    """名册上直接删一行——撤席位就是撤授权，换队友就是这么换的。"""
+    """名册上直接删一行。撤席位就是撤授权，换队友就是这么换的。"""
 
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -145,7 +145,7 @@ def _unseat_by_hand(client, topic_id: str, handle: str) -> None:
 
 
 def _stale_peer_column(client, topic_id: str, handle: str) -> None:
-    """把 ``private_peer`` 写成名册以外的人——存量私聊里两列和名册对不上，
+    """把 ``private_peer`` 写成名册以外的人。存量私聊里两列和名册对不上，
     长的就是这个样子。"""
 
     async def _run() -> None:
@@ -205,7 +205,7 @@ def test_a_dm_names_its_teammate_from_the_roster(client):
 
 
 def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
-    """个人记忆只在当事人自己的私聊里读写——当事人是谁，名册说了算。"""
+    """个人记忆只在当事人自己的私聊里读写。当事人是谁，名册说了算。"""
     project_id = _project(client)
     dm = _dm(client, project_id, "user-1")
     _forget_the_columns(client, dm)
@@ -234,7 +234,7 @@ def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
 
 
 def test_a_dm_badge_is_keyed_by_the_other_seat(client):
-    """未读按对面那一席归类——人按 handle，队友按 agent: 前缀。"""
+    """未读按对面那一席归类：人按 handle，队友按 agent: 前缀。"""
     project_id = _project(client)
     _add_agent(client, project_id, "reviewer", "评审")
     with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
@@ -322,7 +322,7 @@ def test_reopening_a_dm_whose_roster_grew_opens_a_two_seat_one(client):
     """名册多出一席的房间不再是这间 DM：再打开给的是一间正好两席、答得出对面的房。
 
     这样的房间在迁移跑完之前就有，部署窗口里上一版接口也还加得出来。认它就是让
-    「再打开这间 DM」落进一间说不出对面是谁的房间——同时匹配上好几间时，返回哪一
+    「再打开这间 DM」落进一间说不出对面是谁的房间；同时匹配上好几间时，返回哪一
     间更是没有定数。
     """
     project_id = _project(client)
@@ -343,7 +343,7 @@ def test_reopening_a_dm_whose_roster_grew_opens_a_two_seat_one(client):
 def test_an_old_dms_extra_seats_are_unseated(client):
     """存量三席的私聊：迁移跑完回到两席，这间房又答得出对面是谁。
 
-    迁移之前它不是私聊，角标里就不该有它——既不翻倍，也不多出一行归给别人。
+    迁移之前它不是私聊，角标里就不该有它：既不翻倍，也不多出一行归给别人。
     """
     project_id = _project(client)
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
@@ -393,8 +393,8 @@ def test_a_swapped_teammate_is_not_seated_back_by_the_migration(client):
 def test_a_retired_stand_in_is_not_seated_back_by_the_migration(client):
     """替身退役过的私聊：迁移不把它种回名册，也不挤掉项目芝士那一席。
 
-    ``e7d2b91a4c06`` 的第三种情况把房间派生的替身写进了 ``private_peer``——当时
-    项目还没有默认芝士——而 ``d5c48f1a6b73`` 后来补上项目芝士的席位、退役了替身。
+    ``e7d2b91a4c06`` 的第三种情况把房间派生的替身写进了 ``private_peer``（当时
+    项目还没有默认芝士），而 ``d5c48f1a6b73`` 后来补上项目芝士的席位、退役了替身。
     照两列判就会把那条迁移整个倒过来。
     """
     project_id = _project(client)
