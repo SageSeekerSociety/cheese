@@ -1,7 +1,7 @@
 """a delivery is a row before it is a send
 
 Revision ID: e3a7c15d80b4
-Revises: b4d1a70c9e52
+Revises: d7b3f0a9c651
 Create Date: 2026-09-20 23:10:00
 
 投递账本（结论 58）。没送到的投递以前没有任何一行记着它本该发出去 —— 去重住在一个
@@ -25,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "e3a7c15d80b4"
-down_revision: str | Sequence[str] | None = "b4d1a70c9e52"
+down_revision: str | Sequence[str] | None = "d7b3f0a9c651"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

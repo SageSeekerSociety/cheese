@@ -2601,7 +2601,7 @@ class ChatService:
                     topic_id=landed.topic_id,
                     task_id=landed.task_id,
                     author=state.acting_agent,
-                    author_type=AuthorType.system,
+                    author_type=AuthorType.platform,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
                     turn_id=state.work_id,
@@ -3130,7 +3130,7 @@ class ChatService:
                 backfilled=backfilled,
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
-                author_type=AuthorType.system,
+                author_type=AuthorType.platform,
                 task_id=task_id,
             )
         meta: dict | None = (
@@ -3476,7 +3476,7 @@ class ChatService:
             # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
             # a remark 芝士 never made.
-            content, author_type = "分身开工", AuthorType.system
+            content, author_type = "分身开工", AuthorType.platform
             meta: dict = {"event_type": "subagent_start"}
         else:
             # The closing message in full, and it IS the worker's own words. It
@@ -3622,7 +3622,7 @@ class ChatService:
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
             in_room=True,
-            author_type=AuthorType.system,  # 平台自己数出来的，不是芝士说的
+            author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
         )
 
     async def _reconcile_spool(
@@ -4249,7 +4249,7 @@ class ChatService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="system",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=text,
             kind=BlockKind.event,
             turn_id=turn_id,
@@ -4401,7 +4401,12 @@ class ChatService:
                 None
                 if is_private
                 else [
-                    {"id": str(a.id), "name": a.name, "version": a.version}
+                    {
+                        "id": str(a.id),
+                        "name": a.name,
+                        "version": a.version,
+                        "about": a.about,
+                    }
                     for a in await project_artifacts.list_for_project(
                         session, topic.project_id
                     )
@@ -4526,7 +4531,7 @@ class ChatService:
                             topic_id=landed.topic_id,
                             task_id=landed.task_id,
                             author="system",
-                            author_type=AuthorType.system,
+                            author_type=AuthorType.platform,
                             content=waiting_text,
                             kind=BlockKind.event,
                             turn_id=turn_id,

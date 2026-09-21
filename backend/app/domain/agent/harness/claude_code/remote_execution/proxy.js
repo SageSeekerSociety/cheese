@@ -15,7 +15,8 @@ function remotePath(path) {
 
 export function register(on) {
   on("tool.call", async ($, e, next) => {
-    const { tool, tool_use_id, ...args } = e;
+    // agentId identifies the caller; native MCP tools reject it as an argument.
+    const { tool, tool_use_id, agentId, ...args } = e;
     if (tool === "mcp__native__chat_send" || tool === "mcp__native__platform_request" || tool.startsWith("mcp__native__cheese_")) {
       try {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
@@ -38,7 +39,11 @@ export function register(on) {
           id: tool_use_id, tool, args, session_id: await $.session.id(),
         });
         if (response.isError) return { deny: JSON.stringify(response.content) };
-        return JSON.parse(response.content[0].text);
+        const outcome = JSON.parse(response.content[0].text);
+        if (outcome.result?.type === "image") {
+          outcome.result.file.base64 = response.content.find(block => block.type === "image").source.data;
+        }
+        return outcome;
       } catch (error) {
         return { deny: "Remote execution failed: " + String(error) };
       }

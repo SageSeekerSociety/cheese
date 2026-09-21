@@ -1,8 +1,9 @@
 /**
- * 项目首页那一块「做出了什么」。
+ * 项目首页上「做出了什么」那一列的内容。
  *
- * 清单由交付长出来，所以这一块只在真有东西可摆时出现；上面能做的三件事都是人的
- * 判断（改名、合并、删除），芝士 做不了。
+ * 列的框和列头在 RunningWorkView 那边（三列任务加这一列共用 `.board-col`），所以
+ * 这里只钉它里面的东西：一项一行、点得进去、空了说「暂无产物」、件数报上去，以及
+ * 那三件只有人做得了的判断（改名、合并、删除）。
  */
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -19,6 +20,13 @@ vi.mock('../api', () => ({
   renameProjectArtifact: vi.fn(),
   mergeProjectArtifacts: vi.fn(),
   deleteProjectArtifact: vi.fn(),
+  // 网站钉在这一列最上面，但它是另一个组件的事（PublishedSite.spec.ts 钉它）。
+  // 这里让它读不到发布信息，那一行因此不画。
+  getProjectSite: vi.fn(async () => {
+    throw new Error('no site in this test')
+  }),
+  publishProjectSite: vi.fn(),
+  ApiError: class extends Error {},
 }))
 
 const { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } = await import(
@@ -64,8 +72,14 @@ beforeAll(() => {
   }
 })
 
-const REPORT = { id: 'a1', name: '结题报告', version: 3, delivered_at: '2026-09-19T10:00:00Z' }
-const SITE = { id: 'a2', name: '项目官网', version: 0, delivered_at: null }
+const REPORT = {
+  id: 'a1',
+  name: '结题报告',
+  about: '交给甲方的最终报告',
+  version: 3,
+  delivered_at: '2026-09-19T10:00:00Z',
+}
+const SITE = { id: 'a2', name: '项目官网', about: '', version: 0, delivered_at: null }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -102,7 +116,6 @@ describe('做出了什么', () => {
 
     await waitFor(() => expect(container.textContent).toContain('结题报告'))
     const text = container.textContent ?? ''
-    expect(text).toContain('做出了什么')
     expect(text).toContain('第 3 版')
     expect(text).toContain('项目官网')
     expect(text).toContain('尚未交付')
@@ -116,14 +129,32 @@ describe('做出了什么', () => {
     expect(link?.getAttribute('href')).toBe('/projects/p1/artifacts/a1')
   })
 
-  it('清单为空时整块不出现——那时人要看的是下面那块板', async () => {
+  it('一项都没有的时候这一列留着，自己说「暂无产物」', async () => {
+    // 它曾经是整块隐藏，那是它还摞在板上面的时候。现在它是一列，凭空消失会让整个
+    // 网格错位，而板的规矩是位置本身就是信息。
     vi.mocked(listProjectArtifacts).mockResolvedValue({ data: [], total: 0 })
 
     const { container } = mount()
 
-    await waitFor(() => expect(listProjectArtifacts).toHaveBeenCalled())
-    expect(container.querySelector('.made')).toBeNull()
-    expect(container.textContent).not.toContain('做出了什么')
+    await waitFor(() => expect(container.textContent).toContain('暂无产物'))
+    expect(container.querySelector('.made')).not.toBeNull()
+  })
+
+  it('件数报给列头 —— 列头在板那边，件数在这边', async () => {
+    const { emitted } = mount()
+
+    await waitFor(() => expect(emitted().count).toBeTruthy())
+    expect(emitted().count.at(-1)).toEqual([2])
+  })
+
+  it('读不到清单时这一列显示成空的，不把首页变成一条错误', async () => {
+    vi.mocked(listProjectArtifacts).mockRejectedValue(new Error('服务不可用'))
+
+    const { container, emitted } = mount()
+
+    await waitFor(() => expect(container.textContent).toContain('暂无产物'))
+    expect(container.textContent).not.toContain('服务不可用')
+    expect(emitted().count.at(-1)).toEqual([0])
   })
 
   it('改名改的是这一项，改完重新读一次清单', async () => {

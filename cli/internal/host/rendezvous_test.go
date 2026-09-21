@@ -86,6 +86,27 @@ func TestFirstAndCachedPromptsAreEachDeliveredOnce(t *testing.T) {
 	}
 }
 
+func TestUnavailablePromptSocketReturnsMachineReadableFailure(t *testing.T) {
+	old := rvDialWindow
+	rvDialWindow = 10 * time.Millisecond
+	t.Cleanup(func() { rvDialWindow = old })
+	dir := t.TempDir()
+	token := filepath.Join(dir, "token")
+	if err := os.WriteFile(token, []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := hostOnAFakeServer(t, map[string]*sess{"s1": {
+		rvPath: filepath.Join(dir, "missing.sock"), rvTokenFile: token,
+	}})
+	server.send(t, link.Msg{T: "rpc.call", Sid: "s1", ID: "missing",
+		Name: "prompt", Args: []any{"continue"}})
+	result := server.awaitResult(t, "missing")
+	value, ok := result.Value.(map[string]any)
+	if result.Error == "" || !ok || value["failure_code"] != "prompt_socket_unavailable" {
+		t.Fatalf("missing safe-recovery classification: %+v", result)
+	}
+}
+
 // A server-sent file lands under the platform's footprint and nowhere else.
 //
 // The rejected paths are the point, and `room/` among them most of all: the

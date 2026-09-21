@@ -46,7 +46,11 @@ from app.domain.agent.harness import (
     SessionRef,
     UnreadProbe,
 )
-from app.domain.agent.harness.channel import Channel, ScreenSetupError
+from app.domain.agent.harness.channel import (
+    Channel,
+    PromptSocketUnavailable,
+    ScreenSetupError,
+)
 from app.domain.agent.harness.claude_code.hook_events import (
     RECORDED_AT_KEY,
     HookRouter,
@@ -1561,7 +1565,36 @@ class ClaudeCodeRuntime:
                 (delivery_started - dispatch_started) * 1000,
                 time.time() * 1000,
             )
-            ready = await self._channel.send_prompt(screen, prompt)
+            try:
+                ready = await self._channel.send_prompt(screen, prompt)
+            except PromptSocketUnavailable:
+                # A late hook or an existing activity means this session may
+                # still be working. Only a dead session with no submitted
+                # prompt can be replaced without duplicating work.
+                if (
+                    not starts_activity
+                    or not activity.queue.empty()
+                    or not await self._channel.retire_unreachable(screen)
+                ):
+                    raise
+                await self._end_session_activity(
+                    subscription, activity, clear_work=True
+                )
+                screen, subscription = await self.ensure(
+                    session, opening, work_id=work_id
+                )
+                subscription.current_work = attribution
+                activity = await self._begin_session_activity(
+                    subscription,
+                    attribution,
+                    screen,
+                    ready=None,
+                    start_task=False,
+                )
+                staged, lost = await self._stage(screen, images)
+                ready = await self._channel.send_prompt(
+                    screen, _prompt_with_native_images(message, staged, lost)
+                )
             logger.info(
                 "session setup phase=prompt topic=%s duration_ms=%d ready=%s",
                 topic_id,
@@ -1635,32 +1668,46 @@ class ClaudeCodeRuntime:
         attribution: WorkAttribution | None = None
         try:
             try:
-                screen = await self._channel.ensure_ready(
-                    session=session,
-                    token=token,
-                    env=env,
-                    memory_scope=memory_scope,
-                    owner=owner,
-                    turn_id=turn_id,
-                    launch=ClaudeLaunch(
-                        system_prompt=system_prompt,
-                        model=model,
-                        resume_session_id=resume_session_id,
-                    ),
-                    precheck=precheck,
-                )
-                subscription = await self.ensure_subscription(project_id, topic_id)
-                self._live[topic_id] = screen
-                if subscription.current_work is not None:
-                    raise ScreenSetupError("这个话题上已有工作正在运行，本次请求已跳过")
-                attribution = WorkAttribution(
-                    work_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
-                )
-                subscription.current_work = attribution
-                staged, lost = await self._stage(screen, images)
-                ready = await self._channel.send_prompt(
-                    screen, _prompt_with_native_images(prompt, staged, lost)
-                )
+                for attempt in range(2):
+                    screen = await self._channel.ensure_ready(
+                        session=session,
+                        token=token,
+                        env=env,
+                        memory_scope=memory_scope,
+                        owner=owner,
+                        turn_id=turn_id,
+                        launch=ClaudeLaunch(
+                            system_prompt=system_prompt,
+                            model=model,
+                            resume_session_id=resume_session_id,
+                        ),
+                        precheck=precheck,
+                    )
+                    subscription = await self.ensure_subscription(project_id, topic_id)
+                    self._live[topic_id] = screen
+                    if subscription.current_work is not None:
+                        raise ScreenSetupError(
+                            "这个话题上已有工作正在运行，本次请求已跳过"
+                        )
+                    attribution = WorkAttribution(
+                        work_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
+                    )
+                    subscription.current_work = attribution
+                    staged, lost = await self._stage(screen, images)
+                    try:
+                        ready = await self._channel.send_prompt(
+                            screen, _prompt_with_native_images(prompt, staged, lost)
+                        )
+                    except PromptSocketUnavailable:
+                        if (
+                            attempt
+                            or not attribution.queue.empty()
+                            or not await self._channel.retire_unreachable(screen)
+                        ):
+                            raise
+                        subscription.current_work = None
+                        continue
+                    break
             except ScreenSetupError as exc:
                 yield AgentResult(
                     text=str(exc),
@@ -1680,6 +1727,7 @@ class ClaudeCodeRuntime:
                         "输入框一出现就会自动发送。"
                     )
                 )
+            assert attribution is not None
             tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
             monitor_task = await self._channel.start_activity_monitor(screen, tracker)
             try:

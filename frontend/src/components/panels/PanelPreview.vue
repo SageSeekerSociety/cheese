@@ -13,6 +13,7 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
+import { t } from '../../i18n'
 import { useDocumentBytes } from '../../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
@@ -474,12 +475,12 @@ watch(
            gone. Collapsing them told people to summon 芝士 again for a tunnel
            that no summon brings back. -->
       <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
-      <div>应用暂时不在线</div>
+      <div>{{ t('tasks.preview.unavailable') }}</div>
       <div v-if="previewTunnelUp" class="text-caption mt-1">
-        那台机器还连着，但登记的端口上没有服务在应答。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
+        {{ t('tasks.preview.appUnavailable') }}
       </div>
       <div v-else class="text-caption mt-1">
-        跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
+        {{ t('tasks.preview.connectionUnavailable') }}
       </div>
     </div>
     <div v-else-if="documentType && previewFile" class="doc">
