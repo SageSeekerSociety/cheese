@@ -195,9 +195,13 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
 
 
 @pytest.mark.anyio
-async def test_receiving_message_does_not_create_default_agent(client, tmp_path):
+async def test_receiving_a_message_mints_no_second_agent(client, tmp_path):
+    """收下一条消息，收件人是项目建出来时就有的那个芝士，不多长一个队友。
+
+    「读一条消息」不该建参与者。以前这条守的是反面——项目可以一个 agent 都没有，
+    读消息也不许给它补一个；现在项目建出来就带着它的芝士，所以要守的是数目不变。
+    """
     from app.domain.agent_instance.repositories import AgentInstanceRepository
-    from app.domain.project.repositories import ProjectRepository
 
     factory = client.test_factory
     svc = ChatService(
@@ -211,21 +215,27 @@ async def test_receiving_message_does_not_create_default_agent(client, tmp_path)
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
-        agents = AgentInstanceRepository(session)
-        project.default_agent_instance_id = None
-        await session.flush()
-        for agent in await agents.list_for_project(project.id):
-            await agents.delete(agent)
         project_id, topic_id = project.id, topic.id
+        before = [
+            agent.id
+            for agent in await AgentInstanceRepository(session).list_for_project(
+                project_id
+            )
+        ]
         await session.commit()
+    assert before, "建项目就该播下芝士那一行"
     payloads, _, _, _ = await svc.post_user_message(
         topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
     async with factory() as session:
-        assert await AgentInstanceRepository(session).list_for_project(project_id) == []
-        project = await ProjectRepository(session).get(project_id)
-        assert project.default_agent_instance_id is None
+        after = [
+            agent.id
+            for agent in await AgentInstanceRepository(session).list_for_project(
+                project_id
+            )
+        ]
+    assert after == before
 
 
 class ProcessNotesScreen(StubChannel):

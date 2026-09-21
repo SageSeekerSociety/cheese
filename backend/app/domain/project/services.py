@@ -58,13 +58,6 @@ class ProjectService:
             external_task_id=external_task_id,
         )
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
-        # Apply task terms when eligible; a pending application gets a workspace
-        # now and receives its competition resources when approved.
-        if external_task_id is not None:
-            await self._accept_task_protocol(project, external_task_id)
-        if agent_type:
-            await self._set_agent_type(project, agent_type)
-        await AgentInstanceService(self._session).materialize_default(project)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",
@@ -72,9 +65,25 @@ class ProjectService:
             created_by=owner_handle,
         )
         await self._repo.set_root_topic(project, root.id)
+        # 项目的芝士和它在总览里的席位，与项目同一个事务里出生（结论 4、不变量
+        # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
+        # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
+        agents = AgentInstanceService(self._session)
+        instance = await agents.materialize_default(project)
+        if agent_type:
+            # 类型（人设）落在 agent 上，不落在项目上：一个项目可以坐好几个 agent，
+            # 只有 agent 自己知道这套人设是从哪个记忆池里说话的。
+            await agents.set_type(instance, agent_type)
+            await self._session.flush()
+        # Apply task terms when eligible; a pending application gets a workspace
+        # now and receives its competition resources when approved. After the
+        # 芝士 above, because the terms may give it a type — and a type goes on
+        # an agent that exists.
+        if external_task_id is not None:
+            await self._accept_task_protocol(project, external_task_id)
         await self._seed_roster(project)
         # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
-        # Seed it with every current project member + 芝士.
+        # Seed it with every current project member; 芝士 is already seated above.
         member_handles = [
             m["handle"] for m in await self._repo.list_members(project.id)
         ]
@@ -186,18 +195,6 @@ class ProjectService:
         await TopicService(self._session).seed_brief_doc(root, brief)
         return project
 
-    async def _set_agent_type(self, project: Project, type_name: str) -> None:
-        """Give this project's default agent a type (its persona).
-
-        The type goes on the agent, never on the project: a project can host
-        more than one agent, and only the agent knows which memory pool the
-        persona is talking out of.
-        """
-        agents = AgentInstanceService(self._session)
-        instance = await agents.materialize_default(project)
-        await agents.set_type(instance, type_name)
-        await self._session.flush()
-
     async def get(self, project_id: uuid.UUID) -> Project | None:
         """项目本身，不存在返回 None。
 
@@ -289,9 +286,14 @@ class ProjectService:
         protocol = resolve(category=category, task=task)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
-        agent = await AgentInstanceService(self._session).for_project(project)
+        agents = AgentInstanceService(self._session)
+        agent = await agents.for_project(project)
         if protocol.default_role and agent.type_name is None:
-            await self._set_agent_type(project, protocol.default_role)
+            instance = await agents.get_in_project(
+                project_id=project.id, instance_id=agent.instance_id
+            )
+            await agents.set_type(instance, protocol.default_role)
+            await self._session.flush()
         grants = await self._grants.list_for_project(project.id)
         if protocol.compute_credits > 0 and not any(
             grant.source_task_id == task_id for grant in grants

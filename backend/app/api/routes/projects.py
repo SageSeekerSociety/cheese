@@ -52,7 +52,6 @@ from app.domain.agent_instance.schemas import (
     ProjectDefaultAgentIn,
 )
 from app.domain.agent_instance.services import (
-    IMPLICIT_DEFAULT,
     AgentInstanceService,
     ResolvedAgent,
     legacy_topic_pool,
@@ -280,19 +279,11 @@ async def get_project(
 def _holds_the_default(project: Project, row: AgentInstance) -> bool:
     """Whether this row is what a new topic in the project gets.
 
-    Two ways to be it, and both have to be checked in every place that reports
-    it or the same agent comes back ``is_default`` from one route and not from
-    another: the project points at it, or it IS the project's 芝士 — same
-    handle, therefore the same memory pool — which holds the default even
-    before anything points at it. A retired row holds nothing.
+    One way to be it: the project points at it. A project is created with its
+    芝士 and pointed at it right there, so there is no longer a second way — an
+    agent that holds the default before anything points at it.
     """
-    if row.id == project.default_agent_instance_id:
-        return True
-    return (
-        project.default_agent_instance_id is None
-        and row.is_active
-        and row.handle == IMPLICIT_DEFAULT.handle
-    )
+    return row.id == project.default_agent_instance_id
 
 
 def _agent_out(
@@ -306,14 +297,11 @@ def _agent_out(
         id=agent.instance_id,
         project_id=project_id,
         handle=agent.handle,
-        seat_handle=(
-            agent_instance_handle(agent.instance_id) if agent.instance_id else None
-        ),
+        seat_handle=agent_instance_handle(agent.instance_id),
         type_name=agent.type_name,
         display_name=agent.display_name,
         configuration=AgentConfiguration.model_validate(agent.configuration),
         is_default=is_default,
-        configured=agent.instance_id is not None,
         is_active=is_active,
     ).model_dump(mode="json")
 

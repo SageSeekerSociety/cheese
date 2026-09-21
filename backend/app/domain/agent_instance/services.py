@@ -34,28 +34,20 @@ _HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 @dataclass(frozen=True)
 class ResolvedAgent:
-    """The agent acting in one place — configured or implicit.
+    """The agent acting in one place — always a saved row.
 
-    ``instance_id`` is None for a project that never picked one: 芝士 under the
-    ``cheese`` handle, with no type. That case deliberately produces the SAME
-    pool key an explicit ``cheese`` instance would, so configuring one later
-    inherits everything the project's 芝士 already remembered rather than
-    starting from an empty pool.
+    ``instance_id`` is not optional: a project is created with its 芝士, so
+    「已解析的 agent」 and 「一行实例」 are the same thing. There used to be a
+    third state — an implicit default with no row — and it was the reason
+    authorization, seating and attribution each had to ask again whether the
+    agent they were holding actually existed.
     """
 
-    instance_id: uuid.UUID | None
+    instance_id: uuid.UUID
     handle: str
     type_name: str | None
     display_name: str
     configuration: dict = field(default_factory=dict)
-
-
-IMPLICIT_DEFAULT = ResolvedAgent(
-    instance_id=None,
-    handle=CHEESE_HANDLE,
-    type_name=None,
-    display_name=CHEESE_NAME,
-)
 
 
 def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:
@@ -87,11 +79,8 @@ class AgentInstanceService:
     # --- resolution ---------------------------------------------------------
 
     async def for_project(self, project: Project) -> ResolvedAgent:
-        """The project's default agent."""
-        if project.default_agent_instance_id is None:
-            return self.resolved(await self.materialize_default(project))
-        instance = await self._repo.get(project.default_agent_instance_id)
-        return self.resolved(instance or await self.materialize_default(project))
+        """The project's default agent — a row, never an implicit stand-in."""
+        return self.resolved(await self.materialize_default(project))
 
     async def for_topic(self, topic: Topic, project: Project) -> ResolvedAgent:
         """The agent a turn in *topic* runs as, when nobody was addressed.
@@ -106,26 +95,6 @@ class AgentInstanceService:
         if peer is not None:
             return peer
         return await self.for_project(project)
-
-    async def recipient_for_topic(
-        self, topic: Topic, project: Project
-    ) -> ResolvedAgent:
-        """Read the default recipient without creating or activating an agent.
-
-        Same shape as `for_topic`: a DM's own teammate, else the project's
-        default. Who a room message reaches is decided by addressing, not here.
-        """
-        peer = await self._dm_teammate(topic, project)
-        if peer is not None:
-            return peer
-        if project.default_agent_instance_id is not None:
-            instance = await self._repo.get(project.default_agent_instance_id)
-            if instance is not None:
-                return self.resolved(instance)
-        instance = await self._repo.get_by_handle(
-            project_id=project.id, handle=IMPLICIT_DEFAULT.handle
-        )
-        return self.resolved(instance) if instance is not None else IMPLICIT_DEFAULT
 
     async def _dm_teammate(
         self, topic: Topic, project: Project
@@ -180,12 +149,9 @@ class AgentInstanceService:
         instance = await self._repo.get_by_handle(project_id=project.id, handle=handle)
         if instance is not None:
             return instance
-        if (
-            handle == IMPLICIT_DEFAULT.handle
-            and project.default_agent_instance_id is None
-        ):
-            # The project's 芝士, still implicit — asking to talk to it is one of
-            # the ways of choosing it, same as configuring it.
+        if handle == CHEESE_HANDLE and project.default_agent_instance_id is None:
+            # 迁移窗口：旧镜像建的项目还没有芝士这一行。就地补种，走的是同一个
+            # 播种函数，不是第二条读路径。
             return await self.materialize_default(project)
         raise NotFoundError(f"这个项目里没有 handle 为 {handle!r} 的队友")
 
@@ -340,45 +306,65 @@ class AgentInstanceService:
         await self._session.flush()
 
     async def set_project_default(
-        self, project: Project, instance: AgentInstance | None
+        self, project: Project, instance: AgentInstance
     ) -> ResolvedAgent:
-        if instance is not None and not instance.is_active:
+        if not instance.is_active:
             raise ValidationError("这个队友已停用，不能设为默认")
-        project.default_agent_instance_id = instance.id if instance else None
+        project.default_agent_instance_id = instance.id
         await self._session.flush()
         return await self.for_project(project)
 
     async def materialize_default(self, project: Project) -> AgentInstance:
-        """The project's default as a real row, creating it if it was implicit.
+        """项目的默认 agent，没有就在这里播种——全仓唯一的播种函数。
 
-        Needed by anything that has to *change* the default agent rather than
-        just read it — the implicit default has nothing to edit.
+        播种发生在两处：`ProjectService.create`（建项目时，和总览房间同一个事务），
+        和这里被读到一个还没有实例行的项目时的就地补种。补种不是第二条读路径，它
+        建的是真行、走的是这一个函数，所以「这个项目的芝士是谁」仍然只有一处声明。
+
+        补种留着是因为迁移窗口：回填跑完之后、容器换掉之前，旧镜像还在建不带实例
+        行的项目。若这里变成一次「必然命中」的纯查询，那些项目换容器后直接炸。
+
+        席位和实例一起播：一行实例没有席位，就是一个进不了房间的参与者，授权也就
+        没有可读的那一行。根房间还不存在时（建项目的调用顺序里只可能出现一次）不
+        播席位，`ProjectService.create` 在根房间建好之后才调这里。
         """
         if project.default_agent_instance_id is not None:
             instance = await self._repo.get(project.default_agent_instance_id)
             if instance is not None:
                 return instance
         existing = await self._repo.get_by_handle(
-            project_id=project.id, handle=IMPLICIT_DEFAULT.handle
+            project_id=project.id, handle=CHEESE_HANDLE
         )
         instance = existing or await self._repo.create(
             project_id=project.id,
-            handle=IMPLICIT_DEFAULT.handle,
+            handle=CHEESE_HANDLE,
             type_name=None,
-            display_name=IMPLICIT_DEFAULT.display_name,
+            display_name=CHEESE_NAME,
             configuration=(await self.initial_configuration(project)).model_dump(),
         )
-        # An agent gets its identity when it comes into being, and the implicit
-        # 芝士 comes into being here rather than in create(). Without it the first
-        # room of a project could not seat it under its own seat.
+        # An agent gets its identity when it comes into being, and the project's
+        # 芝士 comes into being here rather than in create(). Without it the
+        # project's own room could not seat it under its own seat.
         await self.ensure_identity(instance)
         # Configuring the project's 芝士 is choosing it, so a retired row under
         # that handle comes back rather than becoming a default nobody may pick.
         # Same pool either way — the handle never moved.
         instance.is_active = True
         project.default_agent_instance_id = instance.id
+        await self._seat_in_root(project, instance)
         await self._session.flush()
         return instance
+
+    async def _seat_in_root(self, project: Project, instance: AgentInstance) -> None:
+        """这个 agent 在项目总览房间里的席位。幂等。"""
+        if project.root_topic_id is None:
+            return
+        # 建项目时 ProjectService 就在这条链上，按调用时导入。
+        from app.domain.topic_membership.services import TopicMemberService
+
+        await TopicMemberService(self._session).ensure_agent_seat(
+            project.root_topic_id, agent_instance_handle(instance.id)
+        )
 
     async def _require_known_type(self, type_name: str | None) -> None:
         if type_name and type_name not in preset_types():

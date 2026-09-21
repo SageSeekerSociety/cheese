@@ -151,9 +151,17 @@ class TopicMemberService:
     ) -> None:
         """Seed a project's ROOT topic (总览/项目本体) roster: EVERY project
         member joins the room, so 总览 mirrors the whole project (fusion-design
-        §3). The project owner is the topic owner; other members join as members;
-        芝士 joins as a member. Idempotent — re-seeding never duplicates a row."""
-        await self._seed_with_members(
+        §3). The project owner is the topic owner; other members join as members.
+        Idempotent — re-seeding never duplicates a row.
+
+        People only. 芝士 is seated by whatever seeds the project's own agent
+        (`AgentInstanceService.materialize_default`), because that is where 「这
+        个项目的芝士是谁」 is decided — seating a room-derived stand-in here would
+        give the project总览 a second agent nobody created.
+        """
+        if owner_handle and not self._is_agent_handle(owner_handle):
+            await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
+        await self._ensure_people(
             topic_id, owner_handle=owner_handle, member_handles=member_handles
         )
 
@@ -200,6 +208,17 @@ class TopicMemberService:
         member_handles: list[str],
     ) -> None:
         await self.seed(topic_id, owner_handle=owner_handle)
+        await self._ensure_people(
+            topic_id, owner_handle=owner_handle, member_handles=member_handles
+        )
+
+    async def _ensure_people(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        member_handles: list[str],
+    ) -> None:
         for handle in member_handles:
             if not handle or self._is_agent_handle(handle) or handle == owner_handle:
                 continue
