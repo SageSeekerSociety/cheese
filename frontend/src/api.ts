@@ -237,8 +237,23 @@ export async function refreshNow(): Promise<void> {
   await refreshInFlight
 }
 
+// Room chrome, chat and the work panel request the same roster/task summary
+// on mount. Share only pending reads; the next refresh always goes to the server.
+const pendingRoomReads = new Map<string, Promise<unknown>>()
+function roomRead<T>(path: string): Promise<T> {
+  const key = `${authToken()}:${path}`
+  const pending = pendingRoomReads.get(key)
+  if (pending) return pending as Promise<T>
+  const started = request<T>(path).finally(() => {
+    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
+  })
+  pendingRoomReads.set(key, started)
+  return started
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -307,6 +322,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
+    if (method !== 'GET') pendingRoomReads.clear()
     return envelope.data
   }
 }
@@ -622,7 +638,7 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
@@ -1920,7 +1936,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {

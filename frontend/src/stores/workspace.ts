@@ -59,6 +59,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const members = ref<ProjectMemberRow[]>([])
   const loadingTopics = ref(false)
   let projectEpoch = 0
+  let topicRevision = 0
   const pendingReads = new Map<string, Promise<unknown>>()
   function readOnce<T>(key: string, read: () => Promise<T>): Promise<T> {
     const scopedKey = `${projectEpoch}:${key}`
@@ -195,12 +196,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // Silent refresh of the topic list (no spinner), so sub-topics 芝士 splits off
   // show up on their own.
   async function refreshTopics() {
+    const revision = topicRevision
     const pid = projectId.value
     const epoch = projectEpoch
     if (!pid) return
     try {
-      const payload = await readOnce(`topics:${pid}`, () => listTopics(pid, TOPIC_SORT))
-      if (epoch === projectEpoch && projectId.value === pid) topics.value = payload.data
+      const payload = await readOnce(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
+      if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) topics.value = payload.data
     } catch {
       // Best-effort background refresh; ignore.
     }
@@ -209,6 +211,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // Enter a project: everything project-scoped is reloaded, and anything left
   // over from the previous project is dropped rather than shown as this one's.
   async function openProject(id: string) {
+    const revision = topicRevision
     // Re-entering the project you were already in (back from 首页, a rail click):
     // the tree is still here and blanking it would flash the whole sidebar, but
     // it is as old as the time you spent away, so bring it up to date.
@@ -233,9 +236,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
-      const payload = await readOnce(`topics:${id}`, () => listTopics(id, TOPIC_SORT))
+      const payload = await readOnce(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
       if (epoch !== projectEpoch || projectId.value !== id) return
-      topics.value = payload.data
+      if (revision === topicRevision) topics.value = payload.data
     } catch (e) {
       // 「进不来」和「进来了但这一次没取到」是两件事：前者要一屏说明，后者是那条
       // 红条。分不开的话，一次网络抖动会被写成「你没有权限」。
@@ -332,7 +335,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       const updated = await setTopicTitle(topicId, title)
       const t = topics.value.find((x) => x.id === topicId)
-      if (t) t.title = updated.title
+      if (t) {
+        topicRevision += 1
+        t.title = updated.title
+      }
     } catch (e) {
       reportError(e, '重命名失败')
     }
@@ -341,8 +347,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function archive(topicId: string) {
     const me = myHandle()
     try {
-      await archiveTopic(topicId, me)
-      await refreshTopics()
+      const updated = await archiveTopic(topicId, me)
+      const topic = topics.value.find((row) => row.id === topicId)
+      if (topic) {
+        topicRevision += 1
+        Object.assign(topic, updated)
+      }
+      void refreshTopics()
     } catch (e) {
       reportError(e, '归档失败')
     }
@@ -351,8 +362,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function unarchive(topicId: string) {
     const me = myHandle()
     try {
-      await unarchiveTopic(topicId, me)
-      await refreshTopics()
+      const updated = await unarchiveTopic(topicId, me)
+      const topic = topics.value.find((row) => row.id === topicId)
+      if (topic) {
+        topicRevision += 1
+        Object.assign(topic, updated)
+      }
+      void refreshTopics()
     } catch (e) {
       reportError(e, '取消归档失败')
     }
@@ -370,6 +386,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       // Untitled by default — the title is derived from the first message.
       const topic = await createTopic(pid, title.trim() || '新话题')
       if (epoch !== projectEpoch || projectId.value !== pid) return null
+      topicRevision += 1
       topics.value.push(topic)
       return topic
     } catch (e) {
