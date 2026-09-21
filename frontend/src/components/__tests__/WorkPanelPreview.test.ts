@@ -16,6 +16,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '../../i18n'
+
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
@@ -38,6 +40,7 @@ vi.mock('../../api', async () => {
         (preview: Record<string, unknown> | null) =>
           preview && { ...preview, url: preview.kind === 'app' ? preview.url : 'https://preview-topic-a.example/' }
       ),
+    listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
@@ -112,6 +115,7 @@ beforeEach(() => {
 })
 
 describe('预览面板：运行中的应用到不了的时候说什么', () => {
+  beforeEach(() => setLocale('zh-CN'))
   it('机器没把预览通道拨出来 → 说的是通道，不是应用', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
@@ -125,11 +129,12 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await flush()
     await openPreview(container)
 
-    expect(container.textContent).toContain('预览通道')
-    expect(container.textContent).not.toContain('服务多半已经退出')
+    expect(container.textContent).toContain('预览连接尚未建立或已断开')
+    expect(container.textContent).toContain('不代表芝士已停止工作')
+    expect(container.textContent).not.toContain('再 @')
   })
 
-  it('通道在、应用死了 → 说的是应用，并告诉人再 @ 一次能拉起来', async () => {
+  it('通道在、应用没有响应 → 请芝士检查应用', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
       path: 'Vue dev server',
@@ -142,8 +147,9 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await flush()
     await openPreview(container)
 
-    expect(container.textContent).toContain('应用暂时不在线')
-    expect(container.textContent).toContain('服务多半已经退出')
+    expect(container.textContent).toContain('应用预览暂不可用')
+    expect(container.textContent).toContain('预览连接正常，但应用没有响应')
+    expect(container.textContent).not.toContain('再 @')
   })
 
   it('应用活着 → 向独立来源提交预览授权', async () => {

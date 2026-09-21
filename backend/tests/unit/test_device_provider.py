@@ -12,14 +12,15 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent import device_provider, place
-from app.domain.agent.device_hub import HubScreen
+from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
     device_home_dir,
     device_store_dir,
     tunnel_port_for_topic,
 )
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
@@ -763,6 +764,85 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
     assert hub.closed == ["s1"]  # … the stale screen was dropped …
     assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
     assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+
+
+@pytest.mark.parametrize("api", ["send", "run_turn"])
+@pytest.mark.parametrize(
+    ("failures", "code", "alive", "expected_calls", "success"),
+    [
+        (1, "prompt_socket_unavailable", False, 2, True),
+        (2, "prompt_socket_unavailable", False, 2, False),
+        (1, None, False, 1, False),
+        (1, "prompt_socket_unavailable", True, 1, False),
+    ],
+)
+async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
+    api, failures, code, alive, expected_calls, success
+):
+    class InputHub(DeadClaudeHub):
+        def __init__(self):
+            super().__init__()
+            self.accepted = []
+
+        async def exec(self, device_id, argv, **kwargs):
+            result = await super().exec(device_id, argv, **kwargs)
+            if alive and (kwargs.get("env") or {}).get("CHEESE_ALIVE_TOPIC"):
+                result["stdout"] = "alive"
+            return result
+
+        async def await_call(self, device_id, call_id, timeout=30):
+            if len(self.prompts) <= failures:
+                raise DeviceCallError("input unavailable", failure_code=code)
+            self.accepted.append(self.prompts[-1][0])
+            return {"ready": True}
+
+    hub = InputHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    session = SessionRef(project_id, topic_id)
+    try:
+        if api == "send":
+            call = provider.send(
+                session,
+                "finish the work",
+                Opening(system_prompt="", resume_token="existing-conversation"),
+                work_id=uuid.uuid4(),
+                on_mark=lambda _: None,
+            )
+            if success:
+                assert await call is True
+            else:
+                with pytest.raises(ScreenSetupError, match="input unavailable"):
+                    await call
+        else:
+            events, task = await _run(
+                provider,
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt="finish the work",
+                system_prompt="",
+                resume_session_id="existing-conversation",
+            )
+            if success:
+                await _reached(lambda: bool(hub.accepted))
+                router.push(
+                    str(topic_id),
+                    {"hook_event_name": "Stop", "last_assistant_message": "done"},
+                )
+            await asyncio.wait_for(task, timeout=5)
+            assert (
+                any(
+                    isinstance(event, AgentResult) and event.is_error
+                    for event in events
+                )
+                is not success
+            )
+        assert len(hub.prompts) == expected_calls
+        assert hub.accepted == (["finish the work"] if success else [])
+        assert hub.closed == (["s1"] if expected_calls == 2 else [])
+    finally:
+        await provider.close(session)
 
 
 class DeadTunnelHub(DeadClaudeHub):
