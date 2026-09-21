@@ -44,9 +44,10 @@ What it can do
 --------------
 
 The same module answers the other question about that borrowed machine: what
-this place gives out. One physical fact — are the hands the very machine the
-session process runs on — decided in one place, so that nothing upstream has to
-ask a channel which class it is (结论 24).
+this place gives out. The capability a place can be asked for is named here, so
+that the one physical fact behind it — are the hands the very machine the
+session process runs on — is what upstream reads, and nothing has to ask a
+channel which class it is (结论 24).
 """
 
 import asyncio
@@ -236,15 +237,10 @@ async def write(
 #: 这一份手就是跑会话进程的那台机器——工具不经执行器再跳一程。它说的是物理事实，
 #: 不是通道的类名：``compute.py`` 读它来决定哪些通道上挂得住一个把进程和工作区放
 #: 在同一台机器上的骨架 (pi)。
+# 今天这张表上只有这一位，因为今天只有这一件事是上游真的在问的。多的那几位（平台
+# 能不能销毁这台机器、这个地点给不给得出「休眠」这第三态）跟着**真正实现它们的那个
+# PR** 一起出生 —— 一位没有读者的能力位，和一张按类名写死的表一样，都是「写下它那天
+# 的样子」，区别只是它还骗人说这里已经有一个可以问的接口。同理，推它的那一行就写在
+# 唯一读物理事实的地方（``Channel.capabilities``）：今天只有一个读者，第二种地点要
+# 报一张不一样的表的那天，再把推导收成一个函数。
 HANDS_HERE = "hands_here"
-
-
-def capabilities_of(*, hands_here: bool) -> frozenset[str]:
-    """一个地点的能力位——**由物理事实推出来，不是各家自己报一份**。
-
-    今天这张表上只有一位，因为今天只有一件事是上游真的在问的。多的那几位（平台能
-    不能销毁这台机器、这个地点给不给得出「休眠」这第三态）要跟着**真正实现它们的
-    那个 PR** 一起出生：一位没有读者的能力位，和一张按类名写死的表一样，都是「写下
-    它那天的样子」，区别只是它还骗人说这里已经有一个可以问的接口。
-    """
-    return frozenset({HANDS_HERE}) if hands_here else frozenset()
