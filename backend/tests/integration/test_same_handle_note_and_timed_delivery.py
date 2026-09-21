@@ -8,9 +8,12 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+
 from app.domain.agent.chat import ChatService
+from app.domain.delivery.models import TimedDelivery
 from app.domain.delivery.note import NOT_YOUR_OWN_THREAD
-from app.domain.delivery.timer import deliver_due
+from app.domain.delivery.timer import DELIVERED_AS_ASKED, deliver_due
 
 
 def _project(client, name: str, owner: str = "user-1") -> str:
@@ -129,12 +132,61 @@ def test_a_timed_delivery_arrives_as_a_delivery_not_a_turn_the_platform_started(
     topic_id, kwargs = submitted[0]
     assert topic_id == room
     assert kwargs["content"] == "回来看一眼那条 PR"
-    assert kwargs["author"] == seat
     assert [r.handle for r in kwargs["addressed"].recipients] == [seat]
     assert "summon" not in kwargs, "平台又自己点起了一轮"
+    # 房间里读得到这一轮的缘由（结论 14）：平台说的话署平台的名，那一行写着它是
+    # 谁当初请来的，原话收在 detail 里。
+    assert kwargs["author"] == "system"
+    assert kwargs["nudge_event"] == DELIVERED_AS_ASKED
+    assert kwargs["nudge_meta"]["detail"] == "回来看一眼那条 PR"
 
     # 递过的那一行不再递第二遍 —— 重启、重跑、两台机器同时扫都一样。
     again = asyncio.run(
         deliver_due(client.test_factory, chat=object(), runner=Runner())
     )
     assert again == {"delivered": 0}
+
+
+def test_a_scan_leaves_a_row_another_scanner_already_holds(client):
+    """两个后端同时扫，同一条只递一遍。
+
+    滚动部署里新旧两个容器会同时在跑，各自都带着这条 30 秒的扫描。这里让一条别的
+    连接先握住那一行，再让扫描跑一次：它跳过去（`skip_locked`），不是等在那里，也
+    不是把这一条再递一遍。锁一松，下一拍照常递出去。
+    """
+    room = _room(client, _project(client, "同时扫"), "房间一")
+    due = datetime.now(UTC) - timedelta(minutes=1)
+    r = client.post(
+        f"/topics/{room}/deliveries",
+        json={"at": due.isoformat(), "content": "回来看一眼那条 PR"},
+    )
+    assert r.status_code == 200, r.text
+
+    submitted = []
+
+    class Runner:
+        def submit(self, chat, topic_id, **kwargs):
+            submitted.append(str(topic_id))
+
+    async def _while_another_scanner_holds_it():
+        async with client.test_factory() as holder:
+            await holder.scalars(
+                select(TimedDelivery)
+                .where(TimedDelivery.delivered_at.is_(None))
+                .with_for_update()
+            )
+            skipped = await asyncio.wait_for(
+                deliver_due(client.test_factory, chat=object(), runner=Runner()),
+                timeout=20,
+            )
+            await holder.rollback()
+        return skipped
+
+    assert asyncio.run(_while_another_scanner_holds_it()) == {"delivered": 0}
+    assert submitted == [], "同一条被递了第二遍"
+
+    again = asyncio.run(
+        deliver_due(client.test_factory, chat=object(), runner=Runner())
+    )
+    assert again == {"delivered": 1}
+    assert submitted == [room]

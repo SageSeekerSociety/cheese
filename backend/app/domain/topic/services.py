@@ -1212,7 +1212,7 @@ class TopicService:
                 f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
                 f"{summarize_doc_change(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
+                "先用 cheese doc get 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
         landed = landing(

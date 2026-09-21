@@ -1368,9 +1368,19 @@ async def set_topic_compute_profile(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     await ProjectMachineRepository(db).lock_topic(topic_id)
-    if await AgentSessionService(db).has_run(
-        topic_id
-    ) or await ProjectMachineRepository(db).get_active_for_topic(topic_id):
+    # 「开跑即锁定」锁的是**界面上那个人**：房间跑起来之后他再换一档，扔掉的是正在
+    # 跑的那条会话和它的工作区，而他从那个下拉框里看不见那边在干什么。
+    #
+    # agent 自己这一次调用不是那件事。它是结论 23 的那一次——「这台机器够不着了，
+    # 我要另一台」——而那句话只可能在房间跑起来之后说出口：说它的就是正在这个房间里
+    # 跑的那一轮。按开跑锁死，这个工具在生产里一次也调不通，agent 收到的是一句
+    # 「新建话题可另选算力」，而它连新建话题都做不到。准不准由下面那道策略闸门答
+    # （结论 40）：自托管那台机器要机主点头，Cloud 花的是项目的钱。
+    by_a_turn = actor.via == "cheese"
+    if not by_a_turn and (
+        await AgentSessionService(db).has_run(topic_id)
+        or await ProjectMachineRepository(db).get_active_for_topic(topic_id)
+    ):
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
     try:

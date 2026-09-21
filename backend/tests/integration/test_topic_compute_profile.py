@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -72,6 +73,13 @@ def _project_devices(client, pid: str, *names: str) -> list[str]:
             return device_ids
 
     return asyncio.run(_seed())
+
+
+def _agent_seat(client, tid: str) -> str:
+    rows = client.get(f"/topics/{tid}/members").json()["data"]["data"]
+    seats = [m["member_handle"] for m in rows if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]
 
 
 def _topic_binding(client, tid: str):
@@ -260,6 +268,53 @@ def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
     )
     assert locked_response.status_code == 422
     assert _topic_binding(client, tid).device_id == second
+
+
+def test_the_turn_running_in_the_room_can_still_ask_for_another_machine(client):
+    """`cheese_machine` 打的是这条真路由（结论 23、40）。
+
+    这个工具只会被**正在这个房间里跑的那一轮**调用，而那一刻房间必然已经开跑过。
+    所以「开跑即锁定」必须只锁界面上那个人：锁住 agent，等于表上摆了一样在生产里
+    一次也调不通的工具，它拿到的回话还是「新建话题可另选算力」——而它连新建话题都
+    做不到。
+
+    契约那一组对着一台假 HTTP 断言这次调用落在哪个地址上，答不出这里的问题：地址
+    是对的，答话是拒绝。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid)
+    here, there = _project_devices(client, pid, "here", "there")
+    assert (
+        client.put(
+            f"/topics/{tid}/compute-profile",
+            json={"profile": "device", "device_id": here},
+        ).status_code
+        == 200
+    )
+    _mark_started(client, tid)
+    seat = _agent_seat(client, tid)
+
+    # 界面上那个人：房间开跑了，这一档就定住了。
+    by_a_person = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+    )
+    assert by_a_person.status_code == 422
+    assert _topic_binding(client, tid).device_id == here
+
+    # 房间里跑着的那一轮自己要另一台：这才是这个工具的那次调用。
+    by_the_turn = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+    assert by_the_turn.status_code == 200, by_the_turn.text
+    assert by_the_turn.json()["data"]["device_id"] == there
+    assert _topic_binding(client, tid).device_id == there
 
 
 def test_selecting_cloud_without_machine_create_authority_is_refused(

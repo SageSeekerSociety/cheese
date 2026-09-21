@@ -133,9 +133,6 @@ class ToolTable:
     def __contains__(self, name: object) -> bool:
         return name in self.names()
 
-    def __len__(self) -> int:
-        return len(self._tools)
-
 
 PLATFORM_TOOLS = ToolTable(
     (

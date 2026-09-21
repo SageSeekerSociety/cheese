@@ -522,10 +522,9 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
 **三件事，缺一不可：**
 
 **(a) 路径变短**（结论 21/22）。
-平台的 MCP 永远在 claude 进程所在的机器上——这件事已经做了一半：
-`chat_send`、`platform_request` 和 `cheese.DIRECT_MCP_TOOLS` 里的 `cheese_*` 今天已经从 `client.py` 直接打平台 HTTP。
-没做完的两处：不在 `DIRECT_MCP_TOOLS` 里的 `cheese_*` 仍然 `client.call("invoke", …)` 下机器（`client.py:940-957`），
-`tools/list` 仍然要问执行器要目录（`client.py:710-745`）。做完之后直接消失的：
+平台的 MCP 永远在 claude 进程所在的机器上——`chat_send`、`platform_request` 和平台工具表上的那几样
+`cheese_*` 都从 `client.py` 直接打平台 HTTP，工具表本身是会话侧的一个常量（`backend/sandbox/cheese` 的
+`PLATFORM_TOOLS`），不问执行器要目录。因此直接消失的：
 - #1186 那三小时（`Executor.cli` 抢 `cwd_lock`，平台工具的列表请求排在一条前台 shell 命令后面，Claude Code 30 秒超时就把整个 server 丢掉，
   一个 dev 房间三小时里拒绝了它的每一个工具）——平台工具根本不经过执行器，`cwd_lock` 与它无关。
 - #1051（列表短一截，`No such tool available: mcp__native__cheese_status`）——平台工具的名单是会话侧自己的常量。
@@ -561,8 +560,8 @@ guard 回一句 `Central execution is disabled`。
 而「在线但不答」必须靠**有没有那个 header** 才能和「离线」区分开。
 结论 23 落地后这条链整个不存在：机器状态是平台送到 agent 面前的一条事件，那一轮工具表里项目工具直接标不可用。
 **超时不会消失，它变成一个** [已定] 结论 55：超时是**感知**，不是决策。
-`CONNECT_RETRY_WINDOW_S=180`、`OWNER_CONNECT_RETRY_WINDOW_S=60`、`LISTING_DEADLINE_S=20`、
-pi 的 `STARTUP_WAIT_S=120` 这十五个以上的常量，问题不在于它们**存在**，
+`CONNECT_RETRY_WINDOW_S=180`、`OWNER_CONNECT_RETRY_WINDOW_S=60`、
+pi 的 `STARTUP_WAIT_S=120` 这十几个常量，问题不在于它们**存在**，
 而在于它们是十五个各自为政的「不知道机器状态，只好等」，到期各翻各的话。
 目标形状（不是过渡形状）三句：
 
