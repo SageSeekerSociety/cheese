@@ -4,12 +4,9 @@ Everything else in this domain runs on the request that caused it: a mention
 publishes, a handler writes the in-app row and pushes the email onto Redis.
 These two have no such caller.
 
-``finalize_expired_aggregations`` closes an aggregation window. A burst of
-mentions is merged into one notification that stays open for
-``notification_config.aggregation_window``; the merged notification is only
-DELIVERED when that window is finalized, so without this the aggregated ones
-are written and never sent — the exact notifications a busy room produces most
-of.
+``finalize_expired_aggregations`` closes an aggregation window. A notification
+held open to absorb a burst is only DELIVERED when its window is finalized, so
+without this the ones written into a window are never sent.
 
 ``drain_email_queue`` is the only consumer of the Redis list every email
 notification is pushed onto. Nothing else reads that key, so an unrun drain is

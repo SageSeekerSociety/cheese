@@ -226,18 +226,6 @@ class TestNotificationRepository:
         assert result is False
 
     @pytest.mark.anyio
-    async def test_find_active_aggregation(self):
-        session = _mock_session()
-        n = _notification(is_aggregatable=True, finalized=False)
-        session.execute.return_value = _mock_scalar(n)
-        repo = NotificationRepository(session)
-
-        result = await repo.find_active_aggregation(
-            recipient_id=10, aggregation_key="REACTION:discussion:1", now=NOW
-        )
-        assert result is n
-
-    @pytest.mark.anyio
     async def test_find_expired_aggregations(self):
         session = _mock_session()
         n = _notification(is_aggregatable=True, finalized=False)

@@ -26,6 +26,23 @@ async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
 
 
+async def handles_by_ids(
+    session: AsyncSession, user_ids: Iterable[int]
+) -> tuple[str, ...]:
+    """用户 id -> handle，按传进来的顺序；查不到的那些不在里面。
+
+    收件人在投递那一侧是 handle（I11），而社交那几处调用点手里是自己算出来的一组
+    用户 id —— 申请的管理员名单、邀请人、被 @ 的那几个人。翻译只此一处：与
+    ``user_by_handle`` 一样，账号叫什么是 `User` 的事实，而调用点自己拼一遍
+    ``select(User.username)`` 就要各自再答一遍「删掉的账号算不算」。
+
+    一次查完，不按人 N+1：一条讨论可以 @ 一屋子人。
+    """
+    ids = list(dict.fromkeys(int(i) for i in user_ids if int(i) > 0))
+    users = await UserRepository(session).get_by_ids(ids)
+    return tuple(users[i].username for i in ids if i in users)
+
+
 async def search_accounts(
     session: AsyncSession, q: str, limit: int
 ) -> Sequence[tuple[str, str]]:
