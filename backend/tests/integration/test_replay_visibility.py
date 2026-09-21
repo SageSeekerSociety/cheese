@@ -85,7 +85,7 @@ def _say(client, topic_id: str, text: str) -> None:
 
 def _system_lines(client, topic_id: str) -> list[str]:
     blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    return [b["content"] for b in blocks if b["author_type"] == "platform"]
+    return [b["content"] for b in blocks if b["author_type"] == "system"]
 
 
 def _replay_notices(client, topic_id: str) -> list[str]:

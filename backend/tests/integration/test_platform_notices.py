@@ -3,7 +3,7 @@
 ## 这些测试在钉什么
 
 平台自己在房间里说话原来有两条路。一条是正常的系统事件（`kind=event,
-author_type=platform`，前端一行灰字）。另一条更糟：`runner.submit(author="system")`
+author_type=system`，前端一行灰字）。另一条更糟：`runner.submit(author="system")`
 落下的其实是一条 **`author_type=human`** 的聊天消息 —— 前端把它当真人发言渲染，
 完整气泡、名字显示成 "system"。CI 失败播报走的就是这条，最长能往房间里铺 4000
 字符。
@@ -56,7 +56,7 @@ def _by_a_person(b: dict) -> bool:
 
     档位只分得出参与者和平台，「是人还是芝士」在署名上 —— 这条测试要的正是后者。
     """
-    return b["author_type"] != "platform" and not b["author"].startswith("cheese")
+    return b["author_type"] != "system" and not b["author"].startswith("cheese")
 
 
 def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 10.0):
@@ -87,7 +87,7 @@ def _assert_is_a_platform_notice(
 ) -> None:
     """契约本身：一行 content + 五个键齐全的 meta。"""
     assert block["kind"] == "event"
-    assert block["author_type"] == "platform"
+    assert block["author_type"] == "system"
     assert "\n" not in block["content"], f"content 不是一行：{block['content']!r}"
     assert len(block["content"]) <= 40, f"content 超过 40 字：{block['content']!r}"
     meta = block["meta"]

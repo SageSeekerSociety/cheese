@@ -15,7 +15,7 @@ function evt(id: string, content: string, meta: Record<string, unknown>, turn: s
     project_id: 'p',
     topic_id: 't',
     kind: 'event',
-    author_type: 'platform',
+    author_type: 'system',
     author: 'cheese',
     content,
     reply_to: null,

@@ -34,7 +34,7 @@ def test_contributions_exclude_system_blocks(client):
     ]
     pid, root = p["id"], p["root_topic_id"]
     _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
-    _seed_block(client, pid, root, "user-1", AuthorType.platform, BlockKind.event)
+    _seed_block(client, pid, root, "user-1", AuthorType.system, BlockKind.event)
 
     c = client.get(f"/projects/{pid}/contributions").json()["data"]
     assert c["by_author"].get("user-1") == 1  # the system block is not counted

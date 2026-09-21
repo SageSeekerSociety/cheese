@@ -5,10 +5,10 @@
 让任何取到它的查询 `LookupError`，整条时间线打不开。枚举删掉一档的那一次发布，
 带着那一档的行必须跟着改。
 
-反过来同样成立，这一份的第二个判据就是它：`system` 的行**不许动**。这一次发布只
-把平台那一档在代码里改叫 `platform`，而迁移是在换容器之前跑的——窗口里服务的还是
-上一版镜像，它的枚举里没有 `platform`。所以改写 `system` 的那一行 SQL 属于下一次
-发布，这里出现它就是把 dev 在窗口里打穿。
+反过来同样成立，这一份的第二个判据就是它：`system` 的行**不许动**。平台那一档今天
+写下的就是这个名字，改名分三次发布走（见 ``AuthorType.platform``），改写它的 SQL
+属于第三次。提前到这一次，窗口里服务的上一版镜像枚举里没有 `platform`，取到一行
+就是把 dev 打穿。
 
 测试跑的是**迁移的 `upgrade()` 本身**——把迁移模块加载进来，配一个真的 alembic
 operations 上下文，然后调它，跟 `alembic upgrade head` 走的是同一条路。不抽一个
@@ -38,8 +38,9 @@ _MIGRATION = (
     / "c1a7e05d4b83_the_two_old_author_values_leave_the_enum.py"
 )
 
-# 库里有过的每一个值，各来一行：上一版之前的人/芝士两档、平台那一档写下的名字，
-# 上一版起就在写的 participant，以及这一版起写下的 platform。
+# 库里有过的、以及往后会有的每一个值，各来一行：上一版之前的人/芝士两档、平台那
+# 一档今天写下的名字，上一版起就在写的 participant，以及改名之后才会出现的
+# platform——它现在就得读得回来，那一次发布才敢把写入端换过去。
 SEEDED = {
     "old_person": "human",
     "old_agent": "ai",
@@ -51,7 +52,7 @@ SEEDED = {
 EXPECTED = {
     "old_person": AuthorType.participant,
     "old_agent": AuthorType.participant,
-    # 不动：改写它的是下一次发布，这一次动了就是让窗口里的上一版镜像读不了。
+    # 不动：改写它的是改名那次发布，提前动就是让窗口里的上一版镜像读不了。
     "platform_under_its_old_name": AuthorType.system,
     "already_participant": AuthorType.participant,
     "new_platform": AuthorType.platform,

@@ -99,7 +99,7 @@ async def _run_stop_failure(
 async def _system_event_lines(factory, topic_id: uuid.UUID) -> list[str]:
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
-    return [b.content for b in blocks if b.author_type == AuthorType.platform]
+    return [b.content for b in blocks if b.author_type == AuthorType.system]
 
 
 @pytest.mark.anyio

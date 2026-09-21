@@ -9,7 +9,7 @@ function eventBlock(meta: Record<string, unknown> | null, content = '💥 后端
     id: 'event-1',
     topic_id: 'topic-1',
     kind: 'event',
-    author_type: 'platform',
+    author_type: 'system',
     author: 'backend',
     content,
     meta,

@@ -9,9 +9,9 @@
 所以这里只答一个问题：**这条事件是参与者写的，还是平台自己写的。**「是不是芝士
 说的」去问署名（`app.domain.identity.handles`）。
 
-判据写成「是不是 participant」而不是「是不是 platform」，存量行才不用管：平台那
-一档的旧名字 `system` 还在库里（改写在下一次发布，见 `AuthorType.system`），它同
-样不是 participant，于是同样判成平台自己写的。
+判据写成「是不是 participant」而不是列举平台那一档的名字：那一档正在改名，今天
+写下的是 `system`，两次发布之后是 `platform`（见 `AuthorType.platform`），而两个
+名字都不是 participant，于是这里一个字都不用跟着改。
 """
 
 from sqlalchemy import ColumnElement

@@ -140,7 +140,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
         topic_id=landed.topic_id,
         task_id=landed.task_id,
         author="cheese",
-        author_type=AuthorType.platform,
+        author_type=AuthorType.system,
         content="检查没跑完，这张验收卡已判死",
         kind=BlockKind.event,
         meta={

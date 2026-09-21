@@ -15,7 +15,7 @@ function evt(id: string, content: string, over: Partial<Block> & { meta?: Record
     project_id: 'p',
     topic_id: 't',
     kind: 'event',
-    author_type: 'platform',
+    author_type: 'system',
     author: 'cheese',
     content,
     reply_to: null,

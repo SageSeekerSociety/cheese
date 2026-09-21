@@ -3701,7 +3701,7 @@ class AcceptService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="cheese",
-            author_type=AuthorType.platform,
+            author_type=AuthorType.system,
             content=f"<@{decided_by}> 作废了这张验收卡",
             kind=BlockKind.event,
             meta={

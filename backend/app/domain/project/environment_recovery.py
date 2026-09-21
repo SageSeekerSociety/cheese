@@ -52,7 +52,7 @@ async def report_failure(
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="system",
-            author_type=AuthorType.platform,
+            author_type=AuthorType.system,
             kind=BlockKind.event,
             content=(
                 "环境准备失败，已交给总览芝士检查。"

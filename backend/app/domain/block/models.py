@@ -66,20 +66,27 @@ class AuthorType(enum.StrEnum):
     """
 
     participant = "participant"
-    # 平台自己产的事件：部署提醒、闸门结论、自动重发。
+
+    # 平台自己产的事件：部署提醒、闸门结论、自动重发。**这一档今天写下的是
+    # `system`**（下面那个成员），`platform` 先空着——它要比第一个写它的人早一次
+    # 发布进到枚举里。
+    #
+    # 为什么要早一次：`Enum(AuthorType, native_enum=False)` 绑的是 Python 枚举，
+    # 而 `deploy/deploy-docker.sh` 换容器有先后——`rollout_backend` 之后才轮到
+    # `rollout_frontend`，而且已经开着的标签页跑的还是上一版 bundle。改名于是要
+    # 三次发布，每一次都只动一头：
+    #
+    #   这一次：`platform` 进枚举、前端换成「不是 participant 就是平台」，写入端
+    #           不动，库里一行不变——旧 bundle 读到的仍是它认得的 `system`。
+    #   下一次：写入端改写 `platform`。窗口里的那一版就是这一版，枚举和 bundle
+    #           两头都已经认得这个名字。
+    #   再下次：`UPDATE ... SET 'platform' WHERE author_type='system'` 并删掉
+    #           `system` 这一档。改写跑在换容器之前，服务的是上一版镜像；它读得懂
+    #           `platform`，而且不再写 `system`，所以这一遍改完就不用补跑。
     platform = "platform"
 
-    # 上一档在存量行里的旧名字。没有一处代码再写它，读它的只有
-    # `block/authorship.py`（它不是 participant，于是照样判成平台自己写的）和前端
-    # 的 `lib/authorship.ts`。
-    #
-    # 为什么不在这一次连行一起改掉：`Enum(AuthorType, native_enum=False)` 绑的是
-    # Python 枚举，而 `deploy/deploy-docker.sh` 是先 `alembic upgrade head` 再换
-    # 容器——改写发生的那一刻，服务的还是上一版镜像，它的枚举里没有 platform，
-    # 取到一行就是 LookupError，而平台事件几乎每个房间都有。所以「加值」和「改
-    # 数据」隔一次发布：这一次只把 platform 加进来、写入端全改成它；等这一版镜像
-    # 上了 dev，下一次再 `UPDATE ... SET 'platform' WHERE author_type='system'`
-    # 并把这一档删掉。
+    # 上一档今天的名字，也是存量行里的名字。读它的只有 `block/authorship.py`
+    # （它不是 participant，于是照样判成平台自己写的）和前端的 `lib/authorship.ts`。
     system = "system"
 
 

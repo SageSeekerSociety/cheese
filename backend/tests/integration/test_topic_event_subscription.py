@@ -810,7 +810,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
         if looks_like_agent_handle(b.author) and (b.meta or {}).get("progress")
     ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
-    assert [b for b in blocks if b.author_type == AuthorType.platform] == []
+    assert [b for b in blocks if b.author_type == AuthorType.system] == []
     # And the Stop closed the books on the interval the dead process opened.
     async with factory() as session:
         row = await session.get(AgentTurn, interrupted)
