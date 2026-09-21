@@ -27,6 +27,7 @@ import {
   setUpstream,
 } from '../api'
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
+import ProjectDefaultModelSettings from '../components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
 import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
 import CreditsPanel from '../components/settings/CreditsPanel.vue'
@@ -395,6 +396,16 @@ watch(
              没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
         <h2 class="t-title settings-group">队友</h2>
         <AgentTeamSettings :project-id="projectId" />
+
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+            <span class="page-section-title">默认模型</span>
+          </div>
+          <div class="page-section-body">
+            <ProjectDefaultModelSettings :project-id="projectId" />
+          </div>
+        </section>
 
         <h2 class="t-title settings-group">运行环境</h2>
         <section class="page-section">

@@ -18,6 +18,7 @@ import type {
   EnvironmentStatus,
   FeedbackCard,
   FeedbackComment,
+  FeedbackCommentLikeResult,
   FeedbackCounts,
   FeedbackCreateBody,
   FeedbackDetail,
@@ -236,8 +237,23 @@ export async function refreshNow(): Promise<void> {
   await refreshInFlight
 }
 
+// Room chrome, chat and the work panel request the same roster/task summary
+// on mount. Share only pending reads; the next refresh always goes to the server.
+const pendingRoomReads = new Map<string, Promise<unknown>>()
+function roomRead<T>(path: string): Promise<T> {
+  const key = `${authToken()}:${path}`
+  const pending = pendingRoomReads.get(key)
+  if (pending) return pending as Promise<T>
+  const started = request<T>(path).finally(() => {
+    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
+  })
+  pendingRoomReads.set(key, started)
+  return started
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -306,6 +322,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
+    if (method !== 'GET') pendingRoomReads.clear()
     return envelope.data
   }
 }
@@ -621,7 +638,7 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
@@ -809,10 +826,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),
@@ -841,32 +867,36 @@ export function setTopicComputeProfile(
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
-// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
-// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
 export interface AgentFieldChoice {
   id: string
   label: string
   description: string
   default: boolean
-  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
-   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
-   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
-  models?: string[]
 }
 
-export interface AgentFieldOptions {
-  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
-  state: 'choosable' | 'unavailable'
+// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
+// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
+export interface ProjectDefaultModel {
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
   choices: AgentFieldChoice[]
-  reason: string
-  note: string
+  can_manage: boolean
 }
 
-export type AgentTypeOptions = Record<string, AgentFieldOptions>
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
 
-export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
 }
 
 // Built-in starting configurations, copied only when creating an agent.
@@ -1108,6 +1138,8 @@ export function deleteLibraryFile(projectId: string, path: string): Promise<{ de
 export interface ProjectArtifact {
   id: string
   name: string
+  /** 一句话：这是什么东西、给谁的。交付时写下，没人写过时是空串。 */
+  about: string
   /** 交付过几次。0 = 有一张卡正在交付它，但还没有哪一次落地。 */
   version: number
   /** 最近一次交付被采纳的时刻（ISO），一次都还没有时为 null。 */
@@ -1735,6 +1767,12 @@ export function getPrChecks(topicId: string, taskId?: string | null): Promise<Pr
   )
 }
 
+/** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
+ *  到——他要审的正是这一份。 */
+export function cardDeliverableUrl(cardId: string): string {
+  return `${BASE}/accept-cards/${encodeURIComponent(cardId)}/deliverable`
+}
+
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
 // 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
 // head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
@@ -1878,7 +1916,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
@@ -2017,6 +2055,27 @@ export function getFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/feedback/${encodeURIComponent(feedbackId)}`)
 }
 
+/** 一页评论。不给 `parentId` 是顶层评论那一页（一页若干栋楼，每栋跟着它的前若干条
+ *  回复走），给了就是**那一栋楼里**从 `after` 往后的一段回复。
+ *
+ *  两个取法共用一条路由、一套游标，客户端不记第二种形状。`after` 是服务端发出来的
+ *  **不透明**串，原样带回来 —— 自己拼一个（「最后一条的时间戳 + id」）拼得出来，
+ *  但那是把服务端的排序规则抄了第二份，改排序的那天两边会漂开，症状是翻页漏行。
+ *
+ *  `next_cursor` 为 null 表示这一层取完了（顶层评论取完了 / 这栋楼取完了）。 */
+export function listFeedbackComments(
+  feedbackId: string,
+  opts: { after?: string | null; parentId?: string | null } = {}
+): Promise<{ items: FeedbackComment[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.after) params.set('after', opts.after)
+  if (opts.parentId) params.set('parent_id', opts.parentId)
+  const query = params.toString()
+  return request<{ items: FeedbackComment[]; next_cursor: string | null }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments${query ? `?${query}` : ''}`
+  )
+}
+
 /** 提一条反馈。**agent 不能走这条路** —— 服务端会 403；agent 的入口是提案卡。
  *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
 export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {
@@ -2050,11 +2109,27 @@ export function createFeedbackComment(
   })
 }
 
+/** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
+ *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
+ *  遍历，多算一次就会和服务端的答案漂开。 */
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
     { method: 'DELETE' }
   )
+}
+
+const commentLikeUrl = (feedbackId: string, commentId: string) =>
+  `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}/likes`
+
+/** 点赞一条评论。和 `supportFeedback` 同一个形状：回的是**写完之后的计数**，
+ *  不是增量。重复点是幂等的，所以「双击」这件事不需要客户端去防。 */
+export function likeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'POST' })
+}
+
+export function unlikeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'DELETE' })
 }
 
 /* ---- 管理端 (`/admin/feedback`) ---- */
@@ -2109,6 +2184,66 @@ export function createAdminFeedbackNote(feedbackId: string, body: string): Promi
 }
 
 export type { FeedbackNote }
+
+/* ---- 平台管理员名单 (`/admin/admins`) ----
+ *
+ * 「谁算平台管理员」是**服务端**的一个判据（配置里的根名单 ∪ 这张表），客户端只画。
+ * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
+ * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
+
+/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
+ *  仍然要说得出是谁加的。 */
+export interface PlatformAdminRow {
+  handle: string
+  added_by_handle: string
+  created_at: string
+}
+
+export interface PlatformAdminsPayload {
+  /** 部署配置里那份。列得出来，删不掉。 */
+  root: string[]
+  added: PlatformAdminRow[]
+}
+
+export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
+  return request<PlatformAdminsPayload>('/admin/admins')
+}
+
+/** 「加一个人」那个选择器的候选：按 handle 或昵称搜账号。
+ *
+ *  单开一条而不是复用用户目录接口：那条只在它取回的那一页里过滤（这个部署上账号
+ *  上千，搜昵称十有八九回空），而这里「搜不到」是要么换个说法要么这个人没有账号。
+ *  `already_admin` 里的人照常返回 —— 选择器要把他们画成已选中，而不是「搜不到」。 */
+export interface AdminCandidate {
+  handle: string
+  nickname: string
+  /** 没挑过头像的人是 null（和反馈卡片、聊天区名册同一条判据），界面画彩色首字母。 */
+  avatar_id: number | null
+  already_admin: boolean
+}
+
+export function searchAdminCandidates(q: string, limit = 20): Promise<{ items: AdminCandidate[] }> {
+  return request<{ items: AdminCandidate[] }>(
+    `/admin/users?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`
+  )
+}
+
+/** 加一个人。回的是**更新后的整份名单**（`created` 说明这次是真加了还是他本来就在）：
+ *  加完之后页面上两块都可能变，让客户端自己再拉一次中间那一下页面是旧的。 */
+export function addPlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { created: boolean }> {
+  return request<PlatformAdminsPayload & { created: boolean }>('/admin/admins', {
+    method: 'POST',
+    body: JSON.stringify({ handle }),
+  })
+}
+
+/** 从名单里移出一个人，同样回整份（`removed` 说这次有没有真删掉一行 —— 删一个不在
+ *  名单里的人不是错误，他的目的已经成立了）。根管理员到这里会拿到 409。 */
+export function removePlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { removed: boolean }> {
+  return request<PlatformAdminsPayload & { removed: boolean }>(`/admin/admins/${encodeURIComponent(handle)}`, {
+    method: 'DELETE',
+  })
+}
 
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */
 

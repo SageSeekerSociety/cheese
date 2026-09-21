@@ -15,9 +15,11 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
+
+import { setLocale } from '@/i18n'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -94,6 +96,12 @@ function titlesIn(root: Element, selector: string): string[] {
     (el) => el.querySelector('.v-list-item-title')?.textContent?.trim() ?? ''
   )
 }
+
+// 这一份从**渲染出来的字**上断言置顶行，所以语言必须是它断言的那一种。置顶行的
+// 文案现在走 i18n（壳能换词，所以只能是 key，不能是字面量），而 happy-dom 的
+// navigator.language 是 en-US——不定住的话这些断言问的是英文那套词。
+// 别的断言文案的用例（destinations.spec / App.navigation.spec）用的是同一行。
+beforeEach(() => setLocale('zh-CN'))
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {

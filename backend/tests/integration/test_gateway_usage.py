@@ -338,7 +338,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     import asyncio as _asyncio
 
     for _ in range(10):
-        pending = [t for t in svc._memory_tasks if not t.done()]
+        pending = [t for t in svc._background_tasks if not t.done()]
         if not pending:
             break
         await _asyncio.gather(*pending, return_exceptions=True)
@@ -351,10 +351,14 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_device_turn_keeps_its_saved_gateway_model_when_subscription_is_enabled(
+async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrives(
     client, tmp_path
 ):
-    """Adding subscription supply preserves the saved API model and gateway route.
+    """Deploying the subscription must not move a project that chose the gateway.
+
+    What holds it there is the project's own supply setting, not a model saved
+    on one of its agents: an agent is a participant, and which pool a project
+    runs on is not a property of a participant (结论 44).
 
     Provider URLs and keys remain on the backend, away from the machine.
     """
@@ -370,9 +374,14 @@ async def test_device_turn_keeps_its_saved_gateway_model_when_subscription_is_en
         "default",
     )
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(
+    svc, factory, pid, _tid = await _mk_service(
         client.test_factory, tmp_path, fake, profiles=profiles
     )
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "gateway"}
+        await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
@@ -437,26 +446,14 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     fake = FakeGateway()
-    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
-    async with factory() as session:
-        project = await ProjectRepository(session).get(pid)
-        assert project is not None
-        from app.domain.agent_instance.configuration import AgentConfiguration
-        from app.domain.agent_instance.services import AgentInstanceService
-
-        agents = AgentInstanceService(session)
-        agent = await agents.materialize_default(project)
-        await agents.configure(
-            agent, AgentConfiguration(**{**agent.configuration, "model": "opus"})
-        )
-        await session.commit()
+    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
     device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
     cloud_kwargs, cloud_route = await svc._model_kwargs(pid, _leases_a_machine())
 
     assert cloud_route == device_route == "subscription"
     assert cloud_kwargs == device_kwargs
-    assert cloud_kwargs["model"] == "claude-opus-5"
+    assert cloud_kwargs["model"] == "claude-sonnet-5"
     assert set(cloud_kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
     assert fake.minted == []  # no gateway key is minted for either
 
@@ -480,12 +477,10 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
             handle="reviewer",
             type_name=None,
             display_name="Reviewer",
-            configuration=AgentConfiguration(model="opus", body="Original role"),
+            configuration=AgentConfiguration(body="Original role"),
         )
         snapshot = agents.resolved(agent)
-        await agents.configure(
-            agent, AgentConfiguration(model="fable", body="Edited role")
-        )
+        await agents.configure(agent, AgentConfiguration(body="Edited role"))
         await session.commit()
         assert await agents.system_prompt(snapshot) == "Original role"
         # A later turn addressed to the same teammate resolves it afresh.
@@ -501,8 +496,9 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
         pid, _on_a_machine(), tid, agent=edited, acting_agent="reviewer"
     )
     default, _ = await svc._model_kwargs(pid, _on_a_machine())
-    assert current["model"] == "claude-opus-5"
-    assert following["model"] == "claude-fable-5"
+    # 换的是角色，不是模型：一个房间的主线永远走项目默认，谁来答都一样（结论 3）。
+    # 这三行在这个测试里的用处正是说明「agent 变了，模型不变」。
+    assert current["model"] == following["model"] == default["model"]
     assert default["model"] == "claude-sonnet-5"
     assert (
         current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]

@@ -12,11 +12,13 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'deploy/metering-proxy/**'
       - '.github/workflows/test.yml'
   pull_request:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'deploy/metering-proxy/**'
       - '.github/workflows/test.yml'
 
 # Least privilege: none of these jobs write anything back to GitHub, so the

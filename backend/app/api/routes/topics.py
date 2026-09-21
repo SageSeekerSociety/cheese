@@ -33,10 +33,10 @@ from app.core.errors import (
     SystemBusyError,
     ValidationError,
 )
-from app.domain.agent.announce import notify_question
+from app.domain.agent.announce import announce, notify_question
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent.harness.prompt import thread_relay_prompt, thread_upgraded_prompt
+from app.domain.agent.harness.prompt import thread_relay_prompt
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
@@ -47,13 +47,20 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
+from app.domain.agent.platform_notices import (
+    EVENT_BLOCK_UPGRADED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.delivery.addressing import Event as Addressee
 from app.domain.device.wiring import sql_device_service
 from app.domain.documents.convert import (
     ConvertFailed,
@@ -78,6 +85,8 @@ from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -89,7 +98,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task import presentation
+from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
@@ -558,6 +567,13 @@ async def list_room_tasks(
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
     asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
+    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
+    # `tasks` 上没有一列存它。
+    spent = await UsageRepository(db).last_model_by_task(thread_ids)
+    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
+    # 构造几百遍。
+    project = await ProjectRepository(db).get(topic.project_id)
+    choices = binding.catalog(project.settings if project else None)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -568,6 +584,10 @@ async def list_room_tasks(
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
+                "model": presentation.card_model(
+                    task, spent=spent.get(task.id), choices=choices
+                ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
                     presentation.facts_for_task(
@@ -575,6 +595,8 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
+                        # 同一个房间一次问一个分身，逐条问：每条活的分身是它自己的。
+                        worker_live=chat.worker_live(task.room_id, task.subagent_id),
                         awaiting_answer=task.id in asked,
                     ),
                     now=now,
@@ -634,12 +656,22 @@ async def get_room_task(
             # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
             # 一声。这一位是内存里的当下事实，不是库里的一列。
             room_screen_live=chat.has_live_screen(place.room_id),
+            # 屏幕还在，再问那个正在跑轮次的进程：这条活的分身它看得见。
+            worker_live=chat.worker_live(task.room_id, task.subagent_id),
             awaiting_answer=bool(
                 await BlockRepository(db).tasks_awaiting_an_answer([task.id])
             ),
         ),
         now=datetime.now(UTC),
     ).as_dict()
+    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
+    # 就是它绑的那个。和列表里显示的是同一个函数算的。
+    project = await ProjectRepository(db).get(place.project_id)
+    out["model"] = presentation.card_model(
+        task,
+        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
+        choices=binding.catalog(project.settings if project else None),
+    )
     card = cards.get(task.id)
     out["card"] = (
         None
@@ -710,7 +742,10 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+    members = TopicMemberService(db)
+    if not await members.holds_an_agent_seat(place.room, actor.handle):
+        # 人在一条活上说了话，下一步在这个房间的芝士手上 —— 转达是它的事。点名的是
+        # 说话的那个人，平台只是把这条事件送到它席位上（I12）。
         runner.submit(
             chat,
             place.room_id,
@@ -721,7 +756,9 @@ async def say_on_task(
                 author=actor.handle,
                 message=f"说：{content}",
             ),
-            summon=True,
+            addressed=addressed_to_agent(
+                await members.addressable_agent_handle(place.room_id)
+            ),
             nudge_event=f"{actor.handle} 在一条活上说话了，芝士来转达",
             provision_actor=actor,
         )
@@ -1116,7 +1153,8 @@ async def add_comment(
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
 
-    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+    members = TopicMemberService(db)
+    if not await members.holds_an_agent_seat(place.room, actor.handle):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
         runner.submit(
@@ -1127,7 +1165,9 @@ async def add_comment(
                 f"{author} {said}\n"
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
             ),
-            summon=True,
+            addressed=addressed_to_agent(
+                await members.addressable_agent_handle(place.room_id)
+            ),
             nudge_event=f"{author} 在文档上留了评论，芝士来处理",
             provision_actor=actor,
         )
@@ -1341,6 +1381,8 @@ async def set_topic_compute_profile(
 
     from app.domain.agent.compute_configs import (
         ComputeChoice,
+        machine_policy_call,
+        room_choice,
         standard_choice,
         validate_choice,
     )
@@ -1397,6 +1439,51 @@ async def set_topic_compute_profile(
         if device_id not in {device.device_id for device in scoped_devices}:
             raise ValidationError("设备不属于当前项目")
 
+    # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
+    # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
+    # 人的提议——自托管那台机器的提议收件人就是**机主本人**（结论 40「要那台机器
+    # 的主人点头」），Cloud 花的是项目的钱，收件人是项目的主人。
+    #
+    # 放在这里而不是更早：前面几步在答「这个选择本身成不成立」（池接没接入、设备
+    # 属不属于这个项目），闸门答的是「这个成立的选择可不可以自己发生」。
+    project = await ProjectRepository(db).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    policy = gate.policy_of(project.settings)
+    # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。
+    if not policy.lets_everything_through:
+        verdict = gate.check(
+            await machine_policy_call(db, project=project, topic=topic, choice=choice),
+            policy,
+            actor.handle,
+        )
+        if isinstance(verdict, gate.Proposal):
+            # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+            # 是一条提议，下一步在 approver 手上。
+            await propose(db, verdict, place_id=topic_id)
+            await db.flush()
+            # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
+            # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+            # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
+            # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
+            # 法，先信谁？
+            current = room_choice(topic, project.settings)
+            return ok(
+                {
+                    "current": current.profile,
+                    "choice": current.model_dump(),
+                    "device_id": current.device_id,
+                    "locked": False,
+                    "inherited": topic.compute_profile is None,
+                    "proposal": {
+                        "approver": verdict.approver,
+                        "tier": verdict.call.tier,
+                        "content": verdict.content,
+                    },
+                }
+            )
+
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind
     # itself never overwrites, while an explicit user change before the lock removes
@@ -1427,6 +1514,7 @@ async def set_topic_compute_profile(
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "locked": False,
             "inherited": False,
+            "proposal": None,
         }
     )
 
@@ -1555,7 +1643,7 @@ async def ask_options(
     await notify_question(
         db,
         place=place,
-        block_id=blk.id,
+        block=blk,
         question=question,
         asker=blk.author,
         asked=None if waiting_for == "system" else waiting_for,
@@ -1604,12 +1692,15 @@ async def summon_agent(
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
     # 待读窗口刚好被别人清空的缝隙里当兜底。
+    seat = await TopicMemberService(db).addressable_agent_handle(place.room_id)
     runner.submit(
         chat,
         place.room_id,
         author="system",
         content="有人请你看一下房间里还没读到的消息，照常处理。",
-        summon=True,
+        # 点名的是按下这个按钮的人，不是平台：他指名这个房间的芝士，寻址结果里
+        # 因此恰好有它一个，这一轮才跑得起来。
+        addressed=addressed_to_agent(seat),
         nudge_event=f"<@{actor.handle}> 叫芝士来看前面的消息",
         provision_actor=actor,
     )
@@ -1627,7 +1718,7 @@ async def answer_options(
 ) -> dict:
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
-    the choice as the answerer's message with summon — 芝士 continues."""
+    the choice as the answerer's message, addressed to the 芝士 that asked."""
     option = (body.get("option") or "").strip()
     repo = BlockRepository(db)
     blk = await repo.get(block_id)
@@ -1661,13 +1752,20 @@ async def answer_options(
     await get_broker().publish(
         str(blk.topic_id), {"type": "block_updated", "block": updated}
     )
-    # The choice lands as the answerer's own message + summons 芝士 to continue.
+    # 选项是回答一个待确认问题，收件人就是问问题的那个席位。**@ 写进正文**，不在
+    # 帧上另置一位：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁
+    # 也没叫的消息却起了一轮（这也是浏览器发消息时遵守的同一条规矩）。
+    #
+    # 只认名册上真有的席位（`addressable_agent_handle`）：正文里的 @ 是由名册解析
+    # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
+    # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
+    # 样记在卡上。
+    seat = await TopicMemberService(db).addressable_agent_handle(blk.topic_id)
     await get_broker().receive_message(
         chat,
         blk.topic_id,
         author=author,
-        content=option,
-        summon=True,
+        content=f"<@{seat}> {option}" if seat else option,
         provision_actor=actor,
     )
     return ok(updated)
@@ -2947,10 +3045,10 @@ async def upgrade_block(
     and a card there would be one nobody else could open. The response says
     which by carrying either a task or a topic.
 
-    Who gets woken follows from that split. A room has a session of its own, so
-    it kicks itself off. A card does NOT — the 分身 doing it lives in the room's
-    own session. So the ROOM is woken, and it is told to name the card, raise
-    the worker and bind it.
+    **升级留下的是一条事件，不是一轮被平台点起来的对话**（结论 13）。以前这里 kickoff
+    一轮：作者 `system`、提示词是平台写的一段开工说明，房间被平台叫醒去给这条活起名
+    字、起分身。按结论 31，开一条活剩下的只有分支、卡和负责人，谁来做是负责人的事 ——
+    所以平台在这里只做投递：房间时间线上落一条事件，收件人恰好是这条活的负责人。
     """
     room, thread, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
@@ -2962,22 +3060,27 @@ async def upgrade_block(
         if thread is not None
         else TopicOut.model_validate(room).model_dump(mode="json")
     )
-    # 升级的那段话 IS the brief — read it before the commit expires the instance,
-    # the same way the returned card reads its id before waking the room.
-    source_message = (await BlockRepository(db).get(block_id)) if created else None
-    upgraded_text = "" if source_message is None else source_message.content
-    # Commit BEFORE waking (the woken turn runs on its own session); an
-    # idempotent re-upgrade (created=False) must not wake anyone again.
-    await db.commit()
     if created:
-        if thread is not None:
-            get_work_runner().submit_kickoff(
-                chat,
-                room.id,
-                prompt=thread_upgraded_prompt(
-                    task_id=thread.id, source_message=upgraded_text
-                ),
-            )
-        else:
-            get_work_runner().submit_kickoff(chat, room.id)
+        # 负责人：卡是递给验收人的，没写验收人就是升级的那个人自己。事件和投递写在
+        # 同一个事务里，和这次升级一起提交 —— 回滚了就不会留下一条指向不存在的活的
+        # 通知。**幂等**：重复升级（created=False）不再落第二条事件。
+        owner = (body.reviewer_handle or body.created_by or "").strip()
+        await announce(
+            db,
+            place_id=room.id,
+            content=(
+                "一条消息升级成了这个房间里的一条活"
+                if thread is not None
+                else "一条消息升级成了一个房间"
+            ),
+            meta=notice(
+                EVENT_BLOCK_UPGRADED,
+                severity=SEVERITY_INFO,
+                who=WHO_HUMAN,
+                detail=f"活 {thread.id}" if thread is not None else f"房间 {room.id}",
+                detail_label="升级成了什么",
+            ),
+            points_at=Addressee(reviewers=(owner,) if owner else ()),
+        )
+    await db.commit()
     return ok(out)

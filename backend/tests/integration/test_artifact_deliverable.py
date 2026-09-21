@@ -83,7 +83,11 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
     body = {
         "change_subject": "docs(report): finalise the report",
         "reviewer_handle": "alice",
-        **delivery_artifact(client, room_id),
+        **delivery_artifact(
+            client,
+            room_id,
+            hands_over=bool(declared.get("deliver") or declared.get("deliver_url")),
+        ),
         **declared,
     }
     response = client.post(
@@ -271,7 +275,8 @@ def test_comparison_of_source_deliveries_uses_the_two_accepted_commits(
         return [{"path": "report.py", "diff": "-old\n+new", "note": None}]
 
     monkeypatch.setattr(ProjectFiles, "compare_revisions", compare)
-    artifact_id = _artifact_id(client, project_id)
+    # 两次交出去的都是合并，所以两版都落在项目那个仓库那一项上 —— 它跟项目同名。
+    artifact_id = _artifact_id(client, project_id, "P")
     response = client.get(
         f"/projects/{project_id}/artifacts/{artifact_id}/compare",
         params={"before": ids[0], "after": ids[1]},
@@ -393,7 +398,9 @@ def test_handing_over_the_merge_itself_is_a_kind_of_its_own(client):
     assert filed.status_code == 200, filed.text
     _accept(client, filed.json()["data"]["id"])
 
-    (version,) = _detail(client, project_id, _artifact_id(client, project_id))[
+    # 交出去的是这次合并，所以落在项目那个仓库那一项上 —— 它跟项目同名，因为没有
+    # 谁给它起过名字，平台自己认得出是哪一项。
+    (version,) = _detail(client, project_id, _artifact_id(client, project_id, "P"))[
         "versions"
     ]
     assert version["kind"] == "merge"
@@ -509,10 +516,13 @@ def test_a_card_that_belongs_to_another_artifact_is_not_this_version(client):
 
 
 @pytest.mark.parametrize("field", ["deliver", "deliver_url"])
-def test_declaring_nothing_handed_over_is_allowed_but_still_needs_an_artifact(
-    client, field
-):
-    """交付物可以不给（那就是交出去这次合并），但产物那一项仍然必须点名。"""
+def test_saying_a_field_is_null_hands_over_the_merge_like_leaving_it_out(client, field):
+    """显式写一个 null 和压根不写是同一件事：这次交出去的是合并本身。
+
+    于是它也不用声明产物 —— 交出去的是项目那个仓库（那一半在
+    `test_artifact_is_the_repository.py`）。这里问的只是 null 会不会被当成
+    「交了一份空的」而走岔到另一条路上。
+    """
     project_id = _project(client)
     room_id = _room(client, project_id)
     task = delivery_task(client, room_id)
@@ -526,5 +536,95 @@ def test_declaring_nothing_handed_over_is_allowed_but_still_needs_an_artifact(
             field: None,
         },
     )
-    assert filed.status_code >= 400
-    assert "没说这次交付动的是哪一项产物" in filed.text
+    assert filed.status_code == 200, filed.text
+    assert filed.json()["data"]["deliverable"]["kind"] == "merge"
+
+
+def test_the_reviewer_can_take_the_file_before_accepting(client):
+    """递卡之后、采纳之前就拿得到那一份。
+
+    验收的人要审的正是这一份，而快照在递卡那一刻就落好了 —— 让他等采纳之后才看得
+    到，等于让他先批准再检查。
+    """
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"out/结题报告.docx": "还没有人采纳的正文\n"},
+        deliver="out/结题报告.docx",
+    )
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    assert card["status"] == "pending"
+    # 卡面要说得出这两样：这次动的是哪一项产物、交出去的是什么。
+    assert card["artifact"]["name"] == "报告"
+    assert card["deliverable"] == {
+        "kind": "file",
+        "filename": "结题报告.docx",
+        "url": None,
+    }
+
+    got = client.get(f"/accept-cards/{card['id']}/deliverable")
+    assert got.status_code == 200, got.text
+    assert got.content == "还没有人采纳的正文\n".encode()
+
+    # 项目外的人拿不到：这一份采纳之后就是《报告》的一版，和清单上那几版同一个
+    # 门槛。
+    denied = client.get(
+        f"/accept-cards/{card['id']}/deliverable",
+        headers=session_auth_headers("mallory"),
+    )
+    assert denied.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param({"deliver_url": "https://site.example/r"}, id="link"),
+        pytest.param({}, id="merge"),
+    ],
+)
+def test_a_card_that_hands_over_no_file_has_nothing_to_take(client, declared):
+    """交出去的是一个地址、或者就是这次合并：没有可下载的东西，而这不是缺东西。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+
+    filed = _hand_over(client, room_id, **declared)
+    assert filed.status_code == 200, filed.text
+    card = filed.json()["data"]
+    assert card["deliverable"]["filename"] is None
+
+    got = client.get(f"/accept-cards/{card['id']}/deliverable")
+    assert got.status_code == 404
+    assert "不是一份文件" in got.text
+
+
+def test_the_card_carries_the_version_it_would_become(client):
+    """卡上的版号是这张卡自己那一版。
+
+    版号是数出来的（数已采纳的卡），所以还没采纳的那一张不在这个数里面。卡面要写
+    它采纳之后的号：人正在定的是「这一版要不要成为《报告》的当前版本」，写着前一
+    版的号码等于把他要定的那件事写错。
+    """
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+
+    first = _hand_over(
+        client, room_id, files={"out/报告.pdf": "第一版\n"}, deliver="out/报告.pdf"
+    )
+    assert first.json()["data"]["artifact"]["version"] == 1
+
+    accepted = _accept(client, first.json()["data"]["id"])
+    # 采纳之后它就是那一版，号不再往前跳一格。
+    assert accepted.json()["data"]["artifact"]["version"] == 1
+
+    second = _hand_over(
+        client,
+        room_id,
+        files={"out/报告.pdf": "第二版\n"},
+        deliver="out/报告.pdf",
+        again=True,
+    )
+    assert second.json()["data"]["artifact"]["version"] == 2

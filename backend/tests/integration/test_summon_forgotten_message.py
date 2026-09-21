@@ -22,7 +22,7 @@ def _project_and_topic(client, owner: str = "user-1") -> str:
 
 def _say_without_summoning(client, topic_id: str, text: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": False})
+        ws.send_json({"type": "message", "content": text})
         while ws.receive_json()["type"] != "done":
             pass
 

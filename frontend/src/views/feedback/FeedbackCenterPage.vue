@@ -150,12 +150,9 @@ function clearFilters() {
       <LoadingSkeleton v-if="store.loading" variant="feedback" :rows="6" />
 
       <div v-else class="fb-list">
-        <FeedbackCard
-          v-for="item in store.items"
-          :key="item.id"
-          :item="item"
-          @open="router.push(`/feedback/${item.id}`)"
-        />
+        <!-- 打开详情那条链接在卡片自己身上（`router-link`），这里不再接一个
+             `@open` 去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
+        <FeedbackCard v-for="item in store.items" :key="item.id" :item="item" />
         <div v-if="!store.items.length" class="fb-empty">
           <v-icon size="28" class="mb-2">
             {{ store.error ? 'mdi-alert-circle-outline' : 'mdi-comment-search-outline' }}

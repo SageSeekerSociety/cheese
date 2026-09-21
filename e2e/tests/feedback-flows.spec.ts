@@ -8,7 +8,7 @@ import { api, login } from './helpers';
 // 而不是 value，这些在两边都绿的情况下依然能让用户点着点着撞墙。这条用例只做一件
 // 事：像人一样点一遍，任何一步和预期不符就红。
 //
-// 管理端那条要求后端把 alice 放进管理员名单（`FEEDBACK_ADMIN_HANDLES`，见
+// 管理端那条要求后端把 alice 放进管理员名单（`PLATFORM_ADMIN_HANDLES`，见
 // playwright.config.ts 里后端 webServer 的 env）。没有它，`/admin/feedback` 只会
 // 回 403，用例红在「这一页是管理员后台」的闸门那一步，而不是红在要验的东西上。
 
@@ -53,10 +53,35 @@ test.beforeEach(({ page }) => {
 // 放行范围写死到这个形状，不写成「忽略所有 404」：反馈自己发出的请求挂掉时仍然要红。
 const AVATAR_404 =
   /^\[console\] Failed to load resource: the server responded with a status of 404 \(Not Found\) @ https?:\/\/[^\s]+\/api\/avatars\/\d+$/;
-const isKnownEnvNoise = (entry: string) => AVATAR_404.test(entry);
+
+// 第二条放行，管的是**外部源**上的资源。
+//
+// 字体（JetBrains Mono）是从 jsdelivr 取的（`src/styles/fonts.css`），CI 机器网络抖
+// 一下就是一条 `net::ERR_NETWORK_CHANGED` 的控制台 error —— 而这条检查想问的从来
+// 不是「第三方 CDN 现在可不可用」。它上次就是这么红的：一份和反馈毫无关系的字体没
+// 取到，整条反馈用例跟着红。
+//
+// **按源判，不按错误码、也不按域名判**：换一个 CDN、换一种失败码，规则照样成立；
+// 而页面自己发的请求都是同源的，一条都放不进去。
+const RESOURCE_FAILED = /^\[console\] Failed to load resource: .*? @ (\S+)$/;
+
+function isKnownEnvNoise(entry: string, appOrigin: string): boolean {
+  if (AVATAR_404.test(entry)) return true;
+  const failed = RESOURCE_FAILED.exec(entry);
+  if (!failed) return false;
+  try {
+    return new URL(failed[1]).origin !== appOrigin;
+  } catch {
+    // 取不到位置（控制台那句可能不带 URL，我们写成 `@ ?`）时不当外部源，照旧报出来。
+    return false;
+  }
+}
 
 test.afterEach(() => {
-  const ours = consoleNoise.filter((entry) => !isKnownEnvNoise(entry));
+  // 用配置里那个 baseURL 而不是当前页面的地址：它按定义就是被测应用自己的源，
+  // 用例结束时停在哪个页面都不影响这条判断。
+  const appOrigin = new URL(test.info().project.use.baseURL!).origin;
+  const ours = consoleNoise.filter((entry) => !isKnownEnvNoise(entry, appOrigin));
   expect(ours, '浏览器控制台不该有报错，也不该有没注册的组件').toEqual([]);
 });
 
@@ -97,9 +122,78 @@ test('用户提一条反馈，能看见、能支持、能评论', async ({ page 
   await expect(page.locator('.fb-page')).toContainText('已支持');
 
   // 评论一条，评论列表里读得回来。
+  //
+  // 底部的框收起时只有一行（它 sticky 在视口底部，常驻三行就是永久少掉一屏），
+  // 先点开才有多行框 —— 这一步不是绕路，正是「点一下就能打字」要验的东西。
+  await page.locator('.fb-composer__open').click();
   await page.getByPlaceholder('补充你遇到的情况，或者说明为什么这个改动对你重要').fill(comment);
   await page.getByRole('button', { name: '发表评论' }).click();
   await expect(page.locator('.fb-page')).toContainText(comment);
+  // 发完收回去，占地方的那一屏还回去。
+  await expect(page.locator('.fb-composer__open')).toBeVisible();
+
+  // 点赞那条评论。**三个非颜色信号一起变**才是这条要验的：文案从「赞」到「已赞」、
+  // 计数出现、图标实心。断言只读文案和计数 —— 图标那个 class 页面上看不见，而颜色
+  // 在这一层根本验不了（琥珀还是中性灰只有人眼分得出来，规则在单测和设计规范里）。
+  const top = page.locator('.fb-ci', { hasText: comment });
+  await top.getByText('赞', { exact: true }).click();
+  await expect(top.getByText('已赞')).toBeVisible();
+  await expect(top.locator('.fb-ci__count')).toHaveText('1');
+
+  // 回一条，再回那条回复：「回复 X」只出现在第二条上。
+  //
+  // 折楼之后 `parent_id` 只指顶层，「回的是谁」在客户端猜不出来，所以这一句能不能
+  // 出现完全取决于服务端有没有把 `reply_to_handle` 存下来 —— 正是那种「两边各自都
+  // 绿、接起来没有」的缝。回楼主的那些不写它（本来就紧挨着楼主渲染），所以第一条
+  // 回复上必须**没有**这一行。
+  const reply = `回复一句：${title}`;
+  await top.getByText('回复', { exact: true }).click();
+  // 回复框和动作行里都有「回复」两个字，所以两处都按容器限定，不然撞 strict mode。
+  await page.locator('.fb-ci__form').getByPlaceholder('回复 alice').fill(reply);
+  await page.locator('.fb-ci__form').getByRole('button', { name: '回复' }).click();
+  const firstReply = page.locator('.fb-ci', { hasText: reply });
+  await expect(firstReply).toBeVisible();
+  await expect(firstReply.locator('.fb-ci__re')).toHaveCount(0);
+
+  const second = `再回一句：${title}`;
+  await firstReply.getByText('回复', { exact: true }).click();
+  await page.locator('.fb-ci__form').getByPlaceholder('回复 alice').fill(second);
+  await page.locator('.fb-ci__form').getByRole('button', { name: '回复' }).click();
+  await expect(page.locator('.fb-ci', { hasText: second }).locator('.fb-ci__re')).toContainText('alice');
+
+  // 一栋楼超过两条回复就折起来：整栋楼一次铺开，会把下面所有评论推到屏幕外。前置
+  // 数据走接口（这条用例验的是界面），断言留在屏幕上。
+  const feedbackId = /\/feedback\/([0-9a-f-]{36})/.exec(page.url())?.[1];
+  expect(feedbackId, '详情页地址里应该有这条反馈的 id').toBeTruthy();
+  // 这条接口现在是**按楼分页**的：回的是一页 `{ items, next_cursor }`，不是整条线程
+  // 的裸数组。这里只要「刚发的那条顶层评论的 id」，读这一页的 `items` 就够 —— 这条
+  // 用例总共只有一栋楼。
+  const firstPage = (await api(page, 'get', `/feedback/${feedbackId}/comments`)) as unknown as {
+    items: { id: string; body: string; parent_id: string | null }[];
+  };
+  const topId = firstPage.items.find((row) => row.body === comment && row.parent_id === null)?.id;
+  expect(topId, '刚发的那条顶层评论要在帖子里').toBeTruthy();
+  for (const n of [3, 4]) {
+    await api(page, 'post', `/feedback/${feedbackId}/comments`, {
+      body: `第 ${n} 条回复：${title}`,
+      parent_id: topId,
+    });
+  }
+  await page.reload();
+  const hidden = `第 4 条回复：${title}`;
+  // 「展开更多」不是「加载更多」：服务端一次给全了，折的是已经拿到手的那几条。
+  await expect(page.getByText(hidden)).toBeHidden();
+  await page.getByText('展开更多 2 条回复').click();
+  await expect(page.getByText(hidden)).toBeVisible();
+
+  // 删掉自己那条顶层评论：它下面的四条回复跟着一起走（服务端同事务软删——只删顶层
+  // 会让那些回复变成查不到父亲的孤儿）。确认那一步必须写清连带几条，只说「删掉这条
+  // 评论」而实际删掉一整栋楼，是在骗按按钮的人。
+  await top.getByText('删除', { exact: true }).click();
+  await expect(page.getByText('删掉这条评论，连同它下面的 4 条回复一起？')).toBeVisible();
+  await page.getByText('确认删除').click();
+  await expect(page.getByText('暂无评论')).toBeVisible();
+  await expect(page.locator('.fb-page')).not.toContainText(comment);
 
   // 回到列表：这条在「全部」里，支持数跟着走。
   await page.goto('/feedback');

@@ -49,6 +49,8 @@ jobs:
   # release commit's CI (release events only; a manual dispatch trusts the
   # operator's ref) and then a human approval.
   gate:
+    # Native CLI artifacts are tool distributions, not application releases.
+    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'forgejo-cli-')
     runs-on: [self-hosted, cheese-ci]
     # Deliberately unbounded (GitHub's 360m default): this job blocks on a
     # human approving via manual-approval. A tight timeout here would not

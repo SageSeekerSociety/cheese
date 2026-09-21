@@ -75,10 +75,10 @@ def test_deployment_with_a_real_secret_boots() -> None:
     settings = _build(
         environment="production",
         jwt_secret="a-genuinely-random-48-char-secret-value",
-        # A deployment also has to name its feedback admins before it boots
-        # (test_config_feedback_admins_fail_closed.py); this test is about the
+        # A deployment also has to name its platform admins before it boots
+        # (test_config_platform_admins_fail_closed.py); this test is about the
         # secret, so satisfy that other guard rather than trip it.
-        feedback_admin_handles=["ops"],
+        platform_admin_handles=["ops"],
     )
     assert settings.jwt_secret == "a-genuinely-random-48-char-secret-value"
 
@@ -111,9 +111,9 @@ def test_compose_deployment_with_a_real_secret_boots() -> None:
         environment="development",
         jwt_secret="a-genuinely-random-48-char-secret-value",
         deployed_via_compose=True,
-        # Same reason as above: naming the feedback admins is now part of what
+        # Same reason as above: naming the platform admins is now part of what
         # "a deployment boots" means.
-        feedback_admin_handles=["ops"],
+        platform_admin_handles=["ops"],
     )
     assert settings.deployed_via_compose is True
 

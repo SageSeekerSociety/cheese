@@ -98,13 +98,9 @@ from app.domain.agent.harness.claude_code import (  # noqa: E402
 from app.domain.agent.harness.launch import LaunchPlan  # noqa: E402
 from app.main import app  # noqa: E402
 
-# Tests always run on the DB memory backend: the openviking backend holds an
-# exclusive data-dir lock (owned by the dev server when it's running), and
-# tests must not depend on — or corrupt — the live memory store.
-settings.memory_backend = "db"
 # Tests exercise the real authz enforcement regardless of the dev .env (which
-# ships it OFF for the conservative dogfood rollout). Same leak class as the
-# memory backend above: the .env value must not decide test behavior.
+# ships it OFF for the conservative dogfood rollout): the .env value must not
+# decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
 # platform runs (scheduler/jobs.py). Three of them would act on the test's own
@@ -1335,6 +1331,7 @@ def seed_task_with_protocol(
     conditions: list[dict] | None = None,
     resource_pack: dict | None = None,
     default_role: str | None = None,
+    shell: str | None = None,
     override: dict | None = None,
     space_id: int | None = None,
 ) -> int:
@@ -1343,7 +1340,8 @@ def seed_task_with_protocol(
     Seeded through the DB because the 知是 publish flow needs an authenticated
     space admin and a filled form, and none of that is what the protocol tests
     are about. `override` populates the 赛题's own `protocol_override` (#370
-    option (c)).
+    option (c)). `shell` and `override` carry the 壳 layer the same way, so a
+    项目集-level 壳 and a 赛题-level one are set up in one call.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -1378,6 +1376,7 @@ def seed_task_with_protocol(
                 resource_pack=resource_pack or {},
                 conditions=conditions or [],
                 default_role=default_role,
+                shell=shell,
                 created_at=now,
                 updated_at=now,
             )

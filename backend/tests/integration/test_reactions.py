@@ -26,7 +26,7 @@ def _create_topic(client, owner: str = "alice") -> str:
 def _post_message(client, topic_id: str, content: str, author: str) -> str:
     """Post a plain (unsummoned) message as `author`; returns the new block's id."""
     with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
-        ws.send_json({"type": "message", "content": content, "summon": False})
+        ws.send_json({"type": "message", "content": content})
         block_id = ""
         while True:
             frame = ws.receive_json()
@@ -166,7 +166,7 @@ def test_summon_gets_cheese_seen_receipt(client):
     moment the turn starts — broadcast live and persisted on the block."""
     topic_id = _create_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "芝士帮我看看", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 芝士帮我看看"})
         frames = []
         while True:
             frames.append(ws.receive_json())

@@ -51,6 +51,10 @@ class Placement(NamedTuple):
     rented: bool
 
 
+class PromptSocketUnavailable(ScreenSetupError):
+    """The connector could not connect, so it has not written this prompt."""
+
+
 class Channel:
     """Reach a session host, prepare its workspace, and transport input.
 
@@ -261,6 +265,10 @@ class Channel:
         means the prompt is HELD until the session can take it — worth a visible
         line in the room instead of silence (#445). ``None`` = unknown."""
         raise NotImplementedError
+
+    async def retire_unreachable(self, screen: object) -> bool:
+        """Retire a dead input session; uncertainty leaves it running."""
+        return False
 
     async def start_activity_monitor(
         self, screen: object, tracker: ActivityClock

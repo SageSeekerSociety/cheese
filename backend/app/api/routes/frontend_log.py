@@ -54,7 +54,7 @@ async def report_frontend_errors(body: FrontendErrorBatchIn, db: DbSession) -> d
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="frontend",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=frontend_log.event_content(err),
             kind=BlockKind.event,
             meta=frontend_log.event_meta(err),

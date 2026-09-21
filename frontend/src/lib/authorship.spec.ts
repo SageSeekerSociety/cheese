@@ -4,9 +4,6 @@
 //
 // 拆开喂是这份用例存在的理由：一条 participant 的消息，署名是人还是芝士，答案必须
 // 相反；而一条平台的事件不论署名是什么，两个都是 false——它不是谁说的话。
-//
-// 平台那一档有两个名字要认：行上今天写的 `system`，和后端往后两次发布改写成的
-// `platform`。这份 bundle 要跨过那次发布还在已经打开的标签页里跑，所以两个都喂。
 
 import type { AuthorType, Block } from '../cx_types'
 
@@ -50,16 +47,6 @@ describe('平台那一档：不是谁说的话', () => {
   it('两个都是 false，不论署名', () => {
     // 平台事件顶着谁的 handle 是常事（「<@bobby> 合并了 #12」），所以这一档必须先
     // 于署名判：漏掉它，一条部署提醒会被当成 bobby 说的话，带上头像挂到时间线上。
-    expect(isAgentBlock(block('cheese', 'system'))).toBe(false)
-    expect(isPersonBlock(block('cheese', 'system'))).toBe(false)
-    expect(isAgentBlock(block('bobby', 'system'))).toBe(false)
-    expect(isPersonBlock(block('bobby', 'system'))).toBe(false)
-  })
-
-  it('改名之后的 platform，答案一模一样', () => {
-    // 这一条钉的就是改名那次发布：后端换完到前端换完之间，以及此后每一个没刷新过
-    // 的标签页，跑的都是这份 bundle。它要是红的，改名当天时间线上的平台提示会一条
-    // 条变成 bobby 的聊天气泡。
     expect(isAgentBlock(block('cheese', 'platform'))).toBe(false)
     expect(isPersonBlock(block('cheese', 'platform'))).toBe(false)
     expect(isAgentBlock(block('bobby', 'platform'))).toBe(false)

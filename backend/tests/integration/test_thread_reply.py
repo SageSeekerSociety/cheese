@@ -16,7 +16,6 @@ def _post(ws, content, reply_to=None):
         {
             "type": "message",
             "content": content,
-            "summon": False,
             "reply_to": reply_to,
         }
     )

@@ -8,21 +8,19 @@ heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in Chat
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.block.authorship import participant_blocks
+from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_CHEESE, notice
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block
-from app.domain.identity.handles import agent_handle_column
-from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
+from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.scheduler")
-
-IDLE_MEMORY_HOURS = 8
 
 # A poller against a network misses sometimes: a DNS blip, the connection owner
 # restarting mid-release, a TLS handshake that never finished. The first miss is
@@ -109,143 +107,6 @@ class SchedulerService:
             )
         return out
 
-    async def consolidate_idle_device_screens(
-        self, idle_hours: float = IDLE_MEMORY_HOURS
-    ) -> int:
-        """Organize memory in quiet open rooms without releasing their agents.
-
-        Archival cleanup owns resource deletion. Memory consolidation keeps its
-        own activity and once-per-work-period checks, and remains opt-in.
-        """
-        from app.domain.agent.device_hub import device_hub
-        from app.domain.topic.models import TopicStatus
-        from app.domain.topic.services import TopicService
-
-        pairs = {
-            (s.project_id, s.topic_id)
-            for s in device_hub.all_online_screens()
-            if s.project_id is not None and s.topic_id is not None
-        }
-        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
-        dreams_started = 0
-        async with self._sessions() as session:
-            for project_id, topic_id in pairs:
-                topic = await TopicService(session).get(topic_id)
-                if topic is None or topic.status == TopicStatus.archived:
-                    continue
-                dream = await latest_dream(session, topic_id)
-                last = await self._last_activity(session, topic_id, dream)
-                if last is not None and last >= cutoff:
-                    continue
-                if dreams_started < settings.dream_max_per_sweep and (
-                    await self._start_dream_if_worthwhile(
-                        session, topic_id=topic_id, project_id=project_id, dream=dream
-                    )
-                ):
-                    dreams_started += 1
-        if dreams_started:
-            logger.info("idle memory consolidation: started %d passes", dreams_started)
-        return dreams_started
-
-    async def _last_activity(
-        self, session, topic_id: uuid.UUID, dream
-    ) -> datetime | None:
-        """When this topic last did something that was NOT its own housekeeping.
-
-        A 记忆整理 pass writes blocks, and blocks are what idleness is measured on
-        — so counting them would have the screen renew its own lease off the very
-        turn that was supposed to be its last, forever. The pass's turn id is on
-        the dream row precisely so those blocks can be subtracted here; anything
-        else in the topic, from anyone, still counts and still keeps the screen.
-
-        Scope is the one topic, not the topic and its children. A screen is
-        per-topic (so is the tree it works in, `~/.cheese/work/<project>/<topic>`),
-        so a room and each of its 支线 hold separate screens with separate
-        lifetimes and releasing one costs the others nothing."""
-        stmt = select(func.max(Block.created_at)).where(Block.topic_id == topic_id)
-        if dream is not None and dream.turn_id is not None:
-            stmt = stmt.where(
-                or_(Block.turn_id.is_(None), Block.turn_id != dream.turn_id)
-            )
-        last = (await session.execute(stmt)).scalar()
-        if last is not None and last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
-        return last
-
-    async def _start_dream_if_worthwhile(
-        self,
-        session,
-        *,
-        topic_id: uuid.UUID,
-        project_id: uuid.UUID,
-        dream,
-    ) -> bool:
-        """Give one quiet screen a turn to organize its memory. Return whether
-        a pass was started; the screen remains allocated either way.
-
-        Everything here is a reason NOT to spend a turn, because the default has
-        to be not spending one — the thing this repo already parked once was a
-        clock that woke 芝士 with nothing to say."""
-        if not settings.dream_enabled:
-            return False
-        if dream is not None and not await self._returned_to_life_since(
-            session, topic_id, dream
-        ):
-            # Already organized (or already tried and failed). Re-running is how
-            # a background trigger turns into an infinite loop, and "it failed,
-            # so try again" is the same loop with a nicer story.
-            return False
-        blocks = (
-            await session.execute(
-                select(func.count())
-                .select_from(Block)
-                .where(Block.topic_id == topic_id)
-            )
-        ).scalar() or 0
-        if blocks < settings.dream_min_blocks:
-            return False  # nothing in here a later read of the transcript misses
-        try:
-            from app.api.deps import get_work_runner
-
-            record = await open_dream(session, topic_id=topic_id, project_id=project_id)
-            turn_id = get_work_runner().submit_kickoff(
-                self._chat, topic_id, prompt=DREAM_PROMPT
-            )
-            record.turn_id = turn_id
-            await session.commit()
-        except Exception:  # noqa: BLE001 — 整理 must never hold up cleanup
-            await session.rollback()
-            logger.exception("记忆整理 failed to start for topic %s", topic_id)
-            return False
-        return True
-
-    async def _returned_to_life_since(self, session, topic_id, dream) -> bool:
-        """Did a PERSON come back to this topic after it was organized?
-
-        Deliberately narrower than `_last_activity`: that one decides whether to
-        release a screen (cheap and recoverable), this one decides whether to
-        spend another model turn, and the two failure modes are not symmetric. A
-        human block cannot be produced by a pass under any circumstance, so this
-        answer cannot depend on the turn-id bookkeeping being perfect — which is
-        what makes "organize a topic at most once" a guarantee rather than a
-        hope.
-
-        「是不是人」按署名判：事件行上只剩参与者和平台两档，而一次整理产出的块也
-        是参与者写的 —— 档位再也答不了这一句。"""
-        found = (
-            await session.execute(
-                select(Block.id)
-                .where(
-                    Block.topic_id == topic_id,
-                    participant_blocks(),
-                    ~agent_handle_column(Block.author),
-                    Block.created_at > dream.created_at,
-                )
-                .limit(1)
-            )
-        ).scalar()
-        return found is not None
-
     async def open_draft_prs(self) -> dict:
         """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
         without waiting for anyone to file a card.
@@ -265,9 +126,6 @@ class SchedulerService:
         from app.domain.agent.platform_notices import (
             EVENT_DEPENDENCY_CLOSED,
             EVENT_DEPENDENCY_REJECTED,
-            SEVERITY_INFO,
-            WHO_CHEESE,
-            notice,
         )
         from app.domain.block.models import (
             AGENT_NOTICE_META_KEY,
@@ -307,6 +165,7 @@ class SchedulerService:
                 )
                 continue
             self._dependency_wakes.add(room_id)
+            seat = await addressable_seat(self._sessions, room_id)
             try:
                 # The prompt reads the durable blocks and stamps their receipts.
                 runner.submit(
@@ -314,7 +173,7 @@ class SchedulerService:
                     room_id,
                     author="system",
                     content="",
-                    summon=True,
+                    addressed=addressed_to_agent(seat),
                     nudge_event="正在检查任务依赖",
                     nudge_meta=notice(
                         EVENT_DEPENDENCY_CLOSED,
@@ -439,13 +298,16 @@ class SchedulerService:
 
         runner = get_work_runner()
 
-        def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
+        async def nudge(
+            topic_id: uuid.UUID, content: str, event: str, meta: dict
+        ) -> None:
+            seat = await addressable_seat(self._sessions, topic_id)
             runner.submit(
                 self._chat,
                 topic_id,
                 author="system",
                 content=content,
-                summon=True,
+                addressed=addressed_to_agent(seat),
                 nudge_event=event,
                 nudge_meta=meta,
             )

@@ -9,7 +9,11 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    InProcessBroker,
+    addressed_to_agent,
+)
 from app.domain.identity.actor import Actor
 from tests.turn_log import a_topic, open_turn, open_turn_ids, turn_row
 
@@ -136,7 +140,13 @@ async def test_runner_publishes_turn_frames_to_subscribers(db_factory):
     )
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(chat, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            chat,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         seen = []
         while True:
             f = await asyncio.wait_for(q.get(), 1)
@@ -184,7 +194,13 @@ async def test_a_turn_the_session_did_not_adopt_is_still_reported_finished(db_fa
     )
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(chat, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            chat,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         await _next_frame(q, "done")
 
     for _ in range(200):
@@ -214,7 +230,7 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         await a_topic(db_factory),
         author="owner",
         content="保留这条消息",
-        summon=True,
+        addressed=addressed_to_agent("cheese-seat"),
         provision_actor=actor,
     )
     async with asyncio.timeout(1):
@@ -227,43 +243,6 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
     assert len(runner.recent_work()) == 1
 
 
-class _FakeKickoffChat:
-    """Stand-in ChatService.kickoff: the 分身's first turn after a split —
-    frames flow with NO human message posted."""
-
-    def __init__(self, session_factory=None):
-        self.session_factory = session_factory
-        self.ran = False
-
-    async def kickoff(self, *, topic_id, turn_id=None, prompt=None):
-        self.ran = True
-        self.prompt = prompt
-        await asyncio.sleep(0)
-        yield {"type": "delta", "text": "开场白"}
-        yield {"type": "done"}
-
-
-@pytest.mark.anyio
-async def test_submit_kickoff_runs_first_turn_without_user_block(db_factory):
-    # 分身自动开工 (spec §8.4): a split sub-topic's first turn starts by itself;
-    # the frame stream carries the 分身's own opening, never a user_block.
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    chat = _FakeKickoffChat(db_factory)
-    topic = await a_topic(db_factory)
-    async with broker.subscribe(str(topic)) as q:
-        runner.submit_kickoff(chat, topic)
-        seen = []
-        while True:
-            f = await asyncio.wait_for(q.get(), 1)
-            seen.append(f["type"])
-            if f["type"] == "done":
-                break
-    assert chat.ran is True
-    assert seen == ["turn_started", "delta", "done"]
-    assert "user_block" not in seen
-
-
 @pytest.mark.anyio
 async def test_turn_runs_to_completion_without_a_subscriber(db_factory):
     # The job does not depend on who is watching (invariant 2): no subscriber,
@@ -272,7 +251,11 @@ async def test_turn_runs_to_completion_without_a_subscriber(db_factory):
     runner = AgentWorkRunner(broker)
     chat = _FakeChat([{"type": "done"}], db_factory)
     runner.submit(
-        chat, await a_topic(db_factory), author="u", content="hi", summon=True
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
     )
     for _ in range(200):
         await asyncio.sleep(0.01)
@@ -303,7 +286,13 @@ async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_Hang(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _Hang(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         kinds = []
         for _ in range(4):
             f = await asyncio.wait_for(q.get(), 1)
@@ -345,7 +334,13 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_LongTmuxTurn(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _LongTmuxTurn(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         f = await _next_frame(q, "done", timeout=2)
     # Never timed out, and the internal control frame never leaked to subscribers.
     assert f["type"] == "done"
@@ -365,7 +360,13 @@ async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_Turn(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _Turn(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         await _next_frame(q, "done", timeout=2)
     rec = runner.topic_work(topic)
     assert rec is not None
@@ -395,11 +396,17 @@ async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
             finished_topic,
             author="u",
             content="hi",
-            summon=True,
+            addressed=addressed_to_agent("cheese-seat"),
         )
         await _next_frame(q, "turn_finished")
 
-    runner.submit(_SlowTurn(), running_topic, author="u", content="hi", summon=True)
+    runner.submit(
+        _SlowTurn(),
+        running_topic,
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await asyncio.sleep(0.05)  # started, but its 0.2s sleep hasn't resolved yet
 
     ids = runner.running_topic_ids()
@@ -421,7 +428,13 @@ async def test_runner_publishes_friendly_error_on_failure(db_factory):
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_Boom(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _Boom(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         frame = await _next_frame(q, "error")
     assert frame["type"] == "error"
 
@@ -453,7 +466,13 @@ async def test_turn_failure_lands_in_the_timeline(db_factory):
     svc = _Boom()
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            svc,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         first = await _next_frame(q, "event_block")
         second = await _next_frame(q, "error")
     assert first["type"] == "event_block"
@@ -508,7 +527,13 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
     svc = _Full()
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            svc,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         event = await _next_frame(q, "event_block")
         error = await _next_frame(q, "error")
 
@@ -553,7 +578,13 @@ async def test_failed_turn_fails_loud_and_does_not_resume(db_factory):
     svc = _Svc()
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(svc, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            svc,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         error = await _next_frame(q, "error")
 
     # Let the turn's own tail finish (settling conclusion cards, closing the
@@ -600,7 +631,7 @@ async def test_a_resent_turn_that_crashes_also_fails_loud(db_factory):
             topic,
             author="system",
             content="continue",
-            summon=True,
+            addressed=addressed_to_agent("cheese-seat"),
             is_resume=True,
         )
         error = await _next_frame(queue, "error")
@@ -815,7 +846,13 @@ async def test_a_finished_turn_leaves_a_closed_interval(db_factory):
     topic = await a_topic(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
     chat = _FakeChat([{"type": "done"}], db_factory)
-    runner.submit(chat, topic, author="u", content="hi", summon=True)
+    runner.submit(
+        chat,
+        topic,
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     for _ in range(200):
         await asyncio.sleep(0.01)
         if chat.ran and not await open_turn_ids(db_factory):
@@ -949,6 +986,11 @@ class _SweepChat:
         return {"id": "b1", "content": text}
 
 
+# 会话被自己的 worker 唤醒、自己跑完的那一轮：署的是这个房间的席位 handle，而
+# `names_a_person` 读它为「不是人」，和别的平台轮次一样。
+_SESSION_SEAT = "cheese-abc123abc123"
+
+
 @pytest.mark.anyio
 async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_factory):
     """会话自己开的一轮也是一轮 —— 但它是**没有提示词**的那一种。
@@ -957,16 +999,16 @@ async def test_a_self_started_turn_opens_an_interval_nothing_will_re_send(db_fac
     `delivered` 反过来必须盖上：`close_for_topic` 只关送达过的行，一行永远关不掉
     的轮次比没有这一行更糟。
     """
-    from app.domain.agent.runtime import AgentWorkRunner as _Runner
-
     topic = await a_topic(db_factory)
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
-    await runner.open_self_started_turn(_SweepChat(db_factory), topic, turn_id)
+    await runner.open_turn_the_session_started(
+        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+    )
 
     row = await turn_row(db_factory, turn_id)
     assert row is not None
-    assert row.author == _Runner.SELF_STARTED_AUTHOR
+    assert row.author == _SESSION_SEAT, "一条便条有发件人"
     assert row.content == "", "没有提示词可记 —— 记一段假的会让收尸去重发它"
     assert row.resendable is False
     assert row.is_resume is False
@@ -992,7 +1034,9 @@ async def test_a_self_started_turn_that_went_quiet_is_swept_but_not_re_sent(db_f
     runner = AgentWorkRunner(InProcessBroker())
     # 屏幕还活着 —— 这正是老路放过它的原因。
     chat = _SweepChat(db_factory, live_screen=True)
-    await runner.open_self_started_turn(chat, topic, turn_id)
+    await runner.open_turn_the_session_started(
+        chat, topic, turn_id, author=_SESSION_SEAT
+    )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 3 * 3600
 
     async def _last_block(topic_ids):
@@ -1020,7 +1064,9 @@ async def test_a_self_started_turn_still_working_is_left_alone(db_factory):
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
     chat = _SweepChat(db_factory, live_screen=True)
-    await runner.open_self_started_turn(chat, topic, turn_id)
+    await runner.open_turn_the_session_started(
+        chat, topic, turn_id, author=_SESSION_SEAT
+    )
     runner._last_frame_at[str(turn_id)] = time.monotonic() - 5
 
     async def _last_block(topic_ids):
@@ -1040,10 +1086,12 @@ async def test_closing_a_self_started_turn_drops_the_marks_it_left(db_factory):
     topic = await a_topic(db_factory)
     turn_id = uuid.uuid4()
     runner = AgentWorkRunner(InProcessBroker())
-    await runner.open_self_started_turn(_SweepChat(db_factory), topic, turn_id)
+    await runner.open_turn_the_session_started(
+        _SweepChat(db_factory), topic, turn_id, author=_SESSION_SEAT
+    )
     assert runner.live_work_for_topic(topic) is None, "没有协程在跑它，别说成在跑"
 
-    runner.close_self_started_turn(turn_id)
+    runner.close_turn_the_session_started(turn_id)
     assert str(turn_id) not in runner._last_frame_at
     assert str(turn_id) not in runner._live_topics
     assert runner.topic_work(topic)["status"] == "done"
@@ -1186,7 +1234,13 @@ async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
             await finish.wait()
             yield {"type": "done"}
 
-    turn_id = runner.submit(_Slow(), topic, author="u", content="hi", summon=True)
+    turn_id = runner.submit(
+        _Slow(),
+        topic,
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await asyncio.wait_for(streaming.wait(), 1)
     live = runner.live_work_for_topic(topic)
     assert live is not None
@@ -1233,7 +1287,13 @@ async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
             streaming.set()
             await asyncio.sleep(300)
 
-    runner.submit(_DeadContainer(), topic, author="u", content="hi", summon=True)
+    runner.submit(
+        _DeadContainer(),
+        topic,
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await asyncio.wait_for(streaming.wait(), 1)
     assert topic in runner.running_topic_ids()
     assert broker.in_flight(str(topic)) is True
@@ -1345,7 +1405,11 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(db_fact
 
     async with broker.subscribe(str(topic)) as q:
         turn_id = runner.submit(
-            _GatedChat(), topic, author="u", content="hi", summon=True
+            _GatedChat(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
         )
         await asyncio.wait_for(stamped.wait(), 1)
         for _ in range(200):
@@ -1483,7 +1547,13 @@ async def test_unclassified_failure_hands_to_a_human_without_retrying(db_factory
 
     svc = _AlwaysBroken()
     topic = await a_topic(db_factory)
-    runner.submit(svc, topic, author="u", content="hi", summon=True)
+    runner.submit(
+        svc,
+        topic,
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     for _ in range(200):
         await asyncio.sleep(0.01)
         if any(meta.get("who") == "human" for _, meta in svc.events):
@@ -1527,7 +1597,13 @@ async def test_a_timeout_hands_to_a_human_without_retrying(db_factory):
 
     svc = _AlwaysHangs()
     topic = await a_topic(db_factory)
-    runner.submit(svc, topic, author="u", content="hi", summon=True)
+    runner.submit(
+        svc,
+        topic,
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     for _ in range(400):
         await asyncio.sleep(0.005)
         if any(meta.get("who") == "human" for _, meta in svc.events):
@@ -1575,7 +1651,13 @@ async def test_a_slow_setup_does_not_spend_the_ceiling_before_the_turn_starts(
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_SlowSetup(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _SlowSetup(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         f = await _next_frame(q, "done", timeout=3)
     # "done" is published before the turn's own tail (settling conclusion
     # cards, closing the interval) runs — wait for that too before returning.
@@ -1604,7 +1686,13 @@ async def test_a_turn_cut_by_the_fuse_still_ends_its_stream(db_factory):
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_NeverFinishes(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _NeverFinishes(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         f = await _next_frame(q, "done", timeout=3)
     assert f["type"] == "done"
 
@@ -1637,7 +1725,13 @@ async def test_a_turn_that_keeps_calling_tools_outlives_its_ceiling(db_factory):
 
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_KeepsWorking(), topic, author="u", content="hi", summon=True)
+        runner.submit(
+            _KeepsWorking(),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         f = await _next_frame(q, "done", timeout=5)
     assert f["type"] == "done"
 
@@ -1666,7 +1760,11 @@ async def test_crossing_the_ceiling_is_recorded_and_ends_nothing(db_factory, cap
     with caplog.at_level("WARNING"):
         async with broker.subscribe(str(topic)) as q:
             runner.submit(
-                _TalksPastTheCeiling(), topic, author="u", content="hi", summon=True
+                _TalksPastTheCeiling(),
+                topic,
+                author="u",
+                content="hi",
+                addressed=addressed_to_agent("cheese-seat"),
             )
             f = await _next_frame(q, "done", timeout=5)
     assert f["type"] == "done"
@@ -1685,7 +1783,13 @@ async def test_a_summoned_turn_that_published_nothing_checks_its_tools(db_factor
     runner = AgentWorkRunner(broker)
     silent = _FakeChat([{"type": "user_block"}, {"type": "done"}], db_factory)
     topic = await a_topic(db_factory)
-    runner.submit(silent, topic, author="u", content="修一下登录", summon=True)
+    runner.submit(
+        silent,
+        topic,
+        author="u",
+        content="修一下登录",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await runner.drain()
     assert silent.tool_checks == 1
     assert silent.events == []  # nothing was wrong, so the room hears nothing
@@ -1695,7 +1799,11 @@ async def test_a_summoned_turn_that_published_nothing_checks_its_tools(db_factor
         db_factory,
     )
     runner.submit(
-        spoke, await a_topic(db_factory), author="u", content="hi", summon=True
+        spoke,
+        await a_topic(db_factory),
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
     )
     await runner.drain()
     assert spoke.tool_checks == 0, "a turn that spoke needs no recovery"
@@ -1709,7 +1817,13 @@ async def test_reconnected_tools_re_deliver_the_message_once(db_factory):
         [{"type": "user_block"}, {"type": "done"}], db_factory, tools_recovered=True
     )
     topic = await a_topic(db_factory)
-    runner.submit(chat, topic, author="u", content="修一下登录", summon=True)
+    runner.submit(
+        chat,
+        topic,
+        author="u",
+        content="修一下登录",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     for _ in range(3):  # the first turn's tail submits the re-delivery
         await runner.drain()
     assert chat.events and "已经接回来" in chat.events[0]

@@ -48,7 +48,6 @@ READS = {
     "项目日历": "/projects/{pid}/calendar",
     "上游仓库": "/projects/{pid}/upstream",
     "智能体名册": "/projects/{pid}/agents",
-    "智能体选项": "/projects/{pid}/agent-options",
     "分支保护": "/projects/{pid}/branch-protection",
     "邀请名单": "/projects/{pid}/invitations",
 }

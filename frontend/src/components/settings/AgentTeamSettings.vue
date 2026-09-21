@@ -2,14 +2,14 @@
 // 「AI 队友」—— 这个项目里所有 AI 队友，项目设置里的一节。
 //
 // 它曾经是一整页，而项目设置里只有仓库、分支保护和运行环境 —— 于是设置页对一个
-// 没绑仓库的项目是空的，还写着「角色设定和模型请到 AI 队友 中修改」，把人往外
-// 指。队友的角色设定和模型本来就是这个项目的设置，所以它回到这里。
+// 没绑仓库的项目是空的，还写着「角色设定请到 AI 队友 中修改」，把人往外指。
+// 队友的角色设定本来就是这个项目的设置，所以它回到这里。
 //
 // 每一行除了名字和类型带两个数字 —— 记忆条数和现在有几个话题在用它 —— 有没有在
-// 干活，一眼就分得出来。
+// 干活，一眼就分得出来。用哪个模型不在这一行上：那是一条活的事，写在卡上。
 //
-// 页面读四处，只有第一处是必须的：队友名册。类型目录、记忆、话题各自失败都不该
-// 让整页塌掉，它们只会让对应的那个数字消失，而不是让人看不到队友。
+// 页面读三处，只有第一处是必须的：队友名册。类型目录、记忆各自失败都不该让整页
+// 塌掉，它们只会让对应的那个数字消失，而不是让人看不到队友。
 import type { MemoryEntryOut } from '@/api'
 import type { AgentType, ProjectAgent } from '@/cx_types'
 
@@ -19,7 +19,6 @@ import { useCachedResource } from '@/composables/useCachedResource'
 
 import {
   deactivateProjectAgent,
-  getProjectAgentOptions,
   isEndpointMissing,
   listAgentTypes,
   listMemory,
@@ -28,7 +27,7 @@ import {
 } from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import { agentKey, memoryCountsByHandle } from '@/lib/projectAgents'
+import { memoryCountsByHandle, typeLabel } from '@/lib/projectAgents'
 import { relTime } from '@/lib/relTime'
 
 defineOptions({ name: 'AgentTeamSettings' })
@@ -39,10 +38,6 @@ interface AgentsPayload {
   agents: ProjectAgent[]
   types: AgentType[]
   memories: MemoryEntryOut[]
-  // 运行方式的人话名字。名字只有后端那份目录知道（HARNESSES），在这里留第二份
-  // 清单就是留一份会过期的副本 —— 所以它跟别的补充数据一样，拉得到就用，拉不到
-  // 就退回 id 本身。
-  harnessLabels: Record<string, string>
   // 后端那一半是单独上线的。没上线时这一页不能是白屏，也不能是一句看起来像
   // bug 的报错 —— 它得说清楚「功能还没到这个环境」。
   backendMissing: boolean
@@ -59,7 +54,6 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       agents: [],
       types: [],
       memories: [],
-      harnessLabels: {},
       backendMissing: false,
       loadError: null,
     }
@@ -70,8 +64,8 @@ const { data, loading, refreshing, refresh } = useCachedResource(
       else payload.loadError = e instanceof Error ? e.message : '加载 AI 队友失败'
       return payload
     }
-    // 三个补充数据，谁失败谁空着。
-    const [typeList, memoryList, harnessLabels] = await Promise.all([
+    // 两个补充数据，谁失败谁空着。
+    const [typeList, memoryList] = await Promise.all([
       listAgentTypes().then(
         (r) => r.data,
         () => [] as AgentType[]
@@ -80,14 +74,9 @@ const { data, loading, refreshing, refresh } = useCachedResource(
         (r) => r.data,
         () => [] as MemoryEntryOut[]
       ),
-      getProjectAgentOptions(props.projectId).then(
-        (r) => Object.fromEntries((r.harness?.choices ?? []).map((c) => [c.id, c.label])),
-        () => ({}) as Record<string, string>
-      ),
     ])
     payload.types = typeList
     payload.memories = memoryList
-    payload.harnessLabels = harnessLabels
     return payload
   }
 )
@@ -95,7 +84,6 @@ const { data, loading, refreshing, refresh } = useCachedResource(
 const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
 const types = computed<AgentType[]>(() => data.value?.types ?? [])
 const memories = computed<MemoryEntryOut[]>(() => data.value?.memories ?? [])
-const harnessLabels = computed<Record<string, string>>(() => data.value?.harnessLabels ?? {})
 const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
 // 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
 const actionError = ref<string | null>(null)
@@ -122,16 +110,6 @@ function memoriesOf(agent: ProjectAgent): MemoryEntryOut[] {
   return memories.value.filter((m) => m.scope === 'agent_project' && m.scope_id === `${prefix}${agent.handle}`)
 }
 
-// 一个队友是「用什么跑的」和「背后是哪个模型」两件事，现在两件都是人挑的，
-// 所以名册上两件都得看得见 —— 否则两个队友一个走 pi 一个走 Claude Code，这一栏
-// 长得一模一样。
-function subtitleOf(agent: ProjectAgent): string {
-  const model = agent.configuration.model
-  const harness = agent.configuration.harness
-  if (!harness) return model
-  return `${harnessLabels.value[harness] ?? harness} · ${model}`
-}
-
 function openCreate() {
   editing.value = null
   editorOpen.value = true
@@ -145,8 +123,8 @@ function openEdit(agent: ProjectAgent) {
 const settingDefault = ref<string | null>(null)
 
 async function makeDefault(agent: ProjectAgent) {
-  if (agent.is_default || !agent.id) return
-  settingDefault.value = agentKey(agent)
+  if (agent.is_default) return
+  settingDefault.value = agent.id
   actionError.value = null
   try {
     await setProjectDefaultAgent(props.projectId, { instance_id: agent.id })
@@ -164,7 +142,7 @@ async function makeDefault(agent: ProjectAgent) {
 
 async function confirmDeactivate() {
   const agent = deactivateTarget.value
-  if (!agent?.id) return
+  if (!agent) return
   deactivating.value = true
   actionError.value = null
   try {
@@ -238,7 +216,7 @@ async function confirmDeactivate() {
         <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" @click="openCreate">新建队友</v-btn>
       </div>
 
-      <v-card v-for="a in agents" :key="agentKey(a)" class="mb-3 pa-4" variant="outlined">
+      <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
         <div class="d-flex align-center">
           <UserAvatar :name="a.display_name || a.handle" :size="36" class="mr-3" />
           <div class="min-w-0">
@@ -247,28 +225,20 @@ async function confirmDeactivate() {
               <v-chip v-if="a.is_default" size="x-small" color="primary" variant="tonal">默认</v-chip>
               <v-chip v-if="a.is_active === false" size="x-small" variant="tonal">已停用</v-chip>
             </div>
-            <div class="t-meta c-muted">@{{ a.handle }} · {{ subtitleOf(a) }}</div>
+            <div class="t-meta c-muted">@{{ a.handle }} · {{ typeLabel(types, a.type_name) }}</div>
           </div>
           <v-spacer />
           <v-btn
             v-if="!a.is_default && a.is_active !== false"
             variant="text"
             size="small"
-            :loading="settingDefault === agentKey(a)"
-            :disabled="!a.id"
+            :loading="settingDefault === a.id"
             @click="makeDefault(a)"
           >
             设为默认
           </v-btn>
           <v-btn variant="text" size="small" @click="openEdit(a)">编辑</v-btn>
-          <v-btn
-            v-if="a.is_active !== false"
-            variant="text"
-            size="small"
-            color="error"
-            :disabled="!a.id"
-            @click="deactivateTarget = a"
-          >
+          <v-btn v-if="a.is_active !== false" variant="text" size="small" color="error" @click="deactivateTarget = a">
             停用
           </v-btn>
         </div>
@@ -277,8 +247,8 @@ async function confirmDeactivate() {
           <button
             type="button"
             class="stat-link"
-            :aria-expanded="expanded === agentKey(a)"
-            @click="expanded = expanded === agentKey(a) ? null : agentKey(a)"
+            :aria-expanded="expanded === a.id"
+            @click="expanded = expanded === a.id ? null : a.id"
           >
             <v-icon size="14" class="mr-1">mdi-book-open-variant-outline</v-icon>
             {{ memoryCounts[a.handle] ?? 0 }} 条记忆
@@ -286,7 +256,7 @@ async function confirmDeactivate() {
         </div>
 
         <v-expand-transition>
-          <div v-if="expanded === agentKey(a)" class="memory-list mt-3">
+          <div v-if="expanded === a.id" class="memory-list mt-3">
             <div v-if="memoriesOf(a).length === 0" class="t-meta c-muted">暂无记忆</div>
             <div v-for="m in memoriesOf(a)" :key="m.id" class="memory-row">
               <span class="t-body">{{ m.content }}</span>

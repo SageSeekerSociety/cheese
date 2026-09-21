@@ -12,16 +12,20 @@ badge have to agree, and two copies of a `5` is how they stop agreeing.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, func, or_, select, true
+from sqlalchemy import Select, and_, func, or_, select, true, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
+    FeedbackCommentLike,
     FeedbackKind,
     FeedbackNote,
     FeedbackPriority,
@@ -31,6 +35,11 @@ from app.domain.feedback.models import (
     FeedbackTimeline,
     FeedbackVisibility,
 )
+
+# 这两个数**住在 `paging.py`**（理由写在那儿：路由也要用它们，而路由不许 import
+# repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
+# 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
+from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
 
 #: 「热门」的阈值 —— 按支持数，不按浏览量。原型给过理由（「浏览是路过，支持是表态」），
 #: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
@@ -63,6 +72,97 @@ CLOSED_STATUSES: tuple[FeedbackStatus, ...] = (
 )
 
 
+#: 一次 `IN (...)` 里最多放几个值。**这不是微优化**：asyncpg 把参数个数编进 int16，
+#: 超过 32767 直接抛 `InterfaceError` —— 那是谁都过不去的 500，而且楼里评论一多，
+#: 详情页对**所有人**一起打不开、一直不恢复。分批之后每一批都远在线的这一侧。
+_IN_BATCH = 500
+
+
+def batched(values: Sequence[Any], size: int | None = None) -> Iterator[Sequence[Any]]:
+    """把一串值切成每段最多 `size` 个。见 `_IN_BATCH` 里那条不这么做的后果。
+
+    `size` 是 `None` 时读**当时**的 `_IN_BATCH`，而不是把 `_IN_BATCH` 当默认值写死
+    在签名里：写成默认值的话，这个模块常量就再也改不动了（默认值在 def 那一刻就
+    定下来了），连测试也没法把批大小压小 —— 而「分批之后合并出来的答案对不对」正是
+    需要在小批大小下验的那件事（见
+    `test_chunked_in_queries_answer_the_same_as_one_big_one`）。
+    """
+    items = list(values)
+    chunk = _IN_BATCH if size is None else size
+    for start in range(0, len(items), chunk):
+        yield items[start : start + chunk]
+
+
+def cursor_of(row: FeedbackComment) -> str:
+    """一条评论的游标：`(created_at, id)`，编成不透明字符串给客户端原样带回来。
+
+    带**值**而不是只带 id，是为了翻页不需要再查一次：拿 id 反查时间戳的话，那条
+    评论在这中间被删掉，游标当场指向一个查不到的行，翻页就断在那里。带值的话，
+    锚点没了也照样接着往下走。
+
+    两列一起，是因为 `created_at` 会撞 —— `NOW()` 在一条语句里对每一行是同一个值，
+    批量种子数据尤其明显。只按它排序，同一时刻里的几条在两次查询里顺序可以不一样，
+    翻页会漏行或者重复；`id` 是主键，补上它才是全序。
+    """
+    return f"{row.created_at.isoformat()}|{row.id}"
+
+
+def parse_cursor(after: str) -> tuple[datetime, uuid.UUID]:
+    """游标的逆运算。看不懂的游标抛 `ValueError`，由路由翻成 400。"""
+    at, sep, raw = after.partition("|")
+    if not sep:
+        raise ValueError(f"not a cursor: {after!r}")
+    return datetime.fromisoformat(at), uuid.UUID(raw)
+
+
+def after_cursor(stmt: Select[Any], after: str) -> Select[Any]:
+    """把「从这个游标之后接着取」接到一条已排好序的语句上。"""
+    at, last_id = parse_cursor(after)
+    return stmt.where(
+        or_(
+            FeedbackComment.created_at > at,
+            and_(FeedbackComment.created_at == at, FeedbackComment.id > last_id),
+        )
+    )
+
+
+def _group_by_parent(
+    rows: Sequence[FeedbackComment],
+) -> dict[uuid.UUID, list[FeedbackComment]]:
+    """把一堆回复按 `parent_id` 分堆，堆内保持传进来的顺序。
+
+    `dict` 保插入顺序，而 `rows` 是全局按 `(created_at, id)` 升序取回来的，所以分出来
+    的每一堆内部也是升序 —— 「前 N 条」和「最后一条当游标」这两件事都靠它成立。
+    楼里那条回复的父亲一定在楼里（`parent_id.in_(top_ids)` 已经筛过），所以不处理
+    `None`。
+    """
+    grouped: dict[uuid.UUID, list[FeedbackComment]] = {}
+    for row in rows:
+        assert row.parent_id is not None
+        grouped.setdefault(row.parent_id, []).append(row)
+    return grouped
+
+
+@dataclass(frozen=True)
+class CommentPage:
+    """一页评论：至多 `limit` 栋楼，连同每栋楼各自的回复。
+
+    `next_cursor` 是下一页的起点，`None` 表示取完了。`reply_counts` 是每栋楼
+    **服务端知道**的回复总数 —— 页里那一栋可能只带了前若干条，客户端拿这个数决定
+    「展开更多」是把手上已经有的摊开，还是去取下一页。
+    """
+
+    rows: list[FeedbackComment]
+    next_cursor: str | None
+    reply_counts: dict[uuid.UUID, int]
+    #: 每栋楼**楼内**的下一页游标；楼里回复已经带全了就不在里面。
+    #:
+    #: 客户端不自己拼这个串（「最后一条的时间戳 + id」）。拼得出来，但那是把服务端
+    #: 的排序规则抄了第二份，改排序的那天两边会漂开 —— 所以游标只由服务端发、客户端
+    #: 原样送回来。缺键（不是空串）表示这一栋取完了，和 `reply_counts` 一起读。
+    reply_cursors: dict[uuid.UUID, str]
+
+
 def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     """`FeedbackService.may_see`, spelled as a WHERE clause.
 
@@ -85,6 +185,49 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
         arms.append(Feedback.author_handle == handle)
         arms.append(Feedback.submitted_by_handle == handle)
     return or_(*arms)
+
+
+def live_comment_clause() -> Any:
+    """一条评论算「还在」的条件：自己没被软删，**而且**它的楼还在。
+
+    Why the second half exists, since `deleted_at` alone looks sufficient:
+    `soft_delete_comment` stamps a top-level comment and its replies in one
+    transaction, but that cascade **cannot be made airtight against a reply
+    arriving at the same moment**. Postgres's FK check takes `FOR KEY SHARE` on
+    the parent row; the delete's `UPDATE` takes `FOR NO KEY UPDATE`; those two do
+    not conflict, so an insert that read the parent a moment earlier commits
+    after the cascade has already run, and its reply lands under a parent nobody
+    can see. Serialising would mean `SELECT ... FOR UPDATE` on the parent in the
+    delete path — which is the lock that *does* conflict with `FOR KEY SHARE` —
+    and that would make every like on a comment queue behind a delete.
+
+    Reading the invariant is cheaper and cannot lose the race: visibility is
+    decided when the thread is read, so no interleaving of writes can produce a
+    visible orphan. It also repairs rows that were orphaned **before** this
+    existed, which a write-side fix cannot do for history.
+
+    Used by every reader that counts or returns comments, so the two cannot
+    disagree — a card that counts an invisible reply is its own bug, and a
+    thread that returns one draws nothing (the client builds the tree from
+    top-level rows and their children, so an orphan is silently dropped).
+
+    The write side still cascades and the migration backfills: those are what
+    keep `deleted_at` in the table telling the truth, so the next query written
+    against this table does not have to know this clause exists.
+    """
+    parent = aliased(FeedbackComment)
+    return and_(
+        FeedbackComment.deleted_at.is_(None),
+        or_(
+            FeedbackComment.parent_id.is_(None),
+            select(parent.id)
+            .where(
+                parent.id == FeedbackComment.parent_id,
+                parent.deleted_at.is_(None),
+            )
+            .exists(),
+        ),
+    )
 
 
 def matching(q: str) -> Any:
@@ -477,16 +620,25 @@ class FeedbackRepository:
     async def add_support(self, feedback_id: uuid.UUID, handle: str) -> bool:
         """Idempotent: a repeat POST is a no-op, not a second row.
 
-        Returns whether a row was actually written, so the caller can report a
-        count that is the truth rather than a guess.
+        **`ON CONFLICT DO NOTHING` rather than read-then-insert**, and that is a
+        correctness fix rather than a micro-optimisation. The pair of statements
+        it replaces — `has_support`, then `add` — is a race the unique constraint
+        turns into a 500: two taps of the same button overlapping in flight (a
+        double-click on a slow connection is enough — the button is not disabled
+        while the request is out) both read "not supported", both insert, and the
+        loser's `flush` raises `IntegrityError` out of the route. One statement
+        cannot lose that race, and it also drops a round trip.
+
+        `RETURNING id` is what keeps the boolean honest: the row comes back only
+        when the insert really happened, so "was it written" costs nothing extra.
         """
-        if await self.has_support(feedback_id, handle):
-            return False
-        self._session.add(
-            FeedbackSupport(feedback_id=feedback_id, author_handle=handle)
+        stmt = (
+            pg_insert(FeedbackSupport)
+            .values(feedback_id=feedback_id, author_handle=handle)
+            .on_conflict_do_nothing(index_elements=["feedback_id", "author_handle"])
+            .returning(FeedbackSupport.id)
         )
-        await self._session.flush()
-        return True
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
 
     async def remove_support(self, feedback_id: uuid.UUID, handle: str) -> bool:
         """Also idempotent — deleting a support that is not there answers 200."""
@@ -503,16 +655,150 @@ class FeedbackRepository:
 
     # --- 评论 -----------------------------------------------------------------
 
-    async def list_comments(self, feedback_id: uuid.UUID) -> list[FeedbackComment]:
-        stmt = (
+    async def page_comments(
+        self,
+        feedback_id: uuid.UUID,
+        *,
+        after: str | None = None,
+        limit: int = THREAD_PAGE,
+        replies_limit: int = REPLIES_PAGE,
+    ) -> CommentPage:
+        """一页评论。**这是取评论的唯一入口**，没有「一次把整条都取回来」那个版本。
+
+        以前有（`list_comments`，无上限）。它的代价不是慢，是三个一起到：
+        一个几千条回复的帖子会把整条线程materialize成 ORM 对象和 JSON；同一条线程的
+        评论 id 会进 `comment_like_counts` 的 `IN (...)`，过了 32767 个参数就是一条
+        500，而这是详情页的主路径 —— 也就是说那条帖子之后**对所有人**打不开，删
+        评论才会好。分页把这三件事一起关掉：一页的 id 数由 `limit × (1 + replies_limit)`
+        封顶。
+
+        「楼」是分页单位而不是「条」：客户端按 `parent_id` 分组来画，一栋楼拆到两页
+        里就会出现一条回复挂不住的父亲。所以顶层按游标取 `limit` 栋，回复跟着每栋楼
+        走，楼内那层由 `replies_limit` 单独封顶。
+        """
+        tops_stmt = (
             select(FeedbackComment)
             .where(
                 FeedbackComment.feedback_id == feedback_id,
+                FeedbackComment.parent_id.is_(None),
+                # 顶层没有父亲，`live_comment_clause()` 在这里就是这一句。
                 FeedbackComment.deleted_at.is_(None),
+            )
+            .order_by(FeedbackComment.created_at.asc(), FeedbackComment.id.asc())
+            # 多取一条只用来回答「还有没有下一页」，它不进返回值。
+            .limit(limit + 1)
+        )
+        if after:
+            tops_stmt = after_cursor(tops_stmt, after)
+        tops = list((await self._session.execute(tops_stmt)).scalars().all())
+        more = len(tops) > limit
+        tops = tops[:limit]
+        if not tops:
+            return CommentPage(
+                rows=[], next_cursor=None, reply_counts={}, reply_cursors={}
+            )
+
+        top_ids = [top.id for top in tops]
+        # 每栋楼多取一条：多的那一条不进返回值，只用来回答「这一栋楼里还有下一页
+        # 吗」。取 `limit` 条再猜「大概取完了吧」是不行的 —— 一栋正好 50 条的楼会被
+        # 判成还有下一页，客户端于是多发一次必然取到空页的请求。
+        fetched = await self._replies_of(top_ids, limit=replies_limit + 1)
+        replies: list[FeedbackComment] = []
+        cursors: dict[uuid.UUID, str] = {}
+        for parent_id, rows in _group_by_parent(fetched).items():
+            if len(rows) > replies_limit:
+                cursors[parent_id] = cursor_of(rows[replies_limit - 1])
+                rows = rows[:replies_limit]
+            replies.extend(rows)
+        return CommentPage(
+            rows=[*tops, *replies],
+            next_cursor=cursor_of(tops[-1]) if more else None,
+            reply_counts=await self._reply_counts(top_ids),
+            reply_cursors=cursors,
+        )
+
+    async def page_replies(
+        self,
+        parent_id: uuid.UUID,
+        *,
+        after: str | None = None,
+        limit: int = REPLIES_PAGE,
+    ) -> tuple[list[FeedbackComment], str | None]:
+        """一栋楼里的下一段回复。返回 `(rows, next_cursor)`。
+
+        父亲被判掉的那一瞬间，它下面的回复也一起从读侧消失（`live_comment_clause`），
+        所以这里直接按 `parent_id` 取就够：调用方刚把这条顶层评论拿在手里，它是不是
+        活的已经由那一步回答了。
+        """
+        stmt = (
+            select(FeedbackComment)
+            .where(
+                FeedbackComment.parent_id == parent_id,
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .order_by(FeedbackComment.created_at.asc(), FeedbackComment.id.asc())
+            .limit(limit + 1)
+        )
+        if after:
+            stmt = after_cursor(stmt, after)
+        rows = list((await self._session.execute(stmt)).scalars().all())
+        more = len(rows) > limit
+        rows = rows[:limit]
+        return rows, (cursor_of(rows[-1]) if more and rows else None)
+
+    async def _replies_of(
+        self, top_ids: Sequence[uuid.UUID], *, limit: int
+    ) -> list[FeedbackComment]:
+        """这些楼各自的前 `limit` 条回复 —— 一次查询，每栋楼各数各的。
+
+        `row_number() OVER (PARTITION BY parent_id ...)` 是这件事的正解：按楼分窗、
+        窗内按 `(created_at, id)` 排序、每窗取前 N。写成「每栋楼一个 LIMIT」是一页
+        50 栋楼 50 次查询；写成「先全取回来再在 Python 里截」等于这条上限没生效，
+        而这正是要防的那件事。
+        """
+        ranked = (
+            select(
+                FeedbackComment.id.label("id"),
+                func.row_number()
+                .over(
+                    partition_by=FeedbackComment.parent_id,
+                    order_by=(
+                        FeedbackComment.created_at.asc(),
+                        FeedbackComment.id.asc(),
+                    ),
+                )
+                .label("rank"),
+            )
+            .where(
+                FeedbackComment.parent_id.in_(list(top_ids)),
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .subquery()
+        )
+        stmt = (
+            select(FeedbackComment)
+            .where(
+                FeedbackComment.id.in_(
+                    select(ranked.c.id).where(ranked.c.rank <= limit)
+                )
             )
             .order_by(FeedbackComment.created_at.asc(), FeedbackComment.id.asc())
         )
         return list((await self._session.execute(stmt)).scalars().all())
+
+    async def _reply_counts(self, top_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """每栋楼的回复**总数**（不是页里带了几条），一次 `GROUP BY`。"""
+        stmt = (
+            select(FeedbackComment.parent_id, func.count(FeedbackComment.id))
+            .where(
+                FeedbackComment.parent_id.in_(list(top_ids)),
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .group_by(FeedbackComment.parent_id)
+        )
+        return {
+            row[0]: int(row[1]) for row in (await self._session.execute(stmt)).all()
+        }
 
     async def get_comment(self, comment_id: uuid.UUID) -> FeedbackComment | None:
         stmt = select(FeedbackComment).where(
@@ -529,6 +815,7 @@ class FeedbackRepository:
         author_is_agent: bool,
         body: str,
         parent_id: uuid.UUID | None,
+        reply_to_handle: str | None,
     ) -> FeedbackComment:
         row = FeedbackComment(
             feedback_id=feedback_id,
@@ -537,14 +824,114 @@ class FeedbackRepository:
             author_user_id=author_user_id,
             author_is_agent=author_is_agent,
             body=body,
+            reply_to_handle=reply_to_handle,
         )
         self._session.add(row)
         await self._session.flush()
         return row
 
     async def soft_delete_comment(self, row: FeedbackComment) -> None:
-        row.deleted_at = datetime.now(UTC)
+        """Soft-delete `row`, and the replies that hang under it.
+
+        **The children have to go too, and that is not tidiness.** The client
+        renders a thread by taking the comments with no `parent_id` and then
+        asking each of those for its replies, while `list_comments` filters
+        deleted rows out — so a deleted parent does not merely hide itself:
+        every reply under it leaves the screen with it, with no tombstone and
+        nothing left that would ever query them again. `FeedbackComment.parent_id`
+        already states the intended behaviour («deleting a top-level comment
+        takes its replies with it»); this is where that is kept. B站 and 小红书
+        answer the same way, and no other reading survives contact with a
+        reader: a reply that says 「回复 X」 while X is nowhere on the page is
+        worse than either outcome.
+
+        One `UPDATE` for the children rather than a load-and-touch per reply —
+        a top-level comment can carry a page of them, and someone is waiting on
+        this request. A reply being deleted matches no rows here, which is
+        correct rather than lucky: `parent_id` only ever points at a TOP-LEVEL
+        comment (the service folds replies onto their grandparent), so a reply
+        has no children to begin with.
+        """
+        deleted_at = datetime.now(UTC)
+        row.deleted_at = deleted_at
+        await self._session.execute(
+            update(FeedbackComment)
+            .where(
+                FeedbackComment.parent_id == row.id,
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .values(deleted_at=deleted_at)
+        )
         await self._session.flush()
+
+    # --- 评论点赞 -------------------------------------------------------------
+    #
+    # Read side is batched for the whole thread, for the same reason the report
+    # counts are (`supports_counts`): a thread is a page of rows and the
+    # alternative is two queries per reply.
+
+    async def comment_like_counts(
+        self, comment_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, int]:
+        counts: dict[uuid.UUID, int] = {}
+        for batch in batched(comment_ids):
+            stmt = (
+                select(
+                    FeedbackCommentLike.comment_id,
+                    func.count(FeedbackCommentLike.id),
+                )
+                .where(FeedbackCommentLike.comment_id.in_(list(batch)))
+                .group_by(FeedbackCommentLike.comment_id)
+            )
+            counts.update(
+                {
+                    row[0]: int(row[1])
+                    for row in (await self._session.execute(stmt)).all()
+                }
+            )
+        return counts
+
+    async def comment_like_count(self, comment_id: uuid.UUID) -> int:
+        stmt = select(func.count(FeedbackCommentLike.id)).where(
+            FeedbackCommentLike.comment_id == comment_id
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    async def comment_liked_by(
+        self, comment_ids: Sequence[uuid.UUID], handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these the viewer already liked — the button's filled state."""
+        liked: set[uuid.UUID] = set()
+        for batch in batched(comment_ids):
+            stmt = select(FeedbackCommentLike.comment_id).where(
+                FeedbackCommentLike.comment_id.in_(list(batch)),
+                FeedbackCommentLike.author_handle == handle,
+            )
+            liked.update((await self._session.execute(stmt)).scalars().all())
+        return liked
+
+    async def add_comment_like(self, comment_id: uuid.UUID, handle: str) -> bool:
+        """`add_support`, one table down — including why it is one statement."""
+        stmt = (
+            pg_insert(FeedbackCommentLike)
+            .values(comment_id=comment_id, author_handle=handle)
+            .on_conflict_do_nothing(index_elements=["comment_id", "author_handle"])
+            .returning(FeedbackCommentLike.id)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none() is not None
+
+    async def remove_comment_like(self, comment_id: uuid.UUID, handle: str) -> bool:
+        """Also idempotent — unliking something not liked answers 200."""
+        stmt = select(FeedbackCommentLike).where(
+            FeedbackCommentLike.comment_id == comment_id,
+            FeedbackCommentLike.author_handle == handle,
+        )
+        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
 
     # --- 时间线 ---------------------------------------------------------------
 
@@ -739,10 +1126,12 @@ class FeedbackRepository:
             select(FeedbackComment.feedback_id, func.count(FeedbackComment.id))
             .where(
                 FeedbackComment.feedback_id.in_(list(ids)),
-                FeedbackComment.deleted_at.is_(None),
+                live_comment_clause(),
             )
             .group_by(FeedbackComment.feedback_id)
         )
         return {
             row[0]: int(row[1]) for row in (await self._session.execute(stmt)).all()
         }
+
+    # --- 平台管理员的第二份名单（页面上加的那些） -----------------------------

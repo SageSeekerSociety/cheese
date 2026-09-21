@@ -104,10 +104,9 @@ class Topic(UuidPk, Timestamps, Base):
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).
-    #  - 芝士 DM:  private_peer is NULL, private_owner = the member's handle.
-    #  - peer DM: two humans; the unordered handle pair is canonicalized so
-    #    private_owner = min(a, b), private_peer = max(a, b) — one row, both see it.
     is_private: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # 谁在这间私聊里，答案在名册上（`TopicMemberService.private_seats`，结论 19）。
+    # 这两列没有读点了，写着只为让上一版镜像在换容器之前还答得出私聊；P13 删列。
     private_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
     private_peer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # If this topic was upgraded from a block (讨论升级 / 拆解), link it back.

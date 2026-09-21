@@ -74,6 +74,15 @@ EVENT_CARD_VOIDED: Final = "card_voided"
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
+
+#: 一条消息被升级成了一条活（或一个房间），下一步在它的负责人手上。
+EVENT_BLOCK_UPGRADED: Final = "block_upgraded"
+#: 一个房间的环境倒了，这件事交到总览芝士手上了。
+EVENT_ENVIRONMENT_RECOVERY_REQUEST: Final = "environment_recovery_request"
+#: 房间的环境修好了，此前没送达的消息接着处理。
+EVENT_ENVIRONMENT_REPAIRED: Final = "environment_repaired"
+#: 这个房间的记忆在整理 —— 芝士自己的事，没有人在等它。
+EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -82,6 +91,9 @@ EVENT_TURN_FAILED: Final = "turn_failed"
 EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 #: 部署中断了轮次（孤儿轮次扫底）。
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
+#: 有工具调用发出去了而结果永远不会回来了 —— 平台不替它猜做没做过，也不自动重发
+#: （结论 57）。要人看一眼那件事到底落地没有。
+EVENT_DISPATCH_UNKNOWN: Final = "dispatch_unknown"
 #: 项目并发已满，这轮在排队。
 EVENT_TURN_QUEUED: Final = "turn_queued"
 #: 房间的平台工具通道断了，回复没能发进来 —— 平台接回来并重发了那条消息。
@@ -128,6 +140,8 @@ EVENT_PR_CONFLICT: Final = "pr_conflict"
 # A parent task closed; its dependants need the executor to inspect their base.
 EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
 EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
+#: 一次调用撞上项目的档位策略，变成了给人的一条提议（`domain/policy/gate.py`）。
+EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -147,10 +161,15 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
+        EVENT_BLOCK_UPGRADED,
+        EVENT_ENVIRONMENT_RECOVERY_REQUEST,
+        EVENT_ENVIRONMENT_REPAIRED,
+        EVENT_MEMORY_ORGANIZING,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
         EVENT_DEPLOY_INTERRUPTED,
+        EVENT_DISPATCH_UNKNOWN,
         EVENT_ARCHIVE_DEFERRED,
         EVENT_TURN_QUEUED,
         EVENT_SANDBOX_REBUILT,
@@ -173,6 +192,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PR_CONFLICT,
         EVENT_DEPENDENCY_CLOSED,
         EVENT_DEPENDENCY_REJECTED,
+        EVENT_POLICY_PROPOSAL,
     }
 )
 

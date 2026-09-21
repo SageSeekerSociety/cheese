@@ -225,7 +225,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     verdicts = [
         b
         for b in rows
-        if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
+        if b.author_type == AuthorType.platform and "部署中断" in (b.content or "")
     ]
     assert verdicts == []
     assert await open_turn_ids(factory) == set()
@@ -344,7 +344,7 @@ def test_completed_live_turn_settles_before_another_prompt(
 
     monkeypatch.setattr(stub_hooks, "emit_turn", emit_turn)
     with client.websocket_connect(chat_ws_url(str(tid), "u")) as socket:
-        socket.send_json({"type": "message", "content": "hello", "summon": True})
+        socket.send_json({"type": "message", "content": "@芝士 hello"})
         while True:
             frame = socket.receive_json()
             assert frame["type"] != "error", frame

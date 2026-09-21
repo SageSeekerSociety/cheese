@@ -21,6 +21,48 @@ class FakeDeviceTransport:
         self.sent.append(msg)
 
 
+@pytest.mark.parametrize("code", [None, "prompt_socket_unavailable"])
+async def test_prompt_failure_classification_survives_owner_http_boundary(code):
+    import httpx
+    from fastapi import FastAPI
+
+    from app.core.errors import register_exception_handlers
+    from app.domain.agent.device_hub import DeviceCallError
+    from app.domain.agent.device_hub_rpc import _device_call_failure
+
+    hub = DeviceHub()
+    await hub.attach_device("dev", FakeDeviceTransport())
+    call = asyncio.create_task(hub.await_call("dev", "prompt-1"))
+    await asyncio.sleep(0)
+    await hub.on_device_message(
+        "dev",
+        {
+            "t": "rpc.result",
+            "id": "prompt-1",
+            "error": "socket unavailable",
+            "value": {"failure_code": code} if code else None,
+        },
+    )
+    with pytest.raises(DeviceCallError) as failure:
+        await call
+    assert failure.value.failure_code == code
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/failure")
+    async def owner_failure():
+        raise failure.value
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://owner"
+    ) as client:
+        response = await client.get("/failure")
+    restored = _device_call_failure(response)
+    assert isinstance(restored, DeviceCallError)
+    assert restored.failure_code == code
+    assert str(restored) == "socket unavailable"
+
+
 class FakeViewer:
     def __init__(self) -> None:
         self.bytes_: list[bytes] = []

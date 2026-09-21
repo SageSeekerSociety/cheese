@@ -12,14 +12,15 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent import device_provider, place
-from app.domain.agent.device_hub import HubScreen
+from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
     device_home_dir,
     device_store_dir,
     tunnel_port_for_topic,
 )
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
@@ -420,7 +421,7 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     async def agent(self, topic):
         return SimpleNamespace(id=1, username="agent")
 
-    monkeypatch.setattr(IdentityService, "ensure_topic_agent_user", agent)
+    monkeypatch.setattr(IdentityService, "ensure_room_agent_user", agent)
     monkeypatch.setattr(
         "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
     )
@@ -763,6 +764,97 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
     assert hub.closed == ["s1"]  # … the stale screen was dropped …
     assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
     assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+
+
+@pytest.mark.parametrize("api", ["send", "run_turn"])
+@pytest.mark.parametrize(
+    ("failures", "code", "alive", "late_hook", "expected_calls", "success"),
+    [
+        (1, "prompt_socket_unavailable", False, False, 2, True),
+        (2, "prompt_socket_unavailable", False, False, 2, False),
+        (1, None, False, False, 1, False),
+        (1, "prompt_socket_unavailable", True, False, 1, False),
+        (1, "prompt_socket_unavailable", False, True, 1, False),
+    ],
+)
+async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
+    api, failures, code, alive, late_hook, expected_calls, success
+):
+    class InputHub(DeadClaudeHub):
+        def __init__(self):
+            super().__init__()
+            self.accepted = []
+
+        async def exec(self, device_id, argv, **kwargs):
+            result = await super().exec(device_id, argv, **kwargs)
+            if alive and (kwargs.get("env") or {}).get("CHEESE_ALIVE_TOPIC"):
+                result["stdout"] = "alive"
+            return result
+
+        async def await_call(self, device_id, call_id, timeout=30):
+            if len(self.prompts) <= failures:
+                if late_hook:
+                    router.push(
+                        str(topic_id),
+                        {
+                            "hook_event_name": "PreToolUse",
+                            "tool_name": "Bash",
+                            "tool_input": {"command": "true"},
+                            "tool_use_id": "late-tool",
+                        },
+                    )
+                    await asyncio.sleep(0.01)
+                raise DeviceCallError("input unavailable", failure_code=code)
+            self.accepted.append(self.prompts[-1][0])
+            return {"ready": True}
+
+    hub = InputHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    session = SessionRef(project_id, topic_id)
+    try:
+        if api == "send":
+            call = provider.send(
+                session,
+                "finish the work",
+                Opening(system_prompt="", resume_token="existing-conversation"),
+                work_id=uuid.uuid4(),
+                on_mark=lambda _: None,
+            )
+            if success:
+                assert await call is True
+            else:
+                with pytest.raises(ScreenSetupError, match="input unavailable"):
+                    await call
+        else:
+            events, task = await _run(
+                provider,
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt="finish the work",
+                system_prompt="",
+                resume_session_id="existing-conversation",
+            )
+            if success:
+                await _reached(lambda: bool(hub.accepted))
+                router.push(
+                    str(topic_id),
+                    {"hook_event_name": "Stop", "last_assistant_message": "done"},
+                )
+            await asyncio.wait_for(task, timeout=5)
+            assert (
+                any(
+                    isinstance(event, AgentResult) and event.is_error
+                    for event in events
+                )
+                is not success
+            )
+        assert len(hub.prompts) == expected_calls
+        assert hub.accepted == (["finish the work"] if success else [])
+        assert hub.closed == (["s1"] if expected_calls == 2 else [])
+    finally:
+        await provider.close(session)
 
 
 class DeadTunnelHub(DeadClaudeHub):
@@ -1548,17 +1640,59 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     assert env["SOME_OTHER"] == "kept"
 
 
+# CLI 把模型名写进请求体的全部通道：主回复走 `claude --model`，标题 / 文件建议 /
+# 每一个子 agent 走 family 别名。
+_BODY_MODEL_KEYS = [
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "CLAUDE_MODEL",
+]
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2"])
-async def test_gateway_selection_pins_native_auxiliary_models(
-    monkeypatch, tmp_path, model
+@pytest.mark.parametrize(
+    ("model", "keys"),
+    [
+        # 走网关池：四个键说的是同一件事，所以要么都在，要么都不在。
+        ("deepseek-flash", _BODY_MODEL_KEYS),
+        ("glm-5.2", _BODY_MODEL_KEYS),
+        # 订阅模型到这里已经是 Claude 的全名，CLI 自带的别名默认本来就指着 Claude
+        # 的型号，没有要说的。
+        ("claude-sonnet-5", ["CLAUDE_MODEL"]),
+    ],
+)
+async def test_the_launch_env_says_the_model_once_and_only_into_the_body(
+    monkeypatch, tmp_path, model, keys
 ):
+    """一个控制点（结论 46）：走哪个池、用哪个模型，在请求到计量代理问准入的那
+    一刻解析。启动环境里这几个键不是第二份声明，它们是**把解析出来的那个名字送
+    进请求体**的唯一通道 —— LiteLLM 只从请求体读模型名，而代理今天不改写请求体
+    （`_route_to_gateway` 只换 host 和凭据）。
+
+    这条断言锁的是「一共就这几个，一个不多」。它们一起消失在代理改写请求体模型名
+    的那一天（结论 46「要做的两件」，P34）。
+    """
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model=model)
     assert "ANTHROPIC_BASE_URL" not in hub.env
     assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
-    for family in ("HAIKU", "SONNET", "OPUS"):
-        assert hub.env[f"ANTHROPIC_DEFAULT_{family}_MODEL"] == model
+    assert sorted(key for key in hub.env if key.endswith("_MODEL")) == keys
+    assert all(hub.env[key] == model for key in keys)
+
+
+@pytest.mark.anyio
+async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_path):
+    """凭据里签一个型号，等于把启动那一刻的选择带到每一次准入 —— 同样是第二份
+    声明，而且是准入唯一读得到的那一份，它会压过卡上的绑定。"""
+    from app.core.sandbox_auth import scoped_token_claims
+
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(model="glm-5.2")
+    claims = scoped_token_claims(hub.env["CLAUDE_CODE_OAUTH_TOKEN"])
+    assert claims is not None
+    assert "m" not in claims
+    assert "glm-5.2" not in repr(claims)
 
 
 @pytest.mark.anyio

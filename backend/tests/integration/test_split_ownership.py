@@ -157,7 +157,6 @@ def _pr_body(client, pid: str, tid: str) -> str:
         f"/topics/{tid}/tasks/{delivery_task_id(client, tid)}/accept-card",
         headers=delivery_headers(client, tid),
         json={
-            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(split): follow the driver, not the room",
@@ -274,7 +273,6 @@ def test_a_card_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatc
         f"/topics/{thread}/tasks/{delivery_task_id(client, thread)}/accept-card",
         headers=delivery_headers(client, thread),
         json={
-            "new_artifact": "报告",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
             "change_subject": "fix(split): follow the driver, not the room",

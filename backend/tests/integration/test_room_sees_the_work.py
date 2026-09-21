@@ -57,7 +57,7 @@ def stub_hooks() -> SubagentScreen:
 
 def _chat(client, topic_id: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws_conn:
-        ws_conn.send_json({"type": "message", "content": "hi", "summon": True})
+        ws_conn.send_json({"type": "message", "content": "@芝士 hi"})
         while ws_conn.receive_json()["type"] not in ("done", "error"):
             pass
 

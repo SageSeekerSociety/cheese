@@ -39,11 +39,12 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
+    COMPUTE_TIERS,
     compute_default_name,
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.configuration import AgentConfiguration
+from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -52,10 +53,8 @@ from app.domain.agent_instance.schemas import (
     ProjectDefaultAgentIn,
 )
 from app.domain.agent_instance.services import (
-    IMPLICIT_DEFAULT,
     AgentInstanceService,
     ResolvedAgent,
-    legacy_topic_pool,
     memory_pool,
 )
 from app.domain.block.models import BlockKind
@@ -69,6 +68,7 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
+from app.domain.policy import gate
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -92,6 +92,7 @@ from app.domain.project.repositories import (
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
+    ProjectDefaultModelUpdate,
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
@@ -101,17 +102,42 @@ from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
+from app.domain.shell.catalog import Shell
+from app.domain.shell.schemas import ShellOut
+from app.domain.shell.service import effective_shell, effective_shells
 from app.domain.textfile import compare_bytes
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 logger = logging.getLogger("cheesex.projects")
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
+
+
+def _shelled(project: Project, shell: Shell) -> dict:
+    """One project's wire payload, with the 壳 it runs under.
+
+    `shell` is not a column on `Project`, so it cannot come from
+    `model_validate` — it is resolved from the project's own settings, its 赛题
+    and that 赛题's 项目集, and filled in here. Every route that returns a project
+    goes through this pair, or the frontend would fall back to the default 壳 on
+    some screens and not others.
+    """
+    return (
+        ProjectOut.model_validate(project)
+        .model_copy(update={"shell": ShellOut.of(shell)})
+        .model_dump(mode="json")
+    )
+
+
+async def _shelled_many(db: DbSession, projects: list[Project]) -> list[dict]:
+    """The same, for a list, without a query per project."""
+    shells = await effective_shells(db, projects)
+    return [_shelled(p, shells[p.id]) for p in projects]
 
 
 @router.get("/resource-limits")
@@ -176,7 +202,8 @@ async def create_project(
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
-    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+    shell = await effective_shell(db, project)
+    return ok(_shelled(project, shell))
 
 
 @router.get("")
@@ -236,7 +263,7 @@ async def list_projects(
             # route happened to 401 and trip the refresh. Say it here instead.
             resolver.reject_failed_credential(who)
             projects, total = [], 0
-    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    items = await _shelled_many(db, projects)
     return ok(page(items, total))
 
 
@@ -259,7 +286,7 @@ async def projects_for_task(
     actor = await resolver.resolve(fallback_handle=None)
     await resolver.authorize_task(actor, task_id=task_id)
     projects = await ProjectRepository(db).list_for_external_task(task_id)
-    items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
+    items = await _shelled_many(db, projects)
     return ok(page(items, len(items)))
 
 
@@ -280,7 +307,7 @@ async def project_for_team(
     await resolver.authorize_team(actor, team_id=team_id)
     project = await ProjectRepository(db).get_by_team(team_id)
     data = (
-        ProjectOut.model_validate(project).model_dump(mode="json")
+        _shelled(project, await effective_shell(db, project))
         if project is not None
         else None
     )
@@ -294,25 +321,18 @@ async def get_project(
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+    shell = await effective_shell(db, project)
+    return ok(_shelled(project, shell))
 
 
 def _holds_the_default(project: Project, row: AgentInstance) -> bool:
     """Whether this row is what a new topic in the project gets.
 
-    Two ways to be it, and both have to be checked in every place that reports
-    it or the same agent comes back ``is_default`` from one route and not from
-    another: the project points at it, or it IS the project's 芝士 — same
-    handle, therefore the same memory pool — which holds the default even
-    before anything points at it. A retired row holds nothing.
+    One way to be it: the project points at it. A project is created with its
+    芝士 and pointed at it right there, so there is no longer a second way — an
+    agent that holds the default before anything points at it.
     """
-    if row.id == project.default_agent_instance_id:
-        return True
-    return (
-        project.default_agent_instance_id is None
-        and row.is_active
-        and row.handle == IMPLICIT_DEFAULT.handle
-    )
+    return row.id == project.default_agent_instance_id
 
 
 def _agent_out(
@@ -326,14 +346,11 @@ def _agent_out(
         id=agent.instance_id,
         project_id=project_id,
         handle=agent.handle,
-        seat_handle=(
-            agent_instance_handle(agent.instance_id) if agent.instance_id else None
-        ),
+        seat_handle=agent_instance_handle(agent.instance_id),
         type_name=agent.type_name,
         display_name=agent.display_name,
         configuration=AgentConfiguration.model_validate(agent.configuration),
         is_default=is_default,
-        configured=agent.instance_id is not None,
         is_active=is_active,
     ).model_dump(mode="json")
 
@@ -385,41 +402,6 @@ async def create_project_agent(
         _agent_out(
             project_id, AgentInstanceService.resolved(instance), is_default=False
         )
-    )
-
-
-@router.get("/{project_id}/agent-options")
-async def project_agent_options(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    from app.domain.agent_instance.configuration import harness_choices, model_choices
-
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-    choices = model_choices(project.settings)
-    # Every harness this deployment can actually run here, each carrying the
-    # models it can be pointed at. The editor picks the harness and filters the
-    # model list by it — the direction the constraint really runs, so nothing
-    # downstream has to restate which pairs are legal.
-    harnesses = harness_choices(project.settings)
-    return ok(
-        {
-            "harness": {
-                "state": "choosable" if harnesses else "unavailable",
-                "choices": harnesses,
-                "reason": ""
-                if harnesses
-                else "当前项目没有可用的运行方式，请检查模型服务",
-                "note": "",
-            },
-            "model": {
-                "state": "choosable" if choices else "unavailable",
-                "choices": choices,
-                "reason": "" if choices else "当前项目没有可用模型，请检查模型服务",
-                "note": "",
-            },
-        }
     )
 
 
@@ -570,8 +552,9 @@ async def list_artifacts(
 ) -> dict:
     """产物清单：这个项目交出去的东西，一项一行 (#1085 结论二、三)。
 
-    清单只读，而且没有配套的新建入口：它由交付长出来 —— 递卡时点名的名字不在清单
-    上就当场多一项。所以这里没有 POST，不是还没做。"""
+    清单只读，而且没有配套的新建入口：它由交付长出来 —— 交出去一次合并的，落在项目
+    那个仓库那一项上（平台自己认）；交出去一份文件或一个地址的，递卡时点名的名字不
+    在清单上就当场多一项。所以这里没有 POST，不是还没做。"""
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
     rows = await artifacts.list_for_project(db, project_id)
@@ -579,6 +562,7 @@ async def list_artifacts(
         {
             "id": str(a.id),
             "name": a.name,
+            "about": a.about,
             "version": a.version,
             "delivered_at": a.delivered_at.isoformat() if a.delivered_at else None,
         }
@@ -608,6 +592,7 @@ async def read_artifact(
         {
             "id": str(row.id),
             "name": row.name,
+            "about": row.about,
             "version": listed.version if listed else 0,
             "delivered_at": (
                 listed.delivered_at.isoformat()
@@ -907,6 +892,7 @@ async def list_project_tasks(
                 card,
                 beats.get(task.id),
                 room_screen_live=live_rooms[task.room_id],
+                worker_live=chat.worker_live(task.room_id, task.subagent_id),
                 awaiting_answer=task.id in asked,
             ),
             now=now,
@@ -990,40 +976,19 @@ async def _agent_memory_scope(
     return memory_pool(project_id, agent)
 
 
-async def _agent_memory_read_scopes(
-    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
-) -> list[tuple[MemoryScope, str]]:
-    """Every pool a read on behalf of ``place`` should cover.
-
-    The agent's own pool, plus the pool this room filled back when memory was
-    keyed by the room. Writes go to the first alone; the second is a read-only
-    tail so that repointing memory at the agent does not read as amnesia in
-    every room that had already learned something.
-
-    The legacy tail is the ROOM's, even when a thread is asking: that pool was
-    filled when work was a room of its own, so keying it by the thread would
-    look up an id nothing ever wrote under.
-    """
-    if caller is None:
-        return []
-    agent_scope = await _agent_memory_scope(db, project_id, caller)
-    if agent_scope is None:
-        return []
-    scopes = [agent_scope]
-    legacy = legacy_topic_pool(project_id, caller[0].room_id)
-    if legacy != agent_scope:
-        scopes.append(legacy)
-    return scopes
-
-
-def _authorize_personal_memory_owner(place: Place | None, owner: str) -> None:
+async def _authorize_personal_memory_owner(
+    db: DbSession, place: Place | None, owner: str
+) -> None:
     """个人记忆 lives in a private chat, and a private chat is a room — so this
-    asks the room even when a thread inside it is the caller."""
+    asks the room even when a thread inside it is the caller.
+
+    Who is in that room is the roster's answer: a private chat is a room with
+    two seats (结论 19), and those two are its participants."""
     if place is None:
         return
     room = place.room
-    participants = {room.private_owner, room.private_peer} - {None}
-    if not room.is_private or owner not in participants:
+    seats = await TopicMemberService(db).private_seats(room.id)
+    if not room.is_private or seats is None or owner not in seats:
         raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
 
 
@@ -1060,7 +1025,7 @@ async def add_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(place, owner)
+        await _authorize_personal_memory_owner(db, place, owner)
         await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
         return ok({"remembered": True, "layer": layer.value})
     agent_scope = await _agent_memory_scope(db, project_id, caller)
@@ -1081,9 +1046,8 @@ async def search_memory(
     resolver: ActorResolverDep,
 ) -> dict:
     """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
-    with scope="user"+owner it searches that member's personal memory. On the
-    OpenViking backend this is semantic search returning L0 abstracts; the flat
-    DB backend degrades to keyword matching ranked by query coverage — related,
+    with scope="user"+owner it searches that member's personal memory. This is
+    keyword matching ranked by query coverage, not semantic search — related,
     but not the same thing, which is why the CLI never promises 语义搜索."""
     from app.domain.memory.models import MemoryScope
     from app.domain.memory.store import memory_store
@@ -1101,17 +1065,13 @@ async def search_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(place, owner)
+        await _authorize_personal_memory_owner(db, place, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
-    # The agent's own memory, the pool this room filled before memory followed
-    # the agent, and the shared pool — the last two read-only tails of earlier
-    # keyings. Merged on score, not concatenated by pool: which pool a fact
-    # happens to sit in says nothing about how well it answers the question, and
-    # the caller reads top-down.
-    hits = []
-    for scope in await _agent_memory_read_scopes(db, project_id, caller):
-        hits.extend(await store.search(*scope, query))
+    # 芝士自己那个池，加上项目的共享池。按分数合并，不按池子首尾相接：一条事实
+    # 恰好落在哪个池里，说明不了它答这个问题答得多好，而调用方是从上往下读的。
+    agent_scope = await _agent_memory_scope(db, project_id, caller) if caller else None
+    hits = list(await store.search(*agent_scope, query)) if agent_scope else []
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})
@@ -1211,6 +1171,75 @@ async def save_forge_attribution(
     return await get_forge_attribution(project_id, db, resolver)
 
 
+# --- 项目默认模型（#1365 之后主线的唯一模型来源）---
+
+
+def _default_model_state(project_settings: dict | None) -> dict:
+    from app.domain.agent_instance.configuration import model_choices
+
+    choices = model_choices(project_settings)
+    chosen = (project_settings or {}).get("default_model")
+    # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
+    # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
+    known_ids = {c["id"] for c in choices}
+    effective = chosen if isinstance(chosen, str) and chosen in known_ids else None
+    return {
+        "model": effective,
+        "deployment_default": next((c["id"] for c in choices if c["default"]), None),
+        "choices": choices,
+        "can_manage": False,  # 由路由层按权限填
+    }
+
+
+@router.get("/{project_id}/default-model")
+async def get_default_model(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    state = _default_model_state(project.settings)
+    try:
+        await MemberService(db).require_manager(project_id, actor)
+        state["can_manage"] = True
+    except ForbiddenError:
+        state["can_manage"] = False
+    return ok(state)
+
+
+@router.put("/{project_id}/default-model")
+async def save_default_model(
+    project_id: uuid.UUID,
+    body: ProjectDefaultModelUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if body.model is None:
+        values.pop("default_model", None)
+    else:
+        from app.domain.agent_instance.configuration import model_choices
+
+        valid = {c["id"] for c in model_choices(values)}
+        if body.model not in valid:
+            raise ValidationError(
+                f"当前项目无法使用模型 {body.model!r}，请选择可用模型"
+            )
+        values["default_model"] = body.model
+    project.settings = values
+    await db.flush()
+    state = _default_model_state(project.settings)
+    state["can_manage"] = True
+    return ok(state)
+
+
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
 
 
@@ -1274,6 +1303,69 @@ async def save_compute_configs(
     project.settings = values
     await db.flush()
     return ok(body.model_dump())
+
+
+# --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
+
+
+@router.get("/{project_id}/tier-policy")
+async def get_tier_policy(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这个项目允许哪几档资源自己发生，以及超档怎么办。
+
+    `tiers` 一并给出目录里现在存在的档位，所以调用方不必自己维护一份档位表——
+    那正是闸门拒绝按型号列白名单的同一个理由（`domain/policy/gate.py`）。
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    policy = gate.policy_of(project.settings)
+    return ok(
+        {
+            gate.ALLOWED_TIERS_KEY: (
+                None if policy.allowed_tiers is None else sorted(policy.allowed_tiers)
+            ),
+            gate.OVER_TIER_KEY: policy.over_tier,
+            "tiers": sorted(
+                {choice["tier"] for choice in model_choices(project.settings)}
+                | set(COMPUTE_TIERS.values())
+            ),
+        }
+    )
+
+
+@router.put("/{project_id}/tier-policy")
+async def set_tier_policy(
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """改档位策略。只有项目管理者能改——它决定谁的点头才能放行一次调用。
+
+    `allowed_tiers` 传 `null` 是不限档（默认），传一个列表是只有这几档可以自己
+    发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
+    档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if gate.ALLOWED_TIERS_KEY in body:
+        tiers = body.get(gate.ALLOWED_TIERS_KEY)
+        if tiers is None:
+            values.pop(gate.ALLOWED_TIERS_KEY, None)
+        elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
+            values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
+        else:
+            raise ValidationError("allowed_tiers 必须是字符串数组或 null")
+    if gate.OVER_TIER_KEY in body:
+        disposition = body.get(gate.OVER_TIER_KEY)
+        if disposition not in gate.DISPOSITIONS:
+            raise ValidationError(f"over_tier 只能是 {sorted(gate.DISPOSITIONS)} 之一")
+        values[gate.OVER_TIER_KEY] = disposition
+    project.settings = values
+    await db.flush()
+    return await get_tier_policy(project_id, db, resolver)
 
 
 @router.get("/{project_id}/compute-profiles")
@@ -1387,7 +1479,8 @@ async def set_project_owner(
         handle,
         steward,
     )
-    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+    shell = await effective_shell(db, project)
+    return ok(_shelled(project, shell))
 
 
 # --- Branch protection (issue #718): 平台侧的分支保护规则 ---------------------

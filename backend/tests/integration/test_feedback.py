@@ -12,20 +12,29 @@
 * 提案的三道限流各自回 412，因为它们对客户端的指令是同一句：别重试，别再做这件事。
 """
 
+import asyncio
+import time
 import uuid
 from datetime import UTC, datetime
 
 import pytest
 from anyio.from_thread import BlockingPortal
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import HubScreen, device_hub
-from app.domain.feedback.models import Feedback
+from app.domain.feedback import repositories as feedback_repo
+from app.domain.feedback.models import (
+    Feedback,
+    FeedbackComment,
+    FeedbackKind,
+    FeedbackVisibility,
+)
+from app.domain.feedback.repositories import FeedbackRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_agent_seat, session_auth_headers
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
 #: of anything: platform admin is a platform-level fact, not a project role.
@@ -33,6 +42,14 @@ ADMIN = "fb-admin"
 
 STRANGER = "fb-stranger"
 REPORTER = "fb-reporter"
+
+#: 竞态用例把删除的锁拿满这么久才提交，窗口就是这么撑开的。长到「排队等锁」
+#: （约等于这一整段）和「根本没排」（毫秒）之间差三个数量级，短到整个用例还能忍受。
+_HOLD_SECONDS = 2.0
+
+#: 让删除先拿到锁再插回复。不等一下的话，这条用例测的可能是「谁先跑」，
+#: 而不是「两者冲不冲突」。
+_HEAD_START_SECONDS = 0.3
 
 
 @pytest.fixture
@@ -42,7 +59,7 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     `admin_handles()` re-reads settings on every call precisely so this works
     without a restart (see `services.admin_handles`).
     """
-    monkeypatch.setattr(settings, "feedback_admin_handles", [ADMIN])
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
     return ADMIN
 
 
@@ -343,6 +360,31 @@ def test_a_finished_report_cannot_be_supported(client, as_admin):
 # --- 评论 -------------------------------------------------------------------
 
 
+def _comment(
+    client, handle: str, feedback_id: str, body: str, *, parent_id=None
+) -> dict:
+    payload: dict = {"body": body}
+    if parent_id is not None:
+        payload["parent_id"] = parent_id
+    r = client.post(
+        f"/feedback/{feedback_id}/comments",
+        json=payload,
+        headers=session_auth_headers(handle),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _thread(client, handle: str, feedback_id: str) -> list[dict]:
+    """一页评论的 **items**。评论分页之后响应是个信封（`items` + `next_cursor`），
+    而这些用例问的是「楼里有什么」，不是「还有没有下一页」—— 那条另有专门的用例。"""
+    r = client.get(
+        f"/feedback/{feedback_id}/comments", headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["items"]
+
+
 def test_a_reply_to_a_reply_lands_on_the_top_level_parent(client):
     row = _report(client, REPORTER)
     url = f"/feedback/{row['id']}/comments"
@@ -370,6 +412,718 @@ def test_a_reply_to_a_reply_lands_on_the_top_level_parent(client):
         headers=session_auth_headers(REPORTER),
     ).json()["data"]
     assert deeper["parent_id"] == top["id"]
+
+
+def test_a_reply_names_its_target_exactly_when_the_fold_lost_it(client):
+    """`reply_to_handle` 只在**被回复的那条本身也是回复**时才有值。
+
+    三行合起来是这条规则的全部：顶层评论没有回复对象；回楼主的回复紧挨着楼主渲染，
+    再挂一个「回复 楼主」是每一条楼中楼都有的噪声；回楼中楼的回复被折到了同一个
+    父级下，**折叠动作本身把指向弄丢了** —— 名字必须在写的时候记下来，读的时候谁也
+    猜不出来。B站和小红书画这个前缀，画的正好是第三种。
+    """
+    row = _report(client, REPORTER)
+    fid = row["id"]
+
+    top = _comment(client, STRANGER, fid, "我这边也能复现")
+    assert top["reply_to_handle"] is None
+
+    to_top = _comment(client, REPORTER, fid, "在 staging 也复现", parent_id=top["id"])
+    assert to_top["reply_to_handle"] is None
+
+    to_reply = _comment(client, ADMIN, fid, "同一个现象", parent_id=to_top["id"])
+    assert to_reply["reply_to_handle"] == REPORTER
+
+    # 发出去的那一条和读回来的那一条必须说同一句话：两个地方各建一次 payload
+    # 就会漂开，而漂开的表现是「刚发完看着对、刷新一下前缀没了」。
+    #
+    # 只比**和读者无关**的那几个字段。上面三条是各自作者的眼睛里看到的，而这一份是
+    # STRANGER 读的，`can_delete` 两边本来就该不一样 —— 作者刚写完的东西自己删得掉，
+    # 路过的人删不掉。那条规则归另一个用例管，混进来只会让这条用例说不出它在说什么。
+    read_back = {c["id"]: c for c in _thread(client, STRANGER, fid)}
+    assert set(read_back) == {top["id"], to_top["id"], to_reply["id"]}
+    for posted in (top, to_top, to_reply):
+        for field in (
+            "parent_id",
+            "author_handle",
+            "body",
+            "reply_to_handle",
+            "created_at",
+        ):
+            assert read_back[posted["id"]][field] == posted[field]
+
+
+def test_a_reply_cannot_be_hung_on_a_comment_of_another_report(client):
+    mine = _report(client, REPORTER)
+    other = _report(client, REPORTER)
+    foreign = _comment(client, REPORTER, other["id"], "另一条反馈下面的话")
+
+    r = client.post(
+        f"/feedback/{mine['id']}/comments",
+        json={"body": "挂错了", "parent_id": foreign["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    # 400, not 404: 到这个份上调用方已经证明了自己看得见这条反馈，出问题的是它递过来
+    # 的那个 id（和它自己那张单子对不上），不是它不该知道的东西。
+    assert r.status_code == 400, r.text
+    assert _thread(client, REPORTER, mine["id"]) == []
+
+
+# --- 删自己的评论 -------------------------------------------------------------
+
+
+def test_a_comment_is_deleted_by_its_author_or_an_admin(client, as_admin):
+    row = _report(client, REPORTER)
+    fid = row["id"]
+    url = f"/feedback/{fid}/comments"
+
+    mine = _comment(client, REPORTER, fid, "我提的，我删得掉")
+    theirs = _comment(client, STRANGER, fid, "别人提的")
+    admins = _comment(client, STRANGER, fid, "管理员删得掉")
+
+    # 非作者、非管理员：403 而不是 404。到这一步对方已经看得见这条反馈了，藏一个
+    # 它明明看得见的评论没有意义 —— 缺的是权限，就得说权限。
+    r = client.delete(f"{url}/{theirs['id']}", headers=session_auth_headers(REPORTER))
+    assert r.status_code == 403, r.text
+
+    r = client.delete(f"{url}/{mine['id']}", headers=session_auth_headers(REPORTER))
+    assert r.status_code == 200, r.text
+
+    r = client.delete(f"{url}/{admins['id']}", headers=session_auth_headers(as_admin))
+    assert r.status_code == 200, r.text
+
+    # 删掉的是「这条话」，不是「这层楼」：列表里查无此条，但没人能问出它曾经在。
+    assert _thread(client, STRANGER, fid) == [theirs]
+    # 再删一次是 404 —— 它已经不在了，而不是「你刚删过了」。
+    assert (
+        client.delete(
+            f"{url}/{mine['id']}", headers=session_auth_headers(REPORTER)
+        ).status_code
+        == 404
+    )
+
+
+def test_deleting_a_comment_takes_its_replies_with_it(client):
+    """删顶层评论，楼里的回复跟着走。
+
+    这不是收拾整洁。客户端渲染一栋楼的顺序是「先取没有 parent_id 的那些，再逐个问
+    它们的回复」，而列表把已删的行滤掉了 —— 所以一栋楼的头没了，底下的回复不是
+    掉一行，是**整栋楼从屏幕上消失**，没有墓碑、也没有任何东西会再去读它们。
+    B站和小红书删评论是同一个结果，而另一个读法根本站不住：一条回复写着「回复 X」、
+    而 X 已经不在页面上，比两种答案都糟。
+    """
+    row = _report(client, REPORTER)
+    fid = row["id"]
+
+    kept = _comment(client, STRANGER, fid, "这栋楼留着")
+    top = _comment(client, STRANGER, fid, "这栋楼要删")
+    first = _comment(client, REPORTER, fid, "在 staging 也复现", parent_id=top["id"])
+    second = _comment(client, REPORTER, fid, "同一个现象", parent_id=first["id"])
+
+    r = client.delete(
+        f"/feedback/{fid}/comments/{top['id']}",
+        headers=session_auth_headers(STRANGER),
+    )
+    assert r.status_code == 200, r.text
+
+    left = _thread(client, STRANGER, fid)
+    assert [c["id"] for c in left] == [kept["id"]]
+    # 两条回复都不在，而且不是「还在列表里但没人挂得住」—— 那种孤儿正是这条用例
+    # 之前的形状：`parent_id` 指向一个查不到的父亲，谁也不会再问起它们。
+    assert {second["id"], first["id"]}.isdisjoint({c["id"] for c in left})
+
+
+def test_a_comment_on_a_report_you_cannot_see_is_not_a_comment_at_all(client):
+    """私密反馈底下的评论，对第三方回 404 —— 每一个收 id 的端点都走同一条路。
+
+    先判反馈再判评论，这个顺序是有意的：反过来的话，「这条评论不属于这条反馈」和
+    「这条反馈你看不见」会回出两种不同的东西，而后者正是把「存在」泄露出去的那一种。
+    """
+    private = _report(client, REPORTER, visibility="private")
+    stranger = session_auth_headers(STRANGER)
+
+    r = client.post(
+        f"/feedback/{private['id']}/comments",
+        json={"body": "偷看"},
+        headers=stranger,
+    )
+    assert r.status_code == 404, r.text
+
+    # 作者自己看得见，所以这里先落一条真评论，再拿它的 id 让第三方去点。
+    hidden = _comment(client, REPORTER, private["id"], "只有我和管理员看得到")
+    base = f"/feedback/{private['id']}/comments/{hidden['id']}"
+
+    for method in (client.delete,):
+        assert method(base, headers=stranger).status_code == 404
+    assert client.post(f"{base}/likes", headers=stranger).status_code == 404
+    assert client.delete(f"{base}/likes", headers=stranger).status_code == 404
+
+
+# --- 评论点赞 -----------------------------------------------------------------
+
+
+def test_a_like_is_one_per_person_and_the_reply_is_the_total(client):
+    row = _report(client, REPORTER)
+    comment = _comment(client, STRANGER, row["id"], "说得对")
+    url = f"/feedback/{row['id']}/comments/{comment['id']}/likes"
+    headers = session_auth_headers(REPORTER)
+
+    assert client.post(url, headers=headers).json()["data"] == {
+        "count": 1,
+        "liked": True,
+    }
+    # 和 `supports` 同一句：回的是**写完之后的总数**，不是增量。两个人同时点，各
+    # 自渲染出一个自己加一的结果，页面上就会出现一个从来没存在过的数字。
+    assert client.post(url, headers=headers).json()["data"] == {
+        "count": 1,
+        "liked": True,
+    }
+    assert client.delete(url, headers=headers).json()["data"] == {
+        "count": 0,
+        "liked": False,
+    }
+
+
+def test_every_viewer_gets_their_own_liked_flag(client):
+    row = _report(client, REPORTER)
+    comment = _comment(client, STRANGER, row["id"], "说得对")
+    client.post(
+        f"/feedback/{row['id']}/comments/{comment['id']}/likes",
+        headers=session_auth_headers(REPORTER),
+    )
+
+    seen = {c["id"]: c for c in _thread(client, STRANGER, row["id"])}[comment["id"]]
+    assert (seen["likes"], seen["liked"]) == (1, False)
+
+    seen = {c["id"]: c for c in _thread(client, REPORTER, row["id"])}[comment["id"]]
+    assert (seen["likes"], seen["liked"]) == (1, True)
+
+
+def test_the_thread_and_the_like_route_never_disagree_about_the_count(client):
+    row = _report(client, REPORTER)
+    comment = _comment(client, STRANGER, row["id"], "说得对")
+    url = f"/feedback/{row['id']}/comments/{comment['id']}/likes"
+
+    for handle in (REPORTER, ADMIN, STRANGER):
+        assert client.post(url, headers=session_auth_headers(handle)).status_code == 200
+
+    listed = {c["id"]: c for c in _thread(client, STRANGER, row["id"])}[comment["id"]]
+    assert listed["likes"] == 3
+    # 详情页那一份 thread 也要说同一句话：它读的是同一个 `comments_out`，这条断言
+    # 就是钉住那一句的。
+    detail = client.get(
+        f"/feedback/{row['id']}", headers=session_auth_headers(STRANGER)
+    ).json()["data"]
+    assert {c["id"]: c for c in detail["thread"]}[comment["id"]]["likes"] == 3
+
+
+def test_a_like_still_lands_under_a_finished_report(client, as_admin):
+    """点赞**不挡**已办完的反馈，理由和 `support` 挡它正好相对。
+
+    支持数是「热门」的输入，让人往一条已经办完的东西上继续堆，堆的是一个没人能
+    据此行动的排序 —— 那是反馈级那个回 412 的原因。点赞不参与任何排序，它说的是
+    「这条回复说得对」，而结论（「原来是这样，我也遇到了」）恰恰长在办完了的反馈
+    底下。在这儿加同一道闸，等于最后一批有用的回复是不许被标记的那一批。
+    """
+    row = _report(client, REPORTER)
+    comment = _comment(client, STRANGER, row["id"], "根因是只读 token")
+    client.post(
+        f"/admin/feedback/{row['id']}/status",
+        json={"status": "deployed"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    r = client.post(
+        f"/feedback/{row['id']}/comments/{comment['id']}/likes",
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == {"count": 1, "liked": True}
+
+
+# --- 并发的两条路 -------------------------------------------------------------
+#
+# `ON CONFLICT DO NOTHING` 在这两条上不是微优化，是正确性。被替换掉的写法是
+# 「先 SELECT 有没有、再 INSERT」，两个重叠的请求都会读到「没有」，第二个撞唯一约束
+# 回 500 —— 用户看到的是「点一下按钮把页面搞坏了」。单连接跑不出来（同一根连接上
+# 两条语句本来就是串行的），所以这里从 `client.test_factory` 上开**真的几条连接**：
+# 它的 engine 是 NullPool，每个 session 一根自己的连接。
+
+
+async def _seed_thread(
+    factory, *, handle: str = REPORTER
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """一条反馈 + 一条顶层评论，直接落库。
+
+    不是为了绕开接口，是因为这两个用例要的是并发：HTTP 那一路要经过 `client` 的
+    portal，而 `asyncio.gather` 要的几条真连接得从 test_factory 上开。
+    """
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        row = await repo.add(
+            title="并发",
+            summary="并发",
+            kind=FeedbackKind.bug,
+            visibility=FeedbackVisibility.public,
+            problem="并发",
+            author_handle=handle,
+            author_user_id=None,
+            author_is_agent=False,
+        )
+        comment = await repo.add_comment(
+            feedback_id=row.id,
+            author_handle=handle,
+            author_user_id=None,
+            author_is_agent=False,
+            body="顶楼",
+            parent_id=None,
+            reply_to_handle=None,
+        )
+        ids = (row.id, comment.id)
+        await session.commit()
+    return ids
+
+
+async def test_eight_likes_at_once_leave_exactly_one_row(client):
+    factory = client.test_factory
+    _, comment_id = await _seed_thread(factory)
+
+    async def like(handle: str) -> bool:
+        async with factory() as session:
+            landed = await FeedbackRepository(session).add_comment_like(
+                comment_id, handle
+            )
+            await session.commit()
+            return landed
+
+    # 同一个人点八下：只有一下真的插进去，另外七下是 no-op 而不是七次报错。
+    results = await asyncio.gather(*[like(REPORTER) for _ in range(8)])
+    assert sum(1 for r in results if r) == 1
+
+    async with factory() as session:
+        assert await FeedbackRepository(session).comment_like_count(comment_id) == 1
+
+
+async def test_supporting_twice_at_once_leaves_exactly_one_row(client):
+    """反馈级的那个支持按钮，同一个毛病，同一副药。
+
+    这条是修 `add_support` 时补的：评论点赞是新的，所以从第一天就用对的写法；支持
+    是早就有的，改之前它一直在这个竞态里，而且从外面看和「按钮坏了」一模一样。
+    """
+    factory = client.test_factory
+    feedback_id, _ = await _seed_thread(factory)
+
+    async def support() -> bool:
+        async with factory() as session:
+            landed = await FeedbackRepository(session).add_support(
+                feedback_id, STRANGER
+            )
+            await session.commit()
+            return landed
+
+    results = await asyncio.gather(*[support() for _ in range(8)])
+    assert sum(1 for r in results if r) == 1
+
+    async with factory() as session:
+        assert await FeedbackRepository(session).supports_count(feedback_id) == 1
+
+
+async def test_a_reply_whose_parent_is_gone_is_invisible_and_uncounted(client):
+    """孤儿回复：父亲已经软删，而它自己的 `deleted_at` 还是 NULL。
+
+    这个形状不用等竞态也能造出来 —— 级联跑完之后再插一条回复就是它。而竞态窗口里
+    真实产生的那一行也长这样：外键检查拿 `FOR KEY SHARE`、删除那条 `UPDATE` 拿
+    `FOR NO KEY UPDATE`，两者不冲突，所以同一瞬间插进来的回复不会被挡住。更早的
+    版本还会**自己**留下这种行：那时删顶层只盖了它自己一行。
+
+    读的时候必须挡住，因为客户端是「取顶层、再问每条的回复」—— 一条回复的父亲不在
+    返回里，它就永远画不出来，于是这条评论数得出来、看不见、也没有按钮能删掉。
+    """
+    factory = client.test_factory
+    feedback_id, top_id = await _seed_thread(factory)
+
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        parent = await repo.get_comment(top_id)
+        assert parent is not None
+        # 级联带走的是**当时**已经存在的回复；跑完之后新插的这条正是孤儿。
+        await repo.soft_delete_comment(parent)
+        await repo.add_comment(
+            feedback_id=feedback_id,
+            author_handle=STRANGER,
+            author_user_id=None,
+            author_is_agent=False,
+            body="父亲已经没了，我还活着",
+            parent_id=top_id,
+            reply_to_handle=None,
+        )
+        await session.commit()
+
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        assert (await repo.page_comments(feedback_id)).rows == []
+        assert await repo.comment_counts([feedback_id]) == {}
+
+    # 三条读路径说的是同一件事：帖子、详情里的评论数、帖子里的那一条。
+    assert _thread(client, REPORTER, str(feedback_id)) == []
+    r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(REPORTER))
+    assert r.status_code == 200, r.text
+    detail = r.json()["data"]
+    assert detail["thread"] == []
+    assert detail["comments"] == 0
+
+
+async def test_a_reply_that_arrives_while_its_parent_is_being_deleted(client):
+    """把竞态**跑一遍**，而且拿时间去量它 —— 不是从文档里抄一句「不冲突」。
+
+    上一条用例钉的是「孤儿长什么样、三条读路径挡不挡得住」，它自己的 docstring 写明
+    形状是手工造的。这一条钉的是另一半：**同一瞬间真的会生出一只孤儿**。少了它，
+    「竞态会产生孤儿」就只是从 Postgres 的锁语义推出来的一个结论，没有任何一次执行
+    支持它 —— 而这一批的可见性正确性恰恰架在这句话上面。
+
+    窗口是这么撑开的：删除那条事务拿软删的 `UPDATE` 之后**故意不提交** `_HOLD_SECONDS`，
+    回复就在这段时间里插进来。判据是**插入等了多久**：
+
+    * 不排队（毫秒级）→ 外键检查对父行要的 `FOR KEY SHARE` 和软删要的
+      `FOR NO KEY UPDATE` 确实不冲突，B 直着落地，A 提交时那遍级联 `UPDATE` 早就
+      跑完了 —— 表里留下一条 `deleted_at IS NULL`、父亲却已经软删的行。
+      `live_comment_clause()` 就是为它存在的。
+    * 排队（等满约 `_HOLD_SECONDS`）→ 两者开始抢锁了，那么「读侧必须挡孤儿」的
+      整个理由要重新审一遍：拦住它的会变成数据库，而不是那条 where。
+
+    拿时间去量而不是只断言「表里有那一行」，是因为后者的两种情况看着一模一样 ——
+    排队之后照样落地，于是这条用例会在锁语义变了的当天，安静地退化成「什么都没测」。
+
+    **不变式与走哪条分支无关**：看不见的父亲带不出看得见的儿子。所以读路径验的是
+    三个入口的一致性，而不是某一行在不在。
+    """
+    factory = client.test_factory
+    feedback_id, top_id = await _seed_thread(factory)
+
+    async def delete_and_hold() -> None:
+        async with factory() as session:
+            parent = await FeedbackRepository(session).get_comment(top_id)
+            assert parent is not None
+            await FeedbackRepository(session).soft_delete_comment(parent)
+            # 锁还攥在这条没提交的事务里，回复要在这段时间里进来。
+            await asyncio.sleep(_HOLD_SECONDS)
+            await session.commit()
+
+    async def reply_into_the_window() -> float:
+        await asyncio.sleep(_HEAD_START_SECONDS)
+        async with factory() as session:
+            started = time.monotonic()
+            await FeedbackRepository(session).add_comment(
+                feedback_id=feedback_id,
+                author_handle=STRANGER,
+                author_user_id=None,
+                author_is_agent=False,
+                body="父亲正在被删，我这个时候进来",
+                parent_id=top_id,
+                reply_to_handle=None,
+            )
+            await session.commit()
+            return time.monotonic() - started
+
+    async with asyncio.timeout(_HOLD_SECONDS * 5):
+        _, waited = await asyncio.gather(delete_and_hold(), reply_into_the_window())
+
+    assert waited < _HOLD_SECONDS / 2, (
+        f"插入等了 {waited:.2f}s，而删除把锁攥了 {_HOLD_SECONDS}s：外键检查和软删"
+        "开始抢锁了。`live_comment_clause()` 的理由（数据库挡不住，所以读侧挡）"
+        "要重新审一遍再改这里的判据。"
+    )
+
+    async with factory() as session:
+        # 表里到底留下了什么。说明这次测量，不参与不变式。
+        survivors = list(
+            (
+                await session.execute(
+                    select(FeedbackComment.id).where(
+                        FeedbackComment.parent_id == top_id,
+                        FeedbackComment.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # 数据库没挡住，活下来的那一条就在表里 —— 读侧必须挡住它。
+        assert survivors, "竞态在窗口里落地了，表里却没有那一行"
+
+        repo = FeedbackRepository(session)
+        visible = (await repo.page_comments(feedback_id)).rows
+        # 不变式：返回的每一条，父亲都在返回里。
+        top_ids = {c.id for c in visible if c.parent_id is None}
+        assert all(c.parent_id in top_ids for c in visible if c.parent_id is not None)
+        assert await repo.comment_counts([feedback_id]) == {}
+
+    # 三条读路径说的是同一件事：帖子、详情里的评论数、楼里的那一条。
+    assert _thread(client, STRANGER, str(feedback_id)) == []
+    r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(STRANGER))
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["thread"] == []
+    assert r.json()["data"]["comments"] == 0
+
+
+# --- 评论分页 ---------------------------------------------------------------
+
+
+async def _seed_comments(
+    factory, *, tops: int = 0, replies: int = 0
+) -> tuple[uuid.UUID, list[uuid.UUID], list[uuid.UUID]]:
+    """直接落库造一条反馈：`tops` 条顶层评论，第一条下面挂 `replies` 条回复。
+
+    不走 HTTP，因为这几个用例要的是**条数**（跨过一页的上限、跨过分批的块），一条
+    一次请求往返在这里只是把时间花在网络上。返回 `(反馈 id, 顶层 id, 回复 id)`，
+    顺序都是插入顺序（也就是服务端排的那个顺序）。
+    """
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        row = await repo.add(
+            title="分页",
+            summary="分页",
+            kind=FeedbackKind.bug,
+            visibility=FeedbackVisibility.public,
+            problem="分页",
+            author_handle=REPORTER,
+            author_user_id=None,
+            author_is_agent=False,
+        )
+        top_ids = []
+        for i in range(tops):
+            top = await repo.add_comment(
+                feedback_id=row.id,
+                author_handle=REPORTER,
+                author_user_id=None,
+                author_is_agent=False,
+                body=f"顶楼 {i}",
+                parent_id=None,
+                reply_to_handle=None,
+            )
+            top_ids.append(top.id)
+        reply_ids = []
+        for i in range(replies):
+            reply = await repo.add_comment(
+                feedback_id=row.id,
+                author_handle=STRANGER,
+                author_user_id=None,
+                author_is_agent=False,
+                body=f"回复 {i}",
+                parent_id=top_ids[0],
+                reply_to_handle=None,
+            )
+            reply_ids.append(reply.id)
+        ids = (row.id, top_ids, reply_ids)
+        await session.commit()
+    return ids
+
+
+async def test_a_cursor_walks_a_thread_even_when_every_timestamp_is_identical(client):
+    """翻页不漏不重 —— 包括 `created_at` 全撞在一起的时候。
+
+    同一时间戳不是硬造出来的角落：`NOW()` 在一条语句里对每一行是同一个值，批量导入
+    和种子数据一页全是同一个时间戳。只按 `created_at` 排序时，同一时刻的几条在两次
+    查询里的先后可以不一样，翻页于是漏行、或者把同一行发两遍；把 `id` 并进游标才是
+    全序。这个用例把所有顶层评论的时间戳**钉成同一个值**，再一页一页翻到底。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, _ = await _seed_comments(factory, tops=7)
+    same_instant = datetime(2026, 1, 1, tzinfo=UTC)
+    async with factory() as session:
+        await session.execute(
+            update(FeedbackComment)
+            .where(FeedbackComment.feedback_id == feedback_id)
+            .values(created_at=same_instant)
+        )
+        await session.commit()
+
+    seen: list[uuid.UUID] = []
+    after: str | None = None
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        for _ in range(10):
+            page = await repo.page_comments(feedback_id, after=after, limit=3)
+            seen.extend(row.id for row in page.rows)
+            if page.next_cursor is None:
+                break
+            after = page.next_cursor
+        else:  # pragma: no cover - 只有翻页不收敛才会走到这里
+            pytest.fail("游标没有翻到底：同一时刻的那几条没有全序")
+
+    # 七条各来一次。漏掉一条是「翻页丢行」，多一条是「游标把边界又发了一遍」。
+    assert sorted(seen) == sorted(top_ids)
+
+
+async def test_a_building_gives_its_replies_in_pages_and_says_how_many_it_has(client):
+    """楼内回复自己一页，而**一页带了几条**和**这栋楼一共有几条**是两件事。
+
+    `reply_counts` 是后者，`reply_cursors` 是「还有的话从哪儿接着取」。两个都对着
+    「正好取完」的边界：`page_comments` 每栋楼多取一条只为回答「还有没有下一页」，
+    少了那一条，一栋正好 2 条的楼会被判成还有下一页，客户端于是发一次必然取到空页
+    的请求。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, reply_ids = await _seed_comments(factory, tops=1, replies=5)
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        page = await repo.page_comments(feedback_id, replies_limit=2)
+        assert page.reply_counts == {top_ids[0]: 5}
+        assert [row.id for row in page.rows if row.parent_id] == reply_ids[:2]
+        cursor: str | None = page.reply_cursors[top_ids[0]]
+        assert cursor is not None
+        rest: list[uuid.UUID] = []
+        for _ in range(10):
+            rows, cursor = await repo.page_replies(top_ids[0], after=cursor, limit=2)
+            rest.extend(row.id for row in rows)
+            if cursor is None:
+                break
+        else:  # pragma: no cover
+            pytest.fail("楼内的游标没有翻到底")
+        assert rest == reply_ids[2:]
+
+    # 正好取完：不留一个「下一页是空的」游标。
+    async with factory() as session:
+        exact = await FeedbackRepository(session).page_comments(
+            feedback_id, replies_limit=5
+        )
+    assert exact.reply_counts == {top_ids[0]: 5}
+    assert exact.reply_cursors == {}
+
+
+def test_the_thread_tells_the_client_how_many_replies_a_building_has(client):
+    """这两个数必须真的**到得了线上**。
+
+    `CommentOut.from_row` 收下 `reply_count` 却忘了往构造器里传，是这条路上真实发生
+    过一次的事故形状：字段在 schema 里、注释写得很清楚、测试也全绿（没有一条断言
+    它），而每一个响应里它都是 0 —— 客户端拿到的「这栋楼有 0 条回复」和屏幕上那
+    三条回复对不上，「展开更多」于是永远不发第二次请求。
+    """
+    row = _report(client, REPORTER)
+    top = _comment(client, REPORTER, row["id"], "顶楼")
+    for i in range(3):
+        _comment(client, STRANGER, row["id"], f"回复 {i}", parent_id=top["id"])
+
+    r = client.get(
+        f"/feedback/{row['id']}/comments", headers=session_auth_headers(REPORTER)
+    )
+    assert r.status_code == 200, r.text
+    payload = r.json()["data"]
+    by_id = {c["id"]: c for c in payload["items"]}
+    assert by_id[top["id"]]["reply_count"] == 3
+    # 三条都跟着这一页回来了，所以楼内没有下一页 —— 游标只在真有下一页时有值，
+    # 客户端据此知道「展开更多」是摊开手上这些，还是去取下一页。
+    assert by_id[top["id"]]["replies_next_cursor"] is None
+    # 顶层评论这一页也只有一页。
+    assert payload["next_cursor"] is None
+    # 回复自己不带这两个字段的含义：恒为 0 / 恒为 None（它们没有楼）。
+    replies = [c for c in payload["items"] if c["parent_id"]]
+    assert [c["reply_count"] for c in replies] == [0, 0, 0]
+    assert [c["replies_next_cursor"] for c in replies] == [None, None, None]
+
+    # 楼内那一页走的也是这条路由，只是给了 `parent_id`。
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        params={"parent_id": top["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    assert [c["body"] for c in r.json()["data"]["items"]] == [
+        "回复 0",
+        "回复 1",
+        "回复 2",
+    ]
+
+
+async def test_paging_the_thread_does_not_shrink_the_count_on_the_card(client):
+    """卡片上那个数字是**这条反馈一共有几条评论**，不是这一页有几条。
+
+    分页之前 `comments` 是 `len(thread)`；分页之后那就是一页的大小，卡片上的数字会
+    随翻页往下掉 —— 屏幕上是「评论 50」，翻一次变成「评论 21」，而一条评论都没少。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, _ = await _seed_comments(
+        factory, tops=feedback_repo.THREAD_PAGE + 1
+    )
+    r = client.get(f"/feedback/{feedback_id}", headers=session_auth_headers(REPORTER))
+    assert r.status_code == 200, r.text
+    detail = r.json()["data"]
+    assert len(detail["thread"]) == feedback_repo.THREAD_PAGE
+    assert detail["comments"] == feedback_repo.THREAD_PAGE + 1
+    assert detail["thread_next_cursor"] is not None
+
+
+def test_a_cursor_that_is_not_ours_is_a_400_not_a_500(client):
+    """坏游标是调用方递进来的东西，坏在它那一侧。"""
+    row = _report(client, REPORTER)
+    _comment(client, REPORTER, row["id"], "顶楼")
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        params={"after": "昨天下午"},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_replies_cannot_be_pulled_across_reports(client):
+    """一栋楼里的回复，只能从**它自己那条反馈**的地址里取。
+
+    可见性是按帖子判的（`visible_row`），而楼内那一页是按 `parent_id` 取的。少了
+    「父亲必须属于被点名的那条反馈」这一步，把自己这条公开帖子的地址配上别人私密
+    报告里某条评论的 id，取回来的就是那份私密报告里的对话。
+    """
+    mine = _report(client, REPORTER)
+    my_top = _comment(client, REPORTER, mine["id"], "我这边的顶楼")
+
+    secret = _report(client, STRANGER, visibility="private")
+    secret_top = _comment(client, STRANGER, secret["id"], "私密楼")
+    _comment(
+        client, STRANGER, secret["id"], "只该被自己人看见", parent_id=secret_top["id"]
+    )
+
+    r = client.get(
+        f"/feedback/{mine['id']}/comments",
+        params={"parent_id": secret_top["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    # 404 而不是 403：连「这条评论存在」都不确认。
+    assert r.status_code == 404, r.text
+    assert "只该被自己人看见" not in r.text
+
+    # 同一个地址配自己的楼，照常出结果 —— 挡住的是跨帖，不是这个参数。
+    r = client.get(
+        f"/feedback/{mine['id']}/comments",
+        params={"parent_id": my_top["id"]},
+        headers=session_auth_headers(REPORTER),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["items"] == []
+
+
+async def test_chunked_in_queries_answer_the_same_as_one_big_one(client, monkeypatch):
+    """分批之后**合起来**的答案和一次问完一样。
+
+    `_IN_BATCH` 的由来是 asyncpg 把参数个数编进 int16，超过 32767 条直接抛
+    `InterfaceError` —— 那条线不该靠造三万条评论去验证。把批大小压到 2，走的是同一
+    条回路：切、逐批查、合并。合并写错（覆盖而不是并集）在真实规模下只会表现为
+    「一大片评论的点赞数突然都是 0」，很难从现象倒回来。
+    """
+    factory = client.test_factory
+    feedback_id, top_ids, _ = await _seed_comments(factory, tops=5)
+    monkeypatch.setattr(feedback_repo, "_IN_BATCH", 2)
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        assert await repo.add_comment_like(top_ids[0], STRANGER)
+        assert await repo.add_comment_like(top_ids[3], STRANGER)
+        await session.commit()
+
+    async with factory() as session:
+        repo = FeedbackRepository(session)
+        counts = await repo.comment_like_counts(top_ids)
+        liked = await repo.comment_liked_by(top_ids, STRANGER)
+
+    assert counts == {top_ids[0]: 1, top_ids[3]: 1}
+    assert liked == {top_ids[0], top_ids[3]}
 
 
 # --- agent 通道 -------------------------------------------------------------
@@ -836,7 +1590,7 @@ def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
     about the credential alone; the binding half is the test below.
     """
     agent = "agent-on-the-list"
-    monkeypatch.setattr(settings, "feedback_admin_handles", [agent])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent])
     screen = _register_screen(handle=agent)
     try:
         allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
@@ -877,7 +1631,7 @@ def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkey
     )
     assert made.status_code == 200, made.text
     agent = agent_instance_handle(made.json()["data"]["id"])
-    monkeypatch.setattr(settings, "feedback_admin_handles", [agent, REPORTER])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent, REPORTER])
 
     refused = client.get("/admin/feedback", headers=session_auth_headers(agent))
     assert refused.status_code == 403, refused.text
@@ -1033,6 +1787,45 @@ def test_cards_report_the_avatar_its_author_picked_and_null_for_everyone_else(cl
     assert rows["没有档案的人提的"]["author_avatar_id"] is None
 
 
+def test_the_chat_roster_and_the_feedback_card_report_the_same_face(client):
+    """工作台聊天区读的那份名册和反馈读的是**同一个判断**，不是两条。
+
+    聊天区画的是 `props.members`，也就是 `GET /projects/{id}/members`；反馈画的是
+    `author_avatar_id`。两边各自从 `UserProfile` 解析头像，而「挑过没有」这条规则
+    只要有一侧写得不一样（名册那边哪天改成直接发 `avatar_id`，或者这里改用别的查法），
+    表现就是**同一个人在聊天区有脸、在反馈里是彩色首字母** —— 两套门禁都不会红，
+    因为两边各自都「对」。
+
+    所以这里比的不是「都非空」，是**同一份答案**：挑过的人在两边拿到同一个 id，
+    没挑过的人在两边都拿到 null。判据本身在 `chosen_avatar_ids` 和
+    `ProjectRepository.list_members`，两处都按 `Avatar.avatar_type` 认默认图 ——
+    两边都写了、都写了注释，这个用例是唯一能拦住它们漂开的东西。
+    """
+    ids = _seed_profiles(client, {"fb-picked": "predefined", "fb-plain": "default"})
+    project = _project(client, "fb-picked")
+    client.post(
+        f"/projects/{project}/members",
+        json={"user_handle": "fb-plain"},
+        headers=session_auth_headers("fb-picked"),
+    )
+    _report(client, "fb-picked", title="挑过头像的人提的")
+    _report(client, "fb-plain", title="没挑过头像的人提的")
+
+    roster = {
+        m["user_handle"]: m["avatar_id"]
+        for m in client.get(
+            f"/projects/{project}/members", headers=session_auth_headers("fb-picked")
+        ).json()["data"]["data"]
+    }
+    cards = {c["title"]: c["author_avatar_id"] for c in _cards(client, "fb-picked")}
+
+    assert roster["fb-picked"] == ids["fb-picked"]
+    assert cards["挑过头像的人提的"] == ids["fb-picked"]
+    # 没挑过的那一半：两侧都必须是 null，而不是各自发一个默认头像 id。
+    assert roster["fb-plain"] is None
+    assert cards["没挑过头像的人提的"] is None
+
+
 def test_every_face_the_detail_draws_is_resolved_the_same_way(client, as_admin):
     """详情页一屏里有三种作者：报告的作者、评论的作者、内部备注的作者。
 
@@ -1123,3 +1916,233 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
         headers=session_auth_headers(ADMIN),
     ).json()["data"]["data"]
     assert {card["id"] for card in listed} == {mine["id"]}
+
+
+# --- 成员管理：名单两份来源、加进去的人当场生效、根删不掉 --------------------
+#
+# 这里建的是**真账号**（`seed_user` 直接落库并提交），不是 `session_auth_headers`
+# 那种只带 handle 的令牌：能加进名单的前提是平台里真有这个人，而「有」与「没有」
+# 正是这几条用例要分开的两件事。
+
+
+def _admins(client, handle: str) -> dict:
+    r = client.get("/admin/admins", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _add_admin(client, *, by: str, target: str):
+    return client.post(
+        "/admin/admins", json={"handle": target}, headers=session_auth_headers(by)
+    )
+
+
+def _searched(client, handle: str, q: str) -> list[dict]:
+    """加人那个选择器看到的候选（`GET /admin/users`）。"""
+    r = client.get(
+        "/admin/users", params={"q": q}, headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["items"]
+
+
+def _nickname_user(client, handle: str, nickname: str) -> None:
+    """给一个真人写上昵称，选择器「按名字搜」的那一半才有东西可搜。
+
+    直接写库：注册那条路要邮箱验证码，而这里要的只是「user_profile 里有一行」
+    这一件事（`seed_user` 建人的时候也没写 profile，所以这里自己补一条）。
+    """
+    from app.domain.user.models import UserProfile
+    from app.domain.user.repositories import UserRepository
+
+    async def _write() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            now = datetime.now(UTC)
+            session.add(
+                UserProfile(
+                    user_id=user.id,
+                    nickname=nickname,
+                    intro="",
+                    avatar_id=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_write())
+
+
+def test_the_roster_is_two_lists_and_only_the_added_one_can_be_edited(client, as_admin):
+    """配置里那份列得出来、删不掉；页面上加的那份可删，删一个不在名单里的不是错。"""
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-hired")
+    assert _admins(client, as_admin) == {"root": [ADMIN], "added": []}
+
+    added = _add_admin(client, by=as_admin, target="fb-hired")
+    assert added.status_code == 200, added.text
+    body = added.json()["data"]
+    assert body["created"] is True
+    assert [(row["handle"], row["added_by_handle"]) for row in body["added"]] == [
+        ("fb-hired", as_admin)
+    ]
+    # `root` 那一份不受影响：加一个人不会把他挪成根管理员。
+    assert body["root"] == [ADMIN]
+
+    # 根管理员删不掉 —— 它是部署配置，改它要有服务器权限。409 而不是静默不动：
+    # 真按到了说明页面和服务端对不上，那就该说出来。
+    refused = client.delete(
+        f"/admin/admins/{as_admin}", headers=session_auth_headers(as_admin)
+    )
+    assert refused.status_code == 409, refused.text
+    assert _admins(client, as_admin)["root"] == [ADMIN]
+
+    gone = client.delete(
+        "/admin/admins/fb-hired", headers=session_auth_headers(as_admin)
+    )
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["data"]["removed"] is True
+    assert gone.json()["data"]["added"] == []
+
+    # 删一个已经不在名单里的人不是错误：他要的结果（这个人不在名单里）已经成立。
+    again = client.delete(
+        "/admin/admins/fb-hired", headers=session_auth_headers(as_admin)
+    )
+    assert again.status_code == 200
+    assert again.json()["data"]["removed"] is False
+
+
+def test_whoever_the_page_added_is_an_admin_on_their_next_request(client, as_admin):
+    """加完就生效，不重启也不再改配置 —— 判据是「根 ∪ 表」，不是只有根。
+
+    这条钉的是**两个来源真的合成了一个答案**：只读配置的话，页面上加的人会出现在
+    名单里却什么也打不开（名单说他在，接口说他不是）；只读表的话，根管理员反而
+    进不去。
+    """
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-hired")
+    private = _report(client, REPORTER, visibility="private")
+
+    def is_admin(handle: str) -> bool:
+        r = client.get("/feedback/meta", headers=session_auth_headers(handle))
+        assert r.status_code == 200, r.text
+        return bool(r.json()["data"]["is_admin"])
+
+    def open_private(handle: str):
+        return client.get(
+            f"/feedback/{private['id']}", headers=session_auth_headers(handle)
+        )
+
+    assert is_admin("fb-hired") is False
+    assert (
+        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+    ).status_code == 403
+    assert open_private("fb-hired").status_code == 404
+
+    assert _add_admin(client, by=as_admin, target="fb-hired").status_code == 200
+
+    assert is_admin("fb-hired") is True
+    assert (
+        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+    ).status_code == 200
+    # 私密反馈对他是真的打开了：名单生效不只是改了一个布尔值。
+    assert open_private("fb-hired").status_code == 200
+
+
+def test_the_page_refuses_names_that_would_leave_the_roster_wrong(client, as_admin):
+    """三种拒绝，各自对应一种「名单上有他但他进不来 / 进得来而名单骗人」。"""
+    # 空白：名单按 handle 精确匹配，空串谁也匹配不上。
+    assert _add_admin(client, by=as_admin, target="   ").status_code == 400
+    # 平台上没有这个账号：写进去的表现是「名单里有人」而那个人根本不存在。
+    assert _add_admin(client, by=as_admin, target="fb-nobody-at-all").status_code == 400
+    # 根管理员不用再在页面上加一遍：加进去会落一行删不掉的重复，页面上显示两遍。
+    assert _add_admin(client, by=as_admin, target=ADMIN).status_code == 409
+
+
+def test_an_agent_is_a_refusal_in_the_add_form_and_absent_from_the_picker(
+    client, as_admin
+):
+    """agent 当不了管理员（管理动作 agent 不能做），选择器里也不该出现它。
+
+    这两件事要一起钉：只钉「加它是 400」的话，写错成「平台里没有这个账号」也照样
+    绿 —— 而那条提示会把人送去查拼写，真正的原因却是这个身份不能有权限。
+    """
+    from tests.conftest import seed_user
+
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    agent = room_agent_seat(client, topic)
+
+    refused = _add_admin(client, by=as_admin, target=agent)
+    assert refused.status_code == 400, refused.text
+    assert "agent" in refused.json()["message"]
+
+    # 同一个搜索找得到真人，却找不到 agent —— 否则上面那条「搜不到」是空搜索在过关。
+    seed_user(client, "cheese-human")
+    hits = {row["handle"] for row in _searched(client, as_admin, "cheese")}
+    assert "cheese-human" in hits
+    assert agent not in hits
+
+
+def test_the_roster_is_not_something_a_stranger_can_read_or_change(client, as_admin):
+    """四个端点全部要管理员。
+
+    拒的理由不是「这个页面不该被看见」，而是**这份名单决定了谁能看见私密反馈和
+    安全问题** —— 能读它就知道谁能看所有人的私密条目，能改它就能给自己开门。
+    """
+    calls = [
+        ("GET", "/admin/admins", None),
+        ("GET", "/admin/users?q=a", None),
+        ("POST", "/admin/admins", {"handle": STRANGER}),
+        ("DELETE", f"/admin/admins/{ADMIN}", None),
+    ]
+    for method, path, body in calls:
+        theirs = client.request(
+            method, path, json=body, headers=session_auth_headers(STRANGER)
+        )
+        assert theirs.status_code == 403, (method, path, theirs.text)
+        # 没登录也一样：这不是「页面看不见」，是名单本身不给外人看。
+        anonymous = client.request(method, path, json=body)
+        assert anonymous.status_code in (401, 403), (method, path, anonymous.text)
+
+    # 空搜索词是 400：空串搜出的是「平台的前 20 个账号」，那不是搜索结果。
+    assert (
+        client.get(
+            "/admin/users", params={"q": ""}, headers=session_auth_headers(as_admin)
+        ).status_code
+        == 400
+    )
+
+
+def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
+    """选择器的搜索在 SQL 里、按两列搜，页面上的「搜不到」只有两种意思。
+
+    复用 `GET /users?q=` 是不行的：那条接口先把一页 profile 取出来再在 Python 里
+    过滤，所以搜索只在那一页里成立 —— 加人的时候「搜不到」就成了第三件事（这个人
+    在，只是不在这一页），而界面上三件事长得一模一样。
+    """
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-peng")
+    _nickname_user(client, "fb-peng", "彭文博")
+    seed_user(client, "fb-cat")
+
+    by_name = _searched(client, as_admin, "彭文博")
+    assert [(row["handle"], row["nickname"]) for row in by_name] == [
+        ("fb-peng", "彭文博")
+    ]
+    assert by_name[0]["already_admin"] is False
+    # 只记得 handle 也搜得到。
+    assert [row["handle"] for row in _searched(client, as_admin, "fb-cat")] == [
+        "fb-cat"
+    ]
+    assert _searched(client, as_admin, "这个人肯定没有") == []
+
+    # 已经在名单里的人**照常出现**，带 already_admin —— 选择器据此画「已选中」，
+    # 而不是画成「没有这个人」：后者会让人以为名单已经变了。
+    assert _add_admin(client, by=as_admin, target="fb-peng").status_code == 200
+    assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True

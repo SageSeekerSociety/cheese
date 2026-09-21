@@ -163,13 +163,16 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
 
 def test_write_gate_and_route_use_the_same_screen_participant(client):
     from app.core.sandbox_auth import mint_scoped_token
-    from app.domain.identity.handles import topic_agent_handle
 
     project = client.post(
         "/projects", json={"name": "Screen identity", "owner_handle": "alice"}
     ).json()["data"]
     tid = project["root_topic_id"]
     owner = session_auth_headers("alice")
+    # 项目总览坐着项目自己的芝士，席位用的是它自己的 handle，所以「房间原来那条
+    # agent 席位」要从名册上读，读在别人进场之前。
+    roster = client.get(f"/topics/{tid}/members", headers=owner).json()["data"]["data"]
+    default_agent = next(row["member_handle"] for row in roster if row["agent"])
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]),
         topic_id=uuid.UUID(tid),
@@ -182,7 +185,6 @@ def test_write_gate_and_route_use_the_same_screen_participant(client):
             ).status_code
             == 200
         )
-        default_agent = topic_agent_handle(uuid.UUID(tid))
         assert (
             client.delete(
                 f"/topics/{tid}/members/{default_agent}", headers=owner

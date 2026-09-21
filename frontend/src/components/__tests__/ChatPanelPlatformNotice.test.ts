@@ -62,7 +62,7 @@ function event(roomId: string, content: string, meta: Record<string, unknown> | 
     id: `ev-${blockSeq}`,
     topic_id: roomId,
     kind: 'event',
-    author_type: 'system',
+    author_type: 'platform',
     author: 'system',
     content,
     meta,
