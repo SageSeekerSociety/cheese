@@ -26,7 +26,7 @@ from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
-__all__ = ["CHEESE_HANDLE", "TopicMemberService"]
+__all__ = ["CHEESE_HANDLE", "TopicMemberService", "addressable_seat"]
 
 # Roles allowed to manage a topic's roster (add / remove / change roles).
 _MANAGER_ROLES = frozenset({TopicRole.owner, TopicRole.admin})
@@ -509,3 +509,24 @@ class TopicMemberService:
         ):
             raise ValidationError("不能移除最后一个 owner")
         await self._repo.delete(member)
+
+
+async def addressable_seat(session_factory, topic_id: uuid.UUID) -> str | None:
+    """这个房间的 agent 席位 —— 平台自己那些事件点的就是它的名。
+
+    读名册，不写：`address()` 要的是一个 handle，而「谁是这里的芝士」名册上已经答
+    过一次，这里不重答。名册上一个 agent 都没有就返回 None，寻址结果随之为空 ——
+    一个没有 agent 席位的房间，平台点不出收件人来，也就什么都不会起。
+
+    读失败**照常抛出去**。这个读只有两种结果：名册上有席位，或者名册是空的。把
+    连接池耗尽、数据库抖动这一类失败也答成 None，就等于对调用点说「这个房间谁也
+    不在」—— 而问这个问题的几处里有两处是重发（`_recover_silent_turn`、
+    `_schedule_resend`），它们存在的全部理由就是「刚才那条消息没送到，原样再送一
+    次」，静默地不送等于把那条消息丢了。
+
+    ``session_factory`` 而不是一个 session：问的几处都在自己的事务之外（后台扫、
+    连接器挂上来、重发定时器），各自开一个只读的短会话。手上已经有 session 的调用
+    点直接用 :meth:`TopicMemberService.addressable_agent_handle`。
+    """
+    async with session_factory() as session:
+        return await TopicMemberService(session).addressable_agent_handle(topic_id)

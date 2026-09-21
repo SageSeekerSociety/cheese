@@ -86,10 +86,9 @@ async def report_failure(
         # 这条事件送到那个席位，不替它起一轮（I12）。总览房间里看见的就是下面这一
         # 行 —— 它是这一轮的开场白，一件事只落一条记录；`content` 那一大段是提示
         # 词，只给 agent 看，不作为聊天消息进时间线。
-        from app.domain.topic_membership.services import TopicMemberService
+        from app.domain.topic_membership.services import addressable_seat
 
-        async with chat.session_factory() as seats:
-            seat = await TopicMemberService(seats).addressable_agent_handle(root)
+        seat = await addressable_seat(chat.session_factory, root)
         get_work_runner().submit(
             chat,
             root,

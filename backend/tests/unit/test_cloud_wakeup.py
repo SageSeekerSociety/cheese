@@ -109,3 +109,78 @@ async def test_a_lease_microcloud_gave_up_on_is_announced_once_to_a_waiting_room
     text = log[0][2]
     assert "box-1" in text and "AI 通道" in text
     assert not any(entry[0] == "delivered" for entry in log)
+
+
+class _Chat:
+    """记两笔：房间里那一行落库了没有、扣着的消息投出去了没有。"""
+
+    def __init__(self, waiting: set[uuid.UUID], log: list) -> None:
+        self._waiting = waiting
+        self._log = log
+
+    async def cloud_waiting_topics(self, topic_ids):
+        return [t for t in topic_ids if t in self._waiting]
+
+    async def post_system_event(self, topic_id, content, turn_id=None, *, meta=None):
+        self._log.append(("recorded", topic_id, (meta or {}).get("state")))
+        # 落完这一笔，这个房间就不再是「正在创建」—— 和真实的读一样。
+        self._waiting.discard(topic_id)
+        return {"id": str(uuid.uuid4()), "content": content}
+
+
+class _Runner:
+    def __init__(self, log: list) -> None:
+        self._log = log
+
+    def submit(self, chat, topic_id, **kwargs):
+        self._log.append(("submitted", topic_id, kwargs))
+        return uuid.uuid4()
+
+
+async def _publish(channel, frame):
+    return None
+
+
+async def _seat(session_factory, topic_id):
+    return "cheese-abc"
+
+
+async def test_the_room_stops_waiting_before_the_delivering_turn_is_queued(monkeypatch):
+    """「已接入」这条记录在 `wake` 返回之前就落库了。
+
+    它不只是房间里的一句话，它就是「这个房间已经叫醒过了」本身
+    （`cloud_waiting_topics` 读它的 `state`）。交给那一轮去写，它就排在准入闸后
+    面：算力用尽那一轮直接被拒，记录永远不写，房间永远停在 waiting，每一拍扫描、
+    每一次连接器挂上来都再投递一次；就算不撞闸，投递是当场返回的，这中间的扫描
+    和连接器会为同一个房间起第二轮 —— 多一轮计费，房间里多一条「已接入」。
+    """
+    from types import SimpleNamespace
+
+    import app.api.deps as deps
+
+    topic_id = uuid.uuid4()
+    log: list = []
+    chat = _Chat({topic_id}, log)
+
+    monkeypatch.setattr(deps, "get_chat_service", lambda: chat)
+    monkeypatch.setattr(deps, "get_work_runner", lambda: _Runner(log))
+    monkeypatch.setattr(deps, "get_broker", lambda: SimpleNamespace(publish=_publish))
+    monkeypatch.setattr(
+        deps, "device_hub", SimpleNamespace(is_online=lambda device_id: True)
+    )
+    monkeypatch.setattr("app.domain.topic_membership.services.addressable_seat", _seat)
+    deps.get_cloud_wakeup.cache_clear()
+    monkeypatch.addfinalizer(deps.get_cloud_wakeup.cache_clear)
+
+    await deps.get_cloud_wakeup().wake([(topic_id, "dev-1")])
+
+    assert [entry[0] for entry in log] == ["recorded", "submitted"]
+    assert log[0][2] == "ready", "房间还停在「正在创建」"
+    submitted = log[1][2]
+    # 这一轮不再自带开场白 —— 开场白就是上面那条记录，一件事一条记录。
+    assert submitted.get("nudge_event") is None
+    assert [r.handle for r in submitted["addressed"].recipients] == ["cheese-abc"]
+
+    # 下一拍扫描、连接器挂上来：同一个房间不会被再叫醒一次。
+    await deps.get_cloud_wakeup().wake([(topic_id, "dev-1")])
+    assert [entry[0] for entry in log] == ["recorded", "submitted"]

@@ -27,8 +27,8 @@ logger = logging.getLogger("cheese.machine.wakeup")
 #: 的芝士席位，点它名的是当初发那条消息的人（I12）。
 WAKE_PROMPT = "Cloud machine is ready; continue the pending input."
 #: 房间里看得见的那一行 —— 送达这一轮的开场白，同时是这个房间的 Cloud 生命周期
-#: 转出「正在创建」的那条记录。一件事一条记录：它由送消息的那一轮写，不再有第二
-#: 次广播把同一句话在房间里说第二遍。
+#: 转出「正在创建」的那条记录。一件事一条记录：由投递这一步写，写完才投递，所以
+#: 「这个房间已经叫醒过了」在下一次扫描到来之前就已经是库里的事实。
 WAKE_NOTICE = "Cloud 机器已接入，正在继续刚才的消息"
 
 ReadyLeases = Callable[[str], Awaitable[list[tuple[uuid.UUID, str]]]]
@@ -57,7 +57,10 @@ class CloudWakeup:
         """Deliver the held message of every lease whose machine is connected
         and whose room is still showing the waiting state. Level-triggered and
         idempotent: a topic already told 「已接入」 is not woken twice —— 那一行
-        是送达那一轮的开场白，落库之后这个房间就不再「正在创建」了。"""
+        落库之后这个房间就不再「正在创建」了。这个 await 等的就是那一次落库，而
+        不是整一轮跑完：扫描一拍一拍地来、连接器随时挂上来，两边都从库里读同一个
+        状态，所以那条记录必须在这里返回之前就写完（见 api/deps.py 的
+        `deliver_held`）。"""
         topic_ids = [
             topic_id for topic_id, device_id in ready if self._is_online(device_id)
         ]

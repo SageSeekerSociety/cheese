@@ -31,6 +31,11 @@ def _sources(root: pathlib.Path, suffixes: tuple[str, ...]):
 #: 前逐字扫两个字面量的时候它整条漏在覆盖之外。
 _SUMMON_IS_TRUE = re.compile(r"\bsummon\b\s*(?::[^=\n]+)?=\s*True")
 
+#: 开那一行的调用点，连同它收到的实参。
+_OPENS_THAT_ROW = re.compile(r"open_turn_the_session_started\((?P<args>[^)]*)\)", re.S)
+#: 发件人是引号里的一个词 —— 也就是谁也没写过的那种作者值又回来了。
+_AUTHOR_IS_A_LITERAL = re.compile(r"""author\s*=\s*["']""")
+
 
 def test_no_call_site_can_ask_the_platform_to_start_a_turn():
     """没有任何一处写得出「跑一轮」——`submit` 收的是寻址结果，不是一个布尔。"""
@@ -62,23 +67,35 @@ def test_starting_a_turn_takes_an_addressing_result_not_a_boolean():
 
 
 def test_there_is_no_author_value_nobody_wrote():
-    """`SELF_STARTED_AUTHOR = "session"` 那种轮次退场：一条便条有发件人。
+    """会话自己开的那一行，发件人是**读**出来的，没有一处写得出一个字面量。
 
-    退的是那个**作者值**，不是那条记录——会话被自己的 worker 唤醒照样跑一整轮，
-    它的行还得开，否则收尸看不见、算力不入账、房间一直显示「正在思考」（#604）。
-    所以第二条断言查的是：开这一行的时候，发件人是必须给的。
+    退的是那个作者值（字面量就是「会话」两个字），不是那条记录——会话被自己的
+    worker 唤醒照样跑一整轮，它的行还得开，否则收尸看不见、算力不入账、房间一直
+    显示「正在思考」（#604）。所以这里不查某一个已经退役的名字：那种查法只要改个
+    名就按构造必过，证不了任何事。查的是这条路今天还能不能写出那样一个值——发件人
+    必填，且每一处调用点给的都是读来的表达式，不是引号里的一个词。
+
+    「它确实是名册上那个席位」由 integration 断：
+    `test_the_session_starts_its_own_turn.py` 比对 `room_agent_seat(...)`。
     """
-    offenders = [
-        str(path)
-        for path, text in _sources(APP, (".py",))
-        if "SELF_STARTED_AUTHOR" in text
-    ]
-    assert offenders == []
-
     author = inspect.signature(
         AgentWorkRunner.open_turn_the_session_started
     ).parameters["author"]
     assert author.default is inspect.Parameter.empty, "这一行又能开成没有发件人的了"
+
+    call_sites = []
+    for path, text in _sources(APP, (".py",)):
+        for match in _OPENS_THAT_ROW.finditer(text):
+            if text[: match.start()].rstrip().endswith("def"):
+                continue  # 定义本身，不是调用点
+            call_sites.append((path, match.group("args")))
+    assert call_sites, "这条路改名或没了，守卫得跟着改，而不是就此空过"
+    written = [
+        f"{path}: {args.strip()}"
+        for path, args in call_sites
+        if _AUTHOR_IS_A_LITERAL.search(args)
+    ]
+    assert written == [], f"又有人往这一行上写死了一个作者值：{written}"
 
 
 def test_the_platform_has_no_kickoff_left():

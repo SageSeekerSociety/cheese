@@ -151,29 +151,45 @@ def get_cloud_wakeup() -> CloudWakeup:
     async def deliver_held(topic_id: uuid.UUID) -> None:
         """把房间扣着的那条消息送出去 —— 收件人是它当初点的那个席位。
 
-        房间里看见的那一行是这一轮的开场白（`nudge_event`），`WAKE_PROMPT` 只作为
-        提示词进到 agent 那边。两者分开是平台提示的统一契约：平台在房间里说的每一
-        句都是系统事件，没有一条冒充人说的话。这一行也是这个房间的 Cloud 生命周期
-        从「正在创建」转出去的那一条记录（`cloud_waiting_topics` 读 `state`），所以
-        它由真正把消息送出去的这一轮写，而不是另起一次广播写第二遍。
-        """
-        from app.domain.topic_membership.services import TopicMemberService
+        房间里看见的那一行先落库，再投递，而且是**等它落完**才投递：这一行不只是
+        一句话，它还是这个房间的 Cloud 生命周期从「正在创建」转出去的那条记录
+        （`cloud_waiting_topics` 读它的 `state`），也就是「这个房间已经叫醒过了」
+        本身。交给这一轮去写，它就落在算力闸的后面 —— 算力用尽那一轮直接被拒，记
+        录永远不写，房间永远停在 waiting，于是每一拍扫描、每一次连接器挂上来都再
+        投递一次，房间里堆出一串「算力用尽」；就算不撞闸，`submit` 是当场返回的，
+        记录要等这一轮排到队才写，这中间的扫描和连接器会为同一个房间起第二轮。
 
-        async with async_session_factory() as session:
-            seat = await TopicMemberService(session).addressable_agent_handle(topic_id)
+        `WAKE_PROMPT` 只作为提示词进到 agent 那边，不进时间线：平台在房间里说的每
+        一句都是系统事件，没有一条冒充人说的话。所以这一轮不再自带开场白
+        （`nudge_event` 留空）—— 开场白已经在上面写好了，一件事一条记录。
+        """
+        from app.domain.topic_membership.services import addressable_seat
+
+        seat = await addressable_seat(async_session_factory, topic_id)
+        turn_id = uuid.uuid4()
+        block = await chat.post_system_event(
+            topic_id,
+            WAKE_NOTICE,
+            turn_id,
+            meta={
+                "event_type": "cloud_provisioning",
+                "state": "ready",
+                "severity": SEVERITY_INFO,
+                "who": WHO_PLATFORM,
+            },
+        )
+        if block is None:
+            return  # 房间没了，没有什么可送
+        await get_broker().publish(
+            str(topic_id), {"type": "event_block", "block": block}
+        )
         get_work_runner().submit(
             chat,
             topic_id,
             author="system",
             content=WAKE_PROMPT,
             addressed=addressed_to_agent(seat),
-            nudge_event=WAKE_NOTICE,
-            nudge_meta={
-                "event_type": "cloud_provisioning",
-                "state": "ready",
-                "severity": SEVERITY_INFO,
-                "who": WHO_PLATFORM,
-            },
+            turn_id=turn_id,
         )
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:

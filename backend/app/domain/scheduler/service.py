@@ -26,7 +26,10 @@ from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import agent_handle_column
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
-from app.domain.topic_membership.services import TopicMemberService
+from app.domain.topic_membership.services import (
+    TopicMemberService,
+    addressable_seat,
+)
 
 logger = logging.getLogger("cheesex.scheduler")
 
@@ -327,8 +330,7 @@ class SchedulerService:
                 )
                 continue
             self._dependency_wakes.add(room_id)
-            async with self._sessions() as seats:
-                seat = await TopicMemberService(seats).addressable_agent_handle(room_id)
+            seat = await addressable_seat(self._sessions, room_id)
             try:
                 # The prompt reads the durable blocks and stamps their receipts.
                 runner.submit(
@@ -464,10 +466,7 @@ class SchedulerService:
         async def nudge(
             topic_id: uuid.UUID, content: str, event: str, meta: dict
         ) -> None:
-            async with self._sessions() as seats:
-                seat = await TopicMemberService(seats).addressable_agent_handle(
-                    topic_id
-                )
+            seat = await addressable_seat(self._sessions, topic_id)
             runner.submit(
                 self._chat,
                 topic_id,

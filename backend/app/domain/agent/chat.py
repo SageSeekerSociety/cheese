@@ -126,6 +126,7 @@ from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
+    names_a_person,
 )
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
@@ -1268,11 +1269,17 @@ class ChatService:
         `runtime._a_turn_was_addressed` 从寻址结果读出），不是一个可以不写、写不写
         都默认「跑」的开关。给它默认值，就等于平台又有了一条不点名也能起轮次的路。
         """
-        # 平台指令那一档：这一轮之所以存在，是因为平台写了一段指令（机器接入、环境
-        # 修好、记忆整理、闸门红了…）。下面 `_converse_impl` 用它保证这段指令不会
-        # 被房间里的待读消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗
-        # 口本来就会把同一段话重新递上来，两边都拼就是同一句说两遍。
-        platform_turn = nudge_event is not None and not is_resume
+        # 谁写了这一轮的正文：不是人写的，就是平台写的。判据是**作者**，不是
+        # 「带没带 nudge」—— 平台那几条投递（机器接入、环境修好、记忆整理、闸门红
+        # 了…）作者一律是 `system`，正文是平台写的一段提示词，把它当人话落进时间
+        # 线就是让平台冒充人说话。房间里那一行由谁写是另一件事，见下面。
+        platform_wrote_this = (
+            is_resume or nudge_event is not None or not names_a_person(author)
+        )
+        # 平台指令那一档：下面 `_converse_impl` 用它保证这段指令不会被房间里的待读
+        # 消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
+        # 一段话重新递上来，两边都拼就是同一句说两遍。
+        platform_turn = platform_wrote_this and not is_resume
         # Record the arrival-time state before persistence and acknowledgements.
         # If live work ends during either operation, queueing is still a fallback
         # from the user's attempted live handoff and must be reported.
@@ -1282,7 +1289,7 @@ class ChatService:
             and nudge_event is None
             and self.has_running_turn(topic_id)
         )
-        if is_resume or nudge_event:
+        if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
             # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
@@ -1294,14 +1301,19 @@ class ChatService:
             # the长文 (CI 日志 / 检查输出 / 冲突文件清单) so the room stays
             # glanceable while nothing is lost. `content` is untouched: it is
             # still the whole instruction 芝士 gets as its prompt.
-            if not nudge_event:
+            if is_resume and not nudge_event:
                 nudge_event = resume_reason or "平台重发了上一轮的消息"
-            payload = await self.post_system_event(
-                topic_id, nudge_event, turn_id, meta=nudge_meta
-            )
-            if payload is None:
-                raise NotFoundError("Topic not found")
-            yield {"type": "event_block", "block": payload}
+            # 开场白留空 = 调用点已经自己写好了那一行。Cloud 机器接入就是这一种：
+            # 那一行同时是房间的生命周期记录，必须在这一轮排队之前就落库，否则算力
+            # 闸一拒就永远不写（见 api/deps.py 的 `deliver_held`）。这一轮照样不说
+            # 人话 —— 只是这次没有第二句要说。
+            if nudge_event is not None:
+                payload = await self.post_system_event(
+                    topic_id, nudge_event, turn_id, meta=nudge_meta
+                )
+                if payload is None:
+                    raise NotFoundError("Topic not found")
+                yield {"type": "event_block", "block": payload}
             if not summon:
                 yield {"type": "done"}
                 return

@@ -51,6 +51,7 @@ from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, addre
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import agent_instance_handle, names_a_person
+from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -1465,27 +1466,6 @@ class AgentWorkRunner:
         except Exception:  # noqa: BLE001 — a notice must never break the sweep
             logger.exception("orphan event failed for %s", topic_id)
 
-    @staticmethod
-    async def _agent_seat(chat_service, topic_id: uuid.UUID) -> str | None:
-        """这个房间的 agent 席位 —— 平台自己那些事件点的就是它的名。
-
-        读名册，不写：`address()` 要的是一个 handle，而「谁是这里的芝士」名册上已经
-        答过一次，这里不重答。名册上一个 agent 都没有就返回 None，寻址结果随之为空
-        —— 一个没有 agent 席位的房间，平台点不出收件人来，也就什么都不会起。所以问
-        的是 `addressable_agent_handle` 而不是 `resolve_agent_handle`：后者为了给
-        署名一个答案，名册空了会回落到一个不在名册上的 handle。
-        """
-        from app.domain.topic_membership.services import TopicMemberService
-
-        try:
-            async with chat_service.session_factory() as session:
-                return await TopicMemberService(session).addressable_agent_handle(
-                    topic_id
-                )
-        except Exception:  # noqa: BLE001 — 寻址不到人只是不投递，不该炸掉调用方
-            logger.exception("could not resolve the agent seat of topic %s", topic_id)
-            return None
-
     # The re-send opener's wording (#316): name the platform as the cause —
     # "被部署中断" — never "AI 服务返回错误" for a failure the deploy made.
     RESEND_REASON = "上一轮被平台部署中断，消息没送到芝士那边，原样重发一次"
@@ -1525,7 +1505,7 @@ class AgentWorkRunner:
             author="system",
             content=content,
             addressed=addressed_to_agent(
-                await self._agent_seat(chat_service, topic_id)
+                await addressable_seat(chat_service.session_factory, topic_id)
             ),
             is_resume=True,
             resume_reason=self.TOOLS_REASON,
@@ -1560,7 +1540,7 @@ class AgentWorkRunner:
                 author="system",
                 content=content,
                 addressed=addressed_to_agent(
-                    await self._agent_seat(chat_service, topic_id)
+                    await addressable_seat(chat_service.session_factory, topic_id)
                 ),
                 is_resume=True,
                 resume_reason=self.RESEND_REASON,
