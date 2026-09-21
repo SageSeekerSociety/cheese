@@ -73,6 +73,8 @@ function pendingCard(state: MergeStateInfo): AcceptCard {
     pr_repo: 'o/r',
     pr_head_sha: '7091739',
     pr_merged_at: null,
+    artifact: null,
+    deliverable: null,
     merge_state: state,
     auto_merge: { allowed: false, armed_by: null, armed_at: null },
   }
