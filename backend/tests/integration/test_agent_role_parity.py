@@ -39,7 +39,9 @@ def _seated_agent(client, room: str) -> str:
     「撤席位」「给席位升权」这类断言要问名册，不能自己按房间 id 拼一个名字出来：
     项目总览坐的是项目芝士自己的席位。
     """
-    rows = client.get(f"/topics/{room}/members").json()["data"]["data"]
+    body = client.get(f"/topics/{room}/members", headers=session_auth_headers("alice"))
+    assert body.status_code == 200, body.text
+    rows = body.json()["data"]["data"]
     return next(row["member_handle"] for row in rows if row["agent"])
 
 
