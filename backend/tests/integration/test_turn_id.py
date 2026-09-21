@@ -18,7 +18,7 @@ def _topic(client) -> str:
 def test_turn_blocks_share_one_turn_id(client):
     tid = _topic(client)
     with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 hi"})
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):

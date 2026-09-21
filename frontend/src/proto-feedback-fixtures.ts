@@ -595,6 +595,40 @@ function adminPage(url: URL, tab: string): { data: FeedbackCard[]; total: number
 
 let nextId = 1043
 
+/* ---- 成员管理（`/admin/members`）的假数据 ---- */
+
+/** 部署配置里那份根名单。页面上**删不掉**，所以它是一份常量，不受 POST/DELETE 影响
+ *  —— 预览里那几行没有「移出」按钮，正是要看的那个形态。 */
+const ROOT_ADMINS = ['andy', 'wangchangxin']
+
+/** 页面上加的那一份。形状照服务端的两块（`root` / `added`）分开给，不合成一个带标记
+ *  的数组：两块的**操作权不一样**，分组规则不该由前端再定一份。 */
+const ADDED_ADMINS: { handle: string; added_by_handle: string; created_at: string }[] = [
+  { handle: 'pengwenbo', added_by_handle: 'andy', created_at: ago(60 * 24 * 3) },
+]
+
+/** 加人那个搜索框里的账号池。真环境是 1199 个账号、搜索在 SQL 里；预览里这几个人
+ *  够点出「搜 handle 或昵称都能搜到」「已经是管理员的置灰」这两种形态。 */
+const ACCOUNTS: { handle: string; nickname: string }[] = [
+  { handle: 'andy', nickname: 'andy' },
+  { handle: 'andylizf', nickname: 'andylizf' },
+  { handle: 'caisongyang', nickname: '蔡松洋' },
+  { handle: 'chiruotong', nickname: '池若彤' },
+  { handle: 'ligan', nickname: '李甘' },
+  { handle: 'maxiaoyu', nickname: '马霄宇' },
+  { handle: 'n1ctheboy', nickname: '李甘-nictheboy' },
+  { handle: 'pengwenbo', nickname: '彭文博' },
+  { handle: 'wangchangxin', nickname: '符露夀' },
+]
+
+function adminRoster() {
+  return { root: [...ROOT_ADMINS], added: ADDED_ADMINS.map((row) => ({ ...row })) }
+}
+
+function isAdminHandle(handle: string): boolean {
+  return ROOT_ADMINS.includes(handle) || ADDED_ADMINS.some((row) => row.handle === handle)
+}
+
 /** 假数据的一条答复。`data` 是正常路径；`missing` / `refused` / `forbidden` 是三种
  *  「这件事不能发生」，在 `installPreviewFetch` 里分别翻成 404、412、403 —— 预览要看
  *  到真接口的错误面，否则「按钮点下去没反应」这类问题只有在真机上才现形。
@@ -602,8 +636,21 @@ let nextId = 1043
  *  412 和 403 是**两件事**，不能合成一个：412 是「这件事现在不能做，别重试」（已经
  *  办完了、今天配额用完了），403 是「你没有这个权限」。合成一个的话，预览里删别人的
  *  评论会得到一句「别重试」，而服务端给的是「只能删除自己的评论」—— 读的人会去查一
- *  个不存在的原因。（目前只有删评论用 403，`ForbiddenError`。） */
-type MockReply = { data: unknown } | { missing: true } | { refused: string } | { forbidden: string } | undefined
+ *  个不存在的原因。（目前只有删评论用 403，`ForbiddenError`。）
+ *
+ *  `invalid`（400）和 `conflict`（409）是同一条纪律的延续，都是名单那两个接口带来的：
+ *  「这个 handle 平台上没有」是 400、「他是部署配置里的根管理员」是 409。这两个不能
+ *  并进 `refused` 的 412 —— 412 对客户端说的是「这件事现在不能做，别重试」，而这两条
+ *  说的是「你请求里那个名字有问题」，改个名字就能成。并进去的话，预览里给根管理员
+ *  按删除会得到一句「别重试」，人就会去查一个不存在的重试开关。 */
+type MockReply =
+  | { data: unknown }
+  | { missing: true }
+  | { refused: string }
+  | { forbidden: string }
+  | { invalid: string }
+  | { conflict: string }
+  | undefined
 
 /** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
  *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。 */
@@ -623,6 +670,57 @@ function routes(url: URL, method: string, body: unknown): MockReply {
 
   const adminList = /^\/admin\/feedback$/.exec(path)
   if (adminList && method === 'GET') return { data: adminPage(url, url.searchParams.get('tab') ?? 'public') }
+
+  // --- 成员管理（`/admin/members`）----------------------------------------
+  //
+  // 三条写操作**真的改这份假名单**：加完一个人，右边那两块要当场变（同提交反馈、
+  // 支持那条口径 —— 预览是给人看的，但不该是死的）。
+  if (path === '/admin/admins' && method === 'GET') return { data: adminRoster() }
+  if (path === '/admin/users' && method === 'GET') {
+    const q = (url.searchParams.get('q') ?? '').trim().toLowerCase()
+    const limit = Number(url.searchParams.get('limit') ?? 20)
+    const items = ACCOUNTS.filter(
+      (one) => one.handle.toLowerCase().includes(q) || one.nickname.toLowerCase().includes(q)
+    )
+      .slice(0, limit)
+      .map((one) => ({
+        ...one,
+        avatar_id: avatarOf(one.handle),
+        already_admin: isAdminHandle(one.handle),
+      }))
+    return { data: { items } }
+  }
+  if (path === '/admin/admins' && method === 'POST') {
+    const wanted = String(payload.handle ?? '').trim()
+    // 三条拒绝和服务端同一个**类别**，因为页面把服务端那句原话直接显示出来：
+    // 预览里给一个别的说法，等于让「按下去看到什么」在预览和真机上不一样。
+    if (!wanted) return { invalid: '要加的人不能是空的' }
+    if (ROOT_ADMINS.includes(wanted)) {
+      return { conflict: `${wanted} 是部署配置里的根管理员，不用在页面上加` }
+    }
+    if (!ACCOUNTS.some((one) => one.handle === wanted)) {
+      return { invalid: `平台里没有 handle 是 ${wanted} 的账号` }
+    }
+    const created = !isAdminHandle(wanted)
+    if (created) {
+      ADDED_ADMINS.push({ handle: wanted, added_by_handle: ME, created_at: new Date().toISOString() })
+    }
+    return { data: { ...adminRoster(), created } }
+  }
+
+  const adminRemove = /^\/admin\/admins\/([^/]+)$/.exec(path)
+  if (adminRemove && method === 'DELETE') {
+    const target = decodeURIComponent(adminRemove[1])
+    // 根删不掉：**409，不是静默不动**。页面上那几行本来就没有删除按钮，真按到了
+    // 说明两边对不上，那就该说出来（`AdminService.remove_admin` 那条口径）。
+    if (ROOT_ADMINS.includes(target)) {
+      return { conflict: `${target} 是部署配置里的根管理员，页面上删不掉 —— 改配置要有服务器权限` }
+    }
+    const at = ADDED_ADMINS.findIndex((one) => one.handle === target)
+    const removed = at >= 0
+    if (removed) ADDED_ADMINS.splice(at, 1)
+    return { data: { ...adminRoster(), removed } }
+  }
 
   const detail = /^\/feedback\/([^/]+)$/.exec(path)
   if (detail && method === 'GET') {
@@ -826,6 +924,8 @@ export function installPreviewFetch(): void {
     if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
     if ('refused' in hit) return envelope(null, 412, hit.refused)
     if ('forbidden' in hit) return envelope(null, 403, hit.forbidden)
+    if ('invalid' in hit) return envelope(null, 400, hit.invalid)
+    if ('conflict' in hit) return envelope(null, 409, hit.conflict)
     return envelope(hit.data)
   }
 }

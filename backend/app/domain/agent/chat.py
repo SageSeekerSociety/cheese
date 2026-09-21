@@ -41,7 +41,6 @@ from app.domain.agent.harness import (
     runtime_for,
 )
 from app.domain.agent.harness.prompt import (
-    KICKOFF_PROMPT,
     attachment_prompt_line,
     build_system_prompt,
     chipify_paths,
@@ -124,6 +123,7 @@ from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
+    names_a_person,
 )
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
@@ -1302,7 +1302,7 @@ class ChatService:
         topic_id: uuid.UUID,
         author: str,
         content: str,
-        summon: bool = True,
+        summon: bool,
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
@@ -1322,7 +1322,23 @@ class ChatService:
 
         ``continuation_id`` is the logical unit of work this turn belongs to — a
         turn and every auto-resume of it share one, so a message the interrupted
-        attempt already posted is not posted again (④)."""
+        attempt already posted is not posted again (④).
+
+        ``summon`` 没有默认值：这一轮跑不跑是**调用点算出来的一个答案**（由
+        `runtime._a_turn_was_addressed` 从寻址结果读出），不是一个可以不写、写不写
+        都默认「跑」的开关。给它默认值，就等于平台又有了一条不点名也能起轮次的路。
+        """
+        # 谁写了这一轮的正文：不是人写的，就是平台写的。判据是**作者**，不是
+        # 「带没带 nudge」—— 平台那几条投递（机器接入、环境修好、记忆整理、闸门红
+        # 了…）作者一律是 `system`，正文是平台写的一段提示词，把它当人话落进时间
+        # 线就是让平台冒充人说话。房间里那一行由谁写是另一件事，见下面。
+        platform_wrote_this = (
+            is_resume or nudge_event is not None or not names_a_person(author)
+        )
+        # 平台指令那一档：下面 `_converse_impl` 用它保证这段指令不会被房间里的待读
+        # 消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
+        # 一段话重新递上来，两边都拼就是同一句说两遍。
+        platform_turn = platform_wrote_this and not is_resume
         # Record the arrival-time state before persistence and acknowledgements.
         # If live work ends during either operation, queueing is still a fallback
         # from the user's attempted live handoff and must be reported.
@@ -1332,7 +1348,7 @@ class ChatService:
             and nudge_event is None
             and self.has_running_turn(topic_id)
         )
-        if is_resume or nudge_event:
+        if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
             # System-initiated turn (重发 / 评论叫醒 / 冲突调度…): no human
@@ -1344,14 +1360,19 @@ class ChatService:
             # the长文 (CI 日志 / 检查输出 / 冲突文件清单) so the room stays
             # glanceable while nothing is lost. `content` is untouched: it is
             # still the whole instruction 芝士 gets as its prompt.
-            if not nudge_event:
+            if is_resume and not nudge_event:
                 nudge_event = resume_reason or "平台重发了上一轮的消息"
-            payload = await self.post_system_event(
-                topic_id, nudge_event, turn_id, meta=nudge_meta
-            )
-            if payload is None:
-                raise NotFoundError("Topic not found")
-            yield {"type": "event_block", "block": payload}
+            # 开场白留空 = 调用点已经自己写好了那一行。Cloud 机器接入就是这一种：
+            # 那一行同时是房间的生命周期记录，必须在这一轮排队之前就落库，否则算力
+            # 闸一拒就永远不写（见 api/deps.py 的 `deliver_held`）。这一轮照样不说
+            # 人话 —— 只是这次没有第二句要说。
+            if nudge_event is not None:
+                payload = await self.post_system_event(
+                    topic_id, nudge_event, turn_id, meta=nudge_meta
+                )
+                if payload is None:
+                    raise NotFoundError("Topic not found")
+                yield {"type": "event_block", "block": payload}
             if not summon:
                 yield {"type": "done"}
                 return
@@ -1443,6 +1464,7 @@ class ChatService:
                 is_resume=is_resume,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
+                platform_turn=platform_turn,
             ):
                 yield frame
 
@@ -1832,33 +1854,6 @@ class ChatService:
         turn id is the difference between a handover and an assumption.
         """
         return self._active_turn_ids.get(topic_id) == turn_id
-
-    async def kickoff(
-        self,
-        *,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None = None,
-        prompt: str | None = None,
-    ) -> AsyncIterator[dict]:
-        """An agent turn triggered by a PLATFORM EVENT, not a posted message:
-        分身自动开工 after a split/upgrade (default prompt), or the parent
-        digesting a returned conclusion (custom prompt). No fake human block is
-        posted — the instruction is prompt-only, so the visible result is only
-        what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
-        turn_id = turn_id or uuid.uuid4()
-        async with self._prompt_lock(topic_id, turn_id):
-            async for frame in self._converse_impl(
-                topic_id=topic_id,
-                content=prompt or KICKOFF_PROMPT,
-                turn_id=turn_id,
-                user_block_id=None,
-                # Same default converse() applies: the turn is its own unit of
-                # work, so an auto-resume re-saying a message it already posted
-                # is recognized (④) — kickoff turns ran unprotected before.
-                continuation_id=turn_id,
-                platform_turn=True,
-            ):
-                yield frame
 
     async def post_system_event(
         self,
@@ -2320,6 +2315,10 @@ class ChatService:
         summary, and no interval to close, because none was ever opened. The
         room could not even tell you the turn had happened.
 
+        署名是这个房间的席位 handle。退场的是那个谁也没写过的作者值（字面量就是
+        「会话」两个字，结论 13），不是这条记录 —— 一个 worker 做完唤醒主线程，
+        那是同一个 handle 两条线程之间的一条便条，发件人就在这儿。
+
         Read rather than assembled: there is no prompt to build here, so this
         takes only what turn END needs, and takes it in one transaction. Two
         fields are deliberately not read — `roster` stays None so the message
@@ -2348,10 +2347,13 @@ class ChatService:
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
                 private_owner = await self._private_owner(session, topic)
-            await get_work_runner().open_self_started_turn(self, topic_id, turn_id)
+            await get_work_runner().open_turn_the_session_started(
+                self, topic_id, turn_id, author=acting_agent
+            )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
-                "could not open a self-started turn (topic=%s, work=%s)",
+                "could not open the turn a session started for itself "
+                "(topic=%s, work=%s)",
                 topic_id,
                 turn_id,
             )
@@ -2649,7 +2651,7 @@ class ChatService:
                     if state.self_started:
                         # No coroutine owns this one, so there is no `finally`
                         # anywhere else to drop the marks it left in the runner.
-                        get_work_runner().close_self_started_turn(turn_id)
+                        get_work_runner().close_turn_the_session_started(turn_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -2857,7 +2859,18 @@ class ChatService:
             recipient = {
                 "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
-                "mentioned": False,
+                # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
+                # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
+                # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
+                # 服务端算（I13），所以这里自己认下私聊这一档。
+                #
+                # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的
+                # 私聊也是 `is_private`，而它没有 agent 可点名 —— 认成「点了名」就
+                # 等于把芝士叫进两个人的私密对话里说话。`private_owner` 恒是人，所
+                # 以只看 peer；它既覆盖存下来的队友席位，也覆盖历史上 room-derived
+                # 的那种席位。
+                "mentioned": topic.is_private
+                and looks_like_agent_handle(topic.private_peer or ""),
             }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -4814,8 +4827,8 @@ class ChatService:
             # never declared the capability keeps the old wording rather than
             # being told, wrongly, that it drops images.
             #
-            # No pending human block ⇒ nobody spoke: this is a resume nudge,
-            # a kickoff or a returned conclusion. Say so, rather than handing
+            # No pending human block ⇒ nobody spoke: this is a resume nudge
+            # or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
             embeds_images = getattr(provider, "embeds_images", True)
             backlog = "\n".join(
@@ -5119,7 +5132,7 @@ class ChatService:
             for prior_key, prior in list(self._hook_work.items()):
                 if prior_key[0] == topic_id and prior.self_started:
                     self._hook_work.pop(prior_key, None)
-                    get_work_runner().close_self_started_turn(prior_key[1])
+                    get_work_runner().close_turn_the_session_started(prior_key[1])
             state = self._hook_work.get(key)
             if state is None:
                 self._hook_work[key] = _HookWorkState(

@@ -5,8 +5,8 @@ yet: the message is kept (never consumed) and the room shows 「机器正在创�
 Two facts have to hold before it can be delivered, and they live in different
 places — the machine has settled both provider lifecycles and is enrolled (a
 database fact), and its connector is connected right now (an in-memory fact
-only the hub knows). This is the one place that joins the two and starts the
-turn that delivers the held message.
+only the hub knows). This is the one place that joins the two and delivers the
+held message.
 
 It is asked from two directions, because either fact can be the last one to
 arrive: the enrollment sweep (``wake``) with every settled lease after it has
@@ -22,9 +22,13 @@ from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger("cheese.machine.wakeup")
 
-#: What the delivering turn is told. No human wrote it, and the pending human
-#: message rides in with it — the prompt only has to say why the turn exists.
+#: 送过去的那一句。**它不是平台起的一轮**：房间扣着的那条人写的消息才是这一轮的
+#: 内容（待读窗口会把它原样接上），这一句只说明为什么现在才送到。收件人是这个房间
+#: 的芝士席位，点它名的是当初发那条消息的人（I12）。
 WAKE_PROMPT = "Cloud machine is ready; continue the pending input."
+#: 房间里看得见的那一行 —— 送达这一轮的开场白，同时是这个房间的 Cloud 生命周期
+#: 转出「正在创建」的那条记录。一件事一条记录：由投递这一步写，写完才投递，所以
+#: 「这个房间已经叫醒过了」在下一次扫描到来之前就已经是库里的事实。
 WAKE_NOTICE = "Cloud 机器已接入，正在继续刚才的消息"
 
 ReadyLeases = Callable[[str], Awaitable[list[tuple[uuid.UUID, str]]]]
@@ -39,30 +43,31 @@ class CloudWakeup:
         *,
         ready_leases: ReadyLeases,
         waiting_topics: WaitingTopics,
-        kickoff: TopicAction,
-        announce: TopicAction,
+        deliver_held: TopicAction,
         is_online: Callable[[str], bool],
         announce_failure: FailureAction | None = None,
     ) -> None:
         self._ready_leases = ready_leases
         self._waiting_topics = waiting_topics
-        self._kickoff = kickoff
-        self._announce = announce
+        self._deliver_held = deliver_held
         self._is_online = is_online
         self._announce_failure = announce_failure
 
     async def wake(self, ready: list[tuple[uuid.UUID, str]]) -> None:
-        """Start the delivering turn for every lease whose machine is connected
+        """Deliver the held message of every lease whose machine is connected
         and whose room is still showing the waiting state. Level-triggered and
-        idempotent: a topic already told 「已接入」 is not woken twice."""
+        idempotent: a topic already told 「已接入」 is not woken twice —— 那一行
+        落库之后这个房间就不再「正在创建」了。这个 await 等的就是那一次落库，而
+        不是整一轮跑完：扫描一拍一拍地来、连接器随时挂上来，两边都从库里读同一个
+        状态，所以那条记录必须在这里返回之前就写完（见 api/deps.py 的
+        `deliver_held`）。"""
         topic_ids = [
             topic_id for topic_id, device_id in ready if self._is_online(device_id)
         ]
         if not topic_ids:
             return
         for topic_id in await self._waiting_topics(topic_ids):
-            await self._kickoff(topic_id)
-            await self._announce(topic_id)
+            await self._deliver_held(topic_id)
             logger.info("cloud topic %s woken: its machine is connected", topic_id)
 
     async def report_failures(self, failed: list) -> None:

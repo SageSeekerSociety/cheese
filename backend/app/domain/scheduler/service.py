@@ -15,7 +15,10 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_CHEESE, notice
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.models import Block
+from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.scheduler")
 
@@ -123,9 +126,6 @@ class SchedulerService:
         from app.domain.agent.platform_notices import (
             EVENT_DEPENDENCY_CLOSED,
             EVENT_DEPENDENCY_REJECTED,
-            SEVERITY_INFO,
-            WHO_CHEESE,
-            notice,
         )
         from app.domain.block.models import (
             AGENT_NOTICE_META_KEY,
@@ -165,6 +165,7 @@ class SchedulerService:
                 )
                 continue
             self._dependency_wakes.add(room_id)
+            seat = await addressable_seat(self._sessions, room_id)
             try:
                 # The prompt reads the durable blocks and stamps their receipts.
                 runner.submit(
@@ -172,7 +173,7 @@ class SchedulerService:
                     room_id,
                     author="system",
                     content="",
-                    summon=True,
+                    addressed=addressed_to_agent(seat),
                     nudge_event="正在检查任务依赖",
                     nudge_meta=notice(
                         EVENT_DEPENDENCY_CLOSED,
@@ -297,13 +298,16 @@ class SchedulerService:
 
         runner = get_work_runner()
 
-        def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
+        async def nudge(
+            topic_id: uuid.UUID, content: str, event: str, meta: dict
+        ) -> None:
+            seat = await addressable_seat(self._sessions, topic_id)
             runner.submit(
                 self._chat,
                 topic_id,
                 author="system",
                 content=content,
-                summon=True,
+                addressed=addressed_to_agent(seat),
                 nudge_event=event,
                 nudge_meta=meta,
             )

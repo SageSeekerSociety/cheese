@@ -357,8 +357,9 @@ export interface ChatAttachment {
   mime: string
 }
 
-// WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
-// reply, false (default) just posts the message (spec §7.1 默认不 @).
+// WebSocket client -> server frame. 帧上没有「叫不叫芝士」这一位：这条消息点了谁
+// 的名，由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要
+// 叫它，就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
 export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
 
 export interface WsClientChatMessage {
@@ -367,7 +368,6 @@ export interface WsClientChatMessage {
   // No `author`: the backend takes it from the socket's ?token=. Sending one
   // was never authoritative — it was the forgeable field that let an expired
   // session post as 匿名者 — so the client no longer names itself at all.
-  summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
