@@ -77,7 +77,8 @@ jobs:
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
-          WORKFLOW_FILE: e2e.yml
+          # PR runs now belong to the caller, not this reusable workflow.
+          WORKFLOW_FILE: required-ci.yml
         run: |
           run_heavy=true
           if [ "$GITHUB_EVENT_NAME" = push ]; then
