@@ -24,8 +24,8 @@ CONNECT_RETRY_MAX_DELAY_S = 5
 # What the agent reads when its hands cannot be reached. A COPY of
 # `platform_failures.MACHINE_OUT_OF_REACH`, not a second answer: this file is
 # shipped to the machine and run beside the room's own files with nothing of
-# ours importable, so it carries the sentence. `tests/unit/test_lease.py` holds
-# the two together.
+# ours importable, so it carries the sentence.
+# `tests/unit/test_out_of_reach.py` holds the two together.
 #
 # What it replaced was `f"Executor HTTP request failed: {status}"`. A status
 # code tells the agent that something broke; what it needs in that turn is which

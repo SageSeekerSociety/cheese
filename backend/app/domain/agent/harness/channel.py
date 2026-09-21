@@ -134,13 +134,13 @@ class Channel:
 
     # --- 地点：这条通道租出来的那双手 (结论 24、60) ---------------------------
     #
-    # 两个物理事实，能力位从它们推出来 (`place.capabilities_of`)，上游读能力位。
+    # 物理事实写在这里，能力位从它推出来 (`place.capabilities_of`)，上游读能力位。
     # 直接声明一张能力表的话，它会退化成「写它那天恰好有这个本事的通道」的清单，
     # 而继承一份表的子类会连那张过期的清单一起继承走——`compute.py` 里那条恒为真
     # 的 `isinstance(c, DeviceChannel)` 就是这么来的。
 
-    #: 这台机器是谁开的：平台开的 → 平台有权销毁它、也停得了它；人接入的 → 平台
-    #: 只能停止使用。销毁权与第三态（休眠）都只从这一位推出来。
+    #: 这台机器是谁开的。它今天只回答一个问题：一台这样进来的机器归哪条通道认领
+    #: （`owns` 就在下面）。
     supply: Supply = Supply.self_hosted
 
     #: 这条通道上的手，是不是就是跑会话进程的那台机器。False 表示工具要再跳一程
@@ -148,8 +148,8 @@ class Channel:
     hands_here: bool = True
 
     def capabilities(self) -> frozenset[str]:
-        """这个地点给得出什么——`place.Place` 的那一问。"""
-        return place.capabilities_of(self.supply, hands_here=self.hands_here)
+        """这个地点给得出什么。"""
+        return place.capabilities_of(hands_here=self.hands_here)
 
     def owns(self, supply: Supply) -> bool:
         """一台这样进来的机器，是不是这条通道该认领的。

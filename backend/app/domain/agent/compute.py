@@ -361,9 +361,11 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # and no executor to route its tools through. See pi/channel.py.
     #
     # 所以这里问的是地点的能力位 `HANDS_HERE`，不是通道的类。按类问过一次：
-    # `isinstance(c, DeviceChannel)` 读起来像一条排除规则，而 `CloudChannel` 与
-    # `CentralChannel` 都继承 `DeviceChannel`，它恒为真——什么都没排除，包括那条
-    # 手根本不在会话机上的中心通道。
+    # `isinstance(c, DeviceChannel)` 读起来像一条排除规则，而这个池里装得进来的两
+    # 条通道都继承 `DeviceChannel`，它恒为真——**今天它排除的是空集**，换成能力位
+    # 也不会少挂一个 backend。换的是判据的形状：pi 挂不挂得住，取决于手在不在跑会
+    # 话的那台机器上（一个会变的事实），不取决于通道的类（一个不会变的事实）。多
+    # 一条手在别处的通道进这个池的那天，这里不需要跟着改。
     backends.extend(
         PiRuntime(
             PiChannel(c),

@@ -527,8 +527,8 @@ class DeviceChannel(Channel):
     ``ClaudeCodeRuntime``."""
 
     name = "device"
-    # 人接入的机器：平台只能停止使用它，不能销毁它，也停不了它——所以这条通道给不
-    # 出租约的第三态。「谁开的」是一个常量，不从机器长什么样推 (#282 决定 2)。
+    # 人接入的机器：平台只能停止使用它，不能销毁它。「谁开的」是一个常量，不从机器
+    # 长什么样推 (#282 决定 2)。基类的 `owns` 读的就是这一位。
     supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
     # — the metering-proxy env under a subscription, the backend's /llm route and

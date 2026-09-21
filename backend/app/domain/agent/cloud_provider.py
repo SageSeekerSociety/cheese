@@ -49,8 +49,8 @@ class CloudChannel(DeviceChannel):
     """
 
     name = "cloud"
-    # 平台开的机器：平台有权销毁它，也停得了它——租约的第三态（休眠）只有这一档给
-    # 得出 (结论 39)。同一台物理 VM 由人自己接进来时是 self_hosted，入口决定待遇。
+    # 平台开的机器。同一台物理 VM 由人自己接进来时是 self_hosted：入口决定待遇，
+    # 机器长什么样不决定 (#282 决定 2)。基类的 `owns` 读的就是这一位。
     supply = Supply.cloud
     provisions_machine = True
     # 要手要不到的那一句。要不要手、要不到就停，那条分支在基类上只有一份 —— 这

@@ -270,29 +270,39 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     assert backend.provisions_machine is True
 
 
-def test_pi_is_wired_onto_places_whose_hands_are_the_session_machine():
-    """pi 挂在哪一条通道上，由地点的能力位说，不由通道的类说。
+def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
+    """pi 挂在哪几条通道上，由地点的能力位说。
 
     pi 的进程和它的工作区在同一台机器上——没有第二台机器要指派，也没有执行器要把
-    工具转过去。问这件事只有一种问法：这个地点的手在不在跑会话的那台机器上。
+    工具转过去。所以断言的是真实构造下的那一份池：两条进得了池的通道手都在会话机
+    上，两条都挂 pi；而每一条被 ``CentralChannel`` 包出来的 backend 手在执行机上，
+    一条 pi 都没有。
 
-    按类问过一次，问出来的是恒真：``CloudChannel`` 和 ``CentralChannel`` 都继承
-    ``DeviceChannel``，于是那条 ``isinstance`` 读起来像一条排除规则，实际一条都没
-    排除——包括手根本不在会话机上、工具要再跳一程到执行机的那一条。
+    这里没有负向对照：把 ``isinstance(c, DeviceChannel)`` 换回来，这几条断言照样
+    绿——它排除的本来就是空集，因为进得了池的两条通道都继承 ``DeviceChannel``。换
+    掉它换的是判据的形状，不是今天这份池的内容。真正被排除在外的那一位，在
+    ``tests/contract/test_place_contract.py`` 里：中心通道的能力表是空的。
     """
-    from app.domain.agent.central_provider import CentralChannel
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent.cloud_provider import CloudChannel
     from app.domain.agent.compute import build_compute_pool
-    from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import CLAUDE_CODE, PI
 
-    hands_elsewhere = CentralChannel(DeviceChannel())
-    hands_elsewhere.name = "elsewhere"
-    pool = build_compute_pool(cloud_channel=hands_elsewhere)
+    cloud = CloudChannel(
+        configured=True,
+        ensure_topic_cloud=AsyncMock(),
+        read_topic_cloud=AsyncMock(),
+    )
+    pool = build_compute_pool(cloud_channel=cloud)
 
-    assert pool.has("elsewhere")
-    assert pool.select(provider_id="elsewhere", harness=CLAUDE_CODE) is not None
-    assert pool.select(provider_id="elsewhere", harness=PI) is None
     assert pool.select(provider_id="device", harness=PI) is not None
+    assert pool.select(provider_id="cloud", harness=PI) is not None
+    # 包出来的那两个 backend 手在执行机上，所以它们身上挂的是要转一程的骨架。
+    for provider in ("device", "cloud"):
+        wrapped = pool.select(provider_id=provider, harness=CLAUDE_CODE)
+        assert wrapped is not None
+        assert wrapped.channel.capabilities() == frozenset()
 
 
 def test_resolve_compute_id_uses_room_then_explicit_project_default():

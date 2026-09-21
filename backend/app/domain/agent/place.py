@@ -1,4 +1,4 @@
-"""A place: what of ours is on a machine we borrow, and until when.
+"""A place: what of ours is on a machine we borrow, and what it can do.
 
 Where the platform's own files sit
 ----------------------------------
@@ -40,28 +40,17 @@ standalone program — and the connector is Go. Their copies are checked against
 this module by `backend/tests/unit/test_footprint_root.py`. The values are
 chosen here and nowhere else.
 
-For how long
-------------
+What it can do
+--------------
 
-A place is also a lease: it has a term, three states, and — on the way out —
-three receipts (结论 24、39；不变量 I19). Both halves answer the same question
-about one borrowed machine, which is why they sit together: one says what of
-ours is on it, the other says until when, and what has to be back in our hands
-before it stops being ours.
+The same module answers the other question about that borrowed machine: what
+this place gives out. One physical fact — are the hands the very machine the
+session process runs on — decided in one place, so that nothing upstream has to
+ask a channel which class it is (结论 24).
 """
 
 import asyncio
 import base64
-import enum
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Protocol
-
-from app.domain.agent.platform_failures import (
-    LEASE_EXPIRED_CODE,
-    LEASE_EXPIRED_MESSAGE,
-)
-from app.domain.device.supply import Supply
 
 _ROOT = ".cheese"
 
@@ -236,204 +225,26 @@ async def write(
     return str(answer["path"])
 
 
-# --- 租约：一个地点的使用权 ----------------------------------------------------
+# --- 能力位：这个地点给得出什么 ------------------------------------------------
 #
-# 地点是**有期限、可归还的租约**（结论 24）。今天一台机器在代码里只有「在用」和
-# 「没了」两种样子，于是「闲置停机」和「归还」是同一个动作，而归还要跑的三张收据
-# 也就成了每次闲置都要跑一遍的东西。三态把这两件事分开：
-#
-#   在用 (``in_use``)    —— 手在这条会话上，期限由 ``Lease.expires_at`` 说。
-#   休眠 (``asleep``)    —— 只有平台自己开的机器给得出：快照后停机，reconnect
-#                           window 之内醒来是同一台机器、工作区原样。**休眠不是
-#                           归还**，这条路上一张收据都不取（结论 39）。
-#   已归还 (``returned``)—— 使用权结束，机器可以被销毁或还给它的主人。走到这里
-#                           之前三张收据一张不能少（不变量 I19）。
-#
-# 租约挂在**会话**上，不在房间上，也不在 ``devices`` 上（结论 60）：一个房间里的
-# 两个队友各租各的手，各自迁移互不影响。落点是 P18 已经加好的
-# ``agent_sessions.work_lease``——把 ``lease_until`` / ``state`` 加到 ``devices``
-# 会立刻造出第二份声明。
-
-_LEASE_STATE = "lease_state"
-_LEASE_EXPIRES_AT = "lease_expires_at"
-_LEASE_ASLEEP_UNTIL = "lease_asleep_until"
-
-
-class LeaseState(enum.StrEnum):
-    """一份使用权的三态。"""
-
-    in_use = "in_use"
-    asleep = "asleep"
-    returned = "returned"
-
+# 上游读能力位，不读类名。一张按类名维护的能力表注定是「写下它那天恰好有这个本事
+# 的通道」的清单，下一个学会的永远不会被加进去 —— ``Channel.builds_model_env`` 那
+# 段注释讲的就是这件事，而 ``compute.py`` 的 ``isinstance(c, DeviceChannel)`` 是它
+# 的完成态：读起来像一条能力规则，实际上两个子类都继承了 ``DeviceChannel``，它恒为
+# 真。
 
 #: 这一份手就是跑会话进程的那台机器——工具不经执行器再跳一程。它说的是物理事实，
 #: 不是通道的类名：``compute.py`` 读它来决定哪些通道上挂得住一个把进程和工作区放
-#: 在同一台机器上的骨架。
+#: 在同一台机器上的骨架 (pi)。
 HANDS_HERE = "hands_here"
-#: 这个地点给得出租约的第三态（结论 39）。只有平台自己开的机器给得出——别人的
-#: 机器不是平台停得了的。
-CAN_SLEEP = "can_sleep"
-#: 平台开的机器，所以平台有权销毁它；人接入的机器平台只能停止使用（结论 24，以及
-#: ``Supply`` 自己的 docstring）。
-PLATFORM_MAY_DESTROY = "platform_may_destroy"
 
 
-def capabilities_of(supply: Supply, *, hands_here: bool) -> frozenset[str]:
+def capabilities_of(*, hands_here: bool) -> frozenset[str]:
     """一个地点的能力位——**由物理事实推出来，不是各家自己报一份**。
 
-    两件事决定全部三位：这台机器是谁开的（``supply``），以及这条通道上的手是不是
-    就在跑会话进程的那台机器上。名字不进这个函数：一张按类名维护的能力表注定是
-    「写下它那天恰好有这个本事的通道」的清单，下一个学会的永远不会被加进去——
-    ``Channel.builds_model_env`` 那段注释讲的就是这件事，而 ``compute.py`` 的
-    ``isinstance(c, DeviceChannel)`` 是它的完成态：读起来像一条能力规则，因为两个
-    子类都继承了 ``DeviceChannel``，实际恒为真，什么都没排除。
+    今天这张表上只有一位，因为今天只有一件事是上游真的在问的。多的那几位（平台能
+    不能销毁这台机器、这个地点给不给得出「休眠」这第三态）要跟着**真正实现它们的
+    那个 PR** 一起出生：一位没有读者的能力位，和一张按类名写死的表一样，都是「写下
+    它那天的样子」，区别只是它还骗人说这里已经有一个可以问的接口。
     """
-    bits = {HANDS_HERE} if hands_here else set()
-    if supply is Supply.cloud:
-        bits |= {CAN_SLEEP, PLATFORM_MAY_DESTROY}
-    return frozenset(bits)
-
-
-@dataclass(frozen=True, slots=True)
-class Lease:
-    """一条会话对一个地点的使用权。
-
-    ``expires_at`` 是**期限的唯一来源**：没有第二个各自为政的超时常量，到期只有
-    ``LeaseExpired`` 一种表达，而那一条是送到 agent 面前的**事件**，平台不据此替
-    它换机器（结论 55、不变量 I25）。``None`` = 无期限。
-
-    ``asleep_until`` 只在 ``asleep`` 这一档有值：reconnect window 的尽头。window
-    之内醒来是同一台机器、工作区原样；过了才转成归还，那时三张收据一张不少。
-    """
-
-    machine: str
-    resource_id: str
-    state: LeaseState = LeaseState.in_use
-    expires_at: datetime | None = None
-    asleep_until: datetime | None = None
-
-    def expired(self, now: datetime) -> bool:
-        return self.expires_at is not None and now >= self.expires_at
-
-    def wakeable(self, now: datetime) -> bool:
-        """还在 reconnect window 之内——醒来是同一台机器，不是新开一台。"""
-        return self.state is LeaseState.asleep and (
-            self.asleep_until is None or now < self.asleep_until
-        )
-
-    @classmethod
-    def from_record(cls, record: dict | None) -> "Lease | None":
-        """``agent_sessions.work_lease`` 那一行读成一份租约。
-
-        ``None``（手就在会话机上的那些会话，比如私聊）读成「没有租约」。有行而没
-        记过状态的读成「在用、无期限」——那是这一列在本 PR 之前写下的每一行的意思。
-        """
-        if not record:
-            return None
-        return cls(
-            machine=record.get("device_id") or "",
-            resource_id=record.get("resource_id") or "",
-            state=LeaseState(record.get(_LEASE_STATE, LeaseState.in_use)),
-            expires_at=_read_moment(record.get(_LEASE_EXPIRES_AT)),
-            asleep_until=_read_moment(record.get(_LEASE_ASLEEP_UNTIL)),
-        )
-
-    def into(self, record: dict) -> dict:
-        """把三态与期限写回那一行，别的字段原样留给写它的人。
-
-        地点那一行还带着执行器装到了哪一步（它自己的 ``state`` 键），所以租约的
-        状态另起一个名字——两个 ``state`` 挤在一个 dict 里，先写的那个会被后写的
-        那个悄悄顶掉。
-        """
-        written = dict(record)
-        written[_LEASE_STATE] = self.state.value
-        written[_LEASE_EXPIRES_AT] = _write_moment(self.expires_at)
-        written[_LEASE_ASLEEP_UNTIL] = _write_moment(self.asleep_until)
-        return written
-
-
-def _read_moment(value: object) -> datetime | None:
-    if not value:
-        return None
-    moment = datetime.fromisoformat(str(value))
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-
-
-def _write_moment(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
-
-
-class LeaseExpired(Exception):
-    """期限到了——**唯一的一种表达**。
-
-    它是一条事件，不是一次工具报错：``failure_code`` 让它落成平台事件
-    ``lease_expired``，agent 的下一轮输入里读到的是一句能力话，不是一个 HTTP 状态
-    码。平台**不据此换资源**：换不换机器是 agent 的判断，它手上有「开一台机器 /
-    换到 Cloud」那两个工具（结论 40、55）。
-    """
-
-    failure_code = LEASE_EXPIRED_CODE
-
-    def __init__(self, lease: Lease) -> None:
-        self.lease = lease
-        super().__init__(LEASE_EXPIRED_MESSAGE)
-
-
-@dataclass(frozen=True, slots=True)
-class Receipts:
-    """归还之前必须拿到的三张（不变量 I19）。
-
-    三张都是**已经发生过的事**的凭据，不是待办：transcript 已经落到平台库里、记忆
-    整理已经跑过、未提交的工作已经推上去了。一张不齐就保持 pending 并说明理由——
-    机器一删，缺的那一张就再也补不回来。
-    """
-
-    transcript_stored: bool = False
-    memory_tidied: bool = False
-    work_published: bool = False
-
-    def missing(self) -> tuple[str, ...]:
-        absent = []
-        if not self.transcript_stored:
-            absent.append("transcript 还没落库")
-        if not self.memory_tidied:
-            absent.append("记忆整理还没跑")
-        if not self.work_published:
-            absent.append("还有没推上去的工作")
-        return tuple(absent)
-
-
-def receipts_ready(entering: LeaseState, receipts: Receipts) -> tuple[bool, str]:
-    """能不能走到 ``entering`` 这一档，以及走不了的理由。
-
-    所有回收路径（归档清理、Cloud 释放、容器回收、会话机 drain）走这一个函数，而
-    不是各自抄一段散文。**休眠不取收据**（结论 39）：把休眠也套上收据，等于每次闲
-    置都跑一遍记忆整理，而休眠期间那三样东西一样都没有离开那台机器。
-    """
-    if entering is not LeaseState.returned:
-        return True, ""
-    absent = receipts.missing()
-    if absent:
-        return False, "回收前的收据没齐：" + "、".join(absent)
-    return True, ""
-
-
-class Place(Protocol):
-    """一个地点：一双可以租、可以还、（有的）可以睡的手。
-
-    上游读 ``capabilities()``，不读类名——这是本接口存在的全部理由。三个实现的差别
-    只允许长在这张能力表上：``DeviceChannel``（你接入的机器）、``CloudChannel``
-    （平台开的机器，唯一给得出第三态的那个）、``CentralChannel``（会话进程在中心
-    机、手在执行机上，所以它没有 ``HANDS_HERE``）。
-    """
-
-    def capabilities(self) -> frozenset[str]: ...
-
-    async def acquire(self, term: timedelta | None) -> Lease: ...
-
-    async def release(self, lease: Lease) -> Receipts: ...
-
-    async def sleep(self, lease: Lease) -> Lease: ...
-
-    async def wake(self, lease: Lease) -> Lease: ...
+    return frozenset({HANDS_HERE}) if hands_here else frozenset()
