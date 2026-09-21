@@ -72,8 +72,14 @@ beforeAll(() => {
   }
 })
 
-const REPORT = { id: 'a1', name: '结题报告', version: 3, delivered_at: '2026-09-19T10:00:00Z' }
-const SITE = { id: 'a2', name: '项目官网', version: 0, delivered_at: null }
+const REPORT = {
+  id: 'a1',
+  name: '结题报告',
+  about: '交给甲方的最终报告',
+  version: 3,
+  delivered_at: '2026-09-19T10:00:00Z',
+}
+const SITE = { id: 'a2', name: '项目官网', about: '', version: 0, delivered_at: null }
 
 beforeEach(() => {
   vi.clearAllMocks()

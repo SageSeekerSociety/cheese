@@ -6,7 +6,7 @@
 # stack is brought up once per box and then left alone; app deploys never touch
 # it, and a gateway restart never restarts the app.
 #
-#   docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d --build
+# Released independently by the Release gateway workflow.
 #
 # What it buys (docs in backend/app/domain/agent/gateway.py):
 #   - real per-project token accounting, which the hooks backends cannot produce
@@ -16,9 +16,7 @@
 services:
   litellm:
     # The Dockerfile pins the upstream digest and verifies the patched file hash.
-    image: cheese-litellm:1.96.0-timing
-    build:
-      context: ../gateway
+    image: ${GATEWAY_IMAGE:?set the CI-built gateway image}
     restart: unless-stopped
     depends_on:
       litellm-db:
@@ -33,7 +31,7 @@ services:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - STORE_MODEL_IN_DB=True
     volumes:
-      - ../gateway/config.yaml:/app/config.yaml:ro
+      - ${GATEWAY_CONFIG:?set the release configuration path}:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     ports:
       # The docker0 bridge address, NOT 0.0.0.0 and NOT loopback. Sandbox
