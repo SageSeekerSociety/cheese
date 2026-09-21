@@ -14,10 +14,20 @@ from app.domain.common import Timestamps, UuidPk
 
 
 class ComputeGrant(UuidPk, Timestamps, Base):
-    """Team credits, optionally restricted to a funded project.
+    """Team credits, optionally restricted to a funded project or 机构 space.
 
-    A task's resource pack keeps its project restriction. General grants have
-    no project_id and can be consumed by every project in the owning team.
+    Three kinds of row, told apart by which of the two nullable owners is set:
+
+    * ``project_id`` set — earmarked. Only that project may spend it. A 赛题's
+      resource pack lands here (``source_task_id`` names the 赛题).
+    * ``space_id`` set, ``project_id`` NULL — a 机构/课程 pool. Every project
+      whose 赛题 was published under that Space draws on this one balance,
+      first-come-first-served and capped in total. This is the 2026-09-14
+      decision: a course buys one pool for the class, not one slice per head.
+    * neither set — team-wide. Every project in the owning team may spend it.
+
+    A project spends its own earmarked rows first, then the Space pool, then
+    the team pool (``list_for_project`` fixes that order).
     """
 
     __tablename__ = "compute_grants"
@@ -29,6 +39,11 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # The Space (课程/机构) this pool belongs to; NULL on every other kind of
+    # grant. An int, and deliberately NOT a foreign key — same reason as
+    # `source_task_id` below: the credits were paid for, so the ledger has to
+    # survive the Space being deleted.
+    space_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     # The 赛题 whose 项目集 funded this grant (#370). An int, and deliberately
     # NOT a foreign key: the credits were granted, so the audit trail has to
     # survive the 赛题 being deleted. It pointed at cheesex `tasks.id` (uuid)
