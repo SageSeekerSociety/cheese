@@ -1,10 +1,12 @@
 """Accept-card / Review routes — the 验收 state machine (spec §4.4, §6.3)."""
 
+import asyncio
 import logging
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -21,9 +23,11 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.identity.actor import Actor
+from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
 from app.domain.review import pr_publish
 from app.domain.review.github_pr import GitHubPRError
+from app.domain.review.models import DeliverableKind
 from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptCardDescribe,
@@ -167,6 +171,43 @@ async def describe_card(
     )
     await db.commit()
     return ok(await AcceptService(db).describe(card))
+
+
+@router.get("/accept-cards/{card_id}/deliverable")
+async def download_card_deliverable(
+    card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Response:
+    """这张卡交出去的那一份字节 (#1085 结论五)。
+
+    在人点采纳之前就取得到，因为他要审的正是这一份。给的是递卡那一刻落下的快照，
+    不是现在从源重建一次的结果：构建产物只活在那一轮的工作目录里，那个目录到采纳
+    的时候可能已经不在了。"""
+    svc = AcceptService(db)
+    card = await svc._card_or_404(card_id)
+    topic = await svc._topic_or_404(card.topic_id)
+    # 按项目成员判，不按房间参与者判：这一份采纳之后就是《报告》第 N 版，而清单
+    # 和产物页上那几版本来就是整个项目读得到的东西。验收人还可以被改派给任何一位
+    # 成员，按房间判会把「先看一眼再决定要不要接」挡在门外。
+    actor = await resolver.resolve(fallback_handle=None, project_id=topic.project_id)
+    await resolver.authorize_project(actor, project_id=topic.project_id)
+    if card.deliverable_kind is not DeliverableKind.file or not card.deliverable_name:
+        # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
+        raise NotFoundError("这一版交出去的不是一份文件")
+    data = await asyncio.to_thread(
+        library.read_artifact_snapshot,
+        topic.project_id,
+        card.id,
+        card.deliverable_name,
+    )
+    filename = quote(card.deliverable_name, safe="")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/topics/{topic_id}/accept-card")

@@ -80,10 +80,8 @@ export interface Topic {
 }
 
 // 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
-// ——见 `lib/authorship.ts`。平台那一档正在改名，两个名字现在同时在库里：新行写的是
-// `platform`，`system` 只出现在存量行上，所以这里两个都得认得。后端还剩一次发布把
-// 那些行改写掉，届时 `system` 从这里删掉。
-export type AuthorType = 'participant' | 'platform' | 'system'
+// ——见 `lib/authorship.ts`。
+export type AuthorType = 'participant' | 'platform'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
 // e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
@@ -724,6 +722,13 @@ export interface AcceptCard {
   pr_repo: string | null
   pr_head_sha: string | null
   pr_merged_at: string | null
+  // 这次交付更新的是哪一项产物，以及这张卡自己是它的第几版 (#1085 结论三/五)。
+  // 版本号是后端按卡的状态算好的（还没采纳的那一张算的是它采纳之后的号），前端
+  // 一个都不推。落地之前递的那些卡没有这一项，所以是 null。
+  artifact: { id: string; name: string; version: number } | null
+  // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
+  // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
+  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).

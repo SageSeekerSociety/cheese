@@ -71,6 +71,7 @@ import {
   attachmentRawUrl,
   chatWsUrl,
   downloadFile,
+  ensureFreshToken,
   getProgress,
   isRetryableGetFailure,
   listBlocks,
@@ -395,7 +396,10 @@ async function pickOption(m: Block, option: string) {
   try {
     const updated = await answerOptions(m.id, option, AUTHOR)
     const bi = messages.value.findIndex((x) => x.id === m.id)
-    if (bi >= 0) messages.value.splice(bi, 1, updated)
+    if (bi >= 0) {
+      messages.value.splice(bi, 1, updated)
+      historyChanges?.set(updated.id, updated)
+    }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '选择失败'
   } finally {
@@ -410,6 +414,7 @@ const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '
 const reactionPickerFor = ref<string | null>(null)
 
 function applyReactions(blockId: string, reactions: ReactionAgg[]) {
+  historyReactions?.set(blockId, reactions)
   const m = messages.value.find((x) => x.id === blockId)
   if (m) m.reactions = reactions
 }
@@ -796,7 +801,12 @@ useEventListener(window, 'online', reconnectOnOnline)
 // Append a block unless it's already in the timeline: after a switch-away /
 // return, history (DB) and the broker's in-progress-turn replay overlap, and
 // a block must never show up twice (现场不能错).
+let historyChanges: Map<string, Block | null> | null = null
+let historyReactions: Map<string, ReactionAgg[]> | null = null
+let historyGeneration = 0
+
 function pushBlock(b: Block) {
+  historyChanges?.set(b.id, b)
   if (!messages.value.some((m) => m.id === b.id)) {
     messages.value.push(b)
   }
@@ -873,6 +883,7 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'retract_block':
+      historyChanges?.set(frame.block_id, null)
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'agent_control':
@@ -906,7 +917,13 @@ function handleFrame(frame: WsServerFrame) {
   }
 }
 
-async function loadTopic(topic: Topic) {
+async function loadTopic(topic: Topic, entering = false) {
+  const generation = ++historyGeneration
+  const changes = new Map<string, Block | null>()
+  historyChanges = changes
+  const reactions = new Map<string, ReactionAgg[]>()
+  historyReactions = reactions
+  const stillHere = () => !disposed && generation === historyGeneration && props.topic?.id === topic.id
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
@@ -945,11 +962,17 @@ async function loadTopic(topic: Topic) {
     loadingHistory.value = true
   }
   try {
+    // Allow composer restoration to finish, then authenticate both transports.
+    // Recovery keeps its history-first reconciliation for lost message echoes.
+    await ensureFreshToken()
+    if (!stillHere()) return
+    const parallelSocket = entering && outbox.value.length === 0
+    if (parallelSocket) openSocket(topic.id)
     // One screenful, not the whole timeline — older blocks arrive when the
     // user scrolls up to them (loadOlder).
     const payload = await listBlocks(topic.id, { limit: PAGE_SIZE })
     // Only apply if still the active topic (avoid race on fast switching).
-    if (disposed || props.topic?.id !== topic.id) return
+    if (!stillHere()) return
     // Blocks that landed while we were away append at the tail; if the user
     // was parked at the bottom, follow them so the newest message is visible
     // without a manual scroll. Compared on the LAST id, not on length: the
@@ -961,6 +984,18 @@ async function loadTopic(topic: Topic) {
     const merged = cached
       ? mergeRefreshedTail(cached, { blocks: payload.data, hasMore: payload.has_more })
       : { blocks: payload.data, hasMore: payload.has_more }
+    // Live frames can arrive while the HTTP snapshot is pending. Apply them
+    // last, including retractions, so that snapshot cannot erase newer events.
+    const blocks = new Map(merged.blocks.map((block) => [block.id, block]))
+    for (const [id, block] of changes) {
+      if (block) blocks.set(id, block)
+      else blocks.delete(id)
+    }
+    for (const [id, updated] of reactions) {
+      const block = blocks.get(id)
+      if (block) blocks.set(id, { ...block, reactions: updated })
+    }
+    merged.blocks = [...blocks.values()]
     messages.value = merged.blocks
     // A reconnect starts with durable history. Settle sends that landed while
     // their echo was lost before opening the new socket; only absent client ids
@@ -971,17 +1006,22 @@ async function loadTopic(topic: Topic) {
     placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
-    openSocket(topic.id)
+    if (!parallelSocket && !connectRefused.value) openSocket(topic.id)
     void fillViewportIfNeeded()
   } catch (e) {
-    if (disposed || props.topic?.id !== topic.id) return
+    if (!stillHere()) return
+    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
     errorMsg.value = e instanceof Error ? e.message : '加载历史失败'
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
       scheduleReconnect(topic.id)
     }
   } finally {
-    if (props.topic?.id === topic.id) loadingHistory.value = false
+    if (generation === historyGeneration) {
+      historyChanges = null
+      historyReactions = null
+      loadingHistory.value = false
+    }
   }
 }
 
@@ -1877,7 +1917,7 @@ watch(
     if (props.topic) {
       // loadTopic clears the pending attachments synchronously before its first
       // await, so this topic's own draft has to be restored AFTER the call.
-      loadTopic(props.topic)
+      void loadTopic(props.topic, true)
       restoreComposer(id)
     } else {
       messages.value = []

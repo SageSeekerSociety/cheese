@@ -16,7 +16,7 @@ router = APIRouter(tags=["health"])
 # different question: a process that can still answer every request is not
 # unready because one feature is degraded. Keeping the two apart is what lets a
 # check be loud without also being a switch that pulls the whole platform out
-# of rotation — see `memory` below.
+# of rotation — see `event_loop`.
 _REQUIRED_CHECKS = ("database", "redis")
 
 # A check that had nothing to do is not a failing check.
@@ -45,7 +45,6 @@ async def detailed_health_check() -> dict[str, Any]:
 
     checks["database"] = await _check_database()
     checks["redis"] = await _check_redis()
-    checks["memory"] = await _check_memory()
     checks["event_loop"] = _check_event_loop()
 
     overall = (
@@ -95,27 +94,6 @@ async def _check_redis() -> dict[str, Any]:
             await redis.aclose()
     except Exception as e:
         logger.warning("Redis health check failed: %s", e)
-        return {"status": "down", "error": str(e)}
-
-
-async def _check_memory() -> dict[str, Any]:
-    """Can the memory backend reach its model endpoints, with the configured key?
-
-    This is the only place that answers that at all. On the openviking backend
-    extraction runs in a background task, so a rejected key produces no
-    user-visible symptom whatsoever — the platform just stops learning, exactly
-    as if it were still on the db backend.
-
-    The import is deferred because a db deployment must not pay for the
-    openviking config path; the probe behind it is cached and refreshed off the
-    request path, so this never waits on the model vendor.
-    """
-    try:
-        from app.domain.memory.endpoint_probe import memory_backend_health
-
-        return await memory_backend_health()
-    except Exception as e:  # noqa: BLE001 — a health check reports, never raises
-        logger.warning("Memory health check failed: %s", e)
         return {"status": "down", "error": str(e)}
 
 

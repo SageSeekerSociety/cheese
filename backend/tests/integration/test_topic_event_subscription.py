@@ -18,6 +18,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
     AgentResult,
+    AgentSessionInfo,
     AgentSubagentStart,
     AgentSubagentStop,
     AgentToolUse,
@@ -29,6 +30,7 @@ from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
@@ -638,10 +640,17 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
         compute=ComputePool([provider], provider.name),
     )
     requested_id = uuid.uuid4()
+    # WHO this turn acts as. `ChatService` reads it off the room's roster before
+    # it ever reaches a runtime, and a runtime holds no roster of its own — so a
+    # turn driven straight at the provider has to carry the same answer, or it
+    # mints a project-scoped token that names nobody.
+    async with factory() as session:
+        acting = await TopicMemberService(session).resolve_agent_handle(topic_id)
     events = [
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle=acting,
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -983,3 +992,63 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
     assert late_frames[1]["block"]["turn_id"] != str(work_id)
     await provider._close_topic(topic_id)
+
+
+async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
+    """「那个分身还在不在」有第一手的答案，不该由安静推断出来。
+
+    一个分身埋头跑四十分钟长命令、一条 block 都不落，是真实会话里就有的干法
+    （实测），而那四十分钟里它的时间戳和一个死掉的分身长得一模一样 —— 只按时间戳
+    算，真正在干的活会被误报成失联。分身的起止是这条流里唯一带着「是谁」的生死
+    消息，而且是从会话自己的进程里发出来的，所以这一位从那里来。
+
+    「交回了一次」不判死：分身可以被再叫起来干活，那一位只收回自己的声明，看板
+    退回时间戳那条老规矩 —— 沉默既不能读成活着，也不能读成死了。
+    """
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
+    chat = ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+    consumer = provider._event_consumer
+    assert consumer is not None
+
+    async def deliver(event: object) -> None:
+        await consumer(project_id, topic_id, uuid.uuid4(), event, None, False, False)
+
+    # 屏幕起来了，平台记下它跑在哪个会话上（分身的声明都是对这块屏幕说的）。
+    await deliver(AgentSessionInfo(session_id="session-1"))
+
+    # 没听见过这个分身：没有谁在替它说话。
+    assert chat.worker_live(topic_id, "worker-1") is None
+
+    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    await deliver(AgentSubagentStop(agent_id="worker-1", text="先交一版"))
+    assert chat.worker_live(topic_id, "worker-1") is None
+
+    # 被再叫起来干活，它就又是在做。
+    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    # 换了一块屏幕：新会话没听说过旧会话的孩子，所以旧声明作废 —— 不然后面那块
+    # 屏幕会替一个它从没跑过的分身说「还活着」。
+    await deliver(AgentSessionInfo(session_id="session-2"))
+    assert chat.worker_live(topic_id, "worker-1") is None
+
+    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    assert chat.worker_live(topic_id, "worker-1") is True
+
+    # 屏幕没了，声明跟着没：那个分身住在房间的会话里。这也是这一位唯一会注意到
+    # 屏幕没了的地方 —— 不在这里丢掉，一条声明就会活过它的屏幕，在下一块屏幕上
+    # 接着说自己活着。
+    provider._live.pop(topic_id)
+    assert chat.worker_live(topic_id, "worker-1") is None

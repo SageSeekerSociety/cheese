@@ -222,25 +222,26 @@ def test_failed_reconnect_preserves_existing_binding(client, monkeypatch):
 def test_github_management_follows_participant_role_and_own_account(
     client, monkeypatch, is_agent
 ):
-    import uuid
-
     from app.common.auth import decode_token
     from app.core.sandbox_auth import mint_scoped_token
-    from app.domain.identity.handles import topic_agent_handle
     from app.domain.oauth.services import OAuthService
     from tests.conftest import seed_user
+    from tests.integration.conftest import room_agent_seat
 
     project = client.post(
         "/projects", json={"name": "Participant access", "owner_handle": "alice"}
     ).json()["data"]
     pid = project["id"]
     origin = project["root_topic_id"]
-    handle = topic_agent_handle(uuid.UUID(origin)) if is_agent else "bob"
+    handle = room_agent_seat(client, origin) if is_agent else "bob"
     user_id = int(decode_token(seed_user(client, handle))["sub"])
     auth = (
         {
             "X-Cheese-Token": mint_scoped_token(
-                project_id=pid, topic_id=origin, access_scope="project"
+                project_id=pid,
+                topic_id=origin,
+                access_scope="project",
+                agent_handle=handle,
             )
         }
         if is_agent

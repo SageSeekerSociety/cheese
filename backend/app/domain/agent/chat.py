@@ -44,10 +44,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import (
-    subscription_model_alias,
-    subscription_model_listings,
-)
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -95,14 +92,9 @@ from app.domain.agent.tool_preview import (
     tool_preview,
     work_subpath,
 )
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    validate_configuration,
-)
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    legacy_topic_pool,
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
@@ -132,11 +124,14 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -279,6 +274,19 @@ class _TurnBail:
     machine is still being built."""
 
     frames: list[dict]
+
+
+@dataclass(frozen=True, slots=True)
+class _Proposed:
+    """闸门把这次调用变成了一条提议：那条提议，和它在房间里刚落下的那条事件。
+
+    `landed` 是 `None` 表示这条提议之前就提过了（`policy/proposals.py` 按身份去
+    重）。两个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话
+    来抛。
+    """
+
+    proposal: gate.Proposal
+    landed: dict | None
 
 
 # How long a message's spooled flushes may sit incomplete (no final flush, no
@@ -650,6 +658,40 @@ def _resolve_compute_id(
     from app.domain.agent.compute_configs import project_configs
 
     return topic_compute_profile or project_configs(project_settings).default.profile
+
+
+def _model_policy_call(project) -> gate.Call:
+    """这一轮要用的模型，写成闸门认得的那一次调用（结论 3 后半）。
+
+    两处问它：轮次组装（在这一轮占用任何东西之前）和 `_model_kwargs`（平台自己发
+    起的那几轮不经过组装）。构造写在这里一处，所以两处问的确实是同一次调用。
+
+    模型花的是项目的额度，所以点头的是项目的主人。空 handle（建库早期留下的项目）
+    在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
+    给一个猜出来的人。
+    """
+    choices = binding.catalog(project.settings)
+    bound = binding.resolve(None, choices)
+    return gate.Call(
+        resource=gate.Resource.model,
+        subject=bound.model,
+        label=choices[bound.model]["label"],
+        tier=choices[bound.model]["tier"],
+        approver=project.owner_handle or "",
+    )
+
+
+def _proposal_frames(landed: dict | None) -> list[dict]:
+    """撞上档位策略的那一轮怎么收场：房间里刚落下的那条提议，然后 done。
+
+    没有 error 帧——这一轮没有发生，但也没有出错，下一步在提议收件人手上（结论
+    40）。`landed` 是 `None` 时这条提议之前就提过了，房间里不再多一句一样的话。
+    """
+    frames: list[dict] = []
+    if landed is not None:
+        frames.append({"type": "event_block", "block": landed})
+    frames.append({"type": "done"})
+    return frames
 
 
 def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
@@ -1189,6 +1231,18 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # Which child agents the running sessions say are still doing something,
+        # per room. Only the harness's own lifecycle events can answer this:
+        # they fire in the session's process and carry the child's id, while
+        # every tool call goes through the MCP transport,
+        # whose request has no caller identity on it at all — which is why a
+        # worker that only runs tools leaves no trace of its own. The board's
+        # "is that worker still alive" reads it (`worker_live`).
+        self._live_workers: dict[uuid.UUID, dict[str, bool]] = {}
+        # The session each room is currently on. A claim about a child belongs to
+        # the session that made it: a new session has never heard of the old
+        # one's children, so a claim that outlived its session is void.
+        self._room_sessions: dict[uuid.UUID, str] = {}
         # Where each live session's model traffic goes, remembered from the last
         # turn the platform assembled for it. A turn the session starts by itself
         # rides the same screen and therefore the same supply, and has no prompt
@@ -1197,9 +1251,9 @@ class ChatService:
         # this is a dict that only ever grows in a process that runs for weeks.
         # Losing an entry costs the accuracy of one label, never a wrong charge.
         self._session_route: dict[uuid.UUID, str] = {}
-        # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
-        # only keeps weak refs; without this a pending commit could be GC'd).
-        self._memory_tasks: set[asyncio.Task] = set()
+        # Strong refs to in-flight background tasks (asyncio only keeps weak
+        # refs; without this a pending commit could be GC'd).
+        self._background_tasks: set[asyncio.Task] = set()
         # Debounce + strong refs for background spool settles (attach 收账,
         # #316): topics with a settle already scheduled, and the tasks running
         # them so they can't be GC'd mid-drain.
@@ -1968,6 +2022,34 @@ class ChatService:
         question, and the one that used to be unanswerable."""
         return self._compute.holds(topic_id)
 
+    def worker_live(self, topic_id: uuid.UUID, agent_id: str | None) -> bool | None:
+        """Is the worker bound to this task still doing it?
+
+        True when the room's session reported that agent starting and has not
+        taken it back, None when no one is claiming anything about it — never
+        mentioned, or already handed something back. The board takes this as the
+        strongest evidence it can get (`TaskFacts.worker_live`): a worker can go
+        quiet for forty minutes without being dead — that is what running a long
+        command looks like — and only the thing running it can tell the two
+        apart. The timestamps stay for the None case, where nobody has spoken.
+
+        The session that made a claim must still be the room's session for the
+        claim to hold: this process outlives screens.
+        """
+        if not agent_id:
+            return None
+        workers = self._live_workers.get(topic_id)
+        if not workers:
+            return None
+        if not self._compute.holds(topic_id):
+            # Their screen is gone, so they are gone with it — and this is the
+            # one place that notices, since nothing tells this service a screen
+            # died. Dropping the room's claims here is what keeps a claim from
+            # outliving the screen it came from and resurrecting on the next one.
+            self._live_workers.pop(topic_id, None)
+            return None
+        return workers.get(agent_id)
+
     async def turns_that_produced_something(
         self, turn_ids: list[uuid.UUID]
     ) -> set[uuid.UUID]:
@@ -2156,6 +2238,43 @@ class ChatService:
             frame = {"type": "turn_finished", "turn_id": str(work_id)}
         await get_broker().publish(str(topic_id), frame)
 
+    def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
+        """The room is on a (possibly) different session now.
+
+        Whatever the previous session said about its children died with it: the
+        children of the old session are not running in the new one, and the new
+        one will tell us about its own. Without this, a claim from a screen that
+        has since been replaced would outlive it and say "still running" about a
+        worker nobody is running.
+        """
+        previous = self._room_sessions.get(topic_id)
+        if previous is not None and previous != session_id:
+            self._live_workers.pop(topic_id, None)
+        self._room_sessions[topic_id] = session_id
+
+    def _note_worker_agent(self, topic_id: uuid.UUID, event: object) -> None:
+        """Record what this session just said about one child agent.
+
+        `SubagentStart`/`SubagentStop` are the only events that both name the
+        child they are about and arrive straight from the session's process, so
+        they are the only first-hand answer to "is that worker still doing it".
+        Nothing is inferred from silence: started means running.
+
+        A stop only takes the claim away, it does not declare the worker dead —
+        a subagent that hands something back and stands by, or that is resumed
+        later, produces a stop and then more work (see `AgentSubagentStop`). The
+        board then falls back to the timestamps, which is what it did before this
+        existed, rather than calling a worker dead that is about to speak again.
+        """
+        agent_id = getattr(event, "agent_id", None)
+        if not agent_id:
+            return
+        workers = self._live_workers.setdefault(topic_id, {})
+        if isinstance(event, AgentSubagentStart):
+            workers[agent_id] = True
+        else:
+            workers.pop(agent_id, None)
+
     async def _work_of_worker(
         self, topic_id: uuid.UUID, agent_id: str | None
     ) -> uuid.UUID | None:
@@ -2224,7 +2343,7 @@ class ChatService:
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
-                private_owner = topic.private_owner
+                private_owner = await self._private_owner(session, topic)
             await get_work_runner().open_turn_the_session_started(
                 self, topic_id, turn_id, author=acting_agent
             )
@@ -2310,6 +2429,7 @@ class ChatService:
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
         if isinstance(event, AgentSessionInfo):
+            self._note_room_session(topic_id, event.session_id)
             await self._save_session_pointer(
                 topic_id,
                 event.session_id,
@@ -2317,6 +2437,7 @@ class ChatService:
                 harness=event.harness,
             )
         elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
+            self._note_worker_agent(topic_id, event)
             payload = await self._persist_worker_event(
                 project_id=project_id,
                 topic_id=topic_id,
@@ -2617,7 +2738,6 @@ class ChatService:
                 )
             if not result.is_error:
                 await blocks.mark_consumed(list(state.pending_ids), state.work_id)
-            published_text = await blocks.published_text_for_turn(state.work_id)
             await session.commit()
 
         changeset = await self._turn_changeset(
@@ -2634,16 +2754,6 @@ class ChatService:
             )
             if payload is not None:
                 action_frames.append({"type": "event_block", "block": payload})
-        if not result.is_error:
-            self._schedule_memory_extraction(
-                topic_id=state.topic_id,
-                project_id=state.project_id,
-                is_private=state.is_private,
-                private_owner=state.private_owner,
-                agent_pool=state.agent_pool,
-                user_text=state.user_text,
-                assistant_text=published_text,
-            )
         return action_frames
 
     async def post_user_message(
@@ -3036,11 +3146,13 @@ class ChatService:
     ) -> RecallResult:
         """What this 芝士 carries into every turn inside this project.
 
-        Its own pool first, then two read-only tails: what this ROOM learned
-        while memory was keyed by topic, and the shared ``project`` pool from
+        Its own pool, plus one read-only tail: the shared ``project`` pool from
         before memory was split per agent at all. Writes only ever go to the
-        first, so neither tail grows — but dropping them would make the day this
-        shipped look, from inside a room, exactly like amnesia.
+        first, so the tail does not grow — but dropping it would make the day
+        this shipped look, from inside a room, exactly like amnesia. What the
+        rooms learned while memory was keyed by the room is not a tail: it was
+        rekeyed onto the agent itself by `d5c48f1a6b73`, and is in the first
+        pool.
 
         Only the core layer comes back; everything else is counted, not
         carried, and reached with `recall`. A pool nobody is told is bigger
@@ -3051,9 +3163,7 @@ class ChatService:
             if agent is not None
             else await self._agent_memory_pool(session, topic)
         )
-        legacy = legacy_topic_pool(topic.project_id, topic.id)
-        pools = [own] + ([legacy] if legacy != own else [])
-        pools.append((MemoryScope.project, str(topic.project_id)))
+        pools = [own, (MemoryScope.project, str(topic.project_id))]
         return await recall_pools(memory, pools)
 
     async def _acting_handle(
@@ -3071,6 +3181,18 @@ class ChatService:
         if seat in await TopicMemberService(session).agent_handles(topic_id):
             return seat
         return await self._agent_handle(session, topic_id)
+
+    @staticmethod
+    async def _private_owner(session: AsyncSession, topic: Topic) -> str | None:
+        """私聊里那位人类，名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
+
+        个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
+        一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
+        """
+        if not topic.is_private:
+            return None
+        seats = await TopicMemberService(session).private_seats(topic.id)
+        return seats[0] if seats is not None else None
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -3942,6 +4064,43 @@ class ChatService:
                 phases_ms,
             )
 
+    async def _pass_policy_gate(
+        self,
+        session: AsyncSession,
+        topic_id: uuid.UUID | None,
+        call: gate.Call,
+        policy: gate.Policy,
+        *,
+        actor: str,
+    ) -> _Proposed | None:
+        """闸门放行就返回 `None`；变提议就把提议落进房间，交回它和刚落下的那条事
+        件，收场由调用点自己写；拒绝照抛。
+
+        提议**不是报错**（结论 40：产物是一条给人的提议）。所以它不能顺着 `raise`
+        走：轮次那条路上抛出去的东西最后是屏幕上一个红色的 error 帧，而同一个判决
+        在 `PUT /topics/{id}/compute-profile` 上是 200 加一个 `proposal` 字段——一
+        个判决两种形状，人看到的还是「出错了」。拒绝仍然抛：那一档要的就是一次说
+        得出口的拒绝（I27），和「解析不出模型」在调用点是同一种东西。
+
+        交回来的那条事件可能是 `None`：这条提议已经提过了（`propose` 按身份去重）。
+        调用点照样收场，只是房间里不再多一句一样的话。
+
+        提议写在**调用方这条 session** 上，提交也归调用方——`propose` 欠的不变量是
+        「落库之后这次调用必须中止」，而收场的那一步本来就在调用点。
+
+        没有房间（项目级的调用）就落不下这条提议：提议是房间里的一条事件。那种情
+        形下超档只剩拒绝这一条路，闸门照抛。
+        """
+        verdict = gate.check(call, policy, actor)
+        if isinstance(verdict, gate.Allowed):
+            return None
+        if topic_id is None:
+            raise gate.OverTier(verdict.content)
+        block = await propose(session, verdict, place_id=topic_id)
+        return _Proposed(
+            verdict, _block_payload(BlockOut.model_validate(block)) if block else None
+        )
+
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
@@ -3951,10 +4110,14 @@ class ChatService:
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
     ) -> tuple[dict, str]:
-        """Resolve a turn's explicit agent model, model environment and usage route.
+        """Resolve a turn's model, model environment and usage route.
+
+        Which model comes from the binding of the work this turn belongs to —
+        and a room's main thread is not a piece of work, so it always gets the
+        project default (`room_task/binding.py`).
 
         Machine providers assemble their own scoped credentials. Other providers
-        retain their gateway/profile transport, with the agent's saved model.
+        retain their gateway/profile transport, carrying that resolved model.
         The optional snapshots keep model, role and author consistent within a turn.
 
         ``provider=None`` means there is no machine in this turn at all (私聊 走
@@ -3986,24 +4149,61 @@ class ChatService:
                     if topic
                     else await agents.for_project(project)
                 )
-            config = AgentConfiguration.model_validate(agent.configuration)
-            validate_configuration(config, project.settings)
-            supply = (
-                SUBSCRIPTION
-                if config.model in {item.id for item in subscription_model_listings()}
-                else "gateway"
+        # 用哪个模型，问这条活要 —— 而一个房间的主线不是一条活，所以它拿到的永远
+        # 是项目默认（`room_task/binding.py`，结论 3）。以前这里读的是这个 agent
+        # 存着的 `configuration.model`，那等于「换模型就再建一个 agent」；模型是
+        # 工作占用的资源，不是参与者的属性。
+        #
+        # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
+        # 而主线正是最长、最吃缓存的那条对话。
+        bound = binding.resolve(None, binding.catalog(project.settings))
+        # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门不写进
+        # `binding.resolve`：那个函数只答「用哪个模型」，「超档怎么办」是另一个问
+        # 题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
+        #
+        # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
+        # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
+        # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
+        async with self._sessions() as session:
+            proposed = await self._pass_policy_gate(
+                session,
+                topic_id,
+                _model_policy_call(project),
+                gate.policy_of(project.settings),
+                actor=acting_agent or agent.handle,
             )
+            if proposed is not None:
+                await session.commit()
+                # 这几轮没有一条流在等帧（没人在看），所以这里的收场只能是抛：提
+                # 议已经落进房间，这一轮到此为止，抛出去的是同一句话。
+                raise gate.OverTier(proposed.proposal.content)
+        supply = bound.supply
         model = (
-            subscription_model_alias(config.model)
+            subscription_model_alias(bound.model)
             if supply == SUBSCRIPTION
-            else config.model
+            else bound.model
         )
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
+            #
+            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
+            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
+            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
+            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
+            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
+            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
+            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
+            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
+            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
             (
                 json.dumps(
-                    {"agent": agent.configuration, "git_author": acting_agent},
+                    {
+                        "agent": agent.configuration,
+                        "git_author": acting_agent,
+                        "model": model,
+                        "supply": supply,
+                    },
                     sort_keys=True,
                 )
                 + ":explicit-chat-v3-native-skills"
@@ -4115,8 +4315,8 @@ class ChatService:
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None:
         """Late-landing spend rows: drain again in the background and land the
-        usage row + credit deduction when they show up. Strong-ref'd like the
-        memory tasks so the pending commit can't be GC'd."""
+        usage row + credit deduction when they show up. Strong-ref'd so the
+        pending commit can't be GC'd."""
 
         async def _later() -> None:
             await asyncio.sleep(20.0)
@@ -4149,7 +4349,7 @@ class ChatService:
 
         hold(
             asyncio.create_task(_later()),
-            self._memory_tasks,
+            self._background_tasks,
             name=f"deferred-usage-drain-{turn_id}",
         )
 
@@ -4371,7 +4571,7 @@ class ChatService:
 
             is_private = topic.is_private
             # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
-            private_owner = topic.private_owner
+            private_owner = await self._private_owner(session, topic)
             acting_agent = await self._acting_handle(session, topic.id, agent)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
@@ -4479,6 +4679,52 @@ class ChatService:
                 project.settings if project else None,
                 topic.compute_profile,
             )
+            # 这一轮要占的两样东西 —— 哪台机器、哪个模型 —— 在这里一起过项目的档位
+            # 策略（结论 3 后半、结论 40 后半）。位置是**解析之后、占用之前**：再
+            # 往下就是写绑定、开机器、发请求，撞上策略的调用一旦走到那里，「这一轮
+            # 没有发生」就不再是真的 —— 而那正是提议与拒绝共同的前提。
+            #
+            # 房间从没打开过算力选择器也照样过闸门：决定一个房间占谁的机器的是这
+            # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
+            # 少数情形，它和这里问的是同一个闸门。
+            if project is not None:
+                actor_handle = acting_agent or agent.handle
+                policy = gate.policy_of(project.settings)
+                # 不限档的项目——今天的每一个——在机器这一侧一步也不多走：把「要哪
+                # 台机器」写成一次调用得列一遍项目设备、列一遍 host health、再取一
+                # 次机主，而不限档时判决与这几条查询无关。闸门对现有项目透明，代价
+                # 上也得透明，这是每一轮都走的路。
+                if needs_place and not policy.lets_everything_through:
+                    from app.domain.agent.compute_configs import (
+                        machine_policy_call,
+                        room_choice,
+                    )
+
+                    proposed = await self._pass_policy_gate(
+                        session,
+                        topic_id,
+                        await machine_policy_call(
+                            session,
+                            project=project,
+                            topic=topic,
+                            choice=room_choice(topic, project.settings),
+                        ),
+                        policy,
+                        actor=actor_handle,
+                    )
+                    if proposed is not None:
+                        await session.commit()
+                        return _TurnBail(_proposal_frames(proposed.landed))
+                proposed = await self._pass_policy_gate(
+                    session,
+                    topic_id,
+                    _model_policy_call(project),
+                    policy,
+                    actor=actor_handle,
+                )
+                if proposed is not None:
+                    await session.commit()
+                    return _TurnBail(_proposal_frames(proposed.landed))
             if needs_place and compute_id == "device" and topic.compute_config is None:
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,
@@ -5007,60 +5253,6 @@ class ChatService:
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
         return
-
-    def _schedule_memory_extraction(
-        self,
-        *,
-        topic_id: uuid.UUID,
-        project_id: uuid.UUID,
-        is_private: bool,
-        private_owner: str | None,
-        agent_pool: tuple[MemoryScope, str] | None,
-        user_text: str,
-        assistant_text: str,
-    ) -> None:
-        """Fire the post-turn OpenViking session commit in the background.
-
-        Only active on the openviking backend — the flat DB backend has no
-        extraction pipeline (there, memory grows via explicit `cheese remember`).
-        """
-        if settings.memory_backend != "openviking":
-            return
-        if not settings.openviking_auto_extract:
-            return
-        if not (user_text.strip() or assistant_text.strip()):
-            return
-        if is_private and private_owner:
-            scope, scope_id = MemoryScope.user, private_owner
-        elif agent_pool is not None:
-            # Keep each teammate's learned project knowledge in its own pool.
-            scope, scope_id = agent_pool
-        else:
-            return
-
-        async def _run() -> None:
-            from app.domain.memory.openviking_store import OpenVikingMemoryStore
-
-            await OpenVikingMemoryStore().ingest_turn(
-                scope,
-                scope_id,
-                conversation_key=str(topic_id),
-                exchanges=[("user", user_text), ("assistant", assistant_text)],
-            )
-
-        task = asyncio.create_task(_run())
-        self._memory_tasks.add(task)
-
-        def _log_done(t: asyncio.Task) -> None:
-            self._memory_tasks.discard(t)
-            if not t.cancelled() and t.exception() is not None:
-                logger.warning(
-                    "memory extraction commit failed for topic %s: %s",
-                    topic_id,
-                    t.exception(),
-                )
-
-        task.add_done_callback(_log_done)
 
     async def ingest_activity(
         self,
