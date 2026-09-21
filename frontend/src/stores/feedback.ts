@@ -24,6 +24,7 @@
 import type { FeedbackAdminPatch } from '@/api'
 import type {
   FeedbackCard,
+  FeedbackComment,
   FeedbackCounts,
   FeedbackCreateBody,
   FeedbackDetail,
@@ -37,16 +38,19 @@ import type {
 
 import { defineStore } from 'pinia'
 
+import { ApiError } from '@/api'
 import {
   acceptFeedbackProposal,
   createAdminFeedbackNote,
   createFeedback,
   createFeedbackComment,
+  deleteFeedbackComment,
   dismissFeedbackProposal,
   getAdminFeedback as getAdminFeedbackDetail,
   getFeedback,
   getFeedbackCounts,
   getFeedbackMeta,
+  likeFeedbackComment,
   listAdminFeedback,
   listFeedback,
   listFeedbackProposals,
@@ -55,6 +59,7 @@ import {
   patchAdminFeedback,
   setAdminFeedbackStatus,
   supportFeedback,
+  unlikeFeedbackComment,
   unsupportFeedback,
 } from '@/api'
 import { STATUS_LADDER } from '@/lib/feedbackMeta'
@@ -364,7 +369,9 @@ export const useFeedbackStore = defineStore('feedback', {
 
     /* ---- 评论 ---- */
 
-    /** 发一条评论。`parentId` 指向**任意**一条评论：层级由服务端折上去，前端不判断。 */
+    /** 发一条评论。`parentId` 指向**任意**一条评论：层级由服务端折上去，前端不判断。
+     *  「这条在回谁」（`reply_to_handle`）也是服务端写下来的 —— 折到顶层之后前端再也
+     *  推不出来，猜一个的结果是每个人看到的指代都不一样。 */
     async addComment(id: string, body: string, parentId?: string): Promise<void> {
       const text = body.trim()
       if (!text) return
@@ -377,6 +384,51 @@ export const useFeedbackStore = defineStore('feedback', {
         }
       } catch (error) {
         this.error = message(error, '评论发送失败')
+      }
+    },
+
+    /** 点赞 / 取消点赞一条评论。**回的是写完之后的服务端计数**，不是本地 ±1 —— 和
+     *  `toggleSupport` 同一句：两个人同时点会各自渲染出一个从来没存在过的数字。
+     *
+     *  这里**不**调 `refreshCounts()`，和 `toggleSupport` 有意不同：评论点赞不进任何
+     *  一个 Tab 的计数，「热门」看的是反馈级的支持数。没头没脑地多问一次，只是一次白
+     *  跑的请求。 */
+    async toggleCommentLike(id: string, commentId: string): Promise<void> {
+      const comment = this._commentOf(id, commentId)
+      if (!comment) return
+      try {
+        const result = comment.liked
+          ? await unlikeFeedbackComment(id, commentId)
+          : await likeFeedbackComment(id, commentId)
+        // 重新取一次而不是改上面那个引用：请求在飞的时候页面可能已经换了详情，也可能
+        // 有人又点了一下。`_commentOf` 会挡住前一种（拿不到就什么都不做）。
+        const current = this._commentOf(id, commentId)
+        if (!current) return
+        current.likes = result.count
+        current.liked = result.liked
+      } catch (error) {
+        this.error = message(error, '操作失败')
+      }
+    },
+
+    /** 删一条评论。删得掉谁由服务端的 `can_delete` 说了算，按钮也是照它画的；这里
+     *  不发第二遍请求去问，只把服务端已经答过的那件事照做。
+     *
+     *  **本地也要按服务端的规则把楼里的回复一起拿掉。** 服务端删顶层评论时会连带删掉
+     *  它下面的回复（那是「一条回复挂在一个查不到的父亲下」的那个孤儿），前端少做这
+     *  一步，屏幕上就正是那个形状：父亲没了、回复还挂着，再一次刷新它们又都不见了。
+     *  这是本仓库接受的那种镜像（和 `lib/feedbackMeta.ts::isClosed` 同一个道理：前后端
+     *  都要回答同一个问题时，两份实现里至少一份要写明它跟的是哪一条）。 */
+    async deleteComment(id: string, commentId: string): Promise<void> {
+      try {
+        await deleteFeedbackComment(id, commentId)
+        const detail = this._detailIfCurrent(id)
+        if (!detail) return
+        const kept = detail.thread.filter((c) => c.id !== commentId && c.parent_id !== commentId)
+        detail.comments -= detail.thread.length - kept.length
+        detail.thread = kept
+      } catch (error) {
+        this.error = message(error, '删除失败')
       }
     },
 
@@ -596,6 +648,14 @@ export const useFeedbackStore = defineStore('feedback', {
     /** 当前详情**并且**是这条时才返回它：慢响应回来时页面可能已经换了一条。 */
     _detailIfCurrent(id: string): FeedbackDetail | null {
       return this.detail && this.detailId === id ? this.detail : null
+    },
+
+    /** 楼里的一条评论。评论**只存在于详情那一份数据里**（卡片上只有条数），所以上面
+     *  那两个动作都从这里拿 —— `_find` / `_patch` 管的是反馈级的字段，它们看不见
+     *  `detail.thread`，拿它们改评论会静默什么都不做：按钮按得下去、有按下效果、
+     *  数字一动不动，控制台里一句话也没有。 */
+    _commentOf(id: string, commentId: string): FeedbackComment | undefined {
+      return this._detailIfCurrent(id)?.thread.find((c) => c.id === commentId)
     },
   },
 })

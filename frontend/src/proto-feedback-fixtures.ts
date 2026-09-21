@@ -157,6 +157,40 @@ function ladderUpTo(status: FeedbackStatus, created: string): FeedbackDetail['ti
   }))
 }
 
+/** 一条评论。`reply_to_handle` / `likes` / `liked` / `can_delete` 这四列是这一版
+ *  新加的（服务端算出来的），默认值集中写在这里而不是在每个字面量里重复一遍 ——
+ *  真实实现只有一处（`services.comments_out`），fixture 这边抄五遍就等着漂。 */
+function comment(spec: {
+  id: string
+  /** 折楼之后的父亲：顶层恒为 null，回复指向**顶层**那条（服务端折过）。 */
+  parent?: string | null
+  author: string
+  authorIsAgent?: boolean
+  body: string
+  minutesAgo: number
+  /** 只在这一条是回复、且它回的那条本身也是回复时有值。顶层不出现。 */
+  replyTo?: string
+  likes?: number
+  liked?: boolean
+  canDelete?: boolean
+}): FeedbackComment {
+  return {
+    id: spec.id,
+    parent_id: spec.parent ?? null,
+    author_handle: spec.author,
+    author_is_agent: spec.authorIsAgent ?? false,
+    author_avatar_id: avatarOf(spec.author),
+    body: spec.body,
+    reply_to_handle: spec.replyTo ?? null,
+    likes: spec.likes ?? 0,
+    liked: spec.liked ?? false,
+    // 预览里就是「我写的能删、别人的不能」：服务端的规则是作者本人或管理员，
+    // 这里按同一个规则抄一份，别演成「谁都能删」。
+    can_delete: spec.canDelete ?? spec.author === ME,
+    created_at: ago(spec.minutesAgo),
+  }
+}
+
 const ROWS: FeedbackDetail[] = [
   row({
     id: 'fb-1042',
@@ -181,25 +215,86 @@ const ROWS: FeedbackDetail[] = [
     repro: '1. 手机打开反馈中心 → 2. 点「提交反馈」→ 3. 在正文里输入两行 → 4. 观察提交按钮的位置。',
     evidence: '截图里提交按钮的 y 坐标（612）大于可视区高度（596）。',
     environment: 'iOS 18 / Safari，视口 390×844',
+    // 这一版新加的五种形态**全都摆出来**，摆不出来的话预览就没验到它：一条被赞过
+    // 的顶层、一条自己赞过的回复（取消点赞那一半）、一条「回复 X」的楼内回复、一条
+    // 别人的（删不掉，按钮不出现）、一栋回复多到折起来、一栋自己的楼（删除要问
+    // 的那一句带上条数）。
     thread: [
-      {
+      comment({
         id: 'c-1',
-        parent_id: null,
-        author_handle: 'andylizf',
-        author_is_agent: false,
-        author_avatar_id: avatarOf('andylizf'),
+        author: 'andylizf',
         body: '复现了。`interactive-widget=resizes-content` 那条 meta 只在部分浏览器认，Safari 走的是 JS 那条路，抽屉那层没接。',
-        created_at: ago(280),
-      },
-      {
+        minutesAgo: 280,
+        likes: 3,
+      }),
+      comment({
         id: 'c-2',
-        parent_id: 'c-1',
-        author_handle: ME,
-        author_is_agent: false,
-        author_avatar_id: avatarOf(ME),
+        parent: 'c-1',
+        author: ME,
         body: '那就把抽屉底部改成跟着 `dvh` 走，别再用 vh。',
-        created_at: ago(240),
-      },
+        minutesAgo: 240,
+        likes: 1,
+        liked: true,
+      }),
+      comment({
+        id: 'c-3',
+        parent: 'c-1',
+        author: 'andylizf',
+        body: '`dvh` 在老一点的内核上也有坑，得留一个 `visualViewport` 的回退。',
+        minutesAgo: 200,
+        // 回的是楼里另一条回复：折楼之后只有这一列还记得它回的是谁。
+        replyTo: ME,
+        likes: 2,
+      }),
+      comment({
+        id: 'c-4',
+        parent: 'c-1',
+        author: ME,
+        body: '那两条路都留着，按 `visualViewport` 在不在挑。',
+        minutesAgo: 150,
+        replyTo: 'andylizf',
+      }),
+      comment({
+        id: 'c-5',
+        parent: 'c-1',
+        author: 'andylizf',
+        body: '我先按这个改，改完在这条下面回。',
+        minutesAgo: 90,
+      }),
+      // 第二栋楼是**自己写的一条**，因为要让人看到「删掉这条评论，连同它下面的
+      // 三条回复一起？」那一句。第一栋的楼主是别人，按钮根本不出现；而这一句的
+      // 措辞正是要拍板的东西（只说「删掉这条评论」而实际删掉一栋楼，是在骗按
+      // 按钮的人）。顺带让「两栋楼之间靠间距和缩进分块、不画分隔线」有第二栋
+      // 可比 —— 只有一栋楼的时候，这条规则看不出来。
+      comment({
+        id: 'c-6',
+        author: ME,
+        body: '我也撞上过一次，是在横屏 + 外接键盘的时候。',
+        minutesAgo: 60,
+        likes: 1,
+      }),
+      comment({
+        id: 'c-7',
+        parent: 'c-6',
+        author: 'chiruotong',
+        body: '+1，躺着用的时候也复现了。',
+        minutesAgo: 40,
+        replyTo: ME,
+      }),
+      comment({
+        id: 'c-8',
+        parent: 'c-6',
+        author: 'andylizf',
+        body: '横屏那条是另一个原因（安全区没算进去），我单独开一条。',
+        minutesAgo: 30,
+      }),
+      comment({
+        id: 'c-9',
+        parent: 'c-6',
+        author: ME,
+        body: '好，那就分开跟。',
+        minutesAgo: 20,
+      }),
     ],
   }),
   row({
@@ -368,10 +463,15 @@ function adminPage(url: URL, tab: string): { data: FeedbackCard[]; total: number
 
 let nextId = 1043
 
-/** 假数据的一条答复。`data` 是正常路径；`missing` / `refused` 是两种「这件事不能
- *  发生」，在 `installPreviewFetch` 里分别翻成 404 和 412 —— 预览要能看到真接口的
- *  错误面，否则「按钮点下去没反应」这类问题只有在真机上才现形。 */
-type MockReply = { data: unknown } | { missing: true } | { refused: string } | undefined
+/** 假数据的一条答复。`data` 是正常路径；`missing` / `refused` / `forbidden` 是三种
+ *  「这件事不能发生」，在 `installPreviewFetch` 里分别翻成 404、412、403 —— 预览要看
+ *  到真接口的错误面，否则「按钮点下去没反应」这类问题只有在真机上才现形。
+ *
+ *  412 和 403 是**两件事**，不能合成一个：412 是「这件事现在不能做，别重试」（已经
+ *  办完了、今天配额用完了），403 是「你没有这个权限」。合成一个的话，预览里删别人的
+ *  评论会得到一句「别重试」，而服务端给的是「只能删除自己的评论」—— 读的人会去查一
+ *  个不存在的原因。（目前只有删评论用 403，`ForbiddenError`。） */
+type MockReply = { data: unknown } | { missing: true } | { refused: string } | { forbidden: string } | undefined
 
 /** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
  *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。 */
@@ -416,18 +516,53 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   if (comments && method === 'POST') {
     const item = find(comments[1])
     if (!item) return { missing: true }
-    const created: FeedbackComment = {
+    // 折楼和服务端同一处规则：回一条回复时 `parent_id` 落成那栋楼的顶层，而
+    // `reply_to_handle` 只在「回的对象本身是回复」时记下来。预览里少折这一层，
+    // 画出来就是三层楼 —— 而真实服务端造不出那个形状。
+    const target = item.thread.find((c) => c.id === payload.parent_id)
+    const created = comment({
       id: `c-${(item.thread.length + 10).toString()}`,
-      parent_id: (payload.parent_id as string | null) ?? null,
-      author_handle: ME,
-      author_is_agent: false,
-      author_avatar_id: avatarOf(ME),
+      parent: target ? target.parent_id ?? target.id : null,
+      author: ME,
       body: String(payload.body ?? ''),
-      created_at: new Date(BASE_MS).toISOString(),
-    }
+      minutesAgo: 0,
+      replyTo: target?.parent_id ? target.author_handle : undefined,
+    })
     item.thread = [...item.thread, created]
     item.comments += 1
     return { data: created }
+  }
+
+  const commentLike = /^\/feedback\/([^/]+)\/comments\/([^/]+)\/likes$/.exec(path)
+  if (commentLike) {
+    const item = find(commentLike[1])
+    const target = item?.thread.find((c) => c.id === commentLike[2])
+    if (!item || !target) return { missing: true }
+    const wanted = method === 'POST'
+    // 和 `toggleSupport` 那份一样：**回的是写完之后的服务端计数**，不是本地 ±1。
+    // 同一个人重复 POST/DELETE 不叠加，这也正是唯一约束在做的事。
+    if (target.liked !== wanted) {
+      target.liked = wanted
+      target.likes += wanted ? 1 : -1
+    }
+    return { data: { count: target.likes, liked: target.liked } }
+  }
+
+  const oneComment = /^\/feedback\/([^/]+)\/comments\/([^/]+)$/.exec(path)
+  if (oneComment && method === 'DELETE') {
+    const item = find(oneComment[1])
+    if (!item) return { missing: true }
+    const id = oneComment[2]
+    if (!item.thread.some((c) => c.id === id && c.can_delete)) {
+      // 「看得见但删不掉」（`may_delete_comment`），所以是 403 而不是 404，原话照抄
+      // 服务端的 `ForbiddenError`。预览里也照此拒绝 —— 一个前端挡住而预览放行的
+      // 按钮，正是「看着能点、真机上点了报错」那类 bug。
+      return { forbidden: '只能删除自己的评论' }
+    }
+    const kept = item.thread.filter((c) => c.id !== id && c.parent_id !== id)
+    item.comments -= item.thread.length - kept.length
+    item.thread = kept
+    return { data: { ok: true } }
   }
 
   const status = /^\/admin\/feedback\/([^/]+)\/status$/.exec(path)
@@ -525,6 +660,7 @@ export function installPreviewFetch(): void {
     }
     if ('missing' in hit) return envelope(null, 404, '这条反馈打不开')
     if ('refused' in hit) return envelope(null, 412, hit.refused)
+    if ('forbidden' in hit) return envelope(null, 403, hit.forbidden)
     return envelope(hit.data)
   }
 }

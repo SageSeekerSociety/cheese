@@ -1195,6 +1195,18 @@ export interface FeedbackComment {
   /** 同 `FeedbackCard.author_avatar_id`。 */
   author_avatar_id: number | null
   body: string
+  /** 这条在回答谁。**只在被回复的那条本身也是回复时才有值**，因为折到顶层这个动作
+   *  把指向弄丢了 —— 楼中楼里唯一猜不出来的信息。值为 null 有两种情形（顶层评论、
+   *  回楼主的回复），两者渲染方式相同，所以客户端不需要区分它们。
+   *  恒为 handle 而不是 id：要回答的问题只有一个「在回谁」，答案是个名字。 */
+  reply_to_handle: string | null
+  /** 点赞总数。 */
+  likes: number
+  /** **按读者**算：当前登录的人点过没有。 */
+  liked: boolean
+  /** **按读者**算：服务端说这条删得掉吗。按钮画不画由它决定，不由前端猜 ——
+   *  猜的结果是「按钮画得出来、点下去 403」。 */
+  can_delete: boolean
   created_at: string
 }
 
@@ -1265,6 +1277,15 @@ export interface FeedbackSupportResult {
   /** **写完之后**的计数，不是增量。 */
   count: number
   supported: boolean
+}
+
+/** 评论点赞的返回，`FeedbackSupportResult` 往下一层。字段叫 `liked` 不叫
+ *  `supported`：两件事在界面上是两种表态，共用一个词的话下一个读代码的人会以为
+ *  它们是同一条记录。 */
+export interface FeedbackCommentLikeResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  liked: boolean
 }
 
 /** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */

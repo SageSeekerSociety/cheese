@@ -18,6 +18,7 @@ import type {
   EnvironmentStatus,
   FeedbackCard,
   FeedbackComment,
+  FeedbackCommentLikeResult,
   FeedbackCounts,
   FeedbackCreateBody,
   FeedbackDetail,
@@ -2050,11 +2051,27 @@ export function createFeedbackComment(
   })
 }
 
+/** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
+ *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
+ *  遍历，多算一次就会和服务端的答案漂开。 */
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
     { method: 'DELETE' }
   )
+}
+
+const commentLikeUrl = (feedbackId: string, commentId: string) =>
+  `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}/likes`
+
+/** 点赞一条评论。和 `supportFeedback` 同一个形状：回的是**写完之后的计数**，
+ *  不是增量。重复点是幂等的，所以「双击」这件事不需要客户端去防。 */
+export function likeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'POST' })
+}
+
+export function unlikeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'DELETE' })
 }
 
 /* ---- 管理端 (`/admin/feedback`) ---- */

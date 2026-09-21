@@ -62,6 +62,19 @@ async function postComment() {
   await submitComment(body)
 }
 
+/** 点赞 / 删除一条评论。走 store，和这一页其余部分一样；评论条只 emit，不发请求。
+ *  这里两个包装只做一件事：把「当前这条反馈的 id」补上（详情可能在请求在飞的
+ *  时候被换掉，store 自己会挡住那种情况，见 `_detailIfCurrent`）。 */
+function toggleCommentLike(commentId: string) {
+  if (!item.value) return
+  void store.toggleCommentLike(item.value.id, commentId)
+}
+
+function removeComment(commentId: string) {
+  if (!item.value) return
+  void store.deleteComment(item.value.id, commentId)
+}
+
 async function share() {
   try {
     await navigator.clipboard.writeText(window.location.href)
@@ -206,9 +219,14 @@ async function share() {
               <div class="t-eyebrow">评论 {{ item.comments }}</div>
             </div>
 
+            <!-- 三个动作都走 store，和页面其余部分一样（评论条自己不发请求）。
+                 点赞不刷新任何 Tab 的计数，删除会同时把楼里的回复从本地摘掉 ——
+                 两件事的理由都写在 store 里那两条 action 上。 -->
             <FeedbackCommentsThread
               :comments="item.thread"
               @reply="(parentId, body) => submitComment(body, parentId)"
+              @like="toggleCommentLike"
+              @remove="removeComment"
             />
 
             <div class="fb-comment-form">
@@ -338,7 +356,7 @@ async function share() {
   background: var(--fill);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: var(--lh-12);
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
