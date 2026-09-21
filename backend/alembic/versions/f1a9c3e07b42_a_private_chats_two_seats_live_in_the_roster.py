@@ -13,11 +13,14 @@ Create Date: 2026-09-21 12:00:00
 个人记忆的读写会被拒，未读角标会整间房消失。补的输入就是那两列——它们记的正是这
 件事，只是记错了地方。
 
-补席位只 INSERT，``ON CONFLICT DO NOTHING``：``e7d2b91a4c06`` 已经把 peer 那一席补
-过一遍，建私聊时 ``TopicMemberService.seed_private`` 也一直在写这两行，所以绝大多数
-房间这里一行不动。撤过席位的房间会被补回来——这一点和 ``d5c48f1a6b73`` 里那条「替身
-还坐在名册上才动」的判断不同，因为这里补的是私聊的当事人：一间两席的房间撤掉一席
-就不再是私聊，而不是「这个人被移出了房间」。
+补席位只 INSERT，``ON CONFLICT DO NOTHING``，而且只补给名册还不到两席的房间。
+``e7d2b91a4c06`` 已经把 peer 那一席补过一遍，建私聊时 ``TopicMemberService.seed_private``
+也一直在写这两行，所以绝大多数房间这里一行不动。「已经两席」那道闸省下的不是一次扫
+描，是不去动一间已经答得出对面是谁的房间：换过队友的私聊，名册上是 [人, 队友B] 而
+``private_peer`` 还停在队友A，没有这道闸就会把 A 插回来——而撤席位就是撤授权。
+
+补不到两席的房间只剩两列这一个输入。一间被撤到只剩一席的私聊，和一间从来没写过席位
+的私聊，在数据上分不出来，而两者今天都答不出对面是谁；补回去至少让它重新是一间私聊。
 
 **多出来的那一席也得拿掉，但只拿掉一种形状**：两席是私聊的定义，不是它的下限。名
 册超过两席，「对面是谁」就和没有名册一样答不出来——AI 私聊退回项目默认那位（换了
@@ -71,8 +74,10 @@ ROOM_STAND_IN = "'cheese-' || left(replace(t.id::text, '-', ''), 12)"
 #: 两席各一条。房主那一席是 ``owner``——和 ``seed_private`` 写的角色逐字相同，
 #: 因为读侧（``private_seats``）就是靠这个角色把两席分成「人」和「对面」的。
 #:
-#: 跳过替身：它已经被 ``d5c48f1a6b73`` 退役，种回去就是把那条迁移倒过来。跳过之后
-#: 那些房间的名册是 [人, 项目芝士那一席]，正好两席，对面是谁答得出来。
+#: 只补给还不到两席的房间：已经两席的名册就是答案，动它就是把一次换队友倒回去。
+#: 两句各自判一次，所以空名册的房间第一句补上房主、第二句仍然在两席之内补上对面。
+#:
+#: 也跳过替身：它已经被 ``d5c48f1a6b73`` 退役，种回去就是把那条迁移倒过来。
 SEAT_THE_TWO_PARTIES = tuple(
     f"""
     INSERT INTO topic_memberships (id, topic_id, member_handle, role, created_at, updated_at)
@@ -80,6 +85,8 @@ SEAT_THE_TWO_PARTIES = tuple(
       FROM topics t
      WHERE t.is_private AND t.{column} IS NOT NULL
        AND t.{column} <> {ROOM_STAND_IN}
+       AND (SELECT count(*) FROM topic_memberships tm
+             WHERE tm.topic_id = t.id) < 2
     ON CONFLICT (topic_id, member_handle) DO NOTHING
     """
     for column, role in (("private_owner", "owner"), ("private_peer", "member"))
