@@ -1557,7 +1557,7 @@ async def ask_options(
         block_id=blk.id,
         question=question,
         asker=blk.author,
-        recipients=() if waiting_for in (None, "system") else (waiting_for,),
+        asked=None if waiting_for == "system" else waiting_for,
     )
     await db.commit()
     payload = BlockOut.model_validate(blk).model_dump(mode="json")
