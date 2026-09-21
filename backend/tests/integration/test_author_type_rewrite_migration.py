@@ -25,7 +25,7 @@ from pathlib import Path
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 
 from app.domain.block.models import AuthorType, Block
 from app.domain.project.models import Project
@@ -130,6 +130,36 @@ def _upgrade(client, modules) -> None:
     asyncio.run(_run())
 
 
+def _upgrade_counting_touched_rows(client, module) -> int:
+    """再跑一遍这条迁移，返回它的 `UPDATE` 一共匹配到几行。
+
+    改写过的行数只有数据库自己数得出来——语句跑完表是什么样，看不出它这一遍碰过
+    谁。所以挂在连接上收 `cursor.rowcount`，那是 `UPDATE` 的 `WHERE` 匹配到的行数。
+    """
+    touched: list[int] = []
+
+    def _apply(conn) -> None:
+        def _record(conn_, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().upper().startswith("UPDATE"):
+                touched.append(cursor.rowcount)
+
+        event.listen(conn, "after_cursor_execute", _record)
+        try:
+            with Operations.context(MigrationContext.configure(conn)):
+                module.upgrade()
+        finally:
+            event.remove(conn, "after_cursor_execute", _record)
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            await (await s.connection()).run_sync(_apply)
+            await s.commit()
+
+    asyncio.run(_run())
+    assert touched, "迁移没有跑出 UPDATE，这条测试就什么也没核到"
+    return sum(touched)
+
+
 def _read_back(client, ids) -> tuple[dict[str, AuthorType], set[str]]:
     async def _run() -> tuple[dict[str, AuthorType], set[str]]:
         async with client.test_factory() as s:
@@ -162,19 +192,20 @@ def test_every_author_type_row_comes_back_as_a_value_the_enum_has(client):
     assert distinct == {"participant", "platform"}
 
 
-def test_rerunning_the_system_rewrite_leaves_the_participant_rows_alone(client):
-    """改写是幂等的：再跑一遍，participant 的行也不许被顺手带走。
+def test_the_second_run_of_the_system_rewrite_touches_no_rows(client):
+    """重跑是空操作：第二遍的 `UPDATE` 一行都不碰。
 
-    迁移在换容器之前跑，而部署会重来（回滚再上、一次失败的 deploy 重试）。一条把
-    `participant` 也一起改掉的 `UPDATE`——少写一个 `WHERE`、或者写成「不是
-    participant 的都改」——第一遍看上去是对的，第二遍才把房间里所有人说的话变成
-    平台事件。所以这里跑两遍，核的是第二遍什么也没动。
+    迁移在换容器之前跑，而部署会重来（回滚再上、一次失败的 deploy 重试）。迁移文件
+    说这不要紧，理由是 `WHERE` 点名的是 `system` 这个退役的值，已经改过的行第二遍
+    不再匹配——这条测试就是那句话的判据。
+
+    数据本身核不出这个差别：第二遍之后表里是什么样，第一遍之后就已经是什么样了。
+    一条写成「不是 participant 的都改」的 `WHERE` 两遍下来数据也照样对，它跟点名
+    `system` 的写法唯一读得出来的差别，是第二遍还匹配着那些已经改完的行。所以这里
+    看的是第二遍 `UPDATE` 的 rowcount。
     """
-    ids = _seed(client)
+    _seed(client)
     system_leaves = _load(_SYSTEM_LEAVES)
-    _upgrade(client, [_load(_TWO_OLD_VALUES), system_leaves, system_leaves])
+    _upgrade(client, [_load(_TWO_OLD_VALUES), system_leaves])
 
-    got, distinct = _read_back(client, ids)
-
-    assert got == EXPECTED
-    assert distinct == {"participant", "platform"}
+    assert _upgrade_counting_touched_rows(client, system_leaves) == 0

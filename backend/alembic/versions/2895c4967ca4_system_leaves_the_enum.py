@@ -19,11 +19,10 @@ previous image that serves what this migration wrote — and that image has had
 `platform` itself. So no row of the old shape can appear behind the migration,
 and there is no follow-up pass to schedule.
 
-It is also idempotent: the `WHERE` names the value being retired rather than
-"anything that is not participant", so a deploy that is retried, or rolled back
-and attempted again, runs it a second time over rows it has already rewritten
-and changes nothing. Writing the predicate the other way would pass the first
-pass and turn every participant's message into a platform event on the second.
+It is also idempotent: the `WHERE` names `system`, the value being retired, so a
+row it has already rewritten no longer matches it. A deploy that is retried, or
+rolled back and attempted again, runs the statement a second time and it touches
+nothing.
 
 One full pass over `blocks` with no index to help it. The predicate is not
 selective enough for an index to be worth adding for a single statement, and
