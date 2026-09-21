@@ -20,6 +20,12 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.platform_notices import (
+    EVENT_ENVIRONMENT_REPAIRED,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
@@ -377,6 +383,14 @@ async def repair_environment(
             author="system",
             content="环境配置已修复，请继续处理此前尚未送达的用户消息。",
             addressed=addressed_to_agent(seat),
+            # 房间里看见的是一条系统事件，不是一句署名 system 的聊天消息：上面那
+            # 段是提示词，只给 agent 看（平台提示统一契约，见 platform_notices）。
+            nudge_event="环境配置已修复，正在继续之前的消息",
+            nudge_meta=notice(
+                EVENT_ENVIRONMENT_REPAIRED,
+                severity=SEVERITY_INFO,
+                who=WHO_CHEESE,
+            ),
             turn_id=turn_id,
         )
     return ok({"state": "retrying", "turn_id": str(turn_id)})

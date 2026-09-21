@@ -10,6 +10,7 @@
 
 import inspect
 import pathlib
+import re
 
 from app.api.routes import chat as chat_route
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
@@ -24,15 +25,33 @@ def _sources(root: pathlib.Path, suffixes: tuple[str, ...]):
             yield path, path.read_text()
 
 
+#: `summon` 后面跟着 `True` 的**所有写法**：`summon=True`、`summon = True`，以及带
+#: 类型标注的那一种 `summon: bool = True`。最后一种是个默认参数，也就是「不写就跑
+#: 一轮」——这条路和显式写 `summon=True` 是同一条，只是不用在调用点写出来，所以以
+#: 前逐字扫两个字面量的时候它整条漏在覆盖之外。
+_SUMMON_IS_TRUE = re.compile(r"\bsummon\b\s*(?::[^=\n]+)?=\s*True")
+
+
 def test_no_call_site_can_ask_the_platform_to_start_a_turn():
     """没有任何一处写得出「跑一轮」——`submit` 收的是寻址结果，不是一个布尔。"""
     offenders = [
         f"{path}:{i}"
         for path, text in _sources(APP, (".py",))
         for i, line in enumerate(text.split("\n"), 1)
-        if "summon=True" in line or "summon = True" in line
+        if _SUMMON_IS_TRUE.search(line)
     ]
     assert offenders == [], f"平台自召唤又回来了：{offenders}"
+
+
+def test_whether_a_turn_runs_has_no_default():
+    """`converse` 的 `summon` 是必填的。
+
+    有默认值就等于「不说也跑」——平台又多一条不点名也起得了轮次的路，而它不写在
+    任何调用点上，扫调用点扫不出来。"""
+    from app.domain.agent.chat import ChatService
+
+    summon = inspect.signature(ChatService.converse).parameters["summon"]
+    assert summon.default is inspect.Parameter.empty, "「跑不跑」又有默认值了"
 
 
 def test_starting_a_turn_takes_an_addressing_result_not_a_boolean():

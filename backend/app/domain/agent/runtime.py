@@ -50,7 +50,7 @@ from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
-from app.domain.identity.handles import names_a_person
+from app.domain.identity.handles import agent_instance_handle, names_a_person
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -67,15 +67,13 @@ def _a_turn_was_addressed(addressed: Addressed) -> bool:
     return any(how_it_arrives(r.handle) is Arrival.turn for r in addressed.recipients)
 
 
-def addressed_to_agent(
-    handle: str | None, *, next_hand: Hand = Hand.participant
-) -> Addressed:
+def addressed_to_agent(handle: str | None) -> Addressed:
     """这个房间的 agent 席位被点名了 —— 调用点最常要的那一条寻址。
 
     `asked` 而不是别的关系：房间里有人说了话、有人按了「叫它看一下」、一条活的
     检查红了，共同点都是「芝士停在这里，接下来只有它能往下走」。
     """
-    return address(Event(asked=handle), next_hand) if handle else NOBODY
+    return address(Event(asked=handle), Hand.participant) if handle else NOBODY
 
 
 def _fire_on_done(callback: Callable[[], None]) -> None:
@@ -217,19 +215,34 @@ class InProcessBroker:
             client_id=client_id,
         )
         turn_id = user_block_id
-        recipient_handle = next(
+        recipient = next(
             (
-                (payload.get("meta") or {}).get("agent_recipient", {}).get("handle")
+                (payload.get("meta") or {}).get("agent_recipient")
                 for payload in payloads
                 if (payload.get("meta") or {}).get("agent_recipient")
             ),
             None,
         )
+        recipient_handle = (recipient or {}).get("handle")
         mentioned = any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
             for payload in payloads
         )
-        addressed = addressed_to_agent(recipient_handle if mentioned else None)
+        # 点到的是**席位**，不是这个队友自己的名字。`agent_recipient.handle` 是项目
+        # 给它起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意小写
+        # 串），而一条投递怎么到达是按席位的命名规矩判出来的
+        # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去问，一个没叫
+        # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
+        # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
+        #
+        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
+        # / `wait_for_recipient` 问的是「哪个实例在跑」，那边认的就是实例名。
+        seat = (
+            agent_instance_handle(uuid.UUID(str(recipient["instance_id"])))
+            if recipient and recipient.get("instance_id")
+            else recipient_handle
+        )
+        addressed = addressed_to_agent(seat if mentioned else None)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self.publish(channel, {"type": "user_block", "block": payload})

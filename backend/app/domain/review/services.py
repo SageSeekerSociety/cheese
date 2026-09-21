@@ -82,6 +82,7 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.webhook import service as webhook_service
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -2863,14 +2864,6 @@ class AcceptService:
             ),
         )
 
-    async def _agent_seat(self, topic_id: uuid.UUID) -> str | None:
-        """这个房间的 agent 席位 —— 卡上的事件点的就是它的名，没有就是 None。"""
-        from app.domain.topic_membership.services import TopicMemberService
-
-        return await TopicMemberService(self._session).addressable_agent_handle(
-            topic_id
-        )
-
     async def _note_merge_blocked(
         self,
         *,
@@ -2938,7 +2931,11 @@ class AcceptService:
             # 合不上这件事点的是芝士的名：活还开着，改在它手上。活关了就谁也没点到，
             # 房间里照样看得见这一行，只是不会有人被叫起来（I13）。
             addressed=addressed_to_agent(
-                await self._agent_seat(topic.id) if actionable else None
+                await TopicMemberService(self._session).addressable_agent_handle(
+                    topic.id
+                )
+                if actionable
+                else None
             ),
             # 平台提示统一契约: the room gets one line; GitHub's own words ride in
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
@@ -3151,7 +3148,11 @@ class AcceptService:
             await TaskService(self._session).get(card.task_id) if card.task_id else None
         )
         actionable = task is not None and task.status == TaskStatus.open
-        seat = await self._agent_seat(topic.id) if actionable else None
+        seat = (
+            await TopicMemberService(self._session).addressable_agent_handle(topic.id)
+            if actionable
+            else None
+        )
         for nudge in fresh:
             if nudge.capped:
                 continue

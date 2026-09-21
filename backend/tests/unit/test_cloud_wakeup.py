@@ -18,11 +18,8 @@ def _wakeup(*, leases, waiting, online):
     async def waiting_topics(topic_ids):
         return [t for t in topic_ids if t in waiting]
 
-    async def kickoff(topic_id):
-        log.append(("kickoff", topic_id))
-
-    async def announce(topic_id):
-        log.append(("announce", topic_id))
+    async def deliver_held(topic_id):
+        log.append(("delivered", topic_id))
 
     async def announce_failure(topic_id, text):
         log.append(("failed", topic_id, text))
@@ -31,8 +28,7 @@ def _wakeup(*, leases, waiting, online):
         CloudWakeup(
             ready_leases=ready_leases,
             waiting_topics=waiting_topics,
-            kickoff=kickoff,
-            announce=announce,
+            deliver_held=deliver_held,
             is_online=lambda device_id: device_id in online,
             announce_failure=announce_failure,
         ),
@@ -57,7 +53,9 @@ async def test_only_a_connected_machine_with_a_waiting_room_is_woken():
 
     await wakeup.wake(leases)
 
-    assert log == [("kickoff", waiting_on_online), ("announce", waiting_on_online)]
+    # 一件事一条记录：房间里那一行「已接入」是送达这一轮的开场白，不再由第二次
+    # 广播说一遍。
+    assert log == [("delivered", waiting_on_online)]
 
 
 async def test_a_device_attaching_wakes_the_lease_waiting_on_it_and_no_other():
@@ -70,7 +68,7 @@ async def test_a_device_attaching_wakes_the_lease_waiting_on_it_and_no_other():
 
     await wakeup.wake_device("dev-1")
 
-    assert [t for _, t in log] == [mine, mine]
+    assert [t for _, t in log] == [mine]
 
 
 async def test_nothing_ready_means_nothing_asked_or_said():
@@ -83,7 +81,7 @@ async def test_nothing_ready_means_nothing_asked_or_said():
 async def test_a_lease_microcloud_gave_up_on_is_announced_once_to_a_waiting_room():
     """No sweep will ever hand a failed lease to `wake`, and the room is still
     showing 「机器正在创建」. It is told once; a room already past waiting (told
-    before, or never waiting) hears nothing, and nothing is kicked off."""
+    before, or never waiting) hears nothing, and nothing is delivered."""
     from app.domain.machine.services import FailedLease
 
     waiting = uuid.uuid4()
@@ -110,4 +108,4 @@ async def test_a_lease_microcloud_gave_up_on_is_announced_once_to_a_waiting_room
     ] == [("failed", waiting)], log
     text = log[0][2]
     assert "box-1" in text and "AI 通道" in text
-    assert not any(entry[0] == "kickoff" for entry in log)
+    assert not any(entry[0] == "delivered" for entry in log)

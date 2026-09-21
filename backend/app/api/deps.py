@@ -149,7 +149,14 @@ def get_cloud_wakeup() -> CloudWakeup:
             return await MachineService(session).ready_topic_devices(device_id)
 
     async def deliver_held(topic_id: uuid.UUID) -> None:
-        """把房间扣着的那条消息送出去 —— 收件人是它当初点的那个席位。"""
+        """把房间扣着的那条消息送出去 —— 收件人是它当初点的那个席位。
+
+        房间里看见的那一行是这一轮的开场白（`nudge_event`），`WAKE_PROMPT` 只作为
+        提示词进到 agent 那边。两者分开是平台提示的统一契约：平台在房间里说的每一
+        句都是系统事件，没有一条冒充人说的话。这一行也是这个房间的 Cloud 生命周期
+        从「正在创建」转出去的那一条记录（`cloud_waiting_topics` 读 `state`），所以
+        它由真正把消息送出去的这一轮写，而不是另起一次广播写第二遍。
+        """
         from app.domain.topic_membership.services import TopicMemberService
 
         async with async_session_factory() as session:
@@ -160,23 +167,14 @@ def get_cloud_wakeup() -> CloudWakeup:
             author="system",
             content=WAKE_PROMPT,
             addressed=addressed_to_agent(seat),
-        )
-
-    async def announce(topic_id: uuid.UUID) -> None:
-        block = await chat.post_system_event(
-            topic_id,
-            WAKE_NOTICE,
-            meta={
+            nudge_event=WAKE_NOTICE,
+            nudge_meta={
                 "event_type": "cloud_provisioning",
                 "state": "ready",
                 "severity": SEVERITY_INFO,
                 "who": WHO_PLATFORM,
             },
         )
-        if block is not None:
-            await get_broker().publish(
-                str(topic_id), {"type": "event_block", "block": block}
-            )
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
         from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
@@ -205,7 +203,6 @@ def get_cloud_wakeup() -> CloudWakeup:
         ready_leases=ready_leases,
         waiting_topics=chat.cloud_waiting_topics,
         deliver_held=deliver_held,
-        announce=announce,
         is_online=device_hub.is_online,
         announce_failure=announce_failure,
     )

@@ -533,6 +533,55 @@ async def test_normal_message_without_live_work_queues_without_fallback_error(
 
 
 @pytest.mark.anyio
+async def test_a_teammate_whose_handle_is_not_cheese_still_gets_a_turn(db_factory):
+    """名册上坐一个 handle 不以 `cheese` 开头的队友，@ 它必须起一轮。
+
+    项目给队友起的名字是随便的（`reviewer`、`planner`…，`AgentInstance.handle`
+    允许任意小写串），而「一条投递怎么到达收件人」是按**席位**的命名规矩判的。
+    点名时拿实例名去问，这样一个队友就永远不是「靠一轮收到」—— @ 它、和它私聊，
+    都只会 merge 进别人正在跑的那一轮，或者直接收工，一轮也起不来。
+    """
+    instance_id = uuid.uuid4()
+
+    class ATeammateNamedReviewer(FakeChat):
+        async def post_user_message(self, topic_id, **kwargs):
+            payloads, anchor, ids, duplicate = await super().post_user_message(
+                topic_id, **kwargs
+            )
+            for payload in payloads:
+                payload["meta"] = {
+                    "agent_recipient": {
+                        "instance_id": str(instance_id),
+                        "handle": "reviewer",
+                        "mentioned": True,
+                    }
+                }
+            return payloads, anchor, ids, duplicate
+
+        async def converse_prepared(self, **kwargs):
+            self.converse_calls.append(kwargs)
+            yield {"type": "done"}
+
+    chat = ATeammateNamedReviewer(None, db_factory)
+    runner, broker = _runner()
+    topic = await a_topic(db_factory)
+
+    async with broker.subscribe(str(topic)) as queue:
+        await broker.receive_message(chat, topic, author="u", content="@审稿人 看一下")
+        frames = await _frames_through(queue, "turn_finished")
+
+    assert [frame["type"] for frame in frames] == [
+        "user_block",
+        "turn_started",
+        "done",
+        "turn_finished",
+    ]
+    # 跑起来的是**这个**队友的一轮：席位只用来寻址，会话那边认的还是实例名。
+    assert chat.converse_calls[-1]["recipient_handle"] == "reviewer"
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
 async def test_the_wait_before_a_turn_assembles_is_accounted_for(db_factory, caplog):
     """Every other stretch of a turn is timed. The one between a message being
     durably received and its turn starting to assemble was not, and it holds three

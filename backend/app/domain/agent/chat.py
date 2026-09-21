@@ -1242,7 +1242,7 @@ class ChatService:
         topic_id: uuid.UUID,
         author: str,
         content: str,
-        summon: bool = True,
+        summon: bool,
         turn_id: uuid.UUID | None = None,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
@@ -1262,7 +1262,17 @@ class ChatService:
 
         ``continuation_id`` is the logical unit of work this turn belongs to — a
         turn and every auto-resume of it share one, so a message the interrupted
-        attempt already posted is not posted again (④)."""
+        attempt already posted is not posted again (④).
+
+        ``summon`` 没有默认值：这一轮跑不跑是**调用点算出来的一个答案**（由
+        `runtime._a_turn_was_addressed` 从寻址结果读出），不是一个可以不写、写不写
+        都默认「跑」的开关。给它默认值，就等于平台又有了一条不点名也能起轮次的路。
+        """
+        # 平台指令那一档：这一轮之所以存在，是因为平台写了一段指令（机器接入、环境
+        # 修好、记忆整理、闸门红了…）。下面 `_converse_impl` 用它保证这段指令不会
+        # 被房间里的待读消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗
+        # 口本来就会把同一段话重新递上来，两边都拼就是同一句说两遍。
+        platform_turn = nudge_event is not None and not is_resume
         # Record the arrival-time state before persistence and acknowledgements.
         # If live work ends during either operation, queueing is still a fallback
         # from the user's attempted live handoff and must be reported.
@@ -1383,6 +1393,7 @@ class ChatService:
                 is_resume=is_resume,
                 continuation_id=continuation_id,
                 provision_actor=provision_actor,
+                platform_turn=platform_turn,
             ):
                 yield frame
 

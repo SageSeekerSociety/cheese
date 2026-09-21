@@ -15,11 +15,18 @@ from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.platform_notices import (
+    EVENT_MEMORY_ORGANIZING,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import agent_handle_column
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
+from app.domain.topic_membership.services import TopicMemberService
 
 logger = logging.getLogger("cheesex.scheduler")
 
@@ -45,19 +52,6 @@ class SchedulerService:
         # and an outage do not read the same. One instance drives every tick.
         self._transient_misses: dict[uuid.UUID, int] = {}
         self._dependency_wakes: set[uuid.UUID] = set()
-
-    async def _agent_seat(self, topic_id: uuid.UUID, *, session=None) -> str | None:
-        """这个房间的 agent 席位 —— 平台这些事件点的就是它的名，没有就是 None。
-
-        调用点手上已经有 session 就把它传进来：整理那一支是在遍历所有待整理房间的
-        循环里问的，每个房间自己再开一条连接，就是在扫描循环里往连接池上加压。
-        """
-        from app.domain.topic_membership.services import TopicMemberService
-
-        if session is not None:
-            return await TopicMemberService(session).addressable_agent_handle(topic_id)
-        async with self._sessions() as own:
-            return await TopicMemberService(own).addressable_agent_handle(topic_id)
 
     async def tick(self) -> dict:
         """Parked — see docs/agent-principles.md §12.
@@ -223,14 +217,21 @@ class SchedulerService:
 
             record = await open_dream(session, topic_id=topic_id, project_id=project_id)
             # 记忆整理是这个 agent 自己的事，收件人就是它自己的席位 —— 平台送一条
-            # 事件过去，不替它起一轮（I12）。
+            # 事件过去，不替它起一轮（I12）。房间里看见的是那一行系统事件；整理的
+            # 作业（几百字的 DREAM_PROMPT）是提示词，只给 agent 看。
             turn_id = get_work_runner().submit(
                 self._chat,
                 topic_id,
                 author="system",
                 content=DREAM_PROMPT,
                 addressed=addressed_to_agent(
-                    await self._agent_seat(topic_id, session=session)
+                    await TopicMemberService(session).addressable_agent_handle(topic_id)
+                ),
+                nudge_event="正在整理这个房间的记忆",
+                nudge_meta=notice(
+                    EVENT_MEMORY_ORGANIZING,
+                    severity=SEVERITY_INFO,
+                    who=WHO_CHEESE,
                 ),
             )
             record.turn_id = turn_id
@@ -287,9 +288,6 @@ class SchedulerService:
         from app.domain.agent.platform_notices import (
             EVENT_DEPENDENCY_CLOSED,
             EVENT_DEPENDENCY_REJECTED,
-            SEVERITY_INFO,
-            WHO_CHEESE,
-            notice,
         )
         from app.domain.block.models import (
             AGENT_NOTICE_META_KEY,
@@ -329,6 +327,8 @@ class SchedulerService:
                 )
                 continue
             self._dependency_wakes.add(room_id)
+            async with self._sessions() as seats:
+                seat = await TopicMemberService(seats).addressable_agent_handle(room_id)
             try:
                 # The prompt reads the durable blocks and stamps their receipts.
                 runner.submit(
@@ -336,7 +336,7 @@ class SchedulerService:
                     room_id,
                     author="system",
                     content="",
-                    addressed=addressed_to_agent(await self._agent_seat(room_id)),
+                    addressed=addressed_to_agent(seat),
                     nudge_event="正在检查任务依赖",
                     nudge_meta=notice(
                         EVENT_DEPENDENCY_CLOSED,
@@ -464,12 +464,16 @@ class SchedulerService:
         async def nudge(
             topic_id: uuid.UUID, content: str, event: str, meta: dict
         ) -> None:
+            async with self._sessions() as seats:
+                seat = await TopicMemberService(seats).addressable_agent_handle(
+                    topic_id
+                )
             runner.submit(
                 self._chat,
                 topic_id,
                 author="system",
                 content=content,
-                addressed=addressed_to_agent(await self._agent_seat(topic_id)),
+                addressed=addressed_to_agent(seat),
                 nudge_event=event,
                 nudge_meta=meta,
             )
