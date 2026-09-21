@@ -85,24 +85,24 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
     pending list with every batch, and the room must not fill with copies.
 
     A session that never recorded which agent it is — opened before #1185 and
-    still inside the seven-day retention — has no name to ask under, and the
-    batch says so instead of picking one. The room cannot answer for it: it
-    seats whatever collaborators it holds, so asking it would file the question
-    under an agent that may not have asked it. Reopening the session records
-    the agent, and the events already landed (`receive` is keyed by event id).
+    still inside the seven-day retention — has no name to ask under, so its
+    questions stay on the panel and nothing is written into the room. Picking a
+    name off the room is not the answer: it seats whatever collaborators it
+    holds, so it would file the question under an agent that may not have asked
+    it. What this may not do is decide the worker's return code. The batch is
+    already stored by the time this runs, and failing here would skip
+    `announce` too — so the panel, the one surface these sessions have left,
+    would stop refreshing, and the worker would re-send the same pending list
+    into the same failure until the session ages out.
     """
     sid = session["id"]
+    author = session.get("agent_handle")
+    if not author:
+        return
     topic_id = uuid.UUID(session["topic_id"])
     rc = store()
     snapshot = await rc.snapshot(session)
-    outstanding = (snapshot.get("pending") or {}).items()
-    author = session.get("agent_handle")
-    if outstanding and not author:
-        raise ConflictError(
-            "This session records no agent; reopen it so its questions can be "
-            "asked in the room"
-        )
-    for request_id, pending in outstanding:
+    for request_id, pending in (snapshot.get("pending") or {}).items():
         if not await rc.redis.sadd(key(sid, "voiced"), request_id):
             continue
         payload = await chat._persist_assistant_message(

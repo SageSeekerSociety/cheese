@@ -1,7 +1,7 @@
 """房间攒下的那些记忆，重键到 agent 自己名下
 
 Revision ID: d5c48f1a6b73
-Revises: e5b31c07af28
+Revises: d7b3f0a9c651
 Create Date: 2026-09-21 10:00:00
 
 记忆以前按房间记：一间房的芝士写进 ``agent_project`` 池，scope_id 是
@@ -33,9 +33,15 @@ agent 只有一个名字，从它自己派生，它签的字、它的席位、�
 全部答案（``holds_an_agent_seat`` 不再给项目凭证留例外），席位也是「我是谁」的唯一
 出处，所以那些房里：线下那张项目凭证会从 200 变 403，``resolve_agent_handle`` 也还
 是答出替身的名字——署名、commit identity、令牌的 ``a`` 于是继续用房间派生的名字。
-所以这里把那套形状（唯一的 agent 席位就是本房间的替身 → 改署名、并反应、补上芝士
-自己的席位、删替身行）对每一间房再跑一遍。判据和 ``b4d1a70c9e52`` 一样：替身还在
-名册上，且这间房没有坐着别的 agent 实例——坐着别的就说不出替身站的是谁，一行不动。
+所以这里把那套形状（改署名、并反应、删替身行）对每一间房再跑一遍。判据和
+``b4d1a70c9e52`` 一样：替身还在名册上，且这间房没有坐着别的 agent 实例——坐着别的
+就说不出替身站的是谁，那几步一行不动。
+
+**补席位那一步不受这个判据管**，它对每一间还坐着替身的房间都跑。有歧义的只是「替
+身站的是哪一个」；「项目的芝士该不该有席位」没有歧义，答案在哪一间房里都是该有。
+跳过它，那批房间里线下那张项目凭证就会从 200 变 403，而且没有任何报错指向原因——
+和下面 ``REPOINT_PROJECT_MEMBER`` 要挡的是同一件事。补的是一行席位，改署名和删替
+身那几步照旧跳过。
 
 项目名册上那一行也跟着重指：项目凭证认证成的名字从 ``cheese-<根房间 hex12>`` 换成
 了芝士自己的 handle，而 ``project_members.user_handle`` 是个字符串。不重指，旧那行
@@ -136,20 +142,42 @@ RETIRE_ROOM_STAND_INS = (
      WHERE b.id = br.block_id AND b.topic_id = m.topic_id
        AND br.author = m.stand_in
     """,
-    # 席位：替身腾出来的那一行，换成项目自己那位芝士。用户行、execution binding
-    # 和展示资料上一步已经补好了（``cheese_seats`` 不挑房间）。
-    """
-    INSERT INTO topic_memberships (id, topic_id, member_handle, role, created_at, updated_at)
-    SELECT gen_random_uuid(), m.topic_id, m.own, 'member', now(), now()
-      FROM cheese_room_stand_ins m
-    ON CONFLICT (topic_id, member_handle) DO NOTHING
-    """,
     """
     DELETE FROM topic_memberships tm
      USING cheese_room_stand_ins m
      WHERE tm.topic_id = m.topic_id AND tm.member_handle = m.stand_in
     """,
 )
+
+#: 项目自己那位芝士，在每一间还坐着存量替身的房间里补上席位。
+#:
+#: 这一步不问房里还坐着谁。``ROOM_STAND_INS`` 要答的是「替身站的是哪一个」，房里坐
+#: 着别的 agent 实例就答不出，那批房间它一行不动；而这一步要答的是「项目的芝士该不
+#: 该有席位」，那个问题在每一间房里都是同一个答案。从今天起名册就是全部答案
+#: （``holds_an_agent_seat`` 不再给项目凭证留例外），没有席位就是 403，所以漏掉那批
+#: 房间等于让线下那张项目凭证（本地 agent、bot、CI）在那里静默地从 200 变 403。
+#:
+#: 判据是替身**还坐在**名册上：替身已经被人撤掉的房间不在内，那是一次真的撤席位，
+#: 补回去就把「撤席位即撤授权」又撤销了。
+#:
+#: 用户行、execution binding 和展示资料上一步已经补好了（``cheese_seats`` 不挑房间）。
+#:
+#: 幂等：``ON CONFLICT DO NOTHING``。
+SEAT_THE_PROJECTS_CHEESE = """
+    INSERT INTO topic_memberships (id, topic_id, member_handle, role, created_at, updated_at)
+    SELECT gen_random_uuid(), t.id,
+           'cheese-' || left(replace(a.id::text, '-', ''), 12),
+           'member', now(), now()
+      FROM topics t
+      JOIN projects p ON p.id = t.project_id
+      JOIN agent_instances a ON a.id = p.default_agent_instance_id
+     WHERE EXISTS (
+           SELECT 1 FROM topic_memberships tm
+            WHERE tm.topic_id = t.id
+              AND tm.member_handle =
+                  'cheese-' || left(replace(t.id::text, '-', ''), 12))
+    ON CONFLICT (topic_id, member_handle) DO NOTHING
+"""
 
 #: 项目名册上那一行：项目凭证以前认证成 ``cheese-<根房间 hex12>``，现在认证成芝士
 #: 自己的 handle。先删掉会撞唯一约束的那种情况（两行都在，留芝士自己那行），再把
@@ -199,8 +227,10 @@ def _seats():
 
 
 def retire_stand_ins(execute: Callable[[str], object]) -> None:
-    """替身退役那几步，按顺序。``upgrade()`` 和用例都走这一份：用例照着抄一份顺序，
-    抄出来的那份就会和真要发布的这份走散。"""
+    """替身退役那几步，按顺序。``upgrade()`` 和
+    ``tests/integration/test_the_stand_in_leaves_every_room.py`` 调的是同一个函数，
+    所以用例跑的就是真要发布的这份顺序，不是照着抄出来的一份。"""
+    execute(SEAT_THE_PROJECTS_CHEESE)
     execute(ROOM_STAND_INS)
     for statement in RETIRE_ROOM_STAND_INS:
         execute(statement)

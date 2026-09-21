@@ -10,7 +10,7 @@
 凭证在每一间里都会从 200 变 403，而署名、commit identity、令牌的 ``a`` 会继续用房间
 派生的名字——「做选择的代码」换了形状，库里选中的还是旧名字。
 
-跑的是迁移里那几段真实 SQL（从迁移模块 import），不是照抄一份。
+跑的是迁移自己的 ``retire_stand_ins``（从迁移模块 import），不是照抄一份顺序。
 """
 
 import importlib.util
@@ -84,19 +84,17 @@ async def _say(
 
 
 async def _retire(session: AsyncSession) -> None:
-    """迁移里替身退役那一段，原样跑一遍。"""
+    """迁移里替身退役那一段，原样跑一遍——调的是 ``retire_stand_ins`` 本人。
+
+    照着抄一份顺序，抄出来的那份就会和真要发布的这份走散，而走散的地方恰恰是用例看
+    不见的地方。``exec_driver_sql`` 收的是裸 SQL，和迁移里的 ``op.execute`` 一样，
+    所以 ``':cheese-'`` 不会被当成绑定参数。
+    """
     module = _migration()
-
-    async def execute(statement: str) -> None:
-        await session.execute(sa.text(statement))
-
-    for statement in (
-        module.ROOM_STAND_INS,
-        *module.RETIRE_ROOM_STAND_INS,
-        "DROP TABLE cheese_room_stand_ins",
-        *module.REPOINT_PROJECT_MEMBER,
-    ):
-        await execute(statement)
+    connection = await session.connection()
+    await connection.run_sync(
+        lambda sync: module.retire_stand_ins(sync.exec_driver_sql)
+    )
     await session.flush()
 
 
@@ -143,7 +141,12 @@ def test_an_old_rooms_seat_and_lines_move_to_the_projects_cheese(
 def test_a_room_seating_another_agent_keeps_its_stand_in(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ) -> None:
-    """房间里还坐着别的 agent：说不出替身站的是哪一个，一行不动。"""
+    """房间里还坐着别的 agent：说不出替身站的是哪一个，署名和替身那一行都不动。
+
+    席位是另一个问题，而那个问题在这里没有歧义：名册从今天起就是全部答案，项目的
+    芝士没有席位就是 403，所以它照样补上——线下那张项目凭证在这间房里进得来，替身
+    则留在原地等人来说它站的是谁。
+    """
 
     async def run() -> None:
         members = TopicMemberService(db_session)
@@ -162,13 +165,20 @@ def test_a_room_seating_another_agent_keeps_its_stand_in(
         )
         await members.ensure_agent_seat(room.id, agent_instance_handle(other.id))
         stand_in = await _age(db_session, room.id, own)
+        said = await _say(
+            db_session, project_id=project.id, topic_id=room.id, author=stand_in
+        )
         await db_session.flush()
 
         await _retire(db_session)
 
         roster = {m.member_handle for m in (await members.list_for_topic(room.id))[0]}
         assert stand_in in roster
-        assert own not in roster
+        assert await members.holds_an_agent_seat(room, own)
+        said_by_the_stand_in = await db_session.scalar(
+            sa.text("SELECT author FROM blocks WHERE id=:id"), {"id": said}
+        )
+        assert said_by_the_stand_in == stand_in
 
     _portal.call(run)
 

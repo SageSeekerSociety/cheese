@@ -1,4 +1,8 @@
-"""Project credentials authenticate the fixed agent of the project's root room.
+"""Project credentials authenticate the project's own 芝士.
+
+That is ``default_agent_instance_id``, not a name derived from the project's
+root room: the same participant answers in the browser and off-platform, so
+what either signs carries one name and reaches exactly the same rooms.
 
 The principal does not change with the destination or inherit the issuer's
 roles. Its current memberships grant access; issuance creates no membership.
