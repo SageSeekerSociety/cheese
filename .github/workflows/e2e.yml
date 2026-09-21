@@ -161,10 +161,11 @@ jobs:
         run: |
           slot="${CHEESE_CI_SLOT:-0}"
           echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
-          # Playwright starts a backend and a frontend on fixed ports; two runs
-          # on one machine would take the same two.
+          # Playwright starts a backend, a frontend and the stub gateway on fixed
+          # ports; two runs on one machine would take the same ones.
           echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
           echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
+          echo "E2E_STUB_GATEWAY_PORT=$((4010 + slot))" >> "$GITHUB_ENV"
           echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
           echo "FORGEJO_TEST_PORT=$((33100 + slot))" >> "$GITHUB_ENV"
           echo "FORGEJO_TEST_S3_PORT=$((33200 + slot))" >> "$GITHUB_ENV"
