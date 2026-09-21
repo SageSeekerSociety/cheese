@@ -160,18 +160,3 @@ class NotificationRepository:
         notification.deleted_at = datetime.now(UTC)
         await self._session.flush()
         return True
-
-    async def find_expired_aggregations(self, now: datetime) -> list[Notification]:
-        stmt: Select[tuple[Notification]] = (
-            select(Notification)
-            .where(
-                Notification.is_aggregatable.is_(True),
-                Notification.finalized.is_(False),
-                Notification.aggregate_until.is_not(None),
-                Notification.aggregate_until <= now,
-                Notification.deleted_at.is_(None),
-            )
-            .order_by(Notification.aggregate_until.asc())
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
