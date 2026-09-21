@@ -205,7 +205,7 @@ def test_compose_mounts_secrets_directory_not_single_file():
 
 def _with_admission(mod, monkeypatch, upstream: str | None, **named):
     """Point the addon at a control plane that returns `upstream` for everyone."""
-    verdict = _verdict(pool="subscription", upstream=upstream, **named)
+    verdict = _verdict(**{"pool": "subscription", "upstream": upstream, **named})
     monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
     monkeypatch.setattr(
         mod, "ADMISSION", SimpleNamespace(check=lambda project, topic, bearer: verdict)
