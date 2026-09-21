@@ -50,6 +50,12 @@ export default [
     redirect: '/admin/feedback',
     children: [
       {
+        path: 'spaces',
+        name: 'AdminSpaces',
+        component: () => import('@/views/admin/AdminSpacesPage.vue'),
+        meta: { title: '空间审核', isFullPage: true },
+      },
+      {
         path: 'feedback',
         name: 'AdminFeedback',
         component: () => import('@/views/feedback/AdminFeedbackPage.vue'),

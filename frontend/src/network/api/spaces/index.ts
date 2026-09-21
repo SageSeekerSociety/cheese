@@ -28,6 +28,30 @@ import type {
 import { NewApiInstance } from '../index'
 
 export namespace SpacesApi {
+  export const applications = (offset = 0) =>
+    NewApiInstance.request<{ items: import('./types').SpaceApplication[] }>({
+      url: '/space-applications',
+      method: 'GET',
+      params: { offset, limit: 50 },
+    })
+  export const resubmit = (id: number, data: PostSpaceRequestData) =>
+    NewApiInstance.request({
+      url: `/space-applications/${id}/resubmit`,
+      method: 'POST',
+      data,
+    })
+  export const reviews = (status: string, offset = 0) =>
+    NewApiInstance.request<{ items: import('./types').SpaceApplication[] }>({
+      url: '/admin/spaces',
+      method: 'GET',
+      params: { status, offset, limit: 50 },
+    })
+  export const review = (id: number, approved: boolean, reason = '') =>
+    NewApiInstance.request({
+      url: `/admin/spaces/${id}/review`,
+      method: 'POST',
+      data: { approved, reason },
+    })
   export const create = (data: PostSpaceRequestData) =>
     NewApiInstance.request<{ space: Space }>({
       url: '/spaces',

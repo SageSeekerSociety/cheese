@@ -9,6 +9,37 @@
     </div>
   </div>
   <v-container fluid>
+    <v-sheet v-if="AccountService.loggedIn" border rounded="lg" class="pa-4 mb-4">
+      <h2 class="text-h6 mb-3">{{ t('spaces.review.mine') }}</h2>
+      <v-alert v-if="applicationsError" type="error" variant="tonal" class="mb-3">
+        {{ t('spaces.review.loadFailed') }}
+        <v-btn variant="text" @click="loadApplications">{{ t('spaces.review.retry') }}</v-btn>
+      </v-alert>
+      <p v-if="!applications.length && !applicationsError" class="text-body-2 text-medium-emphasis">
+        {{ t('spaces.review.emptyMine') }}
+      </p>
+      <div v-for="item in applications" :key="item.id" class="py-3">
+        <div class="d-flex flex-wrap align-center ga-2 mb-1">
+          <h3 class="text-body-1 font-weight-medium application-copy">{{ item.name }}</h3>
+          <span class="text-body-2 text-medium-emphasis">{{ t(`spaces.review.${item.reviewStatus}`) }}</span>
+        </div>
+        <p class="text-body-2 application-copy">{{ item.reviewReason || item.intro }}</p>
+        <v-btn v-if="item.reviewStatus === 'REJECTED'" class="mt-2" variant="text" @click="openResubmit(item)">{{
+          t('spaces.review.resubmit')
+        }}</v-btn>
+        <v-btn v-if="item.reviewStatus === 'APPROVED'" class="mt-2" variant="text" :to="`/spaces/${item.id}`">{{
+          t('spaces.review.enter')
+        }}</v-btn>
+      </div>
+      <div v-if="applicationOffset || applications.length === 50" class="d-flex justify-end">
+        <v-btn :disabled="!applicationOffset" @click="changeApplicationsPage(-50)">{{
+          t('spaces.review.previous')
+        }}</v-btn>
+        <v-btn :disabled="applications.length < 50" @click="changeApplicationsPage(50)">{{
+          t('spaces.review.next')
+        }}</v-btn>
+      </div>
+    </v-sheet>
     <!-- 登录后落地的就是这一页（见 router/home.ts：`/` 把已登录的人送去
          HomeSpaces），而这一页通篇是**别人**的空间——没有一个字说他自己的东西
          从哪儿开。这一格只给一个项目都没有的人看；有项目的人看到的是和以前一模
@@ -28,6 +59,14 @@
             <div class="d-flex align-center">
               <span class="text-h6">探索空间</span>
             </div>
+            <v-btn
+              v-if="AccountService.loggedIn"
+              color="primary"
+              variant="flat"
+              prepend-icon="mdi-plus"
+              @click="openCreateSpace"
+              >{{ t('spaces.create.open') }}</v-btn
+            >
             <!-- <v-btn-toggle v-model="selectedSort" class="sort-toggle" rounded="lg" color="primary" density="comfortable">
               <v-btn
                 v-for="(item, index) in sortOptions"
@@ -90,9 +129,53 @@
       </v-col>
     </v-row>
   </v-container>
+  <v-dialog v-model="createDialog" max-width="520" :persistent="creating">
+    <v-card :title="resubmittingId === null ? t('spaces.create.open') : t('spaces.review.resubmit')">
+      <v-form @submit.prevent="createSpace">
+        <v-card-text>
+          <p class="text-body-2 mb-2">{{ t('spaces.create.ownership') }}</p>
+          <p class="text-body-2 text-medium-emphasis mb-4">{{ t('spaces.create.visibility') }}</p>
+          <v-text-field
+            v-model="spaceName"
+            autocomplete="off"
+            maxlength="255"
+            :label="t('spaces.create.name')"
+            :placeholder="t('spaces.create.placeholder')"
+            :disabled="creating"
+            autofocus
+            variant="outlined"
+          />
+          <v-textarea
+            v-model="spaceIntro"
+            autocomplete="off"
+            :label="t('spaces.create.intro')"
+            :disabled="creating"
+            rows="3"
+            variant="outlined"
+          />
+          <v-alert v-if="createError" type="error" variant="tonal" role="alert">{{ createError }}</v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn :disabled="creating" @click="createDialog = false">{{ t('spaces.create.cancel') }}</v-btn>
+          <v-btn
+            type="submit"
+            color="primary"
+            variant="flat"
+            :loading="creating"
+            :disabled="!spaceName.trim() || creating"
+          >
+            {{ t('spaces.create.submit') }}
+          </v-btn>
+        </v-card-actions>
+      </v-form>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script lang="ts" setup>
+import type { SpaceApplication } from '@/network/api/spaces/types'
+
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
@@ -106,9 +189,67 @@ import { listProjects } from '@/api'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
+import AccountService from '@/services/account'
 
 const { t } = useI18n()
 const { mdAndUp } = useDisplay()
+const applications = ref<SpaceApplication[]>([])
+const applicationsError = ref(false)
+const applicationOffset = ref(0)
+const resubmittingId = ref<number | null>(null)
+
+async function loadApplications() {
+  applicationsError.value = false
+  try {
+    applications.value = (await SpacesApi.applications(applicationOffset.value)).data.items
+  } catch {
+    applicationsError.value = true
+  }
+}
+
+function changeApplicationsPage(delta: number) {
+  applicationOffset.value += delta
+  void loadApplications()
+}
+
+function openResubmit(item: SpaceApplication) {
+  resubmittingId.value = item.id
+  spaceName.value = item.name
+  spaceIntro.value = item.intro
+  createError.value = ''
+  createDialog.value = true
+}
+const createDialog = ref(false)
+const creating = ref(false)
+const spaceName = ref('')
+const spaceIntro = ref('')
+const createError = ref('')
+
+function openCreateSpace() {
+  resubmittingId.value = null
+  spaceName.value = ''
+  spaceIntro.value = ''
+  createError.value = ''
+  createDialog.value = true
+}
+
+async function createSpace() {
+  if (creating.value || !spaceName.value.trim()) return
+  creating.value = true
+  createError.value = ''
+  try {
+    const payload = { name: spaceName.value.trim(), intro: spaceIntro.value.trim() }
+    if (resubmittingId.value !== null) await SpacesApi.resubmit(resubmittingId.value, payload)
+    else await SpacesApi.create(payload)
+    createDialog.value = false
+    applicationOffset.value = 0
+    await loadApplications()
+  } catch {
+    createError.value = t('spaces.create.failed')
+  } finally {
+    creating.value = false
+  }
+}
 const { show: showNewProjectDialog } = useNewProjectDialog()
 
 const selectedSort = ref('newest')
@@ -166,12 +307,18 @@ function startProject() {
 }
 
 onMounted(async () => {
+  if (AccountService.loggedIn) void loadApplications()
   void detectFirstRun()
   await refresh()
 })
 </script>
 
 <style scoped>
+.application-copy {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .search-card {
   transition: all 0.3s ease;
   overflow: hidden;

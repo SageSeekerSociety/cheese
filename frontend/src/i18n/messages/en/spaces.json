@@ -1,4 +1,38 @@
 {
+  "create": {
+    "open": "New space",
+    "name": "Space name",
+    "placeholder": "e.g. Programming course",
+    "intro": "Introduction (optional)",
+    "ownership": "A platform administrator will review your application. Once approved, you can publish and review tasks in your space.",
+    "visibility": "The space will appear in the explore list after approval.",
+    "cancel": "Cancel",
+    "submit": "Submit for review",
+    "failed": "Could not create the space. Please try again."
+  },
+  "review": {
+    "applicant": "Applicant",
+    "mine": "My space applications",
+    "title": "Space review",
+    "PENDING": "Pending",
+    "APPROVED": "Approved",
+    "REJECTED": "Rejected",
+    "emptyMine": "You have not applied for a space yet.",
+    "loadFailed": "Could not load applications. Please try again.",
+    "retry": "Retry",
+    "resubmit": "Edit and resubmit",
+    "enter": "Open space",
+    "previous": "Previous",
+    "next": "Next",
+    "adminHelp": "Approval makes the space public and lets its owner publish tasks. Include a reason when rejecting an application.",
+    "status": "Review status",
+    "refresh": "Refresh",
+    "empty": "No applications.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "reason": "Rejection reason",
+    "actionFailed": "Review could not be completed. Refresh to check the application status before retrying."
+  },
   "detail": {
     "editInfo": "Edit info",
     "editSpaceInfo": "Edit space info",

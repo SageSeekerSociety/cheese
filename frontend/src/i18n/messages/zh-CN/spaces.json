@@ -1,4 +1,38 @@
 {
+  "create": {
+    "open": "新建空间",
+    "name": "空间名称",
+    "placeholder": "例如：程序设计课",
+    "intro": "简介（选填）",
+    "ownership": "提交后等待平台管理员审核。通过后，你可以在自己的空间发布和审核题目。",
+    "visibility": "审核通过后，空间会出现在探索列表中。",
+    "cancel": "取消",
+    "submit": "提交审核",
+    "failed": "创建失败，请重试。"
+  },
+  "review": {
+    "applicant": "申请人",
+    "mine": "我的空间申请",
+    "title": "空间审核",
+    "PENDING": "待审核",
+    "APPROVED": "已通过",
+    "REJECTED": "已驳回",
+    "emptyMine": "你还没有申请空间。",
+    "loadFailed": "加载失败，请重试。",
+    "retry": "重试",
+    "resubmit": "修改并重新提交",
+    "enter": "进入空间",
+    "previous": "上一页",
+    "next": "下一页",
+    "adminHelp": "通过后，空间将公开显示，创建者可以开始发布题目。驳回时请说明原因。",
+    "status": "审核状态",
+    "refresh": "刷新",
+    "empty": "暂无申请。",
+    "approve": "通过",
+    "reject": "驳回",
+    "reason": "驳回原因",
+    "actionFailed": "审核未完成，请刷新确认申请状态后重试。"
+  },
   "detail": {
     "editInfo": "编辑信息",
     "editSpaceInfo": "编辑空间信息",

@@ -1,5 +1,18 @@
 import type { Page, Space, TaskSubmitterType } from '@/types'
 
+export type SpaceApplication = {
+  id: number
+  name: string
+  intro: string
+  reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED'
+  description: string
+  owner: string | null
+  reviewReason: string | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  createdAt: string
+}
+
 export type PostSpaceRequestData = {
   name: string
   intro?: string

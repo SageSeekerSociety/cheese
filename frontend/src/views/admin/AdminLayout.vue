@@ -34,6 +34,7 @@ const store = useFeedbackStore()
 const SECTIONS = [
   { to: '/admin/feedback', icon: 'mdi-tray-full', label: '反馈管理' },
   { to: '/admin/members', icon: 'mdi-account-multiple-outline', label: '成员管理' },
+  { to: '/admin/spaces', icon: 'mdi-check-decagram-outline', label: '空间审核' },
 ]
 
 onMounted(() => {
@@ -53,7 +54,7 @@ onMounted(() => {
     <div v-else-if="!store.isAdmin" class="admin-shell__gate page-container">
       <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
       <div class="t-body mb-1">这一页是管理员后台</div>
-      <div class="t-meta mb-3">你的账号不在管理员名单里，看不到这里的反馈 —— 私密反馈和安全问题对非管理员不存在</div>
+      <div class="t-body mb-3">你的账号不在平台管理员名单里，无法访问管理后台。</div>
       <v-btn variant="text" color="secondary" size="small" to="/feedback">回到反馈中心</v-btn>
     </div>
 
