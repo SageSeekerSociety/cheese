@@ -100,15 +100,21 @@ async def _read_topic_cloud(topic_id: uuid.UUID) -> CloudLease | None:
 
 
 @lru_cache
-def get_chat_service() -> ChatService:
-    # Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
-    # when the pool routes through the self-hosted gateway AND admin creds are
-    # configured.
-    gateway = None
+def get_llm_gateway() -> LlmGateway | None:
+    """Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
+    when the pool routes through the self-hosted gateway AND admin creds are
+    configured. ``None`` is a supported deployment, not a fault — it means no
+    metering, no brake, and a model catalogue that stays on its floor."""
     if settings.llm_gateway_admin_base and settings.llm_gateway_admin_key:
-        gateway = LlmGateway(
+        return LlmGateway(
             settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
         )
+    return None
+
+
+@lru_cache
+def get_chat_service() -> ChatService:
+    gateway = get_llm_gateway()
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
