@@ -75,7 +75,7 @@ def _service(
     # in the same process import, and an unrestored stub there is the "a batch
     # of tests you never touched went red" failure in .claude/rules.
     monkeypatch.setattr(
-        "app.domain.workspace.forge_files.ProjectFiles.comparison", comparison
+        "app.domain.repository.forge_files.ProjectFiles.comparison", comparison
     )
     return service
 

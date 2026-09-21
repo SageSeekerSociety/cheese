@@ -12,8 +12,6 @@ from app.domain.identity.actor import (
 
 pytestmark = pytest.mark.anyio
 
-_AGENTS = {"cheese"}
-
 
 def _verify_ok(handle: str, uid: uuid.UUID | None = None):
     def verify(_token: str) -> TokenIdentity | None:
@@ -24,10 +22,6 @@ def _verify_ok(handle: str, uid: uuid.UUID | None = None):
 
 def _verify_none(_token: str) -> TokenIdentity | None:
     return None
-
-
-async def _is_agent(handle: str) -> bool:
-    return handle in _AGENTS
 
 
 async def _cheese_true() -> bool:
@@ -43,7 +37,6 @@ async def _resolve(**kw) -> Actor | None:
         bearer_token=None,
         verify_token=_verify_none,
         cheese_valid=_cheese_false,
-        is_agent=_is_agent,
         cheese_handle="cheese",
         fallback_handle=None,
     )
@@ -64,7 +57,6 @@ async def test_token_wins_over_everything():
     assert actor.user_id == uid
     assert actor.via == "token"
     assert actor.authenticated is True
-    assert actor.is_agent is False
 
 
 async def test_invalid_token_falls_through_to_cheese():
@@ -73,7 +65,6 @@ async def test_invalid_token_falls_through_to_cheese():
     )
     assert actor is not None
     assert actor.handle == "cheese"
-    assert actor.is_agent is True
     assert actor.via == "cheese"
     assert actor.authenticated is True
 
@@ -84,14 +75,18 @@ async def test_handle_fallback_when_no_credentials():
     assert actor.handle == "bob"
     assert actor.via == "handle"
     assert actor.authenticated is False  # fallback is NOT authenticated
-    assert actor.is_agent is False
 
 
-async def test_agent_derivation_on_fallback_handle():
-    # Even the deprecated fallback derives is-agent from the binding adapter.
+async def test_the_fallback_resolves_an_agent_handle_like_any_other():
+    """The 分身 handle takes the same path as a person's: it is a handle, and
+    the seam says only how it got here. Nothing looks it up to decide it is a
+    different kind of participant — the room it acts in holds that answer, in
+    the seat it does or does not have."""
     actor = await _resolve(fallback_handle="cheese")
     assert actor is not None
-    assert actor.is_agent is True
+    assert actor.handle == "cheese"
+    assert actor.via == "handle"
+    assert actor.authenticated is False
 
 
 async def test_no_signal_resolves_none():

@@ -280,7 +280,7 @@ async def _seed_blocks(session, *, topics: int = 40, blocks: int = 4000) -> None
             "INSERT INTO blocks (project_id,topic_id,kind,author_type,author,"
             "content,refs,id,created_at,updated_at,doc_version) SELECT :pid,"
             "('00000000-0000-0000-0000-'||lpad(((g%:t)+1)::text,12,'0'))::uuid,"
-            "CASE WHEN g%3=0 THEN 'event' ELSE 'message' END,'human','u'||(g%7),"
+            "CASE WHEN g%3=0 THEN 'event' ELSE 'message' END,'participant','u'||(g%7),"
             "repeat('x',200),'[]',gen_random_uuid(),"
             "now()-(g||' minutes')::interval,now(),1 "
             "FROM generate_series(1,:n) g"

@@ -7,12 +7,53 @@ import json
 import os
 import sys
 import tarfile
+import threading
+import urllib.request
 import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 from app.domain.agent import forge_cli
+
+
+def test_fj_subpath_transport_preserves_pagination_headers():
+    paths = []
+
+    class Upstream(BaseHTTPRequestHandler):
+        def do_GET(self):
+            paths.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "2")
+            self.send_header("X-Total-Count", "62")
+            self.send_header("Set-Cookie", "upstream-private=value")
+            self.end_headers()
+            self.wfile.write(b"[]")
+
+        def log_message(self, *_):
+            pass
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with forge_cli.fj_path_transport(
+            f"http://127.0.0.1:{upstream.server_port}/forge"
+        ) as destination:
+            with urllib.request.urlopen(
+                destination + "/api/v1/repos/project/code/pulls?page=2&limit=30",
+                timeout=5,
+            ) as response:
+                assert response.read() == b"[]"
+                assert response.headers["X-Total-Count"] == "62"
+                assert response.headers.get("Set-Cookie") is None
+        assert paths == ["/forge/api/v1/repos/project/code/pulls?page=2&limit=30"]
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        thread.join()
 
 
 @pytest.fixture
@@ -187,6 +228,12 @@ def test_missing_binary_downloads_verified_archive_and_reuses_cache(
     monkeypatch.setattr(forge_cli.sys, "platform", system)
     monkeypatch.setattr(forge_cli.platform, "machine", lambda: "arm64")
     monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    if tool == "fj":
+        old = tmp_path / ".cheese/native/fj-0.6.0/fj"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"#!/bin/sh\nexit 101\n")
+        old.chmod(0o700)
+        monkeypatch.setattr(os, "get_exec_path", lambda: [str(old.parent)])
     payload = b"#!/bin/sh\nexit 0\n"
     archive = io.BytesIO()
     if system == "darwin" and tool == "gh":
@@ -227,4 +274,4 @@ def test_bad_checksum_never_installs_binary(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_cli.urllib.request, "urlopen", lambda *a, **kw: response)
     with pytest.raises(RuntimeError, match="checksum mismatch"):
         forge_cli.native_binary("fj")
-    assert not (tmp_path / ".cheese/native/fj-0.6.0/fj").exists()
+    assert not (tmp_path / ".cheese/native/fj-0.6.0-cheese.2/fj").exists()

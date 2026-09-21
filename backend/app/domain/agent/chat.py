@@ -101,7 +101,6 @@ from app.domain.agent_instance.configuration import (
     validate_configuration,
 )
 from app.domain.agent_instance.services import (
-    IMPLICIT_DEFAULT,
     AgentInstanceService,
     ResolvedAgent,
     legacy_topic_pool,
@@ -268,6 +267,9 @@ class _TurnContext:
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
     provider: ComputeProvider
+    # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
+    # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
+    needs_place: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1815,8 +1817,8 @@ class ChatService:
 
         Room-only: every caller here reports something about the room itself
         (a turn that failed, an environment that was rebuilt), which nobody was
-        named for. A notice that knows whose turn it now is passes `recipients`
-        to `announce` directly."""
+        named for. A notice that knows whom it points at passes `points_at`
+        to `announce` directly (`points_at=Event(...)`)."""
         async with self._sessions() as session:
             block = await announce(
                 session,
@@ -2216,12 +2218,10 @@ class ChatService:
                     return None
                 topic = place.room
                 project = await ProjectRepository(session).get(project_id)
+                if project is None:
+                    return None
                 agents = AgentInstanceService(session)
-                agent = (
-                    await agents.for_topic(topic, project)
-                    if project is not None
-                    else IMPLICIT_DEFAULT
-                )
+                agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
@@ -2601,7 +2601,7 @@ class ChatService:
                     topic_id=landed.topic_id,
                     task_id=landed.task_id,
                     author=state.acting_agent,
-                    author_type=AuthorType.system,
+                    author_type=AuthorType.platform,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
                     turn_id=state.work_id,
@@ -2707,11 +2707,9 @@ class ChatService:
                     return payloads, anchor.id, block_ids, True
             created_blocks: list[Block] = []
             project = await ProjectRepository(session).get(topic.project_id)
-            agent = (
-                await AgentInstanceService(session).recipient_for_topic(topic, project)
-                if project is not None
-                else IMPLICIT_DEFAULT
-            )
+            if project is None:
+                raise NotFoundError("Project not found")
+            agent = await AgentInstanceService(session).for_topic(topic, project)
             agent_handles = (
                 await TopicMemberService(session).agent_handles(topic.id)
                 if "@" in content
@@ -2733,7 +2731,7 @@ class ChatService:
                 else {}
             )
             recipient = {
-                "instance_id": str(agent.instance_id) if agent.instance_id else None,
+                "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
                 "mentioned": False,
             }
@@ -2976,7 +2974,7 @@ class ChatService:
         """
         project = await ProjectRepository(session).get(topic.project_id)
         if project is None:
-            return IMPLICIT_DEFAULT
+            raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(topic, project)
 
     async def _agent_at(self, session: AsyncSession, place: Place) -> ResolvedAgent:
@@ -2989,7 +2987,7 @@ class ChatService:
         """
         project = await ProjectRepository(session).get(place.project_id)
         if project is None:
-            return IMPLICIT_DEFAULT
+            raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(place.room, project)
 
     async def _agent_memory_pool(
@@ -3045,10 +3043,9 @@ class ChatService:
         before agents had seats of their own (only its room-derived seat on the
         roster) and a private 1:1 fall through to the room's seat as before.
         """
-        if agent.instance_id is not None:
-            seat = agent_instance_handle(agent.instance_id)
-            if seat in await TopicMemberService(session).agent_handles(topic_id):
-                return seat
+        seat = agent_instance_handle(agent.instance_id)
+        if seat in await TopicMemberService(session).agent_handles(topic_id):
+            return seat
         return await self._agent_handle(session, topic_id)
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
@@ -3122,7 +3119,7 @@ class ChatService:
                 backfilled=backfilled,
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
-                author_type=AuthorType.system,
+                author_type=AuthorType.platform,
                 task_id=task_id,
             )
         meta: dict | None = (
@@ -3465,10 +3462,10 @@ class ChatService:
             return None
         if isinstance(event, AgentSubagentStart):
             # The platform's own sentence about a worker, not anybody's words —
-            # so `system`, the same as every other line the platform says out
+            # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
             # a remark 芝士 never made.
-            content, author_type = "分身开工", AuthorType.system
+            content, author_type = "分身开工", AuthorType.platform
             meta: dict = {"event_type": "subagent_start"}
         else:
             # The closing message in full, and it IS the worker's own words. It
@@ -3537,7 +3534,7 @@ class ChatService:
             return None
 
         async def _collect() -> _Changeset | None:
-            from app.domain.workspace.forge_files import ProjectFiles
+            from app.domain.repository.forge_files import ProjectFiles
 
             fresh = [h for h in commits if h not in known_commits]
             if not fresh:
@@ -3573,8 +3570,8 @@ class ChatService:
         summary is measured against. None when it cannot be read (see
         _HookWorkState.known_commits)."""
         try:
+            from app.domain.repository.forge_files import ProjectFiles
             from app.domain.room_task.services import TaskService
-            from app.domain.workspace.forge_files import ProjectFiles
 
             async with self._sessions() as session:
                 tasks = await TaskService(session).list_in_room(topic_id)
@@ -3614,7 +3611,7 @@ class ChatService:
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
             in_room=True,
-            author_type=AuthorType.system,  # 平台自己数出来的，不是芝士说的
+            author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
         )
 
     async def _reconcile_spool(
@@ -4241,7 +4238,7 @@ class ChatService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="system",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=text,
             kind=BlockKind.event,
             turn_id=turn_id,
@@ -4311,10 +4308,10 @@ class ChatService:
                 (addressed.meta or {}).get("agent_recipient") if addressed else None
             )
             agents = AgentInstanceService(session)
-            if recipient is None:
+            # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
+            # 「收件人是项目的芝士」和今天的解析是同一个答案。
+            if recipient is None or recipient.get("instance_id") is None:
                 agent = await self._resolved_agent(session, topic)
-            elif recipient["instance_id"] is None:
-                agent = IMPLICIT_DEFAULT
             else:
                 agent = agents.resolved(
                     await agents.get_in_project(
@@ -4443,21 +4440,17 @@ class ChatService:
                     card_statuses=[c.status for c in open_cards],
                 )
             )
+            # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：不碰仓库文件、
+            # 不跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。私聊
+            # 是今天唯一这样的一轮——它桌上只有对话、记忆和平台工具。
+            needs_place = not is_private
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
-            compute_id = (
-                "device"
-                if is_private
-                else _resolve_compute_id(
-                    project.settings if project else None,
-                    topic.compute_profile,
-                )
+            compute_id = _resolve_compute_id(
+                project.settings if project else None,
+                topic.compute_profile,
             )
-            if (
-                not is_private
-                and compute_id == "device"
-                and topic.compute_config is None
-            ):
+            if needs_place and compute_id == "device" and topic.compute_config is None:
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,
                 )
@@ -4492,7 +4485,8 @@ class ChatService:
                         {"type": "done"},
                     ]
                 )
-            if provider.provisions_machine:
+            # 开一台机器是租手的一部分，所以不租手的一轮也不等它开完。
+            if needs_place and provider.provisions_machine:
                 ready, waiting_text = await provider.prepare_topic(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -4521,7 +4515,7 @@ class ChatService:
                             topic_id=landed.topic_id,
                             task_id=landed.task_id,
                             author="system",
-                            author_type=AuthorType.system,
+                            author_type=AuthorType.platform,
                             content=waiting_text,
                             kind=BlockKind.event,
                             turn_id=turn_id,
@@ -4603,9 +4597,9 @@ class ChatService:
             # killing the turn at the generic `agent_turn_timeout_s`. Without this
             # the device's own two-layer fix is dead on arrival — the outer guard
             # still kills at 900s.
-            # 私聊没有机器，所以也不该在它身上钉一台。钉了就是给一段永远不会用到
-            # 机器的对话记上一台机器，而这一行本来是给「以后别换机器」用的。
-            if provider is not None and topic.compute_profile is None:
+            # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
+            # 一台机器，而这一行本来是给「以后别换机器」用的。
+            if needs_place and provider is not None and topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later project-default change must
                 # never move an existing work tree or resumable Claude session.
@@ -4633,6 +4627,7 @@ class ChatService:
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
+            needs_place=needs_place,
             replay_notice=replay_notice,
             resume_session_id=resume_session_id,
             role=role,
@@ -4693,6 +4688,7 @@ class ChatService:
         doc_text = prepared.doc_text
         is_private = prepared.is_private
         memories = prepared.memories
+        needs_place = prepared.needs_place
         pending_ids = prepared.pending_ids
         consumed_ids = pending_ids + prepared.notice_ids
         prior_progress = prepared.prior_progress
@@ -4916,6 +4912,7 @@ class ChatService:
                     model=model_kwargs.get("model"),
                     env=model_kwargs.get("env"),
                     agent_handle=acting_agent,
+                    needs_place=needs_place,
                 ),
                 work_id=turn_id,
                 images=turn_images or None,

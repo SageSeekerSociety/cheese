@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.workspace import forge_files
+from app.domain.repository import forge_files
 
 
 @pytest.mark.anyio

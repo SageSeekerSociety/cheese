@@ -64,7 +64,6 @@ function pendingCard(state: MergeStateInfo): AcceptCard {
       reports_checks: true,
       hosts_proposals: true,
       can_write_remote: true,
-      has_external_remote: true,
       pushes_to_external_remote: true,
       identity: 'user',
       declaration: '',

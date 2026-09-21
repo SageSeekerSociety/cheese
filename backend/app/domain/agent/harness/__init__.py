@@ -173,6 +173,13 @@ class Opening:
     memory_scope: str | None = None
     owner: str | None = None
     agent_handle: str | None = None
+    # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：先解析被点名的参与者、
+    # 取到会话，再问这一问题，需要了才去租。False 的一轮只有对话、记忆和平台工具
+    # ——仓库文件和项目命令都不在它桌上，所以它在所有执行机离线时也必须答得出来。
+    #
+    # 它是这一轮的属性，不是这条会话的：同一条会话可以这一轮只聊天、下一轮动文件。
+    # 所以它随 ``Opening`` 每次送进来，而不落在 ``SessionRef`` 上。
+    needs_place: bool = True
 
 
 @runtime_checkable

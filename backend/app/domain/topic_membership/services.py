@@ -22,7 +22,7 @@ from app.domain.identity.handles import (
     topic_agent_handle,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicMembership, TopicRole
+from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
@@ -151,9 +151,17 @@ class TopicMemberService:
     ) -> None:
         """Seed a project's ROOT topic (总览/项目本体) roster: EVERY project
         member joins the room, so 总览 mirrors the whole project (fusion-design
-        §3). The project owner is the topic owner; other members join as members;
-        芝士 joins as a member. Idempotent — re-seeding never duplicates a row."""
-        await self._seed_with_members(
+        §3). The project owner is the topic owner; other members join as members.
+        Idempotent — re-seeding never duplicates a row.
+
+        People only. 芝士 is seated where the project's own agent is seeded
+        (`AgentInstanceService.materialize_default`), because that is where
+        「这个项目的芝士是谁」 is decided. Seating a room-derived stand-in here
+        would give 总览 a second agent nobody created.
+        """
+        if owner_handle and not self._is_agent_handle(owner_handle):
+            await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
+        await self._ensure_people(
             topic_id, owner_handle=owner_handle, member_handles=member_handles
         )
 
@@ -188,18 +196,18 @@ class TopicMemberService:
         everyone as a plain member is simple and correct enough — the owner can
         promote people afterward if the child needs its own owner/admin split.
         Idempotent, same as seed()."""
-        await self._seed_with_members(
+        await self.seed(topic_id, owner_handle=owner_handle)
+        await self._ensure_people(
             topic_id, owner_handle=owner_handle, member_handles=member_handles
         )
 
-    async def _seed_with_members(
+    async def _ensure_people(
         self,
         topic_id: uuid.UUID,
         *,
         owner_handle: str | None,
         member_handles: list[str],
     ) -> None:
-        await self.seed(topic_id, owner_handle=owner_handle)
         for handle in member_handles:
             if not handle or self._is_agent_handle(handle) or handle == owner_handle:
                 continue
@@ -303,6 +311,43 @@ class TopicMemberService:
             and user.id in agent_ids
         ]
 
+    async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
+        """Does ``handle`` answer THIS room as one of its agents?
+
+        The question every caller used to ask of the actor itself ("is this an
+        agent?") and answer away from the room it was acting in. A participant
+        is not typed; it holds a seat, and the seat is what says an agent
+        answers here — so a teammate seated in some OTHER room, this project's
+        rooms included, is in this one simply not one of its agents. That is
+        also the capability the whole change exists to provide: revoking a
+        room's seat revokes the authorization, which only holds while the
+        question stays 「这个房间认不认它」 and does not widen to
+        「这个项目认不认它」.
+
+        One handle answers without a seat here, and it is one handle rather than
+        a second roster: ``ProjectAgentCredentialService.agent_handle`` — i.e.
+        ``topic_agent_handle(root_topic_id)`` — is what a project credential
+        authenticates as, derived from the project's root room and borrowing no
+        room's seat by definition. An off-platform 芝士 (local agent, bot, CI)
+        holds exactly that credential and acts in every room of its project, so
+        asking only the destination room's roster would answer "not an agent"
+        for it in every room but the root one: a 403 instead of a published
+        message, and a turn that reads its own question back as unread input.
+        Reading the root room's whole roster instead of this one handle is what
+        would widen the check back to the project — 总览's roster is every
+        project member, so any agent seated there would pass everywhere.
+
+        Pass the ROOM: threads have no roster of their own, and the project the
+        room belongs to is where that credential handle is derived from.
+        """
+        if handle in await self.agent_handles(room.id):
+            return True
+        project = await ProjectRepository(self._session).get(room.project_id)
+        root_id = project.root_topic_id if project is not None else None
+        if root_id is None or root_id == room.id:
+            return False
+        return handle == topic_agent_handle(root_id)
+
     async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
         """Seat THIS agent in this room, and return the handle it acts under.
 
@@ -340,12 +385,22 @@ class TopicMemberService:
         silently undo a revocation, i.e. break the one capability this whole
         change exists to provide. Blocks already authored under the shared handle
         keep it; history is history.
+
+        And the 分身 is seated only where the shared seat was this room's LAST
+        agent. 总览 seats the project's own 芝士 now (`b4d1a70c9e52` retired the
+        stand-in that used to sit there), so seating one here on the way past
+        would put a second 芝士 back on that roster — and with it the hole the
+        retirement closed: revoke the instance's seat and the stand-in goes on
+        answering 「这里有个 agent」, because it carries an execution binding of
+        its own. The question 「这个房间还有别的 agent 吗」 is the right one for
+        every room, not just 总览, and it costs one roster read.
         """
         legacy = await self._repo.get(topic_id=topic_id, member_handle=CHEESE_HANDLE)
         if legacy is None:
             return
-        await self.ensure_topic_agent_seat(topic_id)
         await self._repo.delete(legacy)
+        if not await self.agent_handles(topic_id):
+            await self.ensure_topic_agent_seat(topic_id)
 
     async def resolve_agent_handle(
         self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
@@ -360,9 +415,8 @@ class TopicMemberService:
         identity back into the audit trail.
 
         Several agents seated: the project's default answers for the room when
-        it is one of them — the room-scoped credentials and the room's own
-        pass (memory dream, git identity) all mean the same one — else the
-        first on the roster.
+        it is one of them — the room-scoped credentials and the room's own git
+        identity all mean the same one — else the first on the roster.
 
         Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
         the room's (threads do not have one), but the fallback has to stay the

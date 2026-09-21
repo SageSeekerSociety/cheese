@@ -366,7 +366,7 @@ def test_what_it_writes_is_filed_under_the_fixed_project_agent(client):
     assert edit_events, _blocks(client, tid)
     assert edit_events[-1]["author"] == room_agent
     assert edit_events[-1]["content"] == "芝士 编辑了文档"
-    assert edit_events[-1]["author_type"] == "system"
+    assert edit_events[-1]["author_type"] == "platform"
 
     decision = client.post(
         f"/topics/{tid}/decision",

@@ -234,7 +234,7 @@ describe('agent status messages', () => {
 
   it("does not label a worker's actual result as a status update", async () => {
     const { container } = mountRoom([
-      { ...event('', '这是分身交回的完整结果', { event_type: 'subagent_stop' }), author_type: 'ai' },
+      { ...event('', '这是分身交回的完整结果', { event_type: 'subagent_stop' }), author_type: 'participant' },
     ])
     await flush()
     expect(container.querySelector('.agent-status')).toBeNull()
@@ -414,7 +414,7 @@ describe('平台提示：连着来的同类事件折成一条', () => {
       id: 'msg-1',
       topic_id: id,
       kind: 'message',
-      author_type: 'human',
+      author_type: 'participant',
       author: '张衡',
       content: '我看看',
       created_at: '2026-08-15T10:50:00Z',

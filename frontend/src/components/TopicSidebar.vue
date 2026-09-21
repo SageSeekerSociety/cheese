@@ -96,10 +96,8 @@ const pinnedPages = [
 // 一年点几次的东西收进项目名旁边那个菜单：它们仍然一次点击可达，只是不再占着
 // 每天都要扫一遍的那条竖线。
 const menuPages = [
-  { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
-  { key: 'project-delivery', label: '导出与发布', icon: 'mdi-export-variant' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return

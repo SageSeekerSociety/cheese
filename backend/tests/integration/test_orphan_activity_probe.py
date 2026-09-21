@@ -46,7 +46,7 @@ async def test_last_block_at_reports_the_newest_block_per_topic(client, tmp_path
                     project_id=project.id,
                     topic_id=topic.id,
                     author="u",
-                    author_type=AuthorType.human,
+                    author_type=AuthorType.participant,
                     content="hi",
                 )
         # Backdate every block of the quiet topic — this is the shape a wedged

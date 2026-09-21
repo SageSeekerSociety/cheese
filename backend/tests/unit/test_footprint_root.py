@@ -26,8 +26,16 @@ from app.domain.agent import (
     machine_launcher,
     resource_cleanup,
 )
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-from app.domain.agent.place import footprint_root, session_platform_dirs
+from app.domain.agent.harness.claude_code.remote_execution import (
+    bootstrap,
+    session_transfer,
+)
+from app.domain.agent.place import (
+    CHECKOUT_DIR,
+    STAGED_DIR,
+    footprint_root,
+    session_platform_dirs,
+)
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 SANDBOX_CLI = REPOSITORY / "backend/sandbox/cheese"
@@ -49,6 +57,34 @@ def test_the_shipped_programs_carry_the_root_that_place_chose():
     )
 
 
+def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():
+    """The name `place.write` refuses, held to the name the checkout gets.
+
+    `place.write` turns a staged file away when the destination has the checkout
+    as a path segment. That rule can only be checked while the name it refuses
+    and the name the checkout is actually given are the same string, and the
+    code that gives it is not the code that refuses it: the backend builds the
+    path it hands a machine, and three programs that run ON the machine build
+    theirs — the bootstrap creates the directory, the teardown looks in it
+    before deleting a home, and the session transfer hashes its path into a
+    session name.
+
+    Drift is silent in each direction. A bootstrap that made `checkout/` while
+    `place.py` still said `room/` would leave the one assertion standing between
+    the platform and somebody's repository rejecting a directory nothing writes
+    to and waving through the one it does; a teardown or a transfer pointed one
+    directory over passes every check vacuously.
+    """
+    assert resource_cleanup.CHECKOUT_DIR == CHECKOUT_DIR
+    assert bootstrap.CHECKOUT_DIR == CHECKOUT_DIR
+    assert session_transfer.CHECKOUT_DIR == CHECKOUT_DIR
+    project, room = uuid.uuid4(), uuid.uuid4()
+    channel = device_provider.DeviceChannel(hub=None)
+    assert channel._work_dir(project, room) == (
+        f"{device_provider.device_home_dir(project, room)}/{CHECKOUT_DIR}"
+    )
+
+
 def test_the_connector_uninstalls_the_root_the_platform_writes():
     """The connector is Go, so its copy is the one nothing can type-check.
 
@@ -57,9 +93,13 @@ def test_the_connector_uninstalls_the_root_the_platform_writes():
     that has drifted removes nothing while reporting that it did. Only the name
     is checked here; that `uninstall` still reaches `removeFootprint` is checked
     in Go, where the identifier resolves — `cli/internal/daemoncmd/daemoncmd_test.go`.
+
+    One declaration on that side too: `cli/internal/place` is read by the
+    uninstall and by the writer that refuses a server-sent file aimed outside
+    the root, and neither spells it itself.
     """
-    source = (REPOSITORY / "cli/internal/daemoncmd/daemoncmd.go").read_text()
-    declared = re.search(r'footprintRoot\s*=\s*"([^"]+)"', source)
+    source = (REPOSITORY / "cli/internal/place/place.go").read_text()
+    declared = re.search(r'Root\s*=\s*"([^"]+)"', source)
     assert declared, "the connector stopped declaring a footprint root"
     assert declared.group(1) == footprint_root()
 
@@ -90,6 +130,15 @@ def test_the_sandbox_cli_carries_the_root_that_place_chose():
     assert tuple(re.findall(r'"([^"]+)"', declared.group(1))) == (
         session_platform_dirs()
     )
+    # The second name it carries: where an attachment sits in the session's own
+    # home. `cheese library get` writes its default there so that a file 芝士
+    # fetches lands where a file the platform staged lands — the same directory,
+    # spelled twice, and drift between them puts the fetched copy somewhere the
+    # prompt's paths do not point. It is also the copy that keeps the default
+    # OUT of the checkout: a relative default is a path under the work tree.
+    staged = re.search(r'STAGED_DIR = "([^"]+)"', source)
+    assert staged, "the sandbox CLI stopped declaring where an attachment sits"
+    assert staged.group(1) == STAGED_DIR
     for spelled in sorted(
         {name.split("/")[0] for name in SANDBOX_HOME_DIR.findall(source)}
         - {RUNNER_STATE_DIR}

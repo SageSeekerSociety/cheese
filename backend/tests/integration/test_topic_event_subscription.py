@@ -27,10 +27,10 @@ from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.turn_log import open_turn
 
@@ -810,7 +810,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
         if looks_like_agent_handle(b.author) and (b.meta or {}).get("progress")
     ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
-    assert [b for b in blocks if b.author_type == AuthorType.system] == []
+    assert [b for b in blocks if b.author_type == AuthorType.platform] == []
     # And the Stop closed the books on the interval the dead process opened.
     async with factory() as session:
         row = await session.get(AgentTurn, interrupted)

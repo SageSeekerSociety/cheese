@@ -18,8 +18,8 @@ from sqlalchemy import select
 import scripts.seed_demo as seed_demo
 from app.core.db import Base, async_session_factory, engine
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.library import service as library
 from app.domain.topic.models import Topic
-from app.domain.workspace import service as ws
 
 
 async def _reset_noop(_session) -> None:  # fresh sqlite file — nothing to reset
@@ -56,7 +56,7 @@ async def main() -> None:
         ).scalar_one()
         pid, tid = topic.project_id, topic.id
         for path, content in _FILES.items():
-            ws.write_room_file(pid, tid, path, content.encode())
+            library.write_room_file(pid, tid, path, content.encode())
         s.add(
             Block(
                 project_id=pid,
