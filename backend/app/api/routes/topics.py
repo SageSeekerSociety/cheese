@@ -103,7 +103,6 @@ from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
-    BindSubagentIn,
     CheckResultIn,
     ConclusionIn,
     DocEditIn,
@@ -749,34 +748,6 @@ async def say_on_task(
             provision_actor=actor,
         )
     return ok(payload)
-
-
-@router.post("/{topic_id}/tasks/{task_id}/bind")
-async def bind_task_subagent(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: BindSubagentIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """认领: the room says which worker in its session is doing this thread.
-
-    The one new thing a room has to tell the platform under 任务=分身. A worker
-    id is minted inside the container when the worker starts, so nothing handed
-    out at dispatch could name it — the room spawns one and reports back, and
-    only then can the platform tell that worker's events from its own.
-
-    ONLY the room may call it, and only the room can: a card is not a place,
-    so `{topic_id}` naming one is a 404 before the body is read.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    task = await TaskService(db).bind_subagent(
-        room_id=place.room_id, task_id=task_id, subagent_id=body.agent_id
-    )
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    await db.commit()
-    return ok(out)
 
 
 @router.post("/{topic_id}/tasks/{task_id}/title")

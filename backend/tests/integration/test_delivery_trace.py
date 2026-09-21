@@ -272,7 +272,7 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
 
 
 def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
-    """`subagent_id` is NULL until a worker is bound, and a room can write a
+    """`subagent_id` is NULL until a worker starts, and a room can write a
     change itself. Dropping the row would make the batch in the commit smaller
     than the batch the room said it delivered."""
     pid = _project(client)

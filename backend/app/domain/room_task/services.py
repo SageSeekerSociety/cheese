@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import Block
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
@@ -16,6 +16,7 @@ from app.domain.room_task.models import (
     TaskStatus,
 )
 from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.thread_label import task_of_thread_label
 
 
 class TaskService:
@@ -110,51 +111,53 @@ class TaskService:
         the platform (topic/retire.py). False when no thread has this id."""
         return await self._repo.mark_transcripts_archived(task_id, at)
 
-    async def open_by_subagent(
-        self, *, room_id: uuid.UUID, subagent_id: str
+    async def open_by_thread_label(
+        self, *, room_id: uuid.UUID, thread_label: str
     ) -> Task | None:
-        """The open thread in *room_id* this worker is doing, if any.
+        """The open thread in *room_id* this label names, if any.
 
-        Asked once per hook event a worker produces, which is what the
-        (room_id, subagent_id) index is for.
+        The label is this card's own (`thread_label.thread_label`), handed to
+        the agent when the card was opened and carried back on every event of
+        the sub-thread it spawned — so this reads an answer rather than looking
+        one up in something reported earlier.
+
+        `open` is part of the question, not a filter on the answer: a finished
+        thread that kept catching events would silently swallow whatever came
+        after it. A label naming another room's work is None for the same reason
+        an unknown one is — the events land on this room's own line, where the
+        room can see them, instead of on a card in a room nobody is watching.
+
+        Asked once per event a sub-thread produces, and it is a primary-key read.
         """
-        return await self._repo.open_by_subagent(room_id, subagent_id)
+        task_id = task_of_thread_label(thread_label)
+        if task_id is None:
+            return None
+        task = await self._repo.get(task_id)
+        if (
+            task is None
+            or task.room_id != room_id
+            or task.status is not TaskStatus.open
+        ):
+            return None
+        return task
 
-    async def bind_subagent(
-        self, *, room_id: uuid.UUID, task_id: uuid.UUID, subagent_id: str
-    ) -> Task:
-        """Say which worker in *room_id*'s session is doing *task_id*.
+    async def note_worker(self, task: Task, subagent_id: str) -> Task:
+        """记下这条活是哪个分身在做 —— 平台看见它开工，不是 agent 报上来的。
 
-        The room spawns a worker and then reports the id it got, because the id
-        does not exist until the worker does — nothing the platform hands out
-        in advance could name it. Everything downstream keys off this: without
-        the binding a worker's events are indistinguishable from the room's own.
+        分身的 id 在容器里才诞生，所以开卡的时候没有任何东西能提前说出它；卡上
+        要写「谁在做、它还活着没有」，唯一说得出这个 id 的地方就是它开工那条事件。
+        归属不靠它（那是线程标识的事），所以重复一次、换一个 id 都不是冲突：一条
+        活重派一个分身，卡上换成新的那个就是对的答案。
 
-        Refuses rather than overwrites when the id is already doing other work
-        in this room. Reassigning it would not move the work, it would silently
-        re-address the events of a worker still running — the first thread would
-        stop receiving its own tool calls and never say why.
+        A worker starting IS this work starting, and `last_turn_at` is the signal
+        the board falls back on before the worker has said anything: without it a
+        thread reads 失联 for the whole gap between starting and its first tool
+        call, which is the busiest moment it has.
         """
         subagent_id = subagent_id.strip()
         if not subagent_id:
-            raise ValidationError("要绑定的分身 id 是空的")
-        task = await self._repo.get(task_id)
-        if task is None or task.room_id != room_id:
-            # Same answer for "no such task" and "someone else's task": which of
-            # the two it is, is exactly what a caller poking at ids wants told.
-            raise NotFoundError("这个房间里没有这条活")
-        if task.status is not TaskStatus.open:
-            raise ConflictError("这条活已经收了，不能再绑分身")
-        held = await self._repo.open_by_subagent(room_id, subagent_id)
-        if held is not None and held.id != task.id:
-            raise ConflictError(
-                f"这个分身正在做「{held.title}」，一个分身同时只做一条活"
-            )
+            return task
         task.subagent_id = subagent_id
-        # A worker starting IS this work starting, and this is the signal the
-        # board falls back on before the worker has said anything: without it a
-        # thread reads 失联 for the whole gap between being claimed and its first
-        # tool call, which is the busiest moment it has.
         task.last_turn_at = datetime.now(UTC)
         await self._session.flush()
         return task
@@ -162,9 +165,10 @@ class TaskService:
     async def record_conclusion(self, task: Task, conclusion: str) -> Task:
         """分身交回来的那句话，落在卡上 —— overwriting whatever was there.
 
-        Called for every `SubagentStop` from a BOUND worker, and a worker stops
-        more than once: parking a long command in its own background reads as
-        finishing, and it stops again when it resumes and finishes for real. So
+        Called for every `SubagentStop` whose label names this card, and a
+        sub-thread stops more than once: parking a long command in its own
+        background reads as finishing, and it stops again when it resumes and
+        finishes for real. So
         the last one is the only one worth keeping. Acceptance closes delivered
         work; an explicit close abandons it. A stop notification does neither.
         """

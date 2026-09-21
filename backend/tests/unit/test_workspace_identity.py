@@ -375,8 +375,8 @@ async def test_a_card_that_declared_nothing_names_nobody(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_work_nobody_was_bound_to_keeps_its_place_in_the_batch(monkeypatch):
-    """`subagent_id` is NULL until a worker is bound, and a room can write a
+async def test_work_no_worker_started_keeps_its_place_in_the_batch(monkeypatch):
+    """`subagent_id` is NULL until a worker starts, and a room can write a
     change itself. Dropping the row would make the batch in the commit smaller
     than the batch the room declared."""
     mine = _task(None, "人自己动手改的")

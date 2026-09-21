@@ -20,8 +20,14 @@ class Assembler:
         self.last_text: dict[str, str] = {}
 
     def attribution(self, thread_id: str) -> dict:
+        """这条记录属于哪条子线程 —— 契约上的 `thread_label`。
+
+        Codex 把起子线程时给的那个名字放在 `agentRole` 上，每条记录都带着它回来，
+        所以这个骨架的标识绑在它上面（`agentRole` 这个名字不出这个包）。父线程的
+        记录不在 `children` 里，返回空 dict，也就是「房间自己说的」。
+        """
         child = self.children.get(thread_id)
-        return {"agent_id": thread_id, "agent_type": child[1]} if child else {}
+        return {"thread_label": child[1]} if child else {}
 
     def accept(self, record: dict) -> list[AgentEvent]:
         method = record["method"]

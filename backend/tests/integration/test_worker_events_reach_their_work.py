@@ -1,21 +1,23 @@
 """一个房间里跑好几个分身，谁干的事记到谁头上。
 
-Several workers run inside one session, and everything they do arrives on the
-same pipe as the session's own. The only thing telling them apart is the
-``agent_id`` on each payload, and the only thing saying what that id is DOING is
-the binding the room reported. These are the tests for the join between the two.
+Several sub-threads run inside one session, and everything they do arrives on
+the same pipe as the session's own. What tells them apart is the thread label
+the agent handed each one when it spawned it — the platform minted that label
+when it opened the card, so a sub-thread's very first event already says which
+card it belongs to and nobody has to have reported anything (结论 43).
 
 Two halves that are easy to conflate and must not be:
 
-- a worker the room bound → its events land in that thread;
-- a worker nobody bound → its events land on the room's own line, exactly where
-  they landed before any of this existed. Not dropped. An unclaimed worker being
-  attributed coarsely is a nuisance; its whole run vanishing is a bug nobody can
-  see happening.
+- an event whose label names an open card in this room → it lands in that
+  thread;
+- an event with no label, or a label naming nothing here → it lands on the
+  room's own line, exactly where it landed before any of this existed. Not
+  dropped. Coarse attribution is a nuisance; a whole run vanishing is a bug
+  nobody can see happening.
 
-The one exception is SubagentStart/Stop, which are written ONLY for bound ids —
-see `test_an_unknown_workers_stop_is_not_written_anywhere` for the measured
-reason.
+The one exception is SubagentStart/Stop, which are written ONLY for a label
+that names a card — see `test_an_unknown_workers_stop_is_not_written_anywhere`
+for the measured reason.
 """
 
 import asyncio
@@ -34,8 +36,10 @@ from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
+from app.domain.room_task.thread_label import thread_label
 from app.domain.topic.repositories import TopicProgressRepository
 from app.domain.topic.services import TopicService
+from app.domain.usage.repositories import UsageRepository
 
 pytestmark = pytest.mark.anyio
 
@@ -69,14 +73,6 @@ async def _dispatch(factory, project_id, room_id, title: str) -> uuid.UUID:
         )
         await session.commit()
         return task.id
-
-
-async def _bind(factory, room_id, task_id, agent_id: str) -> None:
-    async with factory() as session:
-        await TaskService(session).bind_subagent(
-            room_id=room_id, task_id=task_id, subagent_id=agent_id
-        )
-        await session.commit()
 
 
 async def _live_runtime(factory, tmp_path, project_id, room_id):
@@ -129,12 +125,13 @@ async def _settle(factory, room_id, *eids: str) -> None:
         await asyncio.sleep(0.01)
 
 
-async def test_a_bound_workers_tool_call_lands_in_its_thread(client, tmp_path) -> None:
+async def test_a_labelled_workers_tool_call_lands_in_its_thread(
+    client, tmp_path
+) -> None:
     """归流: the room ran the session, but this piece of work owns the event."""
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
-    await _bind(factory, room_id, task_id, "worker-1")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
     assert router.push(
@@ -144,18 +141,135 @@ async def test_a_bound_workers_tool_call_lands_in_its_thread(client, tmp_path) -
             "tool_name": "Bash",
             "tool_input": {"command": "rg TODO"},
             "agent_id": "worker-1",
-            "agent_type": "general-purpose",
-            "_eid": "bound-tool-1",
+            "agent_type": thread_label(task_id),
+            "_eid": "labelled-tool-1",
         },
     )
-    await _settle(factory, room_id, "bound-tool-1")
+    await _settle(factory, room_id, "labelled-tool-1")
 
     rows = await _blocks(factory, room_id)
-    tool = next(r for r in rows if (r.meta or {}).get("eid") == "bound-tool-1")
+    tool = next(r for r in rows if (r.meta or {}).get("eid") == "labelled-tool-1")
     assert tool.task_id == task_id
     # 房间主线上没有它的副本：一件事只落一次。
     main = await _on_main_line(factory, room_id)
-    assert [r for r in main if (r.meta or {}).get("eid") == "bound-tool-1"] == []
+    assert [r for r in main if (r.meta or {}).get("eid") == "labelled-tool-1"] == []
+
+    await provider._close_topic(room_id)
+
+
+async def test_a_subagents_whole_run_reaches_one_card_with_no_bind_call(
+    client, tmp_path
+) -> None:
+    """一个子 agent 的三类事件全部归到同一张卡，而全程没有一次认领调用。
+
+    这是结论 43 那条缝：卡在开的时候就有线程标识，agent 起子 agent 时带上它，
+    从此**平台不问任何人**这条子线程在做哪张卡 —— 开工、工具调用、交回结果，
+    每一条自己带着答案来。
+    """
+    factory = client.test_factory
+    project_id, room_id = await _seed_room(factory)
+    task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
+    label = thread_label(task_id)
+    router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
+
+    for payload in (
+        {
+            "hook_event_name": "SubagentStart",
+            "agent_id": "worker-1",
+            "agent_type": label,
+            "_eid": "run-start",
+        },
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "pytest -q"},
+            "agent_id": "worker-1",
+            "agent_type": label,
+            "_eid": "run-tool",
+        },
+        {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Task",
+            "tool_input": {"description": "查一下缓存目录"},
+            "tool_response": "查到了：在 ~/.cache/cheese",
+            "agent_id": "worker-1",
+            "agent_type": label,
+            "_eid": "run-result",
+        },
+        {
+            "hook_event_name": "SubagentStop",
+            "agent_id": "worker-1",
+            "agent_type": label,
+            "last_assistant_message": "分页那条查完了",
+            "_eid": "run-stop",
+        },
+    ):
+        assert router.push(str(room_id), payload)
+    await _settle(factory, room_id, "run-start", "run-tool", "run-result", "run-stop")
+
+    rows = await _blocks(factory, room_id)
+    landed = {
+        (r.meta or {}).get("eid"): r.task_id
+        for r in rows
+        if (r.meta or {}).get("eid", "").startswith("run-")
+    }
+    assert landed == {
+        "run-start": task_id,
+        "run-tool": task_id,
+        "run-result": task_id,
+        "run-stop": task_id,
+    }
+    # 谁在做这条活，是平台从开工那条事件上读到的，不是 agent 报上来的。
+    async with factory() as session:
+        task = await TaskService(session).get(task_id)
+        assert task is not None
+        assert task.subagent_id == "worker-1"
+
+    await provider._close_topic(room_id)
+
+
+async def test_what_this_work_cost_is_its_own_events_added_up(client, tmp_path) -> None:
+    """卡上「这条活花了多少」，是这条子线程自己报的用量按线程标识累加出来的。
+
+    模型请求上没有「这是哪张卡」这个字段（结论 53），所以这个数只能从事件来。
+    两次收工累加，而同一个房间里另一条活报的用量不掺进来。
+    """
+    factory = client.test_factory
+    project_id, room_id = await _seed_room(factory)
+    mine = await _dispatch(factory, project_id, room_id, "我这条")
+    other = await _dispatch(factory, project_id, room_id, "别人那条")
+    router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
+
+    for task_id, worker, eid, tokens in (
+        (mine, "worker-1", "spend-a", 1000),
+        (mine, "worker-1", "spend-b", 500),
+        (other, "worker-2", "spend-c", 7000),
+    ):
+        assert router.push(
+            str(room_id),
+            {
+                "hook_event_name": "SubagentStop",
+                "agent_id": worker,
+                "agent_type": thread_label(task_id),
+                "last_assistant_message": f"交一次（{eid}）",
+                "usage": {
+                    "model": "claude-sonnet-5",
+                    "input_tokens": tokens,
+                    "output_tokens": 1,
+                    "cost_usd": 0.0,
+                },
+                "_eid": eid,
+            },
+        )
+    await _settle(factory, room_id, "spend-a", "spend-b", "spend-c")
+
+    async with factory() as session:
+        usage = UsageRepository(session)
+        spent = await usage.for_task(mine)
+        assert spent["input_tokens"] == 1500, spent
+        assert (await usage.for_task(other))["input_tokens"] == 7000
+        # 卡上写的是它真花在哪个模型上（`presentation.card_model` 读这里）。
+        assert (await usage.last_model_by_task([mine]))[mine] == "claude-sonnet-5"
 
     await provider._close_topic(room_id)
 
@@ -166,18 +280,16 @@ async def test_two_workers_in_one_room_do_not_mix(client, tmp_path) -> None:
     project_id, room_id = await _seed_room(factory)
     first = await _dispatch(factory, project_id, room_id, "活一")
     second = await _dispatch(factory, project_id, room_id, "活二")
-    await _bind(factory, room_id, first, "worker-1")
-    await _bind(factory, room_id, second, "worker-2")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
-    for agent_id, eid in (("worker-1", "w1-tool"), ("worker-2", "w2-tool")):
+    for task_id, eid in ((first, "w1-tool"), (second, "w2-tool")):
         assert router.push(
             str(room_id),
             {
                 "hook_event_name": "PreToolUse",
                 "tool_name": "Bash",
-                "tool_input": {"command": f"echo {agent_id}"},
-                "agent_id": agent_id,
+                "tool_input": {"command": f"echo {eid}"},
+                "agent_type": thread_label(task_id),
                 "_eid": eid,
             },
         )
@@ -199,7 +311,6 @@ async def test_a_workers_closing_message_is_kept_in_full(client, tmp_path) -> No
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
-    await _bind(factory, room_id, task_id, "worker-1")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
     assert router.push(
@@ -207,16 +318,16 @@ async def test_a_workers_closing_message_is_kept_in_full(client, tmp_path) -> No
         {
             "hook_event_name": "SubagentStop",
             "agent_id": "worker-1",
-            "agent_type": "general-purpose",
+            "agent_type": thread_label(task_id),
             "last_assistant_message": "分页那条查完了，结论是 cursor 更稳",
             "agent_transcript_path": "/home/u/.claude/projects/w/sub.jsonl",
-            "_eid": "bound-stop-1",
+            "_eid": "labelled-stop-1",
         },
     )
-    await _settle(factory, room_id, "bound-stop-1")
+    await _settle(factory, room_id, "labelled-stop-1")
 
     rows = await _blocks(factory, room_id)
-    stop = next(r for r in rows if (r.meta or {}).get("eid") == "bound-stop-1")
+    stop = next(r for r in rows if (r.meta or {}).get("eid") == "labelled-stop-1")
     assert stop.task_id == task_id
     assert stop.content == "分页那条查完了，结论是 cursor 更稳"
     assert (stop.meta or {})["agent_id"] == "worker-1"
@@ -239,7 +350,6 @@ async def test_a_stop_records_a_conclusion_without_ending_the_work(
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
-    await _bind(factory, room_id, task_id, "worker-1")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
     for eid, text in (("stop-a", "先歇一下"), ("stop-b", "接着跑完了")):
@@ -248,11 +358,12 @@ async def test_a_stop_records_a_conclusion_without_ending_the_work(
             {
                 "hook_event_name": "SubagentStop",
                 "agent_id": "worker-1",
+                "agent_type": thread_label(task_id),
                 "last_assistant_message": text,
                 "_eid": eid,
             },
         )
-    await _settle(factory, room_id, "w1-stop", "w2-stop")
+    await _settle(factory, room_id, "stop-a", "stop-b")
 
     # 两次都记下来了——第二次不是重复，是它续跑之后又交了一次。
     rows = await _blocks(factory, room_id)
@@ -273,10 +384,10 @@ async def test_a_stop_records_a_conclusion_without_ending_the_work(
     await provider._close_topic(room_id)
 
 
-async def test_an_unbound_workers_tool_call_still_reaches_the_room(
+async def test_an_unlabelled_workers_tool_call_still_reaches_the_room(
     client, tmp_path
 ) -> None:
-    """没绑的分身不会消失——它只是记在房间头上，跟以前一样。"""
+    """没带标识的分身不会消失——它只是记在房间头上，跟以前一样。"""
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
@@ -287,14 +398,46 @@ async def test_an_unbound_workers_tool_call_still_reaches_the_room(
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": {"command": "rg TODO"},
-            "agent_id": "nobody-claimed-me",
-            "_eid": "unbound-tool-1",
+            "agent_id": "nobody-labelled-me",
+            "agent_type": "general-purpose",
+            "_eid": "unlabelled-tool-1",
         },
     )
-    await _settle(factory, room_id, "unbound-tool-1")
+    await _settle(factory, room_id, "unlabelled-tool-1")
 
     rows = await _blocks(factory, room_id)
-    tool = next(r for r in rows if (r.meta or {}).get("eid") == "unbound-tool-1")
+    tool = next(r for r in rows if (r.meta or {}).get("eid") == "unlabelled-tool-1")
+    assert tool.task_id is None
+
+    await provider._close_topic(room_id)
+
+
+async def test_a_label_from_another_room_catches_nothing_here(client, tmp_path) -> None:
+    """别的房间那张卡的标识，在这个房间里什么也抓不到。
+
+    不是整洁问题：认了，一条活的事件会落进一个没人在看的房间的卡里，而它本该
+    落在出事的这个房间的流水上。
+    """
+    factory = client.test_factory
+    project_id, room_id = await _seed_room(factory)
+    _, elsewhere = await _seed_room(factory)
+    theirs = await _dispatch(factory, project_id, elsewhere, "别人房间的活")
+    router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
+
+    assert router.push(
+        str(room_id),
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rg TODO"},
+            "agent_type": thread_label(theirs),
+            "_eid": "foreign-tool-1",
+        },
+    )
+    await _settle(factory, room_id, "foreign-tool-1")
+
+    rows = await _blocks(factory, room_id)
+    tool = next(r for r in rows if (r.meta or {}).get("eid") == "foreign-tool-1")
     assert tool.task_id is None
 
     await provider._close_topic(room_id)
@@ -306,10 +449,10 @@ async def test_an_unknown_workers_stop_is_not_written_anywhere(
     """来路不明的 SubagentStop 一个字都不落。
 
     Measured twice on 2.1.224: after the session's own Stop, a SubagentStop
-    arrives whose id matches no worker we ever saw, whose type is empty, and
-    whose "closing message" is a fragment of a prompt — something inside Claude
-    Code, not work anybody dispatched. Writing it would put a stranger's
-    half-sentence in the room under 芝士's name.
+    arrives whose label matches no card, whose type is empty, and whose "closing
+    message" is a fragment of a prompt — something inside Claude Code, not work
+    anybody dispatched. Writing it would put a stranger's half-sentence in the
+    room under 芝士's name.
     """
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
@@ -334,12 +477,11 @@ async def test_an_unknown_workers_stop_is_not_written_anywhere(
     await provider._close_topic(room_id)
 
 
-async def test_a_finished_threads_id_stops_catching_events(client, tmp_path) -> None:
-    """收了的活不再吸走事件——它的 id 要是还认，后来的东西会被它吞掉。"""
+async def test_a_finished_threads_label_stops_catching_events(client, tmp_path) -> None:
+    """收了的活不再吸走事件——它的标识要是还认，后来的东西会被它吞掉。"""
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "已经收了的活")
-    await _bind(factory, room_id, task_id, "worker-1")
     async with factory() as session:
         from app.domain.room_task.models import TaskStatus
 
@@ -355,7 +497,7 @@ async def test_a_finished_threads_id_stops_catching_events(client, tmp_path) -> 
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
             "tool_input": {"command": "rg TODO"},
-            "agent_id": "worker-1",
+            "agent_type": thread_label(task_id),
             "_eid": "after-close-1",
         },
     )
@@ -369,11 +511,10 @@ async def test_a_finished_threads_id_stops_catching_events(client, tmp_path) -> 
 
 
 async def test_the_rooms_own_events_are_untouched(client, tmp_path) -> None:
-    """房间自己干的事没有 agent_id，一切照旧。"""
+    """房间自己干的事没有线程标识，一切照旧。"""
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
-    task_id = await _dispatch(factory, project_id, room_id, "并行的一条活")
-    await _bind(factory, room_id, task_id, "worker-1")
+    await _dispatch(factory, project_id, room_id, "并行的一条活")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
     broker = get_broker()
@@ -407,7 +548,6 @@ async def test_a_workers_checklist_is_its_own(client, tmp_path) -> None:
     factory = client.test_factory
     project_id, room_id = await _seed_room(factory)
     task_id = await _dispatch(factory, project_id, room_id, "查一下分页")
-    await _bind(factory, room_id, task_id, "worker-1")
     router, provider = await _live_runtime(factory, tmp_path, project_id, room_id)
 
     # 房间先给自己列一条，分身随后列它自己的第一条并勾掉它。
@@ -415,7 +555,7 @@ async def test_a_workers_checklist_is_its_own(client, tmp_path) -> None:
         {"tool_input": {"subject": "房间的第一件事"}, "_eid": "room-todo-1"},
         {
             "tool_input": {"subject": "分身的第一件事"},
-            "agent_id": "worker-1",
+            "agent_type": thread_label(task_id),
             "_eid": "w1-todo-1",
         },
     ):
@@ -429,7 +569,7 @@ async def test_a_workers_checklist_is_its_own(client, tmp_path) -> None:
             "hook_event_name": "PreToolUse",
             "tool_name": "TaskUpdate",
             "tool_input": {"taskId": "1", "status": "completed"},
-            "agent_id": "worker-1",
+            "agent_type": thread_label(task_id),
             "_eid": "w1-todo-2",
         },
     )

@@ -4,6 +4,7 @@ import re
 import uuid
 
 from app.domain.block.models import BlockKind
+from app.domain.room_task.thread_label import thread_label
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
@@ -207,12 +208,13 @@ def thread_relay_prompt(
     thing that can hear them. What was said stays where it was said — this only
     says who has to act on it.
     """
+    label = thread_label(task_id)
     return (
         f"有人在活「{task_title}」（task id `{task_id}`）上说话了：\n\n"
         f"---\n[{author}] {message}\n---\n\n"
         "**转达给做这条活的分身**：它还在跑就直接给它发消息；已经收工了，你就自己"
-        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身并 "
-        f'`cheese_bind(task_id="{task_id}", agent_id=<新的 agent_id>)`。'
+        "看着办——能替它答的当场答，要接着干的照原来的简报重起一个分身，"
+        f"线程标识照旧用 `{label}`。"
         "回话说在这条活上（`cheese_tell` 到它），别只在房间里说，"
         "问话的人看的是那边。"
     )
@@ -234,11 +236,11 @@ def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
         f'1. `cheese_title(text="<≤12 字的标题>", task="{task_id}")`'
         "——它现在还叫「新话题」，"
         "只有你能给它起名字。\n"
-        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
-        "（分身不会自己去读文档）。\n"
-        f'3. `cheese_bind(task_id="{task_id}", agent_id=<分身的 agent_id>)`'
-        "——不 bind，这条活在界面上"
-        "永远是「没人做」，分身干的每件事都记在你头上。"
+        f"2. 用你的 Agent 工具起一个分身，类型（线程标识）填 `{thread_label(task_id)}`"
+        "，"
+        "**把上面这段简报原文放进它的 prompt**（分身不会自己去读文档）。"
+        "带了这个标识，它干的每件事自己落在这张卡上；带错了或者不带，"
+        "这条活在界面上永远是「没人做」，那些事全记在你头上。"
     )
 
 

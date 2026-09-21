@@ -91,13 +91,7 @@ class Task(UuidPk, Timestamps, Base):
     # (room_id, created_at) is the room's task list, and it is read on every
     # room open — the same shape as ix_blocks_topic_id_created_at, for the same
     # reason: this must not degrade into a scan as tasks accumulate.
-    __table_args__ = (
-        Index("ix_tasks_room_id_created_at", "room_id", "created_at"),
-        # Every hook event a worker produces asks "whose work is this?", so this
-        # lookup runs on each tool call in the room — the one index whose
-        # absence would be paid per event rather than per page.
-        Index("ix_tasks_room_id_subagent_id", "room_id", "subagent_id"),
-    )
+    __table_args__ = (Index("ix_tasks_room_id_created_at", "room_id", "created_at"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
@@ -168,11 +162,13 @@ class Task(UuidPk, Timestamps, Base):
     # reads as the room's, and the room's timeline is one interleaved stream
     # from nobody.
     #
-    # A string, not a foreign key: the id is minted by Claude Code inside the
-    # container, and the platform only ever recognises it. NULL means nobody
-    # has claimed this work yet — a task row exists from the moment it is
-    # dispatched, and the worker is bound a moment later, once the room has
-    # actually spawned one.
+    # A string, not a foreign key: the id is minted by the harness inside the
+    # container, so the platform can only ever recognise it — it is written when
+    # that worker's start event arrives (`ChatService._note_worker`), never
+    # reported by the agent. NULL means nobody has started on this work yet, and
+    # nothing is looked up BY it: which card an event belongs to is the thread
+    # label's answer (`room_task/thread_label.py`), and this column says only
+    # who is on the card and whether that worker is still alive.
     subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # 这条活占用的模型资源（结论 3）。NULL = 没有自己的绑定，跟项目默认走 ——

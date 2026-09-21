@@ -12,8 +12,7 @@
 例:
   cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
   cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 在本房间开一条活(开完自己起分身去做)
-  cheese bind <task_id> <agent_id>  # 告诉平台这条活归哪个分身
+  cheese split "数据清洗"           # 在本房间开一条活(返回线程标识,起分身时带上它)
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
@@ -104,7 +103,6 @@ def artifact_kind_for(path: str) -> str:
 DIRECT_MCP_TOOLS = frozenset(
     {
         "cheese_ask",
-        "cheese_bind",
         "cheese_close_task",
         "cheese_decision",
         "cheese_fetch",
@@ -129,7 +127,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         tool
         in {
             "cheese_ask",
-            "cheese_bind",
             "cheese_close_task",
             "cheese_decision",
             "cheese_feedback_propose",
@@ -152,12 +149,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         and not project
     ):
         raise ValueError("Missing CHEESE_PROJECT")
-    if tool == "cheese_bind":
-        return {
-            "method": "POST",
-            "path": f"/topics/{topic}/tasks/{args['task_id']}/bind",
-            "body": {"agent_id": args["agent_id"]},
-        }
     if tool == "cheese_close_task":
         body = {"conclusion": args.get("conclusion", "")}
         if args.get("reported_by") is not None:
@@ -1369,23 +1360,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recovery.add_argument("task_id", help="任务 UUID")
 
-    pb = sub.add_parser(
-        "bind",
-        help="告诉平台这条活由哪个分身在做",
-        description=(
-            "起完分身立刻调它。平台从此知道哪些事件是这条活干的:分身的每一次工具\n"
-            "调用都记进这条活的时间线,而不是混在房间的流水里。\n"
-            "\n"
-            "agent_id 从你起分身时拿到的那个 id 来。绑错了不能改绑到别的活上——\n"
-            "一个分身同时只做一条活,重复绑会被拒。\n"
-            "\n"
-            "不绑的后果是无声的:活看着没人做,事件全记在房间头上。"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    pb.add_argument("task_id", help="cheese split 返回的那个 id")
-    pb.add_argument("agent_id", help="你起的那个分身的 id")
-
     pct = sub.add_parser(
         "close-task",
         help="结束不再继续的任务；交付请提交验收",
@@ -1988,11 +1962,13 @@ def main() -> None:
         worktree = _task_worktree(r["id"])
         print(
             f"任务：{r['title']}\nid={r['id']}\n工作目录：{worktree}\n"
+            f"线程标识：{r['thread_label']}\n"
             f"验收人：{r.get('reviewer_handle') or '待指定'}"
         )
         print(
-            "进入工作目录后执行任务。使用原生分身时，把任务简报和此目录交给它，"
-            "再用 cheese bind 绑定。"
+            "进入工作目录后执行任务。交给原生分身时，把任务简报和此目录放进它的 "
+            "prompt，并把上面那个线程标识当作它的类型传进去：带了它，分身干的每件事"
+            "自己落在这张卡上；不带，这条活看着就是没人做。"
         )
     elif a.cmd == "worktree":
         print(_task_worktree(a.task_id))
@@ -2003,11 +1979,6 @@ def main() -> None:
             _sync_all_tasks()
         else:
             _sync_task(_task_id(a.task))
-    elif a.cmd == "bind":
-        r = _planned_call("cheese_bind", a)["data"]
-        print(
-            f"「{r['title']}」现在归分身 {r['subagent_id']}，它干的事会记到这条活上。"
-        )
     elif a.cmd == "close-task":
         r = _planned_call("cheese_close_task", a)["data"]
         print(f"「{r['title']}」收了。结论：{(r.get('conclusion') or '（没有留话）')}")

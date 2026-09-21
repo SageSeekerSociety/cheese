@@ -25,6 +25,7 @@ class UsageRepository:
         metered: bool = True,
         route: str = "",
         turn_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
     ) -> ResourceUsage:
         """Record spend against its originating message or platform work id.
 
@@ -38,12 +39,13 @@ class UsageRepository:
         which model, which is the difference between "we do not know how much"
         and "we do not know anything".
         """
-        # The ROOM's books. Every 分身 in a room spends through that room's one
-        # session, so there is no second meter to read: a per-card figure would
-        # be an invented split of one bill.
+        # `task_id` 是这一笔花在哪条活上：一条子线程收工时报的用量，按它的线程
+        # 标识归到卡（结论 43、53）。省掉就是房间自己那条线。同一个房间的两半用
+        # 同一列 `topic_id`，所以房间的总数不需要合并两处（`for_topic`）。
         row = ResourceUsage(
             project_id=project_id,
             topic_id=topic_id,
+            task_id=task_id,
             turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,

@@ -592,13 +592,13 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
 
     started = [e for e in handed if isinstance(e, AgentSubagentStart)]
     stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
-    assert [(e.agent_id, e.agent_type) for e in started] == [
+    assert [(e.agent_id, e.thread_label) for e in started] == [
         ("worker-1", "general-purpose")
     ]
     assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
     # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
     tool = next(e for e in handed if isinstance(e, AgentToolUse))
-    assert (tool.agent_id, tool.agent_type) == ("worker-1", "general-purpose")
+    assert tool.thread_label == "general-purpose"
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -1021,14 +1021,18 @@ async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     # 没听见过这个分身：没有谁在替它说话。
     assert chat.worker_live(topic_id, "worker-1") is None
 
-    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
     assert chat.worker_live(topic_id, "worker-1") is True
 
     await deliver(AgentSubagentStop(agent_id="worker-1", text="先交一版"))
     assert chat.worker_live(topic_id, "worker-1") is None
 
     # 被再叫起来干活，它就又是在做。
-    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
     assert chat.worker_live(topic_id, "worker-1") is True
 
     # 换了一块屏幕：新会话没听说过旧会话的孩子，所以旧声明作废 —— 不然后面那块
@@ -1036,7 +1040,9 @@ async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     await deliver(AgentSessionInfo(session_id="session-2"))
     assert chat.worker_live(topic_id, "worker-1") is None
 
-    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
     assert chat.worker_live(topic_id, "worker-1") is True
 
     # 屏幕没了，声明跟着没：那个分身住在房间的会话里。这也是这一位唯一会注意到
