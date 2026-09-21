@@ -1199,17 +1199,27 @@ class AgentWorkRunner:
         # 试……@ 芝士，它会从断点接着做」，一个字没提有一次写可能已经落地一半。
         # 卡死的轮次自己不进 `entries`：它们已经在上面各自了结过，这里给的是一个话题
         # 里**还没了结**的那些，可以是空的。
+        #
+        # `since` 划出这次要收拾的那段时间：一个话题里最早的那个孤儿轮次什么时候开
+        # 的。执行记录按房间存，而这一趟问的是「**这几轮**里有什么悬着」——上一轮留
+        # 下的空行不该顶掉这一轮一次合法的重发（见 `dispatch_log.unsettled`）。卡死的
+        # 轮次也算进来：机器死在它手上，它正是那些悬着的调用的来源。
         by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
+        since: dict[uuid.UUID, datetime] = {}
         for turn_id, record in orphans.items():
             entries = by_topic.setdefault(record.topic_id, [])
             if turn_id not in wedged:
                 entries.append(record)
+            earliest = since.get(record.topic_id)
+            if earliest is None or record.started_at < earliest:
+                since[record.topic_id] = record.started_at
         for topic_id, entries in by_topic.items():
             remedied += await self._settle_restart_orphans(
                 chat_service,
                 topic_id,
                 entries,
                 now,
+                since=since[topic_id],
                 # A topic the wedged branch already remedied gets no second
                 # action — its restart orphans are folded in, loudly.
                 allow_actions=topic_id not in wedged_topics,
@@ -1223,6 +1233,7 @@ class AgentWorkRunner:
         entries: list[TurnRecord],
         now: datetime,
         *,
+        since: datetime,
         allow_actions: bool = True,
     ) -> int:
         """One topic's remedy for turns that reached nobody.
@@ -1257,9 +1268,12 @@ class AgentWorkRunner:
         情之前 —— 这条顺序由 `tests/unit/test_retry_reads_the_dispatch_record.py`
         守着。悬着的那些调用说的是「发出去了，而结果永远不会回来了」：把它们重发
         一遍，是把一次可能已经落地的写操作再做一次，比什么都不做更坏。这类事情的
-        下一步在人手上。"""
+        下一步在人手上。
+
+        `since` 是这个话题里最早那个孤儿轮次的开始时刻，读只读那之后派出去的
+        （`dispatch_log.unsettled`）。"""
         async with chat_service.session_factory() as ledger:
-            unknown = await dispatch_log.unsettled(ledger, topic_id)
+            unknown = await dispatch_log.unsettled(ledger, topic_id, since=since)
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:

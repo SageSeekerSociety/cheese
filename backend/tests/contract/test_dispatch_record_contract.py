@@ -5,11 +5,15 @@
 
 1. 发出后崩，重启时这条记录是 ``unknown``；
 2. ``unknown`` 的操作不被自动重发，而是产生一条送到人面前的事件；
-3. ``failed``（确定没发出去）的可以直接重派。
+3. ``failed``（确定没被执行）的可以直接重派。
 
 第 1 条不经过路由：崩溃这件事就是「记录已经提交，写回它的那个进程没了」，而一个能在
 这两步中间死掉的路由替身，除了模拟同一件事之外什么也不多说。第 2、3 条走真的扫底
 路径 —— 要断言的正是它读没读这条记录。
+
+重派路径问的是「**这几轮**里有什么悬着」，不是「这个房间有史以来」。一次超时留下的
+空行会一直空着（那一轮照常跑完，没有谁会再碰它），而几天后它不该顶掉另一轮一次合法
+的重发。
 
 哪一种落点被记成什么，则只有走真的路由才问得出来。那套分类整个长在
 ``api/routes/execution.py`` 的 except 上，而它最要命的一档 —— 帧已经写出去了，之后
@@ -42,6 +46,19 @@ from tests.turn_log import a_topic, open_turn
 # 在任何测试把 `asyncio.sleep` 换掉之前拿住真的那个：重派是一个先睡 3 秒再发的任务，
 # 而它要等的那次落库是真的数据库往返。
 _REAL_SLEEP = asyncio.sleep
+
+#: 被打断的那一轮多老。必须比它自己派出去的那些调用还老 —— 一次派发是那一轮做的，
+#: 不可能早于那一轮开始，而重派路径正是按这个把「这几轮里悬着的」和上一轮遗留的空行
+#: 分开的（`dispatch_log.unsettled` 的 `since`）。
+_TURN_AGE_S = EXECUTOR_CALL_TIMEOUT_S + 120
+
+
+def _a_wide_window() -> datetime:
+    """直接问这张表时给的窗口起点，宽到装得下这条用例摆的那些行。
+
+    真的重派路径给的是这个话题里最早那个孤儿轮次的开始时刻（见 `runtime.py`）。
+    """
+    return datetime.now(UTC) - timedelta(days=1)
 
 
 class _Chat:
@@ -163,7 +180,8 @@ async def test_a_dispatch_whose_process_died_reads_unknown(db_factory):
     await _dispatched(db_factory, topic, key="tool-1", method="invoke")
 
     async with db_factory() as session:
-        pending = await dispatch_log.unsettled(session, topic)
+        window = _a_wide_window()
+        pending = await dispatch_log.unsettled(session, topic, since=window)
 
     assert [(d.key, d.method, d.outcome) for d in pending] == [
         ("tool-1", "invoke", dispatch_log.Outcome.unknown)
@@ -182,7 +200,8 @@ async def test_a_call_that_could_still_answer_is_not_yet_unknown(db_factory):
     await _dispatched(db_factory, topic, key="tool-1", ago_s=120)
 
     async with db_factory() as session:
-        assert await dispatch_log.unsettled(session, topic) == []
+        window = _a_wide_window()
+        assert await dispatch_log.unsettled(session, topic, since=window) == []
 
 
 @pytest.mark.anyio
@@ -217,7 +236,7 @@ async def test_an_unknown_dispatch_is_handed_to_a_person_instead_of_resent(
     """
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
-    await open_turn(db_factory, topic, content="把迁移跑上去", age_s=90)
+    await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
     await _dispatched(db_factory, topic, key="tool-1", method="invoke")
     chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
@@ -235,7 +254,8 @@ async def test_an_unknown_dispatch_is_handed_to_a_person_instead_of_resent(
 
     # 问过一次就结清：同一个人不该在这个房间此后每一次扫底里被问同一件事。
     async with db_factory() as session:
-        assert await dispatch_log.unsettled(session, topic) == []
+        window = _a_wide_window()
+        assert await dispatch_log.unsettled(session, topic, since=window) == []
 
 
 @pytest.mark.anyio
@@ -249,7 +269,7 @@ async def test_a_wedged_room_is_told_which_calls_are_in_doubt(db_factory, monkey
     """
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
-    turn = await open_turn(db_factory, topic, content="把迁移跑上去", age_s=90)
+    turn = await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
     await _dispatched(db_factory, topic, key="tool-1", method="invoke")
     chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
@@ -282,14 +302,14 @@ async def test_a_wedged_room_is_told_which_calls_are_in_doubt(db_factory, monkey
 async def test_a_failed_dispatch_does_not_stand_in_the_way_of_a_resend(
     db_factory, monkeypatch
 ):
-    """③`failed`（确定没发出去）的可以直接重派。
+    """③`failed`（确定没被执行）的可以直接重派。
 
-    链路不在、或者机器回话说它没能转交 —— 这些是答复，说的是「没有受理」。什么都没
-    发生过的调用不该把这条活扣在人手上。
+    链路不在，或者执行器回话说这个 id 上已经有别的输入 —— 两档都挡在执行之前。什么
+    都没发生过的调用不该把这条活扣在人手上。
     """
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
-    await open_turn(db_factory, topic, content="把迁移跑上去", age_s=90)
+    await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
     dispatch = await _dispatched(db_factory, topic, key="tool-1", method="invoke")
     async with db_factory() as session:
         await dispatch_log.settle(session, dispatch, dispatch_log.Outcome.failed)
@@ -302,6 +322,60 @@ async def test_a_failed_dispatch_does_not_stand_in_the_way_of_a_resend(
 
     assert [call["content"] for call in chat.converse_calls] == ["把迁移跑上去"]
     assert chat.events == []
+
+
+@pytest.mark.anyio
+async def test_a_row_left_over_from_an_earlier_turn_does_not_eat_a_resend(
+    db_factory, monkeypatch
+):
+    """上一轮留下的空行不该顶掉这一轮一次合法的重发。
+
+    一次超时在房间里留下一行永远不会有人写回来的记录：沙箱把 504 当一次工具报错交给
+    模型，那一轮照常跑完，没有任何路径会再碰那一行。几天后这个房间的另一轮被一次部
+    署打断，那一轮本该被原样重发。读整个房间的话，读到的是那行陈年的空记录：重发被
+    掐掉，房间里换成一条指着几天前那次早就结束的调用的通知 —— 用户这一次的消息真丢
+    了，而提示说的是别的事。
+    """
+    _instant_sleep(monkeypatch)
+    topic = await a_topic(db_factory)
+    await _dispatched(db_factory, topic, key="old-tool", ago_s=3 * 86400)
+    await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
+    chat = _Chat(db_factory)
+    runner = AgentWorkRunner(InProcessBroker())
+
+    assert await runner.resume_orphans(chat) == 1
+    await _let_a_resend_land(chat)
+
+    assert [call["content"] for call in chat.converse_calls] == ["把迁移跑上去"]
+    assert chat.events == []
+
+
+@pytest.mark.anyio
+async def test_a_late_answer_from_the_session_that_wrote_the_row_does_not_erase_it(
+    db_factory,
+):
+    """迟到的那个 `done` 来自**创建这一行的那个 session** —— 路由就是这么结清的。
+
+    上一条摆的是两个互不相识的 session。这一条摆的是真实的那一侧：行是这个请求自己
+    创建的，还在它的 identity map 里，而 `core/db.py` 的 `expire_on_commit=False` 让
+    它一直是刚写下的样子。「读一行、看一眼、再写回去」在这里永远读到自己写的 `None`，
+    扫底在这中间判过什么它看不见，于是那个已经交到人手上的 `unknown` 被抹平。
+    """
+    topic = await a_topic(db_factory)
+    async with db_factory() as route:
+        dispatch = dispatch_log.record(
+            route, place_id=topic, key="tool-1", method="invoke"
+        )
+        await route.commit()
+        # 这次调用还在飞，扫底判它未知，房间里已经有人照着那条通知在查。
+        async with db_factory() as sweep:
+            await dispatch_log.settle(sweep, dispatch, dispatch_log.Outcome.unknown)
+            await sweep.commit()
+        # 659 秒之后它回来了。
+        await dispatch_log.settle(route, dispatch, dispatch_log.Outcome.done)
+        await route.commit()
+
+    assert await _outcomes(db_factory, topic) == [("tool-1", "unknown")]
 
 
 # --- 落点 → 记成什么：走真的路由 ------------------------------------------------
@@ -500,7 +574,8 @@ async def test_a_link_that_died_after_the_frame_left_is_left_unsettled(
     # 等到不可能再有答复在路上，它就是那件要人确认的事。
     await _age(db_factory, topic)
     async with db_factory() as session:
-        pending = await dispatch_log.unsettled(session, topic)
+        window = _a_wide_window()
+        pending = await dispatch_log.unsettled(session, topic, since=window)
     assert [d.outcome for d in pending] == [dispatch_log.Outcome.unknown]
 
 
@@ -535,6 +610,36 @@ async def test_a_call_that_timed_out_is_left_unsettled(
 
     assert response.status_code == 504
     assert await _outcomes(db_factory, topic) == [("tool-1", None)]
+
+
+async def _answers_that_the_id_is_taken(link: _Link, call_id: str) -> None:
+    """机器回话说这个 id 上已经有一行，而输入不是这一个 —— ``invoke`` 入口的那一句。"""
+    await link.hub.on_device_message(
+        _MACHINE,
+        {
+            "t": "execution.result",
+            "id": call_id,
+            "error": "Request ID already belongs to different input",
+        },
+    )
+
+
+@pytest.mark.anyio
+async def test_a_call_the_executor_refused_to_take_is_recorded_failed(
+    db_factory, owner_client, monkeypatch
+):
+    """执行器说这个 id 上已经有别的输入 —— 它挡在 `invoke` 碰这次调用之前。
+
+    和上一条一样是「机器回话说它失败了」，抛的也是同一个异常，而这一句说的是这次调
+    用没有被执行。留着不结清，房间里会多出一件其实什么都没发生的事要人去确认。
+    """
+    _, topic, token = await _a_room_with_hands(db_factory)
+    await _an_attached_machine(monkeypatch, _answers_that_the_id_is_taken)
+
+    response = await _invoke(owner_client, topic, token)
+
+    assert response.status_code == 502
+    assert await _outcomes(db_factory, topic) == [("tool-1", "failed")]
 
 
 @pytest.mark.anyio

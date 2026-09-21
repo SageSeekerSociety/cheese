@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, select
+from sqlalchemy import DateTime, ForeignKey, Index, String, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -64,9 +64,12 @@ def _now() -> datetime:
 class Outcome(StrEnum):
     """这次调用最后怎么了。"""
 
-    #: 执行器答了 —— 不管答的是结果还是它自己的报错，它收下了这次调用。
+    #: 执行器把结果送回来了。
     done = "done"
-    #: 确定没发出去：链路不在，或者机器自己回话说它没能转交。重派它是安全的。
+    #: 确定这次调用没有被执行，重派它是安全的。三档，见 ``api/routes/execution.py``
+    #: 的分类：链路不在，帧一个字节都没写出去（``DeviceUnreachable``）；链路在而这台
+    #: 机器的连接器还在自更新（``DeviceNotReady``，同样挡在发出之前）；帧到了，而执行
+    #: 器回话说这个 id 上已经有一次别的输入 —— 那一句挡在 ``invoke`` 碰这次调用之前。
     failed = "failed"
     #: 发出去了，结果不会回来了。不自动重发，交人确认。
     unknown = "unknown"
@@ -149,19 +152,38 @@ async def settle(
     最要紧的那种是 ``unknown``，写下它的同时房间里已经有一条通知，有人正照着它去看
     那次改动落地没有。这时候一个迟到的 ``done`` 把它抹平，留下的是一行说「都办妥了」
     的记录和一个仍然被要求去确认的人，而没有任何地方还留着他为什么被叫来。
+
+    所以判重写在 ``WHERE`` 里，一条 UPDATE。「读一行、看一眼、再写回去」在这里是假
+    的：路由结清的是它自己刚创建的那一行，用的是同一个 session，而 ``core/db.py`` 的
+    ``expire_on_commit=False`` 让 ``session.get`` 直接从 identity map 拿回那个内存实
+    例 —— 它的 ``outcome`` 永远还是 ``None``，别的进程在这中间写过什么，它一个字也看
+    不见。窗口不宽但真实：一次调用 659 秒才回来，这次结清在连接池上排着队（上面那段
+    注释讲的就是这个池子），而同一时刻扫底已经判它未知、通知也发出去了。
     """
-    row = await session.get(DispatchRow, dispatch_id)
-    if row is None or row.outcome is not None:
-        return
-    row.outcome = outcome.value
-    row.settled_at = _now()
+    await session.execute(
+        update(DispatchRow)
+        .where(DispatchRow.id == dispatch_id, DispatchRow.outcome.is_(None))
+        .values(outcome=outcome.value, settled_at=_now())
+    )
 
 
-async def unsettled(session: AsyncSession, place_id: uuid.UUID) -> list[Dispatch]:
-    """这个地点里结果**不会再回来**的派发，最早的在前 —— 重派路径读的就是它。
+async def unsettled(
+    session: AsyncSession, place_id: uuid.UUID, *, since: datetime
+) -> list[Dispatch]:
+    """这个地点里 ``since`` 之后派出去、而结果**不会再回来**的那些，最早的在前。
 
-    不是「此刻还没写回来的那些」：那一堆里混着属主手上正在正常跑的调用（见模块开头
-    的第二节）。比一次调用能在飞的时间还老，才是「不会再回来」。
+    不是「此刻还没写回来的那些」。两道门，各挡一样东西。
+
+    年龄：那一堆里混着属主手上正在正常跑的调用（见模块开头的第二节）。比一次调用能
+    在飞的时间还老，才是「不会再回来」。
+
+    ``since``：重派路径收拾的是某几轮被打断的对话，而这张表按房间存。一次超时留下的
+    空行是会一直空着的 —— 那一轮照常跑完，没有任何路径会再碰它（路由不替它猜，见
+    ``api/routes/execution.py`` 的超时那一档）。没有这道门，几天后这个房间的下一次扫
+    底照样读得到它：一次本该无条件发生的原样重发被它掐掉，房间里换成一条指着几天前
+    那次早就结束的调用的通知 —— 用户这一次的消息真丢了，而提示说的是别的事。所以调
+    用方给出这次要收拾的那几轮里最早的开始时刻：这一行是在**发出之前**写的，属于那
+    几轮的调用不可能早于它们开始。
     """
     rows = (
         (
@@ -170,6 +192,7 @@ async def unsettled(session: AsyncSession, place_id: uuid.UUID) -> list[Dispatch
                 .where(
                     DispatchRow.place_id == place_id,
                     DispatchRow.outcome.is_(None),
+                    DispatchRow.dispatched_at >= since,
                     DispatchRow.dispatched_at
                     < _now() - timedelta(seconds=EXECUTOR_CALL_TIMEOUT_S),
                 )
