@@ -1,11 +1,14 @@
 """Resource usage data access + aggregation."""
 
+import logging
 import uuid
 
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage.models import ComputeGrant, ResourceUsage
+
+logger = logging.getLogger(__name__)
 
 # The share of a Space pool that means "warn the teacher". 80% is late enough
 # that the number is a fact rather than a forecast, and early enough that
@@ -227,11 +230,20 @@ class ComputeGrantRepository:
         return row
 
     async def list_for_space(self, space_id: int) -> list[ComputeGrant]:
-        """The Space's own pools, oldest first — what a teacher topped up."""
+        """The Space's own pools, oldest first — what a teacher topped up.
+
+        ``populate_existing`` for the same reason ``list_for_project`` has it
+        under a lock: `consume` charges through a Core UPDATE while the same
+        ComputeGrant objects sit in this session's identity map, so a plain
+        SELECT here returns the row as it was before the charge. The pool
+        summary would then read a stale balance, and the 80% warning would be
+        computed from a number that never happened.
+        """
         result = await self._session.execute(
             select(ComputeGrant)
             .where(ComputeGrant.space_id == space_id)
             .order_by(ComputeGrant.created_at, ComputeGrant.id)
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars())
 
@@ -361,10 +373,17 @@ class ComputeGrantRepository:
         }
 
     async def consume(self, project_id: uuid.UUID, credits: float) -> float:
-        """Deduct `credits` from eligible team/project grants. Any
+        """Deduct `credits` from eligible project/Space/team grants. Any
         residual beyond all totals lands on the newest grant (credits_used may
         exceed credits_total) so recorded consumption stays truthful. Returns
-        the amount deducted (0.0 when the project has no grants = unlimited)."""
+        the amount deducted (0.0 when the project has no grants = unlimited).
+
+        The overdraft is deliberate and is also how a shared Space pool can pass
+        its cap: this runs when a turn SETTLES, while the gate that refuses the
+        next turn was checked when it started, so up to (sessions in flight ×
+        one call's cost) can land past zero. Nothing here tightens that — a
+        ledger that refuses to record real spending would simply be wrong.
+        """
         if credits <= 0:
             return 0.0
         grants = await self.list_for_project(project_id, lock=True)
@@ -380,6 +399,12 @@ class ComputeGrantRepository:
                 .values(credits_used=ComputeGrant.credits_used + amount)
             )
 
+        touched_spaces: set[int] = set()
+
+        def _touched(grant: ComputeGrant) -> None:
+            if grant.space_id is not None:
+                touched_spaces.add(grant.space_id)
+
         left = credits
         for g in grants:
             room = g.credits_total - g.credits_used
@@ -387,9 +412,29 @@ class ComputeGrantRepository:
                 continue
             take = min(room, left)
             await _charge(g.id, take)
+            _touched(g)
             left -= take
             if left <= 0:
                 break
         if left > 0:  # overdraw: charge the newest grant, never lose usage
             await _charge(grants[-1].id, left)
+            _touched(grants[-1])
+
+        for space_id in touched_spaces:
+            await self._warn_space_pool(space_id)
         return credits
+
+    async def _warn_space_pool(self, space_id: int) -> None:
+        """Warn the Space's admins if this charge took the pool past the mark.
+
+        Hooked here rather than at the two callers so every way a Space pool
+        can be drained — a settled turn, a subscription backfill — reaches the
+        teacher. Never raises: the caller is settling a turn, and a warning
+        that cannot be delivered must not become a turn that cannot be closed.
+        """
+        from app.domain.usage.space_pool import SpacePoolService
+
+        try:
+            await SpacePoolService(self._session).alert_if_needed(space_id=space_id)
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.exception("could not warn space %s about its compute pool", space_id)

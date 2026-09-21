@@ -334,6 +334,27 @@ class SpaceService:
             return []
         return await self._admin_repo.list_admins(space_id)
 
+    async def ensure_admin(
+        self,
+        space_id: int,
+        user_id: int | None,
+        *,
+        allow_admin: bool = True,
+    ) -> None:
+        """Public door onto `_ensure_admin`, for services outside this module.
+
+        `space_pool` funds a Space and must obey the same rule as every Space
+        write. It calls this rather than restating the check, because an
+        authorization rule written twice is one that can disagree with itself
+        — and the copy that ships is the permissive one.
+
+        NOTE: a Space service built without an `admin_repo` allows everything
+        (`_ensure_admin` returns early). That is how the pre-existing Space
+        routes are wired, so it is inherited here rather than fixed: builders
+        of this service must pass the admin repo.
+        """
+        await self._ensure_admin(space_id, user_id, allow_admin=allow_admin)
+
     async def add_admin(
         self,
         *,

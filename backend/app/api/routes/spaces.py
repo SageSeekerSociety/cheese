@@ -34,6 +34,7 @@ from app.domain.space.repositories import (
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
+from app.domain.usage.space_pool import SpacePoolService
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -1430,3 +1431,65 @@ async def patch_space_manager(
         return {"code": 200, "message": "OK", "data": None}
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
+
+
+# ── Compute pool (空间级额度池) ────────────────────────────────────────────────
+
+
+class FundComputePoolRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: 这次充多少 credit。增量，不是「设成多少」——见 SpacePoolService.fund。
+    credits: float = Field(..., gt=0)
+
+
+async def get_space_pool_service(db=Depends(get_db)) -> SpacePoolService:
+    return SpacePoolService(session=db)
+
+
+@router.get(
+    "/{spaceId}/compute-pool",
+    summary="Get Space Compute Pool",
+)
+async def get_space_compute_pool(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpacePoolService = Depends(get_space_pool_service),
+) -> dict:
+    """这个空间的共享额度池：还剩多少，以及每个项目花了多少。
+
+    只有空间管理员看得到：逐项目的花销点名了哪个队在花钱，而那些队本来互相
+    看不见对方的工作。
+    """
+    data = await service.overview(space_id=space_id, actor_user_id=auth_user.user_id)
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.post(
+    "/{spaceId}/compute-pool",
+    summary="Fund Space Compute Pool",
+)
+async def fund_space_compute_pool(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: FundComputePoolRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpacePoolService = Depends(get_space_pool_service),
+    db=Depends(get_db),
+) -> dict:
+    """给空间的共享池充值。空间下所有学生项目共用这一池，先到先得。
+
+    充值是一次新的发放（grant），不是把余额改成这个数——已经花掉的额度不会被
+    悄悄抹掉，账才对得上。
+    """
+    try:
+        data = await service.fund(
+            space_id=space_id,
+            credits_total=payload.credits,
+            actor_user_id=auth_user.user_id,
+        )
+    except ValueError as exc:
+        # grant_space rejects NaN/inf and non-positive amounts; those are a
+        # caller's mistake, not a 500.
+        raise BadRequestError(str(exc)) from exc
+    # No commit here: `get_db` commits a session that returned without raising.
+    return {"code": 200, "message": "OK", "data": data}

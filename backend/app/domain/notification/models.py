@@ -36,6 +36,13 @@ class NotificationType(str, Enum):
     #: 40 字的约束，前端也要按「一个问题」渲染，而不是按一条平台提示。
     CHEESE_QUESTION = "CHEESE_QUESTION"
 
+    #: A Space's shared compute pool is nearly spent. Sent to the Space's
+    #: admins by `app.domain.usage.space_pool` — the teacher bought the pool,
+    #: so the teacher is who the news is for. Separate from `ROOM_NOTICE`
+    #: because it lands outside any room: it is about a budget, not a place,
+    #: and the text is composed by the backend rather than quoted from a room.
+    SPACE_COMPUTE_POOL_LOW = "SPACE_COMPUTE_POOL_LOW"
+
 
 class Notification(Base):
     __tablename__ = "notification"
