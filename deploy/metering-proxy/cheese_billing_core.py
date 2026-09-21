@@ -420,6 +420,12 @@ TELEMETRY_HOSTS = frozenset(
 )
 # How much of a /v1/messages head ModelRewrite may hold while it looks for the
 # top-level `model` member. See ModelRewrite.
+#
+# Measured, not guessed: Claude Code 2.1.278 (`claude -p`, first turn, probe in
+# `tmp/refactor-research-2026-09-19/impl/probe-model-offset.py`) sent a 245,909-
+# byte body with `"model"` at byte 1 — the CLI writes it first, before
+# `messages`, `system` and `tools`. 64 KiB is therefore a margin of four
+# orders of magnitude, not a bet on where the member sits.
 MODEL_REWRITE_LIMIT = int(_TABLE["model_rewrite_limit_bytes"])
 
 
