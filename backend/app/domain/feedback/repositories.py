@@ -40,6 +40,7 @@ from app.domain.feedback.models import (
 # repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
 # 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
 from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
+from app.domain.topic.models import TopicMembership
 
 #: 「热门」的阈值 —— 按支持数，不按浏览量。原型给过理由（「浏览是路过，支持是表态」），
 #: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
@@ -163,6 +164,34 @@ class CommentPage:
     reply_cursors: dict[uuid.UUID, str]
 
 
+def filed_in_a_room_of(handle: str) -> Any:
+    """「这条反馈是在我当时在的那个房间里提的」，写成一条 WHERE 子句。
+
+    结论 47 的第二档。反馈中心是平台级的收件箱，一条私密反馈在那里对所有人是 404；
+    但它是在某个房间里提出来的，而**那个房间里的人本来就看过它的内容**——agent 提
+    的东西在它的房间里全部留痕（结论 47 第二句）。所以对这些人藏起来只藏掉了追踪它
+    的那条路，藏不掉内容本身。
+
+    名册按**反馈提出的那一刻**取（``created_at <= Feedback.created_at``），和补发
+    投递取名册同一条规则（结论 58）：否则今天把谁加进这个房间，谁就能回头翻出这个
+    房间历史上提过的每一条私密反馈——一次加人变成一次授权，而加人的那个人并不知道
+    自己在授权。
+
+    ``topic_id`` 是 ``ON DELETE SET NULL``（反馈比提它的房间活得久），房间没了这一
+    档就自动关上：没有房间，就没有「那个房间的成员」。
+    """
+    return and_(
+        Feedback.topic_id.is_not(None),
+        select(TopicMembership.id)
+        .where(
+            TopicMembership.topic_id == Feedback.topic_id,
+            TopicMembership.member_handle == handle,
+            TopicMembership.created_at <= Feedback.created_at,
+        )
+        .exists(),
+    )
+
+
 def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     """`FeedbackService.may_see`, spelled as a WHERE clause.
 
@@ -175,6 +204,11 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     relation and asserts this predicate and `may_see` return the same verdict for
     every one of them; the arms here are written in `may_see`'s order so the two
     read as one sentence.
+
+    The room arm is **not** a second spelling: `may_see` asks this very clause
+    about one row (`FeedbackRepository.filed_in_a_room_of_mine`) rather than
+    re-deciding it in Python, because it needs the roster and the roster is in
+    the database either way.
     """
     if is_admin:
         # may_see's second arm: an admin is never narrowed. Said once here rather
@@ -184,6 +218,7 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     if handle:
         arms.append(Feedback.author_handle == handle)
         arms.append(Feedback.submitted_by_handle == handle)
+        arms.append(filed_in_a_room_of(handle))
     return or_(*arms)
 
 
@@ -322,6 +357,21 @@ class FeedbackRepository:
             Feedback.id == feedback_id, Feedback.deleted_at.is_(None)
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def filed_in_a_room_of_mine(
+        self, feedback_id: uuid.UUID, handle: str
+    ) -> bool:
+        """:func:`filed_in_a_room_of`, asked about one row.
+
+        `may_see` runs the very clause the list query runs, against this one id,
+        instead of re-deciding the rule in Python: the answer needs the roster,
+        the roster is a table, and a second spelling of a visibility rule is what
+        `PUBLIC_ONLY` and `visible_to` both exist to prevent.
+        """
+        stmt = select(Feedback.id).where(
+            Feedback.id == feedback_id, filed_in_a_room_of(handle)
+        )
+        return (await self._session.scalar(stmt)) is not None
 
     def _list_stmt(
         self,
@@ -517,12 +567,12 @@ class FeedbackRepository:
         serve one arm of it.
 
         The 指派给我的 arm is the only narrowed one. Being handed a report is work,
-        not access — §4.3's visibility union is 提交者 ∪ 管理员, and being the
-        assignee grants no management power (§8.9). So `visible_to` is ANDed onto
-        that arm, and the list answers about a private row exactly what the detail
-        endpoint answers: nothing. Without it this was the one read path that
-        skipped the predicate in the module docstring, handing a third party the
-        title of a report that `may_see` then refused with a 404 — a list that
+        not access — the visibility union is 提交者 ∪ 管理员 ∪ 提出它的房间, and
+        being the assignee grants no management power (§8.9). So `visible_to` is
+        ANDed onto that arm, and the list answers about a private row exactly what
+        the detail endpoint answers: nothing. Without it this was the one read path
+        that skipped the predicate in the module docstring, handing a third party
+        the title of a report that `may_see` then refused with a 404 — a list that
         disagrees with its own rows.
         """
         where = [

@@ -115,18 +115,36 @@ class FeedbackService:
     async def require_admin(self, handle: str | None) -> str:
         return await self._admins.require_admin(handle)
 
-    def may_see(self, row: Feedback, *, handle: str | None, is_admin: bool) -> bool:
-        """The visibility union, in one line — 公开 + 私密 + 是我提的.
+    async def may_see(
+        self, row: Feedback, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """The visibility union — 公开 + 管理员 + 是我提的 + **提它的那个房间**.
+
+        结论 47 的三档：开发者（管理员）看得见，提出它的那个房间的成员看得见，反馈
+        中心里其他人看不见。前两档一直在这里；第三档是房间这一档，它补的是同一条结
+        论的第二句——agent 提的内容在它的房间里全部留痕，所以对那个房间的人藏起来，
+        藏掉的只是追踪它的那条路，藏不掉内容。
 
         A private report is visible to admins **and to the person who filed it**:
         the reporter must be able to follow their own report, and the agent that
         filed on their behalf counts as them. Everyone else cannot, and gets 404
         rather than 403 — see `visible_row`.
 
+        房间这一档取的是**反馈提出那一刻**的名册（`filed_in_a_room_of`），不是现在
+        的：按现在取的话，把谁加进这个房间就等于把这个房间历史上的每一条私密反馈一
+        并交给他，而加人的那个人并不知道自己在授权。
+
         `security` narrows the public arm, so it is checked in the same breath:
         a row an admin flagged as a security matter is not public even though the
         reporter left `visibility` at its default. That flag is set on triage, by
         someone other than the reporter, and it is the one that must not leak.
+        It does **not** narrow the room arm, for the same reason the author keeps
+        access to a row that was flagged: 「不能泄露」说的是泄露给没看过它的人，而
+        那个房间的人看过。
+
+        Async because the roster is a table — the three arms above are on the
+        row, this one is not. It is the only read path's predicate, so the cost
+        is one query on a row nothing else made visible.
         """
         if row.visibility == FeedbackVisibility.public and not row.security:
             return True
@@ -134,7 +152,9 @@ class FeedbackService:
             return True
         if not handle:
             return False
-        return handle in (row.author_handle, row.submitted_by_handle)
+        if handle in (row.author_handle, row.submitted_by_handle):
+            return True
+        return await self._repo.filed_in_a_room_of_mine(row.id, handle)
 
     async def visible_row(
         self, feedback_id: uuid.UUID, *, handle: str | None, is_admin: bool
@@ -146,7 +166,7 @@ class FeedbackService:
         makes this the rule for every id-taking feedback endpoint.
         """
         row = await self._repo.get(feedback_id)
-        if row is None or not self.may_see(row, handle=handle, is_admin=is_admin):
+        if row is None or not await self.may_see(row, handle=handle, is_admin=is_admin):
             raise NotFoundError("反馈不存在")
         return row
 
