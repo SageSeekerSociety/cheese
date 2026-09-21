@@ -434,6 +434,22 @@ async def record(
             meta=event_meta(err, verdict),
         )
         accepted += 1
+        if err.where == "model gateway" and err.exc_type in (
+            "GatewayHTTPError",
+            "GatewayStreamError",
+        ):
+            from app.core import alerting
+
+            alerting.send(
+                "模型请求失败",
+                [
+                    f"项目：{topic.project_id}",
+                    f"话题：{topic.id}",
+                    scrub_secrets(err.message),
+                    f"请求：{err.request_id or 'unknown'}",
+                ],
+                key=f"model-gateway:{err.exc_type}",
+            )
     return {"accepted": accepted, "dropped": len(errors) - accepted}
 
 
