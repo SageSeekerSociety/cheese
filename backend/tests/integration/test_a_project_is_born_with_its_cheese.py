@@ -12,7 +12,11 @@
 import uuid
 
 from app.domain.agent_instance.repositories import AgentInstanceRepository
-from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_instance_handle,
+    topic_agent_handle,
+)
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -55,3 +59,29 @@ async def test_the_new_project_seats_its_cheese_in_the_root_room(client):
         assert seat in {row.member_handle for row in roster}
         assert await members.agent_handles(project.root_topic_id) == [seat]
         assert await members.resolve_agent_handle(project.root_topic_id) == seat
+        assert await members.addressable_agent_handle(project.root_topic_id) == seat
+
+
+async def test_a_room_with_no_agent_seated_has_nobody_to_address(client):
+    """「谁签这一句」和「这条事件给谁」是两个问题，名册空了答案不一样。
+
+    署名无论如何得有个答案，所以 `resolve_agent_handle` 回落到这个地点自己的
+    `cheese-<hex12>`。可那个 handle 不在名册上：拿它当收件人，寻址结果看着有人，
+    而写进正文的 `<@…>` 谁也对不上 —— 事件送出去了，什么也不会发生。没人可点就
+    如实答 None。
+    """
+    pid = _create_project(client)
+
+    async with client.test_factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None and project.root_topic_id is not None
+        root = project.root_topic_id
+        members = TopicMemberService(session)
+        seat = (await members.agent_handles(root))[0]
+        await members.remove(topic_id=root, handle=seat, actor=OWNER)
+        await session.commit()
+
+        assert await members.agent_handles(root) == []
+        signs_as = await members.resolve_agent_handle(root)
+        assert signs_as == topic_agent_handle(root), "署名还得答得出来"
+        assert await members.addressable_agent_handle(root) is None
