@@ -1262,22 +1262,28 @@ export function compareArtifactVersions(
   )
 }
 
+/** 这一版交出去的那一份，摆到屏幕上要用的那份形态。
+ *
+ *  不是「转成 PDF」：文档转 PDF，旧表格转新表格，其余原样交回去，因为浏览器自己
+ *  画得出来。哪一种由后端决定，而且只有后端能决定——渲染器会做什么是它的事，让这
+ *  一侧再维护一张「哪些后缀要转」的表，那两张表迟早不是同一张。 */
 export async function artifactVersionBytes(
   projectId: string,
   artifactId: string,
-  cardId: string,
-  asPdf = false
+  cardId: string
 ): Promise<ArrayBuffer> {
-  const response = await fetch(
-    artifactVersionFileUrl(projectId, artifactId, cardId) + (asPdf ? '?preview_pdf=true' : ''),
-    { headers: authHeaders() }
-  )
+  const response = await fetch(artifactVersionFileUrl(projectId, artifactId, cardId) + '?preview=true', {
+    headers: authHeaders(),
+  })
   if (response.ok) return response.arrayBuffer()
   let message = ''
   try {
     message = String((await response.json())?.message || '')
   } catch {
     /* Keep the HTTP error when the server sent no JSON. */
+  }
+  if (response.status === 503) {
+    throw new PreviewRendererUnavailable(message || '这个部署没有启用文档预览')
   }
   throw new Error(message || `未能读取这一版（HTTP ${response.status}）`)
 }

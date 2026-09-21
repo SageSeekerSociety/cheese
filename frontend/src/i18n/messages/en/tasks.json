@@ -15,7 +15,6 @@
     "source": "Comparing the complete project source at the two deliveries",
     "link": "Only the recorded addresses are compared; historical page content was not retained",
     "after": "Compare with",
-    "version": "Version {number}",
     "chooseTwo": "Choose two different versions",
     "loading": "Comparing delivered content",
     "loadError": "Could not compare these versions",
@@ -25,11 +24,35 @@
     "changedLink": "These versions recorded different addresses",
     "fileMode": "File type or permissions:",
     "showPreviews": "Preview side by side",
-    "hidePreviews": "Hide previews",
-    "previewError": "Could not preview this version",
-    "loadingPreview": "Loading the delivered file",
-    "downloadOnly": "This format or size cannot be previewed. Download it from the version history",
-    "noPreview": "This version has no file to preview"
+    "hidePreviews": "Hide previews"
+  },
+  "artifactPage": {
+    "preview": "Preview",
+    "downloadCurrent": "Download current version",
+    "open": "Open",
+    "notDelivered": "Not delivered yet",
+    "deliveredAt": "Delivered {time}",
+    "history": "Version history",
+    "previewVersion": "Preview version {number}",
+    "noVersions": "Nothing delivered yet",
+    "noVersionsHint": "Once a delivery is accepted, the first version appears here",
+    "noSubject": "No note",
+    "acceptedBy": "accepted by {name}",
+    "mergeOnly": "This one handed over the merge",
+    "noRetainedFile": "No file was kept for this version",
+    "loadError": "Could not load this artifact",
+    "loadingLabel": "Loading this artifact"
+  },
+  "artifactVersion": {
+    "number": "Version {number}",
+    "loading": "Loading this version",
+    "loadError": "Could not load this version",
+    "downloadError": "Could not download this version",
+    "download": "Download",
+    "rendererMissing": "Document preview is not enabled",
+    "merge": "This delivery handed over the merge itself, so there is no file to look at",
+    "downloadOnly": "This format or size cannot be previewed here",
+    "noPreview": "No file to preview"
   },
   "form": {
     "taskName": "Challenge name",

@@ -39,6 +39,15 @@ def task_machine(client, monkeypatch, tmp_path):
     monkeypatch.setattr(execution, "call", call)
 
 
+def _pdf(raw: bytes = b"PK\x03\x04doc") -> object:
+    """一个成功的渲染服务：收到什么就当成转换出来了。"""
+
+    async def ask(_raw, _suffix, _target, _endpoint, _timeout):
+        return b"%PDF-1.7 " + raw
+
+    return ask
+
+
 def _project(client) -> str:
     r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
@@ -358,8 +367,15 @@ def test_an_address_is_recorded_as_a_pointer_and_has_no_file(client):
 
 
 def test_office_preview_converts_the_selected_retained_file(client, monkeypatch):
-    from app.api.routes import projects
-    from app.domain.preview.office import OfficeRenderUnavailable
+    """产物页上「打开」要的那一份，是当时交出去的那一份的预览形态。
+
+    这里替换的是渲染服务本身（`office._ask`），不是某一条路由里的转发函数：
+    从请求到字节的那条路（转换表、大小闸门、结果校验、缓存）都要是真的走一遍。
+    """
+    from app.core.config import settings
+    from app.domain.preview import office
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://render:8901")
 
     project_id = _project(client)
     room_id = _room(client, project_id)
@@ -371,24 +387,149 @@ def test_office_preview_converts_the_selected_retained_file(client, monkeypatch)
     artifact_id = _artifact_id(client, project_id)
     url = f"/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file"
 
-    async def render(data, name, endpoint):
-        assert data == b"first document"
-        assert name == "report.docx"
+    asked: list[tuple[str, str]] = []
+
+    async def ask(raw, suffix, target, endpoint, timeout):
+        asked.append((suffix, target))
+        assert raw == b"first document"
         return b"%PDF-preview of the first document"
 
-    monkeypatch.setattr(projects, "render_to_pdf", render)
-    preview = client.get(url, params={"preview_pdf": True})
+    monkeypatch.setattr(office, "_ask", ask)
+    preview = client.get(url, params={"preview": True})
     assert preview.status_code == 200, preview.text
     assert preview.headers["content-type"] == "application/pdf"
     assert preview.content == b"%PDF-preview of the first document"
+    assert asked == [(".docx", ".pdf")]
+    # 不带 preview 的那一次仍然是原来那份字节，一个字节都没被换掉。
     assert client.get(url).content == b"first document"
 
-    async def unavailable(*args):
-        raise OfficeRenderUnavailable("文档预览服务暂时无法访问")
 
-    monkeypatch.setattr(projects, "render_to_pdf", unavailable)
-    assert client.get(url, params={"preview_pdf": True}).status_code == 503
+def test_an_old_sheet_is_served_as_a_workbook_not_as_a_pdf(client, monkeypatch):
+    """`.xls` 是唯一一个「不改格式就没人画得出来」的表格：ExcelJS 读不了 BIFF。
+
+    它转成 `.xlsx` 仍然是一张表，而不是一份 PDF —— 一页一页摊开的表没有了列
+    和格子地址，那是这张表唯一能被人指着说话的东西。
+    """
+    from app.core.config import settings
+    from app.domain.preview import office
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://render:8901")
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client, room_id, files={"预算.xls": "old binary"}, deliver="预算.xls"
+    )
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+    artifact_id = _artifact_id(client, project_id)
+
+    async def ask(raw, suffix, target, endpoint, timeout):
+        assert (suffix, target) == (".xls", ".xlsx")
+        return b"PK\x03\x04as a workbook"
+
+    monkeypatch.setattr(office, "_ask", ask)
+    got = client.get(
+        f"/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file",
+        params={"preview": True},
+    )
+    assert got.status_code == 200, got.text
+    assert got.headers["content-type"].endswith("spreadsheetml.sheet")
+    assert got.content == b"PK\x03\x04as a workbook"
+
+
+def test_the_renderer_being_absent_is_not_a_bad_file(client, monkeypatch):
+    """这个部署没接渲染器，是一个会自己好的状态；这个文件转换不了，重试一百次
+    也一样。两者读到的句子和前端给的状态都不能是同一条。"""
+    from app.core.config import settings
+    from app.domain.preview import office
+
+    monkeypatch.setattr(settings, "office_render_endpoint", None)
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client, room_id, files={"report.docx": "first document"}, deliver="report.docx"
+    )
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+    artifact_id = _artifact_id(client, project_id)
+    url = f"/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file"
+
+    async def never(*args):
+        raise AssertionError("没有渲染器就不该去敲它")
+
+    monkeypatch.setattr(office, "_ask", never)
+    assert client.get(url, params={"preview": True}).status_code == 503
+    # 而下载一直是好的：预览没有，不等于这一版交出去的东西没有了。
     assert client.get(url).content == b"first document"
+
+
+def test_a_file_too_big_to_preview_says_so_instead_of_a_status_code(
+    client, monkeypatch, tmp_path
+):
+    from app.core.config import settings
+    from app.domain.preview import office
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://render:8901")
+    monkeypatch.setattr(office, "MAX_PREVIEW_BYTES", 8)
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client,
+        room_id,
+        files={"长报告.docx": "a document longer than eight bytes"},
+        deliver="长报告.docx",
+    )
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+    artifact_id = _artifact_id(client, project_id)
+    url = f"/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file"
+
+    async def never(*args):
+        raise AssertionError("太大就该在问渲染器之前被拦下")
+
+    monkeypatch.setattr(office, "_ask", never)
+    too_big = client.get(url, params={"preview": True})
+    assert too_big.status_code == 422, too_big.text
+    assert "无法生成预览" in too_big.text
+    # 太大是预览的事，不是下载的事。
+    assert client.get(url).status_code == 200
+
+
+def test_a_version_is_behind_the_same_door_as_the_rest_of_the_manifest(
+    client, monkeypatch
+):
+    """清单上的一版和项目里的其它东西同一个门槛：项目外的人连预览也拿不到。"""
+    from app.core.config import settings
+    from app.domain.preview import office
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://render:8901")
+    monkeypatch.setattr(office, "_ask", _pdf())
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client, room_id, files={"report.docx": "first document"}, deliver="report.docx"
+    )
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+    artifact_id = _artifact_id(client, project_id)
+    url = f"/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file"
+
+    assert client.get(url, params={"preview": True}).status_code == 200, (
+        "项目成员本来就该看得到"
+    )
+    assert (
+        client.get(
+            url,
+            params={"preview": True},
+            headers=session_auth_headers("mallory"),
+        ).status_code
+        == 403
+    )
+    assert client.get(url, headers=session_auth_headers("mallory")).status_code == 403
 
 
 def test_handing_over_the_merge_itself_is_a_kind_of_its_own(client):

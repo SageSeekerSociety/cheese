@@ -1,9 +1,9 @@
 /**
  * 一项产物自己那一页。
  *
- * 它回答两个问题：现在是第几版，以及每一版交出去的那一份还拿不拿得到。三种交法在
- * 这一页上必须是三句不同的话 —— 一份文件能下载、一个地址能打开、一次合并没有东
- * 西可拿，而「这一版没有留存文件」是第四种情况，不能和最后那一种混在一起说。
+ * 它回答三个问题：现在是第几版，交出去的那一份长什么样，以及每一版还拿不拿得到。
+ * 三种交法在这一页上必须是三句不同的话 —— 一份文件能下载、一个地址能打开、一次合
+ * 并没有东西可拿，而「这一版没有留存文件」是第四种情况，不能和最后那一种混在一起说。
  */
 import type { ArtifactVersion } from '../api'
 
@@ -22,11 +22,14 @@ vi.mock('../api', () => ({
   downloadFile: vi.fn(),
   compareArtifactVersions: vi.fn(),
   artifactVersionBytes: vi.fn(),
+  /** 部署没接渲染服务时报的就是它；面板按它换一句话。 */
+  PreviewRendererUnavailable: class extends Error {},
   artifactVersionFileUrl: (projectId: string, artifactId: string, cardId: string) =>
     `/api/projects/${projectId}/artifacts/${artifactId}/versions/${cardId}/file`,
 }))
 
-const { downloadFile, getProjectArtifact, compareArtifactVersions, artifactVersionBytes } = await import('../api')
+const { downloadFile, getProjectArtifact, compareArtifactVersions, artifactVersionBytes, PreviewRendererUnavailable } =
+  await import('../api')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -76,7 +79,10 @@ beforeEach(() => {
     note: 'unavailable',
     files: [],
   })
-  vi.mocked(artifactVersionBytes).mockResolvedValue(new ArrayBuffer(0))
+  // 这一页的预览走的是真查看器（pdf.js / ExcelJS），而这一份 spec 问的不是画得像
+  // 不像。默认让它取不到字节：上边那块预览显示它自己的失败状态，页面其余部分的断
+  // 言不受影响。要问预览本身的 spec 在 ArtifactVersionPreview.spec.ts。
+  vi.mocked(artifactVersionBytes).mockRejectedValue(new Error('未能读取这一版'))
 })
 
 function mount() {
@@ -136,8 +142,41 @@ describe('一项产物', () => {
     })
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('此格式不提供逐行差异'))
-    await waitFor(() => expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c1', false))
-    expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c2', false)
+    // 并排预览的两格，各自取自己那一版的字节。
+    await waitFor(() => expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c1'))
+    expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c2')
+  })
+
+  it('进这一页先看最新那一版，点别的行就换成那一版', async () => {
+    const versions = [1, 2, 3].map((number) => ({
+      ...FILE_VERSION,
+      number,
+      card_id: `c${number}`,
+    }))
+    vi.mocked(getProjectArtifact).mockResolvedValue(detail(versions))
+
+    const { container, getByLabelText } = mount()
+
+    await waitFor(() => expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c3'))
+    expect(container.textContent).toContain('结题报告.pdf')
+
+    await fireEvent.click(getByLabelText('预览第 1 版'))
+    await waitFor(() => expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c1'))
+  })
+
+  it('部署没接渲染服务时说的是部署的事，而下载还在', async () => {
+    vi.mocked(getProjectArtifact).mockResolvedValue(detail([FILE_VERSION]))
+    vi.mocked(artifactVersionBytes).mockRejectedValue(new PreviewRendererUnavailable('文档预览服务暂时无法访问'))
+
+    const { container } = mount()
+
+    await waitFor(() => expect(container.textContent).toContain('文档预览未启用'))
+    // 预览没有，不等于这一版交出去的东西没有了 —— 退路要留在原地。
+    const download = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '下载')
+    await fireEvent.click(download!)
+    await waitFor(() =>
+      expect(downloadFile).toHaveBeenCalledWith('/api/projects/p1/artifacts/a1/versions/c1/file', '结题报告.pdf')
+    )
   })
   it('名字、当前是第几版，以及每一版各自一行', async () => {
     const { container } = mount()

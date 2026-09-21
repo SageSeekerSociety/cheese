@@ -15,7 +15,6 @@
     "source": "比较两次交付时项目源文件的完整状态",
     "link": "这里只比较交付时记录的地址；未保存网页的历史内容",
     "after": "对比版本",
-    "version": "第 {number} 版",
     "chooseTwo": "请选择两个不同的版本",
     "loading": "正在比较交付内容",
     "loadError": "未能比较这两个版本",
@@ -25,11 +24,35 @@
     "changedLink": "两个版本记录的地址有变化",
     "fileMode": "文件类型或权限：",
     "showPreviews": "并排预览",
-    "hidePreviews": "收起预览",
-    "previewError": "未能预览这一版",
-    "loadingPreview": "正在读取交付文件",
-    "downloadOnly": "此格式或大小暂不支持预览，可在版本历史中下载",
-    "noPreview": "这一版没有可预览的文件"
+    "hidePreviews": "收起预览"
+  },
+  "artifactPage": {
+    "preview": "预览",
+    "downloadCurrent": "下载当前版本",
+    "open": "打开",
+    "notDelivered": "尚未交付",
+    "deliveredAt": "交付于 {time}",
+    "history": "版本历史",
+    "previewVersion": "预览第 {number} 版",
+    "noVersions": "暂无交付",
+    "noVersionsHint": "有一次交付被验收后，这里会出现第一版",
+    "noSubject": "暂无说明",
+    "acceptedBy": "{name} 验收",
+    "mergeOnly": "交出去的是这次合并",
+    "noRetainedFile": "这一版没有留存文件",
+    "loadError": "未能读取这一项产物",
+    "loadingLabel": "读取这一项产物"
+  },
+  "artifactVersion": {
+    "number": "第 {number} 版",
+    "loading": "正在读取这一版",
+    "loadError": "未能读取这一版",
+    "downloadError": "未能下载这一版",
+    "download": "下载",
+    "rendererMissing": "文档预览未启用",
+    "merge": "这次交出去的是合并本身，没有文件可看",
+    "downloadOnly": "这个格式或大小暂时无法预览",
+    "noPreview": "没有可预览的文件"
   },
   "form": {
     "taskName": "赛题名称",
