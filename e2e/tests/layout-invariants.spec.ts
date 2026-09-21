@@ -136,11 +136,11 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
     const dialog = page.locator('.v-overlay__content').filter({ hasText: '修改 AI 队友' });
     await dialog.waitFor();
-    // 两个下拉的选项是异步取回来的，而「角色设定」是 autoGrow 的文本域——内容灌
-    // 进去之后高度才定下来。等到两个下拉都显示出选中的值，这一屏就不会再动了。
-    // （不等 getByLabel('模型')：v-select 的可访问名来自内部那个 combobox，不是
-    //  描边缺口里的那行字。）
-    await expect(dialog.locator('.v-select__selection')).toHaveCount(2);
+    // 这张表单不再取任何异步选项（模型与运行方式都不是队友的属性了），会动的
+    // 只剩「角色设定」那个 autoGrow 的文本域——内容灌进去之后高度才定下来。
+    // 等到名字和角色设定都是这个队友自己的值，这一屏就不会再动了。
+    await expect(dialog.getByLabel('名字', { exact: true })).toHaveValue(/.+/);
+    await expect(dialog.getByLabel('角色设定（可留空）')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 });

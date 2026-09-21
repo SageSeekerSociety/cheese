@@ -49,8 +49,7 @@ def test_list_values_are_comma_separated_with_blanks_dropped():
 def test_load_type_library_from_dir(tmp_path: Path):
     (tmp_path / "alpha.md").write_text(
         "---\nname: alpha\ntitle: A\ndescription: d\n"
-        "skills: research, writing\nmcp_servers: grafana\n"
-        "model: claude-opus-5\neffort: high\nharness: claude-code\n---\npersona A",
+        "skills: research, writing\nmcp_servers: grafana\n---\npersona A",
         encoding="utf-8",
     )
     # No frontmatter name → filename stem is the type name.
@@ -64,18 +63,22 @@ def test_load_type_library_from_dir(tmp_path: Path):
     assert types["alpha"].body == "persona A"
     assert types["alpha"].skills == ["research", "writing"]
     assert types["alpha"].mcp_servers == ["grafana"]
-    assert types["alpha"].model == "claude-opus-5"
-    assert types["alpha"].effort == "high"
-    assert types["alpha"].harness == "claude-code"
     assert types["beta"].title == "beta"
 
 
-def test_a_type_that_says_nothing_about_how_it_runs_pins_nothing(tmp_path: Path):
-    """A type with no ``model`` must not override the deployment's own choice."""
-    (tmp_path / "plain.md").write_text("---\nname: plain\n---\n正文", encoding="utf-8")
+def test_a_type_says_nothing_about_how_it_runs(tmp_path: Path):
+    """一个类型说的是角色。它连说「用哪个模型、哪个骨架」的字段都没有——写在
+    frontmatter 里也进不来，所以一份抄旧格式的类型文件不会悄悄钉住部署的选择。
+    """
+    (tmp_path / "plain.md").write_text(
+        "---\nname: plain\nmodel: claude-opus-5\nharness: codex\neffort: high\n"
+        "---\n正文",
+        encoding="utf-8",
+    )
 
     plain = load_type_library(tmp_path)["plain"]
-    assert (plain.model, plain.effort, plain.harness) == (None, None, None)
+    assert not {"model", "effort", "harness"} & set(vars(plain))
+    assert plain.body == "正文"
     assert plain.skills == []
     assert plain.mcp_servers == []
 

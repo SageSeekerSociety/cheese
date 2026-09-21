@@ -34,7 +34,12 @@ from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
-from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
+from app.domain.agent.harness import (
+    DEFAULT_HARNESS,
+    Opening,
+    SessionRef,
+    runtime_for,
+)
 from app.domain.agent.harness.prompt import (
     KICKOFF_PROMPT,
     attachment_prompt_line,
@@ -2210,9 +2215,7 @@ class ChatService:
                     if agent_handle is None or harness is None:
                         agent = await self._agent_at(session, place)
                         agent_handle = agent_handle or agent.handle
-                        harness = harness or harness_name(
-                            agent.configuration.get("harness")
-                        )
+                        harness = harness or DEFAULT_HARNESS
                     await AgentSessionService(session).remember(
                         topic_id=place.room_id,
                         agent_handle=agent_handle,
@@ -4577,7 +4580,8 @@ class ChatService:
             project = await projects_repo.get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            wanted_harness = await agents.harness(agent)
+            # 骨架是这套部署跑的那一个（结论 28），不是这个参与者的属性。
+            wanted_harness = DEFAULT_HARNESS
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             roster = (
@@ -4623,7 +4627,7 @@ class ChatService:
             resume_session_id = await AgentSessionService(session).resume_token(
                 place.room_id,
                 session_agent.handle,
-                harness=harness_name(session_agent.configuration.get("harness")),
+                harness=DEFAULT_HARNESS,
             )
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
@@ -4724,11 +4728,9 @@ class ChatService:
                 provider_id=compute_id, harness=wanted_harness
             )
             if provider is None:
-                # The machine is fine; what runs on it is not what this agent's
-                # type asked for. Running Claude Code anyway would answer as an
-                # agent nobody configured — say so instead, and leave the type
-                # to be fixed. (One harness ships, so today this needs a row
-                # written before the field was validated at all.)
+                # The machine is fine; what this deployment runs is not
+                # deployed on it. Say so rather than starting something else:
+                # a turn taken on another harness is a turn nobody asked for.
                 return _TurnBail(
                     [
                         {
@@ -4739,8 +4741,8 @@ class ChatService:
                                 turn_id=turn_id,
                                 session=session,
                                 text=(
-                                    f"这个 agent 的类型要求用 {wanted_harness} "
-                                    "跑，而本话题选的机器上没有部署它，本轮没有开始。"
+                                    f"本话题选的机器上没有部署 {wanted_harness}，"
+                                    "本轮没有开始。"
                                 ),
                             ),
                         },
@@ -5160,7 +5162,7 @@ class ChatService:
                 project_id,
                 topic_id,
                 prepared.agent.handle,
-                harness_name(prepared.agent.configuration.get("harness")),
+                DEFAULT_HARNESS,
             )
             await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
@@ -5335,7 +5337,7 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
-                    harness=harness_name(agent.configuration.get("harness")),
+                    harness=DEFAULT_HARNESS,
                 )
             await session.commit()
 
