@@ -499,9 +499,10 @@ def test_the_turn_can_ask_for_cloud_and_gets_a_proposal_not_a_401(client, monkey
     body = asked.json()["data"]
     assert body["proposal"] is not None, body
     assert body["proposal"]["approver"] == "andyl", body["proposal"]
-    # 这次调用没有发生：没有开机器，房间的算力也没被改写。
+    # 这次调用没有发生：没有开机器，房间自己那一列也没被写过 —— 报回来的算力仍
+    # 然是它从项目默认继承的那一份（`inherited`），不是这次要的那一档。
     provision.assert_not_awaited()
-    assert body["current"] != "cloud", body
+    assert body["inherited"] is True, body
 
 
 def test_a_denied_tier_is_refused_out_loud_even_when_the_room_is_running(client):
