@@ -60,6 +60,13 @@ class FeedbackCreate(BaseModel):
     caller, never a string the client chose. On the accept path the author comes
     from the card instead (the agent that found it) and the caller is recorded
     as the submitter — the route reads both, so the body still carries neither.
+
+    ``topic_id`` / ``project_id`` are not here either, and for the same reason:
+    自从「提出它的那个房间」成为可见性并集的一档（结论 47），``topic_id`` 就是那一
+    档的**授权键**——客户端说了算的键就是客户端填得错的键。给一条反馈安上房间的路
+    只有一条：发送提案卡，而它从自己的 URL 解出房间（``AcceptedProposal``）。于是
+    「这条反馈有房间来源」和「它是那个房间里的一张卡发出来的」是同一件事，而后者正
+    是「那个房间的人本来就看过它的内容」成立的那个条件。
     """
 
     kind: FeedbackKind = FeedbackKind.bug
@@ -76,8 +83,6 @@ class FeedbackCreate(BaseModel):
     logs: str | None = Field(default=None, max_length=20000)
     session_id: str | None = Field(default=None, max_length=64)
     environment: str | None = Field(default=None, max_length=255)
-    topic_id: uuid.UUID | None = None
-    project_id: uuid.UUID | None = None
     tags: list[str] = Field(default_factory=list, max_length=20)
 
 

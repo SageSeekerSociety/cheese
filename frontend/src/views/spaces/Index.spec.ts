@@ -8,12 +8,16 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listProjects = vi.fn()
 const spacesList = vi.fn()
+const spacesCreate = vi.fn()
+const applications = vi.fn()
+const uploadAvatar = vi.fn()
+const resubmit = vi.fn()
 const showNewProjectDialog = vi.fn()
 
 vi.mock('@/api', async () => {
@@ -22,7 +26,16 @@ vi.mock('@/api', async () => {
 })
 
 vi.mock('@/network/api/spaces', () => ({
-  SpacesApi: { list: (...a: unknown[]) => spacesList(...a) },
+  SpacesApi: {
+    list: (...a: unknown[]) => spacesList(...a),
+    create: (...a: unknown[]) => spacesCreate(...a),
+    applications: (...a: unknown[]) => applications(...a),
+    resubmit: (...a: unknown[]) => resubmit(...a),
+  },
+}))
+
+vi.mock('@/network/api/avatars', () => ({
+  AvatarsApi: { createAvatar: (...a: unknown[]) => uploadAvatar(...a) },
 }))
 
 // 对话框本身住在 App.vue（跨路由活着），这一页只是把它叫起来。
@@ -38,6 +51,8 @@ vi.mock('vue-i18n', async () => {
 })
 
 import SpacesIndex from './Index.vue'
+
+import AccountService from '@/services/account'
 
 const START_HERE = '从这里开始'
 const NEW_PROJECT = '新建项目'
@@ -56,10 +71,21 @@ function mountPage() {
     ],
   })
   // PageHeader 要 pinia（它读页面标题那个 store）。
-  return render(SpacesIndex, { global: { plugins: [vuetify, router, createPinia()] } })
+  return { ...render(SpacesIndex, { global: { plugins: [vuetify, router, createPinia()] } }), router }
 }
 
 beforeAll(() => {
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    pageLeft: 0,
+    pageTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
       observe() {}
@@ -80,12 +106,89 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
+  resubmit.mockReset().mockResolvedValue({})
+  URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
+  applications.mockReset().mockResolvedValue({ data: { items: [] } })
   listProjects.mockReset()
   spacesList.mockReset().mockResolvedValue({ data: { spaces: [], page: { pageSize: 12, hasMore: false } } })
   showNewProjectDialog.mockReset()
+  spacesCreate.mockReset()
+  AccountService.loggedIn = true
 })
 
-describe('空间名录页的第一次落点', () => {
+afterEach(cleanup)
+
+describe('space creation', () => {
+  it('uploads the selected image before creating the board', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockResolvedValue({})
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Practice')
+    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
+    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await waitFor(() => expect(spacesCreate).toHaveBeenCalledWith({ name: 'Practice', intro: '', avatarId: 77 }))
+    expect(uploadAvatar).toHaveBeenCalledWith(file)
+  })
+
+  it('keeps the application open when the avatar upload fails', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    uploadAvatar.mockRejectedValueOnce(new Error('Upload failed'))
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Practice')
+    await fireEvent.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] },
+    })
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await waitFor(() => expect(page.getByText('spaces.create.failed')).toBeTruthy())
+    expect(spacesCreate).not.toHaveBeenCalled()
+    expect((page.getByLabelText('spaces.create.name') as HTMLInputElement).value).toBe('Practice')
+  })
+
+  it('lets an ordinary signed-in user submit a space for review', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    const submit = page.getByRole('button', { name: 'spaces.create.submit' })
+    expect(submit.hasAttribute('disabled')).toBe(true)
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), '  Programming course  ')
+    await fireEvent.update(page.getByLabelText('spaces.create.intro'), 'Weekly exercises')
+    await fireEvent.submit(submit.closest('form')!)
+    await waitFor(() => expect(spacesCreate).toHaveBeenCalledTimes(1))
+    expect(spacesCreate).toHaveBeenCalledWith({ name: 'Programming course', intro: 'Weekly exercises' })
+  })
+
+  it('keeps the draft after a failed request and allows retry', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockRejectedValueOnce(new Error('Request failed'))
+    spacesCreate.mockResolvedValueOnce({ data: { space: { id: 43 } } })
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Course')
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await waitFor(() => expect(page.getByText('spaces.create.failed')).toBeTruthy())
+    expect((page.getByLabelText('spaces.create.name') as HTMLInputElement).value).toBe('Course')
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await waitFor(() => expect(spacesCreate).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not offer creation to signed-out visitors', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    AccountService.loggedIn = false
+    const page = mountPage()
+    expect(page.queryByRole('button', { name: 'spaces.create.open' })).toBeNull()
+  })
+})
+
+describe('题目板名录页的第一次落点', () => {
   it('offers a way in when the visitor owns no project', async () => {
     listProjects.mockResolvedValue({ data: [], total: 0 })
     const { getByText, getByRole } = mountPage()

@@ -165,7 +165,7 @@ def test_an_unread_at_awaits_you_and_a_read_one_still_counts(client):
     alerts = client.get(
         f"/projects/{pid}/alerts", headers=session_auth_headers("bob")
     ).json()["data"]["data"]
-    mention = next(a for a in alerts if a["kind"] == "mention")
+    mention = next(a for a in alerts if a["kind"] == "MENTION")
     assert (
         client.post(
             f"/alerts/{mention['id']}/read", headers=session_auth_headers("bob")
@@ -285,7 +285,7 @@ def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log
     assert len(_seen_by(client, big, "alice")) == 13
     big_log = list(sql_log)
 
-    for table in ("alerts",):
+    for table in ("notification",):
         assert _reads(small_log, table) == 1, table
         assert _reads(big_log, table) == 1, table
     # Archive permission is a separate owner/admin-filtered roster query.

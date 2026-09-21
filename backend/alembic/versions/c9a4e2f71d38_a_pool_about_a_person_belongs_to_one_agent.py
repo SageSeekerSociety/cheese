@@ -1,7 +1,7 @@
 """关于一个人的记忆，收进「哪个项目里的哪位芝士」名下
 
 Revision ID: c9a4e2f71d38
-Revises: b8e3f2a10c64
+Revises: c8d3a1e07f54
 Create Date: 2026-09-21 12:00:00
 
 ``user`` 池以前是跨项目的：scope_id 就是那个人的 handle，一个池，谁都读同一份。
@@ -38,7 +38,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c9a4e2f71d38"
-down_revision: str | Sequence[str] | None = "b8e3f2a10c64"
+down_revision: str | Sequence[str] | None = "c8d3a1e07f54"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

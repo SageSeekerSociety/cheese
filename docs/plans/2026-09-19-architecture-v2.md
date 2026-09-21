@@ -1133,7 +1133,7 @@ agent 调「开一台机器 / 换到 Cloud」，撞上项目策略（换到另�
 
 **今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
-`address()` 给出收件人。`chat.py` 里的 @ 仍然自己发一条 `AlertKind.mention`，它随 `alert/` 整包删除一起归拢。
+`address()` 给出收件人。`chat.py` 里的 @ 仍然自己往收件箱写一行 `MENTION`，没有过 `address()`。
 
 ### 5.3 总览与调度
 
@@ -1644,9 +1644,9 @@ so check there and not in the menu, the contract or the doc**」。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
 - **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。
-- **两张通知表并成一张**（结论 58）：`alert/` 那个包和 `alerts` 表原样还在，账本只管
-  `notification/` 这一张；把 `alerts` 的行幂等地搬进 `notification` 也还没有人做，
-  在那之前 `alerts` 不能 drop。
+- **`alerts` 这张表本身**：`alert/` 那个包已经并进 `notification/`，行也幂等地搬过去了，
+  但表和表里的数据还留着 —— 换镜像那段窗口里旧镜像还在往它里面写，得由 drop 它的那条
+  迁移在删表之前把搬家原样再跑一遍。
 - **同 handle 便条的写侧**（读侧的通道已经有了：`chat.py:1605 notify_running_turn`）。
 - **定时投递原语**（今天由 `scheduler/` 替它做，而那是另一件事）。
 - **反馈通道**：全仓一行都没有。

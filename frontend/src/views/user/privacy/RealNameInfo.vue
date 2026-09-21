@@ -208,7 +208,7 @@
                       <v-icon icon="mdi-certificate" size="24" color="primary"></v-icon>
                     </v-avatar>
                     <div class="text-subtitle-2 font-weight-medium mb-1">项目结题认证</div>
-                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于赛题结题后的项目认证与证书发放流程。</p>
+                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于题目结题后的项目认证与证书发放流程。</p>
                   </div>
                 </v-card-text>
               </v-card>
@@ -222,7 +222,7 @@
                       <v-icon icon="mdi-trophy" size="24" color="primary"></v-icon>
                     </v-avatar>
                     <div class="text-subtitle-2 font-weight-medium mb-1">评奖评优</div>
-                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于赛题结题后的奖项评定与优秀项目评选。</p>
+                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于题目结题后的奖项评定与优秀项目评选。</p>
                   </div>
                 </v-card-text>
               </v-card>
@@ -236,7 +236,7 @@
                       <v-icon icon="mdi-school" size="24" color="primary"></v-icon>
                     </v-avatar>
                     <div class="text-subtitle-2 font-weight-medium mb-1">学分认定</div>
-                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于赛题结题后的学分认证与课程成绩登记。</p>
+                    <p class="text-body-2 text-medium-emphasis flex-grow-1">用于题目结题后的学分认证与课程成绩登记。</p>
                   </div>
                 </v-card-text>
               </v-card>
@@ -250,7 +250,7 @@
         <div class="mb-4">
           <h3 class="text-subtitle-2 font-weight-medium mb-3">我们如何保护您的实名信息</h3>
           <p class="text-body-2 mb-4">
-            我们采用多层保护机制，在满足赛题对实名信息的需求的同时，确保您的隐私安全与平台匿名性。
+            我们采用多层保护机制，在满足题目对实名信息的需求的同时，确保您的隐私安全与平台匿名性。
           </p>
 
           <v-row>
@@ -295,7 +295,7 @@
                     </v-avatar>
                     <div class="text-subtitle-2 font-weight-medium mb-1">用途限制</div>
                     <p class="text-body-2 text-medium-emphasis flex-grow-1">
-                      您的实名信息仅在必要的赛题报名环节使用，不用于其他目的。
+                      您的实名信息仅在必要的题目报名环节使用，不用于其他目的。
                     </p>
                   </div>
                 </v-card-text>

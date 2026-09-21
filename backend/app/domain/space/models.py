@@ -32,6 +32,15 @@ class Space(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     intro: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    # Existing spaces stay approved; the public creation route assigns PENDING.
+    review_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="APPROVED", server_default="APPROVED"
+    )
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enable_rank: Mapped[bool] = mapped_column(
         "enable_rank", Boolean, nullable=False, default=False

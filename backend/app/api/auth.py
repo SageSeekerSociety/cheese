@@ -268,8 +268,12 @@ class ActorResolver:
           fallback exists for authorship convenience and must never grant a
           mailbox, or naming ``?target_handle=bob`` would read (and clear)
           bob's mail for free;
-        - no credential, nobody named → the ``anonymous`` broadcast-only slice
-          when the endpoint allows it (reads), else 401 (writes).
+        - no credential, nobody named → the ``anonymous`` handle when the
+          endpoint allows it (reads), else 401 (writes). That handle is on
+          nobody's roster, so it addresses an empty mailbox: a notification is
+          addressed to one person, broadcasts included (they expand to a row
+          per person on the roster when written), and an unidentified caller
+          holds none of those rows.
         """
         wanted = (requested or "").strip() or None
         actor = await self.resolve(fallback_handle=None, project_id=project_id)

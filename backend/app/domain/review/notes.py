@@ -78,6 +78,7 @@ class NoteCode(enum.StrEnum):
 
     #: 等 CI。note 家族里优先级最低的一条：只写进空 note 或它自己。
     waiting_checks = "waiting_checks"
+    waiting_merge_queue = "waiting_merge_queue"
     #: 人工作废。
     voided = "voided"
     #: 人工放行的署名。

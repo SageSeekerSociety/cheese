@@ -62,7 +62,7 @@
       <v-card rounded="lg" class="pa-2">
         <v-card-title class="text-h6 font-weight-bold pb-1">新建项目</v-card-title>
         <v-card-text class="pb-2">
-          <p v-if="sourceTask" class="t-body c-muted mb-3">来自赛题：{{ sourceTask.name }}</p>
+          <p v-if="sourceTask" class="t-body c-muted mb-3">来自题目：{{ sourceTask.name }}</p>
           <ResourceLimitsNotice v-if="newProjectDialog" />
           <v-text-field
             v-model="newProjectName"
