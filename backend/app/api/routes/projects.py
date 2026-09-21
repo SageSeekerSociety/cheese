@@ -105,6 +105,7 @@ from app.domain.room_task.schemas import TaskOut
 from app.domain.textfile import compare_bytes
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -904,14 +905,19 @@ async def _agent_memory_scope(
     return memory_pool(project_id, agent)
 
 
-def _authorize_personal_memory_owner(place: Place | None, owner: str) -> None:
+async def _authorize_personal_memory_owner(
+    db: DbSession, place: Place | None, owner: str
+) -> None:
     """个人记忆 lives in a private chat, and a private chat is a room — so this
-    asks the room even when a thread inside it is the caller."""
+    asks the room even when a thread inside it is the caller.
+
+    Who is in that room is the roster's answer: a private chat is a room with
+    two seats (结论 19), and those two are its participants."""
     if place is None:
         return
     room = place.room
-    participants = {room.private_owner, room.private_peer} - {None}
-    if not room.is_private or owner not in participants:
+    seats = await TopicMemberService(db).private_seats(room.id)
+    if not room.is_private or seats is None or owner not in seats:
         raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
 
 
@@ -948,7 +954,7 @@ async def add_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(place, owner)
+        await _authorize_personal_memory_owner(db, place, owner)
         await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
         return ok({"remembered": True, "layer": layer.value})
     agent_scope = await _agent_memory_scope(db, project_id, caller)
@@ -988,7 +994,7 @@ async def search_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(place, owner)
+        await _authorize_personal_memory_owner(db, place, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
     # 芝士自己那个池，加上项目的共享池。按分数合并，不按池子首尾相接：一条事实

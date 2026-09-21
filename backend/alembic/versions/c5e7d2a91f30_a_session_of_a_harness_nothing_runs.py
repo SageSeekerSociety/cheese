@@ -1,7 +1,7 @@
 """a session row of a harness nothing will run again leaves
 
 Revision ID: c5e7d2a91f30
-Revises: d5c48f1a6b73
+Revises: f1a9c3e07b42
 Create Date: 2026-09-21 16:00:00
 
 ``agent_sessions`` is keyed by ``(topic, agent_handle, harness)``. Until this
@@ -44,7 +44,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "c5e7d2a91f30"
-down_revision: str | Sequence[str] | None = "d5c48f1a6b73"
+down_revision: str | Sequence[str] | None = "f1a9c3e07b42"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
