@@ -1628,6 +1628,83 @@ async def ask_options(
     return ok(payload)
 
 
+@router.post("/{topic_id}/note")
+async def leave_a_note(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """同 handle 便条的写侧（结论 11）：给自己的另一条线程留一句话。
+
+    `topic_id` 是**发件人**——正在说话的那条线程，也是这一轮的令牌签给的那个地点；
+    收件人那条线程在正文里，由平台拿两边的席位比出来（I14②）。同 `tell` 一样，URL
+    里的 id 说的是「谁在说话」，从不说「改的是哪个资源」。
+
+    它不落时间线：便条进的是那条线程正在跑的那一轮（`notify_running_turn`），不是
+    房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
+    """
+    from app.domain.delivery.note import send_note
+
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    sender = actor.handle
+    if not actor.authenticated:
+        sender = await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        )
+    thread = (body.get("thread") or "").strip()
+    try:
+        to_thread = uuid.UUID(thread)
+    except ValueError:
+        raise ValidationError("thread 要是一条线程的 id") from None
+    delivered = await send_note(
+        db,
+        chat,
+        sender=sender,
+        from_project_id=place.project_id,
+        to_thread=to_thread,
+        content=body.get("content") or "",
+    )
+    return ok({"delivered": delivered})
+
+
+@router.post("/{topic_id}/deliveries")
+async def ask_for_a_delivery(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """定时投递（结论 17）：请平台在某个时刻把这条递给请求者自己。
+
+    收件人不在正文里，因为这条原语只有一个收件人规则——**就是请求它的那个参与者**。
+    给别人设闹钟是另一件事，而那件事没有人要过。
+    """
+    from app.domain.delivery.timer import deliver_at
+
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    recipient = actor.handle
+    if not actor.authenticated:
+        recipient = await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        )
+    raw = (body.get("at") or "").strip()
+    try:
+        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValidationError("at 要是一个 ISO-8601 时刻") from None
+    row = await deliver_at(
+        db,
+        when=when,
+        event=body.get("content") or "",
+        recipient=recipient,
+        topic_id=topic_id,
+        project_id=place.project_id,
+    )
+    await db.commit()
+    return ok({"id": str(row.id), "at": when.isoformat(), "to": recipient})
+
+
 @router.post("/{topic_id}/summon")
 async def summon_agent(
     topic_id: uuid.UUID,

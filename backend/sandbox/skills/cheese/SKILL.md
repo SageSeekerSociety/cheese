@@ -1,6 +1,6 @@
 ---
 name: cheese
-description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。聊天用 chat_send 工具，回看聊天记录用 cheese_chat_* 工具，平台动作用同名的 cheese_* 工具，其余平台 API 用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
+description: 在 CheeseX（知是）平台里接收用户消息、开始执行任务或改平台状态时用。MCP 上只有六样平台工具（chat_send、cheese_ask、cheese_feedback_propose、cheese_machine、cheese_note、cheese_deliver_at）；其余平台动作是 cheese 这个 CLI 的子命令，用 Bash 调，没有子命令的用 platform_request。普通输出和最终答复不会自动发送；代码和文件用原生工具。
 ---
 
 # cheese — 平台操作
@@ -150,7 +150,11 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 
 ## 工具
 
-工具名和参数来自平台 CLI 的定义，调用时执行同一份逻辑；下面按用途列出。`?` 标记的参数可省略。
+**MCP 上只有六样**：`chat_send`、`cheese_ask`、`cheese_feedback_propose`、`cheese_machine`、`cheese_note`、`cheese_deliver_at`。它们住在你这一侧，跟平台说话不经过那台执行机——所以那台机器够不着的时候，这六样一个都不少，你照样说得了话、问得了人、报得了故障、要得到另一台机器。
+
+**下面表里其余每一行都是 `cheese` 这个 CLI 的一条子命令，用 Bash 调**：表里写成 `cheese_doc_set(file)` 的那一条，命令行上是 `cheese doc set report.md`（`_` 分开的是子命令层级，参数按各自的 `--help`）。它们跟文件、命令、项目自己的 MCP 一样长在那台机器上：机器没了它们就是不可用，平台不在你这一侧给它们做替身，也不把它们搬到别处去。没有对应子命令的平台动作用 `platform_request`。
+
+`?` 标记的参数可省略。
 
 | 工具 | 作用 |
 |---|---|
@@ -170,6 +174,9 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_recover(task_id)` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
 | `cheese_sync(task?, all?)` | 同步当前或指定任务；`all` 同步本房间机器上已有的任务目录 |
 | `cheese_close_task(task_id, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
+| `cheese_machine(profile, device_id?)` | 要一台机器：把这个房间的算力换成某一档。撞上项目的档位策略时这次调用不报错、也不挂着等，它变成一条给机主（自托管）或项目主人（Cloud）的提议 |
+| `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，如实回 `delivered: false`。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
+| `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
 | `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options` 让人一键拍板 |
 | `cheese_accept_request(subject, deliver?, deliver_url?, artifact?, new_artifact?, about?, reviewer?, reason?, body?, task?)` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`deliver` / `deliver_url` 说清这一版交出去的是什么——工作目录里那一份文件的路径，或者一个地址，**两个都不给就是交出去这次合并本身**。交合并的**不声明产物**（交出去的是这个项目的仓库，平台自己认；传了 `artifact` / `new_artifact` 会被打回）；交文件或地址的，`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单），后者给一个名字并配 `about` 一句话说清这是什么东西、给谁的，返回里带回它的 id。`about` 沿用时可给可不给，给了就以新的为准；它在第 1 版和第 20 版都得成立，抄改动标题会被打回。`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |

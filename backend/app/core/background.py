@@ -336,9 +336,11 @@ def periodic_jobs(
     deployment runs unless it opts in; that is a decision, and it should be made
     on purpose.
     """
+    from app.api.deps import get_work_runner
     from app.domain import backend_log
     from app.domain.agent.forgejo_tokens import purge_expired_tokens
     from app.domain.delivery.ledger import resend_unsent_deliveries
+    from app.domain.delivery.timer import deliver_due
     from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
@@ -457,6 +459,14 @@ def periodic_jobs(
             "delivery resend",
             settings.delivery_resend_interval_s,
             lambda: resend_unsent_deliveries(sessions),
+        ),
+        # 定时投递（结论 17）：一个参与者设下的闹钟，到点由这里递出去。没有它，
+        # `timed_deliveries` 就只是一张没人读的愿望清单 —— 而这份清单存在的理由，
+        # 正是「写完了、部署了、从来没跑过」这种失败。
+        PeriodicRunner(
+            "timed deliveries",
+            30,
+            lambda: deliver_due(sessions, chat=chat, runner=get_work_runner()),
         ),
         # A deadline nobody sweeps is a promise the platform made and quietly did
         # not keep: the moment it matters is the moment nobody is looking.

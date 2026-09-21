@@ -54,9 +54,18 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     }
     arguments = {
         "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
+        "cheese_deliver_at": {"at": "2026-09-21T14:00:00+00:00", "content": "look"},
+        "cheese_machine": {"profile": "cloud", "device_id": None},
+        "cheese_note": {"thread": "other-thread", "content": "note"},
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},
+        "cheese_feedback_propose": {
+            "title": "listing came back short",
+            "kind": "bug",
+            "visibility": "team",
+            "user_said": "用户没有就这个问题说过话",
+        },
         "cheese_members": {},
         "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
         "cheese_notify": {"title": "notice"},
@@ -66,7 +75,10 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
         "cheese_tell": {"target": "task", "message": "update"},
         "cheese_title": {"text": "title", "task": None},
     }
-    assert set(arguments) == cli.DIRECT_MCP_TOOLS
+    # 平台 MCP 上那六样里的每一个 `cheese_*` 都要有计划：没有计划的那一个，
+    # 会话侧打不出去，而它恰恰是机器离线时唯一还能用的那一批（结论 21）。
+    platform = {t for t in cli.platform_tools() if t.startswith("cheese_")}
+    assert platform <= set(arguments), platform - set(arguments)
     plans = {
         tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
     }

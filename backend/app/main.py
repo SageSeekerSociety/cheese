@@ -379,6 +379,10 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # dispatched — this gate can only prove "some agent of this project", because
     # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
+    # 同 handle 便条与定时投递：两条都只有 agent 会调，收件人都由平台算出来（便条
+    # 比席位，投递就是请求者自己），所以正文里没有一个「发给谁」可以被冒名。
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/note$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/deliveries$")),
     # Task bind/title/close/readiness/delivery routes are shared by human and
     # agent executors. They authorize the room and task in the route itself;
     # adding them here would incorrectly restrict them to agent credentials.
