@@ -46,7 +46,7 @@ from app.domain.agent.device_hub import (
     device_hub,
 )
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.channel import Channel, ScreenSetupError
+from app.domain.agent.harness.channel import Channel, Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
@@ -532,6 +532,9 @@ class DeviceChannel(Channel):
     builds_model_env = True
     needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
     timeout_message = "device 轮次超时"
+    # 要手的一轮要不到手时说的那一句。供给不同，这一句不同，而「要不要手、要不到
+    # 就停」那条分支三种供给是同一条——所以变的是这一句，不是那条分支。
+    no_machine_message = "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
 
     def __init__(
         self,
@@ -749,33 +752,9 @@ class DeviceChannel(Channel):
             factory = async_session_factory
         async with factory() as session:
             service = sql_device_service(session)
-            from app.domain.topic.services import TopicService
-
-            place = await TopicService(session).place_or_404(topic_id)
-            if place.room.is_private:
-                from app.domain.agent.private_chat import execution_target
-                from app.domain.agent_session.services import AgentSessionService
-                from app.domain.device.supply import Visibility
-
-                # A private chat seats one agent, so its room has at most one
-                # placed session; whichever it is, its machine is this chat's.
-                placed = await AgentSessionService(session).places_in_room(topic_id)
-                device_id = execution_target(
-                    project_id,
-                    topic_id,
-                    device_id=placed[0].machine if placed else None,
-                )["device_id"]
-                if not self._hub.is_online(device_id):
-                    raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
-                binding = await service.topic_binding(topic_id)
-                if binding is None or binding.device_id != device_id:
-                    await service.bind_topic_device(
-                        topic_id, device_id, visibility=Visibility.host
-                    )
-            else:
-                device_id = await resolve_pinned_device(
-                    service, self._hub.is_online, project_id, topic_id
-                )
+            device_id = await resolve_pinned_device(
+                service, self._hub.is_online, project_id, topic_id
+            )
             if device_id is None:
                 return None
             # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
@@ -1302,12 +1281,6 @@ class DeviceChannel(Channel):
         execution_target = None
         if (env or {}).get("CHEESE_EXECUTION_TARGET"):
             execution_target = json.loads((env or {})["CHEESE_EXECUTION_TARGET"])
-        if (env or {}).get("CHEESE_PRIVATE_CHAT") == "1":
-            from app.domain.agent.private_chat import execution_target as private_target
-
-            execution_target = private_target(
-                project_id, topic_id, resource_id, device_id=device_id
-            )
         if (
             existing is not None
             and (env or {}).get("CHEESE_ENVIRONMENT")
@@ -1656,19 +1629,64 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
-    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
+    def _sessions(self):
+        """一条数据库连接。Cloud 通道从这里继承它——同一个问题，同一份答案。"""
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        return factory()
+
+    async def _resolve_session_host(self, db, session: SessionRef) -> str:
+        """这条会话自己的机器，确认它在线。只读，不写，不提交。
+
+        机器从会话行上读，不是项目钉住的那台工作机。问的是这条会话而不是这个房间：
+        一间房里的两个队友各有一条会话，可能坐在两台机器上。
+        """
+        from app.domain.agent_session.services import AgentSessionService
+
+        await TopicService(db).get_or_404(session.topic_id)
+        place = await AgentSessionService(db).place(
+            session.topic_id, session.agent_handle, harness=session.harness
+        )
+        host = place.machine if place else settings.agent_session_device_id
+        if not host or not self._hub.is_online(host):
+            raise ScreenSetupError("这条会话的机器尚未配置或未连接")
+        return host
+
+    async def _session_host_agent(self, session: SessionRef) -> Placement:
+        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上这个
+        房间的 分身。
+
+        分身不是从执行机上取的，所以所有工作机离线时它照样答得出来。三条通道问的
+        是同一个问题，答案就只有这一份。
+        """
+        async with self._sessions() as db:
+            host = await self._resolve_session_host(db, session)
+            agent = await IdentityService(db).ensure_topic_agent_user(session.topic_id)
+            await db.commit()
+            return Placement(host, agent.id, agent.username, rented=False)
+
+    async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
-        Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
+        Raises ``ScreenSetupError`` (offline pinned device, or none online).
+
+        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机。pi 直接用
+        这条通道 (它是唯一没有包在 ``CentralChannel`` 外面的 backend)，所以「要不
+        要一双手」这一问在这里也必须答得出来——答不出来，一间私聊就会因为项目没
+        有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。答案随 ``Placement``
+        交给 ``ensure_ready``，由它决定这一轮开在草稿区还是项目工作区。"""
+        if not needs_place:
+            return await self._session_host_agent(session)
         resolved = await self._resolve_device_agent(
             session.project_id, session.topic_id
         )
         if resolved is None:
-            raise ScreenSetupError(
-                "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
-            )
-        return resolved
+            raise ScreenSetupError(self.no_machine_message)
+        return Placement(*resolved, rented=True)
 
     async def ensure_ready(
         self,
@@ -1690,18 +1708,19 @@ class DeviceChannel(Channel):
         every harness (``machine_launcher``) while the harness fills the rest.
         This channel says where — the home, the workdir, the state directory the
         connector will resolve — and merges the two environments."""
-        assert isinstance(precheck, tuple)  # from our precheck
+        assert isinstance(precheck, Placement)  # from our precheck
         project_id, topic_id = session.project_id, session.topic_id
-        device_id, agent_user_id, agent_handle = precheck
+        device_id, agent_user_id, agent_handle, rented = precheck
+        # 记忆算谁的，只决定记忆算谁的。这一轮开在哪个工作区是 ``rented`` 的事，
+        # 下面那一句说；两个事实各说各的，其中一个换了另一个不跟着动。
         if memory_scope == "personal":
-            env = dict(
-                env or {}, CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal"
-            )
+            env = dict(env or {}, CHEESE_MEMORY_SCOPE="personal")
             if owner:
                 env["CHEESE_OWNER"] = owner
-        prepares_environment = bool((env or {}).get("CHEESE_ENVIRONMENT")) and not (
-            (env or {}).get("CHEESE_EXECUTION_TARGET")
-            or (env or {}).get("CHEESE_PRIVATE_CHAT") == "1"
+        prepares_environment = (
+            bool((env or {}).get("CHEESE_ENVIRONMENT"))
+            and rented
+            and not (env or {}).get("CHEESE_EXECUTION_TARGET")
         )
         try:
             from app.core.db import async_session_factory
@@ -1729,6 +1748,15 @@ class DeviceChannel(Channel):
                         raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
                     agent_user_id, agent_handle = user.id, user.username
             env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+            # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
+            # 性容器，开在会话自己的机器上，不是一个地点 (结论 19)。做这个选
+            # 择的是「租到手没有」，不是「这间房是不是私聊」。
+            if not rented:
+                from app.domain.agent.private_chat import scratch_target
+
+                env["CHEESE_EXECUTION_TARGET"] = json.dumps(
+                    scratch_target(project_id, resource_id, device_id=device_id)
+                )
             before = (
                 await environment_status(self._hub, device_id, project_id, resource_id)
                 if prepares_environment
