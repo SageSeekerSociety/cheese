@@ -225,13 +225,15 @@ jobs:
         working-directory: backend
         run: uv run python -m scripts.seed_fusion_demo
 
+      # Keep the store outside setup-pnpm, which the setup action deletes each run.
+
       - name: Install frontend deps
         working-directory: frontend
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install E2E deps
         working-directory: e2e
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
 
       - name: Install Playwright browsers
         working-directory: e2e
