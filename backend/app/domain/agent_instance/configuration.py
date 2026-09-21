@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.errors import ValidationError
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import (
     DEFAULT_HARNESS,
     HARNESSES,
@@ -62,21 +63,18 @@ def model_choices(project_settings: dict | None) -> list[dict]:
         if settings.subscription_enabled
         else []
     )
+    # The pool's models come from the gateway, which is the only thing that
+    # knows: it needs a route and a price to serve one at all, so a list kept
+    # here could only ever be a second copy drifting out of step with the first.
     choices.extend(
         {
-            "id": model,
-            "label": label,
+            "id": item.id,
+            "label": item.label,
             "description": "平台模型池",
-            "default": not subscription_default and model == settings.agent_model,
+            "default": not subscription_default and item.id == settings.agent_model,
             "supply": GATEWAY,
         }
-        for model, label in dict.fromkeys(
-            [
-                (settings.agent_model, settings.agent_model),
-                ("deepseek-flash", "DeepSeek V4.1 Flash"),
-                ("glm-5.2", "GLM-5.2"),
-            ]
-        )
+        for item in gateway_catalog.offerable()
     )
     choices = list({item["id"]: item for item in choices}.values())
     # Models an operator named for a harness that brings its own list, and that

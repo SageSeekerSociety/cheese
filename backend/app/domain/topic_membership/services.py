@@ -409,9 +409,8 @@ class TopicMemberService:
         trail.
 
         Several agents seated: the project's default answers for the room when
-        it is one of them — the room-scoped credentials and the room's own pass
-        (memory dream, commit identity) all mean the same one — else the first
-        on the roster.
+        it is one of them — the room-scoped credentials and the room's own
+        commit identity all mean the same one — else the first on the roster.
 
         Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
         the room's (threads do not have one). A thread and its room fall back to

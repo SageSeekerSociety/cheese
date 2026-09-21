@@ -67,29 +67,8 @@ class AuthorType(enum.StrEnum):
 
     participant = "participant"
 
-    # 平台自己产的事件：部署提醒、闸门结论、自动重发。**新行写的就是这一档**——
-    # `backend/app` 里再没有第二个写点，`.claude/scripts/check-repo-rules.sh` 的
-    # Rule 8 守着这一点。
-    #
-    # 为什么改名要拆成三次发布：`Enum(AuthorType, native_enum=False)` 绑的是
-    # Python 枚举，而 `deploy/deploy-docker.sh` 换容器有先后——`rollout_backend`
-    # 之后才轮到 `rollout_frontend`，而且已经开着的标签页跑的还是上一版 bundle。
-    # 于是每一次只动一头：
-    #
-    #   第一次（已发布）：`platform` 进枚举、前端换成「不是 participant 就是平台」，
-    #           写入端不动，库里一行不变——旧 bundle 读到的仍是它认得的 `system`。
-    #   第二次（这一次）：写入端改写 `platform`。窗口里的那一版就是上一版，枚举和
-    #           bundle 两头都已经认得这个名字。
-    #   还剩一次：`UPDATE ... SET 'platform' WHERE author_type='system'` 并删掉
-    #           `system` 这一档。改写跑在换容器之前，服务的是上一版镜像；它读得懂
-    #           `platform`，而且已经不再写 `system`，所以这一遍改完就不用补跑。
+    # 平台自己产的事件：部署提醒、闸门结论、自动重发。
     platform = "platform"
-
-    # 上一档的旧名字，**只剩存量行还带着它**——这一版起没有任何代码写它。留着是因为
-    # 库里的行还要读得出来；上面那次 `UPDATE` 之后它就从枚举里离场。读它的只有
-    # `block/authorship.py`（它不是 participant，于是照样判成平台自己写的）和前端的
-    # `lib/authorship.ts`。
-    system = "system"
 
 
 # `meta` key carried by every new message/attachment that arrives as an input.

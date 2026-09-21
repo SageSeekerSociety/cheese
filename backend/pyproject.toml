@@ -25,7 +25,15 @@ dependencies = [
     "lxml>=5.3.0",
     "curl-cffi>=0.7",
     "meilisearch-python-sdk>=7.1.4",
-    "openviking>=0.4.7",
+    # These three reached the image only through openviking's dependency tree
+    # until it was removed, while `app` imported them directly all along:
+    # `openai` and `tiktoken` are the LLM client and its token counter
+    # (domain/llm), and FastAPI parses every file upload through
+    # `python-multipart` — an undeclared dependency there fails at request
+    # time, on the upload path, with nothing at import time to warn anyone.
+    "openai>=2.44.0",
+    "python-multipart>=0.0.32",
+    "tiktoken>=0.13.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "pyjwt>=2.13.0",
@@ -50,6 +58,8 @@ dev = [
     "aiosqlite>=0.22.1",
     "anyio>=4.13.0",
     "httpx>=0.28.1",
+    # test_codex_runner_process builds a PNG to feed the runner.
+    "pillow>=12.3.0",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",

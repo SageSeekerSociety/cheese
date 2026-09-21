@@ -584,9 +584,6 @@ class Settings(BaseSettings):
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
     # (manual heartbeat only; default off so dev/tests don't burn model calls).
     scheduler_interval_seconds: int = 0
-    # Idle rooms consolidate memory but keep their running environment.
-    sandbox_reap_interval_seconds: int = 3600
-    sandbox_idle_hours: float = 8
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
@@ -618,68 +615,6 @@ class Settings(BaseSettings):
     # blocking tool call — the longest a healthy turn can legitimately go
     # without adding a block.
     turn_stall_signal_s: float = 600.0
-
-    # --- Memory backend (spec §8.4 / §15 Q9) ---
-    # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
-    # "openviking": real layered memory on embedded OpenViking (viking:// FS,
-    # L0/L1/L2 levels, semantic search, LLM extraction). Fully local storage;
-    # needs an OpenAI-compatible chat + embedding endpoint for extraction/vectors.
-    memory_backend: str = "db"
-
-    # --- 记忆整理 dreaming (issue #187 step 4, domain/memory/dream.py) ---
-    # Before an idle sandbox is destroyed, 芝士 gets one turn to reread the
-    # topic and organize what it learned into the project's memory pools.
-    #
-    # OFF by default, and the default is the honest one. This spends model
-    # budget on a background trigger, which is the exact shape of the thing this
-    # repo parked once already (SchedulerService.tick): a clock cannot tell
-    # "there is something worth saying" from "say something". What makes this
-    # different is that the trigger is a real event — the screen is about to be
-    # closed, so this is the last moment anything CAN be checked against the
-    # workspace — not that the cost went away. Turning it on costs roughly one
-    # agent turn per organized topic, and no more than
-    # `dream_max_per_sweep` of them per sweep.
-    dream_enabled: bool = False
-    # How many topics one sweep may organize. A sweep that finds thirty idle
-    # screens must not start thirty turns at once; the rest are picked up an
-    # hour later, and nothing is lost because those screens were not closed
-    # either.
-    dream_max_per_sweep: int = 1
-    # Below this many blocks a topic is not worth a turn — a three-message
-    # topic has nothing in it that reading the transcript later would not give.
-    dream_min_blocks: int = 20
-
-    # Local storage root for the embedded OpenViking instance (AGFS + vectors).
-    openviking_data_dir: str = "./.viking"
-    # OpenAI-compatible endpoints OpenViking uses internally. These are separate
-    # from anthropic_base_url (the agent gateway speaks the Anthropic protocol;
-    # OpenViking needs the OpenAI protocol). For Zhipu the same API key works on
-    # both gateways. api keys default to anthropic_auth_token when unset.
-    openviking_llm_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
-    openviking_llm_model: str = "glm-4.5-air"
-    openviking_llm_api_key: str | None = None
-    openviking_embedding_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
-    openviking_embedding_model: str = "embedding-3"
-    openviking_embedding_api_key: str | None = None
-    openviking_embedding_dimension: int = 2048
-    # 知识沉淀是副产品 (spec §8.4): commit each finished turn to OpenViking so
-    # memories are extracted in the background. Only effective on "openviking".
-    openviking_auto_extract: bool = True
-    # Memory types OpenViking's extractor may write (built-in taxonomy names).
-    # Curated to the omem-style durable kinds — omem:user→profile/preferences,
-    # omem:feedback→preferences, omem:project→events, omem:reference→entities.
-    # identity/soul are the extractor's anchor files and MUST stay allowed
-    # (verified: without them the extraction loop writes nothing at all).
-    # trajectories/experiences are agent-SOP records that bloat recall: off.
-    openviking_memory_types: list[str] = [
-        "profile",
-        "preferences",
-        "entities",
-        "events",
-        "tools",
-        "identity",
-        "soul",
-    ]
 
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key
@@ -735,6 +670,9 @@ class Settings(BaseSettings):
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
     notification_push_drain_interval_s: int = 15
+    #: 投递账本的补发。「写入之后、发出之前崩掉」那一档没有别的出路：那一行已经和
+    #: 事件一起提交了，发送这一半没人再碰它。不跑就是一份丢失记录，不是一次补救。
+    delivery_resend_interval_s: int = 60
     task_deadline_sweep_interval_s: int = 900
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
@@ -843,9 +781,6 @@ class Settings(BaseSettings):
     email_smtp_password: str = Field(default="", alias="EMAIL_SMTP_PASSWORD")
     email_smtp_ssl: bool = Field(default=False, alias="EMAIL_SMTP_SSL_ENABLE")
 
-    notification_dedup_ttl_seconds: int = Field(
-        default=10 * 60, alias="NOTIFICATION_DEDUP_TTL_SECONDS"
-    )
     notification_email_batch_size: int = Field(
         default=100, alias="NOTIFICATION_EMAIL_BATCH_SIZE"
     )
