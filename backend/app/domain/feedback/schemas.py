@@ -433,7 +433,17 @@ class FeedbackMeta(BaseModel):
     status_ladder: list[FeedbackStatus]
     tabs: list[str]
     admin_tabs: list[str]
-    hot_supports: int
+    #: 「热门」这一栏的规则，三个数——为什么是三个而不是一个，见
+    #: `repositories.HOT_SCORE`：门槛、半衰期、补足条数各管一件事，而客户端要能把这
+    #: 一栏**说给人听**（「两周前的一票算今天半票 · 至少 5 条」）。规则留在一个数字
+    #: 里的话，读者看到的是一栏他无法解释的排序。
+    #:
+    #: 这三个数**不是**给客户端自己算热度的：排序和筛选都在服务端（`hot_score()`），
+    #: 客户端拿到的是已经排好的行。它们只用来把规则写出来——客户端算第二遍的话，
+    #: 屏幕上就会出现两套热度。
+    hot_score: float
+    hot_half_life_days: float
+    hot_min_items: int
     #: Whether the caller may see the admin surface. The client asks instead of
     #: guessing from a role string it can only get wrong.
     is_admin: bool

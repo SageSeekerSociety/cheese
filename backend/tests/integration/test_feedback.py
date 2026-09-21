@@ -15,12 +15,10 @@
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
@@ -1515,7 +1513,12 @@ def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
         "resolved",
         "deployed",
     ]
-    assert anon["hot_supports"] == 5
+    # 「热门」的规则是**三个**数一起下发的，不是一个门槛：客户端要把这一栏说给人听
+    # （「两周前的一票算今天半票 · 至少 5 条」）。只发一个 `hot_supports` 时那句话
+    # 说不出来，而这一栏的排序就成了一件读者无法解释的事。
+    assert anon["hot_score"] == 2.0
+    assert anon["hot_half_life_days"] == 14.0
+    assert anon["hot_min_items"] == 5
 
     mine = client.get("/feedback/meta", headers=session_auth_headers(as_admin)).json()[
         "data"
@@ -1722,15 +1725,17 @@ def test_unassigned_is_the_admin_queues_number_and_appears_nowhere_else(
 def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     """The number on a tab and the rows behind it are one query's answer.
 
-    `hot` means 「支持数 ≥ 5」, and it does not sink resolved *suggestions* — only
+    `hot` means 「热度 ≥ 2 分」, and it does not sink resolved *suggestions* — only
     resolved bugs sink (§8.23). The count used a bare `status != resolved`, so a
     resolved suggestion was in the list and not in the number, and the tab read
     「4」 over five cards. One predicate, or the two drift.
     """
     idea = _report(client, REPORTER, title="已实现的建议", kind="suggestion")
-    # The threshold the UI reads, not a 5 typed twice.
-    hot_supports = client.get("/feedback/meta").json()["data"]["hot_supports"]
-    for n in range(hot_supports):
+    # The rule the UI reads, not a number typed twice. 今天的一票就是一分，所以「够线」
+    # 需要的票数正好是 `hot_score` 向上取整 —— 但这里不去算它，直接给足：这条用例问的
+    # 是「数字和行对不对得上」，不是「门槛是多少」。
+    hot_score = client.get("/feedback/meta").json()["data"]["hot_score"]
+    for n in range(int(hot_score) + 1):
         r = client.post(
             f"/feedback/{idea['id']}/supports",
             headers=session_auth_headers(f"fb-supporter-{n}"),
@@ -1748,9 +1753,150 @@ def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     assert page["counts"]["hot"] == len(page["data"])
 
 
-def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
-    client, db_session: AsyncSession, _portal: BlockingPortal
-):
+def _backdate(client, days: int, *feedback_ids: str) -> None:
+    """把几条反馈按到 ``days`` 天前 —— 在 **`client` 那个 app 真正读的库**里。
+
+    不能用 `db_session`：那个夹具绑的是 `settings.database_url`（集成库），而 `client`
+    绑的是 `TEST_DATABASE_URL`（客户端库）—— **是两个库**。所以「用 `db_session` 把一行
+    改老、再用 `client` 读回来」改的是一份没有任何请求会看到的拷贝：改动静静地落空，而
+    用例通过还是失败取决于它本来要钉的那个顺序之外的东西。（本文件里原来那条并列排序的
+    用例就是这么写的，它的 docstring 只说到「这条断言本身不足以证明 tiebreak 在」，
+    没说到底为什么。）
+
+    `client.test_factory` 是那个正确的把手，`client` 夹具把它挂在 client 上就是给这种
+    用例用的。`asyncio.run` + `NullPool` 是夹具自己建库时的同一套办法：每次一个新的
+    连接、一个新的循环，不跟 TestClient 那个循环共用 asyncpg 连接（连接是绑循环的）。
+    """
+    ids = [uuid.UUID(x) for x in feedback_ids]
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback)
+                .where(Feedback.id.in_(ids))
+                .values(created_at=datetime.now(UTC) - timedelta(days=days))
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
+def test_a_stale_pile_loses_the_hot_tab_to_a_fresh_one(client):
+    """「热门」读的是此刻。第一版没有时间因素，于是它读的是「曾经」。
+
+    `supports >= 5` 是一个**累计**量：一条三个月前攒够票的反馈从此常驻这一栏，而这一栏
+    的名字承诺的是现在。一条不再更新的榜单最坏的地方不是排序差，是**读者看不出它已经
+    停止更新** —— 他以为自己看到的是这个平台此刻最热的东西。
+
+    两条路摆在一起：旧的攒了 6 票、放在 90 天前；新的五条各有 1 票、放在今天。按累计数
+    排老的赢（6 > 1）；按热度排老的只有 `6 × 0.5^6.43 ≈ 0.07` 分，而五条新的各 1 分。
+    **「热门」里应该是那五条只有 1 票的。**
+
+    这一条同时压着两件事：衰减在起作用，以及「补足」那一段在起作用 —— 五条新的都没够
+    2 分那条线，它们出现在这里是因为这一栏被补到了 `hot_min_items` 条。
+    """
+    stale = _report(client, REPORTER, title="三个月前大家都在喊的那条")
+    for n in range(6):
+        r = client.post(
+            f"/feedback/{stale['id']}/supports",
+            headers=session_auth_headers(f"fb-decay-{n}"),
+        )
+        assert r.status_code == 200, r.text
+    fresh = [
+        _report(client, f"fb-fresh-{n}", title=f"今天刚提的第 {n} 条") for n in range(5)
+    ]
+    for n, card in enumerate(fresh):
+        r = client.post(
+            f"/feedback/{card['id']}/supports",
+            headers=session_auth_headers(f"fb-decay-fresh-{n}"),
+        )
+        assert r.status_code == 200, r.text
+
+    _backdate(client, 90, stale["id"])
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    shown = {card["id"] for card in page["data"]}
+    assert stale["id"] not in shown, "90 天前的 6 票不该压过今天的 1 票"
+    assert shown == {card["id"] for card in fresh}
+    assert page["counts"]["hot"] == len(page["data"])
+
+
+def test_the_hot_tab_orders_by_heat_and_not_by_raw_supports(client):
+    """判据用哪个分，排序就得用哪个分 —— 否则上一行那句人话当场被推翻。
+
+    有衰减之后「支持数」和「热度」不是一回事了。这里两条：一条今天的 3 票（3.0 分），
+    一条 60 天前的 10 票（`10 × 0.5^4.29 ≈ 0.51` 分）。按支持数排，旧的在前；按热度排，
+    新的在前。这一栏的判据是热度，排序也必须是热度，不然「两周前的 4 票和今天的 2 票
+    一样热」这句话在这一栏里读起来是错的。
+    """
+    old_pile = _report(client, REPORTER, title="两个月前攒的十票")
+    for n in range(10):
+        client.post(
+            f"/feedback/{old_pile['id']}/supports",
+            headers=session_auth_headers(f"fb-order-old-{n}"),
+        )
+    fresh = _report(client, STRANGER, title="今天刚攒的三票")
+    for n in range(3):
+        client.post(
+            f"/feedback/{fresh['id']}/supports",
+            headers=session_auth_headers(f"fb-order-new-{n}"),
+        )
+
+    _backdate(client, 60, old_pile["id"])
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [fresh["id"], old_pile["id"]]
+
+
+def test_the_hot_tab_has_something_in_it_on_a_young_board(client):
+    """门槛是**稳态标定**，而新板子不在稳态。
+
+    5 票这个量级是按一个已经跑起来的平台定的，可平台头一两个月到不了 —— 需求方问的正是
+    这件事。一栏空的「热门」教给读者的是**这一栏坏了**，而它在开板后的整段时间里都会是
+    空的。一条 0 票的新反馈当然算不上「热门」，但**什么都不显示**更差：这一栏至少应该是
+    「现在最值得看的几条」，即使排序还没有东西越过那条线。
+
+    数字和行来自同一个子查询。补足这一段最容易在这里出岔子：只数够线的会印 0，而这一栏
+    明明开着一条。
+    """
+    only = _report(client, REPORTER, title="开板第一条")
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [only["id"]]
+    assert page["counts"]["hot"] == 1
+
+
+def test_the_hot_floor_picks_from_the_rows_the_tab_would_show(client):
+    """补足要在**这一栏自己那批行**里挑，不是在整个表里挑。
+
+    这里的五条私密各 9 票、一条公开的 0 票。补足的窗口如果不受可见性约束，被选中的正好
+    是那五条私密 —— 于是这一栏补足出来的五条全是**它自己不会显示的行**，公开那条一条都
+    没补上，**「热门」当场变成空的**：补足那一段是为了「新板子上这一栏也要有东西」，而
+    算错集合之后它连这个都做不到。
+
+    （实测确认过的失败形态就是这个，不是「私密反馈漏出来」：外层那句 `PUBLIC_ONLY` 早就
+    把它们挡住了，所以泄露这条路上本来就有一道闸。真正没有闸的是**补足的窗口**——它算的
+    是「哪些行分高」，而它该算的是「这一栏里哪些行分高」。）
+
+    所以这条用例要的不是「私密的不出现」（`PUBLIC_ONLY` 保证了），而是**它们连补足那段
+    都进不去** —— 那一段是新加的，而新加的那一段是唯一没有闸的地方。
+    """
+    public = _report(client, REPORTER, title="公开的，还没人理")
+    for n in range(5):
+        hidden = _report(
+            client, f"fb-hidden-{n}", title=f"私密的第 {n} 条", visibility="private"
+        )
+        for m in range(9):
+            client.post(
+                f"/feedback/{hidden['id']}/supports",
+                headers=session_auth_headers(f"fb-hidden-{n}-{m}"),
+            )
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [public["id"]]
+    assert page["counts"]["hot"] == 1
+
+
+def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(client):
     """An ordering two rows can tie on is not an ordering.
 
     `sort=supports` ordered by `count(supports) DESC, created_at DESC` and stopped
@@ -1772,12 +1918,13 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
     newer = _report(client, REPORTER, title="后建的")
 
     async def _pin_both_to_one_instant() -> None:
-        await db_session.execute(
-            update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
-        )
-        await db_session.flush()
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
+            )
+            await session.commit()
 
-    _portal.call(_pin_both_to_one_instant)
+    asyncio.run(_pin_both_to_one_instant())
 
     def page(start: int) -> list[dict]:
         r = client.get(

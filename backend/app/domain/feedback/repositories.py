@@ -4,9 +4,10 @@ Every method takes and returns rows; "who is allowed to see this" is a service
 question, so that a route can never get it right by accident and a test can
 exercise the rule without a database.
 
-`HOT_SUPPORTS = 5` is the prototype's own threshold (`stores/feedback.ts`), kept
-here rather than in a query string: the `hot` tab and the detail card's 「热门」
-badge have to agree, and two copies of a `5` is how they stop agreeing.
+`HOT_SCORE` / `HOT_HALF_LIFE_DAYS` / `HOT_MIN_ITEMS` define the 「热门」 tab and
+live here rather than in a query string: the tab, its count and the detail card's
+「热门」 badge have to agree, and two copies of a threshold is how they stop
+agreeing. `hot_score()` is the single expression behind all three.
 """
 
 from __future__ import annotations
@@ -42,9 +43,57 @@ from app.domain.feedback.models import (
 from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
 from app.domain.topic.models import TopicMembership
 
-#: 「热门」的阈值 —— 按支持数，不按浏览量。原型给过理由（「浏览是路过，支持是表态」），
-#: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
-HOT_SUPPORTS = 5
+#: 「热门」要多少分 —— 按支持数算，不按浏览量。原型给过理由（「浏览是路过，
+#: 支持是表态」），这里照抄。
+#:
+#: **这是热度分，不是支持数。** 第一版拿 `supports >= 5` 当判据，于是**没有任何时间
+#: 因素**：上周爆的和这周爆的同权，一条三个月前攒够 5 票的反馈永远占着这一栏，而这一
+#: 栏的名字叫「热门」——它读的是**此刻**，不是「曾经」。压着不动的那一栏最后会变成一
+#: 份不再更新的榜单，而读者看不出它已经停止更新。
+#:
+#: 衰减取半衰期，不取 Hacker News 那条 `(v-1)/(age+2)^1.8`：支持数是几个小整数，读者
+#: 应该能自己心算这一栏。半衰期能心算——「两周前的一票算今天半票」——而 `(v-1)/(t+2)^1.8`
+#: 不能，一条解释不了的排序规则，维护它的人只能靠试。
+#:
+#: 这一条线换算成人话（`HOT_HALF_LIFE_DAYS = 14`）：**今天 2 票、一周前 3 票、两周前
+#: 4 票**，一样热。三周前的 5 票（5×0.354=1.77）进不来，今天刚发的 1 票也进不来。
+HOT_SCORE = 2.0
+
+#: 一个支持数打对折要几天。改动它等于同时改上面那句人话，所以写在紧挨着的地方。
+HOT_HALF_LIFE_DAYS = 14.0
+
+#: 「热门」最少显示几条 —— **门槛是稳态标定，而新板子不在稳态**。
+#:
+#: 5 票这个量级是按一个已经跑起来的平台定的，可平台头一两个月根本到不了：需求方问的
+#: 就是这件事（「是不是有点要求太高了？低于一定数量的话应该至少放几个上去」）。一栏
+#: 空的「热门」教给读者的是**这一栏坏了**，而不是「还没有东西够热」——而它在开板后
+#: 的整段时间里都会是空的。所以够线的照常全收，不够线时按热度补到这个数：这一栏至少
+#: 是一个「现在最值得看的几条」，而不是一片空白。
+#:
+#: 补进来的仍然按同一个分数排序，所以它不是「随便填几条」——是新板子上**排序依然成
+#: 立**，只是还没有东西越过那条线。
+HOT_MIN_ITEMS = 5
+
+
+def hot_score() -> Any:
+    """一条反馈的热度：支持数按半衰期打折。**排序和判据共用这一个表达式。**
+
+    写成函数而不是在两处各拼一遍：`list_public` 用它排、`public_counts` 和判据用它筛，
+    三份拷贝迟早会有一处漏掉衰减——那一处的症状是数字和列表对不上，而两边各自看着都对。
+
+    `func.now()` 在 Postgres 里是 `transaction_timestamp()`，**一条语句里对每一行是同一
+    个瞬间**。换成在 Python 里按行取当前时间，同一个查询里每一行会比下一行老一点点，
+    排序就不再是那个查询自己的答案（同一条请求重放两次可以给出不同的顺序，OFFSET 翻页
+    于是漏行或重复）。这个理由和 `created_at` 需要 `display_no` 做二级排序是同一个。
+
+    `count` 走 LEFT JOIN，所以 0 票的行得 0 分而不是整行消失——它们要能出现在「补足」
+    那一段里（新板子上第一条反馈的支持数就是 0）。
+    """
+    age_days = func.extract("epoch", func.now() - Feedback.created_at) / 86400.0
+    return func.count(FeedbackSupport.id) * func.power(
+        0.5, age_days / HOT_HALF_LIFE_DAYS
+    )
+
 
 #: What "public" means, as one reusable predicate. `security` is in here as well
 #: as in `FeedbackService.may_see`, and the duplication is deliberate: the write
@@ -308,7 +357,8 @@ def matching(q: str) -> Any:
     would otherwise escape whatever follows it and turn a literal into syntax a
     second way.
     """
-    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{literal}%"
     return or_(
         Feedback.title.ilike(pattern, escape="\\"),
         Feedback.summary.ilike(pattern, escape="\\"),
@@ -417,7 +467,23 @@ class FeedbackRepository:
         # must refuse an unknown sort do it before arriving here (`SORTS` in
         # `services.py`); this function never has to know the vocabulary.
         stmt = select(Feedback).where(Feedback.deleted_at.is_(None), *where)
-        if sort == "supports":
+        if sort == "hot":
+            # 「热门」按**热度**排，不按支持数排。两者在有时间衰减之后不是一回事了：
+            # 一条两周前的 4 票和一条今天的 2 票热度相同（都是 2.0），按原始支持数排会
+            # 把旧的那条放在前面，于是上面那行「两周前的 4 票和今天的 2 票一样热」当场
+            # 被这个排序推翻。判据用哪个分，排序就用哪个分。
+            stmt = (
+                stmt.outerjoin(
+                    FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
+                )
+                .group_by(Feedback.id)
+                .order_by(
+                    hot_score().desc(),
+                    Feedback.created_at.desc(),
+                    Feedback.display_no.desc(),
+                )
+            )
+        elif sort == "supports":
             # `hot` sorts by support count. `GROUP BY feedback.id` rather than a
             # denormalised counter column: MVP lists 20 rows, and this repo has
             # no precedent for a redundant counter (`BlockReaction` has none,
@@ -447,6 +513,44 @@ class FeedbackRepository:
             Feedback.deleted_at.is_(None), *where
         )
         return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    def _hot_ids(self, base: Sequence[Any]) -> Any:
+        """「热门」那一栏的行集，作为一个子查询——**列表和计数问的是同一个**。
+
+        两段并起来：够线的（热度 ≥ `HOT_SCORE`）全收，再加上按热度排的前
+        `HOT_MIN_ITEMS` 条。后者是补足，不是「随便填几条」：新板子上一条都不够线时，
+        它给出的是这个平台上**现在最值得看的五条**，顺序照样成立。
+
+        `base` 是那一栏自己的可见性与沉底条件（`PUBLIC_ONLY` + `_tab_where("hot")`），
+        补足必须在**同一批行**里挑。把补足写在整个表上，症状是标签上写 5、点开只有 2
+        条——数出来的行和画出来的行来自两个不同的集合。这一段的返回值直接喂给
+        `Feedback.id.in_(...)`，列表和 `public_counts` 各用一次，所以那句「数字和列表
+        不许对不上」不是靠人记住，是靠它们没有第二份定义可用。
+        """
+        scored = (
+            select(
+                Feedback.id.label("id"),
+                hot_score().label("score"),
+                Feedback.created_at.label("created_at"),
+            )
+            .outerjoin(FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id)
+            .where(Feedback.deleted_at.is_(None), *base)
+            .group_by(Feedback.id)
+            .subquery()
+        )
+        above = select(scored.c.id).where(scored.c.score >= HOT_SCORE)
+        # 补足那一段要**确定性**排序：`created_at` 来自应用时钟，同一毫秒建的
+        # 两行比相等，
+        # 而 `LIMIT` 在一个能并列的排序上每次可以给出不同的那几条——翻页时会看到一条
+        # 忽有忽无。`id` 是最后那个不会并列的问题。
+        floor = (
+            select(scored.c.id)
+            .order_by(
+                scored.c.score.desc(), scored.c.created_at.desc(), scored.c.id.desc()
+            )
+            .limit(HOT_MIN_ITEMS)
+        )
+        return above.union(floor)
 
     def _tab_where(self, tab: str) -> list[Any]:
         """The four public tabs, defined once so list and counts cannot drift.
@@ -486,20 +590,22 @@ class FeedbackRepository:
     async def list_public(
         self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
+        # Everything that narrows the tab **except** the hot rule itself. The hot
+        # rule is then expressed against this list rather than appended to it —
+        # `where.append(x(_hot_ids(where)))` reads as if the subquery could see the
+        # append, and the next person to reorder these two lines would make that
+        # true. `q` is part of it too: searching inside 「热门」 asks 「这一栏里哪些
+        # 命中」，而补足的那几条也必须来自同一批命中，否则搜完之后这一栏又会多出几条
+        # 不匹配的行。
         where: list[Any] = list(PUBLIC_ONLY)
         where.extend(self._tab_where(tab))
         if q:
             where.append(matching(q))
-        # `hot` means 「支持数 >= 5」 AND sorted by supports — the filter is part
-        # of the tab's definition, not just its ordering.
         if tab == "hot":
-            hot = (
-                select(FeedbackSupport.feedback_id)
-                .group_by(FeedbackSupport.feedback_id)
-                .having(func.count(FeedbackSupport.id) >= HOT_SUPPORTS)
-            )
-            where.append(Feedback.id.in_(hot.scalar_subquery()))
-            sort = "supports"
+            # `hot` is a filter **and** an ordering, and both come from
+            # `hot_score()` — the tab's definition, not just its sort.
+            where.append(Feedback.id.in_(self._hot_ids(where)))
+            sort = "hot"
         # No membership test here: `_list_stmt` is total (anything that is not
         # `supports` is newest-first), so the vocabulary lives in one place —
         # `services.SORTS`. The public route keeps accepting an unknown sort
@@ -527,11 +633,7 @@ class FeedbackRepository:
         all_count = await self._count([*where, *self._tab_where("all")])
         active_count = await self._count([*where, *self._tab_where("active")])
         resolved_count = await self._count([*where, *self._tab_where("resolved")])
-        hot = (
-            select(FeedbackSupport.feedback_id)
-            .group_by(FeedbackSupport.feedback_id)
-            .having(func.count(FeedbackSupport.id) >= HOT_SUPPORTS)
-        )
+        hot_base = [*where, *self._tab_where("hot")]
         # `_tab_where("hot")`, not a second copy of the condition: this is the
         # number on the tab and the rows behind it, and the two were one status
         # apart — a finished suggestion is in the hot list (it does not sink; see
@@ -543,12 +645,12 @@ class FeedbackRepository:
         #
         # The docstring above promises one definition for list and counts; this is
         # what that costs when it is not kept.
+        # `_hot_ids(hot_base)` — the same subquery `list_public` filters with. The
+        # floor makes this number *not* "how many cleared the bar": on a young board
+        # it is 「这一栏至少有 5 条」, which is what the tab will open to. Counting
+        # only the qualifiers would print 0 on a tab that shows 5 rows.
         hot_count = await self._count(
-            [
-                *where,
-                *self._tab_where("hot"),
-                Feedback.id.in_(hot.scalar_subquery()),
-            ]
+            [*hot_base, Feedback.id.in_(self._hot_ids(hot_base))]
         )
         return {
             "all": all_count,
