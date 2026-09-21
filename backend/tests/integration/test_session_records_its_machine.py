@@ -23,6 +23,7 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef, deployment_harness
 from app.domain.agent.harness.channel import Placement
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
 
@@ -204,12 +205,17 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(client, room):
 async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     client, room, monkeypatch
 ):
-    """换过骨架的房间，冷启动只归最后落位的那条会话——其他通道一概不认领。
+    """换过骨架的房间，冷启动只归最后落位的那条会话——别的骨架一概不认领。
 
     会话行按 (房间, agent, 骨架) 各占一行，而换骨架的时候没有任何地方去把旧那行
     的位置清空，所以这样的房间带着两行非空的 ``runtime_location``。房间的屏只有
-    一块：把两行都发给各条通道，中心通道会照着那条陈旧的 claude-code 行去认领这
-    块其实是 pi 开的屏，pi 通道也认领同一块，房间归最后恢复完的那条。
+    一块：认错了，就是拿 Claude Code 的拼装器去翻译 pi 说的话，再当成自己的报进
+    房间。
+
+    认领的判据在 runtime 那一侧，是它自己的骨架——通道答不出这个，一条
+    ``CentralChannel`` 同时被 Claude Code 和 Codex 两个 runtime 包着
+    （``build_compute_pool``）。所以通道把落在自己这儿的会话原样交出来，骨架的名
+    字当 ``running`` 一起交（``Channel.discover`` 的契约）。
     """
     project, topic = room
     del project
@@ -234,9 +240,11 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     assert [(row[1], row[3]) for row in placed] == [(topic, "pi")]
 
     central = channel(client, monkeypatch)
-    central.restore_screens = AsyncMock(return_value=[])
+    central.restore_screens = AsyncMock(
+        side_effect=lambda scopes: [(p, t, None, None) for p, t, _ in scopes]
+    )
     central.executor.discover = AsyncMock(return_value=[])
 
-    await central.discover()
-
-    assert central.restore_screens.await_args.args[0] == []
+    assert [found[3] for found in await central.discover()] == ["pi"]
+    # 这块屏是 pi 开的，所以 Claude Code 那一侧一条都不认领。
+    assert await ClaudeCodeRuntime(central).recover() == []
