@@ -385,26 +385,29 @@ class AdmissionGate:
 # echo of an identity that has already left the building is not recoverable.
 #
 # The table is the contract: a path, a status and the fields the client must
-# find. Tests assert it entry by entry, and a boot that asks for a path absent
-# from it is a boot that reached upstream — which is what the acceptance run
-# watches for.
+# find. It lives in control_answers.json rather than in this file because it has
+# a second reader — cli/e2e scripts a stand-in Anthropic API from the same rows
+# and boots a REAL Claude Code against them, then fails on any non-model path
+# that real client asked for and this table did not answer 2xx. A row missing
+# here is a request that goes upstream on the platform's credential, and that
+# test is what finds one before a deployment does.
 
-_PROFILE = "/api/oauth/profile"
-_SETTINGS = "/api/claude_code/settings"
-_POLICY = "/api/claude_code/policy_limits"
-# Feature evaluation. Cheese supplies its own flags; the three below are what
-# turn on the remote-control bridge the platform drives every session through.
-_FLAGS_PREFIX = "/api/eval/"
-# Telemetry. RC payloads carry control-session identifiers, so neither they nor
-# an upstream credential may cross this boundary.
-_TELEMETRY_PREFIX = "/api/event_logging/"
-TELEMETRY_HOSTS = frozenset({"api.statsig.com", "statsig.anthropic.com"})
+TABLE_PATH = Path(__file__).resolve().with_name("control_answers.json")
+_TABLE = json.loads(TABLE_PATH.read_text(encoding="utf-8"))
 
-RC_FLAGS = {
-    "tengu_ccr_bridge": True,
-    "tengu_ccr_v2_bridge_create_cli": True,
-    "tengu_ccr_v2_session_crud_cli": True,
-}
+_ROWS: list[dict] = _TABLE["rows"]
+# Cheese supplies its own feature flags; these three are what turn on the
+# remote-control bridge the platform drives every session through.
+RC_FLAGS: dict = _TABLE["rc_flags"]
+# Telemetry hosts. RC payloads carry control-session identifiers, so neither
+# they nor an upstream credential may cross this boundary — whatever path they
+# are sent to.
+TELEMETRY_HOSTS = frozenset(
+    host for row in _ROWS for host in row.get("hosts", ())
+)
+# How much of a /v1/messages head ModelRewrite may hold while it looks for the
+# top-level `model` member. See ModelRewrite.
+MODEL_REWRITE_LIMIT = int(_TABLE["model_rewrite_limit_bytes"])
 
 
 @dataclass(frozen=True)
@@ -430,40 +433,39 @@ def control_answer(
     without the claim has no RC route for them to take.
     """
     path = path.split("?", 1)[0]
-    if path == _PROFILE:
+    for row in _ROWS:
+        if not _row_matches(row, host, path):
+            continue
+        body = row["body"]
+        if body is None:
+            return Answer(row["status"], b"")
         return Answer(
-            200,
-            json.dumps(
-                {
-                    "account": {"uuid": topic, "email": "cheese@agent.cheese.local"},
-                    "organization": {"uuid": project},
-                }
-            ).encode(),
+            row["status"], json.dumps(_fill(body, project, topic, rc)).encode()
         )
-    if path == _SETTINGS:
-        return Answer(204, b"")
-    if path == _POLICY:
-        return Answer(
-            200,
-            json.dumps(
-                {"restrictions": {"allow_remote_control": {"allowed": True}}}
-            ).encode(),
-        )
-    if path.startswith(_FLAGS_PREFIX):
-        return Answer(
-            200,
-            json.dumps(
-                {
-                    "features": {
-                        name: {"defaultValue": value}
-                        for name, value in (RC_FLAGS if rc else {}).items()
-                    }
-                }
-            ).encode(),
-        )
-    if path.startswith(_TELEMETRY_PREFIX) or host in TELEMETRY_HOSTS:
-        return Answer(200, b"{}")
     return None
+
+
+def _row_matches(row: dict, host: str, path: str) -> bool:
+    if "exact" in row:
+        return path == row["exact"]
+    if "prefix" in row:
+        return path.startswith(row["prefix"])
+    return host in row.get("hosts", ())
+
+
+def _fill(value, project: str, topic: str, rc: bool):
+    """Substitute the table's placeholders with this caller's own facts."""
+    if isinstance(value, dict):
+        return {k: _fill(v, project, topic, rc) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_fill(v, project, topic, rc) for v in value]
+    if value == "{project}":
+        return project
+    if value == "{topic}":
+        return topic
+    if value == "{rc_flags}":
+        return dict(RC_FLAGS) if rc else {}
+    return value
 
 
 class ModelRewrite:
@@ -486,19 +488,24 @@ class ModelRewrite:
     naive first-match would rewrite a user's own words. This tracks string and
     escape state and only accepts the member at depth 1 of the top-level object.
 
-    ``limit`` is 64KiB and that number is NOT yet backed by a captured request:
-    where the client serializes its top-level ``model`` member is the client's
-    choice, and Claude Code's ``tools`` + ``system`` alone run to tens of KB, so
-    a body that puts ``model`` after ``messages`` would miss on every turn of a
-    long conversation. A miss is loud (`missed`, and the caller logs it) but it
-    is not free: on the subscription the turn falls back to the CLI's own
-    choice, and on the gateway it fails outright because LiteLLM does not serve
-    the Claude names. Raise it against a real capture, not by guesswork — the
-    buffer is held in RAM and unbounded buffering is the #654 OOM.
+    ``limit`` is the head budget from control_answers.json, and cli/e2e asserts
+    it against a REAL Claude Code request: the recorded body's top-level
+    ``model`` member has to arrive inside it, ahead of the bulk members. Where a
+    client serializes that member is the client's choice, and Claude Code's
+    ``tools`` + ``system`` alone run to tens of KB — so a client that moved it
+    after ``messages`` would miss on every turn of a long conversation, and that
+    is a change the e2e catches rather than something to guess a bigger number
+    against. The buffer is held in RAM; unbounded buffering is the #654 OOM.
+
+    A miss REFUSES the turn (I27): nothing is forwarded, and the caller turns
+    the upstream's answer into a refusal that names the reason. Forwarding the
+    head unchanged — which is what this used to do — ran the turn on whatever
+    model the CLI had picked for itself: a silent swap of the brain on the
+    subscription, and on the gateway a hard failure LiteLLM reports as its own.
     """
 
     def __init__(
-        self, model: str, limit: int = 1 << 16, keep_haiku: bool = False
+        self, model: str, limit: int = MODEL_REWRITE_LIMIT, keep_haiku: bool = False
     ) -> None:
         self._model = model
         self._limit = limit
@@ -506,20 +513,24 @@ class ModelRewrite:
         self._buf = b""
         self._done = False
         # True once the head went past without a top-level `model` member. The
-        # body is forwarded unchanged — the caller logs it, because it means the
-        # turn runs on whatever the client asked for rather than on the binding.
+        # body is then DROPPED rather than forwarded: this turn cannot be put on
+        # the model the card is bound to, and the exits are refuse or wait, not
+        # run it on something else (I27). The caller reports the reason.
         self.missed = False
 
     def feed(self, chunk: bytes) -> bytes:
         """One chunk in, the chunk to forward out. ``b""`` ends the stream."""
+        if self.missed:
+            # Refused. Nothing more of this body goes upstream, whatever else
+            # the client is still sending.
+            return b""
         if self._done:
             return chunk
         if not chunk:
             # End of stream with the head still held: nothing more is coming.
-            self._done = True
+            self._buf = b""
             self.missed = True
-            out, self._buf = self._buf, b""
-            return out
+            return b""
         self._buf += chunk
         span = top_level_model_span(self._buf)
         if span is not None:
@@ -536,10 +547,10 @@ class ModelRewrite:
             self._buf = b""
             return out
         if len(self._buf) >= self._limit:
-            self._done = True
+            # The memory bound still holds: the head is dropped, not kept.
+            self._buf = b""
             self.missed = True
-            out, self._buf = self._buf, b""
-            return out
+            return b""
         return b""
 
 
@@ -579,8 +590,17 @@ def top_level_model_span(data: bytes) -> tuple[int, int] | None:
                 return None
             if depth == 1 and data[i:end] == b'"model"':
                 j = _skip_space(data, end)
-                if j >= n or data[j : j + 1] != b":":
+                if j >= n:
+                    # The bytes after it have not arrived; ask again next chunk.
                     return None
+                if data[j : j + 1] != b":":
+                    # A top-level string whose CONTENT is "model" — a value, not
+                    # a key. Giving up here would give up for good: every later
+                    # chunk rescans from the start and lands on the same string,
+                    # so the whole body would miss and the turn be refused for a
+                    # member that is sitting further along.
+                    i = end
+                    continue
                 j = _skip_space(data, j + 1)
                 if j >= n:
                     return None

@@ -73,6 +73,7 @@ from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     BINDING,
     GATEWAY,
+    MODEL_REWRITE_LIMIT,
     TELEMETRY_HOSTS,
     AdmissionGate,
     Meter,
@@ -331,10 +332,12 @@ def _write_bound_model(
     def write(chunk: bytes) -> bytes:
         out = rewrite.feed(chunk)
         if rewrite.missed and not flow.metadata.get("cheese_model_missed"):
-            flow.metadata["cheese_model_missed"] = True
+            flow.metadata["cheese_model_missed"] = model
             logger.error(
-                "no top-level model member in the first 64KiB of a /v1/messages "
-                "body; the turn runs on the client's own choice, not on %s",
+                "no top-level model member in the first %d bytes of a "
+                "/v1/messages body; refusing the turn rather than running it on "
+                "the client's own choice instead of %s",
+                MODEL_REWRITE_LIMIT,
                 model,
             )
         return out
@@ -857,6 +860,12 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    if flow.metadata.get("cheese_model_missed"):
+        # Left buffered on purpose: response() replaces it wholesale with the
+        # refusal, and a streamed body would already be on its way to the client
+        # by then. It is a short upstream error — the body it answers was never
+        # sent — so nothing is held for the length of a turn.
+        return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
             "content-type", ""
@@ -1014,12 +1023,58 @@ def _report_gateway_failure(flow: http.HTTPFlow) -> None:
     task.add_done_callback(_failure_reports.discard)
 
 
+def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
+    """Turn a dropped body into a refusal that names why (I27).
+
+    The binding could not be written into this request, so `_write_bound_model`
+    forwarded none of the body and the pool answered the empty request with an
+    error of its own — an error about JSON, which says nothing about the card.
+    Replacing it here is the only way the reason reaches the client: mitmproxy
+    decides streaming when `requestheaders` returns, and a flow already
+    streaming its request body cannot be given a response (see `_refuse`), so
+    the first moment a refusal can be DELIVERED is when the pool's own answer
+    comes back. Nothing was spent to get it: the pool was sent an empty body.
+    """
+    model = flow.metadata.get("cheese_model_missed")
+    if not model or flow.response is None:
+        return False
+    logger.error(
+        "refusing a turn whose body never named a model in its head: "
+        "binding=%s pool=%s upstream_status=%s",
+        model,
+        flow.metadata.get("cheese_pool") or "subscription",
+        flow.response.status_code,
+    )
+    flow.response = http.Response.make(
+        400,
+        json.dumps(
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": (
+                        "cheese: this request's body did not name a model in "
+                        f"its first {MODEL_REWRITE_LIMIT} bytes, so the model "
+                        f"bound on the card ({model}) could not be written into "
+                        "it; refusing rather than running the turn on another "
+                        "model"
+                    ),
+                },
+            }
+        ).encode(),
+        {"Content-Type": "application/json"},
+    )
+    return True
+
+
 def error(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
 
 
 def response(flow: http.HTTPFlow) -> None:
+    if _answer_a_missed_binding(flow):
+        return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
         _report_gateway_failure(flow)

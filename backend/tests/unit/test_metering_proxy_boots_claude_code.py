@@ -99,6 +99,25 @@ def test_telemetry_is_consumed_here_whichever_host_it_was_sent_to():
         assert json.loads(answer.body) == {}
 
 
+def test_every_row_of_the_shared_table_is_answered_from_it():
+    """The table is a file, not a literal, because cli/e2e reads the same rows
+    to script a stand-in Anthropic API and boot a real Claude Code against
+    them. A row nobody serves would leave that test green while the boot it
+    checks goes upstream, so each row is asserted to come back from here."""
+    table = json.loads(core.TABLE_PATH.read_text(encoding="utf-8"))
+    for row in table["rows"]:
+        host = "api.anthropic.com"
+        if "exact" in row:
+            path = row["exact"]
+        elif "prefix" in row:
+            path = row["prefix"] + "something"
+        else:
+            host, path = row["hosts"][0], "/v1/rgstr"
+        answer = core.control_answer(host, path, PROJECT, TOPIC)
+        assert answer is not None, row
+        assert answer.status == row["status"], row
+
+
 def test_a_model_request_is_not_in_the_table():
     """The table answers everything a boot needs and nothing a turn needs: an
     inference request has to reach a pool, and one answered here would be a
@@ -168,25 +187,50 @@ def test_the_word_model_inside_a_message_is_not_the_model():
     assert "claude-haiku-4-5" in rewritten["messages"][0]["content"]
 
 
-def test_a_body_with_no_model_member_is_forwarded_unchanged_and_says_so():
-    """Not a third exit. The request still goes where admission sent it; what
-    this records is that the turn ran on the client's own choice, which is the
-    one thing the control point cannot silently swallow."""
+def test_a_body_with_no_model_member_is_refused_rather_than_run_as_it_came():
+    """The third exit, closed (I27). Forwarding this body unchanged would run
+    the turn on whatever model the CLI picked for itself — a silent swap of the
+    brain on the subscription, a hard LiteLLM failure on the gateway — so
+    nothing is forwarded and the caller answers with a refusal that says why."""
     body = json.dumps({"messages": []}).encode()
     rewrite = core.ModelRewrite("claude-opus-5")
     assert rewrite.feed(body) == b""
-    assert rewrite.feed(b"") == body
+    assert rewrite.feed(b"") == b""
     assert rewrite.missed is True
 
 
-def test_a_head_larger_than_the_limit_is_released_rather_than_held():
+def test_nothing_of_a_refused_body_goes_upstream_afterwards():
+    """The miss is decided mid-body, and the chunks still arriving from the
+    client must not become a request that runs."""
+    rewrite = core.ModelRewrite("claude-opus-5", limit=16)
+    assert rewrite.feed(b'{"messages":[{"role":"user","content":"hi"}]') == b""
+    assert rewrite.missed is True
+    assert rewrite.feed(b"}") == b""
+    assert rewrite.feed(b"") == b""
+
+
+def test_a_head_larger_than_the_limit_is_dropped_rather_than_held():
     """The memory bound is the whole point: a body whose model member never
     arrives must not turn into an unbounded buffer."""
     body = json.dumps({"system": "x" * 4096, "model": "claude-sonnet-4-5"}).encode()
     rewrite = core.ModelRewrite("claude-opus-5", limit=256)
     out = rewrite.feed(body[:512]) + rewrite.feed(body[512:]) + rewrite.feed(b"")
-    assert out == body
+    assert out == b""
     assert rewrite.missed is True
+
+
+def test_a_top_level_string_that_reads_model_does_not_end_the_scan():
+    """`"model"` at the top level is only the binding when a colon follows it.
+    A string VALUE that happens to read "model" is not, and abandoning the scan
+    there abandons it for good — every later chunk rescans from the start and
+    stops on the same string, so the real member further along is never found
+    and a turn that named its model perfectly well gets refused."""
+    body = json.dumps(
+        {"metadata": "model", "system": "model", "model": "claude-sonnet-4-5"}
+    ).encode()
+    assert json.loads(_rewrite(body))["model"] == "claude-opus-5"
+    # And in pieces, since the scan reruns on every chunk.
+    assert json.loads(_rewrite(body, chunk=5))["model"] == "claude-opus-5"
 
 
 @pytest.mark.parametrize(

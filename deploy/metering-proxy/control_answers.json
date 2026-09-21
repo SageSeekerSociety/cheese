@@ -1,0 +1,67 @@
+{
+  "_read_me": [
+    "The answer table: every non-model request Claude Code makes on its way up,",
+    "and what this proxy sends back instead of letting it reach Anthropic.",
+    "A machine has ONE launch shape now (结论 46), so this table is the only",
+    "thing that gets a screen to a prompt on a deployment that owns no",
+    "subscription at all — and the only thing standing between a sandbox and an",
+    "echo of the platform account's uuid, email and organization.",
+    "",
+    "Data, not prose, because it has two readers: cheese_billing_core.py serves",
+    "it, and cli/e2e's claudee2e suite scripts a stand-in Anthropic API from it",
+    "so a REAL Claude Code process boots under exactly these answers. That test",
+    "records every non-model path the real client asks for and fails on any that",
+    "is not answered 2xx here — which is how a row missing from this table is",
+    "found before production finds it, a missing row being a request that goes",
+    "upstream on the platform's credential.",
+    "",
+    "Placeholders: {project} and {topic} come from the caller's VERIFIED scoped",
+    "token, {rc_flags} expands to rc_flags below for a session whose token grants",
+    "the Cheese RC transport and to {} for one that does not.",
+    "",
+    "Rows are matched in order: `exact` on the path (query stripped), `prefix` on",
+    "the path, `hosts` on the request's host whatever the path. A body of null is",
+    "sent as an empty body."
+  ],
+  "rc_flags": {
+    "tengu_ccr_bridge": {"defaultValue": true},
+    "tengu_ccr_v2_bridge_create_cli": {"defaultValue": true},
+    "tengu_ccr_v2_session_crud_cli": {"defaultValue": true}
+  },
+  "model_rewrite_limit_bytes": 65536,
+  "rows": [
+    {
+      "exact": "/api/oauth/profile",
+      "status": 200,
+      "body": {
+        "account": {"uuid": "{topic}", "email": "cheese@agent.cheese.local"},
+        "organization": {"uuid": "{project}"}
+      }
+    },
+    {
+      "exact": "/api/claude_code/settings",
+      "status": 204,
+      "body": null
+    },
+    {
+      "exact": "/api/claude_code/policy_limits",
+      "status": 200,
+      "body": {"restrictions": {"allow_remote_control": {"allowed": true}}}
+    },
+    {
+      "prefix": "/api/eval/",
+      "status": 200,
+      "body": {"features": "{rc_flags}"}
+    },
+    {
+      "prefix": "/api/event_logging/",
+      "status": 200,
+      "body": {}
+    },
+    {
+      "hosts": ["api.statsig.com", "statsig.anthropic.com"],
+      "status": 200,
+      "body": {}
+    }
+  ]
+}

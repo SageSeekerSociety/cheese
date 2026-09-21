@@ -1308,3 +1308,45 @@ def test_every_forwarded_message_turn_still_streams_its_body(monkeypatch, tmp_pa
 
         assert flow.response is None, f"{what}: was refused, not forwarded"
         assert flow.request.stream is True, f"{what}: forwards a buffered body"
+
+
+def test_a_turn_whose_body_never_names_a_model_is_refused_not_run_as_it_came(
+    monkeypatch, tmp_path
+):
+    """I27's third exit, closed. The launch environment names no model, so the
+    binding reaches the turn by being written into the request body — and when
+    that write cannot happen, forwarding the body as it came runs the turn on
+    whatever model the CLI picked for itself. On the subscription that is a
+    silent change of brain; on the gateway it is a hard LiteLLM failure
+    reported as the pool's own. So none of the body is forwarded, and the
+    client is told why.
+
+    The refusal is delivered on the way back rather than from `requestheaders`:
+    mitmproxy fixes the streaming decision when that hook returns, and a flow
+    already streaming its request body can no longer be given a response (see
+    `_refuse`). Nothing was spent to reach that moment — the pool was sent an
+    empty request.
+    """
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    _with_admission(mod, monkeypatch, None, model="claude-opus-5")
+    flow = _make_flow(caller_bearer=_scoped_token(secret))
+
+    asyncio.run(mod.requestheaders(flow))
+    assert callable(flow.request.stream), "the body must still stream"
+
+    body = json.dumps({"messages": [{"role": "user", "content": "跑一下测试"}]})
+    assert flow.request.stream(body.encode()) == b"", "no model member in the head"
+    assert flow.request.stream(b"") == b"", "and none of it goes upstream"
+
+    flow.response = _make_response(status_code=400, content_type="application/json")
+    mod.responseheaders(flow)
+    assert getattr(flow.response, "stream", False) is False, "stays buffered"
+    mod.response(flow)
+
+    assert flow.response.status_code == 400
+    said = json.loads(flow.response.content)["error"]["message"]
+    assert "claude-opus-5" in said, said
+    assert "cheese" in said, said
