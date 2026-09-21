@@ -1,4 +1,7 @@
-"""Where the platform's own files sit on a machine it borrows.
+"""A place: what of ours is on a machine we borrow, and what it can do.
+
+Where the platform's own files sit
+----------------------------------
 
 A room's machine belongs to someone else. Everything the platform installs on
 it — the executor and its helpers, the CLI, the environment runner, the launch
@@ -36,6 +39,15 @@ exec'd out of a string, one is shipped into the agent's container as a
 standalone program — and the connector is Go. Their copies are checked against
 this module by `backend/tests/unit/test_footprint_root.py`. The values are
 chosen here and nowhere else.
+
+What it can do
+--------------
+
+The same module answers the other question about that borrowed machine: what
+this place gives out. The capability a place can be asked for is named here, so
+that the one physical fact behind it — are the hands the very machine the
+session process runs on — is what upstream reads, and nothing has to ask a
+channel which class it is (结论 24).
 """
 
 import asyncio
@@ -212,3 +224,23 @@ async def write(
             device_id, screen, destination, data, timeout=timeout
         )
     return str(answer["path"])
+
+
+# --- 能力位：这个地点给得出什么 ------------------------------------------------
+#
+# 上游读能力位，不读类名。一张按类名维护的能力表注定是「写下它那天恰好有这个本事
+# 的通道」的清单，下一个学会的永远不会被加进去 —— ``Channel.builds_model_env`` 那
+# 段注释讲的就是这件事，而 ``compute.py`` 的 ``isinstance(c, DeviceChannel)`` 是它
+# 的完成态：读起来像一条能力规则，实际上两个子类都继承了 ``DeviceChannel``，它恒为
+# 真。
+
+#: 这一份手就是跑会话进程的那台机器——工具不经执行器再跳一程。它说的是物理事实，
+#: 不是通道的类名：``compute.py`` 读它来决定哪些通道上挂得住一个把进程和工作区放
+#: 在同一台机器上的骨架 (pi)。
+# 今天这张表上只有这一位，因为今天只有这一件事是上游真的在问的。多的那几位（平台
+# 能不能销毁这台机器、这个地点给不给得出「休眠」这第三态）跟着**真正实现它们的那个
+# PR** 一起出生 —— 一位没有读者的能力位，和一张按类名写死的表一样，都是「写下它那天
+# 的样子」，区别只是它还骗人说这里已经有一个可以问的接口。同理，推它的那一行就写在
+# 唯一读物理事实的地方（``Channel.capabilities``）：今天只有一个读者，第二种地点要
+# 报一张不一样的表的那天，再把推导收成一个函数。
+HANDS_HERE = "hands_here"

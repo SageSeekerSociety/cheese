@@ -1112,20 +1112,16 @@ export interface AgentConfiguration {
 
 export interface ProjectAgent {
   configuration: AgentConfiguration
-  // Current project rosters always return saved IDs; nullable for older clients.
-  id: string | null
+  id: string
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
   // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
-  // 旧客户端和还没保存的行没有。
-  seat_handle?: string | null
+  seat_handle: string
   type_name: string | null
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // Retained for older clients; current project roster entries are always saved.
-  configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
