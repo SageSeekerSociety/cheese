@@ -1,0 +1,13 @@
+services:
+  app-router:
+    image: mirror.gcr.io/library/nginx:1.27-alpine
+    container_name: cheese-app-router
+    network_mode: host
+    volumes:
+      - ${ACTIVE_BACKEND_DIR:?active directory required}:/etc/nginx/active:ro
+      - ${ACTIVE_BACKEND_DIR:?active directory required}/app-router.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"

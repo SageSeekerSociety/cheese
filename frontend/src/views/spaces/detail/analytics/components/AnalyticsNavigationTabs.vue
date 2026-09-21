@@ -26,6 +26,7 @@ const tabs = [
   { name: 'SpacesDetailAnalyticsPublishers', label: '老师', icon: 'mdi-account-tie-outline' },
   { name: 'SpacesDetailAnalyticsTasks', label: '题目', icon: 'mdi-clipboard-text-outline' },
   { name: 'SpacesDetailAnalyticsParticipants', label: '参与者', icon: 'mdi-account-group-outline' },
+  { name: 'SpacesDetailAnalyticsLearning', label: '学习', icon: 'mdi-school-outline' },
 ]
 </script>
 

@@ -23,7 +23,7 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
-from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
@@ -114,16 +114,26 @@ class CentralChannel(DeviceChannel):
         async with factory() as db:
             sessions = await AgentSessionService(db).placed_sessions()
         placed = {room_id for _, room_id, _, _, _ in sessions}
+        # 这条通道认领的是「落在我这里的会话」，不是「某个骨架的会话」：同一条
+        # CentralChannel 被 Claude Code 和 Codex 两个 runtime 各包一次
+        # (``compute.build_compute_pool``)，所以通道答不出哪一条是谁的。骨架的名
+        # 字原样交回去当 ``running``，认领由 runtime 拿自己的 ``self.harness`` 去
+        # 做（``Channel.discover`` 的契约就是这么写的）。
+        runs: dict[uuid.UUID, str] = {}
         for project_id, room_id, _handle, harness, place in sessions:
-            if place.channel != self.name or harness != CLAUDE_CODE:
+            if place.channel != self.name:
                 continue
             center = place.machine
             if (device_id is None or center == device_id) and self._hub.is_online(
                 center
             ):
                 self._subscription_devices[room_id] = center
+                runs[room_id] = harness
                 scopes.append((project_id, room_id, center))
-        found = await self.restore_screens(scopes)
+        found = [
+            (project_id, room_id, screen, runs.get(room_id))
+            for project_id, room_id, screen, _ in await self.restore_screens(scopes)
+        ]
         # Finish consuming turns that began before this deployment. Their next
         # opening transfers the transcript; no new prompt starts on the old host.
         for scope in await self.executor.discover(device_id):

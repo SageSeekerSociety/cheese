@@ -241,7 +241,7 @@ async def test_standalone_owner_survives_client_disconnect(
             assert not CodexBacklog(mirror).unread()
             consume, activity = AsyncMock(), AsyncMock()
             subscription = Subscription(
-                SessionRef(uuid.uuid4(), uuid.uuid4()),
+                SessionRef(uuid.uuid4(), uuid.uuid4(), harness="codex"),
                 tmp_path / "subscription.sqlite",
                 rpc,
                 consume,

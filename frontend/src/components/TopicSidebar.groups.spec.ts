@@ -13,7 +13,7 @@ import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
 
@@ -283,4 +283,27 @@ describe('左侧话题列表：按相关性分两组', () => {
     const archivedHead = container.querySelector('.archived-toggle')
     expect(archivedHead?.textContent).toContain('已归档')
   })
+})
+
+it('reveals and scrolls to the newly selected room immediately', async () => {
+  const scroll = vi.fn()
+  const original = HTMLElement.prototype.scrollIntoView
+  HTMLElement.prototype.scrollIntoView = scroll
+  try {
+    const view = mount()
+    const created = topic('new-room', 'root', { i_participate: true })
+    await view.rerender({
+      inner: {
+        projects: [],
+        selectedProjectId: 'p1',
+        topics: [created, ...topics],
+        selectedTopicId: 'new-room',
+        loadingTopics: false,
+      },
+    })
+    expect(visibleTitles(view.container)).toContain('new-room')
+    await vi.waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: 'nearest' }))
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original
+  }
 })

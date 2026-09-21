@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     # needs no entry: everything the project can use is something it can drive,
     # and listing those again would be a second copy to fall out of date.
     agent_harness_models: dict[str, list[str]] = {}
+    # 这套部署跑哪个骨架（结论 28）。骨架是开发者选项，不是产品概念：它不在类型
+    # 上也不在实例上，普通用户看不到，单个项目可以在自己的设置里盖过这一行。
+    # 空着 = 注册表里那个未配置时的骨架；注册表是唯一写着骨架名字的地方（不变量
+    # I5），所以这里给不出一个名字当默认值。名字不在注册表里，启动就失败——
+    # 悄悄跑另一个骨架，正是结论 28 要防的那件事。
+    agent_harness: str = ""
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
@@ -495,9 +501,7 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices (and switching to the AI channel above). Its own switch, NOT the
-    # project scheduler's: that one spends model budget on 定期巡检 and ships
-    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # devices (and switching to the AI channel above). Ten seconds, not sixty: a Cloud
     # topic's first turn crosses this clock twice (running → switch the AI
     # channel, ready → enroll), and at 60s a person waited up to two minutes on
     # a timer for a machine that was already there. A tick with nothing
@@ -611,10 +615,6 @@ class Settings(BaseSettings):
     # rises with it, until a per-machine gate exists.
     max_concurrent_turns: int = 16
 
-    # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
-    # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
-    # (manual heartbeat only; default off so dev/tests don't burn model calls).
-    scheduler_interval_seconds: int = 0
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
@@ -628,10 +628,10 @@ class Settings(BaseSettings):
     # The most one upload may carry. A device that sends more gets 413 and
     # keeps its home; the sweep says so every tick until somebody looks.
     transcripts_max_bytes: int = 512 * 1024 * 1024
-    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
-    # unlike the heartbeat above: it consumes no model calls unless it actually
-    # finds a killed turn, and its whole purpose is catching the case where
-    # nothing else will ever look — a turn dying without the process dying.
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by
+    # default: it consumes no model calls unless it actually finds a killed
+    # turn, and its whole purpose is catching the case where nothing else will
+    # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)
@@ -691,12 +691,10 @@ class Settings(BaseSettings):
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
     # --- notifications and deadlines ---
-    # Three jobs nothing in a request path can do. An aggregation window that
-    # never closes is a notification written and never delivered; an undrained
-    # email queue is an inbox that never receives; an unswept deadline is a
-    # promise the platform made and quietly did not keep. Each failure is
-    # silent, which is why the intervals are on by default. 0 disables one.
-    notification_finalize_interval_s: int = 60
+    # Two jobs nothing in a request path can do. An undrained email queue is an
+    # inbox that never receives; an unswept deadline is a promise the platform
+    # made and quietly did not keep. Each failure is silent, which is why the
+    # intervals are on by default. 0 disables one.
     notification_email_drain_interval_s: int = 60
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。

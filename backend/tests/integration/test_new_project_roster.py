@@ -20,14 +20,23 @@ from app.domain.team.services import team_service
 OWNER = "owner-1"
 
 
-def _roster(client, project_id: str) -> dict[str, str]:
+def _people(client, project_id: str) -> list[dict]:
+    """名册上**人**那些行。
+
+    名册上也有这个项目的队友（一张名册，队友也在上面）；本文件问的是人那一半从哪
+    三处来，所以这里把队友滤掉。队友在不在名册上，由
+    ``test_one_roster_agents_included`` 守。
+    """
     rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
-    return {m["user_handle"]: m["role"] for m in rows}
+    return [m for m in rows if not m["agent"]]
+
+
+def _roster(client, project_id: str) -> dict[str, str]:
+    return {m["user_handle"]: m["role"] for m in _people(client, project_id)}
 
 
 def _rows(client, project_id: str) -> dict[str, dict]:
-    rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
-    return {m["user_handle"]: m for m in rows}
+    return {m["user_handle"]: m for m in _people(client, project_id)}
 
 
 async def test_the_owner_is_on_the_roster_without_a_member_row(client):
@@ -115,7 +124,7 @@ def test_an_owner_who_is_also_a_member_row_appears_once(client, bearer):
         == 200
     )
 
-    rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
+    rows = _people(client, pid)
     assert [m["user_handle"] for m in rows] == [OWNER]
     # 表里有他自己的一行时，报的就是那一行（带 id），不是补出来的那个影子。
     assert rows[0]["id"] is not None
@@ -206,8 +215,7 @@ async def test_late_teammate_is_listed_without_a_persistent_project_grant(client
     async with factory() as session:
         await TeamRepository(session).add_member(team_id, mate, TeamMemberRole.MEMBER)
         await session.commit()
-    result = client.get(f"/projects/{pid}/members").json()["data"]
-    assert result["total"] == 2
+    assert len(_people(client, str(pid))) == 2
     late = _rows(client, str(pid))["late-mate"]
     assert late["source"] == "team"
     async with factory() as session:
@@ -215,9 +223,10 @@ async def test_late_teammate_is_listed_without_a_persistent_project_grant(client
             await MemberRepository(session).get(project_id=pid, user_handle="late-mate")
             is None
         )
-        assert [
-            m["handle"] for m in await ProjectRepository(session).list_members(pid)
-        ] == ["late-captain", "late-mate"]
+        assert [m["handle"] for m in await ProjectRepository(session).people(pid)] == [
+            "late-captain",
+            "late-mate",
+        ]
         repo = TeamRepository(session)
         relation = await repo.get_member_relation(team_id, mate)
         await repo.soft_delete_member(relation)

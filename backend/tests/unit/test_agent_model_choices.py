@@ -1,9 +1,9 @@
-"""这个项目能用哪些模型，以及这套部署跑的骨架指得到哪些。
+"""这个项目能用哪些模型，以及这个项目跑的骨架指得到哪些。
 
 模型不是参与者的属性（结论 3），所以这里没有一条是在问「这个 agent 用什么」：
-问的全是「这套部署、这个项目，能用的是哪一批」。按骨架筛是部署这一级的事
+问的全是「这套部署、这个项目，能用的是哪一批」。按骨架筛不是参与者这一级的事
 （结论 3「部署决定可选列表（按 harness 筛）」，结论 28「harness 是部署/项目级的
-开发者设置」）。
+开发者设置」）——跑哪个骨架由部署设置加项目设置答，目录就按那个答案筛。
 """
 
 import asyncio
@@ -15,9 +15,8 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
-from app.domain.agent.harness import CODEX, PI
+from app.domain.agent.harness import CODEX, HARNESS_SETTING, PI
 from app.domain.agent.market import subscription_model_alias
-from app.domain.agent_instance import configuration as config
 from app.domain.agent_instance.configuration import model_choices
 
 
@@ -36,8 +35,8 @@ def _pool_models(project_settings: dict | None = None) -> set[str]:
 
 
 def _running(monkeypatch, harness: str) -> None:
-    """这套部署跑的是哪个骨架。它是部署的选择，不是谁的属性。"""
-    monkeypatch.setattr(config, "DEFAULT_HARNESS", harness)
+    """这套部署跑的是哪个骨架。它是部署设置，不是谁的属性（结论 28）。"""
+    monkeypatch.setattr(settings, "agent_harness", harness)
 
 
 @pytest.mark.parametrize(
@@ -124,6 +123,27 @@ def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
     _running(monkeypatch, CODEX)
     assert "sonnet" not in _offered({})
     assert "codex-fixture" in _offered({})
+
+
+def test_a_project_that_switched_harness_is_filtered_by_that_one(monkeypatch):
+    """项目设置盖过部署设置（结论 28），目录就得按项目那个骨架筛。
+
+    轮次组装和克隆都已经按项目答「跑哪个骨架」，目录再按部署答一遍就是同一个问题
+    的第二个答法：部署跑 claude-code、项目设成 codex 时，轮次真跑在 codex 上，而
+    按 claude-code 筛出来的订阅别名 codex 指不到——``binding.resolve`` 把它挑出来
+    绑到活上，在派出去的那一刻才失败。
+    """
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    monkeypatch.setattr(
+        settings, "agent_harness_models", {"codex": ["sonnet", "codex-fixture"]}
+    )
+    # 部署跑的是 claude-code，没动它——动的只有一个项目的设置。
+    assert {"sonnet", "codex-fixture"} <= _offered({})
+
+    switched = {HARNESS_SETTING: CODEX}
+    assert "sonnet" not in _offered(switched)
+    assert "codex-fixture" in _offered(switched)
+    assert "sonnet" in _offered({})
 
 
 @pytest.mark.parametrize(

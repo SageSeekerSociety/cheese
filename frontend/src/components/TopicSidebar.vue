@@ -2,7 +2,7 @@
 import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { columnDotStyle } from '../lib/board'
@@ -327,6 +327,14 @@ watch(
 // 当前选中话题的祖先链：这条路径无论祖先收没收起来都照常渲染，所以"人正待在
 // 里面的那个话题"永远不会被折叠藏掉。用 reveal 而不是"自动展开"，是为了不把
 // 用户自己设的折叠状态在导航时偷偷改写——离开之后那一支照旧是收起来的。
+watch(
+  () => props.selectedTopicId,
+  async (id) => {
+    if (!id) return
+    await nextTick()
+    document.querySelector(`[data-room-id="${CSS.escape(id)}"]`)?.scrollIntoView?.({ block: 'nearest' })
+  }
+)
 const selectedPath = computed(() => ancestorPathIds(props.topics, props.selectedTopicId))
 
 // 状态查表：折叠聚合要按 id 问「这个话题在跑吗 / 在等人吗」，而拍平树里只留了
@@ -695,6 +703,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                 <v-list-item
                   v-for="row in section.rows"
                   :key="row.topic.id"
+                  :data-room-id="row.topic.id"
                   :active="row.topic.id === selectedTopicId"
                   rounded="lg"
                   class="topic-row"

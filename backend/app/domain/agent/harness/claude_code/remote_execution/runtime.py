@@ -545,14 +545,6 @@ class Executor:
             return self.client(server).call(
                 "tools/call", {"name": tool, "arguments": args}
             )
-        if tool.startswith("mcp__native__cheese_"):
-            return self.cli(
-                {
-                    "method": "tools/call",
-                    "tool": tool.removeprefix("mcp__native__"),
-                    "arguments": args,
-                }
-            )
         if tool not in NATIVE_TOOLS:
             raise ValueError(f"Unsupported remote tool: {tool}")
         if tool == "Read":

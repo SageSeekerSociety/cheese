@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Decide which Docker contexts changed since the last fully successful image
-# build. Output is compatible with GITHUB_OUTPUT and intentionally pure apart
-# from reading git, so the contract test can cover failed-build catch-up.
+# build. Output is compatible with GITHUB_OUTPUT. An explicit BASE_SHA skips
+# the GitHub lookup, including an empty value for the first successful build.
 set -euo pipefail
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
@@ -9,6 +9,43 @@ base_sha="${BASE_SHA:-}"
 current_sha="${CURRENT_SHA:-HEAD}"
 event_name="${EVENT_NAME:-push}"
 ref_type="${REF_TYPE:-branch}"
+
+# A failed lookup leaves the baseline unknown. Stop before scheduling builds;
+# only an exhausted history without a success establishes a bootstrap.
+if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; then
+  # The server's success filter has returned older runs while its completed
+  # list included newer successes. Select the conclusion from that list.
+  for page in {1..10}; do
+    if ! runs="$(gh api \
+        "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=completed&event=push&per_page=100&page=$page" \
+        --jq '.workflow_runs | if type != "array" then error("workflow_runs must be an array") else .[] | [.conclusion, .head_sha] | @tsv end')"; then
+      echo "::error::Could not query the previous successful image build; rerun this job when the API is available" >&2
+      exit 1
+    fi
+    [[ -n "$runs" ]] || break
+    count=0
+    while IFS=$'\t' read -r conclusion sha; do
+      if [[ -z "$conclusion" || ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "::error::Invalid completed build record; cannot determine the image baseline" >&2
+        exit 1
+      fi
+      count=$((count + 1))
+      if [[ "$conclusion" == success ]]; then
+        base_sha="$sha"
+        break
+      fi
+    done <<< "$runs"
+    [[ -z "$base_sha" ]] || break
+    # A short page establishes that there is no earlier successful build.
+    [[ "$count" -eq 100 ]] || break
+    # GitHub limits filtered workflow searches to 1,000 results. Reaching
+    # that limit leaves older history unknown, so it cannot mean bootstrap.
+    if [[ "$page" -eq 10 ]]; then
+      echo "::error::No successful build in the first 1,000 completed runs; image baseline is unknown" >&2
+      exit 1
+    fi
+  done
+fi
 
 backend=false
 sandbox=false
@@ -23,8 +60,8 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
   # Which of the four it was. A full rebuild of every image is ~20 minutes on
   # a box with one runner slot, so it is worth a line saying why it happened —
-  # the empty-$base_sha case already warns, but a base commit the checkout
-  # cannot resolve looked identical to a deliberate bootstrap and said nothing.
+  # a base commit the checkout cannot resolve needs to be distinguished from
+  # a deliberate bootstrap.
   if [[ "$event_name" != "push" ]]; then
     why="event is $event_name, not a push"
   elif [[ "$ref_type" == "tag" ]]; then

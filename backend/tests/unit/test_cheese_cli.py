@@ -54,10 +54,18 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     }
     arguments = {
         "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
-        "cheese_bind": {"task_id": "task", "agent_id": "agent"},
+        "cheese_deliver_at": {"at": "2026-09-21T14:00:00+00:00", "content": "look"},
+        "cheese_machine": {"profile": "cloud", "device_id": None},
+        "cheese_note": {"thread": "other-thread", "content": "note"},
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},
+        "cheese_feedback_propose": {
+            "title": "listing came back short",
+            "kind": "bug",
+            "visibility": "team",
+            "user_said": "用户没有就这个问题说过话",
+        },
         "cheese_members": {},
         "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
         "cheese_notify": {"title": "notice"},
@@ -67,11 +75,14 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
         "cheese_tell": {"target": "task", "message": "update"},
         "cheese_title": {"text": "title", "task": None},
     }
-    assert set(arguments) == cli.DIRECT_MCP_TOOLS
+    # 平台 MCP 上那六样里的每一个 `cheese_*` 都要有计划：没有计划的那一个，
+    # 会话侧打不出去，而它恰恰是机器离线时唯一还能用的那一批（结论 21）。
+    platform = {t for t in cli.PLATFORM_TOOLS.names() if t.startswith("cheese_")}
+    assert platform <= set(arguments), platform - set(arguments)
     plans = {
         tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
     }
-    assert all(plan["method"] in {"GET", "POST"} for plan in plans.values())
+    assert all(plan["method"] in {"GET", "POST", "PUT"} for plan in plans.values())
     assert plans["cheese_decision"] == {
         "method": "POST",
         "path": "/topics/room/decision",
@@ -623,3 +634,31 @@ def test_feedback_propose_refuses_locally_when_there_is_no_topic():
     assert plan["method"] == "POST"
     assert plan["path"] == "/topics/room/feedback-proposals"
     assert plan["body"]["title"] == "沙箱里 make 装不上依赖"
+
+
+@pytest.mark.parametrize(
+    ("delivered", "expected"),
+    [
+        (True, "便条已递给那条线程。"),
+        (False, "那条线程这会儿没有在跑的轮次,便条没人接住。"),
+    ],
+)
+def test_note_says_whether_anyone_caught_it(monkeypatch, capsys, delivered, expected):
+    """`delivered` 是这条工具的答案本身，不是一个可以丢掉的状态码。
+
+    便条直接进那条线程正在跑的那一轮，那边这一刻没在跑就没人接住。一律打「已递」
+    的话，用 Bash 调这条命令的那条线程会当作对面已经知道了往下走 —— 而那句话其实
+    掉在地上了，两边都不会有人再提起它。
+    """
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "note", "other-thread", "看一眼 CI"]
+    )
+    monkeypatch.setattr(
+        cli, "_call", lambda *args, **kwargs: {"data": {"delivered": delivered}}
+    )
+
+    cli.main()
+
+    assert capsys.readouterr().out.strip() == expected

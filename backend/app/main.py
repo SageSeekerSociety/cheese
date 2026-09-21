@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
 from app.api.auth import ActorResolver
+from app.core import background
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import BaseError, register_exception_handlers
@@ -54,8 +55,7 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Schema is managed by Alembic migrations. Start the deterministic scheduler
-    # loop (定期巡检 / lifecycle, spec §9.1) — no-op unless the interval is set.
+    # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process died with (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
     # A screen outlives this process, which is exactly why the hook credential
@@ -80,8 +80,6 @@ async def lifespan(_: FastAPI):
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
         configure_subscription_cleanup(hub_runtime)
-    from app.domain.scheduler.service import SchedulerService
-
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
     # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
@@ -172,8 +170,6 @@ async def lifespan(_: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("orphan sweep failed")
 
-    scheduler = SchedulerService(chat_service=get_chat_service())
-
     # 闸门孤儿卡扫底 (2026-08-11): the gate runner is an in-memory asyncio task,
     # so a redeploy kills every check in flight and nobody ever calls
     # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
@@ -182,7 +178,7 @@ async def lifespan(_: FastAPI):
     # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
     # is provably abandoned by the process that died, not by this one.
     try:
-        swept = await scheduler.sweep_abandoned_gates()
+        swept = await background.sweep_abandoned_gates(get_chat_service())
         if swept["condemned"] or swept["errors"]:
             get_logger("cheesex.runtime").info(
                 "gate_sweep_startup",
@@ -195,10 +191,9 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_cloud_wakeup
     from app.core.db import async_session_factory
     from app.domain.machine.runner import MachineEnrollmentSweeper
-    from app.domain.scheduler.jobs import periodic_jobs
 
-    jobs = periodic_jobs(
-        scheduler=scheduler,
+    jobs = background.periodic_jobs(
+        chat=get_chat_service(),
         machines=MachineEnrollmentSweeper(
             async_session_factory,
             on_ready=get_cloud_wakeup().wake,
@@ -208,18 +203,19 @@ async def lifespan(_: FastAPI):
     )
     for job in jobs:
         job.start()
-    from app.core.background import spawn
     from app.core.loop_lag import watch_loop_lag
     from app.domain.topic.retire import sweep_retired_storage
 
-    spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
-    spawn(watch_loop_lag(), name="event loop lag")
+    background.spawn(
+        sweep_retired_storage(async_session_factory), name="cleanup startup recovery"
+    )
+    background.spawn(watch_loop_lag(), name="event loop lag")
     forge_events = None
     if settings.forge_event_relay_url:
         from app.domain.review.events import listen
 
         forge_events = asyncio.create_task(
-            listen(scheduler, async_session_factory), name="forge events"
+            listen(get_chat_service(), async_session_factory), name="forge events"
         )
 
     # What the platform pool offers is the gateway's answer, kept warm here so
@@ -228,7 +224,7 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_llm_gateway
     from app.domain.agent import gateway_catalog
 
-    spawn(
+    background.spawn(
         gateway_catalog.keep_fresh(get_llm_gateway()),
         name="gateway model catalogue",
     )
@@ -383,6 +379,10 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # dispatched — this gate can only prove "some agent of this project", because
     # a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
+    # 同 handle 便条与定时投递：两条都只有 agent 会调，收件人都由平台算出来（便条
+    # 比席位，投递就是请求者自己），所以正文里没有一个「发给谁」可以被冒名。
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/note$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/deliveries$")),
     # Task bind/title/close/readiness/delivery routes are shared by human and
     # agent executors. They authorize the room and task in the route itself;
     # adding them here would incorrectly restrict them to agent credentials.

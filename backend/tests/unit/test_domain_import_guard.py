@@ -107,7 +107,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- questions ---
         ("app.domain.questions.services", "app.domain.user.repositories"),
         ("app.domain.questions.services", "app.domain.answers.repositories"),
-        # --- review / scheduler ---
+        # --- review ---
         # review.archive / review.gate_sweep 是本分支挂起期间从 main 进来的
         # （#286 闸门孤儿清扫等），不是本轮新欠的债，按存量入账。
         ("app.domain.review.archive", "app.domain.block.repositories"),
@@ -121,6 +121,12 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),
         ("app.domain.space.analytics_view_service", "app.domain.user.repositories"),
+        # 学习那一格是读模型：课程 → 它名下的赛题 → 从赛题开的项目。这一跳走的是
+        # project 领域 `list_ids_for_space_tasks`（它自己的注释：「One query rather
+        # than a walk」），而 project 领域没有 service 暴露它 —— `ProjectService` 只
+        # 按 id /（课, 小队）取项目。搬不出来，和 dashboard 那条「横跨多领域聚合的读
+        # 模型」同形，按存量入账。
+        ("app.domain.space.learning_service", "app.domain.project.repositories"),
         (
             "app.domain.space.member_participating_service",
             "app.domain.user.repositories",
@@ -139,11 +145,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.identity.repositories"),
         ("app.domain.topic_membership.services", "app.domain.membership.repositories"),
         ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.user.repositories"),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         # --- app/api/routes ---
@@ -197,9 +201,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.machines", "app.domain.team.repositories"),
         ("app.api.routes.materialbundles", "app.domain.materials.repositories"),
         ("app.api.routes.materials", "app.domain.materials.repositories"),
-        ("app.api.routes.members", "app.domain.identity.repositories"),
-        ("app.api.routes.members", "app.domain.project.repositories"),
-        ("app.api.routes.members", "app.domain.user.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.notification.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.team.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),

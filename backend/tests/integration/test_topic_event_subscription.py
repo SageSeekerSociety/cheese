@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.channel import Channel
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
@@ -37,6 +38,9 @@ from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
+
+#: 一张卡的线程标识，平台开卡时算出来的那个样子。
+_THREAD_LABEL = "work-4f1c2a9b8d7e4c1fa0b3c5d6e7f80912"
 
 
 class _ImmediateScreen(StubChannel):
@@ -413,7 +417,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
         resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE
+            topic_id, CHEESE_HANDLE, harness=deployment_harness()
         )
     ai_messages = [
         row
@@ -537,6 +541,22 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
 
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
+        # 先是房间起分身的那次调用——标识写在给分身的 prompt 里，骨架这边没有
+        # 别的字段装得下它（hook_events.SubThreads）。
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Agent",
+                "tool_use_id": "call-1",
+                "tool_input": {
+                    "description": "查一下 TODO",
+                    "prompt": f"简报……线程标识：{_THREAD_LABEL}",
+                    "subagent_type": "general-purpose",
+                },
+                "_eid": "subagent-spawn-1",
+            },
+        )
         assert router.push(
             str(topic_id),
             {
@@ -578,28 +598,30 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
                 "_eid": "stop-subagent-1",
             },
         )
-        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+        frames = [await asyncio.wait_for(room.get(), 1) for _ in range(6)]
 
     kinds = [frame["type"] for frame in frames]
     assert kinds == [
         "turn_started",
         "event_block",
         "event_block",
+        "event_block",
         "done",
         "turn_finished",
     ]
-    assert frames[1]["block"]["meta"]["eid"] == "subagent-tool-1"
-    assert frames[2]["block"]["content"] == "会话答完了"
+    assert frames[1]["block"]["meta"]["eid"] == "subagent-spawn-1"
+    assert frames[2]["block"]["meta"]["eid"] == "subagent-tool-1"
+    assert frames[3]["block"]["content"] == "会话答完了"
 
     started = [e for e in handed if isinstance(e, AgentSubagentStart)]
     stopped = [e for e in handed if isinstance(e, AgentSubagentStop)]
-    assert [(e.agent_id, e.agent_type) for e in started] == [
-        ("worker-1", "general-purpose")
+    assert [(e.agent_id, e.thread_label) for e in started] == [
+        ("worker-1", _THREAD_LABEL)
     ]
     assert [(e.agent_id, e.text) for e in stopped] == [("worker-1", "分身查完了")]
     # 那条工具调用是谁发的，事件上说得出来——T2 要按这个把活归到卡上。
-    tool = next(e for e in handed if isinstance(e, AgentToolUse))
-    assert (tool.agent_id, tool.agent_type) == ("worker-1", "general-purpose")
+    tool = next(e for e in handed if isinstance(e, AgentToolUse) and e.name == "Bash")
+    assert tool.thread_label == _THREAD_LABEL
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
@@ -1029,14 +1051,18 @@ async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     # 没听见过这个分身：没有谁在替它说话。
     assert chat.worker_live(topic_id, "worker-1") is None
 
-    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
     assert chat.worker_live(topic_id, "worker-1") is True
 
     await deliver(AgentSubagentStop(agent_id="worker-1", text="先交一版"))
     assert chat.worker_live(topic_id, "worker-1") is None
 
     # 被再叫起来干活，它就又是在做。
-    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
     assert chat.worker_live(topic_id, "worker-1") is True
 
     # 换了一块屏幕：新会话没听说过旧会话的孩子，所以旧声明作废 —— 不然后面那块
@@ -1044,7 +1070,9 @@ async def test_a_quiet_worker_is_not_a_dead_one(client, tmp_path) -> None:
     await deliver(AgentSessionInfo(session_id="session-2"))
     assert chat.worker_live(topic_id, "worker-1") is None
 
-    await deliver(AgentSubagentStart(agent_id="worker-1", agent_type="general-purpose"))
+    await deliver(
+        AgentSubagentStart(agent_id="worker-1", thread_label="general-purpose")
+    )
     assert chat.worker_live(topic_id, "worker-1") is True
 
     # 屏幕没了，声明跟着没：那个分身住在房间的会话里。这也是这一位唯一会注意到

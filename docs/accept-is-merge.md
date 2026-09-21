@@ -70,7 +70,7 @@ Forge events trigger reconciliation. A deployment can receive forwarded events
 over an outbound connection; periodic polling also reconciles state after a
 missed event. Both paths observe forge state before recording an outcome.
 
-`SchedulerService.poll_open_prs` and `AcceptService.advance_pr_card` reconcile
+`review/pr_poll.py::poll_open_prs` and `AcceptService.advance_pr_card` reconcile
 pending cards and returned deliveries. They update checks and merge status,
 dismiss stale approvals, notify the agent about work such as failed checks or
 conflicts, and merge explicitly armed cards when their requirements hold.

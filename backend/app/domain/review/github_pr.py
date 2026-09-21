@@ -5,7 +5,7 @@
   `review/pr_publish.py` to open the card's PR fire-and-forget when the card
   is filed.
 - `GitHubPrClient` (lowercase pr) Protocol + `HttpxGitHubPrClient` — the
-  token-per-call client the accept click and the scheduler's poller drive:
+  token-per-call client the accept click and `review/pr_poll.py` drive:
   PR status, raw check runs, compares, merge (with the head-sha guard,
   #718), update-branch.
 """

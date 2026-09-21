@@ -169,12 +169,11 @@ class AgentSessionRepository:
 
         One row per room, and the same rule ``placed_in_room`` and
         ``harness_in_room`` already answer by: a room has one screen and it
-        belongs to whichever session last opened one. A room that ran
-        claude-code and now runs pi keeps both session rows — nothing clears
-        the location of the one that stopped — so handing every channel every
-        row has each of them recognise its own harness and claim that single
-        screen, and the room ends up owned by whichever channel finished
-        restoring last.
+        belongs to whichever session last opened one. A room that switched
+        harness keeps both session rows — nothing clears the location of the
+        one that stopped — and only the last-placed one comes back here. The
+        harness that row names is handed on as it stands; recognising it is the
+        runtime's, not the channel's, since one channel carries several of them.
         """
         result = await self._session.execute(
             select(AgentSession, Topic.project_id)

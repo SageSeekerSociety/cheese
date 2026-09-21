@@ -1798,7 +1798,7 @@ def test_the_chat_roster_and_the_feedback_card_report_the_same_face(client):
 
     所以这里比的不是「都非空」，是**同一份答案**：挑过的人在两边拿到同一个 id，
     没挑过的人在两边都拿到 null。判据本身在 `chosen_avatar_ids` 和
-    `ProjectRepository.list_members`，两处都按 `Avatar.avatar_type` 认默认图 ——
+    `ProjectRepository.people`，两处都按 `Avatar.avatar_type` 认默认图 ——
     两边都写了、都写了注释，这个用例是唯一能拦住它们漂开的东西。
     """
     ids = _seed_profiles(client, {"fb-picked": "predefined", "fb-plain": "default"})

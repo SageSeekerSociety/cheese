@@ -10,7 +10,10 @@ This guards the *absence*: re-mounting a route makes it fail with the reason,
 which a deleted test file could not do.
 """
 
+import re
+
 import pytest
+from fastapi.testclient import TestClient
 
 from app.main import app
 
@@ -21,40 +24,35 @@ PARKED = [
 ]
 
 
-def _mounted() -> set[tuple[str, str]]:
-    live: set[tuple[str, str]] = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        for method in getattr(route, "methods", None) or ():
-            if path and method not in {"HEAD", "OPTIONS"}:
-                live.add((method, path))
-    return live
+@pytest.fixture(scope="module")
+def probe() -> TestClient:
+    """The app as the gateway hands it a request, with no lifespan run: the
+    router answers every probe below before a dependency or a handler does, so
+    this needs no database. Same client shape as
+    tests/contract/test_api_addressing_contract.py."""
+    return TestClient(app)
 
 
 @pytest.mark.parametrize(("method", "path"), PARKED)
-def test_a_parked_bypass_turn_has_no_route(method: str, path: str) -> None:
-    assert (method, path) not in _mounted(), (
-        f"{method} {path} is mounted again. These three were parked on "
-        "2026-08-12 — read docs/agent-principles.md §12 before restoring one, "
-        "and bring a design that does not give the turn its own session."
+def test_a_parked_bypass_turn_has_no_route(
+    probe: TestClient, method: str, path: str
+) -> None:
+    """Ask the server what it serves, not a schema, and not `app.routes`.
+
+    `app.openapi()` is built from `route.include_in_schema` alone
+    (fastapi/openapi/utils.py), and that flag is off on 17 routes under
+    `app/api/routes/` — so a schema read calls a hidden remount absent. Walking
+    `app.routes` is no better: FastAPI keeps an included router as one entry
+    whose own `path` is `None`, so none of these three appear there either way.
+    A request is the only reading that covers both.
+
+    404 is what only an unmounted path answers: a route that exists but declines
+    the caller answers 401 or 403, one that exists under another verb answers
+    405, and one that runs without a database raises out of the client."""
+    response = probe.request(method, re.sub(r"\{[^}]+\}", "7", path))
+    assert response.status_code == 404, (
+        f"{method} {path} answered {response.status_code} — it is mounted "
+        "again. These three were parked on 2026-08-12 — read "
+        "docs/agent-principles.md §12 before restoring one, and bring a design "
+        "that does not give the turn its own session."
     )
-
-
-@pytest.mark.anyio
-async def test_a_scheduler_round_no_longer_wakes_the_agent() -> None:
-    """The runner wiring stays; the round it drives must wake nobody.
-
-    Kept separate from the route guard because the timer, not the route, is what
-    actually fired in production — the endpoint was barely used and the clock ran
-    against every project.
-    """
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    from app.domain.scheduler.service import SchedulerService
-
-    chat = SimpleNamespace(session_factory=None, run_heartbeat=AsyncMock())
-    result = await SchedulerService(chat_service=chat).tick()
-
-    chat.run_heartbeat.assert_not_awaited()
-    assert result["projects_inspected"] == 0

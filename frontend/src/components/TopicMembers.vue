@@ -4,11 +4,11 @@
 // drawer showing every member with their role; an owner/admin can add project
 // members, remove them, or change roles. 芝士 (the AI member) wears an Agent
 // badge, mirroring the @-mention menu.
-import type { ProjectAgent, ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { addTopicMember, listProjectAgents, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
+import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
@@ -16,22 +16,9 @@ import LoadingSkeleton from './common/LoadingSkeleton.vue'
 
 const props = defineProps<{
   topicId: string
-  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
-
-// 这个项目的 AI 队友。请一个进房间和请一个人是同一件事——往名册上加一行——
-// 所以它们和项目成员一起出现在下面那个「添加」列表里。拿不到就只列人。
-const projectAgents = ref<ProjectAgent[]>([])
-async function loadProjectAgents() {
-  try {
-    projectAgents.value = (await listProjectAgents(props.projectId)).data
-  } catch {
-    projectAgents.value = []
-  }
-}
-watch(() => props.projectId, loadProjectAgents, { immediate: true })
 
 const members = ref<TopicMemberRow[]>([])
 const loading = ref(false)
@@ -76,25 +63,18 @@ const myRole = computed(() => members.value.find((m) => m.member_handle === prop
 const canManage = computed(() => myRole.value === 'owner' || myRole.value === 'admin')
 const ownerCount = computed(() => members.value.filter((m) => m.role === 'owner').length)
 
-// Project members and AI teammates not already in the room — the "add member"
-// dropdown. 已停用的队友不列：停用就是为了挡住新的邀请。
+// 还不在这间房里的项目成员——「添加」那个下拉。请一个 AI 队友进房间和请一个人
+// 是同一件事（往名册上加一行），所以它们本来就在同一张项目名册上，这里不再把两
+// 份拼起来。已停用的队友不列：停用就是为了挡住新的邀请。
 const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
-  const people = props.projectMembers
-    .filter((m) => !inRoom.has(m.user_handle))
+  return props.projectMembers
+    .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
     .map((m) => ({
-      title: m.name || m.user_handle,
+      title: m.agent ? `${m.name || m.user_handle}（AI 队友）` : m.name || m.user_handle,
       subtitle: `@${m.user_handle}`,
       value: m.user_handle,
     }))
-  const agents = projectAgents.value
-    .filter((a) => a.is_active !== false && !inRoom.has(a.seat_handle))
-    .map((a) => ({
-      title: `${a.display_name}（AI 队友）`,
-      subtitle: `@${a.seat_handle}`,
-      value: a.seat_handle,
-    }))
-  return [...people, ...agents]
 })
 
 // 头像：本人挑过就画本人的，没挑过画按 handle 哈希出的彩色首字母。种子用

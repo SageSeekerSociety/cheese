@@ -307,7 +307,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean; code?: string }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string; client_id?: string }
   | { type: 'done' }
   | { type: 'turn_started'; turn_id: string }
   | { type: 'turn_finished'; turn_id: string }
@@ -394,14 +394,16 @@ export interface ProjectMember {
   role: string
 }
 
-// GET /api/projects/{id}/members → {data:[{user_handle, role, name, avatar_id}], total}
+// GET /api/projects/{id}/members → {data:[{user_handle, role, name, avatar_id, agent, active}], total}
+// 一张名册，AI 队友也在上面：请一个队友进房间和请一个人是同一件事，所以界面不该
+// 再自己把「人」和「队友」两份拼起来——拼出来的那份就是第二份声明。
 export interface ProjectMemberRow {
   user_handle: string
   role: string
-  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人，或者
-  // 项目的所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据）。
-  // 没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
-  source?: 'team' | 'owner'
+  // 这一行背后**没有**成员表记录时说明它是怎么进名册的：小队带进来的人、项目的
+  // 所有者（所有者记在 Project.owner_handle 上，从来不是一行成员数据），或者它是
+  // 这个项目的 AI 队友。没有这个字段 = 名册上有他自己的一行，角色和移出才动得了。
+  source?: 'team' | 'owner' | 'agent'
   team_id?: number
   name?: string
   // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
@@ -409,9 +411,16 @@ export interface ProjectMemberRow {
   // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
   // /avatars/default，那会让所有没设过头像的人共用同一张脸。
   avatar_id?: number | null
-  // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
-  // execution binding — never from the handle string, which differs per topic.
+  // `agent` marks an AI teammate — server-side it is a row that came from the
+  // project's agent instances, never a guess at the handle string.
   agent?: boolean
+  // 只有队友会是 false：已停用的队友还在名册上（它在已经接手的房间里照常工作），
+  // 只是派新活、请进新房间的地方不该再列出来。
+  active?: boolean
+  // 这个项目的**默认**队友，也就是一间没有 AI 席位的老房间会落到谁身上。名册上
+  // 第一个带 `agent` 的不是这个答案（那是建得最早的那一位），所以要问「这个房间
+  // 归谁」的地方只能读这一位。
+  project_default?: boolean
   [key: string]: unknown
 }
 

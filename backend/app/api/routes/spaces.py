@@ -1,16 +1,19 @@
 import json
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.api.auth import ActorResolverDep
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
+from app.domain.space.learning_service import SpaceLearningService
 from app.domain.space.member_participating_service import (
     SpaceMemberParticipatingService,
 )
@@ -890,6 +893,134 @@ async def export_space_analytics_participants(
             "Content-Disposition": f"attachment; filename=space-{space_id}-participants.csv"  # noqa: E501
         },
     )
+
+
+# ── 学习: 学生怎么与 AI 协作、卡在哪 (issue #945 的教师看板) ────────────────────
+#
+# 上面那一组读 赛题 与报名表，这一组读学生项目里的**对话**，所以门也不同: 课程页
+# 本身对所有人可见（`Role.GUEST` 就能读 Space），学生项目的对话不是。判定不写在
+# 这几条路由里 —— 它在 `app.auth.project_access`，由 `SpaceLearningService` 逐个
+# 项目过一次（`ActorResolver.authorize_project` 是同一个判据的请求内形态）。这里
+# 只负责「先登录」，和本文件其它路由同一个写法。
+#
+# 缺了哪些数据（review_flag、「再给一点提示」、知识点）写在 `SpaceLearningService`
+# 的模块说明里，接口如实把它们报成缺失，不拿别的信号顶替。
+
+
+class LearningOutlineRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    block_ids: list[uuid.UUID] = Field(default_factory=list, alias="blockIds")
+
+
+async def get_space_learning_service(db=Depends(get_db)) -> SpaceLearningService:
+    return SpaceLearningService(session=db)
+
+
+def _learning_handle(actor) -> str | None:
+    """读课程对话用的是谁的 handle。
+
+    未登录给 None —— `may_read_project` 对 None 一律回 False（"nobody asked" 不
+    能读成 "anybody may"），于是页面是空的，而不是全的。
+    """
+    return actor.handle if actor.authenticated else None
+
+
+@router.get(
+    "/{spaceId}/analytics/learning/filters",
+    summary="Get Space Learning Filters",
+)
+async def get_space_learning_filters(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    resolver: ActorResolverDep,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceLearningService = Depends(get_space_learning_service),
+) -> dict:
+    """这一格能筛的两维: 学生、知识点。时间那一维在前端的筛选栏里。"""
+    _ = auth_user
+    actor = await resolver.resolve(fallback_handle=None)
+    data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
+    "/{spaceId}/analytics/learning/questions",
+    summary="Get Space Learning Questions",
+)
+async def get_space_learning_questions(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    resolver: ActorResolverDep,
+    student: str | None = Query(default=None),
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    knowledgePoint: int | None = Query(default=None),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceLearningService = Depends(get_space_learning_service),
+) -> dict:
+    """按学生 / 时间 / 知识点筛出来的学生发言，每条都带得回原文的坐标。"""
+    _ = auth_user
+    actor = await resolver.resolve(fallback_handle=None)
+    data = await service.questions(
+        space_id=space_id,
+        handle=_learning_handle(actor),
+        student=student,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        knowledge_point=knowledgePoint,
+    )
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.get(
+    "/{spaceId}/analytics/learning/queues",
+    summary="Get Space Learning Queues",
+)
+async def get_space_learning_queues(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    resolver: ActorResolverDep,
+    student: str | None = Query(default=None),
+    from_ts: int | None = Query(default=None, alias="from"),
+    to_ts: int | None = Query(default=None, alias="to"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceLearningService = Depends(get_space_learning_service),
+) -> dict:
+    """共性问题两条来源，各自一个队列。"""
+    _ = auth_user
+    actor = await resolver.resolve(fallback_handle=None)
+    data = await service.queues(
+        space_id=space_id,
+        handle=_learning_handle(actor),
+        student=student,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+    return {"code": 200, "message": "OK", "data": data}
+
+
+@router.post(
+    "/{spaceId}/analytics/learning/outline",
+    summary="Build Space Learning Outline",
+)
+async def build_space_learning_outline(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    body: LearningOutlineRequest,
+    resolver: ActorResolverDep,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceLearningService = Depends(get_space_learning_service),
+) -> dict:
+    """把勾中的几条拼成一份能直接上课用的讲解提纲。
+
+    POST 而不是 GET: 勾的是哪几条会随人一直变，而且可能几十个 id —— 放进查询串
+    会撞上长度上限，也会在访问日志里留下别人的引用。
+    """
+    _ = auth_user
+    actor = await resolver.resolve(fallback_handle=None)
+    data = await service.outline(
+        space_id=space_id,
+        handle=_learning_handle(actor),
+        block_ids=body.block_ids,
+    )
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.get(
