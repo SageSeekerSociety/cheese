@@ -7,13 +7,23 @@ Walks the acceptance list for the 空间成员与邀请码 task:
 - leaving hides it again and leaves the leaver's projects alone;
 - a manager whose role was revoked is refused when removing a member;
 - a 私人 space refuses non-members on both /spaces/{id} and /spaces/{id}/managers;
-- 公开 spaces answer exactly as they did before (regression).
+- 公开 spaces answer exactly as they did before (regression);
+- and the writes behind all of it hold up when the same request arrives twice:
+  one live membership row per person, one invite-code use spent for one join,
+  and a roster whose hydration does not grow with the roster.
 """
 
 import time
+from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.space.models import SpaceMember
+from app.domain.space.repositories import SpaceInviteCodeRepository
 from tests.integration.conftest import (
     UserCreator,
     session_auth_headers,
@@ -75,6 +85,75 @@ def _listed_space_ids(api_client: TestClient, token: str) -> set[int]:
 
 def _error_name(resp) -> str | None:
     return (resp.json().get("error") or {}).get("name")
+
+
+def _members(api_client: TestClient, token: str, space_id: int) -> list[dict]:
+    resp = api_client.get(f"/spaces/{space_id}/members", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["members"]
+
+
+def _mint_code(
+    api_client: TestClient,
+    token: str,
+    space_id: int,
+    *,
+    max_uses: int = 10,
+    expires_at: int | None = None,
+) -> str:
+    body: dict = {"maxUses": max_uses}
+    if expires_at is not None:
+        body["expiresAt"] = expires_at
+    resp = api_client.post(
+        f"/spaces/{space_id}/invite-codes", json=body, headers=_auth(token)
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["inviteCode"]["code"]
+
+
+def _use_count(api_client: TestClient, token: str, space_id: int, code: str) -> int:
+    resp = api_client.get(f"/spaces/{space_id}/invite-codes", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    for row in resp.json()["data"]["inviteCodes"]:
+        if row["code"] == code:
+            return int(row["useCount"])
+    raise AssertionError(f"code {code} is not in the space's list")
+
+
+def _join(api_client: TestClient, token: str, code: str) -> None:
+    resp = api_client.post("/spaces/join", json={"code": code}, headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.fixture
+def sql_log(db_connection):
+    """Every statement that reaches the database while the context is open.
+
+    Bound to the per-test connection — the one the TestClient's session is
+    built on — so it records what the endpoints really ran, including anything
+    a lazy-loading attribute fired behind their backs, which is the shape an
+    N+1 takes. A counter wrapped around the repository would miss that.
+
+    The listener goes on the sync connection under the async one: SQLAlchemy
+    refuses these events on an `AsyncConnection` by name.
+    """
+    from sqlalchemy import event
+
+    target = db_connection.sync_connection
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    event.listen(target, "before_cursor_execute", record)
+    try:
+        yield statements
+    finally:
+        event.remove(target, "before_cursor_execute", record)
+
+
+def _selects(statements: list[str]) -> int:
+    return sum(1 for s in statements if s.lstrip().upper().startswith("SELECT"))
 
 
 class TestCodeSpaceVisibility:
@@ -588,4 +667,273 @@ class TestSideDoors:
                 f"/spaces/{space_id}", headers=_auth(creator_token)
             ).status_code
             == 200
+        )
+
+
+async def _rows_for_pair(db: AsyncSession, space_id: int, user_id: int) -> int:
+    """Rows in the table for the pair — deleted ones included. The point of
+    the revive path is that this stays 1 across joins, leaves and re-joins."""
+    result = await db.execute(
+        select(func.count())
+        .select_from(SpaceMember)
+        .where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
+    )
+    return int(result.scalar_one())
+
+
+async def _insert_live_row(db: AsyncSession, space_id: int, user_id: int) -> None:
+    """Write a second live membership the way the application writes one.
+
+    Inside its own savepoint so the refusal leaves the session usable and the
+    test can keep asking it questions afterwards.
+    """
+    now = datetime.now(UTC)
+    async with db.begin_nested():
+        db.add(
+            SpaceMember(
+                space_id=space_id,
+                user_id=user_id,
+                created_at=now,
+                updated_at=now,
+                deleted_at=None,
+            )
+        )
+        await db.flush()
+
+
+async def _spend(db: AsyncSession, code: str) -> bool:
+    repo = SpaceInviteCodeRepository(session=db)
+    row = await repo.get_by_code(code)
+    assert row is not None, f"{code} is not in the table"
+    return await repo.consume_use(row.id)
+
+
+async def _use_count_of(db: AsyncSession, code: str) -> int:
+    repo = SpaceInviteCodeRepository(session=db)
+    row = await repo.get_by_code(code)
+    assert row is not None, f"{code} is not in the table"
+    return int(row.use_count)
+
+
+class TestMembershipIsOneRow:
+    """The writes behind「加入」, and what makes repeating them safe.
+
+    One live row per (space, person) is a property the database has to hold,
+    not one a reader can establish: two requests for the same person really do
+    arrive together — a double-tapped「加入」, or a code redeemed while an admin
+    adds that same person — and a read-then-write pair lets both read "not a
+    member" and both write. That spends an extra invite-code use at best, and
+    at worst leaves two live rows for the pair, which turns `get_member`'s
+    `scalar_one_or_none` into `MultipleResultsFound`: the documented
+    double-tap no-op becoming a 500 on every later check of that membership.
+    """
+
+    def test_joining_twice_keeps_one_row_and_spends_one_use(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        created = _create_space(api_client, creator_token, visibility="CODE")
+        space_id = created["space"]["id"]
+        code = _mint_code(api_client, creator_token, space_id, max_uses=5)
+
+        joiner = user_client.create_user()
+        joiner_token = _login(user_client, api_client, joiner)
+
+        # The double tap the tier was written for. The second redemption is a
+        # no-op, and「no-op」has to include the use counter — otherwise a code
+        # runs out because people were enthusiastic, which is the one thing a
+        # no-op must not do.
+        _join(api_client, joiner_token, code)
+        _join(api_client, joiner_token, code)
+
+        assert [
+            member["userId"] for member in _members(api_client, creator_token, space_id)
+        ] == [joiner.user_id]
+        assert _use_count(api_client, creator_token, space_id, code) == 1
+        # Still answerable: `get_member` is what every visibility check runs
+        # on, so a duplicated row would surface here rather than in the list.
+        assert space_id in _listed_space_ids(api_client, joiner_token)
+
+    def test_rejoining_after_leaving_revives_that_row(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal,
+    ):
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        created = _create_space(api_client, creator_token, visibility="CODE")
+        space_id = created["space"]["id"]
+        code = _mint_code(api_client, creator_token, space_id, max_uses=5)
+
+        joiner = user_client.create_user()
+        joiner_token = _login(user_client, api_client, joiner)
+        _join(api_client, joiner_token, code)
+        assert (
+            api_client.post(
+                f"/spaces/{space_id}/leave", headers=_auth(joiner_token)
+            ).status_code
+            == 204
+        )
+
+        _join(api_client, joiner_token, code)
+
+        assert [
+            member["userId"] for member in _members(api_client, creator_token, space_id)
+        ] == [joiner.user_id]
+        # Re-joining spends a use — it is a join, not a no-op — while the
+        # table keeps one row for the pair rather than one per attempt.
+        assert _use_count(api_client, creator_token, space_id, code) == 2
+        assert _portal.call(_rows_for_pair, db_session, space_id, joiner.user_id) == 1
+
+    def test_the_database_refuses_a_second_live_row(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal,
+    ):
+        """Uniqueness is a constraint, not a convention.
+
+        The second write below is a well-formed membership row for a pair that
+        already has one, written exactly the way the application writes them.
+        What refuses it is the database, so no amount of request interleaving
+        can get past it — which is the whole difference between this and the
+        read-then-write check that a concurrent request can pass too.
+        """
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        created = _create_space(api_client, creator_token, visibility="CODE")
+        space_id = created["space"]["id"]
+        code = created["inviteCode"]["code"]
+
+        joiner = user_client.create_user()
+        _join(api_client, _login(user_client, api_client, joiner), code)
+
+        with pytest.raises(IntegrityError):
+            _portal.call(_insert_live_row, db_session, space_id, joiner.user_id)
+
+        # The refused row is not there, so the space still answers with the
+        # one membership it had.
+        assert _portal.call(_rows_for_pair, db_session, space_id, joiner.user_id) == 1
+
+    def test_a_removed_member_can_be_added_back(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal,
+    ):
+        """剔除 then 添加 is one row again, not two.
+
+        The re-add arrives through the other caller — an admin putting someone
+        back, not the person redeeming a code — and has to land on the same
+        revive path.
+        """
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        created = _create_space(api_client, creator_token, visibility="PRIVATE")
+        space_id = created["space"]["id"]
+        member = user_client.create_user()
+
+        for _ in range(2):
+            added = api_client.post(
+                f"/spaces/{space_id}/members",
+                json={"userId": member.user_id},
+                headers=_auth(creator_token),
+            )
+            assert added.status_code == 201, added.text
+            removed = api_client.delete(
+                f"/spaces/{space_id}/members/{member.user_id}",
+                headers=_auth(creator_token),
+            )
+            assert removed.status_code == 204, removed.text
+
+        # The last removal stands…
+        assert _members(api_client, creator_token, space_id) == []
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": member.user_id},
+            headers=_auth(creator_token),
+        )
+        assert added.status_code == 201, added.text
+
+        # …and putting them back three times over is still one row.
+        assert [
+            entry["userId"] for entry in _members(api_client, creator_token, space_id)
+        ] == [member.user_id]
+        assert _portal.call(_rows_for_pair, db_session, space_id, member.user_id) == 1
+
+    def test_an_expired_code_cannot_be_spent(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal,
+    ):
+        """Expiry is checked in the statement that spends a use, not only in
+        the read before it.
+
+        `join_space` reads the code, decides, and then spends — so a code that
+        expires in between is honoured by a read-only check, and the window is
+        however long the request takes, not zero. Reached here through the
+        repository directly because the endpoint refuses an already-expired
+        code at the read above, which is exactly why the second check needs
+        its own test.
+        """
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        created = _create_space(api_client, creator_token, visibility="CODE")
+        space_id = created["space"]["id"]
+        stale = _mint_code(
+            api_client,
+            creator_token,
+            space_id,
+            max_uses=5,
+            expires_at=int(time.time() * 1000) - 60_000,
+        )
+
+        assert _portal.call(_spend, db_session, stale) is False
+        assert _portal.call(_use_count_of, db_session, stale) == 0
+
+    def test_hydrating_the_roster_does_not_grow_with_the_roster(
+        self, user_client: UserCreator, api_client: TestClient, sql_log: list[str]
+    ):
+        """Two queries for the display names, however many members there are.
+
+        The hydration used to be a `get_by_id` + `get_profile_by_user_id` pair
+        per row, inside the loop building the list — so a space with a class
+        in it cost two queries per student, on every read of it, and the count
+        grew with the roster. Measured at two sizes in ONE test on purpose: a
+        fixed number would only pin today's endpoint, while comparing 1 member
+        against 5 pins the thing that matters — that the count does not move.
+        """
+        creator = user_client.create_user()
+        creator_token = _login(user_client, api_client, creator)
+        created = _create_space(api_client, creator_token, visibility="CODE")
+        space_id = created["space"]["id"]
+        code = _mint_code(api_client, creator_token, space_id, max_uses=20)
+
+        first = user_client.create_user()
+        _join(api_client, _login(user_client, api_client, first), code)
+        # Warm-up, so the measured calls are not the ones paying for anything
+        # the process does once.
+        api_client.get(f"/spaces/{space_id}/members", headers=_auth(creator_token))
+        sql_log.clear()
+        api_client.get(f"/spaces/{space_id}/members", headers=_auth(creator_token))
+        one_member = _selects(sql_log)
+
+        for _ in range(4):
+            extra = user_client.create_user()
+            _join(api_client, _login(user_client, api_client, extra), code)
+        sql_log.clear()
+        api_client.get(f"/spaces/{space_id}/members", headers=_auth(creator_token))
+        five_members = _selects(sql_log)
+
+        assert len(_members(api_client, creator_token, space_id)) == 5
+        assert five_members == one_member, (
+            f"{one_member} selects for 1 member but {five_members} for 5 — the "
+            "hydration is per row again"
         )

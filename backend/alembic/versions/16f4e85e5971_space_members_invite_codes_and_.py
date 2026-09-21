@@ -48,6 +48,18 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
+    # One live row per (space, person) — see `SpaceMember.__table_args__` for
+    # why it is partial and why the pair still needs its own plain index.
+    op.create_index(
+        "uq_space_member_active",
+        "space_member",
+        ["space_id", "user_id"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_index(
+        "ix_space_member_space_user", "space_member", ["space_id", "user_id"]
+    )
 
     # Redeeming one of these makes the redeemer a member. Not the platform's
     # `invite_code`, which admits a person to the platform at registration.
@@ -87,6 +99,8 @@ def downgrade() -> None:
     op.drop_column("space", "visibility")
     op.drop_index(op.f("ix_space_invite_code_code"), table_name="space_invite_code")
     op.drop_table("space_invite_code")
+    op.drop_index("ix_space_member_space_user", table_name="space_member")
+    op.drop_index("uq_space_member_active", table_name="space_member")
     op.drop_table("space_member")
     op.execute(sa.schema.DropSequence(sa.Sequence("space_invite_code_seq")))
     op.execute(sa.schema.DropSequence(sa.Sequence("space_member_seq")))

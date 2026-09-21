@@ -404,6 +404,46 @@ def _admin_to_api_model(
     return result
 
 
+async def _hydrate_people(
+    user_ids: Sequence[int],
+    *,
+    user_repo: UserRepository,
+    profile_repo: UserProfileRepository,
+) -> dict[int, dict]:
+    """user_id → the display fields a roster row carries. Two queries for
+    however many people are asked about.
+
+    This used to be a `get_by_id` + `get_profile_by_user_id` pair per person,
+    inside the loop that built the list — which made rendering a space cost
+    two queries per member plus two per admin, on every read of it, with the
+    count growing as the class does. Both repositories have batched readers
+    for exactly this (`get_by_ids`, `get_profiles_by_user_ids`).
+
+    Someone whose `user` row is gone falls back to the id and a placeholder
+    name: the membership row is still real, and dropping them from the list
+    would make the roster disagree with itself.
+    """
+    ids = list(user_ids)
+    users = await user_repo.get_by_ids(ids)
+    profiles = await profile_repo.get_profiles_by_user_ids(ids)
+    people: dict[int, dict] = {}
+    for user_id in ids:
+        user = users.get(user_id)
+        profile = profiles.get(user_id)
+        people[user_id] = (
+            {
+                "id": user.id,
+                "username": user.username,
+                "nickname": profile.nickname if profile else user.username,
+                "avatarId": profile.avatar_id if profile else None,
+                "intro": profile.intro if profile else "",
+            }
+            if user
+            else {"id": user_id, "username": "unknown"}
+        )
+    return people
+
+
 async def _build_admins_payload(
     space_id: int,
     *,
@@ -419,25 +459,12 @@ async def _build_admins_payload(
     admin-only UI silently disappears after a PATCH.
     """
     admin_relations = await service.list_admins(space_id)
-    admins_list: list[dict] = []
-    for rel in admin_relations:
-        user = await user_repo.get_by_id(rel.user_id)
-        profile = (
-            await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-        )
-        user_info = (
-            {
-                "id": user.id,
-                "username": user.username,
-                "nickname": profile.nickname if profile else user.username,
-                "avatarId": profile.avatar_id if profile else None,
-                "intro": profile.intro if profile else "",
-            }
-            if user
-            else {"id": rel.user_id, "username": "unknown"}
-        )
-        admins_list.append(_admin_to_api_model(rel, user_info))
-    return admins_list
+    people = await _hydrate_people(
+        [rel.user_id for rel in admin_relations],
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+    )
+    return [_admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations]
 
 
 async def _hydrate_members(
@@ -446,25 +473,12 @@ async def _hydrate_members(
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
 ) -> list[dict]:
-    items: list[dict] = []
-    for member in members:
-        user = await user_repo.get_by_id(member.user_id)
-        profile = (
-            await profile_repo.get_profile_by_user_id(member.user_id) if user else None
-        )
-        user_info = (
-            {
-                "id": user.id,
-                "username": user.username,
-                "nickname": profile.nickname if profile else user.username,
-                "avatarId": profile.avatar_id if profile else None,
-                "intro": profile.intro if profile else "",
-            }
-            if user
-            else {"id": member.user_id, "username": "unknown"}
-        )
-        items.append(_member_to_api_model(member, user_info))
-    return items
+    people = await _hydrate_people(
+        [member.user_id for member in members],
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+    )
+    return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
 
 async def _build_full_space_payload(

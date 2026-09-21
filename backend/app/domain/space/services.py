@@ -505,12 +505,40 @@ class SpaceService:
             if await self._admin_repo.get_relation(space.id, user_id) is not None:
                 return space
 
+        # Membership first, use second, and the order is the point: the
+        # membership write is idempotent and atomic (uq_space_member_active,
+        # see `SpaceMemberRepository.add_member`), so its answer to "did I get
+        # in" is the only one that two concurrent redemptions cannot both
+        # claim. Consuming the use first, as this used to, spends one for the
+        # loser of a double-tap: both read "not a member", both spend.
+        _, created = await member_repo.add_member(space_id=space.id, user_id=user_id)
+        if not created:
+            # A concurrent redeem already let them in. No use spent, no error.
+            return space
+
         if not await invite_repo.consume_use(invite.id):
+            # Out of uses after all — or the code expired in the window
+            # between the check above and the UPDATE that spends one, which
+            # `consume_use` refuses for the same reason. Those are two
+            # different things to be told, so ask which one this is instead of
+            # calling it exhausted either way.
+            #
+            # Raising rolls the whole request back, the membership row
+            # included, so the two writes stay one decision rather than a
+            # membership with nothing behind it.
+            current = await invite_repo.get_by_code(code)
+            if (
+                current is not None
+                and current.expires_at is not None
+                and current.expires_at <= datetime.now(UTC)
+            ):
+                raise BadRequestError(
+                    "Invite code expired",
+                    data={"type": "inviteCode", "id": invite.id},
+                )
             raise BadRequestError(
                 "Invite code exhausted", data={"type": "inviteCode", "id": invite.id}
             )
-
-        await member_repo.add_member(space_id=space.id, user_id=user_id)
         return space
 
     async def leave_space(self, *, space_id: int, user_id: int) -> None:
@@ -558,7 +586,13 @@ class SpaceService:
         existing = await member_repo.get_member(space_id, target_user_id)
         if existing is not None:
             return existing
-        return await member_repo.add_member(space_id=space_id, user_id=target_user_id)
+        # Neither answer is interesting here — an admin put them in directly,
+        # so there is no use to spend and nothing else that depends on whether
+        # this call or a concurrent one wrote the row.
+        member, _ = await member_repo.add_member(
+            space_id=space_id, user_id=target_user_id
+        )
+        return member
 
     async def remove_member(
         self,

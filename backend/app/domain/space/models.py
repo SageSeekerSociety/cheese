@@ -6,11 +6,13 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Index,
     Integer,
     Sequence,
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -247,6 +249,27 @@ class SpaceMember(Base):
     """
 
     __tablename__ = "space_member"
+    __table_args__ = (
+        # At most one LIVE row per (space, person). Without this, two requests
+        # landing together both read "not a member" and both write — and then
+        # every later `get_member` raises `MultipleResultsFound` instead of
+        # answering, which turns the documented double-tap no-op into a 500.
+        # Partial because a soft-deleted row is the record of a removal and a
+        # re-join revives it rather than adding a second: those rows are
+        # outside the index, so a removal does not block the join that follows.
+        Index(
+            "uq_space_member_active",
+            "space_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # The pair lookup itself, deleted rows included: `_get_any_member`
+        # reads the pair without the `deleted_at` filter (that is the point of
+        # it), so the partial index above cannot serve it, and `list_members`
+        # reads a whole space by the leading column.
+        Index("ix_space_member_space_user", "space_id", "user_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, space_member_seq, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
