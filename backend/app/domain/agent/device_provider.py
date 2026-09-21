@@ -71,7 +71,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import user_by_handle
 from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
@@ -1724,7 +1724,7 @@ class DeviceChannel(Channel):
                 # A room-scoped legacy token keeps the precheck identity.
                 actor = token_agent_handle(token)
                 if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
-                    user = await UserRepository(room_session).get_by_handle(actor)
+                    user = await user_by_handle(room_session, actor)
                     if user is None:
                         raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
                     agent_user_id, agent_handle = user.id, user.username

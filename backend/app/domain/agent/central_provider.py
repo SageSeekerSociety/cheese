@@ -29,7 +29,7 @@ from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ class CentralChannel(DeviceChannel):
             # A room-scoped legacy token leaves the precheck identity intact.
             actor = token_agent_handle(token)
             if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
-                user = await UserRepository(db).get_by_handle(actor)
+                user = await user_by_handle(db, actor)
                 if user is None:
                     raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
                 agent_user_id, agent_handle = user.id, user.username
