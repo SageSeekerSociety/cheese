@@ -198,7 +198,8 @@ def main():
         # One model request per scripted tool call plus the opening turn —
         # the count the acceptance sequence produces (`request_count` in its
         # summary), so it moves when that sequence does.
-        assert len(requests) == 16, len(requests)
+        summary = json.loads((output / "summary.json").read_text())
+        assert len(requests) == summary["request_count"], len(requests)
         assert "BEFORE_RELEASE" not in requests[0].read_text()
     finally:
         rendezvous.unlink(missing_ok=True)
