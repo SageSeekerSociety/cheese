@@ -208,7 +208,7 @@ describe('这一页原来的两个用处都还在', () => {
     })
     const { container } = mount()
     await waitFor(() => {
-      const head = container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')
+      const head = container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')
       expect(head).toBe('施工中1·待处理1·已完成1')
     })
   })
@@ -311,7 +311,7 @@ describe('一件活都没有', () => {
     const { container, getByText } = mount()
     // 顶上那行仍然说得出这个项目交付过多少：板面空不等于什么都没发生过。
     await waitFor(() =>
-      expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
+      expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('已完成2')
     )
     getByText('在房间里说明要做什么，芝士会把它拆成任务')
   })
