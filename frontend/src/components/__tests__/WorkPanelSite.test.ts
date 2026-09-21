@@ -66,7 +66,7 @@ function block(id: string, content: string): Block {
     id,
     topic_id: 'topic-A',
     kind: 'message',
-    author_type: 'ai',
+    author_type: 'participant',
     author: 'cheese',
     content,
     created_at: '2026-08-12T08:00:00Z',

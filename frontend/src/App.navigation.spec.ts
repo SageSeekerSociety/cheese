@@ -88,7 +88,6 @@ async function mountApp(path: string, width: number) {
         component: Room,
         meta: { barSlot: true, backTo: 'workspace-project' },
       },
-      { path: '/projects/p1/agents', name: 'project-agents', component: blank },
       { path: '/projects/p1/dm/agent:cheese', name: 'workspace-dm', component: blank },
       {
         path: '/home',

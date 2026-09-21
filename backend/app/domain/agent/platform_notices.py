@@ -3,7 +3,7 @@
 ## 为什么有这个模块
 
 平台自己在房间里说话曾经有两条路。一条是 `ChatService.post_system_event()`，落
-`kind=event, author_type=system`，前端渲染成居中灰字一行。另一条是
+`kind=event, author_type=platform`，前端渲染成居中灰字一行。另一条是
 `runner.submit(author="system")`，它落下的其实是
 `kind=message, author_type=human, author="system"` —— 一条**伪装成人**的聊天
 消息，前端按真人发言渲染：完整气泡、头像、名字显示成 "system"。最长的一条（CI
@@ -64,13 +64,15 @@ EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 EVENT_CARD_FILED: Final = "card_filed"
 #: 这次交付在产物清单上新建了一项 —— 名字此前没出现过，看一眼是不是要的那个。
 EVENT_ARTIFACT_DECLARED: Final = "artifact_declared"
+#: 房间里的一份东西被留进了资料库 —— 从这一刻起别的房间也引用得到它。
+EVENT_LIBRARY_SAVED: Final = "library_saved"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
 EVENT_CARD_VOIDED: Final = "card_voided"
 #: 验收卡的描述被更正了 —— 这次改动会在 main 的历史里说什么，变了。
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
-#: 同步上游时合并冲突。
+#: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
@@ -123,12 +125,11 @@ EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
 EVENT_PR_REVIEW: Final = "pr_review"
 #: PR 和它的 base 分支冲突了，GitHub 合不了。
 EVENT_PR_CONFLICT: Final = "pr_conflict"
+# A parent task closed; its dependants need the executor to inspect their base.
+EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
+EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
-EVENT_PR_IDENTITY_DOWNGRADED: Final = "pr_identity_downgraded"
-#: 采纳合完了，改动已经在平台仓库的 main 上，但推回项目自己的远端（gitee、校内
-#: GitLab、自建）没成功 —— 采纳本身是成的，所以这不是 `accept_stopped`。
-EVENT_REMOTE_PUSH_FAILED: Final = "remote_push_failed"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -141,6 +142,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_FILED,
         EVENT_ARTIFACT_DECLARED,
+        EVENT_LIBRARY_SAVED,
         EVENT_CARD_REJECTED,
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
@@ -169,8 +171,8 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PROMPT_REPLAYED,
         EVENT_PR_REVIEW,
         EVENT_PR_CONFLICT,
-        EVENT_PR_IDENTITY_DOWNGRADED,
-        EVENT_REMOTE_PUSH_FAILED,
+        EVENT_DEPENDENCY_CLOSED,
+        EVENT_DEPENDENCY_REJECTED,
     }
 )
 

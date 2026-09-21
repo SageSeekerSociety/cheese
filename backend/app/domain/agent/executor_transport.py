@@ -1,6 +1,7 @@
 """Room executor transport shared by agent harnesses."""
 
 import json
+import logging
 import os
 import re
 import select
@@ -20,6 +21,32 @@ from urllib.parse import unquote, urlsplit
 # happened twice, and the deploy that caused it ends by itself.
 CONNECT_RETRY_WINDOW_S = 180
 CONNECT_RETRY_MAX_DELAY_S = 5
+
+logger = logging.getLogger(__name__)
+
+# 手够不着时 agent 读到的那一句（结论 23）。它的家就在这里：这个文件既是后端
+# import 的那一份（`private_chat.py`、`codex/tools.py` 走的都是它），又是原样发到机
+# 器上、在那边没有任何我们的东西可 import 地跑起来的那一份
+# (`remote_execution/release.py`)。所以这句话只有一处声明，没有第二份要同步。
+#
+# 一句能力话，没有平台内部术语，也没有裸 HTTP 状态码：状态码告诉 agent 的是「有东
+# 西坏了」，而它这一轮需要知道的是还剩哪些通路。它替掉的是
+# `f"Executor HTTP request failed: {status}"`——一个裸数字会把它送回自己的工具调用
+# 里找 bug，而后端本来写好的中文 body 和 `X-Device-Id` 头在这条路上早就全丢了。
+MACHINE_OUT_OF_REACH = (
+    "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
+)
+
+# 但「够不着」是关于机器的一句断言，不是「非 200」的同义词。够不着的只有这三个：
+# 502/504 是中间那一跳转不过去，503 是执行器没在听。一个 500 是机器上某个工具处理
+# 函数抛了异常，一个 401 是执行令牌过期，一个 4xx 是那台机器上的执行器比后端旧 ——
+# 手好好的，下一次工具调用照样通。把它们也说成够不着，agent 会照着这句话放弃这一轮
+# 全部文件与命令操作、并向人报告机器掉线，而那是假话。
+OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
+
+# 够不着以外的那些。同样不给裸状态码（结论 23）：数字会把 agent 送回自己的工具调用
+# 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
+EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
@@ -320,8 +347,15 @@ class RemoteClient:
                     response = connection.getresponse()
                     data = response.read()
                     if response.status != 200:
+                        # agent 读到的那句话里没有状态码，平台这边一个都不少：
+                        # 少了这一行，后端事后连「当时是哪个码」都查不出来。
+                        logger.warning(
+                            "executor %s -> %s: %s", method, response.status, data[:200]
+                        )
                         raise RuntimeError(
-                            f"Executor HTTP request failed: {response.status}"
+                            MACHINE_OUT_OF_REACH
+                            if response.status in OUT_OF_REACH_STATUSES
+                            else EXECUTOR_CALL_FAILED
                         )
                     return json.loads(data)
                 except ConnectionRefusedError:

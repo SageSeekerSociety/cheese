@@ -141,7 +141,7 @@ _TOOL_ARG = {
     "cheese_tell": "message",
     "cheese_milestone": "title",
     "cheese_serve": "note",
-    "cheese_artifact": "path",
+    "cheese_show": "path",
     "cheese_api": "path",
     # 后台任务。起任务时说的是那条命令 —— 任务号是刚生出来的，对读的人不说明
     # 任何事；往里打字时说的是打进去的那句，同理。
@@ -191,7 +191,7 @@ _PATH_TOOLS = frozenset(
         "write",
         "ls",
         "cheese_doc_set",
-        "cheese_artifact",
+        "cheese_show",
     }
 )
 

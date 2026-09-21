@@ -4,7 +4,7 @@ import stat
 import uuid
 
 from app.core.config import settings
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 
 def test_session_dir_precreates_world_writable_hook_spool(tmp_path, monkeypatch):

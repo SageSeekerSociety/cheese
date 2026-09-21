@@ -4,20 +4,17 @@
   "more": "更多",
   "myWork": "我的工作",
   "newProject": "新建{project}",
+  "project": {
+    "board": "看板",
+    "calendar": "日历",
+    "library": "资料库",
+    "members": "成员"
+  },
   "spaces": "空间",
   "teams": "小队",
   "term": {
     "project": "项目",
     "topic": "话题"
   },
-  "workspace": "工作区",
-  "project": {
-    "agents": "AI 队友",
-    "board": "看板",
-    "calendar": "日历",
-    "delivery": "导出与发布",
-    "library": "资料库",
-    "members": "成员",
-    "overview": "总览"
-  }
+  "workspace": "工作区"
 }

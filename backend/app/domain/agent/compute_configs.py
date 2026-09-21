@@ -80,12 +80,14 @@ async def bind_room_device_choice(
     session: AsyncSession, topic, project_settings: dict | None
 ):
     """Materialize a named project default before the device channel starts."""
-    from app.domain.device.supply import Visibility
-
     choice = room_choice(topic, project_settings)
     if choice.device_id:
         await validate_choice(session, topic.project_id, choice)
         devices = sql_device_service(session)
         if await devices.topic_binding(topic.id) is None:
-            await devices.bind_topic_device(topic.id, choice.device_id, Visibility.host)
+            await devices.bind_topic_device(
+                topic.id,
+                choice.device_id,
+                await devices.binding_visibility(choice.device_id),
+            )
     topic.compute_config = choice.model_dump()

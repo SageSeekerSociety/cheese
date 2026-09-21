@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 _CLI_SRC = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 

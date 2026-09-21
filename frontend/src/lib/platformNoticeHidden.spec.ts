@@ -15,7 +15,7 @@ function msg(id: string, content: string, meta: Record<string, unknown> | null =
     id,
     topic_id: 't',
     kind: 'message',
-    author_type: 'ai',
+    author_type: 'participant',
     author: 'cheese',
     content,
     doc_version: 1,

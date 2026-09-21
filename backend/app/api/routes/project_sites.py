@@ -1,6 +1,5 @@
 """Project delivery: publish the accepted static website as a private Site."""
 
-import asyncio
 import uuid
 from typing import Annotated
 
@@ -40,7 +39,7 @@ async def get_project_site(
     if not actor.authenticated:
         raise AuthenticationRequiredError("请先登录")
     await require_site_access(db, actor.handle, project_id)
-    source = await asyncio.to_thread(publication_source, project_id)
+    source = await publication_source(db, project_id)
     release = await get_current_release(db, project_id)
     can_publish = await can_publish_site(db, actor.handle, project_id)
     reason = None

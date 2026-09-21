@@ -73,32 +73,32 @@ class Shell:
     terms: dict[str, str] = field(default_factory=dict)
 
 
-#: 现状, verbatim: the desktop first screen is 看板, both app-level lists are in
-#: their existing order, the project sidebar keeps all seven pages in today's
-#: order, nothing is collapsed and no noun is renamed. A project that declares
-#: no 壳 must be indistinguishable from today, screen by screen — that equality
-#: is the acceptance test for this whole mechanism.
+#: 现状, verbatim: the desktop first screen is 看板 and both app-level lists are in
+#: their existing order. A project that declares no 壳 must be indistinguishable
+#: from today, screen by screen — that equality is the acceptance test for this
+#: whole mechanism, which is why this declaration is edited whenever 「today」
+#: moves upstream. It moved once already: #1330/#1339 narrowed the project
+#: sidebar to 资料库 and sent 日历 / 成员 into the ⋯ menu beside the project name
+#: (总览 and 导出与发布 stopped being pages at all). `hidden` carries that move
+#: rather than a list of seven, so 资料库 stays the one row the sidebar shows and
+#: the rest are one click away in the menu — still 收起, never 禁止.
+#:
+#: 看板 is the 壳's `home` and lives in no `nav.project` list: the project name
+#: itself is the way to it, exactly as upstream argues beside the menu it draws.
 _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
     home="workspace-running",
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("spaces", "workspace", "inbox"),
-        project=(
-            "overview",
-            "workspace-running",
-            "calendar",
-            "project-library",
-            "project-delivery",
-            "project-agents",
-            "project-members",
-        ),
+        project=("calendar", "project-library", "project-members"),
     ),
+    hidden=("calendar", "project-members"),
 )
 
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
-#: 日历 and 导出与发布 are collapsed — a team workspace does not put one person's
-#: schedule or a release pipeline in everyone's sidebar — but both stay in 更多.
+#: 日历 is collapsed — a team workspace does not put one person's schedule in
+#: everyone's sidebar — but it stays one click away.
 _WORKBENCH = Shell(
     name="workbench",
     home="workspace-running",
@@ -106,44 +106,40 @@ _WORKBENCH = Shell(
         rail=("home", "projects", "add"),
         tabs=("workspace", "spaces", "inbox"),
         project=(
-            "workspace-running",
-            "overview",
             "calendar",
             "project-library",
-            "project-agents",
+            "workspace-running",
             "project-members",
-            "project-delivery",
         ),
     ),
-    hidden=("calendar", "project-delivery"),
+    hidden=("calendar",),
     terms={"project": "工作", "topic": "议题"},
 )
 
-#: 课程 (学生): first screen is 总览 — a student opens the class to see what it is
-#: and what is due, not a board of everything the whole class is running. 提问 is
-#: the noun students are actually taught, so 话题 reads as 提问 here.
+#: 课程 (学生): first screen is 看板 for now — the course template's real first
+#: screen (本周任务, or the 助教 conversation in an 答疑 course) is a page this
+#: build does not have yet, and `home` may only name a route that exists. When
+#: that page lands, this one line moves and nothing else does. 提问 is the noun
+#: students are actually taught, so 话题 reads as 提问 here.
 _COURSE_STUDENT = Shell(
     name="course-student",
-    home="overview",
+    home="workspace-running",
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("workspace", "inbox", "spaces"),
         project=(
-            "overview",
-            "workspace-running",
             "project-library",
-            "project-members",
-            "project-agents",
             "calendar",
-            "project-delivery",
+            "project-members",
+            "workspace-running",
         ),
     ),
-    hidden=("calendar", "project-agents", "project-delivery"),
+    hidden=("calendar", "project-members"),
     terms={"project": "课程", "topic": "提问"},
 )
 
 #: 课程 (老师): the board first — a teacher's question is 「这个班现在有什么在等
-#: 我」, which is exactly the column the board sorts by. 名册 second, 交付 third.
+#: 我」, which is exactly the column the board sorts by. 名册 second.
 _COURSE_TEACHER = Shell(
     name="course-teacher",
     home="workspace-running",
@@ -153,14 +149,11 @@ _COURSE_TEACHER = Shell(
         project=(
             "workspace-running",
             "project-members",
-            "overview",
-            "project-delivery",
             "project-library",
             "calendar",
-            "project-agents",
         ),
     ),
-    hidden=("project-library", "project-agents"),
+    hidden=("project-library",),
     terms={"project": "课程", "topic": "提问"},
 )
 

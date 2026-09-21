@@ -211,15 +211,6 @@ async def test_late_teammate_is_listed_without_a_persistent_project_grant(client
     late = _rows(client, str(pid))["late-mate"]
     assert late["source"] == "team"
     async with factory() as session:
-        from app.domain.dashboard.services import DashboardService
-
-        overview = await DashboardService(session).project_overview(
-            pid, viewer="late-captain"
-        )
-        assert {m["handle"] for m in overview["members"]} == {
-            "late-captain",
-            "late-mate",
-        }
         assert (
             await MemberRepository(session).get(project_id=pid, user_handle="late-mate")
             is None

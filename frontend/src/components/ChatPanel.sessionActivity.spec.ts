@@ -58,7 +58,7 @@ const assistantBlock: Block = {
   id: 'assistant-1',
   topic_id: topic.id,
   kind: 'message',
-  author_type: 'ai',
+  author_type: 'participant',
   author: 'cheese-session',
   content: 'Still working.',
   created_at: '2026-08-17T00:00:01Z',

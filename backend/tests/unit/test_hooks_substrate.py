@@ -290,7 +290,7 @@ async def test_failed_precheck_never_touches_the_router():
     class _NoRun(Channel):
         name = "no-run"
 
-        async def precheck(self, session):
+        async def precheck(self, session, *, needs_place=True):
             raise ScreenSetupError("挡在门外")
 
     router = HookRouter()

@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.domain.agent import execution  # noqa: E402
+from app.domain.agent import execution, place  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution import runtime  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution.launch import script  # noqa: E402
 
@@ -25,9 +25,10 @@ class RoomExecutor:
         self.task = str(uuid.uuid4())
         self.owner = folder / "execution-host"
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
-        self.work = self.home / "room"
+        self.work = self.home / place.CHECKOUT_DIR
         self.state = self.home / ".cheese/executor"
         repository = folder / "task-origin"
+        self.remote = str(repository)
         repository.mkdir()
         (repository / "backend").mkdir()
         (repository / "backend/dependency-version").write_text("1")
@@ -68,6 +69,26 @@ class RoomExecutor:
                 }
             )
         )
+        # A real room's checkout is a git checkout — `resource_cleanup` reads
+        # its working-tree status before retiring it, and the whole of 结论 49
+        # is a claim about what that status says. A plain directory here makes
+        # the claim unaskable, so the fixture commits the project's own files
+        # and leaves the tree clean: anything a turn adds after this is either
+        # the agent's work or something the platform had no business writing.
+        for arguments in (
+            ["init", "-q", "-b", "main"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "-qm",
+                "Project files the room starts from",
+            ],
+        ):
+            subprocess.run(["git", "-C", str(original), *arguments], check=True)
         pin = self.owner / ".cheese/claude/versions/2.1.277"
         pin.parent.mkdir(parents=True)
         pin.symlink_to(Path(claude).resolve())
@@ -76,7 +97,6 @@ class RoomExecutor:
             "CHEESE_TOKEN": "room-fixture-token",
             "CHEESE_PROJECT": str(project),
             "CHEESE_TOPIC": str(resource),
-            "CHEESE_GIT_REMOTE": str(repository),
             "GIT_AUTHOR_NAME": "fixture",
             "GIT_AUTHOR_EMAIL": "fixture@example.test",
             "GIT_COMMITTER_NAME": "fixture",
@@ -147,12 +167,17 @@ class RoomExecutor:
                                 "branch": f"task/{executor.task}",
                                 "base": "main",
                                 "closed": False,
+                                "remote": executor.remote,
+                                "coauthors": [],
                             }
                         }
                     )
                 return super().do_GET()
 
             def do_POST(self):
+                if self.path == f"/projects/{executor.project}/git/tasks/{executor.task}":
+                    self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    return self.do_GET()
                 if self.path != "/execution":
                     return super().do_POST()
                 assert self.headers.get("X-Cheese-Token") == "room-fixture-token"

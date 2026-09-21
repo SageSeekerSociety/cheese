@@ -181,6 +181,34 @@ class ProjectGitInstallation(UuidPk, Timestamps, Base):
     account: Mapped[str] = mapped_column(String(255))
 
 
+class ProjectForge(UuidPk, Timestamps, Base):
+    """The single authoritative repository for a project's code and proposals."""
+
+    __tablename__ = "project_forges"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    url: Mapped[str] = mapped_column(String(2048))
+    api_url: Mapped[str] = mapped_column(String(2048))
+    repo: Mapped[str] = mapped_column(String(255))
+    default_branch: Mapped[str] = mapped_column(String(255), default="main")
+    # Only the backend can mint credentials; the account password never leaves it.
+    account_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ForgeToken(UuidPk, Timestamps, Base):
+    """Encrypted cache of access tokens with provider-enforced expiration."""
+
+    __tablename__ = "forge_tokens"
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    api_url: Mapped[str] = mapped_column(String(2048))
+    username: Mapped[str] = mapped_column(String(255))
+    value: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class ProjectArtifact(UuidPk, Timestamps, Base):
     """项目做出来的一样东西 —— 清单上的一行 (#1085 结论二、三)。
 
