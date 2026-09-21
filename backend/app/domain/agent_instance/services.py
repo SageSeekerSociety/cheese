@@ -327,6 +327,12 @@ class AgentInstanceService:
         席位和实例一起播：一行实例没有席位，就是一个进不了房间的参与者，授权也就
         没有可读的那一行。`ProjectService.create` 先建总览房间再调这里，所以正常
         路径上总有一个房间可坐；直接拼出来、还没有总览房间的 Project 只拿到实例。
+
+        席位只在实例出生这一次播，读到一行已有的实例不补席位——补了就等于「撤掉
+        席位」在下一次读的时候自动撤销，而那一撤正是席位存在的理由（见
+        `TopicMemberService.holds_an_agent_seat`）。旧镜像在迁移窗口里建的项目
+        （有实例行、有指针、没有席位）因此不由这里接住，由 `b4d1a70c9e52` 那条
+        幂等回填在 P11 的迁移里原样再跑一遍接住。
         """
         if project.default_agent_instance_id is not None:
             instance = await self._repo.get(project.default_agent_instance_id)
@@ -351,20 +357,15 @@ class AgentInstanceService:
         # Same pool either way — the handle never moved.
         instance.is_active = True
         project.default_agent_instance_id = instance.id
-        await self._seat_in_root(project, instance)
+        if project.root_topic_id is not None:
+            # 建项目时 ProjectService 就在这条链上，按调用时导入。
+            from app.domain.topic_membership.services import TopicMemberService
+
+            await TopicMemberService(self._session).ensure_agent_seat(
+                project.root_topic_id, agent_instance_handle(instance.id)
+            )
         await self._session.flush()
         return instance
-
-    async def _seat_in_root(self, project: Project, instance: AgentInstance) -> None:
-        """这个 agent 在项目总览房间里的席位。幂等。"""
-        if project.root_topic_id is None:
-            return
-        # 建项目时 ProjectService 就在这条链上，按调用时导入。
-        from app.domain.topic_membership.services import TopicMemberService
-
-        await TopicMemberService(self._session).ensure_agent_seat(
-            project.root_topic_id, agent_instance_handle(instance.id)
-        )
 
     async def _require_known_type(self, type_name: str | None) -> None:
         if type_name and type_name not in preset_types():

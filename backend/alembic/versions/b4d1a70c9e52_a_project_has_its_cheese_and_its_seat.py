@@ -33,9 +33,17 @@ A 总览 that seats some OTHER agent as well is left alone, as it was there: wit
 more than one candidate nothing can say which of them the stand-in was.
 
 Pure INSERT for the rows a project is supposed to have, so dev does not stop:
-rows the old image cannot see do not change what it does, and a project it
-creates during the window has no row until the new image's re-seed
-(`AgentInstanceService.materialize_default`) makes one.
+rows the old image cannot see do not change what it does.
+
+The old image goes on creating projects until the container is swapped, and what
+it creates is an agent row and a pointer with no seat — it seats the room-derived
+stand-in instead. `materialize_default`'s re-seed does not catch those: it seeds
+an agent that is missing, and theirs is not missing. Re-seating on every read
+would catch them and would also undo every revoked seat on the next read, which
+is the one capability a seat exists to provide, so this backfill is what catches
+them — named in P11's migration (`refactor(identity): an agent signs with its
+instance handle`, the next migration to deploy) to run once more, unchanged. It
+is idempotent, so the second run costs a scan and changes only those projects.
 
 Idempotent on ``(project_id, handle='cheese')``, on every seat it inserts and on
 the stand-in retirement (which fires only while the stand-in is still seated),
@@ -46,6 +54,7 @@ and deleting an agent would strand the memory pool keyed by its handle.
 """
 
 import json
+import logging
 import uuid
 from collections.abc import Sequence
 
@@ -57,6 +66,8 @@ revision: str = "b4d1a70c9e52"
 down_revision: str | Sequence[str] | None = "c1a7e05d4b83"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+logger = logging.getLogger("alembic.a_project_has_its_cheese_and_its_seat")
 
 # Every project's default agent, with the handle it sits on rosters as, the name
 # it renders under and the room to seat it in. Same derivation as
@@ -123,15 +134,18 @@ def upgrade() -> None:
         .mappings()
         .all()
     )
+    skipped: list[str] = []
+    seeded = 0
     for project in unseeded:
         try:
             model = initial_model(project["settings"] or {}, harness)
         except ValidationError:
-            # 这个项目的 settings 配下来，当前 harness 一个模型都用不了（或者跑
-            # 迁移的容器模型池 env 不全）。跳过它，而不是让一个配坏的项目把整条
-            # 迁移回滚、把部署卡住：`materialize_default` 的就地补种会在下一次读
-            # 到这个项目时按当时的模型池把这行建出来，补不出来就在请求期报错——
-            # 和今天一个没有实例行的项目完全一样。
+            # 这个项目的 settings 配下来，当前 harness 一个模型都用不了。跳过它，
+            # 而不是让一个配坏的项目把整条迁移回滚、把部署卡住：
+            # `materialize_default` 的就地补种会在下一次读到这个项目时按当时的
+            # 模型池把这行建出来，补不出来就在请求期报错——和今天一个没有实例行
+            # 的项目完全一样。跳过谁要点名，否则这里和「没有项目要补」长得一样。
+            skipped.append(str(project["id"]))
             continue
         configuration = {
             "body": "",
@@ -156,6 +170,22 @@ def upgrade() -> None:
                 "project": project["id"],
                 "configuration": json.dumps(configuration),
             },
+        )
+        seeded += 1
+    if skipped:
+        logger.warning(
+            "a_project_has_its_cheese_and_its_seat: 没有可用模型，跳过 %d 个项目：%s",
+            len(skipped),
+            ", ".join(skipped),
+        )
+    if unseeded and not seeded:
+        # 一个项目配坏了是它自己的事；有项目要补而一个都没补成，成因几乎只能是
+        # 跑迁移的容器模型池 env 不全。那一遍是整体空转，而空转正常退出和「本来
+        # 就没有项目要补」在部署日志里长得一模一样——停下来，别让部署拿着一个绿
+        # 的迁移和一批一行没补的存量项目往下走。
+        raise RuntimeError(
+            f"{len(unseeded)} 个项目要补芝士实例，一个都没补成"
+            f"（当前 harness {harness!r} 解析不出模型，多半是模型池 env 不全）"
         )
     # A project points at its 芝士: that pointer is what 「新房间跟谁开」 reads.
     op.execute(

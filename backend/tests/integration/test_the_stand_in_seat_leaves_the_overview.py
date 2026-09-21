@@ -13,6 +13,7 @@ import importlib.util
 import uuid
 from pathlib import Path
 
+import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -169,6 +170,54 @@ def test_a_room_seating_another_agent_keeps_its_stand_in(db_session, _portal):
                     sa.text("SELECT author FROM blocks WHERE id=:id"), {"id": said}
                 ).scalar_one()
                 == stand_in
+            )
+
+        await connection.run_sync(check)
+
+    _portal.call(run)
+
+
+def test_a_backfill_that_seeded_nothing_stops_the_deploy(
+    db_session, _portal, monkeypatch
+):
+    """回填一个项目都没补成，迁移不许绿着退出。
+
+    一个项目都补不成的成因不是「这批项目各自配坏了」——那要一个一个配坏才凑得齐
+    ——而是跑迁移的容器一个模型都读不到。那一遍是整体空转，绿着退出的话部署看到
+    的和「本来就没有项目要补」完全一样，存量项目一行没补也没人知道。
+    """
+    migration = _migration()
+
+    async def run():
+        project = await ProjectService(db_session).create(
+            name="Starved", forge_kind="github_app"
+        )
+        root = project.root_topic_id
+        seeded_seat = agent_instance_handle(project.default_agent_instance_id)
+        connection = await db_session.connection()
+        # 跑迁移的容器一个模型都读不到，在代码里就长这样。
+        monkeypatch.setattr(
+            "app.domain.agent_instance.configuration.model_choices",
+            lambda project_settings: [],
+        )
+
+        def check(conn):
+            migration.op = Operations(MigrationContext.configure(conn))
+            _unseed(conn, project_id=project.id, root_id=root, seat=seeded_seat)
+            conn.execute(
+                sa.text("DELETE FROM agent_instances WHERE project_id=:p"),
+                {"p": project.id},
+            )
+
+            with pytest.raises(RuntimeError):
+                migration.upgrade()
+
+            assert (
+                conn.execute(
+                    sa.text("SELECT count(*) FROM agent_instances WHERE project_id=:p"),
+                    {"p": project.id},
+                ).scalar_one()
+                == 0
             )
 
         await connection.run_sync(check)
