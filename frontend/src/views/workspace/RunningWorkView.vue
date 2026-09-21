@@ -327,10 +327,16 @@ function openTask(task: RoomTask) {
                样子，卡到齐的那一刻没有任何东西挪位置。定时重拉走的是静默那一路，
                它不碰 loading，所以骨架不会在人看着的时候再回来一次。 -->
           <LoadingSkeleton v-if="loading && !rows.length" variant="card" :rows="2" class="board-col__skel" />
-          <ul v-else class="board-col__list">
+          <!-- 这块板每 15 秒自己重拉一次，所以卡是会在没人碰它的时候变的：一条活
+               从「施工中」挪进「待处理」，那一刻的画面是这一页唯一一处不由点击引
+               起的变化，而它恰好是最要紧的那一种——轮到你了。所以卡的进出走过渡，
+               而不是原地换一批。同一列里剩下的那几张跟着 FLIP 补位。
+               跨列不连着动：两列各是一个能独立滚动的容器，一张卡跨过去在前一列是
+               「离开」、在后一列是「进入」，中间那段轨迹没有共同的坐标系可言。 -->
+          <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
             <!-- 空列自己说它空。「施工中」那一列还多一句下一步：三列同时空着是这
                  个项目的常态，那几行字就是第一屏的主要内容。 -->
-            <li v-if="!inColumn(col.key).length" class="board-col__empty t-body">
+            <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
               {{ emptyLine(col.key) }}
               <span v-if="col.key === 'building' && !mine" class="board-col__next t-meta"
                 >在房间里说明要做什么，芝士会把它拆成任务</span
@@ -377,7 +383,7 @@ function openTask(task: RoomTask) {
                 <span v-if="row.card?.pr_number" class="board-card__pr t-meta">PR #{{ row.card.pr_number }}</span>
               </button>
             </li>
-          </ul>
+          </TransitionGroup>
         </section>
 
         <!-- 做出了什么：板上最右边那一列。三列从左到右是一条流水线（施工中 → 交付
@@ -570,7 +576,10 @@ function openTask(task: RoomTask) {
   margin-left: auto;
   color: var(--muted);
 }
+/* `position: relative`：走掉的那张卡在淡出期间要脱离文档流（见下面的过渡），不然
+   它下面那几张得等它消失才补位，那就是一次跳而不是一次移动。 */
 .board-col__list {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -615,6 +624,28 @@ function openTask(task: RoomTask) {
 /* 悬停只改颜色，不改位置：一列几十张卡，鼠标扫过时每张抬一下会让整列跳。 */
 .board-card:hover {
   border-color: var(--line-2);
+}
+/* 静默重拉之后卡的进出。新来的淡入、走掉的淡出，同一列里剩下的那几张滑到新位置
+   ——位置在这块板上是信息（列 = 该谁动，列内 = 先看哪一条），所以补位得看得见是
+   「它挪了」。走掉那张脱离文档流，否则下面几张要等它淡完才动，那是一次跳。
+   左右两个 8px 是 `.board-col__list` 自己的内边距：绝对定位量的是 padding box，
+   不补上这两个数，淡出的那张会先横着挪 8px。
+   减弱动效不在这儿单独关：全局那条把 transition 压到 0.001ms，进出于是瞬间完成。 */
+.board-card-move {
+  transition: transform 0.3s ease;
+}
+.board-card-enter-active {
+  transition: opacity 0.2s ease;
+}
+.board-card-leave-active {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  transition: opacity 0.2s ease;
+}
+.board-card-enter-from,
+.board-card-leave-to {
+  opacity: 0;
 }
 /* 标题最多两行，超出截断 —— 一张卡不该因为标题长就把整列推下去。 */
 .board-card__title {

@@ -36,7 +36,7 @@ records that: `blocks.author_type` stores one value per author, not a history of
 what it used to be called.
 
 Revision ID: 2895c4967ca4
-Revises: d7b3f0a9c651
+Revises: b9e4c17d0a52
 """
 
 from collections.abc import Sequence
@@ -46,7 +46,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "2895c4967ca4"
-down_revision: str | Sequence[str] | None = "d7b3f0a9c651"
+down_revision: str | Sequence[str] | None = "b9e4c17d0a52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
