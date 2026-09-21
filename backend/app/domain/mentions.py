@@ -18,7 +18,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.project.repositories import ProjectRepository
+from app.domain.membership.roster import roster_rows
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 
@@ -78,10 +78,13 @@ async def canonicalize_refs(
     exclude_topic_id: uuid.UUID | None = None,
 ) -> str:
     """Load the project's roster + topic list and canonicalize friendly @refs
-    in `text`. The cheap no-@ case never touches the DB."""
+    in `text`. The cheap no-@ case never touches the DB.
+
+    名册上有队友，所以「@评审」解析得出它的席位 handle：一个 agent 对另一个 agent
+    发的那条 chat（结论 12）就是从这里变成可点名、通知得到的一条消息的。"""
     if not text or "@" not in text:
         return text
-    roster = await ProjectRepository(session).list_members(project_id)
+    roster = await roster_rows(session, project_id)
     topics = [
         {"id": str(t.id), "title": t.title}
         for t in await TopicRepository(session).list_for_project(project_id)

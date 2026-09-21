@@ -84,9 +84,11 @@ class ProjectService:
         await self._seed_roster(project)
         # 总览 = 项目本体: its roster mirrors the whole project (fusion-design §3).
         # Seed it with every current project member; 芝士 is already seated above.
-        member_handles = [
-            m["handle"] for m in await self._repo.list_members(project.id)
-        ]
+        # 问的是名册那一个读法，不是人那一半：本文件在 roster() 的下游（它 import
+        # ProjectService），所以这条 import 只能在函数里。
+        from app.domain.membership.roster import roster
+
+        member_handles = [m.handle for m in await roster(self._session, project.id)]
         await self._members.seed_root(
             root.id, owner_handle=owner_handle, member_handles=member_handles
         )
@@ -107,7 +109,7 @@ class ProjectService:
         **建项目的人不写进这张表**，尽管他显然是这个项目的人。这不是遗漏：这个仓
         里「谁是所有者」记在 ``Project.owner_handle`` 上，成员表存的是**其他**人，
         很多地方按这个前提写（包括「把所有者加进名册」这个动作本身）。把他也塞进
-        来会让那些调用变成插重复键。名册上照样有他——``ProjectRepository.list_members``
+        来会让那些调用变成插重复键。名册上照样有他——``ProjectRepository.people``
         读的时候补出那一行，所以少的只是一条**写**进去的记录。
 
         每一步都尽量往下做：解析不出用户的 handle（agent、测试夹具）不该让建项目
@@ -206,6 +208,15 @@ class ProjectService:
     async def team_for_project(self, project_id: uuid.UUID) -> int | None:
         """Resolve quota ownership, including older personal-team projects."""
         return await self._repo.team_for_project(project_id)
+
+    async def people(self, project_id: uuid.UUID) -> list[dict]:
+        """这个项目里的**人**：成员行、所属小队、所有者，合成的一张表。
+
+        名册的两个来源之一，另一个是这个项目的队友；合起来那张表由
+        ``membership/roster.py`` 的 ``roster()`` 给出，它是这里唯一的调用方。想问
+        「这个项目里有谁」的走那边——只读人这一半，答案里就没有队友。
+        """
+        return await self._repo.people(project_id)
 
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)

@@ -120,6 +120,7 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
 )
+from app.domain.membership.roster import roster_rows
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
@@ -2836,11 +2837,9 @@ class ChatService:
                 if "@" in content
                 else []
             )
-            # Which agent each seat belongs to. A room may seat several, so one
-            # display name cannot stand for all of them: labelling every seat
-            # with the room's pointed-at agent made the other teammates
-            # unaddressable — their names matched nobody, so no mention token
-            # was written and nobody was ever recorded as addressed (#1192).
+            # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
+            # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
+            # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
             by_seat = (
                 {
                     agent_instance_handle(instance.id): instance
@@ -2883,24 +2882,13 @@ class ChatService:
                 # as a clickable chip instead of leaking raw "@Alice" text.
                 # Private topics have no roster to resolve against (and expose
                 # no member list), so they store the content verbatim.
+                # 队友已经在这张名册上（``membership/roster.py``），每一位带着自己
+                # 的名字，所以这里不再把席位和人拼一次——拼出来的那份就是第二份声明。
                 roster = (
                     []
                     if topic.is_private or "@" not in content
-                    else await ProjectRepository(session).list_members(topic.project_id)
+                    else await roster_rows(session, topic.project_id)
                 )
-                # Use the same room seat and display name as the mention picker,
-                # each seat under its own agent's name.
-                roster = [
-                    {
-                        "handle": handle,
-                        "name": (
-                            by_seat[handle].display_name
-                            if handle in by_seat
-                            else agent.display_name
-                        ),
-                    }
-                    for handle in agent_handles
-                ] + [row for row in roster if row["handle"] not in agent_handles]
                 if roster:
                     topic_refs = [
                         {"id": str(t.id), "title": t.title}
@@ -3329,7 +3317,7 @@ class ChatService:
                 roster = (
                     []
                     if topic is None or topic.is_private
-                    else await ProjectRepository(session).list_members(project_id)
+                    else await roster_rows(session, project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
@@ -3798,7 +3786,7 @@ class ChatService:
                 roster = (
                     []
                     if topic is None or topic.is_private
-                    else await ProjectRepository(session).list_members(project_id)
+                    else await roster_rows(session, project_id)
                 )
                 topic_refs, _ = _topic_ref_lists(
                     await TopicRepository(session).list_for_project(project_id),
@@ -4573,16 +4561,13 @@ class ChatService:
                     memory, session, topic=topic, agent=agent
                 )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
-            projects_repo = ProjectRepository(session)
-            project = await projects_repo.get(topic.project_id)
+            project = await ProjectRepository(session).get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             wanted_harness = await agents.harness(agent)
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
-            roster = (
-                [] if is_private else await projects_repo.list_members(topic.project_id)
-            )
+            roster = [] if is_private else await roster_rows(session, topic.project_id)
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；

@@ -301,11 +301,11 @@ const mentionPool = computed(() => {
     agent: !!m.agent,
   }))
   const inRoom = new Set(room.map((r) => r.handle))
-  // 这个房间已经有自己的芝士时，项目名册上那种共用的 agent 行就不进名单了：
-  // 两行都叫「芝士」的话，@芝士 展开成哪一个纯看顺序。房间里那位才是会动的那个。
-  const roomHasAgent = room.some((r) => r.agent)
+  // 项目名册上的 AI 队友也 @ 得到：它坐的是自己的那个 handle（房间席位用的是同一
+  // 个），所以上面按 handle 去重就够了——@ 一位还没进这间房的队友，和 @ 一个还没
+  // 进来的人是同一件事。
   const rest = props.members
-    .filter((m) => !inRoom.has(m.user_handle) && !(roomHasAgent && m.agent))
+    .filter((m) => !inRoom.has(m.user_handle))
     .map((m) => ({ handle: m.user_handle, label: m.name || m.user_handle, agent: !!m.agent }))
   return [...room, ...rest]
 })
