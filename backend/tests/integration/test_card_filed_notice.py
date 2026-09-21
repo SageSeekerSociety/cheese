@@ -11,14 +11,18 @@
 
 import uuid
 
+import pytest
+
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_TURN_QUEUED,
     SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
-from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.delivery.addressing import Event
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
@@ -169,13 +173,17 @@ def test_a_notice_that_names_nobody_reaches_nobody(client):
     assert len(_notices(client, alice)) == 1
 
 
-def test_a_notice_the_platform_is_handling_reaches_nobody(client):
-    """调用点声明下一步在平台手上，点了名也没有收件人。
+@pytest.mark.parametrize(
+    "who,told",
+    [(WHO_PLATFORM, False), (WHO_CHEESE, False), (WHO_HUMAN, True)],
+)
+def test_who_is_handling_it_decides_whether_the_named_person_hears(client, who, told):
+    """同一条事件、同一个被点名的人，只有「等人」那一档发得出去。
 
     平台或芝士正在处理的事发一条通知出去，等于把一条不需要任何人动手的消息推到别
-    人面前。测的是「声明了平台，寻址就不给收件人，投递那一侧也就不发」这条通路 ——
-    不是「调用点不可能声明错」：哪一档由调用点给，今天三个投递调用点写死的都是
-    `Hand.participant`。
+    人面前。调用点说的是这条事件点了谁的名；下一步在谁手上是 `who` 说的，所以
+    「平台在处理，另外通知这几个人」在调用点那里根本写不出来。房间里那一行三档都
+    照落 —— 不通知不等于不留话。
     """
     alice = seed_user(client, "alice")
     room = _room(client)
@@ -186,12 +194,8 @@ def test_a_notice_the_platform_is_handling_reaches_nobody(client):
                 session,
                 place_id=uuid.UUID(room),
                 content="这轮在排队",
-                meta=notice(
-                    EVENT_TURN_QUEUED,
-                    severity=SEVERITY_INFO,
-                    who=WHO_PLATFORM,
-                ),
-                addressed=address(Event(reviewers=("alice",)), Hand.platform),
+                meta=notice(EVENT_TURN_QUEUED, severity=SEVERITY_INFO, who=who),
+                points_at=Event(reviewers=("alice",)),
             )
             await session.commit()
 
@@ -199,4 +203,4 @@ def test_a_notice_the_platform_is_handling_reaches_nobody(client):
 
     blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
     assert any((b.get("meta") or {}).get("event_type") == "turn_queued" for b in blocks)
-    assert _notices(client, alice) == []
+    assert len(_notices(client, alice)) == (1 if told else 0)

@@ -54,7 +54,6 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.documents.convert import (
@@ -1558,10 +1557,7 @@ async def ask_options(
         block_id=blk.id,
         question=question,
         asker=blk.author,
-        addressed=address(
-            Event(asked=None if waiting_for == "system" else waiting_for),
-            Hand.participant,
-        ),
+        asked=None if waiting_for == "system" else waiting_for,
     )
     await db.commit()
     payload = BlockOut.model_validate(blk).model_dump(mode="json")

@@ -6,13 +6,17 @@
 
 - `room_task/presentation.py` 的列（`needs_you` 就是「下一步在人手上」）；
 - `room_task/awaiting.py` 的两条判据（验收人 / 提需求的人 / 被问的那个人）；
-- 每个产生事件的调用点手写的那个 `who` 码（`agent/platform_notices.py` 的
-  `platform` / `cheese` / `human`），它在 `agent/announce.py` 里还兼着「这条提示
-  能不能点收件人」的闸门。
+- `agent/announce.py` 的那道闸门：`meta.who` 不是 `human` 而调用点又点了收件人，
+  就抛 `ValueError`，同时还兼着「agent 不能当收件人」。
 
 三个答案各自都对得起自己那一处，合起来就是看板显示「待处理」而没有人被通知到。
 这个模块把它们收成一个入口：**一条事件说它点了谁的名，`address()` 说谁会收到、
 凭什么收到。**
+
+「下一步在谁手上」本来就在两处被声明过，所以这里不新造第三处，只把那两处翻成
+`Hand`：看板那一列（`hand_of`）和通知契约的 `who` 码（`agent/announce.py` 的
+`_HAND_OF_WHO`，`platform` / `cheese` → 平台手上，`human` → 参与者手上）。两张都是
+封闭表，多一档而没跟上就当场抛 `KeyError`。
 
 ## 唯一的收件人规则（结论 15）
 
@@ -131,8 +135,11 @@ class Addressed:
         return None
 
 
-#: 谁都不通知。调用点用它当默认值 —— 一条没说自己点了谁的事件，默认是不惊动任何人。
+#: 谁都不通知。
 NOBODY = Addressed()
+
+#: 这条事件谁的名也没点。投递入口用它当默认值 —— 不说点了谁，就不惊动任何人。
+NAMES_NOBODY = Event()
 
 
 def address(event: Event, next_hand: Hand) -> Addressed:
@@ -140,10 +147,10 @@ def address(event: Event, next_hand: Hand) -> Addressed:
 
     下一步在平台手上就没有收件人 —— 那一档是结论 15 收紧「一律告诉人」的那一半。
 
-    `next_hand` 是调用点**声明**的，不是这里从状态算出来的：今天三个投递调用点都写
-    死 `Hand.participant`，所以一条平台在处理的事件被声明成「在参与者手上」，这里照
-    样会算出收件人来。这一档要变成拿不出收件人，得等投递侧也从看板那一列取答案（`hand_of`
-    已经在那儿，今天只有「待我处理」那份清单在用）。
+    `next_hand` 不是这里算的，也不由点名的那个调用点填：它从已经声明过这件事的地方
+    翻过来 —— 「待我处理」那份清单从看板那一列（`hand_of`），投递从通知契约的 `who`
+    码（`agent/announce.py`）。所以「平台在处理，另外通知这几个人」在两条路上都写不
+    出来：事件点谁的名是一件事，下一步在谁手上是另一件，后者不归点名的人说。
 
     同一个人只出现一次，带他最强的那个理由 —— 下面这个顺序就是判据本身：一个待确
     认问题挡住其余所有事，所以「被问的那个人」压过「验收人」，而卡递给谁又比「他

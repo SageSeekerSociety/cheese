@@ -4,21 +4,26 @@
 的是**怎么说出去**，两件事在一次调用里完成：
 
 1. 这句话落进房间的时间线（`kind=event, author_type=system`）；
-2. 寻址结果点到的那些人各收到同一句话。
+2. 这条事件点到的那些人各收到同一句话 —— 前提是下一步确实在参与者手上。
 
 芝士自己的提问走 `notify_question`：那条消息已经在时间线上，只缺投递这一半。
 
 通知里的文字就是房间里那一行，没有第二套措辞：人在通知里读到的和回房间看到的是
 同一句，同一件事不会有两种说法。再加一个渠道（浏览器推送之类）也只改这一个函数。
 
-**入参是一次寻址结果，不是一句文案加一串名字（I11）。** 谁该收到由
-`delivery/addressing.py` 的 `address()` 答，这里不猜也不推：凭房间名册推一批收件人出
-来，等于把一条多数人不该收的通知发给一屋子人。下一步在平台手上的那些事件，寻址结果
-里本来就没有人，所以它们只在房间里留话 —— 以前这一条靠读 `meta.who` 的码当闸门，一
-个给前端看的显示码兼着决定收件人，那就是同一个问题的第三个答案。
+**调用点说的是这条事件点了谁的名，不是收件人名单，也不是要不要发（I11）。**「下一
+步在谁手上」由这一层从 `meta.who` 读出来 —— 那个码本来就是这句话：`platform`（平
+台自己在重试/自愈）、`cheese`（芝士接着处理）、`human`（等人）。三个码翻成
+`delivery/addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
 
-怎么送到是 `identity/arrival.py` 的事：人走站内信，agent 在自己房间的时间线上读到上
-面刚落下的那一行。
+所以一条平台正在处理的提示**写不出收件人**：它点了谁的名都不影响，`who` 说了下一步
+不在参与者手上，寻址就拿不出人来。以前这一条是 `meta["who"] != WHO_HUMAN` 就抛
+`ValueError` —— 一道当场炸的闸门，拦得住，但要求每个调用点记住别这么写；现在是同一
+个事实决定同一件事，调用点连表达「平台在处理，另外通知这几个人」的位置都没有。
+
+那道旧闸门还兼着第二件事 —— 「agent 不能当收件人」。这一半不在这里：谁该收到对人和
+agent 是同一句话，分岔只在**怎么送到**，那是 `identity/arrival.py`（人有浏览器走站
+内信，agent 有一条会话，在自己房间的时间线上读到上面刚落下的那一行）。
 """
 
 from __future__ import annotations
@@ -27,16 +32,43 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.platform_notices import SEVERITY_INFO
+from app.domain.agent.platform_notices import (
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+)
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.delivery.addressing import NOBODY, Addressed
+from app.domain.delivery.addressing import (
+    NAMES_NOBODY,
+    Addressed,
+    Event,
+    Hand,
+    address,
+)
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.user.services import user_by_handle
+
+#: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
+#: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
+#: 侧的词 —— 和 `addressing.hand_of(column)` 对看板那一列做的是同一件事。
+#:
+#: `None` 是「这条提示没说谁在管」（`meta` 不是 `notice()` 拼的）：没人声明下一步到
+#: 了参与者手上，就谁都不通知 —— 和看板上一格没挪是同一个意思。
+#:
+#: **封闭表**：`platform_notices` 多一个码而这里没跟上，查表当场抛 `KeyError`，而不
+#: 是让新的码悄悄落进某一档。
+_HAND_OF_WHO: dict[str | None, Hand] = {
+    WHO_PLATFORM: Hand.platform,
+    WHO_CHEESE: Hand.platform,
+    WHO_HUMAN: Hand.participant,
+    None: Hand.platform,
+}
 
 
 async def announce(
@@ -47,9 +79,12 @@ async def announce(
     meta: dict | None = None,
     author: str = "system",
     turn_id: uuid.UUID | None = None,
-    addressed: Addressed = NOBODY,
+    points_at: Event = NAMES_NOBODY,
 ) -> Block | None:
     """把 `content` 说进房间，并投给这条事件点到的那些人。
+
+    `points_at` 只说这条事件点了谁的名（验收人 / 提需求的人 / 被问的那个人），默认
+    谁也没点。要不要真的发出去由 `meta.who` 决定，不由调用点决定。
 
     写的是调用方的 session，不是自己开一个：卡、房间里那句话、通知三者一起提交，
     所以一次回滚不会留下「房间说递了卡，卡却不存在」。要跨事务活下来的调用点
@@ -82,7 +117,7 @@ async def announce(
         place=place,
         content=content,
         meta=meta or {},
-        addressed=addressed,
+        points_at=points_at,
     )
     return block
 
@@ -94,7 +129,7 @@ async def notify_question(
     block_id: uuid.UUID,
     question: str,
     asker: str,
-    addressed: Addressed,
+    asked: str | None,
 ) -> None:
     """芝士提出待确认问题，本轮停止等待 —— 通知等这个回答的人。
 
@@ -105,10 +140,13 @@ async def notify_question(
     由平台决定。这一条是芝士自己的话，长度取决于它怎么问，两者不是一种东西 ——
     共用一个码，前端就无法区分该按哪一种渲染。
 
-    收件人同样来自寻址结果，理由和 `announce` 一致：等这个回答的只有一个人，而房间
-    里还有其他成员。
+    这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：本轮**停在这个问题上
+    了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
+    不到具体的人」（平台发起的轮次），那就谁也不通知。
     """
-    recipient_ids = await _mailbox_ids(session, addressed)
+    recipient_ids = await _mailbox_ids(
+        session, address(Event(asked=asked), Hand.participant)
+    )
     if not recipient_ids:
         return
     await publish_notification_event(
@@ -158,8 +196,9 @@ async def _notify(
     place: Place,
     content: str,
     meta: dict,
-    addressed: Addressed,
+    points_at: Event,
 ) -> None:
+    addressed = address(points_at, _HAND_OF_WHO[meta.get("who")])
     recipient_ids = await _mailbox_ids(session, addressed)
     if not recipient_ids:
         return

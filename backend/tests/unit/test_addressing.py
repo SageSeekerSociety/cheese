@@ -6,8 +6,9 @@
   收紧「一律告诉人」的那一半。
 - **转到某个参与者手上那一刻，恰好一次。** 一个人一条，重复点名不变成两条。
 
-最后一组是族 4 里被结论 14、15 根除的那 7 个 PR：它们各自修的那件事，在这张表里
-是一行，往后再犯就当场红。
+这里喂进来的 `Hand` 是测试自己给的，所以这张表只管这个函数本身。真实的那一档从哪
+来（看板那一列 / 通知契约的 `who` 码），以及一条平台在处理的提示点了名也发不出去，
+在 `tests/integration/test_card_filed_notice.py` 里走完整条通路。
 """
 
 import pytest
@@ -131,53 +132,3 @@ def test_every_column_is_in_the_table():
     """封闭表：看板多一列而这里没跟上，必须当场缺一行，不能悄悄落进「不通知」。"""
     for column in Column:
         assert hand_of(column) in (Hand.platform, Hand.participant)
-
-
-# —— 族 4：被结论 14、15 根除的那 7 个 PR，一个一行 ——————————————
-
-
-@pytest.mark.parametrize(
-    "event,next_hand,expected",
-    [
-        # #1128 一台机器这一分钟关着，平台在等它 —— 那是一个没人在用的平台的常态。
-        # 当时五条一分钟、来自五个话题，一直发到机器开机为止。房间里有个验收人在，
-        # 点了他的名也一样不发：在等的是平台，不是他。
-        (Event(reviewers=("alice",)), Hand.platform, ()),
-        # #1063 房间的运行环境还在准备，平台自己在等 —— 等待本身不是要谁动手，哪怕
-        # 这个房间的活有人报过需求。
-        (Event(reporter="bob"), Hand.platform, ()),
-        # #1058 闸门收走了房间的屏幕，卡停在那儿等验收人。
-        (
-            Event(reviewers=("alice",)),
-            Hand.participant,
-            (Recipient("alice", REASON_REVIEWER),),
-        ),
-        # #1105 后台任务崩了，下一步在人手上，而当时的通知数是 0。
-        (
-            Event(reporter="bob"),
-            Hand.participant,
-            (Recipient("bob", REASON_REPORTER),),
-        ),
-        # #1081 一个人看到的报错要到能修它的人手上，同样是一条也没发出去过。
-        (
-            Event(reporter="bob"),
-            Hand.participant,
-            (Recipient("bob", REASON_REPORTER),),
-        ),
-        # #1055 一轮失败了，发起那一轮的人在等这个答复。
-        (
-            Event(asked="carol"),
-            Hand.participant,
-            (Recipient("carol", REASON_ASKED),),
-        ),
-        # #1132 站点挂了 —— 提需求的人等的东西有了结果（坏结果），通知他一次。
-        (
-            Event(reporter="bob"),
-            Hand.participant,
-            (Recipient("bob", REASON_REPORTER),),
-        ),
-    ],
-    ids=["#1128", "#1063", "#1058", "#1105", "#1081", "#1055", "#1132"],
-)
-def test_the_family_4_regressions(event, next_hand, expected):
-    assert address(event, next_hand).recipients == expected
