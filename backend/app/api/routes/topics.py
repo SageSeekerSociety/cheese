@@ -89,7 +89,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task import presentation
+from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
@@ -558,6 +558,13 @@ async def list_room_tasks(
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
     asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
+    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
+    # `tasks` 上没有一列存它。
+    spent = await UsageRepository(db).last_model_by_task(thread_ids)
+    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
+    # 构造几百遍。
+    project = await ProjectRepository(db).get(topic.project_id)
+    choices = binding.catalog(project.settings if project else None)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -568,6 +575,10 @@ async def list_room_tasks(
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
+                "model": presentation.card_model(
+                    task, spent=spent.get(task.id), choices=choices
+                ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
                     presentation.facts_for_task(
@@ -575,6 +586,8 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
+                        # 同一个房间一次问一个分身，逐条问：每条活的分身是它自己的。
+                        worker_live=chat.worker_live(task.room_id, task.subagent_id),
                         awaiting_answer=task.id in asked,
                     ),
                     now=now,
@@ -634,12 +647,22 @@ async def get_room_task(
             # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
             # 一声。这一位是内存里的当下事实，不是库里的一列。
             room_screen_live=chat.has_live_screen(place.room_id),
+            # 屏幕还在，再问那个正在跑轮次的进程：这条活的分身它看得见。
+            worker_live=chat.worker_live(task.room_id, task.subagent_id),
             awaiting_answer=bool(
                 await BlockRepository(db).tasks_awaiting_an_answer([task.id])
             ),
         ),
         now=datetime.now(UTC),
     ).as_dict()
+    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
+    # 就是它绑的那个。和列表里显示的是同一个函数算的。
+    project = await ProjectRepository(db).get(place.project_id)
+    out["model"] = presentation.card_model(
+        task,
+        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
+        choices=binding.catalog(project.settings if project else None),
+    )
     card = cards.get(task.id)
     out["card"] = (
         None
