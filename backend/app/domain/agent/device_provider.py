@@ -45,7 +45,12 @@ from app.domain.agent.device_hub import (
     device_hub,
 )
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.channel import Channel, Placement, ScreenSetupError
+from app.domain.agent.harness.channel import (
+    Channel,
+    Placement,
+    PromptSocketUnavailable,
+    ScreenSetupError,
+)
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
@@ -1930,12 +1935,26 @@ class DeviceChannel(Channel):
             # NOT "启动失败": by this point the screen is up. Saying what actually
             # failed is the difference between someone re-@ing the agent and
             # someone going to look at the machine.
-            raise ScreenSetupError(
+            error_type = (
+                PromptSocketUnavailable
+                if getattr(exc, "failure_code", None) == "prompt_socket_unavailable"
+                else ScreenSetupError
+            )
+            raise error_type(
                 f"提示词没能送进机器上的会话：{str(exc) or exc.__class__.__name__}"
             ) from exc
         if isinstance(result, dict) and isinstance(result.get("ready"), bool):
             return result["ready"]
         return None
+
+    async def retire_unreachable(self, screen: HubScreen) -> bool:
+        if await self.confirm_alive(screen):
+            return False
+        assert screen.topic_id is not None
+        await self._retire_screen(
+            screen, topic_id=screen.topic_id, reason="prompt_socket_unavailable"
+        )
+        return True
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

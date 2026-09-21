@@ -30,6 +30,7 @@ vi.mock('@/api', async () => {
 
 import FeedbackCenterPage from './FeedbackCenterPage.vue'
 
+import FeedbackRoutes from '@/router/feedback'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 只写这条用例真正要用的字段，其余靠 `as unknown as` 补 —— 但 `author_handle` 得给：
@@ -67,7 +68,10 @@ describe('反馈中心的错误', () => {
     const vuetify = createVuetify({ components, directives })
     const router = createRouter({
       history: createWebHashHistory(),
-      routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
+      // 用应用真的那张表：卡片里那条去详情的链接是按**路由名**解析的，名字不在表里
+      // Vue Router 会在渲染那一刻抛「No match for ...」——这条用例并不点它，但卡片
+      // 一画出来就会踩到。
+      routes: [...FeedbackRoutes, { path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
     })
     // 提交抽屉是个 `v-navigation-drawer`，它要 `v-app` provide 的 layout。
     const Wrapper = {

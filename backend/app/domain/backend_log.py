@@ -428,12 +428,28 @@ async def record(
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="backend",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=content,
             kind=BlockKind.event,
             meta=event_meta(err, verdict),
         )
         accepted += 1
+        if err.where == "model gateway" and err.exc_type in (
+            "GatewayHTTPError",
+            "GatewayStreamError",
+        ):
+            from app.core import alerting
+
+            alerting.send(
+                "模型请求失败",
+                [
+                    f"项目：{topic.project_id}",
+                    f"话题：{topic.id}",
+                    scrub_secrets(err.message),
+                    f"请求：{err.request_id or 'unknown'}",
+                ],
+                key=f"model-gateway:{err.exc_type}",
+            )
     return {"accepted": accepted, "dropped": len(errors) - accepted}
 
 
@@ -459,7 +475,7 @@ async def flush_expired(now: float | None = None) -> int:
                 topic_id=landed.topic_id,
                 task_id=landed.task_id,
                 author="backend",
-                author_type=AuthorType.system,
+                author_type=AuthorType.platform,
                 content=summary_content(burst.sample, burst.count),
                 kind=BlockKind.event,
                 meta=event_meta(burst.sample, Verdict("summary", burst.count)),

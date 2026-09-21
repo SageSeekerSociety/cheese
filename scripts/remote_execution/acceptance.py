@@ -6,6 +6,7 @@ Use --ssh and --remote-root to repeat the same cases on another physical host.
 
 import argparse
 import asyncio
+import base64
 import importlib.util
 import json
 import os
@@ -268,6 +269,7 @@ def case(folder, options):
                 "name": "mcp__native__cheese_api",
                 "input": {"method": "GET", "path": "/platform-fixture"},
             },
+            {"name": "Read", "input": {"file_path": str(center / "image.png")}},
         ]
         if options.mode != "normal":
             actions = [actions[2]]
@@ -486,6 +488,18 @@ def case(folder, options):
         if options.mode == "normal":
             assert not [r for r in results if r.get("is_error")], results
             assert "BEFORE_EDIT" in json.dumps(results[0])
+            picture = next(b for b in results[-1]["content"] if b["type"] == "image")
+            original = executor.call(
+                "invoke",
+                {
+                    "id": "verify-image",
+                    "tool": "Read",
+                    "args": {"file_path": "image.png"},
+                },
+            )
+            assert picture["source"]["media_type"] == "image/png"
+            assert len(base64.b64decode(picture["source"]["data"])) > 200_000
+            assert picture["source"]["data"] == original["value"]["file"]["base64"]
             assert "REMOTE_CUSTOM_ENV" in json.dumps(results[7]), results[7]
             assert "target.txt" in json.dumps(results[9]), results[9]
             assert "AFTER_EDIT" in json.dumps(results[10]), results[10]
