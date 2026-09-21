@@ -55,7 +55,7 @@ beforeEach(() => {
   setActivePinia(pinia)
   listFeedback.mockReset()
   getFeedbackMeta.mockReset()
-  getFeedbackMeta.mockResolvedValue({ is_admin: false, hot_supports: 5 })
+  getFeedbackMeta.mockResolvedValue({ is_admin: false, hot_min_items: 5 })
   listFeedback.mockResolvedValue({
     data: [CARD],
     total: 1,

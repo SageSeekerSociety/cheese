@@ -18,10 +18,10 @@
  *
  * 列表的 Tab 和搜索都是**服务端**参数，所以切 Tab / 改搜索词会重新拉一页，而不是在
  * 本地数组上 filter。搜索键击用 250ms 防抖，而且只有最新一次请求的结果会被采纳
- * （见文件末尾那三个模块级计数器），否则慢的那次后到，会把快的那次覆盖掉。
+ * （见下面那几个模块级计数器），否则慢的那次后到，会把快的那次覆盖掉。
  */
 
-import type { FeedbackAdminPatch } from '@/api'
+import type { AdminFeedbackStats, FeedbackAdminPatch } from '@/api'
 import type {
   FeedbackCard,
   FeedbackComment,
@@ -47,6 +47,7 @@ import {
   deleteFeedbackComment,
   dismissFeedbackProposal,
   getAdminFeedback as getAdminFeedbackDetail,
+  getAdminFeedbackStats,
   getFeedback,
   getFeedbackCounts,
   getFeedbackMeta,
@@ -63,6 +64,14 @@ import {
   unlikeFeedbackComment,
   unsupportFeedback,
 } from '@/api'
+import {
+  clearLiveFeedbackDraft,
+  isDraftMeaningful,
+  loadFeedbackDraft,
+  parkFeedbackDraft,
+  saveFeedbackDraft,
+  takeParkedFeedbackDraft,
+} from '@/lib/feedbackDraft'
 import { STATUS_LADDER } from '@/lib/feedbackMeta'
 
 /** 公开列表的栏位。服务端 `PUBLIC_TABS` 是**同一个集合**：加一个栏位是后端改
@@ -76,20 +85,108 @@ export type AdminSort = 'new' | 'supports'
 
 /** 搜索防抖，毫秒。250 是人停手和「它没反应」之间的那条线。 */
 const SEARCH_DEBOUNCE_MS = 250
-/** 一页拉多少条。这一版没有翻页 UI，所以给得比默认 20 宽，一次把列表读完。 */
+/** 一页拉多少条。**列表有「加载更多」了，但这一页仍然给 50**：一次拿得宽一点，
+ *  多数列表（这个平台上百来条反馈撑死）一页就到底，第一屏不必再等第二次往返；
+ *  真长起来的那几栏才走翻页。 */
 const PAGE_SIZE = 50
+/** 表单落盘的防抖，毫秒。比搜索那条长一点：写的是本机磁盘，不是网络，而中文输入法
+ *  在候选阶段就会发 `update:model-value`，250 的话一次输入要写好几遍。 */
+const DRAFT_SAVE_DEBOUNCE_MS = 400
 
 /** 请求序号，用来丢掉过期响应。它们**不在 state 里**：一个自增的数字和定时器 id
- *  都不是界面状态，放进 state 只会让 Vue 去追踪一个没人渲染的值。 */
+ *  都不是界面状态，放进 state 只会让 Vue 去追踪一个没人渲染的值。
+ *
+ *  每个序号只管**自己那条路**（这一个列表的先后两次请求谁算数）。计数那条路没有
+ *  属于自己的序号 —— 它跨路，用的是下面 `countsRev` 那一把。 */
 let listSeq = 0
 let adminSeq = 0
 let mineSeq = 0
-let countsSeq = 0
+let statsSeq = 0
+/** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回一次），
+ *  所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与 `_adminWrite`。 */
+let adminDetailSeq = 0
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+/** 表单落盘的防抖定时器，见 `touchDraft`。 */
+let draftTimer: ReturnType<typeof setTimeout> | null = null
 /** 管理台搜索框那一个。和 `searchTimer` 分开，因为两个框可能在同一个浏览器标签
  *  页里先后被用过（先进反馈中心搜一下，再进管理台搜一下）—— 共用一支定时器时，
  *  后者会把前者还没发出去的那次输入取消掉，而那次输入属于另一页。 */
 let adminQueryTimer: ReturnType<typeof setTimeout> | null = null
+/** 已经推过未读游标的 id。**不在 state 里**（同上面那几个序号）：它决定的是「这次
+ *  还要不要发请求」，不是一个被渲染的值，放进 state 只会让 Vue 去追踪一个没人看的
+ *  集合。 */
+const markedReadIds = new Set<string>()
+
+/** 计数的一把**单调修订号**，全仓库只有它一个来源。
+ *
+ *  `counts` 有好几条路会写：公开列表、管理端列表、`/feedback/counts` 那个轻量接口，
+ *  以及两个**本地动作**（推已读游标）。它们发出的时间有先后，回来的时间却没有 ——
+ *  先发的后到，屏幕上的数字就会从一个较新的值跳回一个较旧的。所以每个想提交
+ *  counts 的人在**发出请求那一刻**领一个号，回来时带着它；`_commitCounts` 只认号
+ *  大的。这样「谁算数」只由发出去的时刻决定，与到达顺序无关。
+ *
+ *  和上面那几个序号分开：那些是**每条路自己**的（同一个列表的先后两次请求谁算
+ *  数），这一把是**跨路**的（列表的响应和推游标谁算数）。混成一把是错的：一次
+ *  `loadList` 会把之后发出的 `refreshCounts` 一起顶掉。 */
+let countsRev = 0
+const takeCountsRev = (): number => ++countsRev
+
+/** 公开列表上一次的那一页，连同它的**问题指纹**（Tab + 搜索词）。指纹命中就是
+ *  「问的还是同一个问题」，那就先把手上这份画出来、背后再重拉一次 —— 骨架是「我还
+ *  不知道」的表示，而这里明明知道，从详情页返回时不该再闪一次。
+ *
+ *  `counts` **不许进缓存**（见 `_commitCounts`）：一个存下来的数字没法回答「它现在
+ *  还是不是真的」，把上一分钟的未读数再画一遍，比先空着更糟。 */
+let listCache: { key: string; items: FeedbackCard[]; total: number } | null = null
+
+/** 「我的反馈」那一页。它没有参数，所以指纹就是它自己。
+ *
+ *  这一份要**跟着身份走**：它装的是「我提的 / 指派给我的」，换个人登录之后留着就是
+ *  上一个人的清单。`resetFeedbackCaches()` 负责，别在别处再清一遍。 */
+let mineCache: { items: FeedbackCard[]; total: number } | null = null
+
+/** 详情缓存：id → 上一次从 `GET /feedback/{id}` 拿到的那条。
+ *
+ *  **只让用户侧那一条路碰它**。管理端的 `loadAdminDetail` 回的是同一个类型，可见性
+ *  判据却是另一个（管理员 vs 并集），把它的响应写进来就等于让同一台机器上的下一个
+ *  读者先画出一份只有管理员能看的内容 —— 那不是「旧了一点」。
+ *
+ *  存的是**和 `state.detail` 同一个对象**：`_patch` 就地改字段（点赞、支持数）时，
+ *  缓存里那份一起跟着变，不需要任何写回。反过来说，谁把 `state.detail` **整个换成
+ *  另一个对象**（`loadDetail` 的响应、`_adminWrite` 的响应），就得自己决定要不要
+ *  更新缓存 —— 见这两处的注释。 */
+const detailCache = new Map<string, FeedbackDetail>()
+
+/** 丢掉两份列表缓存。**不动已经在屏幕上的数组** —— 「屏幕上那份要不要清」是另一个
+ *  决定（`submit` 清了，因为它刚插进去一条），这里只回答「下次还信不信缓存」。
+ *  两件事分开写，是因为它们真的会分开：提交之后屏幕上那份该清，而缓存里那份对
+ *  同一个查询仍在的回答是错的。 */
+function dropListCaches(): void {
+  listCache = null
+  mineCache = null
+}
+
+/** 把这一层替**上一个人**记着的东西全部丢掉。退出登录、以及换成另一个人登录时调
+ *  （见 `services/account.ts`）。
+ *
+ *  公开列表的那一份也要丢：私密反馈不在里面，但「这台机器上刚刚翻过哪一页反馈」
+ *  仍然是那个人的痕迹，而 `/feedback` 对谁都是同一页。
+ *
+ *  **为什么清缓存就够了，`state` 不用一起清**：三个页面都把内容挂在 loading 那道
+ *  门后面（`<LoadingSkeleton v-if="…loading">` + `v-else` 才是内容，见
+ *  FeedbackCenterPage / FeedbackMinePage / FeedbackDetailPage）。`state` 里那份旧
+ *  的在下一次挂载时会被自己那次请求翻成 loading=true、当场被骨架盖住；真正会把旧
+ *  内容**画出来**的只有命中缓存这一条路 —— 它把 loading 留在 false 上，于是骨架让
+ *  开、旧内容直接上屏，一直挂到重拉回来。所以这一关要卡在缓存上。 */
+export function resetFeedbackCaches(): void {
+  dropListCaches()
+  detailCache.clear()
+  // 这一份也要丢，理由和上面两份一样，只是它的内容是**谁**而不是**什么**：
+  // `markedReadIds` 说的是「这个人的自动已读已经替这几条推过游标了」，留到换人之后
+  // 就是拿上一个人的账本记下一个人 —— 下一个人点开同一条时那次自动已读会被静默跳过
+  // （不推游标、不清徽标，也没有任何提示）。
+  markedReadIds.clear()
+}
 
 const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 }
 
@@ -100,6 +197,12 @@ export interface FeedbackDraft {
   kind: FeedbackKind
   title: string
   body: string
+  /** 「怎么重现」。只有 bug 那一类会问（见 `REPRO_KINDS`）—— 建议类要的是
+   *  「你希望它变成什么样」，问它「怎么重现」是在问一个不存在的东西。 */
+  repro: string
+  /** 「你以为会发生什么」。bug 和建议都问：一句话就能把「哪里不对」和
+   *  「你想让它怎样」分开，而这两件事在正文里常常混成一段读不出要求的话。 */
+  expectation: string
   /** 附件名。**不上传** —— 见 SubmitFeedbackDrawer 里那段说明。 */
   attachments: string[]
   /** 「附带现场」：把 `fromAgent` 那三段会话信息一起提交。 */
@@ -118,11 +221,20 @@ export interface FeedbackDraft {
   proposal?: { topicId: string; blockId: string }
 }
 
+/** 哪几类反馈要问「怎么重现」/「你以为会发生什么」。**按类型分栏的口径写在
+ *  这一个地方**：表单问什么、请求体带什么、以及以后按类型筛列表，三处问的都是
+ *  同一件「这类反馈该有哪些字段」；各写一遍的话，症状是「建议类提交上去的
+ *  `repro` 永远是空的」这种谁也看不出来的偏差。 */
+export const REPRO_KINDS: FeedbackKind[] = ['bug']
+export const EXPECTATION_KINDS: FeedbackKind[] = ['bug', 'suggestion']
+
 function emptyDraft(): FeedbackDraft {
   return {
     kind: 'bug',
     title: '',
     body: '',
+    repro: '',
+    expectation: '',
     attachments: [],
     attachContext: false,
     visibility: 'public',
@@ -134,6 +246,11 @@ function emptyDraft(): FeedbackDraft {
 function toCreateBody(draft: FeedbackDraft): FeedbackCreateBody {
   const body = draft.body.trim()
   const agent = draft.attachContext ? draft.fromAgent : undefined
+  // 按类型收进来的那两栏。**没问过的那一类一律不带**：表单上没出现过的字段，值只
+  // 可能来自「上一次换了类型之前」（选过 bug、填了重现、又改成建议），把它一起发
+  // 上去就是替用户声明了一件他没说过的事。
+  const repro = REPRO_KINDS.includes(draft.kind) ? draft.repro.trim() : ''
+  const expectation = EXPECTATION_KINDS.includes(draft.kind) ? draft.expectation.trim() : ''
   return {
     kind: draft.kind,
     title: draft.title.trim(),
@@ -141,8 +258,11 @@ function toCreateBody(draft: FeedbackDraft): FeedbackCreateBody {
     summary: body.split('\n')[0]?.slice(0, 120) || draft.title.trim(),
     problem: body,
     visibility: draft.visibility,
+    // 人自己写的那一栏优先，agent 带的现场只在人没写时补上 —— 现场是跟着提案卡
+    // 一起过来的，而这一栏人刚才就看着它（bug 那一类表单项里有），他改过就该算他的。
+    repro: repro || agent?.repro || null,
+    expectation: expectation || null,
     what_happened: agent?.whatHappened ?? null,
-    repro: agent?.repro ?? null,
     evidence: agent?.evidence ?? null,
     session_id: agent?.sessionId ?? null,
     environment: agent?.environment ?? null,
@@ -153,6 +273,28 @@ function toCreateBody(draft: FeedbackDraft): FeedbackCreateBody {
  *  「HTTP 412 for /feedback/...」会让人去查一个服务端早就解释过的东西。 */
 function message(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
+}
+
+/** 把新到的一页接在手上这份清单后面。
+ *
+ *  **必须按 id 去重**，因为 `page_start` 是**偏移量**、不是游标：两次请求之间有人提了
+ *  一条新的，它就插到队首，于是第 2 页从原来的第 50 条**前一条**开始 —— 屏幕上第 50
+ *  条出现两遍。这不是排序没写全的锅（服务端三个排序都有 `display_no` 兜底，任何两条
+ *  都比得出先后），是偏移量本身的性质：它数的是**位置**，而位置会动。
+ *
+ *  重复的代价不只是「多一条」：`:key` 撞了之后 Vue 会复用同 key 的节点，于是「多一条」
+ *  和「少一条」同时发生 —— 那张卡片上显示的可能根本是另一条反馈的内容。
+ *
+ *  去重按 id（服务端的 uuid），不按标题：同一个标题下真的可以有几条不同的反馈。
+ *  两份列表（公开 / 我的）共用这一个函数，是因为这里写错的表现是「某一页多一条」，
+ *  两边各写一遍时这种错只会出现在其中一边。 */
+function appendPage(existing: FeedbackCard[], page: FeedbackCard[]): FeedbackCard[] {
+  if (!page.length) return existing
+  const seen = new Set(existing.map((card) => card.id))
+  const fresh = page.filter((card) => !seen.has(card.id))
+  // 一条新的都没有时**原样返回那个数组**：换一个新数组会让整片列表重新渲染一遍，
+  // 而这一次翻页什么都没带来。
+  return fresh.length ? [...existing, ...fresh] : existing
 }
 
 export const useFeedbackStore = defineStore('feedback', {
@@ -168,6 +310,10 @@ export const useFeedbackStore = defineStore('feedback', {
     total: 0,
     counts: { ...EMPTY_COUNTS } as FeedbackCounts,
     loading: false,
+    /** 正在取**下一页**（不是第一页）。和 `loading` 分开是有用的：第一页要骨架、
+     *  下一页要在列表尾巴上转个圈，**而且两者互不代表对方在跑** —— 「加载更多」
+     *  的请求还在飞的时候按一下搜索，屏幕不该先整片闪成骨架再换内容。 */
+    loadingMore: false,
     query: '',
     tab: 'all' as FeedbackTab,
     /* ---- 管理端列表 ---- */
@@ -175,18 +321,32 @@ export const useFeedbackStore = defineStore('feedback', {
     adminTotal: 0,
     adminLoading: false,
     adminTab: 'public' as AdminTab,
-    /** 管理端这一页的问法。四样东西（栏位 / 搜索词 / 排序 / 起点）里改任何一样都
-     *  是**换了一个问题**，所以它们住在一起、由同一个 action 一起提交 —— 分成四
-     *  个独立状态时，「换了栏位但页码没归零」这类组合是必然出现的。 */
+    /** 管理端这一页的问法：栏位 / 搜索词 / 排序 / 起点，加上看板点进来时带的三段
+     *  日期窗口。改其中任何一样都是**换了一个问题**，所以它们住在一起，而且每个
+     *  setter 都自己负责把起点归零 —— 各自为政时，「换了栏位但页码没归零」这类
+     *  组合是必然出现的。 */
     adminQuery: '',
     adminSort: 'new' as AdminSort,
     adminPageStart: 0,
+    /** 看板上「7 日新增 / 7 日解决 / 7 日上线」三个数字点进来时带着的那一段。
+     *  值是链接上的那一天，原样送去查询 —— 「七天前是几号」由看板算一次，这里
+     *  再算一次就会差一个时区。 */
+    adminSince: null as string | null,
+    adminResolvedSince: null as string | null,
+    adminDeployedSince: null as string | null,
+    /* ---- 看板的汇总（`GET /admin/feedback/stats`）。和上面那份列表是**两份数据**：
+       列表回的是「这一栏的第一页」，这里是 7 天的聚合。前端拿列表数一个聚合出来，
+       就是把筛选和分页各抄第二份，数出来的数字迟早和旁边那一栏对不上。 ---- */
+    stats: null as AdminFeedbackStats | null,
+    statsLoading: false,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
        服务端的 WHERE 就不是同一个。 ---- */
     mineItems: [] as FeedbackCard[],
     mineTotal: 0,
     mineLoading: false,
+    /** 同 `loadingMore`，只是「我的反馈」那一份。 */
+    mineLoadingMore: false,
     /* ---- 详情。`detail` 是**当前这一条**；换一条时整个对象换掉。 ---- */
     detail: null as FeedbackDetail | null,
     detailLoading: false,
@@ -220,9 +380,32 @@ export const useFeedbackStore = defineStore('feedback', {
       const fromServer = state.meta?.status_ladder
       return fromServer?.length ? fromServer : STATUS_LADDER
     },
-    /** 「热门」的门槛。前端不写死 5。 */
-    hotSupports(state): number {
-      return state.meta?.hot_supports ?? 5
+    /** 「热门」的三个数：够多少分（`hotThreshold`）、一个支持几天打对折
+     *  （`hotHalfLifeDays`）、不够分时至少补几条（`hotMinItems`）。
+     *
+     *  **前端不拿它们排序**：筛选和排序都在服务端，客户端手上的已经是排好的行，
+     *  再算一遍屏幕上就有两套热度。它们在这里只有一个用处 —— 把这一栏的规则**说给
+     *  人听**（反馈中心那一行小字）。一个「支持数」说不清「上周爆的和今天爆的同权」，
+     *  半衰期这个数才说得清。
+     *
+     *  兜底值和服务端的常量一致（见 `repositories.py` 的 `HOT_*`）：meta 拿不到时
+     *  那一行照样说得通，不会显示一个空白。 */
+    hotThreshold(state): number {
+      return state.meta?.hot_score ?? 2
+    },
+    hotHalfLifeDays(state): number {
+      return state.meta?.hot_half_life_days ?? 14
+    },
+    hotMinItems(state): number {
+      return state.meta?.hot_min_items ?? 5
+    },
+    /** 手上这一页后面还有没有。**用服务端给的 `total` 判**，不用「这一页是不是满的」：
+     *  一页 50 条、总共正好 50 条时，「满员」会让人多按一次才看见空页。 */
+    listHasMore(state): boolean {
+      return state.items.length < state.total
+    },
+    mineHasMore(state): boolean {
+      return state.mineItems.length < state.mineTotal
     },
     tabCounts(state): Record<FeedbackTab, number> {
       return {
@@ -262,25 +445,70 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
 
+    /* ---- 计数 ---- */
+
+    /** `counts` 的**唯一**写入口 —— 全文件只有这一个地方写 `this.counts`。
+     *
+     *  为什么是一个动作而不是几处赋值：那几处各自只回答「我这份数字是何时问到的」，
+     *  没有一处知道别处的事，于是「先发的后到」这种顺序问题只能靠每个调用点自己
+     *  小心；漏一个的表现是屏幕上的未读数跳回去一次、下一轮刷新又自己好了 ——
+     *  最难查的那一种。
+     *
+     *  `rev` 要在**发出请求那一刻**用 `takeCountsRev()` 领，不能等拿到响应再领：
+     *  那时候领到的号说的是「我什么时候回来的」，正好是这里要挡的那件事。本地
+     *  动作（推已读游标）没有请求可等，当场领一个 —— 它就是此刻最新的东西。 */
+    _commitCounts(next: FeedbackCounts, rev: number): void {
+      // 号相等时放行（`<` 而不是 `<=`）：同一个号只可能来自同一次领号。
+      // 号大的赢，与到达顺序无关。
+      if (rev < countsRev) return
+      countsRev = rev
+      this.counts = next
+    },
+
     /* ---- 列表 ---- */
 
-    /** 拉当前 Tab + 搜索词的那一页。 */
+    /** 拉当前 Tab + 搜索词的那一页。
+     *
+     *  **命中缓存的定义是「问的还是同一个问题」**（Tab + 搜索词）。命中就先把手上
+     *  那一页画出来（`loading` 保持 false，不闪骨架），然后**照样重拉一次**：缓存
+     *  只是先画，不是答案 —— 这中间别人可能提了新的、管理员可能改了状态，而这一页
+     *  上没有任何东西能知道。回来之后照常替换，有没有缓存走的是同一条路。
+     */
     async loadList(): Promise<void> {
       const seq = ++listSeq
-      this.loading = true
+      // 号要在**发请求之前**领，见 `_commitCounts`。
+      const rev = takeCountsRev()
+      // 搜的是什么只算一次：指纹和请求体必须用同一个 `q`。两处各 `trim()` 一遍，
+      // 迟早有一处漏掉，于是「命中」说的是另一个问题。
+      const q = this.query.trim()
+      const key = `${this.tab}\u0000${q}`
+      const cached = listCache?.key === key ? listCache : null
+      if (cached) {
+        this.items = cached.items
+        this.total = cached.total
+        this.loading = false
+      } else {
+        this.loading = true
+      }
       this.error = null
       try {
-        const page = await listFeedback({ tab: this.tab, q: this.query.trim(), pageSize: PAGE_SIZE })
+        const page = await listFeedback({ tab: this.tab, q, pageSize: PAGE_SIZE })
         // 只有最后一次请求的结果算数：防抖挡不住「先发的那次后到」。
         if (seq !== listSeq) return
         this.items = page.data
         this.total = page.total
-        this.counts = page.counts
+        listCache = { key, items: page.data, total: page.total }
+        this._commitCounts(page.counts, rev)
       } catch (error) {
         if (seq !== listSeq) return
         this.error = message(error, '反馈列表加载失败')
+        // 失败回到「一条都没有 + 一句错」那一态，**和没有缓存时完全一样** ——
+        // 页面只有那几种状态（加载中 / 有内容 / 一条都没有 / 拉失败），让旧内容
+        // 和错误条同时挂着是第五种，没人设计过它，而「重试」那个按钮正好长在空
+        // 态里：不清空就等于把它一起藏起来。
         this.items = []
         this.total = 0
+        listCache = null
       } finally {
         if (seq === listSeq) this.loading = false
       }
@@ -312,6 +540,48 @@ export const useFeedbackStore = defineStore('feedback', {
       await this.loadList()
     },
 
+    /** 取列表的下一页，接在手上这份后面。
+     *
+     *  **三道门都在这里，不在按钮上**：`disabled` 只挡得住鼠标，回车、快速双击、
+     *  以及慢响应期间的那一下都会绕过去。三道各挡一个具体的坏结果 ——
+     *  `loadingMore` 挡「同一段追加两遍」，`loading` 挡「第一页还在飞的时候偏移量
+     *  按旧清单算、屏幕上出现一段谁也记不得的空档」，`!listHasMore` 挡「到底了还在
+     *  取」。 */
+    async loadMoreList(): Promise<void> {
+      if (this.loadingMore || this.loading || !this.listHasMore) return
+      // 这一页属于**发它时那个问题**（栏位 + 搜索词）。`seq` 是那一刻的号：栏位或
+      // 搜索词在飞的这段时间里变了的话，回来的是上一个问题的第 N 页，接上去就是
+      // 两份清单拼在一起 —— 所以它回来了也只配丢掉。
+      const seq = listSeq
+      const rev = takeCountsRev()
+      const q = this.query.trim()
+      const pageStart = this.items.length
+      this.loadingMore = true
+      try {
+        const page = await listFeedback({ tab: this.tab, q, pageSize: PAGE_SIZE, pageStart })
+        if (seq !== listSeq) return
+        this.items = appendPage(this.items, page.data)
+        this.total = page.total
+        // 缓存跟着长：翻进详情页再退回来时，用户已经展开的那几页还在，不必从头再
+        // 点一遍。代价是下一次 `loadList` 命中它之后会重拉第一页、把长度收回 50 ——
+        // 这是「缓存只是先画」那句话本来就承认的事（见 `loadList`）。
+        listCache = { key: `${this.tab}\u0000${q}`, items: this.items, total: page.total }
+        this._commitCounts(page.counts, rev)
+      } catch (error) {
+        if (seq !== listSeq) return
+        // **不清空已经画出来的那些** —— 这一点和 `loadList` 的失败处理正好相反，
+        // 因为失败的东西不一样：那里失败的是「整页的内容」，这里只是「再多一点」。
+        // 翻页失败退回第一页，是拿「看不见任何东西」去换一个本来就没拿到的增量。
+        // 两个页面都已经会画「列表非空时的失败」（error + 有内容 → 列表上方一条），
+        // 所以这句话放出去有人接。
+        this.error = message(error, '加载更多失败')
+      } finally {
+        // 无条件还门：这个标志说的是「这一次调用在飞」，和 `seq` 是不是还是自己
+        // 无关。挂在 seq 上的话，一次被栏位切换作废的翻页会把门永远锁上。
+        this.loadingMore = false
+      }
+    },
+
     /* ---- 我的反馈 ---- */
 
     /** 拉「和我有关的那一摞」：我提的 + 我替谁提的 + 指派给我的。三个来源合成一个
@@ -323,42 +593,99 @@ export const useFeedbackStore = defineStore('feedback', {
      *  列表一样只是「没有」。 */
     async loadMine(): Promise<void> {
       const seq = ++mineSeq
-      this.mineLoading = true
+      // 这一页没有参数，所以「问的还是同一个问题」永远成立 —— 有就拿去先画。
+      // 它回答的是「我提的/指派给我的」，所以**身份一变就必须已经清掉**：
+      // `resetFeedbackCaches()` 管这件事。
+      const cached = mineCache
+      if (cached) {
+        this.mineItems = cached.items
+        this.mineTotal = cached.total
+        this.mineLoading = false
+      } else {
+        this.mineLoading = true
+      }
       this.error = null
       try {
         const page = await listMyFeedback({ pageSize: PAGE_SIZE })
         if (seq !== mineSeq) return
         this.mineItems = page.data
         this.mineTotal = page.total
+        mineCache = { items: page.data, total: page.total }
       } catch (error) {
         if (seq !== mineSeq) return
         this.error = message(error, '「我的反馈」加载失败')
+        // 同 `loadList`：失败就是失败那一态，和没有缓存时一模一样 —— 页面上
+        // 「拉失败」和「你还没有提过反馈」是两句分开的话，但都得是**清空之后**
+        // 才画得出来。
         this.mineItems = []
         this.mineTotal = 0
+        mineCache = null
       } finally {
         if (seq === mineSeq) this.mineLoading = false
       }
     },
 
+    /** 「我的反馈」的下一页。门和 `loadMoreList` 一样，少一道「问题变了」——
+     *  这一页没有参数，它的问题永远是同一个（「和我有关的那些」），变的只有身份，
+     *  而身份换了会走 `resetFeedbackCaches()` 那条路。 */
+    async loadMoreMine(): Promise<void> {
+      if (this.mineLoadingMore || this.mineLoading || !this.mineHasMore) return
+      const seq = mineSeq
+      const pageStart = this.mineItems.length
+      this.mineLoadingMore = true
+      try {
+        const page = await listMyFeedback({ pageSize: PAGE_SIZE, pageStart })
+        if (seq !== mineSeq) return
+        this.mineItems = appendPage(this.mineItems, page.data)
+        this.mineTotal = page.total
+        mineCache = { items: this.mineItems, total: page.total }
+      } catch (error) {
+        if (seq !== mineSeq) return
+        // 同 `loadMoreList`：已经画出来的留着，失败只在列表上方说一句。
+        this.error = message(error, '加载更多失败')
+      } finally {
+        this.mineLoadingMore = false
+      }
+    },
+
     /* ---- 详情 ---- */
 
-    /** 拉一条的全部内容。看不见的 id 服务端回 404，这里如实把它记成「没有」。 */
+    /** 拉一条的全部内容。看不见的 id 服务端回 404，这里如实把它记成「没有」。
+     *
+     *  命中缓存就**先画旧的那份、不置空**：置空的那一下整页会闪成骨架，而「打一
+     *  条刚看过的反馈」恰恰是最常见的那次导航（列表点进去、返回、再点进去）。
+     *  **背后照样重拉**，回来才替换 —— 和 `loadList` 一个口径：缓存只是先画。
+     *
+     *  它**不碰**管理端那条路，原因写在 `detailCache` 上。
+     */
     async loadDetail(id: string): Promise<void> {
       this.detailId = id
-      this.detail = null
+      const cached = detailCache.get(id) ?? null
+      this.detail = cached
       // 翻页的进度跟着这一条走：换一条反馈之后，上一条的「还剩几页」和「哪几栋楼
       // 正在取回复」都不成立了，留着只会让新页面上的按钮一进来就是转圈状态。
+      // 这一句在缓存命中时也不能省：楼里的「正在取回复」挂的是**上一个 id**。
       this.moreCommentsLoading = false
       this.moreRepliesLoading = {}
-      this.detailLoading = true
+      this.detailLoading = cached === null
       this.error = null
       try {
         const detail = await getFeedback(id)
         if (this.detailId !== id) return
         this.detail = detail
+        detailCache.set(id, detail)
       } catch (error) {
         if (this.detailId !== id) return
+        // 失败回到「这条反馈打不开」那一态（见 `loadList` 那段：页面只有那几种
+        // 画法，旧内容和错误条同时挂着是第五种）。
+        this.detail = null
         this.error = message(error, '这条反馈打不开')
+        // 服务端说这条不该看见了（403/404）：缓存里那份现在是**错**的，留着它会在
+        // 每一次进来时先画一条不该出现的内容。其余失败（网络抖了一下）**留着** —
+        // 那一份仍然是这个人自己的、也仍然大概是对的，下次进来还能先画上。
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+          detailCache.delete(id)
+        }
       } finally {
         if (this.detailId === id) this.detailLoading = false
       }
@@ -385,13 +712,16 @@ export const useFeedbackStore = defineStore('feedback', {
       }
     },
 
-    /** 重新问一次计数。失败不报错：Tab 上的数字晚一拍更新，不值得打断人。 */
+    /** 重新问一次计数。失败不报错：Tab 上的数字晚一拍更新，不值得打断人。
+     *
+     *  这条路上**只有计数**，没有一个列表可以顺手替它做顺序判断，所以它完全靠
+     *  `_commitCounts` 那把号：晚发的不会被早发的盖掉。
+     */
     async refreshCounts(): Promise<void> {
-      const seq = ++countsSeq
+      const rev = takeCountsRev()
       try {
         const counts = await getFeedbackCounts()
-        if (seq !== countsSeq) return
-        this.counts = counts
+        this._commitCounts(counts, rev)
       } catch {
         // 见上。
       }
@@ -549,11 +879,47 @@ export const useFeedbackStore = defineStore('feedback', {
     /* ---- 提交抽屉 ---- */
 
     openSubmit(preset: Partial<FeedbackDraft> = {}): void {
-      this.draft = { ...emptyDraft(), ...preset }
+      const incoming = Object.keys(preset).length > 0
+      if (incoming) {
+        // 人已经打了一半的那份挪去 parked、而不是丢掉：这一步整份替换表单内容，
+        // 而替换不是他的本意（他点的是会话里那张卡）。下一次裸开表单时它会自己回来。
+        parkFeedbackDraft(this.draft)
+        this.draft = { ...emptyDraft(), ...preset }
+        // 卡片带过来的那份也是「打了一半的东西」—— 关掉、刷新、再打开，它该还在。
+        saveFeedbackDraft(this.draft)
+      } else if (isDraftMeaningful(this.draft)) {
+        // 手上这份就是最新的（`touchDraft` 一直在往盘上写），接着写。
+      } else {
+        // 手上是空的：先把上次被替换下去的那份拿回来，没有再取「上次没写完的」。
+        // 这一步是给**页面自己刷新**（发版时 service worker 会 reload，见 pwa.ts）
+        // 和「关掉又想起来」用的 —— 少这一步，几百字在用户眼皮底下消失。
+        const restored = takeParkedFeedbackDraft() ?? loadFeedbackDraft()
+        this.draft = { ...emptyDraft(), ...(restored ?? {}) }
+      }
       this.submitOpen = true
     },
 
+    /** 表单里改了任何一栏，调用方在字段的 `update:model-value` 上打一下这里。
+     *
+     *  **落盘要防抖**：每敲一个字写一次 `localStorage` 是不必要的（而且中文输入法
+     *  在候选阶段就会发事件）。防抖窗口是 `DRAFT_SAVE_DEBOUNCE_MS`，关抽屉和提交
+     *  各会额外收一次尾（见 `closeSubmit` / `submit`），所以窗口里那几下不会漏。
+     *
+     *  **不传内容进来**：读的是 `this.draft` 那一刻的值。让调用方把值传进来就等于
+     *  每个字段自己折一份，而它们迟早会漏掉一栏。 */
+    touchDraft(): void {
+      if (draftTimer) clearTimeout(draftTimer)
+      draftTimer = setTimeout(() => {
+        draftTimer = null
+        saveFeedbackDraft(this.draft)
+      }, DRAFT_SAVE_DEBOUNCE_MS)
+    },
+
     closeSubmit(): void {
+      // 关掉抽屉不是「不要了」：把防抖窗口里那几下收尾写下去。
+      if (draftTimer) clearTimeout(draftTimer)
+      draftTimer = null
+      saveFeedbackDraft(this.draft)
       this.submitOpen = false
       this.lastSubmittedId = null
     },
@@ -562,10 +928,12 @@ export const useFeedbackStore = defineStore('feedback', {
     addAttachment(name: string): void {
       if (!name || this.draft.attachments.includes(name)) return
       this.draft.attachments.push(name)
+      this.touchDraft()
     },
 
     removeAttachment(name: string): void {
       this.draft.attachments = this.draft.attachments.filter((n) => n !== name)
+      this.touchDraft()
     },
 
     /** 提交。返回新条目的 **uuid**（路由用它），失败回 null 并把原因写进 error。
@@ -587,15 +955,36 @@ export const useFeedbackStore = defineStore('feedback', {
         this.submitOpen = false
         this.lastSubmittedId = detail.id
         this.draft = emptyDraft()
+        // 这份东西已经变成一条反馈了，盘上那份不该再留着：否则下次打开表单它整份
+        // 弹回来，看着像「刚提交的那条又回到草稿里了」。**只清「正在写的」那一格** ——
+        // 被替换下去的那份（有人自己打了一半的）和这次提交无关，还得在。
+        if (draftTimer) clearTimeout(draftTimer)
+        draftTimer = null
+        clearLiveFeedbackDraft()
         // 列表和各种计数都变了：清掉，让下次挂载重新拉，而不是在这里手改数组
         // （手改的那份迟早和下一页对不上）。`mineItems` 也得清 —— 刚提的这条
         // 属于「我提的」，留着旧的会让「我的反馈」少一条，而那正是这一页要回答的
         // 那个问题。
+        //
+        // **缓存要一起丢**：只清屏幕上那份的话，下次挂载会命中缓存、把提交之前那
+        // 一页原样画回来，再在背后换成新的 —— 那一下看上去就是「我刚提的反馈不见
+        // 了」，而它其实只是还没被那次重拉带上。
+        dropListCaches()
         this.items = []
         this.mineItems = []
+        // 顺手把刚落地的这条写进详情缓存：提交之后紧接着去的就是它的详情页，而手上
+        // 这一份就是服务端刚回的**整条**。这里能这么写不是猜的 —— `POST /feedback`
+        // 和 `GET /feedback/{id}` 在服务端走的是同一个 `_detail(...)` 序列化，形状
+        // 一样（见 routes/feedback.py）。
+        detailCache.set(detail.id, detail)
         return detail.id
       } catch (error) {
         this.error = message(error, '提交失败')
+        // 失败时**盘上那份留着**，而且这里补一次收尾：提交是防抖窗口里最可能发生的
+        // 「人停下来了」，而那一下不该让人在刷新后丢掉刚写完的东西。
+        if (draftTimer) clearTimeout(draftTimer)
+        draftTimer = null
+        saveFeedbackDraft(this.draft)
         return null
       } finally {
         this.submitting = false
@@ -606,6 +995,9 @@ export const useFeedbackStore = defineStore('feedback', {
 
     async loadAdmin(): Promise<void> {
       const seq = ++adminSeq
+      // 这一页也带着一份计数（栏位上的数），和公开列表那份是**同一份**。所以它
+      // 也要在发请求前领号 —— 不领的话它就绕过了 `_commitCounts` 那道门。
+      const rev = takeCountsRev()
       this.adminLoading = true
       this.error = null
       try {
@@ -613,13 +1005,18 @@ export const useFeedbackStore = defineStore('feedback', {
           tab: this.adminTab,
           q: this.adminQuery.trim(),
           sort: this.adminSort,
+          // `null`（没有这个窗口）折成 `undefined`：查询串里「没给」和「给了个空值」
+          // 是两件事，前者才是「这段日子不筛」。
+          since: this.adminSince ?? undefined,
+          resolvedSince: this.adminResolvedSince ?? undefined,
+          deployedSince: this.adminDeployedSince ?? undefined,
           pageStart: this.adminPageStart,
           pageSize: PAGE_SIZE,
         })
         if (seq !== adminSeq) return
         this.adminItems = page.data
         this.adminTotal = page.total
-        this.counts = page.counts
+        this._commitCounts(page.counts, rev)
       } catch (error) {
         if (seq !== adminSeq) return
         this.error = message(error, '管理队列加载失败')
@@ -641,6 +1038,34 @@ export const useFeedbackStore = defineStore('feedback', {
     setAdminSort(sort: AdminSort): void {
       if (this.adminSort === sort) return
       this.adminSort = sort
+      this.adminPageStart = 0
+      void this.loadAdmin()
+    },
+
+    /** 三个日期窗口：看板上「7 日新增 / 7 日解决 / 7 日上线」点进来时带着的那一段。
+     *  和栏位、排序同一条规矩 —— 换一个窗口就是换了一个问题，页码必须归零，否则
+     *  第 3 页落在另一段时间里，看着像「这段时间一条都没有」。
+     *
+     *  三个分开而不是合成一个 action：链接上从来只带其中一个，而「都没变」时这三
+     *  个都直接返回、连请求都不发 —— 合成一个之后，从别的页切回队列时的「清空窗口」
+     *  那一次会白拉一页。 */
+    setAdminSince(since: string | null): void {
+      if (this.adminSince === since) return
+      this.adminSince = since
+      this.adminPageStart = 0
+      void this.loadAdmin()
+    },
+
+    setAdminResolvedSince(since: string | null): void {
+      if (this.adminResolvedSince === since) return
+      this.adminResolvedSince = since
+      this.adminPageStart = 0
+      void this.loadAdmin()
+    },
+
+    setAdminDeployedSince(since: string | null): void {
+      if (this.adminDeployedSince === since) return
+      this.adminDeployedSince = since
       this.adminPageStart = 0
       void this.loadAdmin()
     },
@@ -684,33 +1109,105 @@ export const useFeedbackStore = defineStore('feedback', {
       void this.loadAdmin()
     },
 
-    /** 管理端点开一条。详情走**管理端**那个端点（`/admin/feedback/{id}`）：它和公开
-     *  那个回的字段一样，但前者的可见性判据是「管理员」，后者是「并集」。 */
-    async loadAdminDetail(id: string): Promise<void> {
+    /** 光标挪到 `id` 上了：详情区手上那一份当场作废。
+     *
+     *  和 `loadAdminDetail` 开头那三行是同一件事，区别只在**什么时候**做。那个要等
+     *  队列页那 150ms 防抖到期，而连按 `j`/`k` 时那支计时器每次都被重置 —— 于是整段
+     *  连按期间详情区挂的一直是**上一条**的正文，左侧选中的行、头上的编号却已经是
+     *  新的（F-06 说的就是这个）。作废必须发生在挪光标的那一刻。
+     *
+     *  `detailId` 一并前移不是顺手，是必须的：它还兼着「响应回来时这一条还算不算数」
+     *  的判据（见下面 `loadAdminDetail`）。只清 `detail` 而不改它，那条还在路上的
+     *  上一条的响应回来时会被当成这一条收下 —— 刚清掉的旧正文又贴回来了。
+     *
+     *  `id` 为 null（列表被筛空、光标没了）：作废，而且不该停在「正在拉」上。 */
+    invalidateDetail(id: string | null): void {
+      // 代次 +1：**已经在路上**的那些管理端详情响应从这一刻起全部作废。作废必须
+      // 发生在这里而不是等页面那 150ms 防抖到期 —— 防抖只把「同一段连按」并成一次
+      // 请求，它挡不住「光标先动了、请求还没发」那段时间里回来的一份旧响应：那期间
+      // `detailId` 还是旧的，只按 id 判会把上一条的正文贴回来（F-06）。
+      adminDetailSeq += 1
       this.detailId = id
       this.detail = null
-      this.detailLoading = true
+      this.detailLoading = id !== null
       this.error = null
+    },
+
+    /** 管理端点开一条。详情走**管理端**那个端点（`/admin/feedback/{id}`）：它和公开
+     *  那个回的字段一样，但前者的可见性判据是「管理员」，后者是「并集」。
+     *
+     *  **它不用 `detailCache`**，两件事都刻意：这一份可能是同一台机器上**另一个人**
+     *  的会话留下来的，共享那份缓存等于让下一个读者先画出一份他本来就看不见的内容；
+     *  而且管理端的响应带的字段集不一样，混进同一个 id 的槽里，公开那一页会先画一个
+     *  形状不对的对象。缓存是给「同一个人反复开同一条公开详情」用的。 */
+    async loadAdminDetail(id: string): Promise<void> {
+      // 作废那一步只有一处写法，避免「清了 detail 忘了推 detailId」这种半截状态。
+      this.invalidateDetail(id)
+      // 取号**必须在 `invalidateDetail` 之后**：那一下自己就把代次 +1 了。这一份响应
+      // 只有在「从这一刻起到它落地为止，没有人作废过、也没有人写过这条」时才作数 ——
+      // 后者是它和 `detailId` 那条判据的分工：读和写落在**同一个 id** 上，id 一样
+      // 判不出先后，只有代次能（见 `_adminWrite`）。
+      const seq = adminDetailSeq
       try {
         const detail = await getAdminFeedbackDetail(id)
-        if (this.detailId !== id) return
+        if (seq !== adminDetailSeq || this.detailId !== id) return
         this.detail = detail
       } catch (error) {
-        if (this.detailId !== id) return
+        if (seq !== adminDetailSeq || this.detailId !== id) return
         this.error = message(error, '这条反馈打不开')
       } finally {
-        if (this.detailId === id) this.detailLoading = false
+        // 被作废时**不复位** `detailLoading`：那面旗现在归更晚的那一次（新的读，或者
+        // 刚写完那一下），这里复位等于替它宣布「不拉了」。
+        if (seq === adminDetailSeq && this.detailId === id) this.detailLoading = false
       }
     },
 
-    /** 把未读游标推到此刻。 */
+    /** 人**按下**的那个已读（`M` 键、页头上那个按钮）：把未读游标推到此刻。
+     *
+     *  和下面那个自动的分开，而不只是「都推一次游标」：这一个**每次都要真发请求**。
+     *  页面自己触发的那个带一个 id 去重集合（同一条只推一次），拿它当人手那一下的
+     *  实现，就会出现「按了没反应」—— 打开一条超过 800ms 之后再按 `M`，那一按会被
+     *  集合直接早退掉：未读数不减、徽标不动、也没有任何提示。手动那一下是幂等的
+     *  （服务端推的就是同一个游标），但它不该是静默的。 */
     async markRead(): Promise<void> {
       try {
         await markFeedbackRead()
-        this.counts = { ...this.counts, unread: 0 }
+        // 这一下把游标推过了**此刻还开着的这一条**，所以页面那个自动已读再为它发一次
+        // 请求就没有意义了 —— 记进集合里，让它 800ms 后那次自己跳过。
+        // **只在成功之后记**：失败时不能记，否则自动那一条路也不会再试了。
+        if (this.detailId) markedReadIds.add(this.detailId)
+        // 当场领号：这一份是**此刻**最新的东西，比任何还在路上的响应都新 ——
+        // 早一步发出的那次 loadList 回来时不该把未读数再点回去。
+        this._commitCounts({ ...this.counts, unread: 0 }, takeCountsRev())
       } catch {
         // 游标推不动不值得报错 —— 下次打开还会再试一次。
       }
+    },
+
+    /** 进详情时**自动**走的那个已读：同一个 id 只真发一次请求。
+     *
+     *  和上面那个分开，因为触发的人不同：`markRead` 是人按下 M 键或按钮，按两次
+     *  就是两次表态；这一条是页面自己触发的，而一条详情在一段时间里会被开开关关
+     *  好几次（抽屉、返回列表再点开），每开一次推一次游标，等于把同一件事重复说了
+     *  好几遍。
+     *
+     *  失败时把 id 放回去：游标没推成，这一条在服务端仍然是未读，记成「已标记」
+     *  会让它再也清不掉 —— 那正是这一轮要修的那个死档。 */
+    async markReadOnce(id: string): Promise<void> {
+      if (markedReadIds.has(id)) return
+      markedReadIds.add(id)
+      try {
+        await markFeedbackRead()
+      } catch {
+        markedReadIds.delete(id)
+        return
+      }
+      // 先把徽标归零，再问一次服务端：`markFeedbackRead()` 推的是**整个人**的游标
+      // （一直推到此刻），所以读过这一条之后没有一条还是未读的。本地减一是在前端
+      // 算一遍服务端的账，而那张账本（谁在什么时候动过我的条目）前端看不见。
+      // 当场领号（同 `markRead`）：这是一次本地动作，没有请求可等。
+      this._commitCounts({ ...this.counts, unread: 0 }, takeCountsRev())
+      void this.refreshCounts()
     },
 
     /** 推一个状态。服务端把状态和它那条时间线写在同一个事务里，所以这里回的是
@@ -755,7 +1252,20 @@ export const useFeedbackStore = defineStore('feedback', {
         // 只在**还是这一条**时回填：写请求在飞的时候人可能已经点开了另一条，慢响应
         // 回来会把 `detailId` 拉回旧的那条 —— 新条目的抽屉要么显示「这条反馈打不开」，
         // 要么因为 `detailLoading` 永远不再复位而卡在「加载中…」。
-        if (this.detailId === id) this.detail = detail
+        // 换掉 `state.detail` 本身，**不写回 `detailCache`**（这一份来自管理端端点，
+        // 见 `detailCache` 那段）。缓存里那份留着旧值，下一次 `loadDetail` 会先画它、
+        // 再被重拉覆盖 —— 代价是一次往返，换来的是「缓存里只存公开端点回的东西」
+        // 这条不变量，它比省掉的那一次往返值钱。
+        if (this.detailId === id) {
+          this.detail = detail
+          this.detailLoading = false
+          // 代次 +1：**写之前发出去、写之后才回来**的那次读从此作废。没有这一下，
+          // 一份比这次写更旧的快照会贴回来盖掉它，而屏幕上看着就是「这一按没生效」——
+          // 管理员再按一次，于是状态白走一格。读和写落在同一个 id 上，只按 id 判
+          // 分不出谁新谁旧，这条代次是唯一能判的那个（e2e 里真的踩到过：
+          // 面板显示的还是「已收录」，而库里已经写成了「处理中」）。
+          adminDetailSeq += 1
+        }
         // 那一行也变了，而且可能在**别的一栏**里（改了安全问题就从公开栏挪进安全栏），
         // 所以整页重新拉一次。以前这里只是把数组清空、指望「下次挂载重拉」，可管理端
         // 这一页在抽屉关掉时既不重新挂载也不重新拉取 —— 于是表格画出来的是「这一栏
@@ -763,6 +1273,28 @@ export const useFeedbackStore = defineStore('feedback', {
         await this.loadAdmin()
       } catch (error) {
         this.error = message(error, '操作失败')
+      }
+    },
+
+    /* ---- 看板 ---- */
+
+    /** 拉看板那一页要的汇总。`days` 由页面给（默认 7，就是页头上那句「过去 7 天」）
+     *  —— 窗口是页面的问题，不是 store 的：将来多一个「过去 30 天」就是换个参数。
+     *
+     *  和列表一样要扔掉过期响应：R 键连按两次会发两个请求，而先发的那次可能后到。 */
+    async loadStats(days = 7): Promise<void> {
+      const seq = ++statsSeq
+      this.statsLoading = true
+      this.error = null
+      try {
+        const stats = await getAdminFeedbackStats({ days })
+        if (seq !== statsSeq) return
+        this.stats = stats
+      } catch (error) {
+        if (seq !== statsSeq) return
+        this.error = message(error, '看板加载失败')
+      } finally {
+        if (seq === statsSeq) this.statsLoading = false
       }
     },
 

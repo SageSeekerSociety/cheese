@@ -50,7 +50,9 @@ function cssRule(rel: string, selector: string): string {
   return src.slice(at, src.indexOf('}', at))
 }
 
-const PAGE_SCROLLERS = ['FeedbackCenterPage', 'FeedbackDetailPage']
+// 「我的反馈」是重做之后才补进这份清单的：它和另外两页一样自己领滚动，但以前没人
+// 钉着它，改回「什么都滚不了」也不会红。
+const PAGE_SCROLLERS = ['FeedbackCenterPage', 'FeedbackDetailPage', 'FeedbackMinePage']
 
 describe('反馈页面的滚动归自己领', () => {
   for (const page of PAGE_SCROLLERS) {
@@ -62,15 +64,27 @@ describe('反馈页面的滚动归自己领', () => {
     })
   }
 
-  it('AdminFeedbackPage 把滚动下放给表格，但这一页自己仍然是满高的', () => {
+  it('管理端不再让整页一起滚，但满高这件事换了个地方继续成立', () => {
     // 根节点不再带 `overflow-y-auto`，所以上面那条不适用 —— 但「满高」这件事不能丢：
-    // 根节点塌成内容高，下面那个 `1 1 auto` 的表格就没有可分配的高度，
-    // 表格内部也就没有溢出可滚，整页又会回到「被外壳裁掉且没人能滚」。
-    expect(rootTag('AdminFeedbackPage')).toContain('fbadmin')
-    const rule = cssRule('views/feedback/AdminFeedbackPage.vue', '.fbadmin')
+    // 根节点塌成内容高，下面那个 `1 1 auto` 的格子就没有可分配的高度，格子内部也就
+    // 没有溢出可滚，整页又会回到「被外壳裁掉且没人能滚」。
+    //
+    // **领这一条的元素换过名字，所以这个用例也换过靶子**：管理端重做之后
+    // `/admin/feedback` 变成一层薄壳（`AdminFeedbackPage.vue` 现在只渲染
+    // `<AdminQueuePage />`），满高和滚动都搬到了 `views/admin/AdminQueuePage.vue`
+    // 的 `.qpage`。钉旧名字的代价是这条不变量会在没人发现的情况下失效 —— 薄壳本身
+    // 没有样式，它「有 `fbadmin` 类」这件事跟「页面能不能滚」已经没有关系了。
+    const rule = cssRule('views/admin/AdminQueuePage.vue', '.qpage')
     expect(rule).toContain('height: 100%')
     expect(rule).toContain('min-height: 0')
     // 而且真的有一个能滚的格子在里面，不是「把滚动挪走了」就完事。
     expect(cssRule('components/admin/AdminGrid.vue', '.agrid__scroll')).toContain('overflow: auto')
+  })
+
+  it('薄壳那条老地址仍然指向队列', () => {
+    // 这一条钉的是**链接还活着**，不是布局：老书签、老通知、别人贴在聊天里的链接都还
+    // 指着 `/admin/feedback`，它当时指的是「后台里管反馈的那一块」，今天还是那件事。
+    // （薄壳的来龙去脉和它为什么不用重定向见 `AdminFeedbackPage.vue` 顶部那段。）
+    expect(rootTag('AdminFeedbackPage')).toContain('<AdminQueuePage')
   })
 })

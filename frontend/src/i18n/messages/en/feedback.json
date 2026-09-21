@@ -184,7 +184,7 @@
   "detail": {
     "missing": {
       "title": "This feedback doesn't exist",
-      "desc": "It may have been deleted, or you don't have permission to view it."
+      "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the room when it was filed can see it."
     },
     "error": {
       "title": "Couldn't load the details",
