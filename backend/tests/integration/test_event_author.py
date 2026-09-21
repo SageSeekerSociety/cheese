@@ -41,8 +41,11 @@ def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
 
 
 def _say(client, topic_id: str, text: str, *, summon: bool) -> None:
+    # 叫不叫它写在正文里：帧上没有这一位，后端从 @ 解析。
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": summon})
+        ws.send_json(
+            {"type": "message", "content": f"@芝士 {text}" if summon else text}
+        )
         while ws.receive_json()["type"] != "done":
             pass
 
@@ -141,7 +144,6 @@ def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub
             {
                 "type": "message",
                 "content": "看看这张截图",
-                "summon": False,
                 "attachments": [att],
             }
         )

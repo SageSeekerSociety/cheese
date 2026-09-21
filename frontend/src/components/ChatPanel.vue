@@ -36,7 +36,6 @@ const composerMemory = new Map<string, ComposerDraft>()
 interface Outgoing {
   clientId: string
   content: string
-  summon: boolean
   replyTo?: string
   atts?: ChatAttachment[]
   /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
@@ -1106,7 +1105,6 @@ function flushOutbox() {
     const msg: WsClientChatMessage = {
       type: 'message',
       content: item.content,
-      summon: item.summon,
       reply_to: item.replyTo,
       attachments: item.atts,
       client_id: item.clientId,
@@ -1153,7 +1151,6 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   outbox.value.push({
     clientId: `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     content: trimmed,
-    summon,
     replyTo: replyTarget.value?.id ?? undefined,
     atts,
     state: 'queued',

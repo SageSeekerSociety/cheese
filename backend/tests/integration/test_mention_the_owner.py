@@ -12,7 +12,7 @@ from tests.integration.conftest import chat_ws_url, session_auth_headers
 def _post(client, topic_id: str, content: str, author: str) -> None:
     """发一条人说的话（不唤醒芝士）：@ 的通知在这条消息落库时就发出去了。"""
     with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
-        ws.send_json({"type": "message", "content": content, "summon": False})
+        ws.send_json({"type": "message", "content": content})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

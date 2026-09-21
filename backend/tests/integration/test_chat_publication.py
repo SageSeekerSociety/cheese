@@ -161,7 +161,7 @@ def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks)
     topic, _ = room(client)
     stub_hooks.reply = "This terminal output must remain in activity."
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "检查一下", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -188,7 +188,7 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
     topic, headers = private_room(client)
     stub_hooks.reply = "这段是终端里的最终答复。"
     with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "帮我记一下偏好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 帮我记一下偏好"})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -237,7 +237,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
     with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "检查一下", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
         turn_id = None
         while True:
             frame = ws.receive_json()
@@ -335,7 +335,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
 
     monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
     with client.websocket_connect(chat_ws_url(topic, speaker)) as ws:
-        ws.send_json({"type": "message", "content": "检查一下", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
             if (

@@ -239,9 +239,13 @@ def test_an_unknown_disposition_is_refused(client):
 
 
 def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") -> list:
-    """在房间里说一句并 @ 芝士，收完这一轮的帧。"""
+    """在房间里说一句并 @ 芝士，收完这一轮的帧。
+
+    @ 写在正文里：「这一句点了谁的名」是服务端从正文解析出来的（I13），帧上没有
+    那一位，所以不 @ 就没有人被叫起来，闸门也就轮不到撞。
+    """
     with client.websocket_connect(chat_ws_url(topic_id, who)) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": True})
+        ws.send_json({"type": "message", "content": f"@芝士 {text}"})
         frames = []
         while True:
             frames.append(ws.receive_json())

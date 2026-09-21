@@ -257,6 +257,7 @@ async def test_resume_turn_still_speaks_as_the_platform(client, tmp_path):
                 topic_id=topic_id,
                 author="system",
                 content="从上一轮的断点继续",
+                summon=True,
                 is_resume=True,
             )
         ),

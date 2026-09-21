@@ -1133,3 +1133,5 @@ class FeedbackRepository:
         return {
             row[0]: int(row[1]) for row in (await self._session.execute(stmt)).all()
         }
+
+    # --- 平台管理员的第二份名单（页面上加的那些） -----------------------------
