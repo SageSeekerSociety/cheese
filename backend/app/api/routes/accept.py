@@ -116,10 +116,14 @@ async def create_accept_card(
 
 @router.post("/topics/{topic_id}/tasks/{task_id}/push-fix")
 async def push_fix(
-    topic_id: uuid.UUID, task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    task_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    drop_dependency: bool = False,
 ) -> dict:
     await _task_actor(topic_id, task_id, db, resolver)
-    result = await AcceptService(db).push_fix(task_id)
+    result = await AcceptService(db).push_fix(task_id, drop_dependency=drop_dependency)
     await db.commit()
     return ok(result)
 
