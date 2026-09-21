@@ -177,7 +177,7 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
     class Recipients(FakeChat):
         def __init__(self):
             super().__init__(None)
-            self.selected = "b"
+            self.selected = "cheese-b"
             self.waiting = asyncio.Event()
             self.finish_a = asyncio.Event()
             self.delivered = []
@@ -196,7 +196,7 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
             return payloads, anchor, ids, duplicate
 
         async def wait_for_recipient(self, topic, recipient):
-            if recipient == "b":
+            if recipient == "cheese-b":
                 self.waiting.set()
                 await self.finish_a.wait()
                 return True
@@ -219,16 +219,16 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
             chat, topic, author="u", content="<@cheese-seat> B's next task"
         )
         await chat.waiting.wait()
-        chat.selected = "a"
+        chat.selected = "cheese-a"
         await broker.receive_message(
             chat, topic, author="u", content="Stop A's current task"
         )
         await _until(lambda: bool(chat.delivered))
-        assert chat.delivered == [("a", "Stop A's current task")]
+        assert chat.delivered == [("cheese-a", "Stop A's current task")]
         assert other.active_work_count() == 0
         chat.finish_a.set()
         await runner.drain()
-        assert chat.delivered[-1] == ("b", "B's next task")
+        assert chat.delivered[-1] == ("cheese-b", "<@cheese-seat> B's next task")
     finally:
         chat.finish_a.set()
         await runner.drain()
