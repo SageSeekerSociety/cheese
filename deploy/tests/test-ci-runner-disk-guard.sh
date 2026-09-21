@@ -14,6 +14,7 @@ trap 'rm -rf "$RUN_DIR"' EXIT
 FAKE_BIN="$RUN_DIR/bin"
 CALLS="$RUN_DIR/docker.calls"
 SUDO_CALLS="$RUN_DIR/sudo.calls"
+export CHEESE_APT_LOCK="$RUN_DIR/apt.lock"
 mkdir -p "$FAKE_BIN"
 
 fail() {
@@ -158,7 +159,18 @@ seed_home
 out="$(run_guard 15 25 20)"
 grep -q "15G free is below 20G" <<<"$out" || fail "the floor was not honoured: $out"
 
-# 9. A df that says nothing is not a reason to prune.
+# 9. An install in another slot holds this same host lock. The guard must
+# leave apt alone while continuing its other reclaim tiers.
+seed_home
+exec 9>"$CHEESE_APT_LOCK"
+flock -x 9
+out="$(run_guard 4 4)"
+[ ! -s "$SUDO_CALLS" ] || fail "apt was reclaimed during an install"
+[ ! -d "$HOME_DIR/.npm/_cacache" ] || fail "busy apt prevented later tiers"
+flock -u 9
+exec 9>&-
+
+# 10. A df that says nothing is not a reason to prune.
 : > "$CALLS"
 cat > "$FAKE_BIN/df" <<'EOF'
 #!/bin/sh
