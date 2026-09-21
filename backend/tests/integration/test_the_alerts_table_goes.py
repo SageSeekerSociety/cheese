@@ -12,7 +12,8 @@
 2. **对不上就停在那儿，不是把表删掉** —— 造一条搬完之后被改过的 alert，迁移抛错
    点名它，表和行原样留着，收件箱一行没动。
 3. **一个收件人也算不出来的广播不算对不上** —— 它谁也没送到过，删表之后照旧没人
-   读得到，所以只写进迁移日志，不挡删表。
+   读得到，所以写进迁移日志、不挡删表；这一行随表一起消失，日志里连项目、房间、
+   标题、写下的时刻一起留着，事后拿一个 uuid 是查不回来的。
 
 跑的是**迁移的 `upgrade()` 本身**，跟 `alembic upgrade head` 走同一条路；`alerts`
 在 head 上已经没有了，所以表由 `create_alerts_table()` 立起来（
@@ -101,7 +102,11 @@ def test_a_row_that_does_not_line_up_stops_the_migration(client):
 
 
 def test_a_broadcast_that_reached_nobody_does_not_stop_the_drop(client, caplog):
-    """空名册上的一条广播：谁也没收到过，写进日志，不挡删表。"""
+    """空名册上的一条广播：谁也没收到过，写进日志，不挡删表。
+
+    放行就是跟着 `DROP TABLE` 一起删掉，事后拿着 id 再也查不回来 —— 所以日志行
+    自己要说得清这条广播是什么：项目、房间、标题、写下的时刻。
+    """
     pid, tid = _empty_room(client)
     _seed_alerts(
         client, pid, tid, [{"target": None, "title": "没人在的房间", "topic": True}]
@@ -113,6 +118,8 @@ def test_a_broadcast_that_reached_nobody_does_not_stop_the_drop(client, caplog):
         _upgrade(client, DROP_MIGRATION)
 
     assert str(alert) in caplog.text
+    for said in (pid, tid, "没人在的房间"):
+        assert said in caplog.text
     assert not _alerts_exists(client)
     assert _recipients_of(client, "没人在的房间") == set()
 

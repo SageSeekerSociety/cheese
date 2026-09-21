@@ -36,8 +36,10 @@ Create Date: 2026-09-21 12:00:00
 
 广播（`target_handle IS NULL`）碰上空名册时一个收件人也算不出来，一行也落不下
 （`c8d3a1e07f54` 的说明里点了这一种）。它不算「对不上」：这条 alert 从来没有送到
-过任何人手上，也没有任何人能读到它 —— 删表之后不多不少还是没人读得到。所以它
-**按 id 写进迁移日志**，不挡删表。
+过任何人手上，也没有任何人能读到它 —— 删表之后不多不少还是没人读得到。所以它不
+挡删表，**连同项目、房间、标题、写下的时刻一起写进迁移日志**：放行就是随
+`DROP TABLE` 一起删掉，日志里只留一个 uuid 的话，事后拿着它查无可查 —— 日志行
+自己就得说得清这条广播是什么。
 
 点名给某个人的那一种落不下行是另一回事：`target_handle` 非空时搬家必定算出恰好
 一个收件人，所以「点名的那一条一行都没落下」只可能是搬家这一句自己坏了。那一种
@@ -91,12 +93,21 @@ def the_same_move() -> sa.TextClause:
 #: `IS DISTINCT FROM` 而不是 `<>`：`topic_id` 和 `level` 两边都可以是 NULL，而
 #: `NULL <> NULL` 是 NULL 不是 true，用 `<>` 的话两边都空的那几列会被当成「没对
 #: 上」，于是每一条都进 `differing`，删表永远走不到。
+#:
+#: 投影里还带着 `alerts` 自己的项目、房间、标题、写下的时刻：放行的那一条广播要
+#: 随 `DROP TABLE` 一起没，它说的是什么只剩迁移日志这一份，所以查出来的时候就得
+#: 一并拿上。`a.id` 是主键，按它分组之后同一行的其余列都跟着定下来。
 UNACCOUNTED = sa.text(
     """
-    SELECT id, broadcast, copies, differing FROM (
+    SELECT id, broadcast, copies, differing,
+           project_id, topic_id, title, created_at FROM (
         SELECT
             a.id::text AS id,
             a.target_handle IS NULL AS broadcast,
+            a.project_id::text AS project_id,
+            a.topic_id::text AS topic_id,
+            a.title AS title,
+            a.created_at AS created_at,
             count(l.alert_id) AS copies,
             count(l.alert_id) FILTER (
                 WHERE l.type IS DISTINCT FROM (
@@ -135,8 +146,14 @@ def upgrade() -> None:
         if row["copies"] == 0 and row["broadcast"]:
             log.warning(
                 "alerts %s 是一条谁也没收到的广播（当时名册是空的，搬家算不出收件人）"
-                "—— 删表之后它照旧不在任何人的收件箱里",
+                "—— 删表之后它照旧不在任何人的收件箱里。这一行跟着表一起删掉，拿着"
+                "这个 id 再也查不回来，所以它说的是什么留在这里：项目 %s、房间 %s、"
+                "标题「%s」、写于 %s",
                 row["id"],
+                row["project_id"],
+                row["topic_id"] or "（不在任何房间里）",
+                row["title"],
+                row["created_at"],
             )
             continue
         stuck.append(
