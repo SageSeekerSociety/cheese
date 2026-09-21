@@ -6,6 +6,11 @@
  * 一处的事，而前端的常量表要靠发版才能跟上。颜色则相反 —— 它是视觉决定，服务端
  * 不该知道 `--warn-wash` 这样的 token，所以它留在这里。
  *
+ * 阶梯条的段数（`STATUS_SEGMENTS`）与颜色同属这一类，但它**比颜色硬** —— 它是
+ * 「去掉颜色之后还分不分得出四个状态」的主通道（三处冗余里排第一）：形状在 1x 屏、
+ * 色觉障碍和黑白打印下都还活着，而 4px 宽的色块会先糊掉。所以配色可以换，段数记住
+ * 别顺手改。
+ *
  * 两边的接缝就是这几个 Record：服务端说「有这四个状态」，这里说「这四个各是什么
  * 颜色」。服务端多出一个这里没有的状态时，**`statusMeta` 会退回中性色而不是渲染空白**
  * —— 一行渲染不出来比颜色不对严重得多（见下）。
@@ -48,9 +53,14 @@ const NEUTRAL: StatusMeta = { label: '未知', wash: 'var(--fill)', ink: 'var(--
  * 「处理中」只有这一级，不往下再分：里面分了几步、谁在动哪一段，和服务端记录的是
  * 一回事，但**和提交者没关系** —— 他要知道的只是「有人在弄」。管理端要更细的口径时
  * 用指派和优先级两个字段，不往状态里塞。
+ *
+ * `received` 的 `dot` 取 `--muted` 而不是更淡的 `--faint`：这个字段就是阶梯条已填段的
+ * 颜色（`StatusRail` 从这里取）。已收录只有一段，没有后面的段帮它把形状撑起来，落在
+ * 卡片底上 2.64:1 的 `--faint` 就只剩「有一条」可认；`--muted` 才让那一格同时是形状
+ * 和颜色。别按「越淡越像还没开始」把它调回去。
  */
 export const STATUS_META: Record<FeedbackStatus, StatusMeta> = {
-  received: { label: '已收录', wash: 'var(--fill)', ink: 'var(--muted)', dot: 'var(--faint)' },
+  received: { label: '已收录', wash: 'var(--fill)', ink: 'var(--muted)', dot: 'var(--muted)' },
   in_progress: { label: '处理中', wash: 'var(--warn-wash)', ink: 'var(--warn-ink)', dot: 'var(--warn)' },
   resolved: { label: '已修复', wash: 'var(--ok-wash)', ink: 'var(--ok-ink)', dot: 'var(--ok)' },
   deployed: { label: '已上线', wash: 'var(--ok-wash)', ink: 'var(--ok-ink)', dot: 'var(--ok)' },
@@ -58,6 +68,19 @@ export const STATUS_META: Record<FeedbackStatus, StatusMeta> = {
 
 /** 状态梯子的**兜底**顺序，给 meta 还没到的那一帧用。 */
 export const STATUS_LADDER: FeedbackStatus[] = ['received', 'in_progress', 'resolved', 'deployed']
+
+/**
+ * 阶梯条画几段：状态在梯子上排第几就填几段（`STATUS_LADDER` 是同序的权威来源）。
+ *
+ * 和颜色一样是**视觉决定**，所以不跟 `statusMeta` 一起从服务端取 —— 它是这一档的主
+ * 通道：段数的形状在黑白打印、低分屏和色觉障碍下都还在，色块不一定（见文件开头）。
+ */
+export const STATUS_SEGMENTS: Record<FeedbackStatus, number> = {
+  received: 1,
+  in_progress: 2,
+  resolved: 3,
+  deployed: 4,
+}
 
 /**
  * 「办完了」的那两级：修复和上线。
@@ -96,6 +119,12 @@ export const SOURCE_LABEL = {
 /** 拿一个状态的呈现，取不到就回中性。见文件开头第 2 条理由。 */
 export function statusMeta(status: FeedbackStatus | undefined): StatusMeta {
   return (status && STATUS_META[status]) || NEUTRAL
+}
+
+/** 拿一个状态的阶梯条段数，认不出的状态按 1 段画 —— 兜底理由同 `statusMeta`：
+ *  画成一格总比不画强，一段也总比渲染出一个空条子强。 */
+export function statusSegments(status: FeedbackStatus | undefined): number {
+  return (status && STATUS_SEGMENTS[status]) || 1
 }
 
 /** 拿一个优先级的呈现，取不到就回中性。 */

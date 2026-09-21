@@ -1282,6 +1282,9 @@ export interface FeedbackCounts {
   unread: number
   /** 管理端才有：还没指派给任何人的条数。 */
   unassigned?: number
+  /** 管理端才有：已经上线的累计条数。它和 `resolved` 是两条不同的数 —— 解决了不等于
+   *  上线了，看板把这两件事分开显示。 */
+  deployed?: number
 }
 
 export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
@@ -1302,8 +1305,16 @@ export interface FeedbackMeta {
   status_ladder: FeedbackStatus[]
   tabs: string[]
   admin_tabs: string[]
-  /** 「热门」的门槛，前端不写死 5。 */
-  hot_supports: number
+  /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
+   *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
+   *  分、一个支持几天打对折、不够线时至少补几条。
+   *
+   *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
+   *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
+   *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
+  hot_score: number
+  hot_half_life_days: number
+  hot_min_items: number
   is_admin: boolean
 }
 

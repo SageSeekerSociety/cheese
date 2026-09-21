@@ -129,6 +129,10 @@
   /* ---- Page width ---- */
   --page-w: 920px; /* reading and forms — the default */
   --page-w-wide: 1100px; /* multi-column dashboards */
+  /* 连续正文的第三档。920 是给表单和卡片列表的，正文铺满它一行会排到 60 个汉字
+     以上，回行时眼睛要横穿一整行去找下一行的开头，很容易跳行；660 下 15px 汉字
+     一行约 44 字。前两档的值不动，宽度是这一栏的属性，不是这一次的偏好。 */
+  --page-w-read: 660px; /* long-form reading column */
 
   /* ---- Type ---- */
   --font-sans:
@@ -164,6 +168,14 @@
   --lh-15: 21px; /* 1.40 — section / card title */
   --lh-18: 26px; /* 1.44 — sheet title */
   --lh-23: 33px; /* 1.43 — page title */
+
+  /* 两个为长文单开的档，系数 1.57 / 1.60。它们不是阶梯上的新一级：1.43 是给短行的
+     （一两行的说明、表格、标题），而 14px 汉字连排三行以上、20px 行盒会让上一行的
+     下缘贴住下一行的上缘。各自只配一个类（.t-body-readable / .t-reading），阶梯
+     仍然是 1.43。
+     和圆角同一个道理，这两行只在 :root 写一次，不在深色块里重复。 */
+  --lh-14-loose: 22px; /* 1.57 — .t-body-readable */
+  --lh-15-reading: 24px; /* 1.60 — .t-reading */
 }
 
 /* ---------------------------------------------------------------------------
@@ -355,6 +367,72 @@
   font-size: 12.5px;
   line-height: var(--lh-12);
   color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Console title: 23 / 33 / 650 / 0 / --ink.
+   .t-page-title 的孪生体，只差分字距：23px 下的 -0.02em 是 -0.46px，而汉字字面本身
+   只留 0.7–1.4px 的侧边，再收就贴住了。.t-page-title 已经在所有既有页面上，改它会
+   全站回流，所以那一档的诉求（正字距）用这一个新类接住。 */
+.t-console-title {
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 650;
+  line-height: var(--lh-23);
+  letter-spacing: 0;
+  color: var(--ink);
+}
+
+/* Body, readable: 14 / 22 / 400 / --text.
+   比 .t-body 松一档，给会连排三行以上的 CJK（卡片摘要、详情正文、看板说明）。
+   字重从 430 落到 400：430 在 PingFang SC 上没有对应字重，会被吸到 500，汉字
+   混排的拉丁部分凭空重半档——只有这一批新面用得上 400，既有 .t-body 不动。 */
+.t-body-readable {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: var(--lh-14-loose);
+  color: var(--text);
+}
+
+/* Reading: 15 / 24 / 400 / --text（1.60）。
+   660px 阅读栏里的连续正文。字号比上面大一档，是因为栏更窄、每行字数更少，
+   行距不够就更难跟行。 */
+.t-reading {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: var(--lh-15-reading);
+  color: var(--text);
+}
+
+/* Meta, readable: 12.5 / 18 / 400 / --muted.
+   与 .t-meta 同档、同尺寸，只换了颜色。判据是**文字那条线**（AA 4.5:1），不是图形
+   那条（3:1）：这一档装的是 12.5px 的时间戳、计数、轴标签。`--faint` 在浅色主题下
+   四种底色上连 3:1 都到不了（`--surface` 2.64 / `--canvas` 2.48 / `--fill` 2.42 /
+   `--line-2` 2.05）—— 所以它不是「差一点」，而写这条规则的人要是照图形那条线算，
+   会得出「把 --faint 抬到 3.1 这个类就能删」的结论，那个结论对 12.5px 的字是错的。
+   深色那一侧不成立同样的量级（4.25 / 4.60 / 3.92 / 2.70），吃紧的一直是浅色。
+   .t-meta 是既有类，它的 `--faint` 留给存量页面，不在这里改。 */
+.t-meta-read {
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+/* Eyebrow, readable: 12 / 18 / 600 / .04em / --muted. 同 .t-eyebrow 的理由。 */
+.t-eyebrow-read {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* 等宽数字。此前是每处手抄这两个声明，于是有的地方抄了、有的没抄，同一张表里
+   两列的右边缘对不齐；而表格里一列数字的宽度只要随数值变化，每次取数整列都会
+   横向抖一下。定义只此一处，凡是要纵向比较的数字都加它。 */
+.t-num {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
@@ -607,6 +685,27 @@ button:not(.v-btn) {
   overflow: hidden;
   opacity: 0;
   border: 0;
+}
+
+/* 管理后台的队列行与总表行共用 .fb-row —— 两处都是「一整行 = 一个可聚焦的链接」，
+   所以 hover 和焦点环只在这里写一次，行内那个链接叫 .fbrow__link。
+   hover 只改底色：这一列有几十行，任何位移都会让整列跟着跳，而底色已经说清了指针
+   在哪一行。包在 (hover: hover) 里是因为触屏上 :hover 点过之后会一直粘着，那一行
+   看着像被选中了 —— 而总表里的「选中」是另一件事（左侧 2px 琥珀竖条）。 */
+.fb-row {
+  transition: background-color 0.12s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .fb-row:hover {
+    background-color: var(--fill);
+  }
+}
+/* 焦点环画在行上、不画在链接上：链接只是行内一小段文字，2px 的环跟着它走会缩成
+   一个小方块，看不出光标现在停在哪一行。offset 取负值是为了不被相邻行裁掉 ——
+   行与行之间只隔一条 1px 发丝线，环画在外面会压进上/下一行里。 */
+.fb-row:has(.fbrow__link:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */
