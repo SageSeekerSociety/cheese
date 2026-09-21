@@ -709,11 +709,12 @@ def _set_merge_since(client, card_id: str, iso: str) -> None:
 
 
 @pytest.mark.parametrize("removed", [False, True])
+@pytest.mark.parametrize("action", ["accept", "override", "auto"])
 def test_queued_accept_stays_pending_until_github_merges(
-    client, app_world, monkeypatch, removed
+    client, app_world, monkeypatch, removed, action
 ):
     fake = app_world["fake"]
-    _pid, tid, cid, number, head = _ready_card(client, app_world)
+    pid, tid, cid, number, head = _ready_card(client, app_world)
     fake.check_state_by_sha[head] = ("success", "green")
     enqueues = []
 
@@ -726,7 +727,14 @@ def test_queued_accept_stays_pending_until_github_merges(
 
     monkeypatch.setattr(fake, "merge_pull_request", enqueue)
     monkeypatch.setattr(fake, "merge_queue_entry", in_queue, raising=False)
-    response = _accept(client, cid)
+    if action == "auto":
+        _protect(client, pid, auto_merge_allowed=True)
+        response = _arm(client, cid, "alice")
+        _poll(client)
+    elif action == "override":
+        response = _merge_anyway(client, cid, "alice", reason="test")
+    else:
+        response = _accept(client, cid)
     assert response.status_code == 200, response.text
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"

@@ -391,8 +391,8 @@ class GitHubPrClient(Protocol):
         makes GitHub answer 409 (`stale_head` on the result) instead of
         merging a commit nobody looked at.
 
-        Returns the merge commit SHA on success, else a `blocked_reason` the
-        caller surfaces on the card — never a silent "try again later"."""
+        Queue entry returns `queued=True` without a merge SHA. Otherwise the
+        result carries the merged SHA or the refusal reason."""
         ...
 
     async def list_check_runs(
@@ -1629,10 +1629,7 @@ class GitHubPRClient:
         `PATCH /pulls/{n}` has no `draft` field, and GitHub exposes the
         transition only as the GraphQL mutation `markPullRequestReadyForReview`,
         keyed by the PR's node id (which the REST response already carries, so
-        nothing has to be stored for this). That is the whole reason a GraphQL
-        request appears in a REST client — it is a hole in the REST API, not a
-        second way of talking to GitHub, so this stays one private method
-        instead of growing a GraphQL layer nothing else would use.
+        nothing has to be stored for this).
 
         Already-ready is not an error and not this method's business to detect:
         the mutation is idempotent, and the caller (`AcceptService.mark_ready`)
