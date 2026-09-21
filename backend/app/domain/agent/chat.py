@@ -45,10 +45,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import (
-    subscription_model_alias,
-    subscription_model_listings,
-)
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -96,10 +93,6 @@ from app.domain.agent.tool_preview import (
     tool_preview,
     work_subpath,
 )
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    validate_configuration,
-)
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -137,6 +130,7 @@ from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -1189,6 +1183,18 @@ class ChatService:
         # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
+        # Which child agents the running sessions say are still doing something,
+        # per room. Only the harness's own lifecycle events can answer this:
+        # they fire in the session's process and carry the child's id, while
+        # every tool call goes through the MCP transport,
+        # whose request has no caller identity on it at all — which is why a
+        # worker that only runs tools leaves no trace of its own. The board's
+        # "is that worker still alive" reads it (`worker_live`).
+        self._live_workers: dict[uuid.UUID, dict[str, bool]] = {}
+        # The session each room is currently on. A claim about a child belongs to
+        # the session that made it: a new session has never heard of the old
+        # one's children, so a claim that outlived its session is void.
+        self._room_sessions: dict[uuid.UUID, str] = {}
         # Where each live session's model traffic goes, remembered from the last
         # turn the platform assembled for it. A turn the session starts by itself
         # rides the same screen and therefore the same supply, and has no prompt
@@ -1973,6 +1979,34 @@ class ChatService:
         question, and the one that used to be unanswerable."""
         return self._compute.holds(topic_id)
 
+    def worker_live(self, topic_id: uuid.UUID, agent_id: str | None) -> bool | None:
+        """Is the worker bound to this task still doing it?
+
+        True when the room's session reported that agent starting and has not
+        taken it back, None when no one is claiming anything about it — never
+        mentioned, or already handed something back. The board takes this as the
+        strongest evidence it can get (`TaskFacts.worker_live`): a worker can go
+        quiet for forty minutes without being dead — that is what running a long
+        command looks like — and only the thing running it can tell the two
+        apart. The timestamps stay for the None case, where nobody has spoken.
+
+        The session that made a claim must still be the room's session for the
+        claim to hold: this process outlives screens.
+        """
+        if not agent_id:
+            return None
+        workers = self._live_workers.get(topic_id)
+        if not workers:
+            return None
+        if not self._compute.holds(topic_id):
+            # Their screen is gone, so they are gone with it — and this is the
+            # one place that notices, since nothing tells this service a screen
+            # died. Dropping the room's claims here is what keeps a claim from
+            # outliving the screen it came from and resurrecting on the next one.
+            self._live_workers.pop(topic_id, None)
+            return None
+        return workers.get(agent_id)
+
     async def turns_that_produced_something(
         self, turn_ids: list[uuid.UUID]
     ) -> set[uuid.UUID]:
@@ -2161,6 +2195,43 @@ class ChatService:
             frame = {"type": "turn_finished", "turn_id": str(work_id)}
         await get_broker().publish(str(topic_id), frame)
 
+    def _note_room_session(self, topic_id: uuid.UUID, session_id: str) -> None:
+        """The room is on a (possibly) different session now.
+
+        Whatever the previous session said about its children died with it: the
+        children of the old session are not running in the new one, and the new
+        one will tell us about its own. Without this, a claim from a screen that
+        has since been replaced would outlive it and say "still running" about a
+        worker nobody is running.
+        """
+        previous = self._room_sessions.get(topic_id)
+        if previous is not None and previous != session_id:
+            self._live_workers.pop(topic_id, None)
+        self._room_sessions[topic_id] = session_id
+
+    def _note_worker_agent(self, topic_id: uuid.UUID, event: object) -> None:
+        """Record what this session just said about one child agent.
+
+        `SubagentStart`/`SubagentStop` are the only events that both name the
+        child they are about and arrive straight from the session's process, so
+        they are the only first-hand answer to "is that worker still doing it".
+        Nothing is inferred from silence: started means running.
+
+        A stop only takes the claim away, it does not declare the worker dead —
+        a subagent that hands something back and stands by, or that is resumed
+        later, produces a stop and then more work (see `AgentSubagentStop`). The
+        board then falls back to the timestamps, which is what it did before this
+        existed, rather than calling a worker dead that is about to speak again.
+        """
+        agent_id = getattr(event, "agent_id", None)
+        if not agent_id:
+            return
+        workers = self._live_workers.setdefault(topic_id, {})
+        if isinstance(event, AgentSubagentStart):
+            workers[agent_id] = True
+        else:
+            workers.pop(agent_id, None)
+
     async def _work_of_worker(
         self, topic_id: uuid.UUID, agent_id: str | None
     ) -> uuid.UUID | None:
@@ -2308,6 +2379,7 @@ class ChatService:
         # would see an event that a reload then moves somewhere else.
         channel = str(task_id) if task_id is not None else str(topic_id)
         if isinstance(event, AgentSessionInfo):
+            self._note_room_session(topic_id, event.session_id)
             await self._save_session_pointer(
                 topic_id,
                 event.session_id,
@@ -2315,6 +2387,7 @@ class ChatService:
                 harness=event.harness,
             )
         elif isinstance(event, AgentSubagentStart | AgentSubagentStop):
+            self._note_worker_agent(topic_id, event)
             payload = await self._persist_worker_event(
                 project_id=project_id,
                 topic_id=topic_id,
@@ -3927,10 +4000,14 @@ class ChatService:
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
     ) -> tuple[dict, str]:
-        """Resolve a turn's explicit agent model, model environment and usage route.
+        """Resolve a turn's model, model environment and usage route.
+
+        Which model comes from the binding of the work this turn belongs to —
+        and a room's main thread is not a piece of work, so it always gets the
+        project default (`room_task/binding.py`).
 
         Machine providers assemble their own scoped credentials. Other providers
-        retain their gateway/profile transport, with the agent's saved model.
+        retain their gateway/profile transport, carrying that resolved model.
         The optional snapshots keep model, role and author consistent within a turn.
 
         ``provider=None`` means there is no machine in this turn at all (私聊 走
@@ -3962,24 +4039,41 @@ class ChatService:
                     if topic
                     else await agents.for_project(project)
                 )
-            config = AgentConfiguration.model_validate(agent.configuration)
-            validate_configuration(config, project.settings)
-            supply = (
-                SUBSCRIPTION
-                if config.model in {item.id for item in subscription_model_listings()}
-                else "gateway"
-            )
+        # 用哪个模型，问这条活要 —— 而一个房间的主线不是一条活，所以它拿到的永远
+        # 是项目默认（`room_task/binding.py`，结论 3）。以前这里读的是这个 agent
+        # 存着的 `configuration.model`，那等于「换模型就再建一个 agent」；模型是
+        # 工作占用的资源，不是参与者的属性。
+        #
+        # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
+        # 而主线正是最长、最吃缓存的那条对话。
+        bound = binding.resolve(None, binding.catalog(project.settings))
+        supply = bound.supply
         model = (
-            subscription_model_alias(config.model)
+            subscription_model_alias(bound.model)
             if supply == SUBSCRIPTION
-            else config.model
+            else bound.model
         )
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
+            #
+            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
+            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
+            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
+            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
+            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
+            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
+            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
+            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
+            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
             (
                 json.dumps(
-                    {"agent": agent.configuration, "git_author": acting_agent},
+                    {
+                        "agent": agent.configuration,
+                        "git_author": acting_agent,
+                        "model": model,
+                        "supply": supply,
+                    },
                     sort_keys=True,
                 )
                 + ":explicit-chat-v3-native-skills"

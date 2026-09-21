@@ -335,13 +335,13 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 
 ### 8.2 Project agents and starting configurations
 
-Each project agent owns its name, role instructions, explicit model and memory. A room selects an agent; the project selects the default agent for new rooms. There is no project default model.
+Each project agent owns its name, role instructions, explicit model and memory. A room selects an agent; the project selects the default agent for new rooms.
 
 Built-in presets provide starting values when an agent is created. A preset can supply role instructions, a model and existing tool settings. Missing model values are filled from the available supply's creation default and saved on the new agent. Subsequent preset changes do not affect existing agents. There is no editable team or global role catalog.
 
 Users edit an individual agent in AI 队友. Edits take effect from its next turn in every room using that agent. The current turn uses one configuration snapshot. Existing agent IDs, handles and memory remain unchanged, and other agents keep their own configuration. New rooms require an active agent, so the last active agent cannot be retired.
 
-Model choices come from the project's connected supply. An unavailable saved model produces an error requiring a new selection. Device and Cloud execution pass the saved model explicitly. A reused process is refreshed between turns when the agent configuration changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
+Model choices come from the project's connected supply. An unavailable saved model produces an error requiring a new selection. The model is bound to a piece of work, not to a participant: a card carries its own binding, a room's main thread always runs the project default, and one control point — admission, when the turn reaches the metering proxy — resolves which model a request runs on. A reused process is refreshed between turns when the agent configuration or that resolution changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
 
 Migration copies existing role instructions and the effective model onto each agent. Projects with an implicit default receive a saved agent under the same cheese handle, preserving their memory keys. Original custom roles and project settings remain in archive tables for inspection and rollback.
 

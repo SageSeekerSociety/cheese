@@ -242,6 +242,15 @@ class Verdict:
     # ticket be forwarded untouched instead of swapped for one the proxy holds.
     # None = fall back to the deployment-wide identity, and to the swap.
     upstream: str | None = None
+    # True = NOBODY ANSWERED. This verdict was manufactured here — admission is
+    # unconfigured, the project is unknown, or the backend could not be reached
+    # — so every field on it is a default, `pool` included. Defaults to True so
+    # that a verdict built anywhere but out of a real admission response says so
+    # without having to remember to; `_post_admission` is the one place that
+    # turns it off. A caller that reads `pool` to decide WHO MAY ANSWER (rather
+    # than merely where to send a turn) must check this first: fail-open means
+    # `pool` reads SUBSCRIPTION for a project that may well be on the gateway.
+    fail_open: bool = True
 
 
 def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
@@ -268,6 +277,8 @@ def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
         if isinstance(upstream, str) and len(upstream.split(":", 1)) == 2
         and all(upstream.split(":", 1))
         else None,
+        # The backend answered; `pool` below is its word, not a default.
+        fail_open=False,
     )
 
 
