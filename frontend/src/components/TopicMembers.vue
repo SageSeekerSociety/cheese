@@ -88,11 +88,11 @@ const addable = computed(() => {
       value: m.user_handle,
     }))
   const agents = projectAgents.value
-    .filter((a) => a.seat_handle && a.is_active !== false && !inRoom.has(a.seat_handle))
+    .filter((a) => a.is_active !== false && !inRoom.has(a.seat_handle))
     .map((a) => ({
       title: `${a.display_name}（AI 队友）`,
       subtitle: `@${a.seat_handle}`,
-      value: a.seat_handle as string,
+      value: a.seat_handle,
     }))
   return [...people, ...agents]
 })

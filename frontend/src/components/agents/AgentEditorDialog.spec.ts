@@ -248,8 +248,8 @@ describe('修改时', () => {
     handle: 'reviewer',
     type_name: 'reviewer',
     display_name: '代码评审',
+    seat_handle: 'cheese-a2',
     is_default: false,
-    configured: true,
     is_active: true,
   }
 

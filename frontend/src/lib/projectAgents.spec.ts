@@ -2,12 +2,10 @@
 // 单独被盯着：算错了不会渲染失败，只会安静地骗人 —— 一个攒了 25 条记忆的队友
 // 显示成 0。
 import type { MemoryEntryOut } from '../api'
-import type { ProjectAgent } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
 import {
-  agentKey,
   displayNameError,
   fieldChoices,
   fieldIsChoosable,
@@ -21,21 +19,6 @@ const OTHER_PROJECT = '11111111-2222-3333-4444-555555555555'
 
 function memory(scope: string, scopeId: string): MemoryEntryOut {
   return { id: `${scope}-${scopeId}-${Math.random()}`, scope, scope_id: scopeId, content: '一条', created_at: '' }
-}
-
-function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
-  return {
-    configuration: { body: '', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
-    id: 'a1',
-    project_id: PROJECT,
-    handle: 'cheese',
-    type_name: null,
-    display_name: '芝士',
-    is_default: true,
-    configured: true,
-    is_active: true,
-    ...overrides,
-  }
 }
 
 describe('记忆条数', () => {
@@ -62,13 +45,6 @@ describe('记忆条数', () => {
   it('别的项目的池不算进来', () => {
     const counts = memoryCountsByHandle([memory('agent_project', `${OTHER_PROJECT}:cheese`)], PROJECT)
     expect(counts).toEqual({})
-  })
-})
-
-describe('列表键', () => {
-  it('项目还没配过队友时那条隐式的芝士，不会和别人撞键', () => {
-    const implicit = agent({ id: null, configured: false })
-    expect(agentKey(implicit)).not.toBe(agentKey(agent({ id: 'a1' })))
   })
 })
 
