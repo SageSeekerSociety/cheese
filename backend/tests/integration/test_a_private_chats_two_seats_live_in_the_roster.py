@@ -223,12 +223,18 @@ def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
     assert _who_answers(client, dm) == "cheese"
 
 
-def _project_member(client, project_id: str, handle: str) -> None:
+def _project_with_a_roster(client, owner: str, member: str) -> str:
+    """一个真有名册的项目：所有者，加一位成员。@ 要解析得到人，名册里就得有人。"""
+    project_id = client.post(
+        "/projects", json={"name": "Demo", "owner_handle": owner}
+    ).json()["data"]["id"]
     r = client.post(
         f"/projects/{project_id}/members",
-        json={"user_handle": handle, "role": "member"},
+        json={"user_handle": member, "role": "member"},
+        headers=session_auth_headers(owner),
     )
     assert r.status_code == 200, r.text
+    return project_id
 
 
 def _send(client, topic_id: str, content: str, author: str) -> None:
@@ -247,11 +253,10 @@ def _alerts(client, project_id: str, handle: str) -> list[dict]:
     ).json()["data"]["data"]
 
 
-def _texts(client, topic_id: str) -> list[str]:
-    return [
-        b["content"]
-        for b in client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
-    ]
+def _texts(client, topic_id: str, reader: str) -> list[str]:
+    r = client.get(f"/topics/{topic_id}/blocks", headers=session_auth_headers(reader))
+    assert r.status_code == 200, r.text
+    return [b["content"] for b in r.json()["data"]["data"]]
 
 
 def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
@@ -265,9 +270,7 @@ def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
     席位不齐这件事真实存在：#1380 那次发布的窗口里旧镜像建的私聊一行席位都没有，
     回填还没跑在真数据上；房间被加进第三个人也是同一种。
     """
-    project_id = _project(client)
-    _project_member(client, project_id, "user-1")
-    _project_member(client, project_id, "mentor-1")
+    project_id = _project_with_a_roster(client, owner="user-1", member="mentor-1")
     _add_agent(client, project_id, "reviewer", "评审")
     dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
     # 名册不是两席了，而 mentor-1 从头到尾不在这间房里。
@@ -278,7 +281,7 @@ def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
 
     assert _alerts(client, project_id, "mentor-1") == []
     # 名册解析不到，@ 原样留在正文里（渲染成「项目成员里没有这个 handle」的 ⚠️）。
-    assert "@mentor-1 这段先别说出去" in _texts(client, dm)
+    assert "@mentor-1 这段先别说出去" in _texts(client, dm, "user-1")
 
 
 def test_a_pairs_own_dm_wins_over_a_room_that_grew_into_the_pair(client):
