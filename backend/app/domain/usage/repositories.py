@@ -1,11 +1,84 @@
 """Resource usage data access + aggregation."""
 
+import logging
 import uuid
 
 from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.usage.models import ComputeGrant, ResourceUsage
+
+logger = logging.getLogger(__name__)
+
+# The share of a Space pool that means "warn the teacher". 80% is late enough
+# that the number is a fact rather than a forecast, and early enough that
+# topping up is still a choice — the alternative is everyone finding out by
+# being refused.
+SPACE_POOL_ALERT_RATIO = 0.8
+
+
+def _require_positive_credits(credits_total: float) -> None:
+    """Reject a top-up that is not a number we can charge against.
+
+    NaN and infinity are the ones that matter: both survive SQLAlchemy's
+    float bind, land in the ledger, and then make every comparison in
+    ``consume`` false, so the pool silently stops refusing anything.
+    """
+    import math
+
+    if not math.isfinite(credits_total) or credits_total <= 0:
+        raise ValueError("credits must be finite and positive")
+
+
+# The seven aggregates every usage roll-up reports — a room's, a project's, a
+# whole Space's. Module-level rather than rebuilt per call so the one-query
+# grouped roll-up and the single-owner one cannot drift apart.
+#
+# The public `turns` key is retained for wire compatibility, but its number now
+# means distinct originating human messages or platform work ids, not intervals.
+# One attributed unit can write several rows: the metering proxy logs every
+# /v1/messages call and the gateway may land a deferred backfill. Rows without
+# attribution still count once each.
+#
+# `unpriced_tokens` are tokens whose USD price is not knowable — a subscription
+# is billed by the month, so its rows carry cost_usd = 0.0 meaning "no price",
+# not "free". Reported separately so the UI can say 未知 instead of printing
+# $0.0000 over millions of tokens ("未知冒充零").
+_AGG_COLUMNS = (
+    func.coalesce(func.sum(ResourceUsage.input_tokens), 0),
+    func.coalesce(func.sum(ResourceUsage.output_tokens), 0),
+    func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
+    func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
+    func.count(func.distinct(ResourceUsage.turn_id)),
+    func.coalesce(
+        func.sum(case((ResourceUsage.turn_id.is_(None), 1), else_=0)),
+        0,
+    ),
+    func.coalesce(
+        func.sum(
+            case(
+                (
+                    (ResourceUsage.cost_usd <= 0.0) & (ResourceUsage.total_tokens > 0),
+                    ResourceUsage.total_tokens,
+                ),
+                else_=0,
+            )
+        ),
+        0,
+    ),
+)
+
+
+def _agg_dict(row) -> dict:
+    """One row of ``_AGG_COLUMNS`` as the wire shape the routes already return."""
+    return {
+        "input_tokens": int(row[0]),
+        "output_tokens": int(row[1]),
+        "total_tokens": int(row[2]),
+        "cost_usd": float(row[3]),
+        "turns": int(row[4]) + int(row[5]),
+        "unpriced_tokens": int(row[6]),
+    }
 
 
 class UsageRepository:
@@ -58,44 +131,9 @@ class UsageRepository:
         return row
 
     async def _agg(self, column, value) -> dict:
-        # The public `turns` key is retained for wire compatibility, but its
-        # number now means distinct originating human messages or platform work
-        # ids, not intervals. One attributed unit can write several rows: the
-        # metering proxy logs every /v1/messages call and the gateway may land a
-        # deferred backfill. Rows without attribution still count once each.
-        unattributed = func.sum(case((ResourceUsage.turn_id.is_(None), 1), else_=0))
-        attributed_work = func.count(func.distinct(ResourceUsage.turn_id))
-        # Tokens whose USD price is not knowable — a subscription is billed by
-        # the month, so its rows carry cost_usd = 0.0 meaning "no price", not
-        # "free". Reported separately so the UI can say 未知 instead of printing
-        # $0.0000 over millions of tokens ("未知冒充零").
-        unpriced = func.sum(
-            case(
-                (
-                    (ResourceUsage.cost_usd <= 0.0) & (ResourceUsage.total_tokens > 0),
-                    ResourceUsage.total_tokens,
-                ),
-                else_=0,
-            )
-        )
-        stmt = select(
-            func.coalesce(func.sum(ResourceUsage.input_tokens), 0),
-            func.coalesce(func.sum(ResourceUsage.output_tokens), 0),
-            func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
-            func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
-            attributed_work,
-            func.coalesce(unattributed, 0),
-            func.coalesce(unpriced, 0),
-        ).where(column == value)
+        stmt = select(*_AGG_COLUMNS).where(column == value)
         row = (await self._session.execute(stmt)).one()
-        return {
-            "input_tokens": int(row[0]),
-            "output_tokens": int(row[1]),
-            "total_tokens": int(row[2]),
-            "cost_usd": float(row[3]),
-            "turns": int(row[4]) + int(row[5]),
-            "unpriced_tokens": int(row[6]),
-        }
+        return _agg_dict(row)
 
     async def for_topic(self, topic_id: uuid.UUID) -> dict:
         """A room's TOTAL — its own main line and every thread dispatched in it.
@@ -144,6 +182,26 @@ class UsageRepository:
     async def for_project(self, project_id: uuid.UUID) -> dict:
         return await self._agg(ResourceUsage.project_id, project_id)
 
+    async def for_projects(self, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
+        """Per-project spend in ONE query, for a Space's roll-up.
+
+        The Space view needs a row per project and a total; asking
+        ``for_project`` once per project would be a query per student project,
+        which is a class-sized ``N+1``. Projects with no rows are absent from
+        the result rather than present as zero — the caller knows its own
+        roster and can fill the blanks, and inventing zeros here would claim
+        the query saw projects it never matched.
+        """
+        if not project_ids:
+            return {}
+        stmt = (
+            select(ResourceUsage.project_id, *_AGG_COLUMNS)
+            .where(ResourceUsage.project_id.in_(project_ids))
+            .group_by(ResourceUsage.project_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row[0]: _agg_dict(row[1:]) for row in rows}
+
 
 class ComputeGrantRepository:
     """Compute-credit grants: issuance, balance, and deduction (spec §9.1)."""
@@ -171,10 +229,7 @@ class ComputeGrantRepository:
         return row
 
     async def grant_team(self, team_id: int, credits_total: float) -> ComputeGrant:
-        import math
-
-        if not math.isfinite(credits_total) or credits_total <= 0:
-            raise ValueError("credits must be finite and positive")
+        _require_positive_credits(credits_total)
         row = ComputeGrant(
             team_id=team_id,
             project_id=None,
@@ -184,6 +239,70 @@ class ComputeGrantRepository:
         self._session.add(row)
         await self._session.flush()
         return row
+
+    async def grant_space(self, space_id: int, credits_total: float) -> ComputeGrant:
+        """Fund a Space's shared pool. Every project under the Space draws here.
+
+        ``team_id`` stays NULL on purpose. A Space is not a team, and setting
+        one would make the pool reachable by the team clause as well — the same
+        credits spendable under two names, and reported twice by
+        ``list_for_team``.
+        """
+        _require_positive_credits(credits_total)
+        row = ComputeGrant(
+            team_id=None,
+            project_id=None,
+            space_id=space_id,
+            source_task_id=None,
+            credits_total=credits_total,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def list_for_space(self, space_id: int) -> list[ComputeGrant]:
+        """The Space's own pools, oldest first — what a teacher topped up.
+
+        ``populate_existing`` for the same reason ``list_for_project`` has it
+        under a lock: `consume` charges through a Core UPDATE while the same
+        ComputeGrant objects sit in this session's identity map, so a plain
+        SELECT here returns the row as it was before the charge. The pool
+        summary would then read a stale balance, and the 80% warning would be
+        computed from a number that never happened.
+        """
+        result = await self._session.execute(
+            select(ComputeGrant)
+            .where(ComputeGrant.space_id == space_id)
+            .order_by(ComputeGrant.created_at, ComputeGrant.id)
+            .execution_options(populate_existing=True)
+        )
+        return list(result.scalars())
+
+    async def space_summary(self, space_id: int) -> dict:
+        """What the Space's pool has left, and whether it needs attention.
+
+        Distinct from ``summary``: that one answers "what may this project
+        spend" and folds in the project's earmarked and team grants; this one
+        answers "how is the pool I funded doing" and counts only the Space's
+        own rows. An empty pool is NOT unlimited the way a project with no
+        grants is — a Space with no pool simply has none, and saying
+        "unlimited" here would read as a promise the teacher never made.
+        """
+        grants = await self.list_for_space(space_id)
+        total = sum(g.credits_total for g in grants)
+        used = sum(g.credits_used for g in grants)
+        return {
+            "has_pool": bool(grants),
+            "credits_total": total,
+            "credits_used": used,
+            "credits_remaining": total - used,
+            "credits_ratio": (used / total) if total > 0 else 0.0,
+            "exhausted": bool(grants) and used >= total,
+            "needs_attention": (
+                bool(grants) and total > 0 and used / total >= SPACE_POOL_ALERT_RATIO
+            ),
+            "grants": grants,
+        }
 
     async def list_for_team(self, team_id: int) -> list[ComputeGrant]:
         from app.domain.project.services import ProjectService
@@ -204,26 +323,64 @@ class ComputeGrantRepository:
     async def list_for_project(
         self, project_id: uuid.UUID, *, lock: bool = False
     ) -> list[ComputeGrant]:
+        """Every grant this project may spend, in the order it must spend them.
+
+        Three tiers, narrowest first:
+
+        1. earmarked on this project (``project_id`` set) — a 赛题's resource
+           pack, bought for this project alone;
+        2. the Space's shared pool (``space_id`` set) — the course's one pool,
+           which every project under the Space draws on;
+        3. the team pool (neither set) — every project in the owning team.
+
+        The order is the point, not a detail: a project must burn the credits
+        bought for it before it burns the pool its classmates are also
+        spending, or one team's profligacy silently eats the class's budget
+        while its own earmarked credits sit untouched.
+
+        A project made from the rail has no 赛题 and so no Space: tier 2 is
+        simply absent for it, and it can never reach a course pool.
+        """
         from app.domain.project.services import ProjectService
 
-        team_id = await ProjectService(self._session).team_for_project(project_id)
+        projects = ProjectService(self._session)
+        team_id = await projects.team_for_project(project_id)
+        space_id = await projects.space_for_project(project_id)
+
         eligible = ComputeGrant.project_id == project_id
+        if space_id is not None:
+            eligible = or_(
+                eligible,
+                and_(
+                    ComputeGrant.space_id == space_id,
+                    ComputeGrant.project_id.is_(None),
+                ),
+            )
         if team_id is not None:
             eligible = or_(
                 eligible,
                 and_(
-                    ComputeGrant.team_id == team_id, ComputeGrant.project_id.is_(None)
+                    ComputeGrant.team_id == team_id,
+                    ComputeGrant.project_id.is_(None),
+                    # A Space pool is not a team pool even when the two would
+                    # both match; without this the same row lands in two tiers.
+                    ComputeGrant.space_id.is_(None),
                 ),
             )
+
+        # 0 = earmarked, 1 = Space, 2 = team. A CASE rather than the boolean
+        # this used to be: `project_id IS NULL` can no longer tell the second
+        # tier from the third, and ordering Space grants after team grants
+        # would spend every class's shared budget before anyone's own.
+        tier = case(
+            (ComputeGrant.project_id.is_not(None), 0),
+            (ComputeGrant.space_id.is_not(None), 1),
+            else_=2,
+        )
         stmt = (
             select(ComputeGrant)
             .where(eligible)
-            # Spend earmarked credits before the pool other projects rely on.
-            .order_by(
-                ComputeGrant.project_id.is_(None),
-                ComputeGrant.created_at,
-                ComputeGrant.id,
-            )
+            .order_by(tier, ComputeGrant.created_at, ComputeGrant.id)
         )
         if lock:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
@@ -247,10 +404,17 @@ class ComputeGrantRepository:
         }
 
     async def consume(self, project_id: uuid.UUID, credits: float) -> float:
-        """Deduct `credits` from eligible team/project grants. Any
+        """Deduct `credits` from eligible project/Space/team grants. Any
         residual beyond all totals lands on the newest grant (credits_used may
         exceed credits_total) so recorded consumption stays truthful. Returns
-        the amount deducted (0.0 when the project has no grants = unlimited)."""
+        the amount deducted (0.0 when the project has no grants = unlimited).
+
+        The overdraft is deliberate and is also how a shared Space pool can pass
+        its cap: this runs when a turn SETTLES, while the gate that refuses the
+        next turn was checked when it started, so up to (sessions in flight ×
+        one call's cost) can land past zero. Nothing here tightens that — a
+        ledger that refuses to record real spending would simply be wrong.
+        """
         if credits <= 0:
             return 0.0
         grants = await self.list_for_project(project_id, lock=True)
@@ -266,6 +430,12 @@ class ComputeGrantRepository:
                 .values(credits_used=ComputeGrant.credits_used + amount)
             )
 
+        touched_spaces: set[int] = set()
+
+        def _touched(grant: ComputeGrant) -> None:
+            if grant.space_id is not None:
+                touched_spaces.add(grant.space_id)
+
         left = credits
         for g in grants:
             room = g.credits_total - g.credits_used
@@ -273,9 +443,29 @@ class ComputeGrantRepository:
                 continue
             take = min(room, left)
             await _charge(g.id, take)
+            _touched(g)
             left -= take
             if left <= 0:
                 break
         if left > 0:  # overdraw: charge the newest grant, never lose usage
             await _charge(grants[-1].id, left)
+            _touched(grants[-1])
+
+        for space_id in touched_spaces:
+            await self._warn_space_pool(space_id)
         return credits
+
+    async def _warn_space_pool(self, space_id: int) -> None:
+        """Warn the Space's admins if this charge took the pool past the mark.
+
+        Hooked here rather than at the two callers so every way a Space pool
+        can be drained — a settled turn, a subscription backfill — reaches the
+        teacher. Never raises: the caller is settling a turn, and a warning
+        that cannot be delivered must not become a turn that cannot be closed.
+        """
+        from app.domain.usage.space_pool import SpacePoolService
+
+        try:
+            await SpacePoolService(self._session).alert_if_needed(space_id=space_id)
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.exception("could not warn space %s about its compute pool", space_id)
