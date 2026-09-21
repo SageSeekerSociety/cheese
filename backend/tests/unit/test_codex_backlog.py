@@ -101,7 +101,7 @@ async def test_reconnect_completes_partial_child_after_start_record_is_pruned(tm
     events = [event for row in second.unread() for event in second.assemble(row)]
     assert isinstance(events[0], AgentMessage)
     assert events[0].text == "whole"
-    assert events[0].agent_id == "child"
+    assert events[0].thread_label == "explorer"
     assert isinstance(events[1], AgentSubagentStop)
     assert events[1].session_id == "root"
     assert not second.unfinished()
