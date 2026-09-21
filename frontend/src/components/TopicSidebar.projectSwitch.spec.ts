@@ -160,7 +160,7 @@ describe('手机上的切换项目', () => {
   it('只有一个项目时不列：没有可换的地方', async () => {
     const { container, baseElement } = mount({ page: true, projects: [projects[0]] })
     const rows = await openProjectMenu(container, baseElement)
-    // 菜单里仍然有那几页（总览、日历、成员…），但没有一行是项目 —— 没得换。
+    // 菜单里仍然有那几页（日历、成员、项目设置），但没有一行是项目 —— 没得换。
     expect(rows).not.toContain('P1')
     expect(rows).toContain('项目设置')
   })
