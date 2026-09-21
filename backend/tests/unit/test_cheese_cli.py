@@ -82,7 +82,7 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     plans = {
         tool: cli.request_plan(tool, values, env) for tool, values in arguments.items()
     }
-    assert all(plan["method"] in {"GET", "POST"} for plan in plans.values())
+    assert all(plan["method"] in {"GET", "POST", "PUT"} for plan in plans.values())
     assert plans["cheese_decision"] == {
         "method": "POST",
         "path": "/topics/room/decision",
