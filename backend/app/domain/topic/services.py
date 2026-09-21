@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent import clone
-from app.domain.agent.harness import CLAUDE_CODE, DEFAULT_HARNESS
+from app.domain.agent.harness import DEFAULT_HARNESS
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -1072,13 +1072,10 @@ class TopicService:
         sessions = AgentSessionService(self._session)
         source_agent = await self.resolve_agent(source)
         target_agent = await self.resolve_agent(target)
-        # 骨架不是参与者的属性（结论 28），源和目标跑的是同一个——这套部署跑的
-        # 那一个，所以这里只剩「它支不支持克隆」一个问题。
-        harness = DEFAULT_HARNESS
-        if harness != CLAUDE_CODE:
-            raise ValidationError("当前运行方式尚不支持克隆会话")
+        # 骨架不是参与者的属性（结论 28）：源和目标跑的是同一个，这套部署跑的
+        # 那一个，所以「两边骨架不同」这个问题在这里不存在。
         source_sid = await sessions.resume_token(
-            source.id, source_agent.handle, harness=harness
+            source.id, source_agent.handle, harness=DEFAULT_HARNESS
         )
         if not source_sid:
             raise ValidationError("源话题还没跑过（没有可克隆的会话）")
@@ -1100,7 +1097,7 @@ class TopicService:
             topic_id=target.id,
             agent_handle=target_agent.handle,
             resume_token=new_sid,
-            harness=harness,
+            harness=DEFAULT_HARNESS,
         )
         return target
 

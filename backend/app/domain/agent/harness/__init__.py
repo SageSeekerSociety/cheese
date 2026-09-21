@@ -495,17 +495,11 @@ HARNESSES: dict[str, Harness] = {
     PI: Harness(PI, "pi", draws_on_its_screen=False),
 }
 
-# What a type that declines to choose runs on. A type is 出厂设置, not a
-# deployment decision — most of them have no opinion about the harness, and the
-# null they store means "whatever this platform runs", not "none".
+# 这套部署跑的骨架（结论 28）。骨架不是产品概念，不在类型上也不在实例上，所以
+# 没有第二处可以答「跑的是哪个」；P16 把这一行换成真的部署设置。
 DEFAULT_HARNESS = CLAUDE_CODE
 
 
-def harness_name(declared: str | None) -> str:
-    """The harness a type declared, or the default when it declared none."""
-    return declared or DEFAULT_HARNESS
-
-
-def known_harness(declared: str | None) -> bool:
-    """Is this a harness we can actually run? None (undeclared) always is."""
-    return declared is None or declared in HARNESSES
+def harness_name(name: str | None) -> str:
+    """调用方给的 harness 名，没给就是这套部署跑的那个。"""
+    return name or DEFAULT_HARNESS
