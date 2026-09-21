@@ -613,7 +613,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
     # that the session has the text.
     assert [frame["type"] for frame in frames] == ["user_block"]
     assert chat.merged is not None
-    assert chat.merged[2:] == ("补充一条", "u", None)
+    assert chat.merged[2:] == ("<@cheese-seat> 补充一条", "u", None)
     assert broker.active_turn_ids(str(topic)) == ["already-running"]
     assert runner.active_work_count() == 1
     await broker.publish(

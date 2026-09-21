@@ -238,7 +238,9 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
                 topic_id=topic, author="alice", content=content, summon=False
             ):
                 pass
-        async for _ in chat.kickoff(topic_id=t, prompt="start work"):
+        async for _ in chat.converse(
+            topic_id=t, author="system", content="start work", summon=True
+        ):
             pass
         for _ in range(500):
             if "/environment/recovery/rooms/" in (stub_hooks.last_prompt or ""):
@@ -248,7 +250,9 @@ def test_real_failed_turn_preserves_overview_and_room_messages(
         assert f"/environment/recovery/rooms/{t}" in stub_hooks.last_prompt
         await settle_turn(chat, root)
         monkeypatch.setattr(stub_hooks, "ensure_ready", original)
-        async for _ in chat.kickoff(topic_id=t, prompt="continue after repair"):
+        async for _ in chat.converse(
+            topic_id=t, author="system", content="continue after repair", summon=True
+        ):
             pass
         assert "room backlog marker" in stub_hooks.last_prompt
         assert "continue after repair" in stub_hooks.last_prompt

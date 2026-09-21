@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
+from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
@@ -135,9 +136,7 @@ def test_upgrading_a_message_leaves_an_event_and_starts_no_turn(client, stub_hoo
     room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
         "data"
     ]
-    client.post(
-        f"/projects/{p['id']}/members", json={"user_handle": "alice", "role": "member"}
-    )
+    seed_user(client, "alice")  # 收件人得是一个真的人，站内信才有地方放
     block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
 
     screens = _record_screens(stub_hooks)
