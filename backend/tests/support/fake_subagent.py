@@ -18,6 +18,10 @@
 - **不指定模型就起不出来**。那一条要求是「起得了子 agent **并指定模型**」，而一个
   存下来没人读的 model 字段谁也拦不住：起它的那次调用不说跑哪个，这里就不给它一
   个默认值蒙过去，直接不成立。
+- **指令有读者**，同一个坑不能在 ``instruction`` 上再踩一遍。它唯一的读者是
+  ``works()``：干出来的那句活带着当前指令出去，所以父线程改没改得动它，是从这条
+  流上读出来的，不是把 setter 写回来的那个值再读一遍。把 ``retask`` 的那次赋值拿
+  掉，换了要求之后它干的还是原来那件事——测试红。
 """
 
 from collections.abc import Callable
@@ -55,6 +59,15 @@ class FakeSubagent:
         if not self.running:
             raise SubagentStopped(f"{self.label} 已经停了")
         self._say(text, self.label)
+
+    def works(self) -> None:
+        """按当前指令干一句活，带着自己的标识进父会话那条流。
+
+        ``instruction`` 唯一的读者。换了要求之后这条流上的话跟着换，旧那句再也出
+        不来——「父线程改得动它的指令」是这么读出来的，而不是把刚写进去的那个值读
+        回来（那只证明 ``retask`` 是个 setter）。
+        """
+        self.says(f"在做：{self.instruction}")
 
     def retask(self, instruction: str) -> None:
         """父线程改它的指令。

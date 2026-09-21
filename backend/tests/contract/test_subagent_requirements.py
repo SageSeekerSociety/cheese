@@ -46,11 +46,35 @@ SESSION = SessionRef(
 OPENING = Opening(system_prompt="CONTRACT")
 LABEL = thread_label(uuid.UUID("00000000-0000-4000-8000-000000000003"))
 
-#: 一句答案里反引号引起来的东西。以 ``.py`` 结尾的是路径（从 ``app/domain/`` 起
-#: 算），其余的是符号名。
+#: 一句答案里反引号引起来的东西。
 _CITED = re.compile(r"`([A-Za-z0-9_./]+)`")
+#: 一条路径长什么样：带 ``/``，或者以一个文件扩展名结尾。从 ``app/domain/`` 起算。
+#: 不止 ``.py``——一条要求的做法写在哪儿就引哪儿，``agent/skill_library/`` 下发给
+#: agent 的那几份说明也是本仓库的东西，也核得了。
+_PATH = re.compile(r"/|\.(?:py|md)\Z")
 #: 一个符号名长什么样：``SubThreads``、``thread_label``、``AgentRuntime.deliver``。
 _SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
+
+
+def _participates(part: str, src: str) -> bool:
+    """这个名字在这份源码里**参与了代码**，而不只是躺在一张字面量清单里。
+
+    「文件里搜得到这串字」是不够的，而且不够的方式恰好是反着的：
+    ``device_provider.py`` 里那三个模型别名只出现在一张 ``merged.pop`` 的删除名单
+    里——文件里搜得到，而它证明的是那句话的反面。所以这里认的是出现的**位置**：
+    被定义、被赋值、被当成键写进去、被调用、被取属性、从 payload 里被读出来。
+    """
+    p = re.escape(part)
+    shapes = (
+        rf"(?:def|class)\s+{p}\b",  # 定义在这儿
+        rf"\b{p}\b\s*(?::[^=\n]+)?=(?!=)",  # 赋值（含带注解的）
+        rf"[\"']{p}[\"']\s*\]\s*=(?!=)",  # env["X"] = ...
+        rf"[\"']{p}[\"']\s*:",  # 字面量里的键 "X": ...
+        rf"\b{p}\s*\(",  # 调用
+        rf"\.{p}\b",  # 取属性
+        rf"get\(\s*[\"']{p}[\"']",  # 从 payload 里读这个字段
+    )
+    return any(re.search(shape, src) for shape in shapes)
 
 
 def _every_answer() -> list[tuple[str, SubagentRequirement]]:
@@ -83,24 +107,27 @@ def test_an_answer_points_at_code_that_exists(
     时候发现——和功能矩阵里那些格子同一条规矩。
 
     核到符号那一层，不是只核文件在不在。一句答案的实质是里面那几个名字——
-    ``SubThreads``、``thread_label``、``AgentRuntime.deliver``、启动环境里那三个模
-    型别名——而删掉一个符号比搬走一个文件常见得多：文件照样在，这句话已经是假的
-    了，读起来却和真的一模一样。
+    ``SubThreads``、``thread_label``、``AgentRuntime.deliver``——而删掉一个符号比搬
+    走一个文件常见得多：文件照样在，这句话已经是假的了，读起来却和真的一模一样。
+
+    而且核的是那个名字**出现在什么位置**（``_participates``），不是文件里搜不搜得
+    到它。搜得到就算数的话，一张删除名单也算数：那正是这条守卫想挡的「读起来和真
+    的一模一样」，只不过它读起来和真的一模一样的同时，说的是反话。
     """
     answer = HARNESSES[name].subagents[requirement]
     cited = _CITED.findall(answer)
-    paths = [c for c in cited if c.endswith(".py")]
-    assert paths, f"{name}/{requirement} 没有指出代码在哪个文件里"
+    paths = [c for c in cited if _PATH.search(c)]
+    assert paths, f"{name}/{requirement} 没有指出这件事写在哪个文件里"
     missing = [path for path in paths if not (DOMAIN / path).exists()]
     assert not missing, f"{name}/{requirement} 指着不存在的文件：{missing}"
 
     sources = [(DOMAIN / path).read_text(encoding="utf-8") for path in paths]
-    for symbol in (c for c in cited if not c.endswith(".py") and _SYMBOL.match(c)):
+    for symbol in (c for c in cited if c not in paths and _SYMBOL.match(c)):
         for part in symbol.split("."):
-            found = any(re.search(rf"\b{re.escape(part)}\b", src) for src in sources)
+            found = any(_participates(part, src) for src in sources)
             assert found, (
-                f"{name}/{requirement} 指着 `{symbol}`，但 {paths} 里没有 {part}——"
-                "这句话此刻已经不成立了"
+                f"{name}/{requirement} 指着 `{symbol}`，但 {paths} 里没有一处真的"
+                f"定义、赋值或读 {part}——这句话此刻已经不成立了"
             )
 
 
@@ -193,23 +220,29 @@ async def test_everything_a_worker_says_carries_its_thread_label() -> None:
 async def test_a_parent_thread_retasks_its_worker() -> None:
     """人对卡的操作投递给父线程执行，改指令的是父线程自己。
 
-    断在看得见的那一侧：``worker.instruction`` 读回刚写进去的那句话，证明的只是那
-    个方法是个 setter。换了要求之后这条子线程还在说话、说的话还带着同一个标识出
-    来——「还是那条活、还归那张卡」是这么读出来的。
+    断在它**干出来的活**上，不是断在那个字段上：``worker.instruction`` 读回刚写进
+    去的那句话，证明的只是 ``retask`` 是个 setter——把那次赋值删掉，这条断言之外
+    的一切照绿。所以这里读的是换了要求之后它干的是哪件事，而旧那件事再也出不来；
+    标识一路不变，「还是那条活、还归那张卡」也是从同一条流上读出来的。
     """
     runtime = await _session()
     worker = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
+    worker.works()
 
     # 送到的是父线程，不是那条子线程（结论 43）。
     assert await runtime.deliver(SESSION.topic_id, "先只改后端") is True
     (instruction,) = runtime.delivered(SESSION)
     # 父线程读到它，自己去改子线程的指令。
     worker.retask(instruction)
-    worker.says("改完了")
+    assert worker.instruction == "先只改后端"
+    worker.works()
 
     backlog = runtime.backlog(SESSION)
     events = [e for entry in backlog.unread() for e in backlog.assemble(entry)]
-    assert [(e.text, e.thread_label) for e in events] == [("改完了", LABEL)]
+    assert [(e.text, e.thread_label) for e in events] == [
+        ("在做：查分页", LABEL),
+        ("在做：先只改后端", LABEL),
+    ]
 
 
 async def test_a_parent_thread_stops_its_worker() -> None:
