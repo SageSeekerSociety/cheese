@@ -534,7 +534,9 @@ def test_creating_with_a_bearer_alone_works(client):
     pid = _project(client)
     r = client.post(
         f"/projects/{pid}/alerts",
-        json=_create_body("人发的"),
+        # 点名给一个人 —— 这条验的是凭据，不是广播展开给谁，而一份空名册上的广播
+        # 一个人也到不了。
+        json={**_create_body("人发的"), "target_handle": "alice"},
         headers={"X-Cheese-Token": "", **session_auth_headers("alice")},
     )
     assert r.status_code == 200, r.text
