@@ -33,7 +33,7 @@ async def _notify(
     type_: NotificationType,
     payload: dict[str, Any],
     handed_to: Iterable[int] = (),
-    outcome_for: Iterable[int] = (),
+    outcome_for: int | None = None,
 ) -> None:
     """把这条申请上刚发生的事交给投递账本。
 
@@ -48,7 +48,7 @@ async def _notify(
     那一侧只认名册上的名字。
     """
     reviewers = await handles_by_ids(session, handed_to)
-    waiting = await handles_by_ids(session, outcome_for)
+    waiting = await handles_by_ids(session, [outcome_for] if outcome_for else [])
     await deliver(
         session,
         DeliveryEvent(
@@ -275,7 +275,7 @@ class TeamMembershipService:
             app,
             type_=NotificationType.TEAM_INVITATION_ACCEPTED,
             payload=payload,
-            outcome_for=[initiator_id],
+            outcome_for=initiator_id,
         )
 
     async def decline_team_invitation(
@@ -311,7 +311,7 @@ class TeamMembershipService:
             app,
             type_=NotificationType.TEAM_INVITATION_DECLINED,
             payload=payload,
-            outcome_for=[initiator_id],
+            outcome_for=initiator_id,
         )
 
     async def approve_team_join_request(
@@ -364,7 +364,7 @@ class TeamMembershipService:
             app,
             type_=NotificationType.TEAM_REQUEST_APPROVED,
             payload=payload,
-            outcome_for=[requester_id],
+            outcome_for=requester_id,
         )
 
     async def reject_team_join_request(
@@ -409,7 +409,7 @@ class TeamMembershipService:
             app,
             type_=NotificationType.TEAM_REQUEST_REJECTED,
             payload=payload,
-            outcome_for=[requester_id],
+            outcome_for=requester_id,
         )
 
     async def cancel_team_invitation(
@@ -454,7 +454,7 @@ class TeamMembershipService:
             app,
             type_=NotificationType.TEAM_INVITATION_CANCELED,
             payload=payload,
-            outcome_for=[invited_user_id],
+            outcome_for=invited_user_id,
         )
 
     async def list_my_invitations(

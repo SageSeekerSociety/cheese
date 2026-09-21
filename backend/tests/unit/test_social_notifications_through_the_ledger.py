@@ -157,6 +157,44 @@ async def test_the_same_approval_reaches_the_requester_once(db_factory):
         assert inbox[0].type == NotificationType.TEAM_REQUEST_APPROVED
 
 
+async def test_canceling_an_invitation_is_a_second_event_on_the_same_record(db_factory):
+    """一条邀请先发出再取消 —— 被邀请的人两条都收到。
+
+    这两件事挂在同一条 `team_membership_application` 上，通知的还是同一个人，所以
+    事件身份只按记录算是不够的：算进「这条记录上发生了哪件事」，取消那一条才有自
+    己的去重键。只按记录算的话，`TEAM_INVITATION_CANCELED` 撞上 `TEAM_INVITATION`
+    已经落下的那一行，账本当它是同一件事的重放，被邀请的人永远等不到取消的消息，
+    而「同一件事只通知一次」那几条用例照样全绿 —— 它们每条都只在一条记录上发生一
+    件事。
+    """
+    async with db_factory() as session:
+        owner = await _user(session, "owner")
+        invited = await _user(session, "invited")
+        team_id = await _team(session, owner_id=owner)
+
+        invitation = await _service(session).create_team_invitation(
+            initiator_user_id=owner,
+            team_id=team_id,
+            user_id_to_invite=invited,
+            role=None,
+            message=None,
+        )
+        await _service(session).cancel_team_invitation(
+            canceler_user_id=owner, team_id=team_id, invitation_id=invitation.id
+        )
+        await session.commit()
+
+        assert [row.type for row in await _inbox(session, invited)] == [
+            NotificationType.TEAM_INVITATION,
+            NotificationType.TEAM_INVITATION_CANCELED,
+        ]
+        rows = await _ledger_rows(session)
+        assert len(rows) == 2
+        assert len({row.event_id for row in rows}) == 2, (
+            "同一条邀请上的两件事共用了一个事件身份，取消那一条发不出去"
+        )
+
+
 async def test_a_join_request_is_recorded_before_it_is_sent(db_factory):
     """入队申请：每个管理员在账本上各有一行，发出去之后回写 `sent_at`。
 

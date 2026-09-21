@@ -156,7 +156,7 @@ def dedup_key(event_id: uuid.UUID, handle: str) -> str:
     return f"{event_id}:{handle}"
 
 
-def event_id_for(type_: NotificationType, record_id: object) -> uuid.UUID:
+def event_id_for(type_: NotificationType, record_id: int) -> uuid.UUID:
     """长在一条领域记录上的那种事件的身份：哪条记录，发生了哪件事。
 
     `record_id` 是引发它的那条记录（申请、邀请、讨论回复），`type_` 是那条记录上
