@@ -46,7 +46,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from app.core.config import settings
 from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
@@ -128,7 +127,15 @@ def _known(name: str, source: str) -> str:
 
 
 def deployment_harness() -> str:
-    """这套部署跑的骨架（结论 28）——一条部署设置，不是谁的属性。"""
+    """这套部署跑的骨架（结论 28）——一条部署设置，不是谁的属性。
+
+    设置在函数里读，不在模块顶上 import：这个文件是 codex runner 那个
+    standard-library-only 归档的一部分（``codex/bundle.py``），而 ``core.config``
+    带着 pydantic-settings 和它整棵依赖树，不在归档里——顶上一行 import 就是
+    runner 进程起不来。runner 自己从不问这个问题，它被告知自己是谁。
+    """
+    from app.core.config import settings
+
     configured = (settings.agent_harness or "").strip()
     return _known(configured, "agent_harness") if configured else _UNCONFIGURED
 
@@ -155,8 +162,8 @@ class SessionRef:
     project — not the seat it authors under. The two differ, and reading under
     one while writing under the other hands back None rather than failing.
 
-    ``agent_handle`` is left unset by the calls that address a PLACE rather than
-    a conversation: a room's event spool and the screen it is watched in are one
+    It is left unset by the calls that address a PLACE rather than a
+    conversation: a room's event spool and the screen it is watched in are one
     per room, so reading them names no agent. Anything that resolves where a
     session runs must fill it in — that resolution is per session and there is
     nothing on the room left to fall back to.
