@@ -9,7 +9,7 @@ and multiple connections to the same topic all see the live stream.
 
 Protocol (unchanged frontend contract):
   connect → /api/topics/{id}/chat?token=<session token>   (required)
-  client → {"type":"message","content": str, "summon": bool,
+  client → {"type":"message","content": str,
             "attachments"?: [{"path": str, "mime": str}]}
   client → {"type":"ping"}  →  server → {"type":"pong"}
   server → user_block / reaction / tool / todo / state / event_block /
@@ -176,8 +176,12 @@ async def chat(
                     else (payload.get("author") or "anonymous").strip()[:64]
                     or "anonymous"
                 )
-                # @芝士 toggle: summon the AI, or just post (spec C3).
-                summon = bool(payload.get("summon", False))
+                # 帧上没有「叫不叫它」这一位。**这条消息点了谁的名，是服务端从正文
+                # 里解析出来的**（不变量 I13）：@ 了这个房间的哪个席位就是点了谁，私
+                # 聊是两席的房间、说话就是对着对方说的。以前这里读一个浏览器算好的
+                # `summon` 布尔，和服务端解析出来的 @ 做或运算 —— 于是一条谁也没 @
+                # 的消息，只要客户端把那一位置真，照样起一轮，而时间线上那条消息看不
+                # 出它叫了谁。
                 # B3: replying to a specific message threads under it.
                 reply_to = payload.get("reply_to") or None
                 # 图片输入: previously-uploaded worktree files this message carries.
@@ -211,7 +215,6 @@ async def chat(
                         topic_id,
                         author=author,
                         content=content,
-                        summon=summon,
                         reply_to=reply_to,
                         attachments=attachments,
                         provision_actor=conn_actor,

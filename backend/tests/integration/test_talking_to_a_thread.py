@@ -114,7 +114,7 @@ def test_a_card_has_no_chat_socket_of_its_own(client, stub_hooks):
     _wait_work_idle()
 
     with client.websocket_connect(chat_ws_url(thread["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "进度怎么样", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 进度怎么样"})
         frames = _drain_until_done(ws)
 
     assert frames[-1]["type"] == "error", frames
@@ -127,7 +127,7 @@ def test_a_room_still_answers_on_its_own_line(client, stub_hooks):
 
     screens = _record_screens(stub_hooks)
     with client.websocket_connect(chat_ws_url(room["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "在吗", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 在吗"})
         _drain_until_done(ws)
     _wait_work_idle()
 

@@ -7,6 +7,9 @@
 
 这些测试钉的就是「它现在也是一轮」，以及它**不是**什么：只有会话在产出才开一行，
 一条来路不明的分身完成通知开不了。
+
+署名是这个房间的席位 handle：退场的是那个谁也没写过的作者值（结论 13），不是这条
+记录 —— 一个 worker 做完唤醒主线程，那是同一个 handle 两条线程之间的一条便条。
 """
 
 import asyncio
@@ -15,10 +18,9 @@ import uuid
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, room_agent_seat
 
 
 def _room(client) -> tuple[str, str]:
@@ -33,7 +35,7 @@ def _room(client) -> tuple[str, str]:
 def _one_ordinary_turn(client, topic_id: str) -> None:
     """一轮普通的、平台喂进去的轮次 —— 之后这个房间才有一块活着的屏幕。"""
     with client.websocket_connect(chat_ws_url(topic_id, "u")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
@@ -86,7 +88,8 @@ def test_the_session_working_on_its_own_opens_an_interval(client, stub_hooks):
 
     assert len(rows) == 1, "会话自己干了一整轮，表里却没有这一轮"
     row = rows[0]
-    assert row.author == AgentWorkRunner.SELF_STARTED_AUTHOR
+    # 一条便条有发件人：署的是这个房间的席位 handle，不是某个谁也没写过的作者值。
+    assert row.author == room_agent_seat(client, room_id)
     assert row.content == ""
     assert row.resendable is False, "没有提示词可发 —— 标成可重发就是叫收尸去发空气"
     assert row.delivered_at is not None

@@ -185,17 +185,6 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
-KICKOFF_PROMPT = (
-    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
-    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
-    "现在开工：\n"
-    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
-    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
-    "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
-    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
-)
-
-
 def thread_relay_prompt(
     *, task_id: uuid.UUID, task_title: str, author: str, message: str
 ) -> str:
@@ -215,30 +204,6 @@ def thread_relay_prompt(
         f'`cheese_bind(task_id="{task_id}", agent_id=<新的 agent_id>)`。'
         "回话说在这条活上（`cheese_tell` 到它），别只在房间里说，"
         "问话的人看的是那边。"
-    )
-
-
-def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
-    """The ROOM's wake-up instruction when one of its messages became a thread.
-
-    Addressed to the room because a thread is a 分身 inside the room's own
-    session and has no session to wake. The platform writes the row, its card
-    block and its brief; raising the worker is the room's, and so is naming the
-    thread — it is created untitled and nothing else is in a position to name it.
-    """
-    return (
-        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
-        f"---\n{source_message}\n---\n\n"
-        "接下来是你的事：\n"
-        f'1. `cheese_title(text="<≤12 字的标题>", task="{task_id}")`'
-        "——它现在还叫「新话题」，"
-        "只有你能给它起名字。\n"
-        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
-        "（分身不会自己去读文档）。\n"
-        f'3. `cheese_bind(task_id="{task_id}", agent_id=<分身的 agent_id>)`'
-        "——不 bind，这条活在界面上"
-        "永远是「没人做」，分身干的每件事都记在你头上。"
     )
 
 

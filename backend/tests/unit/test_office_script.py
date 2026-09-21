@@ -532,3 +532,135 @@ def test_deciding_without_saying_where_to_write_is_refused(edited: Path):
 def test_a_document_without_revisions_says_so(report: Path):
     """没有修订时给一句话，而不是一张空表。"""
     assert "没有修订" in ran("revisions", report)
+
+
+# --- 别人先改了同一份：在他那一版上重做 -------------------------------------
+#
+# 两个人同时改一份 .docx，git 合不了，而合并内容也办不到。既定的做法是在对方那一版
+# 上把本轮改动重做一遍 (#1085 结论六)。这里钉的是这条路的两头：能落下去的时候落得
+# 准，落不下去的时候当场拒绝 —— 那两件事都由已有的 `edit` / `validate` 承担，所以
+# 它们必须组合起来仍然成立。
+
+
+def test_a_redo_on_the_other_side_version_keeps_both_changes(
+    report: Path, tmp_path: Path
+):
+    """对方改了标题，我改了金额：在他那一版上重做，两处都在。"""
+    theirs = tmp_path / "主干那一版.docx"
+    ran(
+        "edit",
+        report,
+        "-o",
+        theirs,
+        "--replace",
+        "第三季度预算说明=第四季度预算说明",
+        "--author",
+        "别人",
+    )
+
+    redone = tmp_path / "重做.docx"
+    ran(
+        "edit",
+        theirs,
+        "-o",
+        redone,
+        "--replace",
+        "合计 120 万元=合计 135 万元",
+        "--author",
+        "芝士",
+    )
+
+    body = "".join(visible(redone))
+    assert "第四季度预算说明" in body
+    assert "合计 135 万元" in body
+
+
+def test_a_redo_validates_against_the_version_both_sides_started_from(
+    report: Path, tmp_path: Path
+):
+    """重做之后的那一份，`--base` 要给**两边共同的那一版**，不是对方那一版。
+
+    这是重做这条路上唯一的保险：重做可能把一处小改动放大、也可能落在错的位置，而这
+    两种失败都不会自己报错。而 `validate --base` 的做法是拒绝掉文件里全部修订再逐字
+    对比 —— 重做出来的那一份里躺着两边的修订，所以拒绝全部之后它回到的是两边共同的
+    起点，不是对方那一版（对方那一版自己还带着没被接受的修订）。给错了 base 这个检
+    查会报一个假问题，见下一条。
+    """
+    theirs = tmp_path / "主干那一版.docx"
+    ran("edit", report, "-o", theirs, "--replace", "差旅=出行", "--author", "别人")
+    redone = tmp_path / "重做.docx"
+    ran(
+        "edit",
+        theirs,
+        "-o",
+        redone,
+        "--replace",
+        "合计 120 万元=合计 135 万元",
+        "--author",
+        "芝士",
+    )
+
+    out = ran("validate", redone, "--base", report)
+    assert "拒绝全部修订 → 正文与原文档逐字相同" in out
+    # 接受全部修订之后两边的改动都在：这一份是两个人的工作叠起来的结果。
+    assert "出行" in out
+    assert "合计 135 万元" in out
+
+
+def test_the_other_side_version_is_the_wrong_base_for_a_redo(
+    report: Path, tmp_path: Path
+):
+    """把对方那一版当 base，检查会失败 —— 而那不是重做做错了。
+
+    钉住它是因为这是这条路上最容易走的一步错：对方那一版是重做的起点，看起来就该是
+    base。但它自己带着还没被接受的修订，拒绝全部之后回不到它。
+    """
+    theirs = tmp_path / "主干那一版.docx"
+    ran("edit", report, "-o", theirs, "--replace", "差旅=出行", "--author", "别人")
+    redone = tmp_path / "重做.docx"
+    ran(
+        "edit",
+        theirs,
+        "-o",
+        redone,
+        "--replace",
+        "合计 120 万元=合计 135 万元",
+        "--author",
+        "芝士",
+    )
+
+    message = refused("validate", redone, "--base", theirs)
+    assert "对不上" in message
+
+
+def test_a_redo_is_refused_when_the_other_side_changed_the_same_sentence(
+    report: Path, tmp_path: Path
+):
+    """两边改的是同一句：重做落不下去，当场拒绝。
+
+    这就是「重做不成立」的判据，而它不需要新机制 —— `edit` 找不到原文本来就报错、
+    不猜。拒绝之后该做的是把两个出口摆给人，不是改写替换条件去凑一个结果。
+    """
+    theirs = tmp_path / "主干那一版.docx"
+    ran(
+        "edit",
+        report,
+        "-o",
+        theirs,
+        "--replace",
+        "合计 120 万元=合计 200 万元",
+        "--author",
+        "别人",
+    )
+
+    message = refused(
+        "edit",
+        theirs,
+        "-o",
+        tmp_path / "重做.docx",
+        "--replace",
+        "合计 120 万元=合计 135 万元",
+        "--author",
+        "芝士",
+    )
+    assert "合计 120 万元" in message

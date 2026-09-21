@@ -55,7 +55,7 @@ def _chat(client, topic_id: str) -> list[dict]:
     # The chat socket requires a session token; take the same path the browser
     # does via the shared helper (see .claude/rules/backend-tests.md).
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 hi"})
         while True:
             frame = ws.receive_json()
             frames.append(frame)
@@ -132,7 +132,7 @@ def test_progress_survives_a_turn_that_dies(client, stub_hooks, monkeypatch):
     monkeypatch.setattr(stub_hooks, "emit_turn", reports_then_goes_quiet)
 
     with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 hi"})
         ws.receive_json()  # the turn is under way; it will never report done
 
     # NOT `wait_work_idle()`: this turn is built never to finish, so waiting for

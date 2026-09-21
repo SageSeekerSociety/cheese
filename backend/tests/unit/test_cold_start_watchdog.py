@@ -17,7 +17,11 @@ import asyncio
 
 import pytest
 
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    InProcessBroker,
+    addressed_to_agent,
+)
 from tests.turn_log import a_topic
 
 
@@ -111,7 +115,13 @@ async def _frames_until_done(
     topic = await a_topic(db_factory)
     frames: list[dict] = []
     async with runner._broker.subscribe(str(topic)) as q:
-        runner.submit(backend, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            backend,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         while True:
             frame = await asyncio.wait_for(q.get(), 10)
             frames.append(frame)
@@ -124,7 +134,13 @@ async def _error_frame(runner: AgentWorkRunner, backend: _Backend, db_factory) -
     backend.session_factory = db_factory
     topic = await a_topic(db_factory)
     async with runner._broker.subscribe(str(topic)) as q:
-        runner.submit(backend, topic, author="u", content="hi", summon=True)
+        runner.submit(
+            backend,
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         while True:
             frame = await asyncio.wait_for(q.get(), 10)
             if frame["type"] == "error":

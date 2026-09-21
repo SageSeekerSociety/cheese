@@ -74,6 +74,15 @@ EVENT_CARD_VOIDED: Final = "card_voided"
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
+
+#: 一条消息被升级成了一条活（或一个房间），下一步在它的负责人手上。
+EVENT_BLOCK_UPGRADED: Final = "block_upgraded"
+#: 一个房间的环境倒了，这件事交到总览芝士手上了。
+EVENT_ENVIRONMENT_RECOVERY_REQUEST: Final = "environment_recovery_request"
+#: 房间的环境修好了，此前没送达的消息接着处理。
+EVENT_ENVIRONMENT_REPAIRED: Final = "environment_repaired"
+#: 这个房间的记忆在整理 —— 芝士自己的事，没有人在等它。
+EVENT_MEMORY_ORGANIZING: Final = "memory_organizing"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -152,6 +161,10 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
+        EVENT_BLOCK_UPGRADED,
+        EVENT_ENVIRONMENT_RECOVERY_REQUEST,
+        EVENT_ENVIRONMENT_REPAIRED,
+        EVENT_MEMORY_ORGANIZING,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,

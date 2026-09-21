@@ -69,7 +69,7 @@ def _say(client, place_id: str, who: str, text: str) -> None:
     with threads.
     """
     with client.websocket_connect(chat_ws_url(place_id, who)) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": False})
+        ws.send_json({"type": "message", "content": text})
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):

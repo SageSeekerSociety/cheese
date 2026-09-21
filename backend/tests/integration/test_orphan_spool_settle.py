@@ -344,7 +344,7 @@ def test_completed_live_turn_settles_before_another_prompt(
 
     monkeypatch.setattr(stub_hooks, "emit_turn", emit_turn)
     with client.websocket_connect(chat_ws_url(str(tid), "u")) as socket:
-        socket.send_json({"type": "message", "content": "hello", "summon": True})
+        socket.send_json({"type": "message", "content": "@芝士 hello"})
         while True:
             frame = socket.receive_json()
             assert frame["type"] != "error", frame
