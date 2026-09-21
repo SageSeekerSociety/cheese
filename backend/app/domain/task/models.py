@@ -40,7 +40,8 @@ class Task(Base):
     # 机构协议 per-赛题 override (#370 option (c)). NULL / absent keys inherit the
     # 项目集's terms; a present key REPLACES it wholesale (a half-merged resource
     # pack is harder to reason about than either source). Accepted keys:
-    # resource_pack / conditions / default_role — see app.domain.task.protocol.
+    # resource_pack / conditions / default_role / shell — see
+    # app.domain.task.protocol.
     protocol_override: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Foreign keys as simple ids for now; detailed relationships can be added later.
