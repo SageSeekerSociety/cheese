@@ -189,3 +189,25 @@ def test_viewer_authorization_survives_unrelated_membership_column_drops(
         assert not await _may_view_screen(db_session, screen, None)
 
     _portal.call(ask)
+
+
+def test_the_column_the_owner_kept_reading_is_gone(db_session, _portal):
+    """`topics.session_placement` 这一列不在了。
+
+    #1347 删掉了 `backend/app` 里最后一个读点——这个持有者在发布窗口里留的那个
+    回落——列却留着：app 的发布不换 device connection owner 的镜像，那个镜像还
+    `SELECT` 它，列一掉，它服务的每一条房间命令都报 `column
+    topics.session_placement does not exist`，也就是本文件开头那次事故的形状。
+    `Release device connection owner` 跑过之后，没有哪个还在跑的进程读它了。
+    """
+
+    async def ask():
+        return await db_session.scalar(
+            text(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_name = 'topics'"
+                "   AND column_name = 'session_placement'"
+            )
+        )
+
+    assert _portal.call(ask) == 0
