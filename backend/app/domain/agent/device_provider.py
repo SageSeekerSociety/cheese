@@ -1382,7 +1382,19 @@ class DeviceChannel(Channel):
         # subagents by. A key here would be a second declaration of what the
         # binding on the card already says, and nobody could write down which
         # of the two wins (I4a).
-        model_env = {**(env or {}), **sub.env}
+        model_env = {**(env or {})}
+        # Dropped, not overridden: `subscription_provider` only ADDS keys, and
+        # any of these surviving from a caller's env flips the CLI out of
+        # subscription mode or asks a pool for a model nobody bound.
+        for key in (
+            "ANTHROPIC_BASE_URL",
+            "CLAUDE_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ):
+            model_env.pop(key, None)
+        model_env.update(sub.env)
         model_env["CHEESE_REMOTE_CONTROL"] = "1"
         # The tunnel's CONNECT credential must carry the same place and RC
         # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.

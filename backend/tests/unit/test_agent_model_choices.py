@@ -190,6 +190,17 @@ def _gateway_reports(*rows):
     asyncio.run(gateway_catalog.refresh(_gateway_answering(list(rows))))
 
 
+def _pool_models(project=None) -> set[str]:
+    """What the POOL offers. The subscription's own models are always in the
+    catalogue beside them — a machine reaches both through one launch shape —
+    so a question about the gateway has to say so."""
+    return {
+        item["id"]
+        for item in model_choices(project or {})
+        if item["supply"] == "gateway"
+    }
+
+
 @pytest.fixture(autouse=True)
 def _forget_the_catalogue():
     gateway_catalog.reset()
@@ -305,11 +316,11 @@ async def test_a_gateway_that_is_not_up_yet_is_asked_again_soon(monkeypatch):
     task = asyncio.get_running_loop().create_task(gateway_catalog.keep_fresh(late))
     try:
         # Until it answers, the deployment runs on the model it is configured for.
-        assert {item["id"] for item in model_choices({})} == {"the-configured-one"}
+        assert _pool_models() == {"the-configured-one"}
         for _ in range(200):
             await asyncio.sleep(0.01)
-            if "arrived-late" in {item["id"] for item in model_choices({})}:
+            if "arrived-late" in _pool_models():
                 break
-        assert "arrived-late" in {item["id"] for item in model_choices({})}
+        assert "arrived-late" in _pool_models()
     finally:
         task.cancel()
