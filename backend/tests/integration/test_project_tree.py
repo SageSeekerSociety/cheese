@@ -128,7 +128,8 @@ def test_upgrading_a_message_wakes_the_room_to_raise_the_worker(client, stub_hoo
 
     这条路和「结论卡打回」是同一颗雷的两个引信：朝一条活的 id 开轮次，平台就得为它
     起一整个容器 —— 正是「一条活 = 房间会话里的一个分身」拆掉的东西。所以轮次落在
-    房间，提示词里带着房间起分身所需要的一切：活的 id、简报原文、起名和认领怎么做。
+    房间，提示词里带着房间起分身所需要的一切：活的 id、简报原文、起名怎么做，
+    以及起分身时要带上的线程标识。
     """
     p = _project(client)
     room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
@@ -148,9 +149,11 @@ def test_upgrading_a_message_wakes_the_room_to_raise_the_worker(client, stub_hoo
     assert thread["id"] not in screens, "为一条活起了屏幕——这是在复活容器"
     assert screens == [room["id"]], f"叫醒的不是房间：{screens}"
     prompt = stub_hooks.last_prompt or ""
-    assert thread["id"] in prompt, "不给 task id，房间没法 bind，也没法给它起名字"
+    assert thread["id"] in prompt, "不给 task id，房间没法给它起名字"
     assert "把导入这段单独拆出来做" in prompt, "简报原文没带过去，分身就没东西可读"
-    assert "bind" in prompt, "不说 bind，这条活在界面上永远是「没人做」"
+    assert thread["thread_label"] in prompt, (
+        "不把线程标识告诉房间，它起的分身干的事全记在房间头上"
+    )
 
 
 def test_a_room_names_its_own_thread(client):
