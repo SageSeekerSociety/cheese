@@ -12,7 +12,11 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    InProcessBroker,
+    addressed_to_agent,
+)
 from tests.turn_log import a_topic
 
 
@@ -57,10 +61,22 @@ class FakeChat:
         self.converse_calls.append({"received": True, **kwargs})
         ids = []
         payloads = []
+        # 落库那一刻解析出这条消息点了谁的名 —— 真实的 ChatService 做的就是这件事，
+        # 而「这一轮跑不跑」从此只看它。
+        recipient = {
+            "handle": "cheese-seat",
+            "mentioned": "<@cheese-seat>" in (kwargs.get("content") or ""),
+        }
         if kwargs["content"]:
             block_id = uuid.uuid4()
             ids.append(block_id)
-            payloads.append({"id": str(block_id), "content": kwargs["content"]})
+            payloads.append(
+                {
+                    "id": str(block_id),
+                    "content": kwargs["content"],
+                    "meta": {"agent_recipient": recipient},
+                }
+            )
         for attachment in kwargs.get("attachments") or []:
             block_id = uuid.uuid4()
             ids.append(block_id)
@@ -69,6 +85,7 @@ class FakeChat:
                     "id": str(block_id),
                     "content": attachment["path"],
                     "kind": "attachment",
+                    "meta": {"agent_recipient": recipient},
                 }
             )
         return payloads, ids[0], ids, False
@@ -79,7 +96,7 @@ class FakeChat:
     async def converse(self, **kwargs):
         self.converse_calls.append(kwargs)
         if not kwargs.get("summon", True):
-            # summon=False = post-only pass (used to land a refused message).
+            # 没点到谁 = 只落库不起轮次（用来落下一条被拒的消息）。
             yield {"type": "user_block", "block": {"content": kwargs["content"]}}
             yield {"type": "done"}
             return
@@ -113,14 +130,10 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
     topic = uuid.uuid4()
     try:
         async with broker.subscribe(str(topic)) as browser:
-            await broker.receive_message(
-                chat, topic, author="u", content="first", summon=False
-            )
+            await broker.receive_message(chat, topic, author="u", content="first")
             await chat.entered.wait()
             assert (await browser.get())["block"]["content"] == "first"
-            await broker.receive_message(
-                chat, topic, author="u", content="second", summon=False
-            )
+            await broker.receive_message(chat, topic, author="u", content="second")
             assert (await browser.get())["block"]["content"] == "second"
             assert chat.delivered == []
         # Delivery is owned by the subscriber even after the browser leaves.
@@ -149,9 +162,7 @@ async def test_failed_agent_delivery_does_not_stop_next_message():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as browser:
         for content in ("first", "second"):
-            await broker.receive_message(
-                chat, topic, author="u", content=content, summon=False
-            )
+            await broker.receive_message(chat, topic, author="u", content=content)
         await runner.drain()
         assert {"delivered": "second"} in chat.converse_calls
         frames = []
@@ -176,7 +187,12 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
                 *args, **kwargs
             )
             for payload in payloads:
-                payload["meta"] = {"agent_recipient": {"handle": self.selected}}
+                payload["meta"] = {
+                    "agent_recipient": {
+                        "handle": self.selected,
+                        "mentioned": "<@cheese-seat>" in (kwargs.get("content") or ""),
+                    }
+                }
             return payloads, anchor, ids, duplicate
 
         async def wait_for_recipient(self, topic, recipient):
@@ -200,12 +216,12 @@ async def test_waiting_recipient_does_not_block_current_agent_followup():
     topic = uuid.uuid4()
     try:
         await broker.receive_message(
-            chat, topic, author="u", content="B's next task", summon=True
+            chat, topic, author="u", content="<@cheese-seat> B's next task"
         )
         await chat.waiting.wait()
         chat.selected = "a"
         await broker.receive_message(
-            chat, topic, author="u", content="Stop A's current task", summon=False
+            chat, topic, author="u", content="Stop A's current task"
         )
         await _until(lambda: bool(chat.delivered))
         assert chat.delivered == [("a", "Stop A's current task")]
@@ -254,16 +270,34 @@ async def test_concurrency_gate_queues_and_announces_position(db_factory):
     runner, _ = _runner()
     topic = await a_topic(db_factory)
 
-    runner.submit(chat, topic, author="u1", content="第一轮", summon=True)
+    runner.submit(
+        chat,
+        topic,
+        author="u1",
+        content="第一轮",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await _until(lambda: chat.running == 1)
 
     # Second turn: gate is full → queued, with a visible system event (0 ahead).
-    runner.submit(chat, topic, author="u2", content="第二轮", summon=True)
+    runner.submit(
+        chat,
+        topic,
+        author="u2",
+        content="第二轮",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await _until(lambda: len(chat.system_events) == 1)
     assert "排队" in chat.system_events[0]
 
     # Third turn: one waiter already ahead of it.
-    runner.submit(chat, topic, author="u3", content="第三轮", summon=True)
+    runner.submit(
+        chat,
+        topic,
+        author="u3",
+        content="第三轮",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await _until(lambda: len(chat.system_events) == 2)
     assert "前面还有 1 个" in chat.system_events[1]
 
@@ -290,8 +324,20 @@ async def test_concurrency_gate_allows_up_to_limit_without_queueing(db_factory):
     )
     runner, _ = _runner()
 
-    runner.submit(chat, await a_topic(db_factory), author="u", content="a", summon=True)
-    runner.submit(chat, await a_topic(db_factory), author="u", content="b", summon=True)
+    runner.submit(
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="a",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
+    runner.submit(
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="b",
+        addressed=addressed_to_agent("cheese-seat"),
+    )
     await _until(lambda: chat.running == 2)
 
     # Both run concurrently; no queue event was posted.
@@ -316,7 +362,13 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
 
     frames = []
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(chat, topic, author="u1", content="还在吗", summon=True)
+        runner.submit(
+            chat,
+            topic,
+            author="u1",
+            content="还在吗",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         async with asyncio.timeout(2.0):
             while True:
                 frame = await q.get()
@@ -324,7 +376,7 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
                 if frame["type"] == "error":
                     break
 
-    # The human's message landed (posting is free), via a summon=False pass.
+    # The human's message landed (posting is free), via a post-only pass.
     assert [f["type"] for f in frames] == ["user_block", "event_block", "error"]
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["summon"] is False
@@ -342,7 +394,7 @@ async def test_unknown_policy_admits_ungated(db_factory):
     runner, _ = _runner()
 
     runner.submit(
-        chat, await a_topic(db_factory), author="u", content="hi", summon=True
+        chat, await a_topic(db_factory), author="u", content="<@cheese-seat> hi"
     )
     await _until(lambda: chat.running == 1)
     chat.release.set()
@@ -364,7 +416,7 @@ async def test_received_message_lands_before_credit_refusal():
 
     async with broker.subscribe(str(topic)) as queue:
         await broker.receive_message(
-            chat, topic, author="u", content="这条必须先落库", summon=True
+            chat, topic, author="u", content="<@cheese-seat> 这条必须先落库"
         )
         frames = []
         async with asyncio.timeout(2):
@@ -379,7 +431,7 @@ async def test_received_message_lands_before_credit_refusal():
         "event_block",
         "error",
     ]
-    # One receive operation, no summon=False second pass and no model turn.
+    # One receive operation, no post-only second pass and no model turn.
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["received"] is True
     assert chat.converse_calls[0]["content"] == "这条必须先落库"
@@ -396,9 +448,7 @@ async def test_unsummoned_message_never_touches_turn_admission():
     runner, broker = _runner()
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(
-            chat, topic, author="u", content="只发消息", summon=False
-        )
+        await broker.receive_message(chat, topic, author="u", content="只发消息")
         assert (await queue.get())["type"] == "user_block"
         assert (await queue.get())["type"] == "done"
     await runner.drain()
@@ -419,7 +469,7 @@ async def test_normal_message_without_live_work_queues_without_fallback_error(
 
     async with broker.subscribe(str(topic)) as queue:
         await broker.receive_message(
-            chat, topic, author="u", content="正常开工", summon=True
+            chat, topic, author="u", content="<@cheese-seat> 正常开工"
         )
         frames = await _frames_through(queue, "turn_finished")
 
@@ -454,7 +504,7 @@ async def test_the_wait_before_a_turn_assembles_is_accounted_for(db_factory, cap
     with caplog.at_level("INFO"):
         async with broker.subscribe(str(topic)) as queue:
             await broker.receive_message(
-                chat, topic, author="u", content="正常开工", summon=True
+                chat, topic, author="u", content="<@cheese-seat> 正常开工"
             )
             await _frames_through(queue, "turn_finished")
         await _until(lambda: runner.active_work_count() == 0)
@@ -493,7 +543,7 @@ async def test_live_delivery_fallback_reports_error_then_runs_normally(
 
     async with broker.subscribe(str(topic)) as queue:
         await broker.receive_message(
-            chat, topic, author="u", content="补充一条", summon=True
+            chat, topic, author="u", content="<@cheese-seat> 补充一条"
         )
         frames = await _frames_through(queue, "turn_finished")
 
@@ -535,7 +585,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
 
     async with broker.subscribe(str(topic)) as queue:
         await broker.receive_message(
-            chat, topic, author="u", content="补充一条", summon=True
+            chat, topic, author="u", content="<@cheese-seat> 补充一条"
         )
         frames = []
         async with asyncio.timeout(2):
@@ -592,7 +642,6 @@ async def test_image_only_message_can_merge_into_live_session():
             author="u",
             content="",
             attachments=[attachment],
-            summon=True,
         )
         frames = [await queue.get()]
         await _until(lambda: chat.merged is not None)

@@ -20,16 +20,16 @@ pytestmark = pytest.mark.anyio
 
 
 class _Kickoffs:
-    """Stand-in for the work runner: records the turns a sweep would start."""
+    """Stand-in for the work runner: records what a sweep would deliver."""
 
     def __init__(self, boom: bool = False):
         self.started: list[tuple[uuid.UUID, str]] = []
         self._boom = boom
 
-    def submit_kickoff(self, chat, topic_id, *, prompt=None):
+    def submit(self, chat, topic_id, *, content="", **_kw):
         if self._boom:
             raise RuntimeError("模型网关挂了")
-        self.started.append((topic_id, prompt or ""))
+        self.started.append((topic_id, content))
         return uuid.uuid4()
 
 

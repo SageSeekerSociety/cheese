@@ -5,8 +5,8 @@ yet: the message is kept (never consumed) and the room shows 「机器正在创�
 Two facts have to hold before it can be delivered, and they live in different
 places — the machine has settled both provider lifecycles and is enrolled (a
 database fact), and its connector is connected right now (an in-memory fact
-only the hub knows). This is the one place that joins the two and starts the
-turn that delivers the held message.
+only the hub knows). This is the one place that joins the two and delivers the
+held message.
 
 It is asked from two directions, because either fact can be the last one to
 arrive: the enrollment sweep (``wake``) with every settled lease after it has
@@ -22,8 +22,9 @@ from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger("cheese.machine.wakeup")
 
-#: What the delivering turn is told. No human wrote it, and the pending human
-#: message rides in with it — the prompt only has to say why the turn exists.
+#: 送过去的那一句。**它不是平台起的一轮**：房间扣着的那条人写的消息才是这一轮的
+#: 内容（待读窗口会把它原样接上），这一句只说明为什么现在才送到。收件人是这个房间
+#: 的芝士席位，点它名的是当初发那条消息的人（I12）。
 WAKE_PROMPT = "Cloud machine is ready; continue the pending input."
 WAKE_NOTICE = "Cloud 机器已接入，正在继续刚才的消息"
 
@@ -39,20 +40,20 @@ class CloudWakeup:
         *,
         ready_leases: ReadyLeases,
         waiting_topics: WaitingTopics,
-        kickoff: TopicAction,
+        deliver_held: TopicAction,
         announce: TopicAction,
         is_online: Callable[[str], bool],
         announce_failure: FailureAction | None = None,
     ) -> None:
         self._ready_leases = ready_leases
         self._waiting_topics = waiting_topics
-        self._kickoff = kickoff
+        self._deliver_held = deliver_held
         self._announce = announce
         self._is_online = is_online
         self._announce_failure = announce_failure
 
     async def wake(self, ready: list[tuple[uuid.UUID, str]]) -> None:
-        """Start the delivering turn for every lease whose machine is connected
+        """Deliver the held message of every lease whose machine is connected
         and whose room is still showing the waiting state. Level-triggered and
         idempotent: a topic already told 「已接入」 is not woken twice."""
         topic_ids = [
@@ -61,7 +62,7 @@ class CloudWakeup:
         if not topic_ids:
             return
         for topic_id in await self._waiting_topics(topic_ids):
-            await self._kickoff(topic_id)
+            await self._deliver_held(topic_id)
             await self._announce(topic_id)
             logger.info("cloud topic %s woken: its machine is connected", topic_id)
 

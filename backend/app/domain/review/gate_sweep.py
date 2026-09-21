@@ -39,7 +39,7 @@
 """
 
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -164,7 +164,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
 async def sweep(
     session_factory: async_sessionmaker,
     *,
-    nudge: Callable[[uuid.UUID, str, str, dict], None] | None = None,
+    nudge: Callable[[uuid.UUID, str, str, dict], Awaitable[None]] | None = None,
     skip_card_ids: Iterable[uuid.UUID] | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -204,7 +204,7 @@ async def sweep(
                 continue
         condemned.append(card_id)
         if nudge is not None:
-            nudge(
+            await nudge(
                 topic_id,
                 _ABANDONED_NUDGE,
                 _ABANDONED_EVENT,

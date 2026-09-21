@@ -124,7 +124,6 @@ def test_document_reaches_agent_as_file(client, stub_hooks):
             {
                 "type": "message",
                 "content": "",
-                "summon": True,
                 "attachments": [att],
             }
         )
@@ -168,7 +167,6 @@ def test_office_document_lands_in_the_room(client, stub_hooks, filename, mime):
             {
                 "type": "message",
                 "content": "这是说明书",
-                "summon": True,
                 "attachments": [att],
             }
         )
@@ -258,7 +256,6 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
             {
                 "type": "message",
                 "content": "看看这张截图",
-                "summon": True,
                 "attachments": [att],
             }
         )
@@ -295,7 +292,6 @@ def test_image_only_message_allowed(client, stub_hooks):
             {
                 "type": "message",
                 "content": "",
-                "summon": True,
                 "attachments": [att],
             }
         )
@@ -350,7 +346,6 @@ def test_prompt_does_not_claim_attachment_when_backend_drops_images(client, tmp_
             {
                 "type": "message",
                 "content": "看看这张截图",
-                "summon": True,
                 "attachments": [att],
             }
         )
@@ -374,9 +369,7 @@ def test_embedding_backend_still_says_the_image_is_attached(client, stub_hooks):
     att = _upload(client, topic_id)
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json(
-            {"type": "message", "content": "看图", "summon": True, "attachments": [att]}
-        )
+        ws.send_json({"type": "message", "content": "@芝士 看图", "attachments": [att]})
         _drain_until_done(ws)
 
     prompt = stub_hooks.last_prompt or ""

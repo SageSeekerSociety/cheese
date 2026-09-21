@@ -491,7 +491,7 @@ def test_a_credential_without_an_agent_identity_is_rejected(client):
 
 def _turn(client, room: str, text: str) -> None:
     with client.websocket_connect(chat_ws_url(room, "u")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 " + text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

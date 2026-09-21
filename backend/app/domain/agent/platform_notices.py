@@ -74,6 +74,9 @@ EVENT_CARD_VOIDED: Final = "card_voided"
 EVENT_CARD_REDESCRIBED: Final = "card_redescribed"
 #: Historical upstream-sync notices remain readable after retiring local sync.
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
+
+#: 一条消息被升级成了一条活（或一个房间），下一步在它的负责人手上。
+EVENT_BLOCK_UPGRADED: Final = "block_upgraded"
 #: A message expected to enter the live session had to return to the queue.
 EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -150,6 +153,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_CARD_VOIDED,
         EVENT_CARD_REDESCRIBED,
         EVENT_UPSTREAM_CONFLICT,
+        EVENT_BLOCK_UPGRADED,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,

@@ -40,7 +40,7 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     # the room is chat_send's alone, here as in any other room — that contract
     # is pinned in test_chat_publication.py.
     with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "设个偏好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 设个偏好"})
         frames = []
         while True:
             f = ws.receive_json()

@@ -19,7 +19,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.identity.actor import Actor
 from app.domain.project.forge import proposal_client
 from app.domain.review import pr_publish
@@ -37,6 +37,7 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
+from app.domain.topic_membership.services import TopicMemberService
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -341,6 +342,11 @@ async def reject_card(
         if actionable
         else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
     )
+    seat = (
+        await TopicMemberService(db).resolve_agent_handle(topic_id)
+        if actionable
+        else None
+    )
     await db.commit()  # the card's new state must be readable by the woken turn
     runner.submit(
         chat,
@@ -349,7 +355,9 @@ async def reject_card(
         content=(
             f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
-        summon=actionable,
+        # 驳回的人点的是芝士的名：活还开着，下一步就在它手上。活已经关了就谁也没点
+        # 到 —— 一条没有收件人的事件落在房间里，不起任何一轮（I13）。
+        addressed=addressed_to_agent(seat),
         nudge_event=f"{decided_by} 驳回了验收卡"
         + ("，芝士去改" if actionable else "，原任务已结束"),
         nudge_meta=notice(

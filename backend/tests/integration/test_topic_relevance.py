@@ -81,7 +81,7 @@ def _card(client, tid: str, reviewer: str) -> str:
 def _say(client, tid: str, speaker: str, text: str) -> None:
     """Post a human message, no agent turn — mentions fire on the block persist."""
     with client.websocket_connect(chat_ws_url(tid, speaker)) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": False})
+        ws.send_json({"type": "message", "content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

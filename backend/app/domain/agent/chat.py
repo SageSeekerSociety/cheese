@@ -36,7 +36,6 @@ from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
 from app.domain.agent.harness.prompt import (
-    KICKOFF_PROMPT,
     attachment_prompt_line,
     build_system_prompt,
     chipify_paths,
@@ -1774,33 +1773,6 @@ class ChatService:
         """
         return self._active_turn_ids.get(topic_id) == turn_id
 
-    async def kickoff(
-        self,
-        *,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None = None,
-        prompt: str | None = None,
-    ) -> AsyncIterator[dict]:
-        """An agent turn triggered by a PLATFORM EVENT, not a posted message:
-        分身自动开工 after a split/upgrade (default prompt), or the parent
-        digesting a returned conclusion (custom prompt). No fake human block is
-        posted — the instruction is prompt-only, so the visible result is only
-        what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
-        turn_id = turn_id or uuid.uuid4()
-        async with self._prompt_lock(topic_id, turn_id):
-            async for frame in self._converse_impl(
-                topic_id=topic_id,
-                content=prompt or KICKOFF_PROMPT,
-                turn_id=turn_id,
-                user_block_id=None,
-                # Same default converse() applies: the turn is its own unit of
-                # work, so an auto-resume re-saying a message it already posted
-                # is recognized (④) — kickoff turns ran unprotected before.
-                continuation_id=turn_id,
-                platform_turn=True,
-            ):
-                yield frame
-
     async def post_system_event(
         self,
         topic_id: uuid.UUID,
@@ -2191,12 +2163,12 @@ class ChatService:
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
-        any other: an interval a sweep can find, and everything its Stop needs.
+        any other: everything its Stop needs.
 
-        Without this, a self-started turn's Stop landed the message and then did
-        nothing at all — no usage row, no conclusion cards settled, no change
-        summary, and no interval to close, because none was ever opened. The
-        room could not even tell you the turn had happened.
+        它**不再开一条平台这边的轮次记录**。那条记录以前挂在一个谁也没写过的作者值
+        `SELF_STARTED_AUTHOR = "session"` 上；按结论 13，平台不发起一轮，也就没有这
+        样一种「没有发件人的轮次」可记 —— 一个 worker 做完唤醒主线程，那是同 handle
+        之间的一条便条，发件人和收件人都在，不需要第三种作者。
 
         Read rather than assembled: there is no prompt to build here, so this
         takes only what turn END needs, and takes it in one transaction. Two
@@ -2209,8 +2181,6 @@ class ChatService:
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
-        from app.api.deps import get_work_runner
-
         try:
             async with self._sessions() as session:
                 place = await PlaceResolver(session).resolve(topic_id)
@@ -2226,10 +2196,10 @@ class ChatService:
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
                 private_owner = topic.private_owner
-            await get_work_runner().open_self_started_turn(self, topic_id, turn_id)
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
-                "could not open a self-started turn (topic=%s, work=%s)",
+                "could not read the context of a session-started turn "
+                "(topic=%s, work=%s)",
                 topic_id,
                 turn_id,
             )
@@ -2522,10 +2492,6 @@ class ChatService:
                     )
                 finally:
                     self._hook_work.pop((topic_id, turn_id), None)
-                    if state.self_started:
-                        # No coroutine owns this one, so there is no `finally`
-                        # anywhere else to drop the marks it left in the runner.
-                        get_work_runner().close_self_started_turn(turn_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -2744,7 +2710,11 @@ class ChatService:
             recipient = {
                 "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
-                "mentioned": False,
+                # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
+                # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
+                # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
+                # 服务端算（I13），所以这里自己认下私聊这一档。
+                "mentioned": topic.is_private,
             }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -4566,8 +4536,8 @@ class ChatService:
             # never declared the capability keeps the old wording rather than
             # being told, wrongly, that it drops images.
             #
-            # No pending human block ⇒ nobody spoke: this is a resume nudge,
-            # a kickoff or a returned conclusion. Say so, rather than handing
+            # No pending human block ⇒ nobody spoke: this is a resume nudge
+            # or a returned conclusion. Say so, rather than handing
             # 芝士 bare text that looks like a person's message.
             embeds_images = getattr(provider, "embeds_images", True)
             backlog = "\n".join(
@@ -4672,7 +4642,6 @@ class ChatService:
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
-        from app.api.deps import get_work_runner
 
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
@@ -4871,7 +4840,6 @@ class ChatService:
             for prior_key, prior in list(self._hook_work.items()):
                 if prior_key[0] == topic_id and prior.self_started:
                     self._hook_work.pop(prior_key, None)
-                    get_work_runner().close_self_started_turn(prior_key[1])
             state = self._hook_work.get(key)
             if state is None:
                 self._hook_work[key] = _HookWorkState(

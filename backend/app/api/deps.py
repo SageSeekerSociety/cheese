@@ -15,7 +15,11 @@ from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
-from app.domain.agent.runtime import AgentWorkRunner, get_broker
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    addressed_to_agent,
+    get_broker,
+)
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.actor import Actor
@@ -144,8 +148,19 @@ def get_cloud_wakeup() -> CloudWakeup:
         async with async_session_factory() as session:
             return await MachineService(session).ready_topic_devices(device_id)
 
-    async def kickoff(topic_id: uuid.UUID) -> None:
-        get_work_runner().submit_kickoff(chat, topic_id, prompt=WAKE_PROMPT)
+    async def deliver_held(topic_id: uuid.UUID) -> None:
+        """把房间扣着的那条消息送出去 —— 收件人是它当初点的那个席位。"""
+        from app.domain.topic_membership.services import TopicMemberService
+
+        async with async_session_factory() as session:
+            seat = await TopicMemberService(session).resolve_agent_handle(topic_id)
+        get_work_runner().submit(
+            chat,
+            topic_id,
+            author="system",
+            content=WAKE_PROMPT,
+            addressed=addressed_to_agent(seat),
+        )
 
     async def announce(topic_id: uuid.UUID) -> None:
         block = await chat.post_system_event(
@@ -189,7 +204,7 @@ def get_cloud_wakeup() -> CloudWakeup:
     return CloudWakeup(
         ready_leases=ready_leases,
         waiting_topics=chat.cloud_waiting_topics,
-        kickoff=kickoff,
+        deliver_held=deliver_held,
         announce=announce,
         is_online=device_hub.is_online,
         announce_failure=announce_failure,

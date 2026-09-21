@@ -111,13 +111,13 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(client, tm
 
     # 一轮开起来，并且停在半路（会话还活着）。
     await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="去查一下这条链路", summon=True
+        svc, topic_id, author="wangchangxin", content="@芝士 去查一下这条链路"
     )
     await asyncio.wait_for(screen.started.wait(), 5)
 
     # 干活途中，有人不带 @ 地说了一句正事。
     await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="直接说你准备怎么改", summon=False
+        svc, topic_id, author="wangchangxin", content="直接说你准备怎么改"
     )
 
     await _until(lambda: len(screen.delivered) == 1)
@@ -146,16 +146,14 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(client, tmp_
     topic_id = await _a_topic(factory)
 
     await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="去查一下这条链路", summon=True
+        svc, topic_id, author="wangchangxin", content="@芝士 去查一下这条链路"
     )
     await asyncio.wait_for(screen.started.wait(), 5)
 
     await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="直接说你准备怎么改", summon=False
+        svc, topic_id, author="wangchangxin", content="直接说你准备怎么改"
     )
-    await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="<@cheese>", summon=True
-    )
+    await broker.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
 
     await _until(lambda: len(screen.delivered) == 2)
     assert [p.split("\n\n", 1)[0] for p in screen.delivered] == [
@@ -185,7 +183,7 @@ async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(client, tmp
     topic_id = await _a_topic(factory)
 
     await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="先记一句", summon=False
+        svc, topic_id, author="wangchangxin", content="先记一句"
     )
     await asyncio.sleep(0.1)
 
@@ -206,11 +204,9 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(client, tmp_p
     topic_id = await _a_topic(factory)
 
     await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="先记一句", summon=False
+        svc, topic_id, author="wangchangxin", content="先记一句"
     )
-    await broker.receive_message(
-        svc, topic_id, author="wangchangxin", content="<@cheese>", summon=True
-    )
+    await broker.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
     await asyncio.wait_for(screen.started.wait(), 5)
 
     assert len(screen.prompts) == 1

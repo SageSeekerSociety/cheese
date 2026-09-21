@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import agent_handle_column
@@ -44,6 +45,13 @@ class SchedulerService:
         # and an outage do not read the same. One instance drives every tick.
         self._transient_misses: dict[uuid.UUID, int] = {}
         self._dependency_wakes: set[uuid.UUID] = set()
+
+    async def _agent_seat(self, topic_id: uuid.UUID) -> str:
+        """这个房间的 agent 席位 —— 平台这些事件点的就是它的名。"""
+        from app.domain.topic_membership.services import TopicMemberService
+
+        async with self._sessions() as session:
+            return await TopicMemberService(session).resolve_agent_handle(topic_id)
 
     async def tick(self) -> dict:
         """Parked — see docs/agent-principles.md §12.
@@ -208,8 +216,14 @@ class SchedulerService:
             from app.api.deps import get_work_runner
 
             record = await open_dream(session, topic_id=topic_id, project_id=project_id)
-            turn_id = get_work_runner().submit_kickoff(
-                self._chat, topic_id, prompt=DREAM_PROMPT
+            # 记忆整理是这个 agent 自己的事，收件人就是它自己的席位 —— 平台送一条
+            # 事件过去，不替它起一轮（I12）。
+            turn_id = get_work_runner().submit(
+                self._chat,
+                topic_id,
+                author="system",
+                content=DREAM_PROMPT,
+                addressed=addressed_to_agent(await self._agent_seat(topic_id)),
             )
             record.turn_id = turn_id
             await session.commit()
@@ -314,7 +328,7 @@ class SchedulerService:
                     room_id,
                     author="system",
                     content="",
-                    summon=True,
+                    addressed=addressed_to_agent(await self._agent_seat(room_id)),
                     nudge_event="正在检查任务依赖",
                     nudge_meta=notice(
                         EVENT_DEPENDENCY_CLOSED,
@@ -439,13 +453,15 @@ class SchedulerService:
 
         runner = get_work_runner()
 
-        def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
+        async def nudge(
+            topic_id: uuid.UUID, content: str, event: str, meta: dict
+        ) -> None:
             runner.submit(
                 self._chat,
                 topic_id,
                 author="system",
                 content=content,
-                summon=True,
+                addressed=addressed_to_agent(await self._agent_seat(topic_id)),
                 nudge_event=event,
                 nudge_meta=meta,
             )

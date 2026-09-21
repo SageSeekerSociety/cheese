@@ -20,6 +20,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
@@ -32,6 +33,7 @@ from app.domain.project.environment_recovery import (
 )
 from app.domain.project.models import Project, ProjectRole
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
 router = APIRouter(prefix="/projects/{project_id}/environment", tags=["environment"])
@@ -366,10 +368,15 @@ async def repair_environment(
             "dispatched_at": datetime.now(UTC).isoformat(),
         }
         await db.commit()
-        get_work_runner().submit_kickoff(
+        # 环境修好了，下一步回到这个房间的芝士手上 —— 平台把这条事件送过去，那些
+        # 一直没送达的用户消息随待读窗口一起被它读到（I12）。
+        seat = await TopicMemberService(db).resolve_agent_handle(topic_id)
+        get_work_runner().submit(
             chat,
             topic_id,
+            author="system",
+            content="环境配置已修复，请继续处理此前尚未送达的用户消息。",
+            addressed=addressed_to_agent(seat),
             turn_id=turn_id,
-            prompt="环境配置已修复，请继续处理此前尚未送达的用户消息。",
         )
     return ok({"state": "retrying", "turn_id": str(turn_id)})

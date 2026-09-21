@@ -78,7 +78,7 @@ def _project_and_topic(client) -> str:
 def _say(client, topic_id: str, text: str) -> None:
     """Send one message and let its turn finish (however it finishes)."""
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 " + text})
         while ws.receive_json()["type"] != "done":
             pass
 

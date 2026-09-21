@@ -58,7 +58,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
     seen: list[str] = []
     try:
         with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-            ws.send_json({"type": "message", "content": "不要丢掉我", "summon": True})
+            ws.send_json({"type": "message", "content": "@芝士 不要丢掉我"})
             while True:
                 frame = ws.receive_json()
                 seen.append(frame["type"])

@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -83,11 +84,19 @@ async def report_failure(
                 "room_id": str(topic_id),
             },
         )
-        get_work_runner().submit_kickoff(
+        # 收件人是总览房间的芝士席位：房间的环境倒了，下一步在它手上。平台只是把
+        # 这条事件送到那个席位，不替它起一轮（I12）。
+        from app.domain.topic_membership.services import TopicMemberService
+
+        async with chat.session_factory() as seats:
+            seat = await TopicMemberService(seats).resolve_agent_handle(root)
+        get_work_runner().submit(
             chat,
             root,
+            author="system",
+            addressed=addressed_to_agent(seat),
             turn_id=dispatch_turn,
-            prompt=(
+            content=(
                 f"房间 {topic_id} 的环境准备失败，任务消息尚未送达。"
                 f"修复记录：{event.id}。使用 cheese api GET {path} 读取失败步骤、"
                 "日志和房间配置。诊断原因后，如能修复，使用 cheese api POST "
@@ -124,7 +133,7 @@ async def reconcile_recovery(db, topic_id):
         return event
     meta = event.meta or {}
     turn_id = uuid.UUID(meta["dispatch_turn"])
-    if get_work_runner().kickoff_pending(turn_id):
+    if get_work_runner().turn_pending(turn_id):
         return event
     turn = await db.get(AgentTurn, turn_id)
     if turn is not None and turn.stopped_at is None:

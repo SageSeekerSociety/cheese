@@ -70,7 +70,7 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
 def _turn(client, topic_id: str, content: str = "hi") -> list[dict]:
     """Run one summoned turn against the stub agent, return its frames."""
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": content, "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 " + content})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -209,7 +209,7 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
     """Post a human message that notifies but starts no turn."""
     with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
-        ws.send_json({"type": "message", "content": content, "summon": False})
+        ws.send_json({"type": "message", "content": content})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
