@@ -24,4 +24,6 @@ def test_preset_initializes_a_project_agent(client):
     ).json()["data"]
     agent = client.get(f"/projects/{project['id']}/agents").json()["data"]["data"][0]
     assert agent["configuration"]["body"] == preset["body"]
-    assert agent["configuration"]["model"]
+    # 一个类型交出去的是角色。模型不在其中——它绑在活上，卡是它唯一的住处。
+    assert "model" not in preset
+    assert "model" not in agent["configuration"]

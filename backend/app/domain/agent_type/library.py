@@ -2,6 +2,9 @@
 
 Presets ship as Markdown files in ``presets/``. Creation copies their values
 onto an agent; existing agents never resolve their configuration through here.
+
+一个类型说的是**角色**：人设、技能、外部工具。模型、骨架、思考深度都不在其中
+——模型绑在活上（结论 3），骨架是部署的开发者选项（结论 28）。
 """
 
 from dataclasses import dataclass, field
@@ -21,11 +24,6 @@ class AgentTypeDef:
     # Skills loaded at start, and MCP servers reachable — the tool surface.
     skills: list[str] = field(default_factory=list)
     mcp_servers: list[str] = field(default_factory=list)
-    # How it runs. None = whatever the platform would have used anyway; a type
-    # that does not care must not pin the deployment's choice.
-    model: str | None = None
-    effort: str | None = None
-    harness: str | None = None
 
 
 _PRESET_DIR = Path(__file__).resolve().parent / "presets"
@@ -87,9 +85,6 @@ def load_type_library(directory: Path) -> dict[str, AgentTypeDef]:
             body=body,
             skills=parse_list_value(meta.get("skills", "")),
             mcp_servers=parse_list_value(meta.get("mcp_servers", "")),
-            model=meta.get("model") or None,
-            effort=meta.get("effort") or None,
-            harness=meta.get("harness") or None,
         )
     return types
 
