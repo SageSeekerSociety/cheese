@@ -21,7 +21,9 @@ from app.domain.memory.models import (
     MemoryEntry,
     MemoryScope,
     agent_project_scope_id,
-    agent_project_scope_prefix,
+    project_scope_prefix,
+    user_scope_about,
+    user_scope_id,
 )
 from app.domain.memory.store import live_entries
 
@@ -54,7 +56,7 @@ async def list_memory(
     agent_handle: str | None = None,
     include_agent: bool = True,
 ) -> dict:
-    """Memory entries for a project and/or a user, newest first.
+    """Memory entries for a project and/or a person, newest first.
 
     A project's memory includes what its 芝士 remembered: `cheese remember`
     always carries a topic, so in practice every agent write lands in an
@@ -64,6 +66,13 @@ async def list_memory(
     from. ``agent_handle`` narrows to one agent's pool, ``include_agent=false``
     is the escape hatch back to the shared project pool alone (it wins over
     ``agent_handle`` if both are given).
+
+    ``user_handle`` asks the other question a person has about memory — what
+    has been remembered *about me* — and it is answered INSIDE this project:
+    a pool about a person belongs to one agent instance in one project (结论
+    8), so listing it without a project would hand the reader another project's
+    notes about the same person. That is why it no longer stands alone as a
+    condition of its own.
     """
     conds = []
     if project_id is not None:
@@ -89,14 +98,24 @@ async def list_memory(
                 conds.append(
                     agent_cond
                     & MemoryEntry.scope_id.startswith(
-                        agent_project_scope_prefix(project_id), autoescape=True
+                        project_scope_prefix(project_id), autoescape=True
                     )
                 )
-    if user_handle:
-        conds.append(
-            (MemoryEntry.scope == MemoryScope.user)
-            & (MemoryEntry.scope_id == user_handle)
-        )
+            if user_handle:
+                if agent_handle:
+                    about = MemoryEntry.scope_id == user_scope_id(
+                        project_id, agent_handle, user_handle
+                    )
+                else:
+                    # 这个项目里每一位 agent 对他的记录。前缀锁住项目，后缀锁住
+                    # 人，中间那一段是谁记的——两头夹住才既不漏掉一位队友，也不
+                    # 把别的项目对同一个人的记录带进来。
+                    about = MemoryEntry.scope_id.startswith(
+                        project_scope_prefix(project_id), autoescape=True
+                    ) & MemoryEntry.scope_id.endswith(
+                        user_scope_about(user_handle), autoescape=True
+                    )
+                conds.append((MemoryEntry.scope == MemoryScope.user) & about)
     if not conds:
         return ok(page([], 0))
     cond = conds[0]

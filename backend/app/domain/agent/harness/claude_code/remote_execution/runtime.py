@@ -1261,6 +1261,61 @@ class Executor:
             return {"version": hashlib.sha256(data).hexdigest()[:16]}
         raise ValueError("Unknown task filesystem operation")
 
+    def repo_search(self, params):
+        """Find lines in this room's checkout that carry the given keywords.
+
+        What it is for: 记忆只记 repo 里查不到的东西（结论 61），and the only
+        place that can answer "is it in the repo" is the machine holding the
+        checkout — the platform has no copy of it. Tracked files and untracked
+        ones both count: a fact written in a file that is not committed yet is
+        still written down somewhere a person will read.
+
+        A private chat rents no place and has no checkout (结论 19), so it
+        answers with nothing rather than searching whatever the process happens
+        to be standing in.
+        """
+        if self.config.get("private"):
+            return {"hits": []}
+        terms = [
+            term
+            for term in params.get("terms", [])
+            if isinstance(term, str) and term.strip()
+        ][:12]
+        if not terms:
+            return {"hits": []}
+        argv = [
+            "git",
+            "-C",
+            str(self.root),
+            "grep",
+            "--no-color",
+            "-n",  # line numbers: the refusal names a place, not just a file
+            "-I",  # never a binary
+            "-F",  # the keywords are literals, not patterns
+            "-i",
+            "--untracked",
+            "--max-count",
+            "3",
+        ]
+        for term in terms:
+            argv += ["-e", term]
+        try:
+            result = subprocess.run(argv, capture_output=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return {"hits": []}
+        # 1 = 一行都没匹配上，是答案；其余（没有 git、这里不是仓库）是查不成，
+        # 两种都还回空，由调用端决定怎么办。
+        if result.returncode not in (0, 1):
+            return {"hits": []}
+        hits = []
+        for line in result.stdout.decode("utf-8", "replace").splitlines()[:200]:
+            path, _, rest = line.partition(":")
+            number, _, text = rest.partition(":")
+            if not number.isdigit():
+                continue
+            hits.append({"path": path, "line": int(number), "text": text[:400]})
+        return {"hits": hits}
+
     def context_fs(self, params):
         """Expose the native project context as a bounded read-only file view."""
         if self.config.get("private"):
@@ -1530,6 +1585,8 @@ class Executor:
             return self.context_fs(params)
         if method == "task_fs":
             return self.task_fs(params)
+        if method == "repo_search":
+            return self.repo_search(params)
         if method == "mcp":
             return self.client(params["server"]).call(
                 params["method"], params.get("params")
