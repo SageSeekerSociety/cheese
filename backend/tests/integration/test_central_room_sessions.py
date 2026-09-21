@@ -421,7 +421,7 @@ async def test_a_room_stays_writable_while_its_agent_is_starting(
             token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
             env={},
             launch=ClaudeLaunch("System"),
-            precheck=await central.precheck(ref(project, topic)),
+            precheck=await central.precheck(ref(project, topic), needs_place=True),
         )
     )
     try:
