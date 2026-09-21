@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.memory.models import MemoryLayer, MemoryScope
+from app.domain.memory.models import MemoryLayer, MemoryScope, user_scope_id
 from app.domain.memory.store import DbMemoryStore, recall_pools
 
 if TYPE_CHECKING:
@@ -142,5 +142,27 @@ def test_core_survives_a_pool_that_has_outgrown_the_prompt(
         # The prompt is told exactly how much of the pool it did not get —
         # that is the part that must never go silent.
         assert got.omitted == 155
+
+    _portal.call(_run)
+
+
+def test_the_longest_pool_key_anyone_can_name_still_fits_the_column(
+    db_session: AsyncSession, _portal: "BlockingPortal"
+):
+    """一个池的键最长能有多长，是用户填得出来的，不是我们挑的。
+
+    关于某个人的池键是 `<项目 uuid>:<agent handle>:<人的 handle>`，两个 handle 各
+    自最长 64（agent 的是用户在「AI 队友」页自己填的），36+1+64+1+64 = 166。列比
+    它窄一个字符，`cheese remember` 就是一个 500，迁移里同样的拼接就是一次
+    `alembic upgrade head` 失败——而那一步失败，整次发布停在换容器之前。
+    """
+
+    async def _run() -> None:
+        store = DbMemoryStore(db_session)
+        longest = user_scope_id(uuid.uuid4(), "a" * 64, "b" * 64)
+        await store.remember(MemoryScope.user, longest, "他要结论在最前面")
+        await db_session.flush()
+
+        assert await store.recall(MemoryScope.user, longest) == ["他要结论在最前面"]
 
     _portal.call(_run)
