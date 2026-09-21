@@ -494,9 +494,7 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices (and switching to the AI channel above). Its own switch, NOT the
-    # project scheduler's: that one spends model budget on 定期巡检 and ships
-    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # devices (and switching to the AI channel above). Ten seconds, not sixty: a Cloud
     # topic's first turn crosses this clock twice (running → switch the AI
     # channel, ready → enroll), and at 60s a person waited up to two minutes on
     # a timer for a machine that was already there. A tick with nothing
@@ -610,10 +608,6 @@ class Settings(BaseSettings):
     # rises with it, until a per-machine gate exists.
     max_concurrent_turns: int = 16
 
-    # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
-    # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
-    # (manual heartbeat only; default off so dev/tests don't burn model calls).
-    scheduler_interval_seconds: int = 0
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
     # Where the platform keeps the raw Claude session files of every place that
@@ -627,10 +621,10 @@ class Settings(BaseSettings):
     # The most one upload may carry. A device that sends more gets 413 and
     # keeps its home; the sweep says so every tick until somebody looks.
     transcripts_max_bytes: int = 512 * 1024 * 1024
-    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
-    # unlike the heartbeat above: it consumes no model calls unless it actually
-    # finds a killed turn, and its whole purpose is catching the case where
-    # nothing else will ever look — a turn dying without the process dying.
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by
+    # default: it consumes no model calls unless it actually finds a killed
+    # turn, and its whole purpose is catching the case where nothing else will
+    # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)

@@ -3,7 +3,7 @@
 Data-only migration — no schema change. Before this, `TopicService._archive_one`
 did not touch accept cards, so archiving a topic left its card on a non-terminal
 status forever. For `pr_open` cards that was not "stopped" but "still running":
-`SchedulerService.poll_open_prs` selected purely on the CARD's status, so every
+the merge-state poller selected purely on the CARD's status, so every
 60s it kept driving them with the approver's GitHub token.
 
 The code fix (review/archive.py + AcceptCardRepository.list_pr_open_on_active_topics)

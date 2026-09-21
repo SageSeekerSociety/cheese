@@ -421,21 +421,6 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
     assert MachineService is not Service
 
 
-def test_enrollment_does_not_ride_the_ai_scheduler():
-    """Machines must not require 定期巡检 to be switched on.
-
-    The project scheduler spends model budget and ships disabled
-    (scheduler_interval_seconds = 0), which is exactly the state dev runs in — a
-    machine enrolled only from that tick would never be enrolled at all.
-    """
-    import inspect
-
-    from app.domain.scheduler.service import SchedulerService
-
-    source = inspect.getsource(SchedulerService)
-    assert "enroll" not in source
-
-
 def test_the_script_provides_tmux_the_connector_needs():
     """The connector hosts sessions in tmux and exits without one.
 

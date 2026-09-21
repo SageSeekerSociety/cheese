@@ -2,7 +2,7 @@
 
 "孤儿卡" = 停在**已归档话题**上、状态却还是非终态（pending / pending_gate /
 conflict / pr_open）的验收卡。`pr_open` 那几张最要命：修复之前
-`SchedulerService.poll_open_prs` 只按卡的 status 选行，所以它们每 60 秒还在被
+合并态轮询（`review/pr_poll.py`）只按卡的 status 选行，所以它们每 60 秒还在被
 推进——用的是 `decided_by` 那个人的 GitHub token。
 
 用法（在能连到目标库的地方）::

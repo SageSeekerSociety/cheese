@@ -104,10 +104,25 @@ def _file_card(client, topic_id: str, reviewer: str = "alice"):
     )
 
 
+def _chat_service():
+    """生产上扫底拿到的就是这一个 ChatService（`deps.get_chat_service` 的单例）。"""
+    from app.api.deps import get_chat_service
+    from app.main import app
+
+    return app.dependency_overrides[get_chat_service]()
+
+
 def _sweep(client) -> dict:
-    r = client.post("/admin/scheduler/sweep-abandoned-gates")
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
+    """跑一轮闸门扫底。
+
+    在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：扫底会 `submit`
+    叫醒芝士的那一轮，它得落在 work runner 所在的那个循环上——生产上这一轮也正
+    是从那里跑的（`app/core/background.py` 的 "gate sweep"）。
+    """
+    from app.core import background
+
+    result = client.portal.call(background.sweep_abandoned_gates, _chat_service())
+    return {**result, "condemned": [str(cid) for cid in result["condemned"]]}
 
 
 def _deadline_passed(monkeypatch) -> None:

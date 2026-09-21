@@ -22,12 +22,18 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.domain.scheduler.service import (
-    TRANSIENT_MISSES_BEFORE_ERROR,
-    SchedulerService,
-)
+from app.domain.review import pr_poll
+from app.domain.review.pr_poll import TRANSIENT_MISSES_BEFORE_ERROR
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def _forget_misses_between_tests():
+    """一张卡连丢了几拍是进程状态：一条用例留下的计数会让下一条提前（或推迟）报错。"""
+    pr_poll._transient_misses.clear()
+    yield
+    pr_poll._transient_misses.clear()
 
 
 class _Session:
@@ -36,8 +42,8 @@ class _Session:
     async def rollback(self) -> None: ...
 
 
-def _scheduler(monkeypatch, failure: Exception) -> tuple[SchedulerService, dict]:
-    """A scheduler whose one card fails with `failure` until `next` is emptied."""
+def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:
+    """A chat binding whose one card fails with `failure` until `next` is emptied."""
     card_id = uuid.uuid4()
     next_outcome: dict = {"failure": failure}
 
@@ -60,11 +66,10 @@ def _scheduler(monkeypatch, failure: Exception) -> tuple[SchedulerService, dict]
         "app.domain.review.services.AcceptService", _AcceptService, raising=True
     )
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: None, raising=True)
-    scheduler = SchedulerService(chat_service=SimpleNamespace(session_factory=sessions))
     monkeypatch.setattr(
-        scheduler, "_note_card_poll_crashed", _nothing_on_the_card, raising=True
+        pr_poll, "_note_card_poll_crashed", _nothing_on_the_card, raising=True
     )
-    return scheduler, next_outcome
+    return SimpleNamespace(session_factory=sessions), next_outcome
 
 
 async def _nothing_on_the_card(*_args, **_kwargs) -> None:
@@ -76,12 +81,10 @@ def _errors(caplog) -> list[logging.LogRecord]:
 
 
 async def test_one_missed_tick_is_not_worth_waking_anyone(monkeypatch, caplog):
-    scheduler, _outcome = _scheduler(
-        monkeypatch, httpx.ConnectError("no route to host")
-    )
+    chat, _outcome = _poller(monkeypatch, httpx.ConnectError("no route to host"))
 
     with caplog.at_level(logging.DEBUG):
-        result = await scheduler.poll_open_prs()
+        result = await pr_poll.poll_open_prs(chat)
 
     assert _errors(caplog) == []
     assert any(r.levelno == logging.WARNING for r in caplog.records)
@@ -91,13 +94,11 @@ async def test_one_missed_tick_is_not_worth_waking_anyone(monkeypatch, caplog):
 
 
 async def test_retries_that_keep_failing_are_reported(monkeypatch, caplog):
-    scheduler, _outcome = _scheduler(
-        monkeypatch, httpx.ConnectError("no route to host")
-    )
+    chat, _outcome = _poller(monkeypatch, httpx.ConnectError("no route to host"))
 
     with caplog.at_level(logging.DEBUG):
         for _ in range(TRANSIENT_MISSES_BEFORE_ERROR):
-            await scheduler.poll_open_prs()
+            await pr_poll.poll_open_prs(chat)
 
     assert len(_errors(caplog)) == 1
 
@@ -105,24 +106,24 @@ async def test_retries_that_keep_failing_are_reported(monkeypatch, caplog):
 async def test_a_failure_that_is_not_the_network_is_reported_at_once(
     monkeypatch, caplog
 ):
-    scheduler, _outcome = _scheduler(monkeypatch, KeyError("pr_number"))
+    chat, _outcome = _poller(monkeypatch, KeyError("pr_number"))
 
     with caplog.at_level(logging.DEBUG):
-        await scheduler.poll_open_prs()
+        await pr_poll.poll_open_prs(chat)
 
     assert len(_errors(caplog)) == 1
 
 
 async def test_a_tick_that_works_forgives_the_misses_before_it(monkeypatch, caplog):
     """Two blips an hour apart are two blips, not a machine on its way out."""
-    scheduler, outcome = _scheduler(monkeypatch, httpx.ConnectError("blip"))
+    chat, outcome = _poller(monkeypatch, httpx.ConnectError("blip"))
 
     with caplog.at_level(logging.DEBUG):
-        await scheduler.poll_open_prs()
+        await pr_poll.poll_open_prs(chat)
         outcome["failure"] = None
-        await scheduler.poll_open_prs()
+        await pr_poll.poll_open_prs(chat)
         outcome["failure"] = httpx.ConnectError("blip")
         for _ in range(TRANSIENT_MISSES_BEFORE_ERROR - 1):
-            await scheduler.poll_open_prs()
+            await pr_poll.poll_open_prs(chat)
 
     assert _errors(caplog) == []

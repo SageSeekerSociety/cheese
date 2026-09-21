@@ -196,7 +196,11 @@ def test_live_subscription_stops_receiving_when_its_authorization_expires(
 
 @pytest.mark.anyio
 async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
-    from app.domain.review import events
+    from app.domain.review import events, pr_poll
+
+    # 这条盯的是 socket 的生命周期，不是对账本身；对账另有它自己的用例。
+    monkeypatch.setattr(pr_poll, "open_draft_prs", AsyncMock())
+    monkeypatch.setattr(pr_poll, "poll_open_prs", AsyncMock())
 
     started = asyncio.Event()
     stopped = asyncio.Event()
@@ -231,7 +235,7 @@ async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
     monkeypatch.setattr(events, "register_subscriptions", register)
     monkeypatch.setattr(events.asyncio, "sleep", retry)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(AsyncMock(), None), 2)
+        await asyncio.wait_for(events.listen(object(), None), 2)
 
 
 @pytest.mark.anyio
@@ -430,9 +434,15 @@ def test_body_size_is_bounded_before_json_parsing(client, monkeypatch):
 
 @pytest.mark.anyio
 async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch):
-    from app.domain.review import events
+    from app.domain.review import events, pr_poll
 
-    scheduler = AsyncMock()
+    poll = AsyncMock()
+    monkeypatch.setattr(pr_poll, "open_draft_prs", poll.open_draft_prs)
+    monkeypatch.setattr(pr_poll, "poll_open_prs", poll.poll_open_prs)
+    monkeypatch.setattr(
+        pr_poll, "forge_repository_changed", poll.forge_repository_changed
+    )
+    chat = object()
     attempts = []
 
     class Socket:
@@ -440,7 +450,7 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
             return self
 
         async def __anext__(self):
-            if scheduler.forge_repository_changed.await_count:
+            if poll.forge_repository_changed.await_count:
                 raise asyncio.CancelledError
             return json.dumps({"kind": "forgejo", "repo": "owner/project"})
 
@@ -464,23 +474,24 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     )
     monkeypatch.setattr(events.settings, "forge_event_secret", "deployment-secret")
     with pytest.raises(asyncio.CancelledError):
-        await events.listen(scheduler, None)
+        await events.listen(chat, None)
     assert len(attempts) == 2
     assert attempts[1][1]["additional_headers"] == {
         "Authorization": "Bearer deployment-secret"
     }
-    scheduler.open_draft_prs.assert_awaited_once()
-    scheduler.poll_open_prs.assert_awaited_once()
-    scheduler.forge_repository_changed.assert_awaited_once_with(
-        kind="forgejo", repo="owner/project"
+    poll.open_draft_prs.assert_awaited_once_with(chat)
+    poll.poll_open_prs.assert_awaited_once_with(chat)
+    poll.forge_repository_changed.assert_awaited_once_with(
+        chat, kind="forgejo", repo="owner/project"
     )
 
 
 @pytest.mark.anyio
 async def test_event_refresh_is_limited_to_bound_repository(db_factory, monkeypatch):
+    from types import SimpleNamespace
+
     from app.domain.project.models import Project, ProjectForge
-    from app.domain.review import pr_publish
-    from app.domain.scheduler.service import SchedulerService
+    from app.domain.review import pr_poll, pr_publish
 
     async with db_factory() as session:
         first, second = Project(name="First"), Project(name="Second")
@@ -498,17 +509,19 @@ async def test_event_refresh_is_limited_to_bound_repository(db_factory, monkeypa
                 )
             )
         await session.commit()
-    scheduler = object.__new__(SchedulerService)
-    scheduler._sessions = db_factory
-    scheduler.poll_open_prs = AsyncMock()
+    chat = SimpleNamespace(session_factory=db_factory)
+    poll = AsyncMock()
+    monkeypatch.setattr(pr_poll, "poll_open_prs", poll)
     sweep = AsyncMock()
     monkeypatch.setattr(pr_publish, "sweep_draft_prs", sweep)
-    await scheduler.forge_repository_changed("forgejo", "owner/first")
+    await pr_poll.forge_repository_changed(chat, "forgejo", "owner/first")
     sweep.assert_awaited_once_with(db_factory, first.id)
-    scheduler.poll_open_prs.assert_awaited_once_with(first.id)
-    await scheduler.forge_repository_changed("github_app", "owner/first")
+    poll.assert_awaited_once_with(chat, first.id)
+    await pr_poll.forge_repository_changed(chat, "github_app", "owner/first")
     assert sweep.await_count == 1
-    await scheduler.forge_repository_changed("forgejo", "owner/first", str(second.id))
+    await pr_poll.forge_repository_changed(
+        chat, "forgejo", "owner/first", str(second.id)
+    )
     assert sweep.await_count == 1
 
 

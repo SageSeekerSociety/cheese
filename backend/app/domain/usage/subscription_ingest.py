@@ -18,9 +18,8 @@ Credits: a subscription row has no USD price, so it burns the flat token rate
 they dominate (one observed task: 2.9M cached vs 141k fresh). This matches the
 proxy's own cap arithmetic, so the two brakes count the same thing.
 
-``ingest_once`` runs on its own interval (``scheduler/jobs.py``) when
-``SUBSCRIPTION_USAGE_LOG`` is set — never hung off the project scheduler, which
-ships disabled.
+``ingest_once`` runs on its own interval (``app/core/background.py``) when
+``SUBSCRIPTION_USAGE_LOG`` is set.
 """
 
 import hashlib

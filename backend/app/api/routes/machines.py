@@ -138,7 +138,7 @@ async def create_machine(
         machine = await service.provision(
             project_id=project_id,
             requested_by=who.handle,
-            # Enrollment happens later, in the scheduler sweep, long after this
+            # Enrollment happens later, in the enrollment sweep, long after this
             # request returned — so the device's future owner is recorded now.
             owner_user_id=who.user_id,
             ssh_pubkey=body.ssh_pubkey,

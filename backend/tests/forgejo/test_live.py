@@ -352,7 +352,7 @@ async def test_new_repository_registers_forgejo_events(db_factory, monkeypatch):
 async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypatch):
     """Requires host.docker.internal:33087 to reach this test's loopback relay."""
     from app import forge_events_app as relay
-    from app.domain.review import events
+    from app.domain.review import events, pr_poll
 
     url = "http://127.0.0.1:33086"
     admin = Path(os.environ["FORGEJO_TEST_TOKEN_FILE"]).read_text().strip()
@@ -377,12 +377,16 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
     )
     serving = asyncio.create_task(server.serve())
     consumer = None
-    scheduler = AsyncMock()
+    changed = AsyncMock()
+    monkeypatch.setattr(pr_poll, "open_draft_prs", AsyncMock())
+    monkeypatch.setattr(pr_poll, "poll_open_prs", AsyncMock())
+    monkeypatch.setattr(pr_poll, "forge_repository_changed", changed)
+    chat = object()
     try:
         async with asyncio.timeout(10):
             while not server.started:
                 await asyncio.sleep(0.01)
-        consumer = asyncio.create_task(events.listen(scheduler, db_factory))
+        consumer = asyncio.create_task(events.listen(chat, db_factory))
         async with asyncio.timeout(10):
             while "test" not in relay.connections:
                 await asyncio.sleep(0.01)
@@ -406,10 +410,10 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
             )
             delivered.raise_for_status()
         async with asyncio.timeout(20):
-            while not scheduler.forge_repository_changed.await_count:
+            while not changed.await_count:
                 await asyncio.sleep(0.05)
-        scheduler.forge_repository_changed.assert_awaited_with(
-            kind="forgejo", repo=binding.repo, project_id=str(project.id)
+        changed.assert_awaited_with(
+            chat, kind="forgejo", repo=binding.repo, project_id=str(project.id)
         )
     finally:
         if consumer is not None:
