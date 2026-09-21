@@ -275,31 +275,33 @@ check_platform_cli_in_claude_md() {
     "$hits"
 }
 
-# Rule 8 — 平台自己产的事件署名为 `AuthorType.platform`。`system` 是那一档的旧
-# 名字；它还在枚举里，因为库里的存量行仍带着它，但**没有一行新代码可以再写它**。
+# Rule 8 — 退役的档位名字不能以字符串形式写进 `author_type`。这一列只有两档：
+# `participant` 和 `platform`，`human`、`ai`、`system` 都已经离场。
 #
-# 为什么需要一道守卫，而不是「改完就完了」：这一档的读侧判的是「不是
-# participant」（`app/domain/block/authorship.py`），两个名字都过。所以一个漏改或
-# 新加的 `AuthorType.system` 写点，在功能上完全看不出来——房间照样渲染成灰字一行，
-# 测试照样绿。它要等到把 `system` 从枚举里删掉的那次发布才炸，那时新写下的行已经
-# 落在库里，而那次发布的一次性 `UPDATE` 已经跑过去了。
+# 写成 `AuthorType.system` 不需要守卫：成员不在了，一取就是 AttributeError。写成
+# 字符串需要。这一列的类型是 `Enum(AuthorType, native_enum=False, length=16)`，没传
+# `validate_strings`（默认 False），于是 SQLAlchemy 把它不认识的字符串原样绑进
+# INSERT（`sqlalchemy/sql/sqltypes.py` 的 `_db_value_for_elem`），列上也没有 CHECK
+# 约束接着。写的那一刻什么都不响，LookupError 要等下一次 select 取到这行才抛，那时
+# 整条时间线打不开，正是 `2895c4967ca4` 这次发布要终结的故障。
 #
-# 只看 `backend/app`：`tests/` 里要造存量行（迁移测试就得写 `system`），
-# `alembic/versions/` 里的历史迁移是写死的过去。枚举成员自己（`system = "system"`）
-# 不匹配这两个模式，所以不需要豁免——它写的是成员名，不是 `AuthorType.system`。
+# 写错的形状就长在眼前：平台自己的事件署名 `author="system"`（那是 handle，
+# `backend/app` 里十几处，都对），在它旁边再写一个 `author_type="system"` 是顺手的事。
 #
-# 整行注释跳过：注释一行都写不进库，而这一档剩下的那次发布要在代码里讲清楚（那条
-# `UPDATE ... WHERE author_type='system'` 就长得跟第二个模式一模一样）。让守卫对着
-# 说明它自己的那段话报红，结果只会是下一个人把话改得看不懂。
-check_author_type_system_write() {
+# 别处接不住：`tests/unit/test_author_type_two_values.py` 的 AST 扫描追的是**读**
+# （`author_type.value`，以及拿这一列和非成员比），关键字实参是写点，不匹配。
+#
+# 只看 `backend/app`：`tests/` 里要造存量行（迁移测试就得写 'system'），
+# `alembic/versions/` 里的历史迁移是写死的过去。整行注释跳过：注释一行都写不进库。
+check_retired_author_type_as_string() {
   local hits
   hits="$(grep -rnE --include='*.py' \
-    -e 'AuthorType\.system' -e 'author_type *= *["'"'"']system["'"'"']' \
+    'author_type *= *["'"'"'](human|ai|system)["'"'"']' \
     "$ROOT/backend/app" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
   [ -z "$hits" ] && return 0
-  echo "FAIL: 平台那一档的旧名字 system 出现在写入端"
-  report "AuthorType.system is the old name — the platform signs its events as platform" \
-    "use AuthorType.platform; the system member stays only for rows already in the database" \
+  echo "FAIL: 退役的档位名字以字符串形式写进了 author_type"
+  report "a retired author_type name written as a string — SQLAlchemy binds it as-is" \
+    "use AuthorType.participant or AuthorType.platform; the string goes in unchecked and raises on the next read" \
     "$hits"
 }
 
@@ -310,7 +312,7 @@ run_all() {
   check_supply_reverse_lookup
   check_fixed_palette
   check_platform_cli_in_claude_md
-  check_author_type_system_write
+  check_retired_author_type_as_string
 }
 
 # --- palette baseline update ------------------------------------------------
@@ -495,32 +497,33 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "naming the product in a rule must pass"
   rm -rf "$tmp/backend/sandbox" "$tmp/.claude"
 
-  # Rule 8. The fixture is a write point exactly as it read before this change.
+  # Rule 8. The fixture is the half that can actually reach the database: the
+  # string form, which binds unchecked.
   mkdir -p "$tmp/backend/app/domain/review"
-  printf 'await blocks.add(author="cheese", author_type=AuthorType.system)\n' \
+  printf 'await blocks.add(author="system", author_type="system")\n' \
     > "$tmp/backend/app/domain/review/bad_sig.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "AuthorType.system at a write point must fail"
-  # The string form too — `AuthorType` is a StrEnum, so it goes in unnoticed.
-  printf 'await blocks.add(author="cheese", author_type="system")\n' \
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the string form must fail"
+  printf 'await blocks.add(author="cheese", author_type="ai")\n' \
     > "$tmp/backend/app/domain/review/bad_sig.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the string form must fail too"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the retired name ai must fail too"
+  printf 'await blocks.add(author="cheese", author_type="human")\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the retired name human must fail too"
   printf 'await blocks.add(author="cheese", author_type=AuthorType.platform)\n' \
     > "$tmp/backend/app/domain/review/bad_sig.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "AuthorType.platform must pass"
+  # The handle is another column and keeps the word — that is what a live
+  # platform write looks like, and firing on it would make the guard unusable.
+  printf 'await blocks.add(author="system", author_type=AuthorType.platform)\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the author handle must pass"
   rm "$tmp/backend/app/domain/review/bad_sig.py"
-  # The enum member itself must survive: rows already in the database carry it,
-  # and a guard that killed the declaration would make them unreadable. So must
-  # the comment that explains the release still to come — it is the line this
-  # guard first fired on, and it writes nothing.
-  mkdir -p "$tmp/backend/app/domain/block"
-  printf 'class AuthorType(enum.StrEnum):\n    platform = "platform"\n    # UPDATE ... WHERE author_type='"'"'system'"'"' 之后这一档离场。\n    system = "system"\n' \
-    > "$tmp/backend/app/domain/block/models.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the enum declaration and its comment must pass"
   # Scoped to app/: a migration test has to build a row under the old name.
   mkdir -p "$tmp/backend/tests"
-  printf 'rows = {"old": AuthorType.system}\n' > "$tmp/backend/tests/test_rewrite.py"
+  printf 'await blocks.add(author="system", author_type="system")\n' \
+    > "$tmp/backend/tests/test_rewrite.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "tests naming the old value must pass"
-  rm -rf "$tmp/backend/tests" "$tmp/backend/app/domain/block"
+  rm -rf "$tmp/backend/tests"
 
   echo "PASS: check-repo-rules self-test (7 rules, scoping and the palette ratchet verified)"
   exit 0
@@ -532,4 +535,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, AuthorType.system at a write point)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, retired author_type name as a string)"
