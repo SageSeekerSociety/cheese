@@ -70,6 +70,9 @@ import { STATUS_LADDER } from '@/lib/feedbackMeta'
 export type FeedbackTab = 'all' | 'hot' | 'active' | 'resolved'
 /** 管理端的栏位。同上，服务端 `ADMIN_TABS`。 */
 export type AdminTab = 'public' | 'private' | 'agent' | 'security'
+/** 列表的排序。服务端 `SORTS` —— `new` 按时间倒序，`supports` 按支持数。
+ *  管理台那个「最新 / 最热」切换就是这个类型的两半。 */
+export type AdminSort = 'new' | 'supports'
 
 /** 搜索防抖，毫秒。250 是人停手和「它没反应」之间的那条线。 */
 const SEARCH_DEBOUNCE_MS = 250
@@ -83,6 +86,10 @@ let adminSeq = 0
 let mineSeq = 0
 let countsSeq = 0
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+/** 管理台搜索框那一个。和 `searchTimer` 分开，因为两个框可能在同一个浏览器标签
+ *  页里先后被用过（先进反馈中心搜一下，再进管理台搜一下）—— 共用一支定时器时，
+ *  后者会把前者还没发出去的那次输入取消掉，而那次输入属于另一页。 */
+let adminQueryTimer: ReturnType<typeof setTimeout> | null = null
 
 const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 }
 
@@ -168,6 +175,12 @@ export const useFeedbackStore = defineStore('feedback', {
     adminTotal: 0,
     adminLoading: false,
     adminTab: 'public' as AdminTab,
+    /** 管理端这一页的问法。四样东西（栏位 / 搜索词 / 排序 / 起点）里改任何一样都
+     *  是**换了一个问题**，所以它们住在一起、由同一个 action 一起提交 —— 分成四
+     *  个独立状态时，「换了栏位但页码没归零」这类组合是必然出现的。 */
+    adminQuery: '',
+    adminSort: 'new' as AdminSort,
+    adminPageStart: 0,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
        服务端的 WHERE 就不是同一个。 ---- */
@@ -218,6 +231,17 @@ export const useFeedbackStore = defineStore('feedback', {
         active: state.counts.active,
         resolved: state.counts.resolved,
       }
+    },
+    /** 管理端的翻页。**边界由自己手上的那一页算，不靠服务端**：`adminTotal` 是
+     *  整个栏位的条数，用它算「下一页还有没有」需要知道每页多大、而且翻到最后一
+     *  页时会多按一次才发现是空的。手上这一页满员就还有下一页 —— 只有一条边界
+     *  情况（最后一页正好满员），代价是那一次点下去会看到空页，而反过来（先按了
+     *  才去问服务端）要多一次往返。 */
+    adminHasPrev(state): boolean {
+      return state.adminPageStart > 0
+    },
+    adminHasNext(state): boolean {
+      return state.adminItems.length >= PAGE_SIZE
     },
   },
 
@@ -585,7 +609,13 @@ export const useFeedbackStore = defineStore('feedback', {
       this.adminLoading = true
       this.error = null
       try {
-        const page = await listAdminFeedback({ tab: this.adminTab, pageSize: PAGE_SIZE })
+        const page = await listAdminFeedback({
+          tab: this.adminTab,
+          q: this.adminQuery.trim(),
+          sort: this.adminSort,
+          pageStart: this.adminPageStart,
+          pageSize: PAGE_SIZE,
+        })
         if (seq !== adminSeq) return
         this.adminItems = page.data
         this.adminTotal = page.total
@@ -602,6 +632,55 @@ export const useFeedbackStore = defineStore('feedback', {
     setAdminTab(tab: AdminTab): void {
       if (this.adminTab === tab) return
       this.adminTab = tab
+      // 换栏位回到第一页：第 3 页的第 4 条在另一个栏位里没有意义，留着页码会
+      // 直接落到一个空页上 —— 看着像「这一栏一条都没有」。
+      this.adminPageStart = 0
+      void this.loadAdmin()
+    },
+
+    setAdminSort(sort: AdminSort): void {
+      if (this.adminSort === sort) return
+      this.adminSort = sort
+      this.adminPageStart = 0
+      void this.loadAdmin()
+    },
+
+    /** 搜索框。**防抖在 action 里，不在页面上** —— 页面拿到的还是「用户打进来的
+     *  每一个字」，由这里决定什么时候真去打服务端。
+     *
+     *  过期的响应必须扔：手速快时 `cai` 和 `caiy` 两个请求会同时在飞，先发的
+     *  那次**可能后到**，把结果换成上一个词的那一页，而输入框里是新的词。所以
+     *  每次新的输入都把序号推一格，回来晚的看到序号变了就直接丢。 */
+    setAdminQuery(q: string): void {
+      this.adminQuery = q
+      this.adminPageStart = 0
+      if (adminQueryTimer !== null) clearTimeout(adminQueryTimer)
+      adminQueryTimer = setTimeout(() => {
+        adminQueryTimer = null
+        void this.loadAdmin()
+      }, SEARCH_DEBOUNCE_MS)
+    },
+
+    clearAdminQuery(): void {
+      if (adminQueryTimer !== null) {
+        clearTimeout(adminQueryTimer)
+        adminQueryTimer = null
+      }
+      if (!this.adminQuery) return
+      this.adminQuery = ''
+      this.adminPageStart = 0
+      void this.loadAdmin()
+    },
+
+    adminPrev(): void {
+      if (!this.adminHasPrev) return
+      this.adminPageStart = Math.max(0, this.adminPageStart - PAGE_SIZE)
+      void this.loadAdmin()
+    },
+
+    adminNext(): void {
+      if (!this.adminHasNext) return
+      this.adminPageStart += PAGE_SIZE
       void this.loadAdmin()
     },
 

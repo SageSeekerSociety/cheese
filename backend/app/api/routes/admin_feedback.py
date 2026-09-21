@@ -87,16 +87,24 @@ async def list_admin_feedback(
     tab: str = Query(default="public"),
     assignee: str | None = Query(default=None, max_length=64),
     q: str | None = Query(default=None, max_length=200),
+    sort: str = Query(default="new"),
     page_start: int = Query(default=0, ge=0),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> dict:
     """四个栏位：公开 / 私密 / agent 提的 / 安全。
 
     `tab` 不认识时报 400 而不是悄悄退回 `public` —— 管理端猜错栏位会让人以为
-    「这条反馈不见了」，而它其实在隔壁那一栏。
+    「这条反馈不见了」，而它其实在隔壁那一栏。`sort` 走同一条规矩（`new` /
+    `supports`，见 `services.SORTS`）：排序就是这一页的答案，答成另一种排序
+    等于用同一个标题回答了另一个问题。
     """
     rows, total = await service.list_admin(
-        tab=tab, assignee=assignee, q=q, limit=page_size, offset=page_start
+        tab=tab,
+        assignee=assignee,
+        q=q,
+        sort=sort,
+        limit=page_size,
+        offset=page_start,
     )
     return ok(
         {

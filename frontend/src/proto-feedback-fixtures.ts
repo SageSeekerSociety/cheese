@@ -504,6 +504,150 @@ const ROWS: FeedbackDetail[] = [
     problem: '办完了的条目不该继续占着「全部」的第一屏。',
     expectation: '默认沉底。',
   }),
+  // 下面这一批是**为管理台补的**：原来的五条里只有一条私密加安全、一条 agent，
+  // 管理端四个栏位点进去有两栏几乎是空的 —— 那样一张截图看不出这个后台**在忙的时候**
+  // 长什么样，也就没法判断重设计到底解不解决问题。**不编数字**：这几条和上面五条
+  // 是同一份数据，栏位计数、统计块、空态全都从这一份算出来。
+  row({
+    id: 'fb-1037',
+    display: 'FB-1037',
+    kind: 'bug',
+    title: '话题文档里的表格在深色模式下看不清',
+    summary: '表头和正文的底色几乎一样，横线也看不见。',
+    status: 'received',
+    priority: 'high',
+    author: 'ligan',
+    submittedBy: 'ligan',
+    supports: 4,
+    minutesAgo: 180,
+    problem: '深色模式下话题文档里的表格读不出来：表头是 `--fill`，正文也是 `--fill`，中间那条线在深色下基本看不见。',
+    why: '文档正文走的是 markdown 渲染那一份样式，它没有跟着设计系统的深色块走。',
+    expectation: '表头比正文略深一档，横线用 `--line-2`。',
+  }),
+  row({
+    id: 'fb-1036',
+    display: 'FB-1036',
+    kind: 'suggestion',
+    title: '希望话题能置顶几条',
+    summary: '一个长期跑的话题，最重要的那条结论会被后来的对话顶走。',
+    status: 'in_progress',
+    author: 'chiruotong',
+    submittedBy: 'chiruotong',
+    assignee: 'andy',
+    tags: ['对话', '组织'],
+    supports: 6,
+    minutesAgo: 700,
+    problem: '话题里的结论散在对话里，新来的人要翻很久。',
+    expectation: '能把某几条消息钉在话题顶部。',
+  }),
+  row({
+    id: 'fb-1035',
+    display: 'FB-1035',
+    kind: 'bug',
+    title: '定时巡检有时连着两轮都没跑',
+    summary: '按小时排的巡检，日志里偶尔缺两轮，下一轮又正常。',
+    status: 'received',
+    author: 'cheese-71f0b2ad',
+    authorIsAgent: true,
+    submittedBy: 'andylizf',
+    supports: 0,
+    minutesAgo: 45,
+    problem: '同一个话题的定时巡检，在 03:00 和 04:00 两轮里都没有产生记录，05:00 那轮正常。',
+    whatHappened: '我在话题里按小时做巡检，翻记录时发现有两轮完全没有产物。',
+    repro: '把巡检排成每小时一次，连着看 24 轮的记录。',
+    evidence: '话题记录的 event 里 03:00 / 04:00 两轮不存在，前后两轮都在。',
+    environment: '定时巡检 / 平台托管机器',
+  }),
+  row({
+    id: 'fb-1034',
+    display: 'FB-1034',
+    kind: 'suggestion',
+    title: '想把一个话题里的文件打包带走',
+    summary: '话题工作区攒了一堆产物，想要一个按钮把它们打成一份。',
+    status: 'received',
+    visibility: 'private',
+    author: 'maxiaoyu',
+    submittedBy: 'maxiaoyu',
+    supports: 3,
+    minutesAgo: 2600,
+    problem: '一次会话里产出的几份文档要交出去，只能一份一份下载。',
+    expectation: '话题里给一个「打包下载」。',
+  }),
+  row({
+    id: 'fb-1033',
+    display: 'FB-1033',
+    kind: 'bug',
+    title: '私有部署的机器上工作区目录权限过宽',
+    summary: '工作区目录对所有本机用户可读，里面可能有会话内容。',
+    status: 'in_progress',
+    priority: 'urgent',
+    visibility: 'private',
+    security: true,
+    author: 'n1ctheboy',
+    submittedBy: 'n1ctheboy',
+    assignee: 'andy',
+    supports: 1,
+    minutesAgo: 340,
+    problem: '装机器的时候工作区目录建成 0755，同机器上任何一个账号都能读里面的会话文件。',
+    repro: '装完机器，`ls -ld ~/cheese/home/*/room`。',
+    evidence: '`drwxr-xr-x` 加上目录属主是会话用户。',
+    environment: '自托管机器 / Ubuntu 24.04',
+    notes: [
+      {
+        id: 'n-2',
+        author_handle: 'andy',
+        author_avatar_id: avatarOf('andy'),
+        body: '改成 0700；已经在跑的机器要出一条修好的命令，不能只改安装脚本。',
+        created_at: ago(300),
+      },
+    ],
+  }),
+  row({
+    id: 'fb-1032',
+    display: 'FB-1032',
+    kind: 'bug',
+    title: '列表滚动到一半会跳回顶部',
+    summary: '在反馈中心往下翻，点完一条再回来位置就没了。',
+    status: 'resolved',
+    author: 'pengwenbo',
+    submittedBy: 'pengwenbo',
+    assignee: 'andylizf',
+    supports: 9,
+    minutesAgo: 5200,
+    problem: '从列表点进详情再返回，列表重新挂载，滚动位置丢掉。',
+    expectation: '返回时停在原来的位置。',
+  }),
+  row({
+    id: 'fb-1031',
+    display: 'FB-1031',
+    kind: 'bug',
+    title: '提交按钮在窄屏上被一级导航盖住',
+    summary: '手机上最下面一行按钮压在底部导航底下，点不到。',
+    status: 'deployed',
+    author: 'cheese-c82aeb40',
+    authorIsAgent: true,
+    submittedBy: 'wangchangxin',
+    assignee: 'andy',
+    supports: 2,
+    minutesAgo: 12000,
+    problem: '窄屏（<600px）下底部一级导航高 56px，抽屉底部的按钮没有给它让位。',
+    repro: '把窗口宽度调到 390px，打开提交抽屉，看最下面那行按钮。',
+    environment: 'Chrome / 视口 390×844',
+  }),
+  row({
+    id: 'fb-1030',
+    display: 'FB-1030',
+    kind: 'suggestion',
+    title: '反馈里想能贴一张图',
+    summary: '说明问题的时候，一句话不如一张截图。',
+    status: 'received',
+    author: 'caisongyang',
+    submittedBy: 'caisongyang',
+    supports: 8,
+    minutesAgo: 7000,
+    problem: '只能写字，很多界面问题描述起来很费劲。',
+    expectation: '能直接粘一张截图进去。',
+  }),
 ]
 
 /** 列表可见性。真实实现在 `services.may_see` 里判（提交者 ∪ 管理员 ∪ 提出它的房间），这里按预览身份简化：
@@ -531,10 +675,15 @@ function matchesTab(item: FeedbackCard, tab: string): boolean {
   return sunk
 }
 
-function matchesQuery(item: FeedbackCard, q: string): boolean {
+/** 搜索匹配的字段。**四列**，和 `repositories.matching(q)` 是同一份：标题、摘要、
+ *  正文、作者。以前这里只有前两列，是「搜索扩到四列」那一批漏改的一处 —— 预览于是
+ *  比真环境**搜得少**：按作者名搜、按正文里的词搜，真环境有结果、预览回空。这种
+ *  偏差最坏的地方是它看着像「功能没做」。 */
+function matchesQuery(item: FeedbackDetail, q: string): boolean {
   if (!q) return true
   const needle = q.toLowerCase()
-  return item.title.toLowerCase().includes(needle) || item.summary.toLowerCase().includes(needle)
+  const fields = [item.title, item.summary, item.problem, item.author_handle]
+  return fields.some((one) => (one ?? '').toLowerCase().includes(needle))
 }
 
 /** 计数与列表用**同一个**谓词算，免得预览里的 Tab 数字和点进去看到的条数对不上。 */

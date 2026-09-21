@@ -4,6 +4,7 @@ import type { AdminCandidate, PlatformAdminRow, PlatformAdminsPayload } from '@/
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { addPlatformAdmin, listPlatformAdmins, removePlatformAdmin, searchAdminCandidates } from '@/api'
+import AdminGrid from '@/components/admin/AdminGrid.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { relTime } from '@/lib/relTime'
 
@@ -17,6 +18,16 @@ import { relTime } from '@/lib/relTime'
 // 「根删不掉」这条规则不在这页上：删除按钮只画在 `added` 那几行，因为接口给的名单
 // **本来就分两块**（`root` / `added`）。前端若把一个扁平数组按标记分组，分组规则就成
 // 了第二份判据 —— 服务端哪天多一种来源，这里画不出来而且不会报错。
+//
+// 这一版改的三件事：
+//
+//   1. **两段裸结构收成一张表**。上一版是「一排芯片 + 一张两列表格」两段互不相干的
+//      东西；两块说的都是「谁是管理员」，分开画就得让人自己把两处对起来。现在是一张
+//      表里的两组，组头行是**这一组的名字和它的人数**。
+//   2. **「删不掉」有形状**。上一版根那几行右边是空的，人要自己读上面那段说明才知道
+//      「不是漏画了按钮」。现在那一格写着「不可移出」。
+//   3. **「移出」是一个界内的按钮**，不是一行名字旁边的裸文字：两种操作权在同一个
+//      视觉层级里，才看得出它们不一样。
 //
 // 「我是不是管理员」不在这里问：外壳（`AdminLayout`）已经问过并且把子页挡在门后了。
 // 这一页能画出来，就说明这个人过了那道门。
@@ -45,6 +56,22 @@ const confirmHandle = ref<string | null>(null)
 
 const added = computed<PlatformAdminRow[]>(() => roster.value?.added ?? [])
 const root = computed<string[]>(() => roster.value?.root ?? [])
+
+/** 四条列。**只有「添加信息」那一列是 `null`**（自适应）—— `table-layout: fixed`
+ *  下没有宽度的列会平分剩余空间，多给一列就散架。 */
+const COLS: (string | null)[] = ['320px', '160px', null, '120px']
+const BONE_WIDTHS = ['62%', '48%', '64%', '40%']
+
+/** 表头下那段说明。**屏幕上一行、完整那句放 `title`**：它上一版占两行，两行说明后面
+ *  跟着三行数据，读起来像文档不像后台。`PLATFORM_ADMIN_HANDLES` 这个变量名也从屏幕上
+ *  移走了 —— 它对我们有用，对「想知道这些人是谁、能不能删」的人没用（§8.2：界面上不写
+ *  实现细节）。 */
+const SUBTITLE = '这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。'
+const SUBTITLE_TITLE =
+  SUBTITLE +
+  '「部署配置」那一组来自部署配置（PLATFORM_ADMIN_HANDLES），页面上删不掉：能在这里被清空的名单没有回头的路，改它要有服务器权限。'
+
+const countLine = computed(() => (roster.value ? `共 ${root.value.length + added.value.length} 人` : ''))
 
 /** 后端把能读的原因写在 `message` 里（`ApiError` 带上来的），照它显示 —— 上面那句
  *  「显示原话」的意思就是这里不加工。`fallback` 只在拿不到那句话时用。 */
@@ -144,83 +171,121 @@ onMounted(load)
 </script>
 
 <template>
-  <!-- 滚动归这一页自己领（仓库约定，见 styles/common.scss）。 -->
-  <div class="admin-members fill-height overflow-y-auto">
-    <div class="admin-members__inner page-container--wide">
-      <header class="admin-members__head">
-        <div>
-          <h1 class="t-page-title">成员管理</h1>
-          <div class="t-meta">
-            这些人能看所有私密反馈和安全问题，也能在这里加别人 —— 能改这份名单就等于能给自己开门。
-          </div>
-        </div>
-        <v-spacer />
-        <v-btn color="primary" prepend-icon="mdi-account-plus-outline" @click="openDialog">添加管理员</v-btn>
-      </header>
+  <div class="am">
+    <header class="am__head">
+      <h1 class="t-page-title">成员管理</h1>
+      <p class="am__sub t-meta" :title="SUBTITLE_TITLE">{{ SUBTITLE }}</p>
+    </header>
 
-      <v-alert v-if="error" type="error" density="compact" variant="tonal" class="mb-4">
-        {{ error }}
-        <template #append>
-          <v-btn variant="text" size="small" @click="load">重试</v-btn>
-        </template>
-      </v-alert>
-      <v-alert
-        v-else-if="notice"
-        type="success"
-        density="compact"
-        variant="tonal"
-        class="mb-4"
-        closable
-        @click:close="notice = null"
-      >
-        {{ notice }}
-      </v-alert>
+    <div class="am__tools">
+      <span class="t-meta">{{ countLine }}</span>
+      <div class="am__spacer" />
+      <v-btn icon="mdi-refresh" variant="text" size="small" aria-label="刷新" :loading="loading" @click="load" />
+      <!-- 全页唯一一块琥珀：这一页确实有一个主操作，而它就是这个。 -->
+      <v-btn color="primary" size="small" prepend-icon="mdi-account-plus-outline" @click="openDialog">
+        添加管理员
+      </v-btn>
+    </div>
 
-      <div v-if="loading" class="t-meta py-8">加载中…</div>
-
-      <template v-else-if="roster">
-        <section class="admin-members__block">
-          <div class="t-title mb-1">部署配置里的根管理员</div>
-          <div class="t-meta mb-3">
-            来自部署配置（<code>PLATFORM_ADMIN_HANDLES</code>），<strong>页面上删不掉</strong> ——
-            能在这里被清空的名单没有回头的路，改它要有服务器权限
-          </div>
-          <div class="d-flex flex-wrap ga-2">
-            <span v-for="handle in root" :key="handle" class="chip-neutral">{{ handle }}</span>
-            <span v-if="!root.length" class="t-meta">配置里没写人（本地开发如此；部署时必须填）</span>
-          </div>
-        </section>
-
-        <section class="admin-members__block">
-          <div class="t-title mb-1">页面上添加的</div>
-          <div class="t-meta mb-3">这些人随时可以移出名单。</div>
-          <v-table v-if="added.length" hover class="admin-members__table">
-            <tbody>
-              <tr v-for="row in added" :key="row.handle">
-                <td class="am-td am-td--who">
-                  <div class="d-flex align-center ga-2">
-                    <FeedbackAuthorAvatar :handle="row.handle" :size="22" />
-                    <span>{{ row.handle }}</span>
-                  </div>
-                </td>
-                <td class="am-td t-meta">{{ row.added_by_handle }} 加的 · {{ relTime(row.created_at) }}</td>
-                <td class="am-td am-td--actions">
-                  <v-btn
-                    variant="text"
-                    size="small"
-                    color="secondary"
-                    :loading="removing === row.handle"
-                    @click="confirmHandle = row.handle"
-                  >
-                    移出
-                  </v-btn>
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-          <div v-else class="t-meta py-4">还没有在页面上加过管理员 —— 现在名单上的人全部来自部署配置。</div>
-        </section>
+    <v-alert v-if="error" type="error" density="compact" variant="tonal" class="am__alert">
+      {{ error }}
+      <template #append>
+        <v-btn variant="text" size="small" @click="load">重试</v-btn>
       </template>
+    </v-alert>
+    <v-alert
+      v-else-if="notice"
+      type="success"
+      density="compact"
+      variant="tonal"
+      class="am__alert"
+      closable
+      @click:close="notice = null"
+    >
+      {{ notice }}
+    </v-alert>
+
+    <div class="am__gridwrap">
+      <AdminGrid
+        label="平台管理员名单"
+        :cols="COLS"
+        :bone-widths="BONE_WIDTHS"
+        :loading="loading && !roster"
+        :skeleton-rows="4"
+      >
+        <template #head>
+          <tr>
+            <th scope="col">管理员</th>
+            <th scope="col">来源</th>
+            <th scope="col">添加信息</th>
+            <th scope="col" class="am__num">操作</th>
+          </tr>
+        </template>
+
+        <!-- 组头行。**名字和人数是两个元素**，不是一个字符串拼出来的：它们是两种
+             东西（这一组叫什么 / 有几个人），拼在一起会让读屏把它们念成一串数字
+             加名字，也让人没法单独抓那个数。 -->
+        <tr class="am__group">
+          <td colspan="4" class="am__groupcell">
+            <span class="am__grouplabel">部署配置里的根管理员</span>
+            <span class="am__groupcount">{{ root.length }}</span>
+          </td>
+        </tr>
+
+        <tr v-for="handle in root" :key="handle" class="am__row">
+          <td class="am__cell">
+            <span class="am__who">
+              <FeedbackAuthorAvatar :handle="handle" :size="20" />
+              <span>{{ handle }}</span>
+            </span>
+          </td>
+          <td class="am__cell"><span class="am__dim">部署配置</span></td>
+          <td class="am__cell"><span class="am__dim">—</span></td>
+          <!-- 这一格上一版是空的，人要读完上面那段说明才知道「不是漏画了按钮」。
+               写出来比留白省一次阅读。 -->
+          <td class="am__cell am__cell--actions"><span class="am__dim">不可移出</span></td>
+        </tr>
+        <tr v-if="!root.length" class="am__row">
+          <td colspan="4" class="am__cell am__none">配置里没写人（本地开发如此；部署时必须填）</td>
+        </tr>
+
+        <tr class="am__group">
+          <td colspan="4" class="am__groupcell">
+            <span class="am__grouplabel">页面上添加的</span>
+            <span class="am__groupcount">{{ added.length }}</span>
+          </td>
+        </tr>
+
+        <tr v-for="row in added" :key="row.handle" class="am__row">
+          <td class="am__cell">
+            <span class="am__who">
+              <FeedbackAuthorAvatar :handle="row.handle" :size="20" />
+              <span>{{ row.handle }}</span>
+            </span>
+          </td>
+          <td class="am__cell"><span class="am__dim">页面添加</span></td>
+          <td class="am__cell">
+            <span class="am__dim">{{ row.added_by_handle }} 加的 · {{ relTime(row.created_at) }}</span>
+          </td>
+          <td class="am__cell am__cell--actions">
+            <!-- 描边（不是实心、不是文字按钮）：这个动作改的是「谁能看别人的私密
+                 反馈」，它得看得出来是一个真正界内的按钮，而不是一行可以随手划过的
+                 文字。确认在同名的对话框里。（**没有 `aria-label`** —— 加了会把可及
+                 名字覆盖掉，读屏念的就不再是「移出」这两个字了。） -->
+            <v-btn
+              variant="outlined"
+              size="small"
+              :loading="removing === row.handle"
+              @click="confirmHandle = row.handle"
+            >
+              移出
+            </v-btn>
+          </td>
+        </tr>
+        <tr v-if="!added.length" class="am__row">
+          <td colspan="4" class="am__cell am__none">还没有在页面上加过管理员 —— 现在名单上的人全部来自部署配置。</td>
+        </tr>
+      </AdminGrid>
     </div>
 
     <!-- 加人的框照「成员页面邀请」那一套：按钮 → 对话框 → 可搜的多选 + 添加。
@@ -298,35 +363,128 @@ onMounted(load)
 </template>
 
 <style scoped>
-.admin-members {
-  padding: 24px 16px 48px;
-}
-.admin-members__head {
+/* 和反馈管理同一套页头 / 工具条 / 表格三段式，`padding` 也逐字相同 —— 两块是同一个
+   后台的两个分区，切换时页头不该跳一下。 */
+.am {
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  margin-bottom: 20px;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 16px 24px 0;
 }
-.admin-members__block {
-  margin-bottom: 28px;
+
+.am__head {
+  flex: 0 0 auto;
+  padding-bottom: 8px;
 }
-/* 压过 Vuetify 自带的 th/td 规则，同管理端反馈表格（那边把 Vuetify 自己那几层写进
-   选择器，权重正常赢，所以不用 !important）。 */
-.admin-members__table :deep(.v-table__wrapper table) :is(tbody td) {
-  height: auto;
-  padding: 10px 8px;
-}
-.am-td--actions {
-  text-align: right;
-  width: 1%;
+
+/* 一行说完。`min-height` 是给「名单还没回来」那一帧留位，否则数字到货时页头会长一行。 */
+.am__sub {
+  overflow: hidden;
+  min-height: var(--lh-12);
+  margin-top: 2px;
+  max-width: 680px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 行内代码照 `.md-content code` 那一份：同一个仓库里嵌在正文里的代码块长一样。 */
-code {
-  font-family: var(--font-mono);
+
+.am__tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  border-bottom: 1px solid var(--line);
+}
+
+.am__spacer {
+  flex: 1 1 auto;
+}
+
+.am__alert {
+  flex: 0 0 auto;
+  margin-top: 12px;
+}
+
+/* 名单只有几行，所以这一张卡**贴着内容**，不撑满剩下的高度（反馈那一页相反：它一屏
+   十七行，表格自己领滚动）。外面的这一层负责「能缩」—— 名单长起来时它先让位，然后
+   表格内部才滚。 */
+.am__gridwrap {
+  display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
+  margin-top: 12px;
+}
+
+.am__group {
+  background: var(--fill-2);
+}
+
+.am__groupcell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.am__grouplabel {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+}
+
+.am__groupcount {
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-12);
+}
+
+.am__row {
+  transition: background-color 0.12s ease;
+}
+
+.am__row:hover {
   background: var(--fill);
-  padding: 0.5px 5px;
-  border-radius: var(--radius-sm);
-  font-size: 0.88em;
+}
+
+.am__cell {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 操作格上下收到 4px：里面那颗按钮是 32，加上两头就是 40 的行高（8/4 都在间距阶梯
+   上），比默认的 8px 内边距挤出来的 48 矮一档。 */
+.am__cell--actions {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  text-align: right;
+}
+
+.am__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.am__dim {
+  color: var(--muted);
+}
+
+.am__none {
+  padding: 20px 12px;
+  color: var(--faint);
+  text-align: center;
+}
+
+.am__num {
+  text-align: right;
 }
 </style>

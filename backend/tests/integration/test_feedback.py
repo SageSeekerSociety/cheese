@@ -1792,6 +1792,82 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
     assert [card["id"] for card in page(1)] == [older["id"]]
 
 
+def _admin_cards(client, handle: str, **params) -> list[dict]:
+    r = client.get(
+        "/admin/feedback", params=params, headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_the_admin_queue_orders_by_the_sort_it_was_asked_for(client, as_admin):
+    """管理端的「最新 / 最热」是两个真会换位置的顺序。
+
+    这一条钉的是一个**看不见**的坏法：路由和仓储都收 `sort`，中间的服务层把它
+    写死成 `new`，于是排序控件按下去、高亮也换、请求也发了，列表一动不动 ——
+    而每一层单看都对，界面上没有任何东西报错。
+
+    所以这里要求的不是「两种 sort 返回的列表不同」（那样一个随机的顺序也能过），
+    而是**同一个两行的清单在两种 sort 下给出相反的第一行**：先提的那条赢在支持
+    数上，后提的那条赢在时间上。谁被写死成另一个，两行里必有一行对不上。
+    """
+    early = _report(client, REPORTER, title="提得早，大家都在撞")
+    for n in range(3):
+        r = client.post(
+            f"/feedback/{early['id']}/supports",
+            headers=session_auth_headers(f"fb-sort-{n}"),
+        )
+        assert r.status_code == 200, r.text
+    late = _report(client, STRANGER, title="刚提的，还没人理")
+
+    newest_first = [card["id"] for card in _admin_cards(client, ADMIN, sort="new")]
+    most_supported_first = [
+        card["id"] for card in _admin_cards(client, ADMIN, sort="supports")
+    ]
+
+    # 默认与显式传 `new` 是同一个东西 —— 控件没动的时候发出去的就是这一份。
+    assert [card["id"] for card in _admin_cards(client, ADMIN)] == newest_first
+
+    assert newest_first[:2] == [late["id"], early["id"]]
+    assert most_supported_first[:2] == [early["id"], late["id"]]
+
+
+def test_the_admin_queue_refuses_an_ordering_it_does_not_have(client, as_admin):
+    """不认识的 `sort` 报 400，而不是悄悄退回 `new`。
+
+    和 `tab` 同一条规矩，但这里更咬人：客户端写的是 `hottest`、拿到的是
+    `new`，读的人会把页面顶部当成「支持最多的几条」—— 排序**就是**这一页的答案，
+    换一种排法等于用同一个标题回答了另一个问题，而屏幕上没有一处看得出来。
+    """
+    r = client.get(
+        "/admin/feedback",
+        params={"sort": "hottest"},
+        headers=session_auth_headers(ADMIN),
+    )
+    assert r.status_code == 400, r.text
+    assert "hottest" in r.text
+
+
+def test_the_public_route_still_forgives_an_unknown_sort(client, as_admin):
+    """公开那条路**不**报错，这是有意留下的不对称，别顺手统一掉。
+
+    公开列表不接受用户输入的排序：`sort` 只有 `hot` 那一栏隐含的 `supports`，
+    以及默认的 `new`，都是服务端自己填的。所以一个不认识的词到那里只可能是旧
+    客户端留下的，答成最新-first 不会把谁骗到 —— 而管理端那个顺序是**画在屏幕
+    上的一个控件**，同一个词在那边就有意义了。
+
+    真正要挡住的是 `_list_stmt` 从「任何不是 supports 的都当 new」变成「不认识的
+    就不排序」（那会变成数据库的任意顺序）。这里顺带把这条总函数性也钉住。
+    """
+    _report(client, REPORTER, title="先提的")
+    late = _report(client, REPORTER, title="后提的")
+
+    r = client.get("/feedback", params={"sort": "hottest"})
+    assert r.status_code == 200, r.text
+    cards = r.json()["data"]["data"]
+    assert [card["id"] for card in cards][0] == late["id"]
+
+
 # --- agent 与提案卡 ---------------------------------------------------------
 
 

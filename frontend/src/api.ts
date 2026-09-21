@@ -2215,6 +2215,7 @@ export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string
       tab: query.tab,
       assignee: query.assignee,
       q: query.q,
+      sort: query.sort,
       page_start: query.pageStart,
       page_size: query.pageSize,
     })}`

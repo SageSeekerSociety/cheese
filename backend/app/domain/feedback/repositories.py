@@ -400,6 +400,10 @@ class FeedbackRepository:
         limit: int,
         offset: int,
     ) -> Select[tuple[Feedback]]:
+        # Total on purpose: `supports` is the only non-default branch, so any
+        # other string means newest-first rather than "no ordering". Callers that
+        # must refuse an unknown sort do it before arriving here (`SORTS` in
+        # `services.py`); this function never has to know the vocabulary.
         stmt = select(Feedback).where(Feedback.deleted_at.is_(None), *where)
         if sort == "supports":
             # `hot` sorts by support count. `GROUP BY feedback.id` rather than a
@@ -484,8 +488,12 @@ class FeedbackRepository:
             )
             where.append(Feedback.id.in_(hot.scalar_subquery()))
             sort = "supports"
-        if sort not in ("new", "supports"):
-            sort = "new"
+        # No membership test here: `_list_stmt` is total (anything that is not
+        # `supports` is newest-first), so the vocabulary lives in one place —
+        # `services.SORTS`. The public route keeps accepting an unknown sort
+        # silently; the admin one refuses it, because there it is a control the
+        # client draws and a stale client would render the wrong ordering under
+        # the right heading. See `services.list_admin`.
         rows = list(
             (
                 await self._session.execute(
@@ -543,6 +551,7 @@ class FeedbackRepository:
         tab: str,
         assignee: str | None,
         q: str | None,
+        sort: str = "new",
         limit: int,
         offset: int,
     ) -> tuple[list[Feedback], int]:
@@ -568,7 +577,7 @@ class FeedbackRepository:
         rows = list(
             (
                 await self._session.execute(
-                    self._list_stmt(where=where, sort="new", limit=limit, offset=offset)
+                    self._list_stmt(where=where, sort=sort, limit=limit, offset=offset)
                 )
             )
             .scalars()

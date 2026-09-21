@@ -72,6 +72,13 @@ ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
 #: The public tabs, in the order the tab bar draws them.
 PUBLIC_TABS: tuple[str, ...] = ("all", "hot", "active", "resolved")
 
+#: The two orderings any list can be asked for. `new` is the default everywhere;
+#: `supports` is what the public `hot` tab implies and what the admin console's
+#: 最新/最热 toggle asks for by name. One tuple because the serializer
+#: (`_list_stmt`) has exactly two branches: a third name here would be a value
+#: that silently means `new`.
+SORTS: tuple[str, ...] = ("new", "supports")
+
 #: Movement order shown by the status ladder. One rung per thing the person who
 #: filed it can see happen: 收录 → 处理 → 解决 → 部署. `resolved` and `deployed`
 #: are reachable from any state, and a reopen (resolved → in_progress) is
@@ -222,13 +229,21 @@ class FeedbackService:
         tab: str,
         assignee: str | None,
         q: str | None,
+        sort: str = "new",
         limit: int,
         offset: int,
     ) -> tuple[list[Feedback], int]:
         if tab not in ADMIN_TABS:
             raise BadRequestError(f"未知的管理视图：{tab}")
+        if sort not in SORTS:
+            # Refused rather than coerced to `new`, same reasoning as `tab` above
+            # and it bites harder here: a client asking for `hottest` and getting
+            # `new` reads the top of the page as "the most supported reports".
+            # The ordering is the answer, so answering in a different order is
+            # answering a different question under the same heading.
+            raise BadRequestError(f"未知的排序：{sort}")
         return await self._repo.list_admin(
-            tab=tab, assignee=assignee, q=q, limit=limit, offset=offset
+            tab=tab, assignee=assignee, q=q, sort=sort, limit=limit, offset=offset
         )
 
     async def list_mine(
