@@ -27,18 +27,18 @@ def _seed_block(client, project_id, topic_id, author, author_type, kind):
     asyncio.run(_seed())
 
 
-def test_contributions_exclude_system_blocks(client):
-    # spec §10.1: by_author counts real contributors, not system lifecycle blocks.
+def test_contributions_exclude_platform_blocks(client):
+    # spec §10.1: by_author counts real contributors, not platform lifecycle blocks.
     p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
         "data"
     ]
     pid, root = p["id"], p["root_topic_id"]
     _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
-    _seed_block(client, pid, root, "user-1", AuthorType.system, BlockKind.event)
+    _seed_block(client, pid, root, "user-1", AuthorType.platform, BlockKind.event)
 
     c = client.get(f"/projects/{pid}/contributions").json()["data"]
-    assert c["by_author"].get("user-1") == 1  # the system block is not counted
-    assert c["by_author_type"]["system"] >= 1
+    assert c["by_author"].get("user-1") == 1  # the platform block is not counted
+    assert c["by_author_type"]["platform"] >= 1
 
 
 def test_member_summary_has_active_and_weekly(client, bearer):
