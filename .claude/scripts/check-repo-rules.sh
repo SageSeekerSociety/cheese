@@ -275,6 +275,34 @@ check_platform_cli_in_claude_md() {
     "$hits"
 }
 
+# Rule 8 — 平台自己产的事件署名为 `AuthorType.platform`。`system` 是那一档的旧
+# 名字；它还在枚举里，因为库里的存量行仍带着它，但**没有一行新代码可以再写它**。
+#
+# 为什么需要一道守卫，而不是「改完就完了」：这一档的读侧判的是「不是
+# participant」（`app/domain/block/authorship.py`），两个名字都过。所以一个漏改或
+# 新加的 `AuthorType.system` 写点，在功能上完全看不出来——房间照样渲染成灰字一行，
+# 测试照样绿。它要等到把 `system` 从枚举里删掉的那次发布才炸，那时新写下的行已经
+# 落在库里，而那次发布的一次性 `UPDATE` 已经跑过去了。
+#
+# 只看 `backend/app`：`tests/` 里要造存量行（迁移测试就得写 `system`），
+# `alembic/versions/` 里的历史迁移是写死的过去。枚举成员自己（`system = "system"`）
+# 不匹配这两个模式，所以不需要豁免——它写的是成员名，不是 `AuthorType.system`。
+#
+# 整行注释跳过：注释一行都写不进库，而这一档剩下的那次发布要在代码里讲清楚（那条
+# `UPDATE ... WHERE author_type='system'` 就长得跟第二个模式一模一样）。让守卫对着
+# 说明它自己的那段话报红，结果只会是下一个人把话改得看不懂。
+check_author_type_system_write() {
+  local hits
+  hits="$(grep -rnE --include='*.py' \
+    -e 'AuthorType\.system' -e 'author_type *= *["'"'"']system["'"'"']' \
+    "$ROOT/backend/app" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  [ -z "$hits" ] && return 0
+  echo "FAIL: 平台那一档的旧名字 system 出现在写入端"
+  report "AuthorType.system is the old name — the platform signs its events as platform" \
+    "use AuthorType.platform; the system member stays only for rows already in the database" \
+    "$hits"
+}
+
 run_all() {
   check_naive_datetime
   check_raw_http_exception
@@ -282,6 +310,7 @@ run_all() {
   check_supply_reverse_lookup
   check_fixed_palette
   check_platform_cli_in_claude_md
+  check_author_type_system_write
 }
 
 # --- palette baseline update ------------------------------------------------
@@ -466,7 +495,34 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "naming the product in a rule must pass"
   rm -rf "$tmp/backend/sandbox" "$tmp/.claude"
 
-  echo "PASS: check-repo-rules self-test (6 rules, scoping and the palette ratchet verified)"
+  # Rule 8. The fixture is a write point exactly as it read before this change.
+  mkdir -p "$tmp/backend/app/domain/review"
+  printf 'await blocks.add(author="cheese", author_type=AuthorType.system)\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "AuthorType.system at a write point must fail"
+  # The string form too — `AuthorType` is a StrEnum, so it goes in unnoticed.
+  printf 'await blocks.add(author="cheese", author_type="system")\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the string form must fail too"
+  printf 'await blocks.add(author="cheese", author_type=AuthorType.platform)\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "AuthorType.platform must pass"
+  rm "$tmp/backend/app/domain/review/bad_sig.py"
+  # The enum member itself must survive: rows already in the database carry it,
+  # and a guard that killed the declaration would make them unreadable. So must
+  # the comment that explains the release still to come — it is the line this
+  # guard first fired on, and it writes nothing.
+  mkdir -p "$tmp/backend/app/domain/block"
+  printf 'class AuthorType(enum.StrEnum):\n    platform = "platform"\n    # UPDATE ... WHERE author_type='"'"'system'"'"' 之后这一档离场。\n    system = "system"\n' \
+    > "$tmp/backend/app/domain/block/models.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the enum declaration and its comment must pass"
+  # Scoped to app/: a migration test has to build a row under the old name.
+  mkdir -p "$tmp/backend/tests"
+  printf 'rows = {"old": AuthorType.system}\n' > "$tmp/backend/tests/test_rewrite.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "tests naming the old value must pass"
+  rm -rf "$tmp/backend/tests" "$tmp/backend/app/domain/block"
+
+  echo "PASS: check-repo-rules self-test (7 rules, scoping and the palette ratchet verified)"
   exit 0
 fi
 
@@ -476,4 +532,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, AuthorType.system at a write point)"
