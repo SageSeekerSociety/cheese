@@ -30,7 +30,11 @@ assert_plan() {
   local output
   output="$(
     cd "$test_repo"
-    BASE_SHA="$base" CURRENT_SHA=HEAD EVENT_NAME="$event_name" REF_TYPE="$ref_type" \
+    export BASE_SHA="$base"
+    if [[ "$base" == lookup ]]; then
+      unset BASE_SHA
+    fi
+    CURRENT_SHA=HEAD EVENT_NAME="$event_name" REF_TYPE="$ref_type" \
       GITHUB_OUTPUT=/dev/stdout bash "$planner"
   )"
   local actual
@@ -93,5 +97,41 @@ assert_plan 'backend=true,sandbox=false,frontend=true,office_render=false,browse
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path deploy/gateway/Dockerfile
 assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true' "$base_sha"
+
+# Exercise the same GitHub lookup used by the workflow without network calls.
+gh() {
+  printf '%s' "$GH_TEST_BASE"
+  return "$GH_TEST_STATUS"
+}
+export -f gh
+export GITHUB_REPOSITORY=example/project GITHUB_REF_NAME=main
+export GH_TEST_BASE="$base_sha" GH_TEST_STATUS=0
+assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true' lookup
+
+export GH_TEST_BASE=''
+assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true' lookup
+
+# An API failure must never publish a plan, even if stdout contains a SHA.
+export GH_TEST_STATUS=1
+for GH_TEST_BASE in '' "$base_sha"; do
+  export GH_TEST_BASE
+  if (
+    cd "$test_repo"
+    unset BASE_SHA
+    CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
+      GITHUB_OUTPUT="$test_repo/failed-output" bash "$planner"
+  ); then
+    echo 'FAIL: a failed GitHub lookup must fail planning' >&2
+    exit 1
+  fi
+  if [[ -s "$test_repo/failed-output" ]]; then
+    echo 'FAIL: a failed GitHub lookup published a build plan' >&2
+    exit 1
+  fi
+done
+
+# Explicit release requests remain usable while the API is unavailable.
+assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true' lookup workflow_dispatch branch
+assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true' lookup push tag
 
 echo 'PASS: image build planning contracts'
