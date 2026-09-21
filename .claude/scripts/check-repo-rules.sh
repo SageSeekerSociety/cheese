@@ -505,7 +505,10 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the string form must fail"
   printf 'await blocks.add(author="cheese", author_type="ai")\n' \
     > "$tmp/backend/app/domain/review/bad_sig.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the other two retired names must fail too"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the retired name ai must fail too"
+  printf 'await blocks.add(author="cheese", author_type="human")\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the retired name human must fail too"
   printf 'await blocks.add(author="cheese", author_type=AuthorType.platform)\n' \
     > "$tmp/backend/app/domain/review/bad_sig.py"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "AuthorType.platform must pass"
