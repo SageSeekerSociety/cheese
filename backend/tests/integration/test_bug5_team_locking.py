@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestBug5TeamLockingPolicy:
@@ -33,8 +33,8 @@ class TestBug5TeamLockingPolicy:
         suffix = unique_int()
 
         # Create space
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Bug5 Space ({suffix})",
                 "intro": "Test",
@@ -178,8 +178,8 @@ class TestBug5TeamLockingPolicy:
 
         suffix = unique_int()
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Bug5 NoLock Space ({suffix})",
                 "intro": "Test",

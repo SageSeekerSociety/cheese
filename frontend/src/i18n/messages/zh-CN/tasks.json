@@ -32,11 +32,11 @@
     "noPreview": "这一版没有可预览的文件"
   },
   "form": {
-    "taskName": "赛题名称",
+    "taskName": "题目名称",
     "participantType": "参与者类型",
     "individual": "个人",
     "team": "小队",
-    "taskLevel": "赛题难度",
+    "taskLevel": "题目难度",
     "beginner": "初级",
     "intermediate": "中级",
     "advanced": "高级",
@@ -46,7 +46,7 @@
     "defaultDeadline": "默认完成期限",
     "allowMultipleSubmissions": "允许多次提交",
     "allowEditSubmissions": "允许编辑提交",
-    "taskDescription": "赛题描述",
+    "taskDescription": "题目描述",
     "participantLimitHint": "留空表示不限制参与人数",
     "teamLockingPolicy": "队伍成员锁定策略",
     "teamLockingPolicyNoLock": "允许自由调整",
@@ -57,23 +57,23 @@
     "accessControl": {
       "title": "权限设置",
       "enableAccessRestriction": "启用访问限制",
-      "enableAccessRestrictionHint": "开启后，只有指定域名邮箱的用户才能查看和参与此赛题",
+      "enableAccessRestrictionHint": "开启后，只有指定域名邮箱的用户才能查看和参与此题目",
       "domainGroups": "域名组",
       "domainGroupsHint": "选择允许访问的域名组，未选择任何域名组时所有用户均可访问",
       "noDomainGroups": "暂无可用域名组"
     }
   },
   "detail": {
-    "editTask": "编辑赛题",
+    "editTask": "编辑题目",
     "save": "保存",
-    "updateSuccess": "赛题更新成功",
-    "updateFailed": "更新赛题失败"
+    "updateSuccess": "题目更新成功",
+    "updateFailed": "更新题目失败"
   },
   "publish": {
-    "title": "发布赛题",
+    "title": "发布题目",
     "back": "返回",
     "submit": "提交",
-    "createFailed": "创建赛题失败"
+    "createFailed": "创建题目失败"
   },
   "status": {
     "pending": "审核中",

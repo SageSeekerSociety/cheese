@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.tag.models import Tag
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 def create_topics_in_db(
@@ -49,8 +49,8 @@ class TestTaskTopicIntegration:
             db_session, _portal, topic_names, creator.user_id
         )
 
-        space_resp = api_client.post(
-            "/spaces",
+        space_resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Task Topic Test Space ({suffix})",
                 "intro": "Test space for task topics",

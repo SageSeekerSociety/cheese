@@ -17,20 +17,20 @@
 
       <v-card-text class="py-6">
         <v-alert v-if="!taskData?.submittable" type="warning" class="mb-6" variant="tonal">
-          当前不可提交，请联系赛题发布者获取提交权限。
+          当前不可提交，请联系题目发布者获取提交权限。
         </v-alert>
 
         <v-alert v-else-if="!hasValidIdentity" type="warning" class="mb-6" variant="tonal">
           <template #title>无可用身份</template>
           <template #text>
-            <p>您没有可用于提交的身份。可能是因为您尚未加入该赛题或者您的身份尚未获得批准。</p>
+            <p>您没有可用于提交的身份。可能是因为您尚未加入该题目或者您的身份尚未获得批准。</p>
           </template>
         </v-alert>
 
         <v-alert v-else-if="reachedSubmissionLimit" type="warning" class="mb-6" variant="tonal">
           <template #title>已达到提交次数上限</template>
           <template #text>
-            <p>该赛题不允许重复提交，您已经提交过作品。</p>
+            <p>该题目不允许重复提交，您已经提交过作品。</p>
             <div class="mt-2">
               <v-btn
                 color="primary"
@@ -147,17 +147,17 @@
       <v-card-text>
         <v-list>
           <v-list-item prepend-icon="mdi-check-circle-outline" class="ps-2">
-            <v-list-item-title>确保您的提交内容符合赛题要求，并且所有必填项均已填写完整</v-list-item-title>
+            <v-list-item-title>确保您的提交内容符合题目要求，并且所有必填项均已填写完整</v-list-item-title>
           </v-list-item>
           <v-list-item prepend-icon="mdi-file-upload-outline" class="ps-2">
             <v-list-item-title>上传的文件大小不得超过50MB，支持常见文档和压缩包格式</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="taskData?.resubmittable" prepend-icon="mdi-refresh" class="ps-2">
-            <v-list-item-title>该赛题允许多次提交，您可以在截止日期前多次更新您的作品</v-list-item-title>
+            <v-list-item-title>该题目允许多次提交，您可以在截止日期前多次更新您的作品</v-list-item-title>
           </v-list-item>
           <v-list-item v-else prepend-icon="mdi-alert-circle-outline" class="ps-2">
             <v-list-item-title class="text-warning"
-              >该赛题仅允许提交一次，提交后将无法修改，请谨慎操作</v-list-item-title
+              >该题目仅允许提交一次，提交后将无法修改，请谨慎操作</v-list-item-title
             >
           </v-list-item>
         </v-list>

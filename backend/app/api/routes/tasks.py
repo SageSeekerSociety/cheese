@@ -1025,6 +1025,10 @@ async def _create_task_entity(
     space_repo = SpaceRepository(session=db)
     category_repo = SpaceCategoryRepository(session=db)
 
+    space = await space_repo.get_by_id(space_id)
+    if space is None or space.review_status != "APPROVED":
+        raise BadRequestError("Space must be approved before creating tasks")
+
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await _validate_and_get_category_id(
         space_repo=space_repo,

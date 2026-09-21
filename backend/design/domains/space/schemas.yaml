@@ -12,6 +12,12 @@ Space:
       type: string
     description:
       type: string
+    reviewStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED]
+    reviewReason:
+      type: string
+      nullable: true
     avatarId:
       type: integer
       format: int64

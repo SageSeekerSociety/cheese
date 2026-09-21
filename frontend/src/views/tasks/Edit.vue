@@ -3,7 +3,7 @@
     <v-card outlined class="pa-4">
       <v-card-title class="text-h5 mb-4">
         <v-icon left class="mr-2">mdi-pencil</v-icon>
-        编辑赛题
+        编辑题目
       </v-card-title>
       <v-divider class="mb-4"></v-divider>
       <LoadingErrorContainer v-if="loading || error" :loading="loading" :error="error" @retry="loadTaskData" />
