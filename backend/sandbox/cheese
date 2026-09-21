@@ -65,7 +65,9 @@ TOKEN = os.environ.get("CHEESE_TOKEN", "")
 # The agent turn this CLI call belongs to — sent back so the blocks it creates
 # share the turn's id (R4).
 TURN = os.environ.get("CHEESE_TURN", "")
-# In a private chat, `remember` writes the owner's personal memory (跟着人走).
+# In a private chat, `remember` writes this 芝士's view of its owner — the pool
+# keyed `<project>:<agent handle>:<person>`, which belongs to this instance in
+# this project and is not carried to another one.
 MEMORY_SCOPE = os.environ.get("CHEESE_MEMORY_SCOPE", "project")
 OWNER = os.environ.get("CHEESE_OWNER", "")
 

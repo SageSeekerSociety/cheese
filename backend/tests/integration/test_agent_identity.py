@@ -8,11 +8,16 @@ to the one that wrote it.
 
 import asyncio
 import time
+import uuid
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.memory.models import MemoryScope, user_scope_id
+from app.domain.memory.store import DbMemoryStore
+from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
@@ -272,6 +277,26 @@ def test_human_members_are_not_mistaken_for_agents(client):
 # --- 记忆可见: the agent's own pool has to be listable, not just searchable ---
 
 
+def _remember_about(client, project_id: str, person: str, fact: str) -> None:
+    """项目默认芝士对某个人的一条记忆。
+
+    直接按键写库：写的那一侧（私聊里的 `cheese remember`）有自己的测试，这一组
+    问的是列出来的时候都带回了什么。"""
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            project = await ProjectService(s).get_or_404(uuid.UUID(project_id))
+            agent = await AgentInstanceService(s).for_project(project)
+            await DbMemoryStore(s).remember(
+                MemoryScope.user,
+                user_scope_id(project.id, agent.handle, person),
+                fact,
+            )
+            await s.commit()
+
+    asyncio.run(_seed())
+
+
 def _list_memory(client, project_id: str, **params) -> list[dict]:
     query = "&".join(f"{k}={v}" for k, v in params.items())
     url = f"/memory?project_id={project_id}" + (f"&{query}" if query else "")
@@ -367,3 +392,26 @@ def test_include_agent_false_is_the_way_back_to_the_shared_pool(client):
     assert shared["scope"] == "project"
     assert shared["scope_id"] == project_id
     assert len(_list_memory(client, project_id)) == 2
+
+
+def test_the_escape_hatch_still_answers_what_was_remembered_about_me(client):
+    """`include_agent=false` 关掉的是芝士自己那些池，不是「关于这个人的记录」。
+
+    问「关于我记了什么」的人在请求里写了 `user_handle`，那一条是另一个问题；
+    把它跟着逃生口一起关掉，接口会不报错地只回共享池——请求里明明写了这个人，
+    答案里一条关于他的都没有。"""
+    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    topic_id = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "T", "created_by": "alice"},
+    ).json()["data"]["id"]
+    _remember(client, project_id, topic_id, "芝士自己记的")
+    _remember_about(client, project_id, "alice", "他要结论在最前面")
+
+    about = _list_memory(
+        client,
+        project_id,
+        user_handle="alice",
+        include_agent="false",
+    )
+    assert [e["content"] for e in about] == ["他要结论在最前面"]

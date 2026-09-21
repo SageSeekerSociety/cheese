@@ -1,8 +1,9 @@
 """这一轮读哪几个池（`pools_for_turn`）。
 
-守的是结论 54 那一条：关于人的池随时可读。所以这个函数**不认识房间**——它的入参里
-没有 topic、没有 is_private、没有任何能用来「这种房间才读」的东西，在场的人给几个
-就还几份池。哪天有人想把过滤加回来，第一步一定是先给它加一个这样的参数。
+守的是结论 54 那一条：关于人的池随时可读——在场的人给几个就还几份池，不因为房间
+是什么类型而少还一份。「私聊和普通房间读到的东西」那一侧由
+`tests/integration/test_a_pool_belongs_to_one_instance_in_one_project.py` 按注入到
+system prompt 里的内容来守，这里守的是键怎么拼。
 """
 
 import uuid
@@ -47,12 +48,3 @@ def test_two_projects_never_name_the_same_pool():
     assert {scope_id for _, scope_id in here} & {
         scope_id for _, scope_id in there
     } == set()
-
-
-def test_it_is_not_told_what_kind_of_room_this_is():
-    """签名守卫：只要参数里出现 topic / is_private / private 一类的东西，就是把
-    「这种房间才读」的判断又接回来了（结论 54 删掉的正是它）。"""
-    import inspect
-
-    params = set(inspect.signature(pools_for_turn).parameters)
-    assert params == {"project_id", "agent_handle", "people_present"}

@@ -64,8 +64,10 @@ async def list_memory(
     made this endpoint blind to the whole live pool, so ``project_id`` sweeps
     them in by default; ``scope``/``scope_id`` on each entry say where it came
     from. ``agent_handle`` narrows to one agent's pool, ``include_agent=false``
-    is the escape hatch back to the shared project pool alone (it wins over
-    ``agent_handle`` if both are given).
+    is the escape hatch back to the shared project pool (it wins over
+    ``agent_handle`` if both are given). It closes the agent pools and nothing
+    else: a caller that also asked ``user_handle`` still gets that answer, which
+    is a different question and has its own condition below.
 
     ``user_handle`` asks the other question a person has about memory — what
     has been remembered *about me* — and it is answered INSIDE this project:
@@ -101,21 +103,21 @@ async def list_memory(
                         project_scope_prefix(project_id), autoescape=True
                     )
                 )
-            if user_handle:
-                if agent_handle:
-                    about = MemoryEntry.scope_id == user_scope_id(
-                        project_id, agent_handle, user_handle
-                    )
-                else:
-                    # 这个项目里每一位 agent 对他的记录。前缀锁住项目，后缀锁住
-                    # 人，中间那一段是谁记的——两头夹住才既不漏掉一位队友，也不
-                    # 把别的项目对同一个人的记录带进来。
-                    about = MemoryEntry.scope_id.startswith(
-                        project_scope_prefix(project_id), autoescape=True
-                    ) & MemoryEntry.scope_id.endswith(
-                        user_scope_about(user_handle), autoescape=True
-                    )
-                conds.append((MemoryEntry.scope == MemoryScope.user) & about)
+        if user_handle:
+            if agent_handle:
+                about = MemoryEntry.scope_id == user_scope_id(
+                    project_id, agent_handle, user_handle
+                )
+            else:
+                # 这个项目里每一位 agent 对他的记录。前缀锁住项目，后缀锁住
+                # 人，中间那一段是谁记的——两头夹住才既不漏掉一位队友，也不
+                # 把别的项目对同一个人的记录带进来。
+                about = MemoryEntry.scope_id.startswith(
+                    project_scope_prefix(project_id), autoescape=True
+                ) & MemoryEntry.scope_id.endswith(
+                    user_scope_about(user_handle), autoescape=True
+                )
+            conds.append((MemoryEntry.scope == MemoryScope.user) & about)
     if not conds:
         return ok(page([], 0))
     cond = conds[0]
