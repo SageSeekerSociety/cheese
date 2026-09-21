@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.memory import redundant
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
@@ -60,6 +61,27 @@ def _write_for_everyone(client, project_id: str, topic_id: str, fact: str) -> No
         json={"content": fact, "topic": topic_id, "scope": "everyone"},
     )
     assert r.status_code == 200, r.text
+
+
+def _project_agent(client, project_id: str) -> str:
+    return client.get(f"/projects/{project_id}/agents").json()["data"]["data"][0][
+        "handle"
+    ]
+
+
+def _checkout_holding(monkeypatch, *lines: dict) -> None:
+    async def search(terms: list[str]) -> list[dict]:
+        return [
+            line
+            for line in lines
+            if any(term.lower() in str(line["text"]).lower() for term in terms)
+        ]
+
+    monkeypatch.setattr(
+        redundant,
+        "agent_checkout_search",
+        lambda db, room, agent_handle, harness: search,
+    )
 
 
 def test_a_fact_for_everyone_is_readable_in_the_project_overview_document(client):
@@ -122,6 +144,66 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
     prompt = stub_hooks.last_system_prompt
     assert prompt is not None
     assert FACT in prompt
+
+
+def test_every_fact_lands_in_one_section_and_carries_who_wrote_it(client):
+    """文档里看得见是谁说的，而且这几条聚在自己那一节里。
+
+    裸追加到末尾的一条，落在文档最后一个标题底下——总览文档最后一节叫「数据」，
+    读的人就把它当成数据那一节的内容；而正文里不署名，谁说的就只剩「最近一次编辑
+    这份文档的人」，下一个人一改就没了。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    agent = _project_agent(client, project_id)
+    client.put(
+        f"/topics/{overview}/doc",
+        json={
+            "content": "## 目标\n做课程推荐系统\n\n## 数据\n教务处脱敏导出",
+            "author": "user-1",
+            "expected_version": 0,
+        },
+    )
+
+    _write_for_everyone(client, project_id, topic_id, FACT)
+    _write_for_everyone(client, project_id, topic_id, "前端交给张衡，后端交给李四")
+
+    text = _doc_text(client, overview)
+    for fact in (FACT, "前端交给张衡，后端交给李四"):
+        assert f"{fact} —— @{agent}" in text
+    # 两条在同一节里往下排，不是一条一个标题——被观察切碎的文档没人再往里写字。
+    section = [line for line in text.split("\n") if line.startswith("## ")]
+    assert len(section) == len(set(section)) == 3
+    # 人自己写的那一节到此为止，芝士 的观察不挂在它底下。
+    assert text.index("教务处脱敏导出") < text.index(FACT)
+
+
+def test_a_fact_the_repo_already_carries_still_goes_into_the_document(
+    client, monkeypatch
+):
+    """repo 里写着，不是不让所有人知道的理由。
+
+    「只记 repo 里查不到的」是记忆那一侧的判据（结论 61）——记忆是一份会过期的副
+    本。文档不是副本，它是人和所有芝士共看的那一份状态，而项目用什么技术栈、分工
+    写在哪个文件里，正是它该说的话。两条一起测：同一条事实，记忆那一路拒，文档这
+    一路收。
+    """
+    project_id, topic_id = _project_and_room(client)
+    overview = _overview_room(client, project_id)
+    fact = "本项目后端用 FastAPI 和 PostgreSQL"
+    _checkout_holding(
+        monkeypatch,
+        {"path": "README.md", "line": 4, "text": "后端用 FastAPI 和 PostgreSQL。"},
+    )
+
+    refused = client.post(
+        f"/projects/{project_id}/memory",
+        json={"content": fact, "topic": topic_id},
+    )
+    assert refused.status_code == 422
+
+    _write_for_everyone(client, project_id, topic_id, fact)
+    assert fact in _doc_text(client, overview)
 
 
 def _move_statement() -> str:
