@@ -376,37 +376,6 @@ async def create_project_agent(
     )
 
 
-@router.get("/{project_id}/agent-options")
-async def project_agent_options(project_id: uuid.UUID, db: DbSession) -> dict:
-    from app.domain.agent_instance.configuration import harness_choices
-
-    project = await ProjectService(db).get_or_404(project_id)
-    choices = model_choices(project.settings)
-    # Every harness this deployment can actually run here, each carrying the
-    # models it can be pointed at. The editor picks the harness and filters the
-    # model list by it — the direction the constraint really runs, so nothing
-    # downstream has to restate which pairs are legal.
-    harnesses = harness_choices(project.settings)
-    return ok(
-        {
-            "harness": {
-                "state": "choosable" if harnesses else "unavailable",
-                "choices": harnesses,
-                "reason": ""
-                if harnesses
-                else "当前项目没有可用的运行方式，请检查模型服务",
-                "note": "",
-            },
-            "model": {
-                "state": "choosable" if choices else "unavailable",
-                "choices": choices,
-                "reason": "" if choices else "当前项目没有可用模型，请检查模型服务",
-                "note": "",
-            },
-        }
-    )
-
-
 @router.put("/{project_id}/agents/{agent_id}")
 async def update_project_agent(
     project_id: uuid.UUID,

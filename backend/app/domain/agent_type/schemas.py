@@ -16,9 +16,6 @@ class AgentTypeOut(BaseModel):
     body: str
     skills: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
-    model: str | None = None
-    effort: str | None = None
-    harness: str | None = None
     # Whether it ships with the platform — presets are read-only.
     builtin: bool
     space_id: int | None = None

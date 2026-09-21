@@ -1104,9 +1104,6 @@ export interface AgentType {
   body: string
   skills: string[]
   mcp_servers: string[]
-  model: string | null
-  effort: string | null
-  harness: string | null
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1115,13 +1112,12 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+// 一个 agent 存着的**角色**。模型绑在活上（卡是用户接触模型的唯一地方），
+// 运行方式是部署的开发者选项 —— 两样都不在这里。
 export interface AgentConfiguration {
   body: string
-  model: string
-  harness: string
   skills: string[]
   mcp_servers: string[]
-  effort: string | null
 }
 
 export interface ProjectAgent {

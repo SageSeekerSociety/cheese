@@ -136,7 +136,6 @@ def test_a_project_starts_with_one_editable_cheese(client):
     assert agents[0]["id"] is not None
     # 它是一行真的实例，不是一个「还没配过」的占位：有 id，就有它坐名册的 handle。
     assert agents[0]["seat_handle"] == agent_instance_handle(agents[0]["id"])
-    assert agents[0]["configuration"]["model"]
     assert (
         client.post(f"/projects/{pid}/agents", json={"handle": "cheese"}).status_code
         == 422
