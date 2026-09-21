@@ -1,8 +1,10 @@
-"""三份行为声明，汇总成一张没有空格的功能矩阵。
+"""行为声明，汇总成一张没有空格的功能矩阵。
 
 结论 48：每个骨架的适配层带一份行为声明——它自带哪些产品概念、每一项平台怎么
-关掉、这份声明对着哪个钉住的版本验证过。本模块是那件事的汇总侧：把三份声明并
-成一张表，并且**在生成的时候就不让任何一格是空的**（不变量 I6）。
+关掉、这份声明对着哪个钉住的版本验证过。本模块是那件事的汇总侧：把注册表里那些
+骨架的声明并成一张表，并且**在生成的时候就不让任何一格是空的**（不变量 I6）。
+一个留着代码而不注册的骨架（结论 43）在这张表上不占一列，它的声明仍然写着，见
+``written()``。
 
 一格只有两种可能：一句「怎么关的」（那就是「有」），或者 ``Difference`` 里的一
 条码；那份名单是封闭的，所以「这一格我说不清」这句话本身也得选一个已经存在的说
@@ -22,7 +24,8 @@ from app.domain.agent.harness.claude_code import declaration as claude_code_decl
 from app.domain.agent.harness.codex import declaration as codex_declaration
 from app.domain.agent.harness.pi import declaration as pi_declaration
 
-#: 每个骨架的声明函数。三个骨架三个调用者——注册表里多一个骨架而这里没有它，
+#: 每个有适配层的骨架的声明函数——包括今天不在注册表里的那些（结论 43：答不出四
+#: 条硬性要求的骨架留着代码不注册）。注册表里多一个骨架而这里没有它，
 #: ``declarations()`` 就红，所以这份名单不会悄悄落后于 ``HARNESSES``。
 _DECLARED = {
     CLAUDE_CODE: claude_code_declaration,
@@ -35,6 +38,16 @@ class MatrixIncomplete(RuntimeError):
     """矩阵里有一格没人填。不是「渲染不出来」，是「这件事没有人回答过」。"""
 
 
+def written() -> dict[str, Declaration]:
+    """每一份写下来的行为声明，包括不在注册表里的那个骨架的。
+
+    跟 ``declarations()`` 的分别就是「有代码」和「在跑」的分别：一个骨架可以留着
+    适配层而不上注册表，而它的 pin 仍然归那条「版本号只写一处」的守卫管——那条守
+    卫要是只看在跑的那些，摘掉一个骨架的同一天，它那几份复制品就没人管了。
+    """
+    return {name: declare() for name, declare in _DECLARED.items()}
+
+
 def declarations() -> dict[str, Declaration]:
     """每个这套部署真的会跑的骨架，和它的行为声明。
 
@@ -44,7 +57,8 @@ def declarations() -> dict[str, Declaration]:
     missing = sorted(set(HARNESSES) - set(_DECLARED))
     if missing:
         raise MatrixIncomplete(f"这些骨架没有行为声明：{missing}")
-    return {name: _DECLARED[name]() for name in HARNESSES}
+    every = written()
+    return {name: every[name] for name in HARNESSES}
 
 
 def matrix() -> dict[str, dict[BuiltIn, str | Difference]]:
