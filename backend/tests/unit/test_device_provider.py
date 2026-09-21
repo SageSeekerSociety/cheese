@@ -432,7 +432,9 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
         result = await central.discover("center")
     screen = hub.screen("survivor")
-    assert result == [(project_id, topic_id, screen, None)]
+    # 第四位是这条会话跑的骨架，从会话行上原样交回来的——中心通道不按骨架挑，
+    # 认领是 runtime 拿自己的骨架去判的（``Channel.discover`` 的契约）。
+    assert result == [(project_id, topic_id, screen, "claude-code")]
     assert screen.resource_id == resource_id
     assert screen.credential_expires == 1234567890
     assert screen.agent_configuration == "original-config"
