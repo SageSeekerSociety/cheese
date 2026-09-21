@@ -7,8 +7,6 @@
 import asyncio
 import uuid
 
-from app.domain.notification.models import NotificationLevel, NotificationType
-from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.models import ProjectMember
 from tests.integration.conftest import session_auth_headers
 
@@ -55,46 +53,6 @@ def _titles(client, project_id: str, handle: str | None = None, **params) -> lis
     r = client.get(f"/projects/{project_id}/alerts", headers=headers, params=params)
     assert r.status_code == 200, r.text
     return [n["title"] for n in r.json()["data"]["data"]]
-
-
-def test_notification_quota_per_topic(client):
-    # spec §8.5: 每个房间每天 ≤2 条 light、每周 ≤1 条 strong；silent 不限。
-    pid = _create_project(client)
-    tid = client.post("/topics", json={"project_id": pid, "title": "T"}).json()["data"][
-        "id"
-    ]
-    p, t = uuid.UUID(pid), uuid.UUID(tid)
-
-    async def run():
-        async with client.test_factory() as s:
-            repo = NotificationRepository(s)
-
-            async def add(level):
-                await repo.add(
-                    project_id=p,
-                    recipient_handle="alice",
-                    receiver_id=None,
-                    level=level,
-                    type_=NotificationType.HEARTBEAT,
-                    title="x",
-                    topic_id=t,
-                )
-                await s.commit()
-
-            assert await repo.over_quota(t, NotificationLevel.light) is False
-            await add(NotificationLevel.light)
-            await add(NotificationLevel.light)
-            assert await repo.over_quota(t, NotificationLevel.light) is True
-
-            assert await repo.over_quota(t, NotificationLevel.strong) is False
-            await add(NotificationLevel.strong)
-            assert await repo.over_quota(t, NotificationLevel.strong) is True
-
-            # silent 和不挂房间的那些从不限流。
-            assert await repo.over_quota(t, NotificationLevel.silent) is False
-            assert await repo.over_quota(None, NotificationLevel.light) is False
-
-    asyncio.run(run())
 
 
 def test_create_notification(client):

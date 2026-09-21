@@ -316,7 +316,7 @@ class ProjectNotificationService:
         self,
         project_id: uuid.UUID,
         *,
-        target_handle: str | None = None,
+        target_handle: str,
         unread_only: bool = False,
     ) -> tuple[list[Notification], int]:
         items = await self._repo.list_for_project(
@@ -328,14 +328,12 @@ class ProjectNotificationService:
         self,
         project_id: uuid.UUID,
         *,
-        target_handle: str | None = None,
+        target_handle: str,
     ) -> tuple[list[Notification], int]:
         items = await self._repo.list_inbox(project_id, recipient_handle=target_handle)
         return items, len(items)
 
-    async def unread_count(
-        self, project_id: uuid.UUID, *, target_handle: str | None = None
-    ) -> int:
+    async def unread_count(self, project_id: uuid.UUID, *, target_handle: str) -> int:
         return await self._repo.unread_count_in_project(
             project_id, recipient_handle=target_handle
         )
@@ -350,9 +348,7 @@ class ProjectNotificationService:
         """
         return await self._repo.mention_topic_ids(topic_ids, target_handle)
 
-    async def mark_all_read(
-        self, project_id: uuid.UUID, *, target_handle: str | None = None
-    ) -> int:
+    async def mark_all_read(self, project_id: uuid.UUID, *, target_handle: str) -> int:
         return await self._repo.mark_all_read_in_project(
             project_id, recipient_handle=target_handle
         )

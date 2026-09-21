@@ -8,7 +8,7 @@
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,12 +18,6 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
-
-#: 分级限流 (spec §8.5): 每个房间每天最多 2 条 light、每周 1 条 strong。
-_QUOTA = {
-    NotificationLevel.light: (timedelta(days=1), 2),
-    NotificationLevel.strong: (timedelta(days=7), 1),
-}
 
 
 class NotificationRepository:
@@ -195,34 +189,10 @@ class NotificationRepository:
 
     # --- 项目收件箱 ------------------------------------------------------
     #
-    # 下面这几条按 `project_id` + `recipient_handle` 查。一条通知只对一个人，所以
-    # 「我看得见哪些」就是一句相等 —— 并表之前这里每一处都还得带上「或者谁的名都
-    # 没点」那一档（广播），四处查询一处内存过滤，漏掉任何一处就是把别人的信念给
-    # 了他。广播现在在写入时展开成一人一行。
-
-    async def over_quota(
-        self, topic_id: uuid.UUID | None, level: NotificationLevel
-    ) -> bool:
-        """这个房间这一档在窗口里是不是已经发满了（silent 不限，房间外的也不限）。
-
-        数的是**行**，而并表之后一条广播就是名册上每人一行：三个人的房间里发一条
-        广播，「每天 ≤2 条 light」当场就满了。`alerts` 那会儿一条广播是一行，同一
-        个配额数的是「发了几条」—— 想按条数限流，得先给同一次发送的那几行一个共同
-        的身份（账本的去重键就是），这里只数行。
-        """
-        if topic_id is None or level not in _QUOTA:
-            return False
-        window, cap = _QUOTA[level]
-        count = await self._session.scalar(
-            select(func.count())
-            .select_from(Notification)
-            .where(
-                Notification.topic_id == topic_id,
-                Notification.level == level.value,
-                Notification.created_at >= datetime.now(UTC) - window,
-            )
-        )
-        return (count or 0) >= cap
+    # 下面这几条按 `project_id` + `recipient_handle` 查，收件人是必填的。一条通知
+    # 只对一个人，所以「我看得见哪些」就是一句相等 —— 并表之前这里每一处都还得带
+    # 上「或者谁的名都没点」那一档（广播），四处查询一处内存过滤，漏掉任何一处就
+    # 是把别人的信念给了他。广播现在在写入时展开成一人一行。
 
     async def add(
         self,
@@ -268,23 +238,24 @@ class NotificationRepository:
         await self._session.refresh(notification)
         return notification
 
-    def _mine_in(self, stmt, project_id: uuid.UUID, recipient_handle: str | None):
-        # `deleted_at` 也挡在这里：一条通知现在两侧都读得到（站内信按
-        # `receiver_id`，项目收件箱按 handle），所以 `DELETE /notifications/{id}`
-        # 软删掉的那一条不能还在项目角标和「等你决定」里亮着。
-        stmt = stmt.where(
+    def _mine_in(self, stmt, project_id: uuid.UUID, recipient_handle: str):
+        """这个项目里我看得见的那些 —— 收件人必填，没有「不给就全看」那一档。
+
+        `deleted_at` 也挡在这里：一条通知现在两侧都读得到（站内信按
+        `receiver_id`，项目收件箱按 handle），所以 `DELETE /notifications/{id}`
+        软删掉的那一条不能还在项目角标和「等你决定」里亮着。
+        """
+        return stmt.where(
             Notification.project_id == project_id,
+            Notification.recipient_handle == recipient_handle,
             Notification.deleted_at.is_(None),
         )
-        if recipient_handle is not None:
-            stmt = stmt.where(Notification.recipient_handle == recipient_handle)
-        return stmt
 
     async def list_for_project(
         self,
         project_id: uuid.UUID,
         *,
-        recipient_handle: str | None = None,
+        recipient_handle: str,
         unread_only: bool = False,
     ) -> list[Notification]:
         stmt = self._mine_in(select(Notification), project_id, recipient_handle)
@@ -297,7 +268,7 @@ class NotificationRepository:
         self,
         project_id: uuid.UUID,
         *,
-        recipient_handle: str | None = None,
+        recipient_handle: str,
     ) -> list[Notification]:
         """等你处理的事 (spec G2): 决策请求挂到拍板为止，验收卡挂到读过为止。"""
         stmt = self._mine_in(select(Notification), project_id, recipient_handle).where(
@@ -316,7 +287,7 @@ class NotificationRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def unread_count_in_project(
-        self, project_id: uuid.UUID, *, recipient_handle: str | None = None
+        self, project_id: uuid.UUID, *, recipient_handle: str
     ) -> int:
         """角标：这个项目里还没读、又不是 silent 的那些（silent 默默记下来）。"""
         stmt = self._mine_in(
@@ -328,7 +299,7 @@ class NotificationRepository:
         return int((await self._session.scalar(stmt)) or 0)
 
     async def mark_all_read_in_project(
-        self, project_id: uuid.UUID, *, recipient_handle: str | None = None
+        self, project_id: uuid.UUID, *, recipient_handle: str
     ) -> int:
         """全部标记已读 —— 返回标了几条。没拍板的决策请求照样留在收件箱里。"""
         stmt = self._mine_in(select(Notification), project_id, recipient_handle).where(
