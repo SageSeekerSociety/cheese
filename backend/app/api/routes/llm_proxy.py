@@ -1,21 +1,24 @@
-"""Model route for machines that are not the backend's own host.
+"""Admission, and the model route for harnesses that speak to a base URL.
 
-A local sandbox container reaches the pool gateway directly (it shares the
-box's network), so nothing had to stand between them. A MicroCloud machine
-cannot: the gateway listens on a box-local address, and handing the machine a
-provider key instead would put a shared credential on hardware the platform
-does not control and make spend unattributable.
+``/llm/admission`` is THE control point (结论 46). Claude Code machines hold no
+base URL at all: they reach the metering proxy over ``HTTPS_PROXY``, and the
+proxy asks here, per request, whether the turn may run, which pool serves it and
+which model name to write into its body. Nothing about that is signed into a
+launch environment, so a binding changed on a card takes effect on the next
+request rather than the next screen.
 
-So a remote screen is launched with ``ANTHROPIC_BASE_URL`` pointing here and
-its own per-turn scoped cheese token as ``ANTHROPIC_AUTH_TOKEN``
-(``machine_launcher.screen_env``). This route authenticates that token,
-swaps in the project's virtual gateway key — the same key its local turns run
-on, so budget and attribution are unchanged — and streams the upstream response
-back verbatim. The credential never leaves the box.
+The catch-all below serves the harnesses that CANNOT be steered that way — Codex
+and Pi are pointed at ``{api_base}/llm/v1``. A MicroCloud machine cannot reach
+the pool gateway itself (it listens on a box-local address), and handing the
+machine a provider key would put a shared credential on hardware the platform
+does not control and make spend unattributable. So the machine carries only its
+own scoped cheese token; this route authenticates it, swaps in the project's
+virtual gateway key — the same key its local turns run on, so budget and
+attribution are unchanged — and streams the upstream response back verbatim. The
+credential never leaves the box.
 
-Anthropic-protocol-agnostic on purpose: whatever path Claude Code asks for
-(``/v1/messages``, ``/v1/messages/count_tokens``, …) is forwarded as-is, so a
-client-side protocol change needs no change here.
+Protocol-agnostic on purpose: whatever path the client asks for is forwarded
+as-is, so a client-side protocol change needs no change here.
 """
 
 import logging
@@ -34,6 +37,7 @@ from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
     NotFoundError,
+    ValidationError,
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
@@ -154,16 +158,39 @@ async def admission(
     # whose model cannot be resolved is refused and told so, never quietly
     # served from the other pool.
     #
-    # 解析失败没有在这里接住：准入今天传的永远是 `None`（房间主线），而目录里必
-    # 有一个 default，所以 `resolve` 在这条路径上抛不出来。这条活自己的绑定进到
-    # 准入，是 P33 派子 agent 那一刻的事；接住它、以及「拒绝理由不能被套上项目额
-    # 度的前缀」（代理今天把所有 allow=False 渲染成 `cheese project budget: …`），
-    # 跟着那条 PR 一起落，那时它才有真能走到的路径可测。
+    # 答不出就拒绝，不换池（I27）。A deployment whose catalogue cannot name a
+    # model for this project has no second pool to quietly serve the request
+    # from — that silent swap is what one control point exists to remove — so
+    # the refusal carries the resolver's own words and the turn stops here.
     project = await ProjectRepository(db).get(project_uuid)
-    pool = binding.resolve(
-        None, binding.catalog(project.settings if project else None)
-    ).supply
-    supply: dict = {"pool": pool}
+    try:
+        bound = binding.resolve(
+            None, binding.catalog(project.settings if project else None)
+        )
+    except ValidationError as exc:
+        # `reason_kind` is what stops the proxy dressing this up as a budget
+        # refusal: it renders every `allow=false` it has ever seen as a 429
+        # `rate_limit_error` prefixed "cheese project budget: …", and a project
+        # whose card names a model the catalogue cannot serve would be told its
+        # quota ran out. The refusal has to say the true reason to satisfy I27
+        # at all — a refusal nobody can act on is the silent swap wearing a
+        # different hat.
+        return ok(
+            {
+                "allow": False,
+                "reason": exc.message,
+                "reason_kind": "binding",
+                "supply": {},
+            }
+        )
+    pool = bound.supply
+    # The name that goes into the REQUEST BODY. The proxy writes it there on the
+    # way out, which is the only place either pool reads a model from, and the
+    # only reason the launch environment can now name none. A subscription model
+    # is catalogued under a short id (`sonnet`) and served under its full name;
+    # the catalogue is the only thing that knows, so the translation lives on
+    # the binding (`WorkBinding.wire_model`) rather than here.
+    supply: dict = {"pool": pool, "model": bound.wire_model}
     if pool == GATEWAY and decision.allow:
         # Minted lazily and cached on the project; the proxy never holds a
         # provider key of its own, so a project whose key cannot be provisioned
@@ -195,7 +222,14 @@ async def admission(
                 if upstream:
                     supply["upstream"] = upstream
 
-    return ok({"allow": decision.allow, "reason": decision.reason, "supply": supply})
+    return ok(
+        {
+            "allow": decision.allow,
+            "reason": decision.reason,
+            "reason_kind": "budget",
+            "supply": supply,
+        }
+    )
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)

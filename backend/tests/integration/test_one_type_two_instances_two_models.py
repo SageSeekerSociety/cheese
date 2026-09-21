@@ -21,15 +21,8 @@ from app.domain.topic.services import TopicService
 RETIRED = {"model", "harness", "effort"}
 
 
-@pytest.fixture
-def subscribed(monkeypatch):
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
-
-
 @pytest.mark.anyio
-async def test_one_type_two_instances_and_two_works_on_two_models(client, subscribed):
+async def test_one_type_two_instances_and_two_works_on_two_models(client):
     bound = {"one": "sonnet", "two": "opus"}
     ids: dict[str, uuid.UUID] = {}
     async with client.test_factory() as session:

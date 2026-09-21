@@ -276,7 +276,6 @@ class ClaudeLaunch:
         return on_machine(
             place,
             system_prompt=self.system_prompt,
-            model=self.model,
             # The third thing a plan carries, and the one the device channel
             # used to drop on the floor. A screen is retired and reopened for
             # reasons that say nothing about the conversation, and until this

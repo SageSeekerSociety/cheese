@@ -615,13 +615,13 @@ HARNESSES: dict[str, Harness] = {
         subagents={
             SubagentRequirement.SPAWNS_WITH_A_MODEL: (
                 "Task / Agent 工具起一条子线程，跑哪个模型由起它的那次调用按家族"
-                "（haiku / sonnet / opus）说。平台这边定的是一个家族落到哪个模型，"
-                "只在启动环境里定一次：订阅形状 `agent/provider_env.py` 的 "
-                "`subscription_provider` 三个别名一个都不设，家族各归各的模型（同"
-                "一句里 `agent/device_provider.py` 的 `_ensure_screen` 还把调用方带"
-                "进来的别名删掉，免得网关形状的那几个漏过来）；网关形状 "
-                "`api_key_provider` 把三个别名钉成同一个模型，家族在那边选不出第二"
-                "个答案。"
+                "（haiku / sonnet / opus）说。平台这边不在启动环境里定模型（结论 "
+                "46）：一台机器只有一种启动形状（`agent/provider_env.py` 的 "
+                "`subscription_provider`），`agent/device_provider.py` 的 "
+                "`_ensure_screen` 把调用方带进来的模型别名删掉；这条活绑的是哪个模"
+                "型在准入时解析（`room_task/binding.py` 的 `WorkBinding.wire_model`"
+                "），计量代理把它写进请求体——订阅池上放过子线程点名 haiku 家族的"
+                "那些请求，网关池上全部改写。"
             ),
             SubagentRequirement.LABELS_ITS_THREAD: (
                 "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识由"

@@ -171,6 +171,10 @@ class Settings(BaseSettings):
     private_chat_executor_image: str = "cheese-private-executor:2.1.277"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
+    # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
+    # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
+    # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
+    claude_code_max_subagent_spawn_depth: int = 1
     # Model aliases the CLI may resolve internally; map them to the provider.
     # Subagents (the Task/Agent tool) resolve via sonnet/opus → keep them on the
     # main model so 分身 don't silently run an older/weaker model.
@@ -364,10 +368,11 @@ class Settings(BaseSettings):
     # client would change what the provider sees. The meter is instead a proxy the
     # traffic passes through — same observability, different place.
     #
-    # OFF by default: with no proxy configured a sandbox would resolve
-    # api.anthropic.com to nothing and every turn would fail. Turning this on is a
-    # deployment decision that needs the proxy actually running.
-    subscription_enabled: bool = False
+    # This is the ONE shape a machine is launched in (结论 46): no base URL, the
+    # metering proxy on HTTPS_PROXY, a fake ticket. The proxy asks
+    # `/llm/admission` per request and sends it to the subscription pool or
+    # rewrites it to the gateway. A deployment without a reachable proxy has no
+    # second shape to fall back to — it refuses and says so.
     # Address the SANDBOX reaches the metering proxy at. The docker bridge address
     # (not loopback, which no container can reach; not 0.0.0.0, which would put the
     # subscription on the LAN).

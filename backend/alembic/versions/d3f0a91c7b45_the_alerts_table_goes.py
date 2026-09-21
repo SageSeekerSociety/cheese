@@ -1,7 +1,7 @@
 """the alerts table goes, after its rows have landed twice
 
 Revision ID: d3f0a91c7b45
-Revises: c8d3a1e07f54
+Revises: c3b9e41f75a2
 Create Date: 2026-09-21 12:00:00
 
 `c8d3a1e07f54` 把 `alerts` 的行搬进了 `notification`，表和数据原样留着，因为换
@@ -75,7 +75,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d3f0a91c7b45"
-down_revision: str | Sequence[str] | None = "c8d3a1e07f54"
+down_revision: str | Sequence[str] | None = "c3b9e41f75a2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

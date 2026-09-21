@@ -389,32 +389,16 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
-    assert app_settings.subscription_enabled is False  # and with the flag on:
-
-    import unittest.mock
-
-    with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
-        subscription_kwargs, subscription_route = await svc._model_kwargs(
-            pid, _on_a_machine()
-        )
-
-    assert subscription_route == route == "gateway"
-    assert subscription_kwargs == kwargs
-    assert fake.minted == []
 
 
 @pytest.mark.anyio
 async def test_subscription_route_follows_the_capability_not_the_backend_name(
     client, tmp_path, monkeypatch
 ):
-    """subscription_enabled names a capability a backend has to IMPLEMENT — it
-    builds the metering-proxy env itself, so nothing travels from here. A
-    backend without that transport used to fall through under the same flag with
-    no env at all and run on the backend process's own inherited credentials; it
-    must keep its profile/gateway routing instead."""
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    """A machine builds the metering-proxy env itself, so nothing about the
+    transport travels from here — a channel that does NOT build one must keep
+    its profile/gateway routing rather than fall through with no env at all and
+    run on the backend process's own inherited credentials."""
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
@@ -442,9 +426,6 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     subscription that does not serve it, and its usage row named the gateway's
     meter while its traffic went through the proxy — counted once in each.
     """
-    from app.core.config import settings as app_settings
-
-    monkeypatch.setattr(app_settings, "subscription_enabled", True)
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
@@ -462,11 +443,9 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
 async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     client, tmp_path, monkeypatch
 ):
-    from app.core.config import settings
     from app.domain.agent_instance.configuration import AgentConfiguration
     from app.domain.agent_instance.services import AgentInstanceService
 
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     svc, factory, pid, tid = await _mk_service(
         client.test_factory, tmp_path, FakeGateway()
     )

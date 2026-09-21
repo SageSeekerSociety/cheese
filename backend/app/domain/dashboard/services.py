@@ -178,8 +178,12 @@ class DashboardService:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
         they are, what they're on across projects, and 芝士's understanding of
         them (个人记忆, §8.4). This is the "项目过程即简历" view."""
-        from app.domain.memory.models import MemoryScope
-        from app.domain.memory.store import memory_store
+        from app.domain.memory.models import (
+            MemoryEntry,
+            MemoryScope,
+            user_scope_about,
+        )
+        from app.domain.memory.store import live_entries
         from app.domain.project.models import Project, ProjectMember
         from app.domain.topic.models import Topic
         from app.domain.user.repositories import UserProfileRepository, UserRepository
@@ -236,7 +240,27 @@ class DashboardService:
                 }
             )
 
-        understanding = await memory_store(self._s).recall(MemoryScope.user, handle)
+        # 关于他的记忆已经不是一个跨项目的池了：每个项目里的每位芝士各有一份自己
+        # 的看法（结论 8），键是 `<项目>:<agent>:<他>`。这一页问的却正好是那个没有
+        # 项目的问题——「大家对我的认识」——所以按后缀把每一份都收进来，而不是拼
+        # 一个不存在的全局键。收进来的是哪一位芝士记的，`scope_id` 自己说得出。
+        understanding = [
+            row.content
+            for row in (
+                await self._s.scalars(
+                    select(MemoryEntry)
+                    .where(
+                        MemoryEntry.scope == MemoryScope.user,
+                        MemoryEntry.scope_id.endswith(
+                            user_scope_about(handle), autoescape=True
+                        ),
+                        live_entries(),
+                    )
+                    .order_by(MemoryEntry.created_at.desc())
+                    .limit(50)
+                )
+            ).all()
+        ][::-1]
         return {
             "handle": handle,
             # Merged schema: display name is UserProfile.nickname, bio is
