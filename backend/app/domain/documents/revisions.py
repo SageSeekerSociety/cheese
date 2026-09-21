@@ -54,8 +54,12 @@ class RevisionsFailed(RuntimeError):
     """The document could not be read, or the decision could not be applied."""
 
 
-def _script() -> Any:
+def script() -> Any:
     """The skill script, loaded once.
+
+    Public because reading a document's text (`documents.text`) has to load the
+    same one: two loaders would be two copies of the judgement this module's
+    docstring is about.
 
     Imported by path rather than as a package: `sandbox/` is what ships to other
     people's machines and is deliberately not importable as one.
@@ -108,34 +112,37 @@ class Revision:
         }
 
 
-def _package(raw: bytes, path: str, office: Any):
+def package(raw: bytes, path: str, office: Any, *, kinds: tuple[str, ...] = ("word",)):
     """`office.Package` over bytes, which it otherwise reads from disk.
 
     The document may live on a machine that is not this one, so it arrives as
     bytes; `Package` wants a path. Writing a temporary file to hand it back the
     interface it expects is cheaper than a second way to open a package.
+
+    `kinds` is what the caller can do something with: tracked changes are a Word
+    thing, while reading the text out also works on slides.
     """
     suffix = Path(path).suffix or ".docx"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
         handle.write(raw)
         temporary = Path(handle.name)
     try:
-        package = office.Package(temporary)
+        opened = office.Package(temporary)
     except Exception as exc:  # noqa: BLE001 — the script's message is the answer
         temporary.unlink(missing_ok=True)
         raise RevisionsFailed(str(exc)) from exc
-    if package.kind() != "word":
+    if opened.kind() not in kinds:
         temporary.unlink(missing_ok=True)
         raise RevisionsUnsupported("只有 Word 文档带修订记录")
-    return package, temporary
+    return opened, temporary
 
 
 def revisions_in(raw: bytes, path: str) -> list[Revision]:
     """Every tracked change in the document, in the order a reader meets them."""
-    office = _script()
-    package, temporary = _package(raw, path, office)
+    office = script()
+    opened, temporary = package(raw, path, office)
     try:
-        rows = office._revision_rows(package, "word")
+        rows = office._revision_rows(opened, "word")
     except Exception as exc:  # noqa: BLE001 — a malformed part reads as unreadable
         raise RevisionsFailed(f"读不出这份文档的修订：{exc}") from exc
     finally:
@@ -168,7 +175,7 @@ def decide(
     not in it means the caller is acting on a different version of the
     document — refused, rather than applied to whatever now sits at that index.
     """
-    office = _script()
+    office = script()
     known = {r.number: r for r in revisions_in(raw, path)}
     chosen: dict[int, bool] = {}
     for number in accept:
@@ -184,12 +191,12 @@ def decide(
             f"这份文档一共 {len(known)} 处——清单可能已经变了，重新读一次。"
         )
 
-    package, temporary = _package(raw, path, office)
+    opened, temporary = package(raw, path, office)
     try:
         paragraph_tag = office._tags("word")[0]
         counted = 0
-        for name in package.text_parts():
-            root = package.elements(name)
+        for name in opened.text_parts():
+            root = opened.elements(name)
             touched = 0
             for paragraph in root.iter(paragraph_tag):
                 for group in office._groups_in(paragraph):
@@ -199,8 +206,8 @@ def decide(
                     office._apply_one(group, chosen[counted])
                     touched += 1
             if touched:
-                package.put(name, root)
-        package.save(temporary)
+                opened.put(name, root)
+        opened.save(temporary)
         made = temporary.read_bytes()
     except Exception as exc:  # noqa: BLE001 — the script's message is the answer
         raise RevisionsFailed(str(exc)) from exc
