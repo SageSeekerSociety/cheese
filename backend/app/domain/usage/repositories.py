@@ -110,6 +110,32 @@ class UsageRepository:
         """One thread's own spend, and nothing of the room around it."""
         return await self._agg(ResourceUsage.task_id, task_id)
 
+    async def last_model_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """每条活最后一次花钱花在哪个模型上，一次查完整个房间。
+
+        卡上的模型是从这里算出来的，不是一列存着的状态（`presentation.card_model`）。
+        取最后一行而不是取「用得最多的」：卡回答的是「现在用的是什么」，而一条改过
+        绑定的活，历史上那些行说的是它改之前的事。
+
+        空 `model` 的行跳过 —— 那种行说的是「有活动，但不知道花了多少」
+        （`add(metered=False)`），它不足以说出用的是哪个模型。
+        """
+        if not task_ids:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(ResourceUsage.task_id, ResourceUsage.model)
+                .where(
+                    ResourceUsage.task_id.in_(task_ids),
+                    ResourceUsage.model != "",
+                )
+                .order_by(ResourceUsage.task_id, ResourceUsage.created_at)
+            )
+        ).all()
+        return {task_id: model for task_id, model in rows if task_id is not None}
+
     async def for_project(self, project_id: uuid.UUID) -> dict:
         return await self._agg(ResourceUsage.project_id, project_id)
 

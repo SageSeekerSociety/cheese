@@ -40,6 +40,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
+from app.domain.room_task.binding import resolve
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -259,6 +260,24 @@ def facts_for_room(
         card=facts_for_card(card),
         awaiting_answer=awaiting_answer,
     )
+
+
+def card_model(task: Task, *, spent: str | None, project_settings: dict | None) -> str:
+    """卡上写哪个模型。
+
+    **花过就写它真花的那个** —— `spent` 是 `usage` 里这条活最后一行的 `model`，
+    也就是钱实际花在谁身上。一分钱还没花过的卡没有这个事实，才退回它绑的那个
+    （`binding.resolve`），那是它下一轮会用的。
+
+    这两个都不是存下来的状态：`tasks` 上没有一列记「显示什么」，也不会有。一列
+    这样的状态要靠每一次真实用量去刷新它，而它对不上的那一天，卡上写着 A、账单
+    上是 B，没有任何地方能说出是谁写错的。和这一层其余所有显示状态同一条规矩
+    —— 读的时候从已有事实算。
+
+    `spent` 从外面喂进来，和 `awaiting_answer` 一样：它要查一次库，而这一层不碰
+    I/O（见模块开头）。
+    """
+    return spent or resolve(task, project_settings).model
 
 
 # —— 卡 ————————————————————————————————————————————————————————

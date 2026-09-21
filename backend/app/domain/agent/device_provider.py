@@ -1357,7 +1357,6 @@ class DeviceChannel(Channel):
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
                 resource_id=str(resource_id),
-                model=launch.model,
                 # WHO acts with it. The launcher has known this all along and
                 # let the minter fall back to a handle derived from the room —
                 # which is the one thing a room cannot answer once it may seat
@@ -1385,6 +1384,14 @@ class DeviceChannel(Channel):
             # surviving flips the CLI into API-key mode or asks the subscription
             # for a model it does not serve. Dropped, not overridden, because
             # subscription_provider only ADDS keys.
+            #
+            # And NOTHING puts a model back afterwards. Which model a request
+            # runs on is decided at one control point — admission, when the
+            # request reaches the metering proxy (结论 46) — and it reads the
+            # binding on the card. A model name nailed into the launch env
+            # would be a second declaration of the same thing, made once at
+            # process birth and never revisited, with nothing anywhere saying
+            # which of the two wins.
             merged = {**(env or {})}
             for k in (
                 "ANTHROPIC_BASE_URL",
@@ -1395,11 +1402,6 @@ class DeviceChannel(Channel):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
-            if launch.model and not launch.model.startswith("claude-"):
-                # Native auxiliary calls and subagents must use the selected
-                # gateway model too; LiteLLM does not serve Claude aliases.
-                for family in ("HAIKU", "SONNET", "OPUS"):
-                    merged[f"ANTHROPIC_DEFAULT_{family}_MODEL"] = launch.model
             merged["CHEESE_REMOTE_CONTROL"] = "1"
             # The tunnel's CONNECT credential must carry the same place and RC
             # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.

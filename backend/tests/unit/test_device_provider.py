@@ -1641,16 +1641,33 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2"])
-async def test_gateway_selection_pins_native_auxiliary_models(
-    monkeypatch, tmp_path, model
-):
+@pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2", "claude-sonnet-5"])
+async def test_the_launch_env_nails_down_no_model_at_all(monkeypatch, tmp_path, model):
+    """一个控制点（结论 46）：模型在请求经计量代理问准入的那一刻解析。
+
+    启动环境里再钉一个型号，就是同一件事的第二份声明 —— 一份在卡的绑定上，随时
+    可以改；一份在进程出生时写死，之后谁也够不着。两份不一致的时候，没有任何地方
+    说得出谁赢。
+    """
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model=model)
     assert "ANTHROPIC_BASE_URL" not in hub.env
     assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
-    for family in ("HAIKU", "SONNET", "OPUS"):
-        assert hub.env[f"ANTHROPIC_DEFAULT_{family}_MODEL"] == model
+    assert [key for key in hub.env if key.endswith("_MODEL")] == []
+
+
+@pytest.mark.anyio
+async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_path):
+    """凭据里签一个型号，等于把启动那一刻的选择带到每一次准入 —— 同样是第二份
+    声明，而且是准入唯一读得到的那一份，它会压过卡上的绑定。"""
+    from app.core.sandbox_auth import scoped_token_claims
+
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(model="glm-5.2")
+    claims = scoped_token_claims(hub.env["CLAUDE_CODE_OAUTH_TOKEN"])
+    assert claims is not None
+    assert "m" not in claims
+    assert "glm-5.2" not in repr(claims)
 
 
 @pytest.mark.anyio

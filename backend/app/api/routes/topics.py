@@ -558,6 +558,10 @@ async def list_room_tasks(
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
     asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
+    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
+    # `tasks` 上没有一列存它。
+    spent = await UsageRepository(db).last_model_by_task(thread_ids)
+    project = await ProjectRepository(db).get(topic.project_id)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -568,6 +572,12 @@ async def list_room_tasks(
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
+                "model": presentation.card_model(
+                    task,
+                    spent=spent.get(task.id),
+                    project_settings=project.settings if project else None,
+                ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
                     presentation.facts_for_task(
@@ -640,6 +650,14 @@ async def get_room_task(
         ),
         now=datetime.now(UTC),
     ).as_dict()
+    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
+    # 就是它绑的那个。和列表里显示的是同一个函数算的。
+    project = await ProjectRepository(db).get(place.project_id)
+    out["model"] = presentation.card_model(
+        task,
+        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
+        project_settings=project.settings if project else None,
+    )
     card = cards.get(task.id)
     out["card"] = (
         None

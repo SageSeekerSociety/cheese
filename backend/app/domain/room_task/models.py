@@ -175,6 +175,18 @@ class Task(UuidPk, Timestamps, Base):
     # actually spawned one.
     subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # 这条活占用的模型资源（结论 3）。NULL = 没有自己的绑定，跟项目默认走 ——
+    # 见 `room_task/binding.py`，那里是唯一读这两列的地方。
+    #
+    # 两个标量列而不是一个 JSONB：今天要存的就是这两个已知的量，JSONB 换来的只是
+    # 没有 schema 校验、也写不出「这条活绑了什么」的守卫。
+    #
+    # 卡上**显示**哪个模型不在这里，也永远不会在这里：它从 `usage` 里这条活最后
+    # 一行的 `model` 算出来，算的地方是 `presentation.card_model`。一列存「显示
+    # 什么」就是第二份声明，它和真的花出去的那个迟早对不上。
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     # 最后一次有人确认这条活还活着。Stamped when a worker is bound; the board
     # reads it together with the thread's last block, and takes the later of the
     # two — a worker that has said nothing yet has only this, and one that has

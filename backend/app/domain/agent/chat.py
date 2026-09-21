@@ -45,10 +45,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import (
-    subscription_model_alias,
-    subscription_model_listings,
-)
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -96,10 +93,6 @@ from app.domain.agent.tool_preview import (
     tool_preview,
     work_subpath,
 )
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    validate_configuration,
-)
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -137,6 +130,7 @@ from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -3973,17 +3967,19 @@ class ChatService:
                     if topic
                     else await agents.for_project(project)
                 )
-            config = AgentConfiguration.model_validate(agent.configuration)
-            validate_configuration(config, project.settings)
-            supply = (
-                SUBSCRIPTION
-                if config.model in {item.id for item in subscription_model_listings()}
-                else "gateway"
-            )
+        # 用哪个模型，问这条活要 —— 而一个房间的主线不是一条活，所以它拿到的永远
+        # 是项目默认（`room_task/binding.py`，结论 3）。以前这里读的是这个 agent
+        # 存着的 `configuration.model`，那等于「换模型就再建一个 agent」；模型是
+        # 工作占用的资源，不是参与者的属性。
+        #
+        # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
+        # 而主线正是最长、最吃缓存的那条对话。
+        bound = binding.resolve(None, project.settings)
+        supply = bound.supply
         model = (
-            subscription_model_alias(config.model)
+            subscription_model_alias(bound.model)
             if supply == SUBSCRIPTION
-            else config.model
+            else bound.model
         )
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
