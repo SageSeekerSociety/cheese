@@ -56,7 +56,11 @@ def relay(client, monkeypatch):
         requests.append((request, await request.aread()))
         return httpx.Response(
             200,
-            headers={"Content-Type": "application/x-git-upload-pack-result"},
+            headers={
+                "Content-Type": "application/x-git-upload-pack-result",
+                "X-Total-Count": "62",
+                "Set-Cookie": "upstream-private=value",
+            },
             stream=Pack(),
         )
 
@@ -121,6 +125,18 @@ def test_token_cannot_select_another_projects_transport(client, relay):
     )
     assert response.status_code == 401
     assert requests == []
+
+
+def test_forge_api_relay_preserves_the_native_clients_pagination_count(client, relay):
+    project_id, requests, _ = relay
+    response = client.get(
+        f"/sandbox/forge/{project_id}/api/v1/repos/project/code/pulls?page=2&limit=30",
+        headers={"Authorization": "token project-token"},
+    )
+    assert response.status_code == 200
+    assert response.headers["x-total-count"] == "62"
+    assert "set-cookie" not in response.headers
+    assert str(requests[0][0].url).endswith("/pulls?page=2&limit=30")
 
 
 def test_expired_token_is_refused_even_before_upstream_revocation(client, relay):
