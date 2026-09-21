@@ -588,6 +588,39 @@ async def test_a_call_the_executor_refused_to_take_is_recorded_failed(
     assert await _outcomes(db_factory, topic) == [("tool-1", "failed")]
 
 
+async def _a_settle_that_cannot_reach_the_database(*_a, **_kw) -> None:
+    """结清那一步失败：池子被占满的样子，路由上面那段注释记的就是那次事故。"""
+    raise OSError("connection pool is exhausted")
+
+
+@pytest.mark.anyio
+async def test_a_settle_that_fails_does_not_change_what_the_call_answered(
+    db_factory, owner_client, monkeypatch
+):
+    """结不上账，不许把一次已经回来的结果变成 500，也不许盖掉机器自己的话。
+
+    这次结清是在远端调用结束**之后**才重新向池子要的那一次连接，而每一次工具调用都要
+    一次。它抛出来会毁掉两样东西：``done`` 那一档排在 ``return answer`` 前面，一次已
+    经 200 回来的结果变成 500 交给沙箱；``failed`` 那一档排在 ``raise`` 前面，409 连
+    同要带进房间的机器原话一起退化成一个未处理的 500。留着不结清的代价只是这一行读出
+    来是 ``unknown``，那本来就是它的默认那一档。
+    """
+    _, topic, token = await _a_room_with_hands(db_factory)
+    monkeypatch.setattr(
+        dispatch_log, "settle", _a_settle_that_cannot_reach_the_database
+    )
+    await _an_attached_machine(monkeypatch, _answers_with_a_result)
+
+    answered = await _invoke(owner_client, topic, token, key="tool-1")
+
+    monkeypatch.setattr(execution, "device_hub", DeviceHub())
+    unreachable = await _invoke(owner_client, topic, token, key="tool-2")
+
+    assert answered.status_code == 200
+    assert unreachable.status_code == 409
+    assert await _outcomes(db_factory, topic) == [("tool-1", None), ("tool-2", None)]
+
+
 @pytest.mark.anyio
 async def test_a_call_without_an_id_records_nothing(
     db_factory, owner_client, monkeypatch
