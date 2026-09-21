@@ -1403,6 +1403,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="把指定任务的新提交推到其现有 PR 并刷新验收状态。",
     )
     pfix.add_argument("--task", help="任务 UUID；省略时取当前任务目录")
+    pfix.add_argument(
+        "--drop-dependency",
+        action="store_true",
+        help="已整理并验证独立改动后，将现有 PR 改到项目默认分支，清除任务依赖和旧批准",
+    )
 
     pfetch = sub.add_parser(
         "fetch",
@@ -2030,7 +2035,10 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
         _sync_task(task)
-        r = _call("POST", f"/topics/{topic}/tasks/{task}/push-fix")["data"]
+        path = f"/topics/{topic}/tasks/{task}/push-fix"
+        if a.drop_dependency:
+            path += "?drop_dependency=true"
+        r = _call("POST", path)["data"]
         if r.get("pushed"):
             print(f"已推到 PR #{r['pr_number']}：{r.get('pr_url') or ''}")
         else:

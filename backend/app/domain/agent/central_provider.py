@@ -14,7 +14,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.domain.agent import execution, private_chat
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -27,7 +27,9 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +217,15 @@ class CentralChannel(DeviceChannel):
         # below.
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
+            # The machine resolver supplies a room identity; the signed launch
+            # credential names the teammate actually taking this turn.
+            # A room-scoped legacy token leaves the precheck identity intact.
+            actor = token_agent_handle(token)
+            if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+                user = await user_by_handle(db, actor)
+                if user is None:
+                    raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
+                agent_user_id, agent_handle = user.id, user.username
             mark("room_lock")
             resource = room.resource_id or room.id
             is_private = room.is_private

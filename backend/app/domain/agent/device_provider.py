@@ -31,7 +31,11 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
+from app.core.sandbox_auth import (
+    mint_scoped_token,
+    scoped_token_claims,
+    token_agent_handle,
+)
 from app.domain.agent import machine_launcher, place, provider_env
 from app.domain.agent.device_hub import (
     DeviceCallError,
@@ -71,6 +75,7 @@ from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.library import service as library
 from app.domain.topic.services import TopicService
+from app.domain.user.services import user_by_handle
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
@@ -1717,6 +1722,15 @@ class DeviceChannel(Channel):
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
+                # Use the same actor for Git and tools, including a non-default
+                # teammate whose identity differs from the machine precheck.
+                # A room-scoped legacy token keeps the precheck identity.
+                actor = token_agent_handle(token)
+                if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+                    user = await user_by_handle(room_session, actor)
+                    if user is None:
+                        raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
+                    agent_user_id, agent_handle = user.id, user.username
             env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
             before = (
                 await environment_status(self._hub, device_id, project_id, resource_id)
