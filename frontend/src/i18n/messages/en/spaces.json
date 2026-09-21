@@ -4,6 +4,7 @@
     "name": "Problem board name",
     "placeholder": "e.g. Programming exercises",
     "intro": "Introduction (optional)",
+    "avatar": "Avatar (optional)",
     "ownership": "A platform administrator will review your application. Once approved, you can publish and review problems in your problem board.",
     "visibility": "The problem board will appear in the explore list after approval.",
     "cancel": "Cancel",

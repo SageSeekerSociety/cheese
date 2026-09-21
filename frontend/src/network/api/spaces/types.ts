@@ -2,6 +2,7 @@ import type { Page, Space, TaskSubmitterType } from '@/types'
 
 export type SpaceApplication = {
   id: number
+  avatarId?: number | null
   name: string
   intro: string
   reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED'

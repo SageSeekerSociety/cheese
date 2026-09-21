@@ -4,6 +4,8 @@ import type { SpaceApplication } from '@/network/api/spaces/types'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
@@ -88,7 +90,10 @@ onMounted(load)
     <v-progress-linear v-if="loading" indeterminate />
     <p v-else-if="!items.length && !error" class="text-body-2">{{ t('spaces.review.empty') }}</p>
     <v-card v-for="item in items" :key="item.id" variant="outlined" class="mb-3">
-      <v-card-title>{{ item.name }}</v-card-title>
+      <v-card-title>
+        <v-avatar v-if="item.avatarId" size="40" :image="getAvatarUrl(item.avatarId)" class="mr-2" />
+        {{ item.name }}
+      </v-card-title>
       <v-card-text>
         <p class="text-body-2 mb-2">{{ t('spaces.review.applicant') }}：{{ item.owner }}</p>
         <p class="text-body-2">{{ item.intro }}</p>

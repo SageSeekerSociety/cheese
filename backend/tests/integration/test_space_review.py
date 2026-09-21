@@ -19,13 +19,24 @@ def test_review_controls_visibility_and_task_creation(client, actors):
     owner, stranger, admin = actors
     response = client.post(
         "/spaces",
-        json={"name": "Programming course", "intro": "Weekly exercises"},
+        json={
+            "name": "Programming course",
+            "intro": "Weekly exercises",
+            "avatarId": 77,
+        },
         headers=owner,
     )
     assert response.status_code == 201, response.text
     space = response.json()["data"]["space"]
     sid = space["id"]
     assert space["reviewStatus"] == "PENDING"
+    assert space["avatarId"] == 77
+    assert (
+        client.get("/admin/spaces", headers=admin).json()["data"]["items"][0][
+            "avatarId"
+        ]
+        == 77
+    )
     assert client.get("/spaces", headers=stranger).json()["data"]["spaces"] == []
     for path in (
         f"/spaces/{sid}",
@@ -109,12 +120,28 @@ def test_rejection_requires_reason_and_only_owner_can_resubmit(client, actors):
     assert item["reviewReason"] == "Explain the course"
     assert item["reviewedBy"] == "course-reviewer"
     endpoint = f"/space-applications/{sid}/resubmit"
-    body = {"name": "Programming course", "intro": "Weekly practice"}
+    body = {"name": "Programming course", "intro": "Weekly practice", "avatarId": 88}
     assert client.post(endpoint, json=body, headers=stranger).status_code == 404
     response = client.post(endpoint, json=body, headers=owner)
     assert response.status_code == 200, response.text
     assert response.json()["data"]["application"]["reviewStatus"] == "PENDING"
+    assert response.json()["data"]["application"]["avatarId"] == 88
+    assert (
+        client.get("/admin/spaces", headers=admin).json()["data"]["items"][0][
+            "avatarId"
+        ]
+        == 88
+    )
     assert client.post(endpoint, json=body, headers=owner).status_code == 409
+    client.post(
+        f"/admin/spaces/{sid}/review",
+        json={"approved": False, "reason": "Clarify the scope"},
+        headers=admin,
+    )
+    body.pop("avatarId")
+    response = client.post(endpoint, json=body, headers=owner)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["application"]["avatarId"] == 88
     assert (
         client.patch(
             f"/spaces/{sid}", json={"name": "Changed during review"}, headers=owner

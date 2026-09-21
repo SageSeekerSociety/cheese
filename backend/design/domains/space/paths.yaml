@@ -65,6 +65,9 @@
                 maxLength: 255
               intro:
                 type: string
+              avatarId:
+                type: integer
+                description: Uploaded avatar ID; omitted to keep the existing avatar
     responses:
       '200':
         description: Application returned to PENDING

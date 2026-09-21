@@ -20,6 +20,7 @@
       </p>
       <div v-for="item in applications" :key="item.id" class="py-3">
         <div class="d-flex flex-wrap align-center ga-2 mb-1">
+          <v-avatar v-if="item.avatarId" size="32" :image="getAvatarUrl(item.avatarId)" />
           <h3 class="text-body-1 font-weight-medium application-copy">{{ item.name }}</h3>
           <span class="text-body-2 text-medium-emphasis">{{ t(`spaces.review.${item.reviewStatus}`) }}</span>
         </div>
@@ -135,6 +136,14 @@
         <v-card-text>
           <p class="text-body-2 mb-2">{{ t('spaces.create.ownership') }}</p>
           <p class="text-body-2 text-medium-emphasis mb-4">{{ t('spaces.create.visibility') }}</p>
+          <p class="text-body-2 mb-2">{{ t('spaces.create.avatar') }}</p>
+          <AvatarUploader
+            v-if="createDialog"
+            v-model="selectedAvatar"
+            :src="existingAvatarId ? getAvatarUrl(existingAvatarId) : undefined"
+            :disabled="creating"
+            class="mb-4 board-avatar-picker"
+          />
           <v-text-field
             v-model="spaceName"
             autocomplete="off"
@@ -174,7 +183,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { SpaceApplication } from '@/network/api/spaces/types'
+import type { PostSpaceRequestData, SpaceApplication } from '@/network/api/spaces/types'
 
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -186,8 +195,10 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/network/api/spaces'
 import AccountService from '@/services/account'
 
@@ -216,6 +227,8 @@ function openResubmit(item: SpaceApplication) {
   resubmittingId.value = item.id
   spaceName.value = item.name
   spaceIntro.value = item.intro
+  selectedAvatar.value = undefined
+  existingAvatarId.value = item.avatarId ?? undefined
   createError.value = ''
   createDialog.value = true
 }
@@ -223,12 +236,16 @@ const createDialog = ref(false)
 const creating = ref(false)
 const spaceName = ref('')
 const spaceIntro = ref('')
+const selectedAvatar = ref<File>()
+const existingAvatarId = ref<number>()
 const createError = ref('')
 
 function openCreateSpace() {
   resubmittingId.value = null
   spaceName.value = ''
   spaceIntro.value = ''
+  selectedAvatar.value = undefined
+  existingAvatarId.value = undefined
   createError.value = ''
   createDialog.value = true
 }
@@ -238,7 +255,11 @@ async function createSpace() {
   creating.value = true
   createError.value = ''
   try {
-    const payload = { name: spaceName.value.trim(), intro: spaceIntro.value.trim() }
+    const payload: PostSpaceRequestData = { name: spaceName.value.trim(), intro: spaceIntro.value.trim() }
+    if (selectedAvatar.value) {
+      const { data } = await AvatarsApi.createAvatar(selectedAvatar.value)
+      payload.avatarId = data.avatarId
+    }
     if (resubmittingId.value !== null) await SpacesApi.resubmit(resubmittingId.value, payload)
     else await SpacesApi.create(payload)
     createDialog.value = false
@@ -314,6 +335,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.board-avatar-picker {
+  width: 120px;
+}
+
 .application-copy {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

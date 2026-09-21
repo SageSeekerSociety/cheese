@@ -16,6 +16,8 @@ const listProjects = vi.fn()
 const spacesList = vi.fn()
 const spacesCreate = vi.fn()
 const applications = vi.fn()
+const uploadAvatar = vi.fn()
+const resubmit = vi.fn()
 const showNewProjectDialog = vi.fn()
 
 vi.mock('@/api', async () => {
@@ -28,7 +30,12 @@ vi.mock('@/network/api/spaces', () => ({
     list: (...a: unknown[]) => spacesList(...a),
     create: (...a: unknown[]) => spacesCreate(...a),
     applications: (...a: unknown[]) => applications(...a),
+    resubmit: (...a: unknown[]) => resubmit(...a),
   },
+}))
+
+vi.mock('@/network/api/avatars', () => ({
+  AvatarsApi: { createAvatar: (...a: unknown[]) => uploadAvatar(...a) },
 }))
 
 // 对话框本身住在 App.vue（跨路由活着），这一页只是把它叫起来。
@@ -99,6 +106,9 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
+  uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
+  resubmit.mockReset().mockResolvedValue({})
+  URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
   applications.mockReset().mockResolvedValue({ data: { items: [] } })
   listProjects.mockReset()
   spacesList.mockReset().mockResolvedValue({ data: { spaces: [], page: { pageSize: 12, hasMore: false } } })
@@ -110,6 +120,36 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('space creation', () => {
+  it('uploads the selected image before creating the board', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    spacesCreate.mockResolvedValue({})
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Practice')
+    const file = new File(['image'], 'avatar.png', { type: 'image/png' })
+    await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await waitFor(() => expect(spacesCreate).toHaveBeenCalledWith({ name: 'Practice', intro: '', avatarId: 77 }))
+    expect(uploadAvatar).toHaveBeenCalledWith(file)
+  })
+
+  it('keeps the application open when the avatar upload fails', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    uploadAvatar.mockRejectedValueOnce(new Error('Upload failed'))
+    const page = mountPage()
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
+    await flush()
+    await fireEvent.update(page.getByLabelText('spaces.create.name'), 'Practice')
+    await fireEvent.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [new File(['image'], 'avatar.png', { type: 'image/png' })] },
+    })
+    await fireEvent.submit(page.getByRole('button', { name: 'spaces.create.submit' }).closest('form')!)
+    await waitFor(() => expect(page.getByText('spaces.create.failed')).toBeTruthy())
+    expect(spacesCreate).not.toHaveBeenCalled()
+    expect((page.getByLabelText('spaces.create.name') as HTMLInputElement).value).toBe('Practice')
+  })
+
   it('lets an ordinary signed-in user submit a space for review', async () => {
     listProjects.mockResolvedValue({ data: [] })
     spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })

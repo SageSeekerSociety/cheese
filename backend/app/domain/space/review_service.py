@@ -15,6 +15,7 @@ def application_view(space: Space) -> dict:
         "id": space.id,
         "name": space.name,
         "intro": space.intro,
+        "avatarId": space.avatar_id,
         "description": space.description,
         "reviewStatus": space.review_status,
         "reviewReason": space.review_reason,
@@ -114,7 +115,13 @@ class SpaceReviewService:
         return application_view(row)
 
     async def resubmit(
-        self, space_id: int, *, user_id: int, name: str, intro: str
+        self,
+        space_id: int,
+        *,
+        user_id: int,
+        name: str,
+        intro: str,
+        avatar_id: int | None = None,
     ) -> dict:
         if not await self.is_owner(space_id, user_id):
             raise NotFoundError("Space not found")
@@ -135,6 +142,8 @@ class SpaceReviewService:
         if duplicate:
             raise ConflictError("A space with this name already exists")
         row.name, row.intro = name.strip(), intro.strip()
+        if avatar_id is not None:
+            row.avatar_id = avatar_id
         row.review_status = "PENDING"
         row.review_reason = row.reviewed_by = row.reviewed_at = None
         row.updated_at = datetime.now(UTC)

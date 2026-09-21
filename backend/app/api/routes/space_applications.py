@@ -14,6 +14,7 @@ router = APIRouter(prefix="/space-applications", tags=["Spaces"])
 class ResubmitSpaceRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     intro: str = ""
+    avatar_id: int | None = Field(default=None, alias="avatarId")
 
 
 @router.get("")
@@ -38,6 +39,10 @@ async def resubmit_space(
     db=Depends(get_db),
 ) -> dict:
     item = await SpaceReviewService(db).resubmit(
-        space_id, user_id=user.user_id, name=body.name, intro=body.intro
+        space_id,
+        user_id=user.user_id,
+        name=body.name,
+        intro=body.intro,
+        avatar_id=body.avatar_id,
     )
     return {"code": 200, "data": {"application": item}}
