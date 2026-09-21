@@ -26,13 +26,53 @@ FRONTEND_SRC = BACKEND.parent / "frontend/src"
 RETIRED = ("model", "harness", "effort")
 
 
-def _reads_a_retired_key(tree: ast.AST) -> list[tuple[int, str]]:
-    """一个 ``configuration`` 里的三个键被读出来的地方。
+def _holds_a_configuration(expr: ast.expr, aliases: set[str]) -> bool:
+    """这个表达式取的是一份 configuration 吗。
 
-    读法只有两种——``configuration["model"]`` 和 ``configuration.get("model")``
-    ——两种都按「取值的那个东西的源码里出现了 configuration」来认。宽一点是故意
-    的：这条守卫宁可多问一句，也不要放过一个改了变量名就绕过去的读点。
+    两类都算：源码里带 ``configuration`` 的（``agent.configuration``、
+    ``AgentConfiguration.model_validate(...)``——大小写不分，后者的类名里也有它），
+    以及先被起了局部名的（``cfg = agent.configuration`` 之后的 ``cfg``）。
     """
+    if isinstance(expr, ast.Name) and expr.id in aliases:
+        return True
+    return "configuration" in ast.dump(expr).lower()
+
+
+def _configuration_aliases(tree: ast.AST) -> set[str]:
+    """``x = <一份 configuration>`` 里的那些 ``x``。
+
+    一路跟到不再长出新名字为止，``a = agent.configuration`` 之后 ``b = a`` 的
+    ``b`` 也算——改个变量名就绕过守卫，是这条不变量最容易被悄悄破掉的方式。
+    """
+    aliases: set[str] = set()
+    while True:
+        grown = set(aliases)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            elif isinstance(node, ast.NamedExpr):
+                targets, value = [node.target], node.value
+            else:
+                continue
+            if not _holds_a_configuration(value, grown):
+                continue
+            grown |= {t.id for t in targets if isinstance(t, ast.Name)}
+        if grown == aliases:
+            return aliases
+        aliases = grown
+
+
+def _reads_a_retired_key(tree: ast.AST) -> list[tuple[int, str]]:
+    """一份 configuration 里的三样东西被读出来的地方。
+
+    三种读法都认：``configuration["model"]``、``configuration.get("model")``，
+    以及走 schema 的 ``AgentConfiguration.model_validate(row).model``——最后这种
+    是最可能长回来的一条，因为字段这一轮还留在 schema 上（P15b 才删）。持有它的
+    表达式先过 :func:`_holds_a_configuration`，所以起个局部名换个写法也绕不过去。
+    """
+    aliases = _configuration_aliases(tree)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         holder = key = None
@@ -46,9 +86,11 @@ def _reads_a_retired_key(tree: ast.AST) -> list[tuple[int, str]]:
             and isinstance(node.args[0], ast.Constant)
         ):
             holder, key = node.func.value, node.args[0].value
+        elif isinstance(node, ast.Attribute):
+            holder, key = node.value, node.attr
         if key not in RETIRED or holder is None:
             continue
-        if "configuration" in ast.dump(holder):
+        if _holds_a_configuration(holder, aliases):
             found.append((node.lineno, key))
     return found
 
@@ -65,11 +107,26 @@ def test_no_backend_code_reads_the_three_keys_off_a_saved_configuration() -> Non
     )
 
 
-# ``draft.value.harness``、``agent.configuration.model``、``preset?.effort``——
-# 前端读它们只有属性访问这一种写法，而持有它们的名字就这几个。
-_FRONTEND_READ = re.compile(
-    r"\b(configuration|draft|preset|config|agent)(\.value)?\??\.(model|harness|effort)\b"
+# ``draft.value.harness``、``agent.configuration.model``、``preset?.effort``、
+# ``cfg['model']``——界面读它们是属性访问或者下标，而持有它们的要么是下面这几个
+# 名字，要么是一个当场起的局部名（``const cfg = a.configuration``）。
+_HOLDERS = ("configuration", "draft", "preset", "config", "agent")
+_FRONTEND_ALIAS = re.compile(
+    r"\b(?:const|let|var)\s+(\w+)\s*(?::[^=]+)?=[^=].*configuration", re.I
 )
+
+
+def _frontend_reads(text: str) -> list[str]:
+    holders = set(_HOLDERS) | set(_FRONTEND_ALIAS.findall(text))
+    reads = re.compile(
+        r"\b(" + "|".join(sorted(holders)) + r")(\.value)?\??"
+        r"(\.(model|harness|effort)\b|\[['\"](model|harness|effort)['\"]\])"
+    )
+    return [
+        f"line {i}: {line.strip()}"
+        for i, line in enumerate(text.splitlines(), 1)
+        if reads.search(line)
+    ]
 
 
 def test_no_frontend_code_reads_the_three_fields_off_a_type_or_an_instance() -> None:
@@ -77,11 +134,7 @@ def test_no_frontend_code_reads_the_three_fields_off_a_type_or_an_instance() -> 
     for path in sorted(FRONTEND_SRC.rglob("*")):
         if path.suffix not in (".ts", ".vue"):
             continue
-        hits = [
-            f"line {i}: {line.strip()}"
-            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-            if _FRONTEND_READ.search(line)
-        ]
+        hits = _frontend_reads(path.read_text(encoding="utf-8"))
         if hits:
             offenders[str(path.relative_to(FRONTEND_SRC))] = hits
     assert not offenders, (

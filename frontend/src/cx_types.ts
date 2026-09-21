@@ -1103,9 +1103,6 @@ export interface AgentConfiguration {
   body: string
   skills: string[]
   mcp_servers: string[]
-  model?: string | null
-  harness?: string | null
-  effort?: string | null
 }
 
 export interface ProjectAgent {

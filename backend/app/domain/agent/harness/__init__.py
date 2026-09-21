@@ -432,12 +432,6 @@ def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
 
 # --- which harness ----------------------------------------------------------
 #
-# ``AgentType.harness`` has existed as a column for a while with nobody reading
-# it. This is the reader. A type that names a harness this deployment does not
-# have must be refused when it is WRITTEN rather than quietly running Claude
-# Code — a stored value nothing honours is how the column got here in the first
-# place.
-#
 # The names themselves are declared at the top of this module, because
 # ``SessionRef`` defaults to one and a default written as a literal is a second
 # declaration of the same fact.
@@ -455,9 +449,8 @@ class Harness:
     present it. A model has no opinion about any of that.
 
     Written the wrong way round, adding a harness meant editing the model
-    catalogue, an editor had to infer the harness from the model the person
-    picked, and refusing a combination produced an error about the model — the
-    half the person had actually chosen on purpose.
+    catalogue, and refusing a combination produced an error about the model —
+    the half the person had actually chosen on purpose.
     """
 
     name: str
