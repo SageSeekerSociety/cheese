@@ -69,8 +69,10 @@ def _seat(client, tid: str, handle: str, *, by: str, role: str = "member") -> No
 
 
 def _project_handles(client, pid: str) -> list[str]:
+    """The people on the project roster. The roster also seats the project's own
+    芝士 (one roster, agents included), and these tests are about who leaves."""
     rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
-    return [m["user_handle"] for m in rows]
+    return [m["user_handle"] for m in rows if not m.get("agent")]
 
 
 def _topic_handles(client, tid: str) -> list[str]:

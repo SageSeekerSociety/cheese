@@ -188,6 +188,9 @@ def test_adding_a_shell_touches_no_component() -> None:
     for path in (REPO_ROOT / "frontend" / "src").rglob("*"):
         if path.suffix not in {".ts", ".vue", ".js"} or not path.is_file():
             continue
+        # Fixtures name the shells they exercise; they are not shipped components.
+        if path.name.endswith(".spec.ts"):
+            continue
         text = path.read_text(encoding="utf-8")
         for name in SHELL_NAMES:
             if name in text:
