@@ -3836,7 +3836,12 @@ class ChatService:
 
         ``harness`` is the one this room's turns run on, resolved by the caller
         — the ref that reads the spool carries the same answer the turn used,
-        rather than asking again and possibly getting a different one.
+        rather than asking again and possibly getting a different one. Nothing
+        downstream reads it today: the spool is addressed by (project, topic)
+        in ``hooks_substrate.read_log``/``acknowledge_log``, and no ``backlog``
+        implementation looks at it — so a spool is NOT partitioned by harness.
+        It is required because ``SessionRef`` has no default harness (不变量
+        I5) and every construction point must be able to state its answer.
 
         The harness's ``backlog`` says WHAT was said; this decides what to do
         about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
@@ -5342,21 +5347,6 @@ class ChatService:
             project = await projects.get(project_id)
             if project is None:
                 raise NotFoundError("Project not found")
-            # 这个项目跑的骨架（结论 28），趁项目行还在手上解析一次——下面把会话
-            # 指针写回去的那一段在另一个事务里，那里已经没有项目可读。
-            harness = harness_for(project.settings)
-            # 选机器也用这个答案。这一段以前问的是 ``platform_work``，它按部署的
-            # 骨架挑：一套跑 claude-code 的部署上，一个设成别的骨架的项目会真跑在
-            # claude-code 上，而会话行按项目那个骨架落键——同一间房的活动轮和普通
-            # 轮成了两行，下一轮把这一轮的 resume token 递给了另一个骨架。
-            compute_id = _resolve_compute_id(project.settings)
-            provider = self._compute.select(provider_id=compute_id, harness=harness)
-            if provider is None:
-                # 机器没问题，是这套部署没把这个项目要的骨架部署在上面。跟
-                # ``_assemble_turn`` 一样说出来，而不是改用别的骨架跑一轮。
-                raise ValidationError(
-                    f"本项目选的机器上没有部署 {harness}，活动没有接入"
-                )
 
             title = " ".join(text.split())[:40] or "活动记录"
             topic = await topics.add(
@@ -5380,6 +5370,9 @@ class ChatService:
             )
             memories = await self._recall_agent_memories(memory, session, topic=topic)
             topic_id = topic.id
+            compute_id = _resolve_compute_id(
+                project.settings,
+            )
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
@@ -5397,6 +5390,7 @@ class ChatService:
             "如果这是个关键节点就用 cheese 钉成里程碑；"
             "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
+        provider = self._compute.platform_work(compute_id)
         runtime = runtime_for(provider)
         final_text = ""
         new_session_id = None
@@ -5425,7 +5419,10 @@ class ChatService:
                     topic_id=topic_id,
                     agent_handle=agent.handle,
                     resume_token=new_session_id,
-                    harness=harness,
+                    # 这一轮真正跑在哪个骨架上，问跑它的那个适配器——平台自己起
+                    # 的活没有 agent 类型站在后面，``platform_work`` 给的是这台
+                    # 机器跑的东西（结论 28）。
+                    harness=runtime.harness,
                 )
             await session.commit()
 
