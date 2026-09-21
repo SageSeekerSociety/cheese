@@ -247,27 +247,22 @@ def test_the_move_finds_the_live_account_not_a_retired_one(client):
     assert _receivers_of(client, "给alice") == {live}, retired
 
 
-def test_rolling_back_does_not_invent_an_account_for_the_rows_it_keeps(client):
-    """回滚把收件人为空的行删掉，而不是编一个 0 号用户。
+def test_a_recipient_without_an_account_still_gets_the_row(client):
+    """handle 在账号池里没有对应行时，`receiver_id` 留空 —— 不编一个。
 
-    这些行不只是搬家搬来的：handle 在账号池里没有对应行时新代码本来就这么写，
-    @ 一个 agent 就产生一条，而 `DELETE ... delivery_key LIKE 'alert:%'` 删不掉
-    它们。给它们编一个不存在的账号 id，回滚之后它们就停在那个谁也打不开的信箱
-    里，而按 `receiver_id` 数未读的那一侧认得它们。
+    这也是 `downgrade()` 里那一句的由来：这些行删掉，而不是塞进「0 号用户」的
+    信箱。回滚本身这里测不了 —— `downgrade()` 把列真的从库里删掉，而这个套件的
+    `test_factory` 是真提交（只有每个请求那一层在事务里），一跑就把后面所有用例
+    的库拆了。
     """
     pid, tid = _room(client)
-    # 点名给 agent 的那一条：`cheese-…` 在账号池里没有行，所以 `receiver_id` 为空。
     _seed_alerts(
         client, pid, tid, [{"target": AGENT, "title": "点名给芝士", "topic": True}]
     )
+
     _upgrade(client)
-    orphans = _ids_without_an_account(client)
-    assert orphans, "这一步该留下一条收件人为空的行，否则下面测不到东西"
 
-    _downgrade(client)
-
-    assert _count_where(client, "receiver_id = 0") == 0
-    assert _count_where(client, f"id IN ({','.join(str(i) for i in orphans)})") == 0
+    assert _receivers_of(client, "点名给芝士") == {None}
 
 
 def _recipients_of(client, title: str) -> set[str]:
@@ -323,43 +318,5 @@ def _two_accounts_named(client, handle: str) -> tuple[int, int]:
                 ids.append(int(row.scalar_one()))
             await s.commit()
             return ids[0], ids[1]
-
-    return asyncio.run(_run())
-
-
-def _downgrade(client) -> None:
-    def _apply(conn) -> None:
-        with Operations.context(MigrationContext.configure(conn)):
-            _load().downgrade()
-
-    async def _run() -> None:
-        async with client.test_factory() as s:
-            await (await s.connection()).run_sync(_apply)
-            await s.commit()
-
-    asyncio.run(_run())
-
-
-def _ids_without_an_account(client) -> list[int]:
-    async def _run() -> list[int]:
-        async with client.test_factory() as s:
-            rows = await s.execute(
-                text("SELECT id FROM notification WHERE receiver_id IS NULL")
-            )
-            return [int(row[0]) for row in rows.all()]
-
-    return asyncio.run(_run())
-
-
-def _count_where(client, predicate: str) -> int:
-    async def _run() -> int:
-        async with client.test_factory() as s:
-            return int(
-                (
-                    await s.execute(
-                        text(f"SELECT count(*) FROM notification WHERE {predicate}")
-                    )
-                ).scalar_one()
-            )
 
     return asyncio.run(_run())

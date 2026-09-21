@@ -186,6 +186,8 @@ def test_an_unidentified_caller_has_no_mailbox_at_all(client):
 
 def test_tokenless_caller_naming_someone_else_is_refused(client):
     pid = _project(client)
+    # bob 得在名册上：广播展开成名册上一人一行，一份空名册上的广播一个人也到不了。
+    _add_member(client, pid, "bob")
     _notify(client, pid, "给bob", target="bob")
     _broadcast(client, pid, "全体注意")
 
@@ -565,6 +567,9 @@ def test_creating_with_a_scoped_token_works(client):
     """The sandbox cheese CLI path: a per-turn token scoped to this project."""
     pid = _project(client)
     tid = _topic(client, pid)
+    # 点名给一个人 —— 这条验的是凭据，不是广播展开给谁，而一间只坐着芝士的房间和
+    # 一份空名册上的广播一个人也到不了。
+    named = {**_create_body(), "target_handle": "alice"}
     for token, body in (
         (
             mint_scoped_token(
@@ -573,11 +578,11 @@ def test_creating_with_a_scoped_token_works(client):
                 access_scope="project",
                 agent_handle=room_agent_seat(client, tid),
             ),
-            _create_body(),
+            named,
         ),
         (
             mint_scoped_token(project_id=pid, topic_id=tid),
-            {**_create_body(), "topic_id": tid},
+            {**named, "topic_id": tid},
         ),
     ):
         r = client.post(
@@ -692,7 +697,7 @@ def test_deleting_a_notification_takes_it_out_of_the_project_side_too(client):
         kind="decision_request",
     )
     mention = _notify_in_room(
-        client, pid, tid, "有人@你", kind="mention", target_handle="alice"
+        client, pid, tid, "有人@你", kind="MENTION", target_handle="alice"
     )
 
     assert _unread(client, pid, "alice") == 2
