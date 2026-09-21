@@ -1678,6 +1678,21 @@ class DeviceChannel(Channel):
             raise ScreenSetupError("这条会话的机器尚未配置或未连接")
         return host
 
+    async def _session_agent(self, db, session: SessionRef):
+        """Resolve the selected conversation's project handle to its author."""
+        from app.domain.agent_instance.services import AgentInstanceService
+        from app.domain.project.services import ProjectService
+
+        if not session.agent_handle:
+            return await IdentityService(db).ensure_topic_agent_user(session.topic_id)
+        project = await ProjectService(db).get_or_404(session.project_id)
+        agents = AgentInstanceService(db)
+        instance = await agents.for_handle(project, session.agent_handle)
+        handle = await agents.ensure_identity(instance)
+        user = await user_by_handle(db, handle)
+        assert user is not None
+        return user
+
     async def _session_host_agent(self, session: SessionRef) -> Placement:
         """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上这个
         房间的 分身。
@@ -1687,7 +1702,7 @@ class DeviceChannel(Channel):
         """
         async with self._sessions() as db:
             host = await self._resolve_session_host(db, session)
-            agent = await IdentityService(db).ensure_topic_agent_user(session.topic_id)
+            agent = await self._session_agent(db, session)
             await db.commit()
             return Placement(host, agent.id, agent.username, rented=False)
 
@@ -1709,7 +1724,12 @@ class DeviceChannel(Channel):
         )
         if resolved is None:
             raise ScreenSetupError(self.no_machine_message)
-        return Placement(*resolved, rented=True)
+        if self._device_resolver is not None:
+            return Placement(*resolved, rented=True)
+        async with self._sessions() as db:
+            agent = await self._session_agent(db, session)
+            await db.commit()
+            return Placement(resolved[0], agent.id, agent.username, rented=True)
 
     async def ensure_ready(
         self,

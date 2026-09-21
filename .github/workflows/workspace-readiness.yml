@@ -1,0 +1,61 @@
+name: Workspace startup diagnostics
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  dev:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 3
+    steps:
+      - name: Read session host readiness and recent startup failures
+        run: |
+          docker exec -i cheese-backend-1 python - <<'PY'
+          import asyncio
+          import json
+          import asyncpg
+          import httpx
+          from app.core.config import settings
+
+          async def main():
+              host = settings.agent_session_device_id
+              print('default_session_host:', host or '(unset)')
+              print('connection_owner_configured:', bool(settings.device_connection_url))
+              if settings.device_connection_url:
+                  async with httpx.AsyncClient(timeout=15) as client:
+                      response = await client.get(
+                          settings.device_connection_url.rstrip('/') + '/internal/device-connection/snapshot',
+                          headers={'X-Device-Connection-Secret': settings.device_connection_auth_secret},
+                      )
+                      print('connection_owner_http_status:', response.status_code)
+                      response.raise_for_status()
+                      devices = response.json()['devices']
+                      print('default_session_host_online:', any(d['device_id'] == host and d['online'] for d in devices))
+                      print('online_device_count:', sum(bool(d['online']) for d in devices))
+              dsn = settings.database_url.replace('postgresql+asyncpg://', 'postgresql://')
+              db = await asyncpg.connect(dsn, timeout=10)
+              try:
+                  async with db.transaction(readonly=True):
+                      await db.execute("SET LOCAL statement_timeout = '15s'")
+                      rows = await db.fetch("""
+                          SELECT created_at, topic_id,
+                            CASE
+                              WHEN concat(content, meta->>'detail') LIKE '%机器尚未配置或未连接%'
+                                THEN 'session_host_unavailable'
+                              WHEN concat(content, meta->>'detail') LIKE '%room teammate changed before session startup%'
+                                THEN 'teammate_identity_mismatch'
+                              WHEN concat(content, meta->>'detail') LIKE '%中心会话机器未连接%'
+                                THEN 'central_session_host_unavailable'
+                            END AS failure
+                          FROM blocks
+                          WHERE kind = 'event' AND created_at > now() - interval '24 hours'
+                            AND (concat(content, meta->>'detail') LIKE '%机器尚未配置或未连接%'
+                              OR concat(content, meta->>'detail') LIKE '%room teammate changed before session startup%'
+                              OR concat(content, meta->>'detail') LIKE '%中心会话机器未连接%')
+                          ORDER BY created_at DESC LIMIT 40
+                      """)
+                      print('recent_startup_failures:', json.dumps([dict(r) for r in rows], default=str))
+              finally:
+                  await db.close()
+          asyncio.run(main())
+          PY
