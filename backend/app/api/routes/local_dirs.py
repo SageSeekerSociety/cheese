@@ -43,8 +43,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent.device_hub import device_hub
-from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
 from app.domain.local_fs.records import (
@@ -90,7 +89,7 @@ async def _require_owned_device(db: AsyncSession, user_id: int, device_id: str) 
     A device that exists but belongs to somebody else is reported as missing, so
     the endpoint cannot be used to enumerate other people's machines.
     """
-    device = await DeviceService(SqlDeviceRepository(db)).get_hosted_device(device_id)
+    device = await sql_device_service(db).get_hosted_device(device_id)
     if device is None or device.owner_user_id != user_id:
         raise NotFoundError("设备不存在或不属于你")
 
