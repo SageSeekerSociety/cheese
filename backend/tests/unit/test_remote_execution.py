@@ -36,6 +36,59 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
+def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
+    source = (
+        (RUNTIME.parent / "proxy.js")
+        .read_text()
+        .replace(
+            "__EXECUTION_CONFIG__",
+            json.dumps(
+                {
+                    "central_config": "/config",
+                    "central_workspace": "/center",
+                    "workspace": "/work",
+                }
+            ),
+        )
+    )
+    program = """
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        let called;
+        const api = {
+          session: {id: async () => 'session'},
+          mcp: {call: async (server, tool, args) => {
+            called = {server, tool, args};
+            const text = JSON.stringify({result: {ok: true}});
+            return {content: [{type: 'text', text}]};
+          }},
+        };
+        await handlers['tool.call'](api, {
+          tool: 'Read', tool_use_id: 'read', agentId: 'child',
+          file_path: '/center/image.png',
+        });
+        assert.deepEqual(called, {server: 'native', tool: 'invoke', args: {
+          id: 'read', tool: 'Read', args: {file_path: '/work/image.png'},
+          session_id: 'session',
+        }});
+    """
+    subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            program,
+            base64.b64encode(source.encode()).decode(),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.mark.parametrize("exit_contents", ["", "0", "7"])
 def test_exit_written_during_process_scan_is_not_reported_as_unknown(
     tmp_path, monkeypatch, exit_contents
