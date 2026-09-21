@@ -127,6 +127,52 @@ def _seat_by_hand(client, topic_id: str, handle: str) -> None:
     asyncio.run(_run())
 
 
+def _unseat_by_hand(client, topic_id: str, handle: str) -> None:
+    """名册上直接删一行——撤席位就是撤授权，换队友就是这么换的。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                sa.text(
+                    "DELETE FROM topic_memberships"
+                    " WHERE topic_id=:t AND member_handle=:h"
+                ),
+                {"t": uuid.UUID(topic_id), "h": handle},
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _stale_peer_column(client, topic_id: str, handle: str) -> None:
+    """把 ``private_peer`` 写成名册以外的人——存量私聊里两列和名册对不上，
+    长的就是这个样子。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                sa.text("UPDATE topics SET private_peer=:h WHERE id=:t"),
+                {"t": uuid.UUID(topic_id), "h": handle},
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _run_the_migration(client) -> None:
+    """跑迁移自己的 ``only_the_two_parties``，不是照抄一份 SQL。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            connection = await session.connection()
+            await connection.run_sync(
+                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
 def _say(client, project_id: str, topic_id: str, author: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -311,20 +357,53 @@ def test_an_old_dms_extra_seats_are_unseated(client):
     assert _seats(client, dm) is None
     assert _badge(client, project_id, "user-1") == {}
 
-    async def _run_the_migration() -> None:
-        async with client.test_factory() as session:
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
-            )
-            await session.commit()
-
-    asyncio.run(_run_the_migration())
+    _run_the_migration(client)
 
     assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
     assert _badge(client, project_id, "user-1") == {"agent:reviewer": 1}
     assert _who_answers(client, dm) == "reviewer"
 
     # 幂等：再跑一遍不动任何一行。
-    asyncio.run(_run_the_migration())
+    _run_the_migration(client)
     assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+
+
+def test_a_swapped_teammate_is_not_seated_back_by_the_migration(client):
+    """换过队友的私聊：迁移不把撤掉的那一席补回来，也不把在用的那一席删掉。
+
+    席位就是授权（``holds_an_agent_seat``），而加席位、换席位、撤席位改的只有名册
+    那一份。两列停在上一个队友身上的时候，对的是名册。
+    """
+    project_id = _project(client)
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    writer = _add_agent(client, project_id, "writer", "写手")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+
+    # 评审那一席被撤掉，换成写手；``private_peer`` 还停在评审身上。
+    _unseat_by_hand(client, dm, reviewer["seat_handle"])
+    _seat_by_hand(client, dm, writer["seat_handle"])
+    assert _seats(client, dm) == ("user-1", writer["seat_handle"])
+
+    _run_the_migration(client)
+
+    assert _seats(client, dm) == ("user-1", writer["seat_handle"])
+    assert _who_answers(client, dm) == "writer"
+
+
+def test_a_retired_stand_in_is_not_seated_back_by_the_migration(client):
+    """替身退役过的私聊：迁移不把它种回名册，也不挤掉项目芝士那一席。
+
+    ``e7d2b91a4c06`` 的第三种情况把房间派生的替身写进了 ``private_peer``——当时
+    项目还没有默认芝士——而 ``d5c48f1a6b73`` 后来补上项目芝士的席位、退役了替身。
+    照两列判就会把那条迁移整个倒过来。
+    """
+    project_id = _project(client)
+    dm = _dm(client, project_id, "user-1")
+    seated = _seats(client, dm)
+    assert seated is not None
+    _stale_peer_column(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
+
+    _run_the_migration(client)
+
+    assert _seats(client, dm) == seated
+    assert _who_answers(client, dm) == "cheese"
