@@ -228,6 +228,12 @@ def test_missing_binary_downloads_verified_archive_and_reuses_cache(
     monkeypatch.setattr(forge_cli.sys, "platform", system)
     monkeypatch.setattr(forge_cli.platform, "machine", lambda: "arm64")
     monkeypatch.setenv("CHEESE_API", "https://platform.invalid/api")
+    if tool == "fj":
+        old = tmp_path / ".cheese/native/fj-0.6.0/fj"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"#!/bin/sh\nexit 101\n")
+        old.chmod(0o700)
+        monkeypatch.setattr(os, "get_exec_path", lambda: [str(old.parent)])
     payload = b"#!/bin/sh\nexit 0\n"
     archive = io.BytesIO()
     if system == "darwin" and tool == "gh":
@@ -268,4 +274,4 @@ def test_bad_checksum_never_installs_binary(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_cli.urllib.request, "urlopen", lambda *a, **kw: response)
     with pytest.raises(RuntimeError, match="checksum mismatch"):
         forge_cli.native_binary("fj")
-    assert not (tmp_path / ".cheese/native/fj-0.6.0/fj").exists()
+    assert not (tmp_path / ".cheese/native/fj-0.6.0-cheese.2/fj").exists()
