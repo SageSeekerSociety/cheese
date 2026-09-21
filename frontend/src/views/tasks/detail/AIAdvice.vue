@@ -11,7 +11,7 @@
             <div class="text-h5 font-weight-bold d-flex flex-wrap align-center">
               启星研导 <span class="text-primary ml-2">Navigator AI</span>
             </div>
-            <div class="text-medium-emphasis">为您解析赛题核心，推荐学习路径，助力科研探索</div>
+            <div class="text-medium-emphasis">为您解析题目核心，推荐学习路径，助力科研探索</div>
           </div>
 
           <v-chip color="primary" variant="outlined" class="powered-by">

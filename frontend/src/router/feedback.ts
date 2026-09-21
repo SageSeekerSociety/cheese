@@ -53,7 +53,7 @@ export default [
         path: 'spaces',
         name: 'AdminSpaces',
         component: () => import('@/views/admin/AdminSpacesPage.vue'),
-        meta: { title: '空间审核', isFullPage: true },
+        meta: { title: '题目板审核', isFullPage: true },
       },
       {
         path: 'feedback',

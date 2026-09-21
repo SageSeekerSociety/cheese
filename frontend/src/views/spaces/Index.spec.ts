@@ -148,7 +148,7 @@ describe('space creation', () => {
   })
 })
 
-describe('空间名录页的第一次落点', () => {
+describe('题目板名录页的第一次落点', () => {
   it('offers a way in when the visitor owns no project', async () => {
     listProjects.mockResolvedValue({ data: [], total: 0 })
     const { getByText, getByRole } = mountPage()

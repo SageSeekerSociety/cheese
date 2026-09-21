@@ -34,7 +34,7 @@ const store = useFeedbackStore()
 const SECTIONS = [
   { to: '/admin/feedback', icon: 'mdi-tray-full', label: '反馈管理' },
   { to: '/admin/members', icon: 'mdi-account-multiple-outline', label: '成员管理' },
-  { to: '/admin/spaces', icon: 'mdi-check-decagram-outline', label: '空间审核' },
+  { to: '/admin/spaces', icon: 'mdi-check-decagram-outline', label: '题目板审核' },
 ]
 
 onMounted(() => {

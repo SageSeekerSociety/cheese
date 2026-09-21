@@ -9,7 +9,7 @@
         </template>
         <v-card-title class="text-h6 ps-0">PDF 快速发布</v-card-title>
         <v-card-subtitle class="ps-0"
-          >上传赛题 PDF 后，系统会解析赛题内容；发布参数请在下方表单统一填写</v-card-subtitle
+          >上传题目 PDF 后，系统会解析题目内容；发布参数请在下方表单统一填写</v-card-subtitle
         >
       </v-card-item>
 
@@ -17,7 +17,7 @@
         <v-file-input
           v-model="pdfFile"
           accept=".pdf,application/pdf"
-          label="上传赛题 PDF"
+          label="上传题目 PDF"
           variant="outlined"
           density="comfortable"
           clearable
@@ -63,7 +63,7 @@
         </template>
         <v-card-title class="text-h6 ps-0">解析预览结果</v-card-title>
         <v-card-subtitle class="ps-0">
-          共识别 {{ pdfDrafts.length }} 个赛题草稿，提交下方表单后会批量应用发布参数。
+          共识别 {{ pdfDrafts.length }} 个题目草稿，提交下方表单后会批量应用发布参数。
           <span v-if="pdfTokenUsed !== null">本次约消耗 {{ pdfTokenUsed }} tokens</span>
         </v-card-subtitle>
       </v-card-item>
@@ -73,7 +73,7 @@
           <v-expansion-panel v-for="(draft, index) in pdfDrafts" :key="`${index}-${draft.name || 'draft'}`">
             <v-expansion-panel-title>
               <div class="d-flex align-center justify-space-between w-100 pr-2">
-                <div class="text-subtitle-2">{{ index + 1 }}. {{ draft.name || '未命名赛题' }}</div>
+                <div class="text-subtitle-2">{{ index + 1 }}. {{ draft.name || '未命名题目' }}</div>
                 <v-chip size="x-small" color="primary" variant="tonal">PDF 草稿</v-chip>
               </div>
             </v-expansion-panel-title>
@@ -272,7 +272,7 @@ const previewFromPdf = async () => {
     })
 
     if (!data.drafts || data.drafts.length === 0) {
-      toast.error('未识别到可发布的赛题草稿')
+      toast.error('未识别到可发布的题目草稿')
       pdfDrafts.value = []
       pdfTokenUsed.value = data.tokenUsed ?? null
       initialTaskData.value = {}
@@ -284,7 +284,7 @@ const previewFromPdf = async () => {
       name: data.drafts[0]?.name || 'PDF 批量发布参数',
     }
     pdfTokenUsed.value = data.tokenUsed ?? null
-    toast.success(`解析完成，共识别 ${data.drafts.length} 个赛题草稿`)
+    toast.success(`解析完成，共识别 ${data.drafts.length} 个题目草稿`)
   } catch (error) {
     console.error('PDF 解析预览失败:', error)
     toast.error('PDF 解析预览失败')
@@ -309,7 +309,7 @@ const confirmPublishFromPdf = async (taskData: TaskFormSubmitData, spaceId: numb
       drafts: pdfDrafts.value,
       taskOptions: buildTaskOptions(taskData, spaceId),
     })
-    toast.success(`已发布 ${data.count || data.tasks.length} 个赛题`)
+    toast.success(`已发布 ${data.count || data.tasks.length} 个题目`)
     pdfDrafts.value = []
     pdfTokenUsed.value = null
     router.replace({ name: 'SpacesDetailMyPublishing', params: { spaceId } })

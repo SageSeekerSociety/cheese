@@ -47,7 +47,7 @@ export default {
       name: 'HomeSpaces',
       component: () => import('@/views/spaces/Index.vue'),
       meta: {
-        title: '空间',
+        title: '题目板',
         titleKey: 'navigation.spaces',
         isFullPage: true,
       },

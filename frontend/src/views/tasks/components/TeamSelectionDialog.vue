@@ -10,7 +10,7 @@
       <v-divider></v-divider>
       <v-card-text class="pa-0">
         <div class="px-4 pt-4 pb-2">
-          <div class="text-body-1">请选择一个小队代表参与此赛题</div>
+          <div class="text-body-1">请选择一个小队代表参与此题目</div>
         </div>
 
         <div v-if="loading" class="d-flex justify-center my-8">
@@ -27,7 +27,7 @@
             {{
               taskData?.requireRealName
                 ? '请确保您的小队所有成员都已完成实名认证，或创建一个新的小队'
-                : '您可能需要创建一个小队或加入一个小队才能参与此赛题'
+                : '您可能需要创建一个小队或加入一个小队才能参与此题目'
             }}
           </div>
         </div>
@@ -48,7 +48,7 @@
                 </v-avatar>
                 <div>
                   <div class="text-subtitle-2 font-weight-medium mb-1">实名认证要求</div>
-                  <p class="text-body-2 mb-0">此赛题要求实名参与，只有所有成员都已完成实名认证的小队才能参与</p>
+                  <p class="text-body-2 mb-0">此题目要求实名参与，只有所有成员都已完成实名认证的小队才能参与</p>
                 </div>
               </div>
             </v-card-text>
