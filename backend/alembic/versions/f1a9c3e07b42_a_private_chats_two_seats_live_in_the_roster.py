@@ -19,13 +19,22 @@ Create Date: 2026-09-21 12:00:00
 还坐在名册上才动」的判断不同，因为这里补的是私聊的当事人：一间两席的房间撤掉一席
 就不再是私聊，而不是「这个人被移出了房间」。
 
-**补齐还不够，多的那些席位也得拿掉**：两席是私聊的定义，不是它的下限。名册超过两
-席，「对面是谁」就和没有名册一样答不出来——AI 私聊退回项目默认那位（换了人，也换
-了记忆池），个人记忆的读写被拒，未读角标整间消失。这样的房间今天就有：
-``e7d2b91a4c06`` 给每间 AI 私聊补上了队友那一席，而 ``d5c48f1a6b73`` 在「房里坐着别
-的实例」时跳过了删替身，于是留下 [人, 队友的席位, ``cheese-<房间 hex12>`` 替身] 这
-种三席的私聊。``d5c48f1a6b73`` 那条顾虑（坐着别的就说不出替身站的是谁）在私聊里不
-成立：两列已经指名了谁是当事人，剩下的席位按定义就是多余的。
+**多出来的那一席也得拿掉，但只拿掉一种形状**：两席是私聊的定义，不是它的下限。名
+册超过两席，「对面是谁」就和没有名册一样答不出来——AI 私聊退回项目默认那位（换了
+人，也换了记忆池），个人记忆的读写被拒，未读角标整间消失。今天真长成这样的只有一
+种房间：``e7d2b91a4c06`` 给每间 AI 私聊补上了队友那一席，而 ``d5c48f1a6b73`` 在「房
+里坐着别的实例」时跳过了删替身，于是留下 [人, 队友的席位, ``cheese-<房间 hex12>``
+替身] 这种三席的私聊。拿掉的就是这一种，判据是「这一行是不是这间房派生出来的替
+身」。
+
+判据不能是那两列。两列和名册不一致的时候对的是名册——加席位、换席位、撤席位改的只
+有名册那一份，而席位就是授权（``holds_an_agent_seat``）。照「不在这两列里就删」判，
+两种真会发生的房间会被弄坏：换过队友的私聊（名册 [人, 队友B]，``private_peer`` 还留
+着队友A）会被插回 A、删掉 B，一次真的撤销就这么被恢复；``private_peer`` 写着房间派
+生替身的那些私聊（``e7d2b91a4c06`` 的第三种情况，当时项目还没有默认芝士）已经被
+``d5c48f1a6b73`` 补上项目芝士的席位、退役了替身，照两列判就会把替身插回来、把项目芝
+士那一席删掉，正好把那条迁移倒过来。补席位那一步因此也跳过替身：它被退役过，不该
+再被种回去。
 
 代价写在这里：拿着 ``cheese-<房间 hex12>`` 那张凭证的线下进程，在这些私聊里会从 200
 变 403——而这正是结论 19 要的，私聊只有两席，席位就是那份授权。被删席位的人看不见
@@ -37,9 +46,11 @@ Create Date: 2026-09-21 12:00:00
 遍扫不到它们，而那之后没有代码再读那个键。记忆是显式写进去的、不可再生的（结论
 61），所以这一遍把窗口里落下的那批搬过来。幂等，跑完第二遍零行。
 
-降级不做：补进去的席位行和本来就该在的席位行长得一模一样，分不出哪些是这一条写
-的；删掉的那些行连记都没地方记。要回到上一版，靠的是那两列还在——上一版读的就是
-它们，这条再跑一遍就是了。
+降级不做，但删掉的行找得回来：删之前先抄进
+``topic_memberships_unseated_f1a9c3e07b42``，要回滚就
+``INSERT INTO topic_memberships SELECT * FROM topic_memberships_unseated_f1a9c3e07b42``。
+补进去的那一半没有这个待遇，也不需要：新插的席位行和本来就该在的长得一模一样，分不
+出哪些是这一条写的，而要回到上一版靠的是那两列还在——上一版读的就是它们。
 """
 
 import importlib.util
@@ -53,36 +64,60 @@ down_revision: str | Sequence[str] | None = "d5c48f1a6b73"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+#: 这间房派生出来的那个替身席位 ``cheese-<房间 hex12>``：``e7d2b91a4c06`` 的第三种
+#: 情况把它写进了 ``private_peer``，``d5c48f1a6b73`` 又把它从名册上退役了。
+ROOM_STAND_IN = "'cheese-' || left(replace(t.id::text, '-', ''), 12)"
+
 #: 两席各一条。房主那一席是 ``owner``——和 ``seed_private`` 写的角色逐字相同，
 #: 因为读侧（``private_seats``）就是靠这个角色把两席分成「人」和「对面」的。
+#:
+#: 跳过替身：它已经被 ``d5c48f1a6b73`` 退役，种回去就是把那条迁移倒过来。跳过之后
+#: 那些房间的名册是 [人, 项目芝士那一席]，正好两席，对面是谁答得出来。
 SEAT_THE_TWO_PARTIES = tuple(
     f"""
     INSERT INTO topic_memberships (id, topic_id, member_handle, role, created_at, updated_at)
     SELECT gen_random_uuid(), t.id, t.{column}, '{role}', now(), now()
       FROM topics t
      WHERE t.is_private AND t.{column} IS NOT NULL
+       AND t.{column} <> {ROOM_STAND_IN}
     ON CONFLICT (topic_id, member_handle) DO NOTHING
     """
     for column, role in (("private_owner", "owner"), ("private_peer", "member"))
 )
 
-#: 名册上不是这两位的那些行，删掉。
+#: 删之前先抄一份。CLAUDE.md 的「备份后再删」对迁移一样成立，而 ``downgrade()`` 不
+#: 做——这张表就是那条回头路。
 #:
-#: ``private_owner``/``private_peer`` 空着的房间一行不动：这两列是判断「谁是当事人」
-#: 的唯一依据，空着不等于「名册上谁都不是当事人」，而是什么也判不出来——照删就是
-#: 把一间私聊的名册清空。``e7d2b91a4c06`` 之后没有这样的房间，这道判断防的是它之外
-#: 的来路，代价是一次白判。
+#: 建表与抄行分成两句：``CREATE TABLE IF NOT EXISTS`` 让重跑不报错，而抄行那句每一
+#: 遍都照抄，所以不会出现「表已经在了，这一遍删掉的行没留下」。
+BACK_UP_THE_UNSEATED = (
+    """
+    CREATE TABLE IF NOT EXISTS topic_memberships_unseated_f1a9c3e07b42
+        (LIKE topic_memberships)
+    """,
+    f"""
+    INSERT INTO topic_memberships_unseated_f1a9c3e07b42
+    SELECT tm.*
+      FROM topic_memberships tm
+      JOIN topics t ON t.id = tm.topic_id
+     WHERE t.is_private
+       AND tm.member_handle = {ROOM_STAND_IN}
+    """,
+)
+
+#: 私聊名册上那一行房间派生的替身，删掉。
 #:
-#: 幂等：跑完之后私聊名册上只剩这两位，第二遍零行。
-UNSEAT_THE_REST = """
+#: 判据是「这一行是不是这间房派生出来的替身」，不是「这一行在不在那两列里」：两列
+#: 和名册不一致时对的是名册，照两列删会把换过的队友删掉、把退役过的替身留下来
+#: （docstring 第五段）。
+#:
+#: 幂等：跑完之后私聊名册上没有替身了，第二遍零行。
+UNSEAT_THE_ROOM_STAND_IN = f"""
     DELETE FROM topic_memberships tm
      USING topics t
      WHERE tm.topic_id = t.id
        AND t.is_private
-       AND t.private_owner IS NOT NULL
-       AND t.private_peer IS NOT NULL
-       AND tm.member_handle <> t.private_owner
-       AND tm.member_handle <> t.private_peer
+       AND tm.member_handle = {ROOM_STAND_IN}
 """
 
 _REKEY = (
@@ -100,15 +135,17 @@ def _agent_signs():
 
 
 def only_the_two_parties(execute) -> None:
-    """名册上留下的正好是这间私聊的两位：缺的补进来，多的拿掉。``upgrade()`` 和
-    ``tests/integration/test_a_private_chats_two_seats_live_in_the_roster.py``
+    """名册上留下的正好是这间私聊的两位：缺的补进来，退役过的替身拿掉。``upgrade()``
+    和 ``tests/integration/test_a_private_chats_two_seats_live_in_the_roster.py``
     调的是同一个函数，所以用例跑的就是真要发布的这份 SQL。
 
-    先补后删：两步都对着同一对列判，顺序不改变结果，而先补的话，中途崩在两步之间
-    留下的是一间席位多了的房间，不是一间空名册的房间。"""
+    两步互不相干：补那一步跳过替身，删那一步只认替身，所以中途崩在哪一句上，剩下的
+    都是可以直接重跑的状态。"""
     for statement in SEAT_THE_TWO_PARTIES:
         execute(statement)
-    execute(UNSEAT_THE_REST)
+    for statement in BACK_UP_THE_UNSEATED:
+        execute(statement)
+    execute(UNSEAT_THE_ROOM_STAND_IN)
 
 
 def upgrade() -> None:

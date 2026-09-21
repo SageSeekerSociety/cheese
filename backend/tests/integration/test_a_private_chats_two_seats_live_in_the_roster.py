@@ -109,8 +109,8 @@ def _badge(client, project_id: str, user: str) -> dict:
 
 
 def _seat_by_hand(client, topic_id: str, handle: str) -> None:
-    """名册上直接加一行——存量三席的私聊就是这么来的（替身还坐着，队友也坐着），
-    而从这一版起接口不再让谁加出第三席。"""
+    """名册上直接加一行——存量三席的私聊就是这么来的：``e7d2b91a4c06`` 补上了队友
+    那一席，``d5c48f1a6b73`` 因为房里坐着别的实例把替身留了下来。"""
 
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -272,27 +272,26 @@ def test_an_old_dms_two_seats_are_backfilled(client):
     assert asyncio.run(_again()) == 2
 
 
-def test_a_dm_refuses_a_third_seat(client):
-    """私聊加不进第三席：两席是它的定义，不是它的下限（结论 19）。
+def test_reopening_a_dm_whose_roster_grew_opens_a_two_seat_one(client):
+    """名册多出一席的房间不再是这间 DM：再打开给的是一间正好两席、答得出对面的房。
 
-    挡住的是「这间房还是不是私聊」这个问题本身——第三席一加，谁答它、个人记忆记在
-    谁名下、未读算给谁就都没有答案了。人多了开一间房，那间房里两位队友都坐得下。
+    这样的房间在迁移跑完之前就有，部署窗口里上一版接口也还加得出来。认它就是让
+    「再打开这间 DM」落进一间说不出对面是谁的房间——同时匹配上好几间时，返回哪一
+    间更是没有定数。
     """
     project_id = _project(client)
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    writer = _add_agent(client, project_id, "writer", "写手")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    grown = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    _seat_by_hand(client, grown, f"cheese-{uuid.UUID(grown).hex[:12]}")
+    assert _seats(client, grown) is None
 
-    refused = client.post(
-        f"/topics/{dm}/members",
-        json={"handle": writer["seat_handle"], "role": "member"},
-        headers=session_auth_headers("user-1"),
-    )
-    assert refused.status_code == 422, refused.text
-    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+    again = _dm(client, project_id, "user-1", agent_handle="reviewer")
 
-    # 和写手的私聊是另一间房，不会撞进评审那间。
-    assert _dm(client, project_id, "user-1", agent_handle="writer") != dm
+    assert again != grown
+    assert _seats(client, again) == ("user-1", reviewer["seat_handle"])
+    assert _who_answers(client, again) == "reviewer"
+    # 两席的那间从此是唯一认得出的一间，再打开还是它。
+    assert _dm(client, project_id, "user-1", agent_handle="reviewer") == again
 
 
 def test_an_old_dms_extra_seats_are_unseated(client):

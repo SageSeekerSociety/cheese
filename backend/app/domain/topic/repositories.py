@@ -228,9 +228,14 @@ class TopicRepository:
         teammate's seat — is the service's decision; here a DM is two handles.
 
         Found by its two seats, because that is where they live (结论 19): the
-        private room of this project that seats both handles. Two memberships,
-        each asked for on its own, so which of the two opens the conversation
-        does not decide whether it is found.
+        private room of this project that seats both handles, and seats nobody
+        else. Two memberships, each asked for on its own, so which of the two
+        opens the conversation does not decide whether it is found.
+
+        「恰好两席」是这里的闸，和 `TopicMemberService.private_seats`、
+        `private_unread_counts` 同一条：席位多出一个，这间房就答不出对面是谁，
+        再打开它等于落进一间谁也说不清的房间——而 `.first()` 在同时匹配上好几间
+        时返回哪一间也没有定数。答不出就不认它，开一间正好两席的。
         """
 
         def seats(handle: str) -> Select[tuple[uuid.UUID]]:
@@ -243,6 +248,11 @@ class TopicRepository:
             Topic.is_private.is_(True),
             Topic.id.in_(seats(owner)),
             Topic.id.in_(seats(peer)),
+            select(func.count())
+            .select_from(TopicMembership)
+            .where(TopicMembership.topic_id == Topic.id)
+            .scalar_subquery()
+            == 2,
         )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:

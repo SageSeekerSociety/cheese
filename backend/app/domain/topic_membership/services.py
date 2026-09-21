@@ -459,12 +459,6 @@ class TopicMemberService:
         if topic is None:
             raise NotFoundError("Topic not found")
         await self._require_manager(topic_id, actor)
-        if topic.is_private:
-            # 私聊就是名册两席的房间（结论 19）。第三席不是「房里多一个人」，是这
-            # 间房再也答不出「对面是谁」——谁答这间房、个人记忆记在谁名下、未读算
-            # 给谁，问的都是那一席。挡在写进去的这一处，比每个读点各挡一次便宜，
-            # 也省掉以后每加一个读点再补一次闸。人要多了，开一间房。
-            raise ValidationError("私聊只有两席，要多一个人请另开一间房")
         if handle.startswith(AGENT_HANDLE_PREFIX):
             # A teammate's seat is derived from its instance, and an instance
             # keys a memory pool inside ITS project — so another project's
