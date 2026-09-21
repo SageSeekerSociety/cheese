@@ -103,7 +103,6 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
                 topic_id,
                 author="u",
                 content=content,
-                summon=True,
                 attachments=attachments,
                 client_id="same-browser-delivery",
             ),
@@ -112,7 +111,6 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
                 topic_id,
                 author="u",
                 content=content,
-                summon=True,
                 attachments=attachments,
                 client_id="same-browser-delivery",
             ),
@@ -178,7 +176,6 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         topic_id,
         author="u",
         content="saved by the old backend",
-        summon=True,
         attachments=[{"path": "room/a.png", "mime": "image/png"}],
         client_id="pre-upgrade-delivery",
     )
@@ -356,9 +353,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(client, tmp_pa
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
-    await broker.receive_message(
-        svc, topic_id, author="u", content="@芝士 check this", summon=False
-    )
+    await broker.receive_message(svc, topic_id, author="u", content="@芝士 check this")
     await asyncio.wait_for(asyncio.gather(*runner._tasks), 2)
     await settle_turn(svc, topic_id)
     assert "check this" in screen.last_prompt
@@ -411,8 +406,10 @@ async def test_other_teammate_message_waits_for_live_turn(
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
+    # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
+    # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
     await broker.receive_message(
-        svc, topic_id, author="u", content="@Second Second task", summon=False
+        svc, topic_id, author="u", content="@Second Second task"
     )
     await asyncio.wait_for(waiting.wait(), 2)
     assert screen.delivered == []

@@ -1,5 +1,7 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { Shell } from '@/lib/shell'
+
 export interface Project {
   id: string
   name: string
@@ -18,6 +20,12 @@ export interface Project {
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
+  /**
+   * 这个项目生效的壳，服务端已经解析好（项目级设置 → 赛题 整键覆盖 → 项目集 →
+   * default）。**是解析后的声明，不是那个名字**——前端按它画，不自己维护一份
+   * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
+   */
+  shell?: Shell
 }
 
 export interface ProjectSite {
@@ -349,8 +357,9 @@ export interface ChatAttachment {
   mime: string
 }
 
-// WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
-// reply, false (default) just posts the message (spec §7.1 默认不 @).
+// WebSocket client -> server frame. 帧上没有「叫不叫芝士」这一位：这条消息点了谁
+// 的名，由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要
+// 叫它，就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
 export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
 
 export interface WsClientChatMessage {
@@ -359,7 +368,6 @@ export interface WsClientChatMessage {
   // No `author`: the backend takes it from the socket's ?token=. Sending one
   // was never authoritative — it was the forgeable field that let an expired
   // session post as 匿名者 — so the client no longer names itself at all.
-  summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。

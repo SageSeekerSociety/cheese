@@ -136,48 +136,6 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
     assert said == 1, "重发把同一句话又说了一遍"
 
 
-def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
-    """A kickoff turn (分身自动开工 / parent digesting a conclusion) is the one
-    turn shape that ran with NO continuation — so an interrupted kickoff's
-    auto-resume re-said everything, unprotected. It must claim under its own
-    turn id like every converse turn does."""
-    pid = _project(client)
-    tid = _topic(client, pid)
-    text = "领到任务了，我先把仓库结构过一遍。"
-    chat = ChatService(
-        session_factory=client.test_factory,
-        compute=stub_compute(_SameMessageTwice(text)),
-        base_system_prompt="你是芝士。",
-        workspace_root=str(tmp_path / "ws"),
-    )
-    kickoff_turn = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-
-    async def _turn() -> None:
-        async for _ in chat.kickoff(topic_id=uuid.UUID(tid), turn_id=kickoff_turn):
-            pass
-
-    async def _both() -> None:
-        await _turn()  # the attempt that got interrupted
-        await _turn()  # the auto-resume, saying the same thing again
-
-    asyncio.run(_both())
-
-    said = asyncio.run(
-        _count(
-            client.test_factory,
-            select(func.count())
-            .select_from(Block)
-            .where(
-                Block.topic_id == uuid.UUID(tid),
-                Block.kind == BlockKind.event,
-                Block.meta["progress"].as_boolean().is_(True),
-                Block.content == text,
-            ),
-        )
-    )
-    assert said == 1, "kickoff 的重发把同一句话又说了一遍"
-
-
 def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     """The complement, and the reason the key is not just a content hash: the
     SAME text in a LATER, unrelated unit of work is a second message, not a
@@ -240,7 +198,7 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     kickoffs: list[uuid.UUID] = []
     monkeypatch.setattr(
         in_a_turn,
-        "submit_kickoff",
+        "submit",
         lambda _chat, topic_id, **_kw: kickoffs.append(topic_id) or uuid.uuid4(),
     )
     pid = _project(client)
@@ -372,7 +330,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     kickoffs: list[uuid.UUID] = []
     monkeypatch.setattr(
         runner,
-        "submit_kickoff",
+        "submit",
         lambda _chat, topic_id, **_kw: kickoffs.append(topic_id) or uuid.uuid4(),
     )
     pid = _project(client)

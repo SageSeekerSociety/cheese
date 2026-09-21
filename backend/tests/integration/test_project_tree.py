@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
+from tests.conftest import seed_user
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
@@ -63,7 +64,7 @@ def test_upgrade_block_to_topic(client):
         json={"created_by": "user-1", "reviewer_handle": "alice"},
     )
     assert r.status_code == 200
-    _wait_work_idle()  # kickoff runs in the background; don't race its writes
+    _wait_work_idle()
     new_topic = r.json()["data"]
     # Work inside the room, not a room of its own: upgrading a message in a room
     # dispatches a thread, and a thread names its room rather than a parent in a
@@ -76,26 +77,21 @@ def test_upgrade_block_to_topic(client):
     card = next(t for t in listed if t["id"] == new_topic["id"])
     assert "我们要不要单独做一个数据清洗的模块" in card["brief"]
 
-    # The ROOM is what runs a turn: a thread is a 分身 in the room's session and
-    # has no session of its own, so the thread starts with nothing said in it.
-    msgs = _card_messages(client, topic["id"], new_topic["id"])
-    assert not msgs, f"这条活自己跑了一轮——它没有会话，这是在起容器：{msgs}"
+    # 谁也没被点起来：卡上没有话，房间里也没有芝士说的话 —— 平台不发起一轮。
+    assert not _card_messages(client, topic["id"], new_topic["id"])
     room_msgs = _messages(client, topic["id"])
     assert room_msgs and all(not b["author"].startswith("cheese") for b in room_msgs)
-    activity = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
-    assert any(
-        b["author"].startswith("cheese") and (b.get("meta") or {}).get("progress")
-        for b in activity
-    )
 
     # Re-upgrading the same block is idempotent: it returns the topic already
-    # created (so a double-click just navigates), not an error — and it does
-    # NOT wake the room a second time.
+    # created (so a double-click just navigates), not an error — and it leaves
+    # no second event behind.
+    before = len(client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"])
     r2 = client.post(f"/blocks/{block_id}/upgrade", json={})
     assert r2.status_code == 200
     assert r2.json()["data"]["id"] == new_topic["id"]
     _wait_work_idle()
-    assert len(_messages(client, topic["id"])) == len(room_msgs)
+    after = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
+    assert len(after) == before
 
 
 def _messages(client, room_id: str) -> list[dict]:
@@ -123,18 +119,24 @@ def _record_screens(stub_hooks) -> list[str]:
     return seen
 
 
-def test_upgrading_a_message_wakes_the_room_to_raise_the_worker(client, stub_hooks):
-    """讨论升级出来的是房间里的一条活，而活没有自己的会话可以叫醒。
+def test_upgrading_a_message_leaves_an_event_and_starts_no_turn(client, stub_hooks):
+    """升级出来的是一条活；房间里随之出现的是**一条事件**，不是一轮对话。
 
-    这条路和「结论卡打回」是同一颗雷的两个引信：朝一条活的 id 开轮次，平台就得为它
-    起一整个容器 —— 正是「一条活 = 房间会话里的一个分身」拆掉的东西。所以轮次落在
-    房间，提示词里带着房间起分身所需要的一切：活的 id、简报原文、起名怎么做，
-    以及起分身时要带上的线程标识。
+    平台从不发起一轮（结论 13 / I12）。以前这里 kickoff 一轮：作者 `system`、提示词
+    是平台写的一段开工说明，房间被叫醒去给这条活起名字、起分身 —— 那一轮没有任何人
+    点过名，却要为它起一整块屏幕。按结论 31，开一条活剩下的只有分支、卡和负责人，谁
+    来做是负责人的事，所以平台在这里只做投递：事件落在房间的时间线上，收件人恰好是
+    这条活的负责人，一个人。
     """
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+
     p = _project(client)
     room = client.post("/topics", json={"project_id": p["id"], "title": "讨论"}).json()[
         "data"
     ]
+    seed_user(client, "alice")  # 收件人得是一个真的人，站内信才有地方放
     block_id = _insert_block(client, p["id"], room["id"], "把导入这段单独拆出来做")
 
     screens = _record_screens(stub_hooks)
@@ -146,14 +148,24 @@ def test_upgrading_a_message_wakes_the_room_to_raise_the_worker(client, stub_hoo
     thread = r.json()["data"]
     _wait_work_idle()
 
-    assert thread["id"] not in screens, "为一条活起了屏幕——这是在复活容器"
-    assert screens == [room["id"]], f"叫醒的不是房间：{screens}"
-    prompt = stub_hooks.last_prompt or ""
-    assert thread["id"] in prompt, "不给 task id，房间没法给它起名字"
-    assert "把导入这段单独拆出来做" in prompt, "简报原文没带过去，分身就没东西可读"
-    assert thread["thread_label"] in prompt, (
-        "不把线程标识告诉房间，它起的分身干的事全记在房间头上"
-    )
+    assert screens == [], f"平台自己点起了一轮，还为它起了屏幕：{screens}"
+    assert _messages(client, room["id"]) == [
+        b for b in _messages(client, room["id"]) if not b["author"].startswith("cheese")
+    ], "房间里冒出了一句芝士说的话——没有人叫过它"
+
+    blocks = client.get(f"/topics/{room['id']}/blocks").json()["data"]["data"]
+    upgraded = [
+        b for b in blocks if (b.get("meta") or {}).get("event_type") == "block_upgraded"
+    ]
+    assert len(upgraded) == 1, f"升级没有在房间里留下一条事件：{blocks}"
+    assert thread["id"] in (upgraded[0]["meta"] or {}).get("detail", "")
+
+    async def _recipients() -> list[str]:
+        async with client.test_factory() as session:
+            rows = (await session.execute(select(Delivery))).scalars().all()
+            return [row.recipient_handle for row in rows]
+
+    assert asyncio.run(_recipients()) == ["alice"], "收件人不是这条活的负责人"
 
 
 def test_a_room_names_its_own_thread(client):

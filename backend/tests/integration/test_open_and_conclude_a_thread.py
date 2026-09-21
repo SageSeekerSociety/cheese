@@ -110,7 +110,7 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
     _, room_id = _room(client)
     task = _split(client, room_id)
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
@@ -201,7 +201,7 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     task = _split(client, room_id)
     # 一轮普通的轮次，房间因此有了一块活着的屏幕（也才有钩子可以推）。
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
@@ -248,7 +248,7 @@ def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub
     _, room_id = _room(client)
     task = _split(client, room_id)
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "你好", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()

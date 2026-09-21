@@ -467,8 +467,12 @@ def test_a_credential_without_an_agent_identity_is_rejected(client):
 
 
 def _turn(client, room: str, text: str) -> None:
+    """点名由正文说了算（I13）。已经点了名的原样发出去 —— 在 `<@seat> 还在吗`
+    前面再补一个 `@芝士`，点到的就成了名册上排在前面的那一个，于是接话的不是被
+    叫的那个队友。"""
+    addressed = text if "<@" in text else f"@芝士 {text}"
     with client.websocket_connect(chat_ws_url(room, "u")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": True})
+        ws.send_json({"type": "message", "content": addressed})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
