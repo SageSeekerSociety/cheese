@@ -801,9 +801,14 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
     # scoped cheese token that means nothing upstream, and the hop goes out on
     # the deployment-wide identity — whose ticket is the one this host holds.
     #
-    # On EVERY request, not just messages: Claude Code validates its login
-    # against api/oauth/profile at startup, so if only /v1/messages carried the
-    # real token that check would 401 and the turn would never start.
+    # On EVERY request that gets this far, not just messages. What gets this far
+    # is everything the table did not answer, and the table answers one host —
+    # so the login and refresh calls a human's `claude /login` makes against
+    # console.anthropic.com and platform.claude.com come through here too, as
+    # does any api.anthropic.com path Anthropic adds that no row names yet. One
+    # credential for all of them; the alternative is forwarding the sandbox's
+    # scoped bearer, which means nothing upstream and 401s as if the caller's
+    # own auth had failed.
     token = _real_token()
     # Fail closed BEFORE forwarding when the platform has no credential of its
     # own either. Return a clear local 503 so the caller learns the PLATFORM

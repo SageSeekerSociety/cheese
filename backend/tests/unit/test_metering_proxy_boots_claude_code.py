@@ -106,16 +106,46 @@ def test_every_row_of_the_shared_table_is_answered_from_it():
     checks goes upstream, so each row is asserted to come back from here."""
     table = json.loads(core.TABLE_PATH.read_text(encoding="utf-8"))
     for row in table["rows"]:
-        host = "api.anthropic.com"
+        host = row.get("hosts", ["api.anthropic.com"])[0]
         if "exact" in row:
             path = row["exact"]
         elif "prefix" in row:
             path = row["prefix"] + "something"
         else:
-            host, path = row["hosts"][0], "/v1/rgstr"
+            path = "/v1/rgstr"
         answer = core.control_answer(host, path, PROJECT, TOPIC)
         assert answer is not None, row
         assert answer.status == row["status"], row
+
+
+@pytest.mark.parametrize("host", ["console.anthropic.com", "platform.claude.com"])
+def test_the_login_hosts_are_not_answered_from_the_boot_table(host):
+    """Three names are MITM'd by this proxy and only one of them is a sandbox
+    booting. console.anthropic.com and platform.claude.com carry interactive
+    Claude Code's login and refresh — a human at the box running `claude
+    /login` or `claude setup-token` — and those ask for the very same paths
+    against a REAL Anthropic account. Answered from this table they would get
+    Cheese's synthesised account back (uuid = a topic, email @cheese.local),
+    and the setup-token that login produces is the credential this proxy
+    injects on every subscription turn. So the boot rows answer one host, and
+    every other request on these two goes upstream untouched."""
+    for path in (
+        "/api/oauth/profile",
+        "/api/claude_code/settings",
+        "/api/claude_code/policy_limits",
+        "/api/eval/anything",
+        "/api/event_logging/v2/batch",
+    ):
+        assert core.control_answer(host, path, PROJECT, TOPIC, rc=True) is None, path
+
+
+def test_a_row_that_names_no_host_answers_the_boot_host_only():
+    """The default is the fail-SAFE half of the rule above: a row added later
+    without a `hosts` key answers only where a sandbox boots, rather than
+    everywhere this proxy happens to terminate TLS."""
+    row = {"exact": "/api/something/new", "status": 200, "body": {}}
+    assert core._row_matches(row, "api.anthropic.com", "/api/something/new")
+    assert not core._row_matches(row, "console.anthropic.com", "/api/something/new")
 
 
 def test_a_model_request_is_not_in_the_table():

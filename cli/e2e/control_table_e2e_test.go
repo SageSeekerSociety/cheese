@@ -55,11 +55,33 @@ type controlTable struct {
 	Rows         []controlRow `json:"rows"`
 }
 
+// bootHost is the one name a sandbox's launch shape talks to. The proxy also
+// MITMs console.anthropic.com and platform.claude.com, where a human's `claude
+// /login` asks for these same paths against a real Anthropic account — so a row
+// only counts here if it serves this host, and a row naming no host serves it by
+// default. This mock stands in for that host and nothing else.
+const bootHost = "api.anthropic.com"
+
+func (r controlRow) servesBootHost() bool {
+	if len(r.Hosts) == 0 {
+		return true
+	}
+	for _, host := range r.Hosts {
+		if host == bootHost {
+			return true
+		}
+	}
+	return false
+}
+
 // covers answers the question the test exists to ask: would the proxy have
 // answered this path itself, or would it have gone upstream?
 func (c controlTable) covers(path string) bool {
 	path, _, _ = strings.Cut(path, "?")
 	for _, row := range c.Rows {
+		if !row.servesBootHost() {
+			continue
+		}
 		if row.Exact != "" && path == row.Exact {
 			return true
 		}
@@ -89,12 +111,15 @@ func loadControlTable(t *testing.T) controlTable {
 
 // installControlTable scripts the mock to answer exactly what the proxy would.
 //
-// Host-matched rows (the Statsig names) are skipped: this client is pointed at
-// the mock by ANTHROPIC_BASE_URL, so nothing addressed to another host arrives
-// here at all.
+// Rows for another host are skipped — the Statsig names, and anything a later
+// row addresses to the login hosts: this client is pointed at the mock by
+// ANTHROPIC_BASE_URL, so nothing addressed elsewhere arrives here at all.
 func installControlTable(t *testing.T, base string, table controlTable) {
 	t.Helper()
 	for _, row := range table.Rows {
+		if !row.servesBootHost() {
+			continue
+		}
 		match := row.Exact
 		if match == "" {
 			if row.Prefix == "" {

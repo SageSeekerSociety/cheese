@@ -19,9 +19,14 @@
     "token, {rc_flags} expands to rc_flags below for a session whose token grants",
     "the Cheese RC transport and to {} for one that does not.",
     "",
-    "Rows are matched in order: `exact` on the path (query stripped), `prefix` on",
-    "the path, `hosts` on the request's host whatever the path. A body of null is",
-    "sent as an empty body."
+    "Rows are matched in order, and `hosts` is checked FIRST on every one of",
+    "them: a row answers only the hosts it names, and a row that names none",
+    "answers api.anthropic.com alone. That is not a formality — this proxy also",
+    "MITMs console.anthropic.com and platform.claude.com, where interactive",
+    "Claude Code's login and refresh ask for these same paths and must reach the",
+    "real Anthropic. Then `exact` matches the path (query stripped), `prefix`",
+    "matches its start, and a row with neither answers every path on its hosts.",
+    "A body of null is sent as an empty body."
   ],
   "rc_flags": {
     "tengu_ccr_bridge": {"defaultValue": true},
@@ -31,6 +36,7 @@
   "model_rewrite_limit_bytes": 65536,
   "rows": [
     {
+      "hosts": ["api.anthropic.com"],
       "exact": "/api/oauth/profile",
       "status": 200,
       "body": {
@@ -39,21 +45,25 @@
       }
     },
     {
+      "hosts": ["api.anthropic.com"],
       "exact": "/api/claude_code/settings",
       "status": 204,
       "body": null
     },
     {
+      "hosts": ["api.anthropic.com"],
       "exact": "/api/claude_code/policy_limits",
       "status": 200,
       "body": {"restrictions": {"allow_remote_control": {"allowed": true}}}
     },
     {
+      "hosts": ["api.anthropic.com"],
       "prefix": "/api/eval/",
       "status": 200,
       "body": {"features": "{rc_flags}"}
     },
     {
+      "hosts": ["api.anthropic.com"],
       "prefix": "/api/event_logging/",
       "status": 200,
       "body": {}

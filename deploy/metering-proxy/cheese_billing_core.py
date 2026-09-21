@@ -399,11 +399,24 @@ _ROWS: list[dict] = _TABLE["rows"]
 # Cheese supplies its own feature flags; these three are what turn on the
 # remote-control bridge the platform drives every session through.
 RC_FLAGS: dict = _TABLE["rc_flags"]
-# Telemetry hosts. RC payloads carry control-session identifiers, so neither
-# they nor an upstream credential may cross this boundary — whatever path they
-# are sent to.
+# The host a row serves when it names none. Three names are MITM'd here and
+# only one of them carries a sandbox's boot: console.anthropic.com and
+# platform.claude.com carry interactive Claude Code's login and refresh, which
+# ask for these very paths — `/api/oauth/profile` above all — and must get
+# ANTHROPIC'S answer. Answering those from this table hands `claude /login` a
+# synthesised Cheese account, and the setup-token that IS this proxy's
+# subscription credential is what that login exists to produce.
+DEFAULT_ANSWER_HOSTS = frozenset({"api.anthropic.com"})
+# Telemetry hosts: the rows matched by host alone, whatever the path. RC
+# payloads carry control-session identifiers, so neither they nor an upstream
+# credential may cross this boundary. A row that also matches a path is not one
+# of these — its host is where the boot happens, and the caller treats a
+# telemetry host as one nothing else may be asked of.
 TELEMETRY_HOSTS = frozenset(
-    host for row in _ROWS for host in row.get("hosts", ())
+    host
+    for row in _ROWS
+    if "exact" not in row and "prefix" not in row
+    for host in row["hosts"]
 )
 # How much of a /v1/messages head ModelRewrite may hold while it looks for the
 # top-level `model` member. See ModelRewrite.
@@ -422,6 +435,11 @@ def control_answer(
     host: str, path: str, project: str, topic: str, rc: bool = False
 ) -> Answer | None:
     """The proxy's own answer for a non-model endpoint, or None to forward.
+
+    ``host`` is part of the question, not decoration: a row answers only the
+    hosts it names, defaulting to the one host a sandbox boots against. The
+    login hosts ask for the same paths on their way to a real Anthropic account
+    and go upstream untouched.
 
     ``project``/``topic`` are the VERIFIED place from the caller's scoped token:
     the identity Cheese asserts is Cheese's own, never an Anthropic account's.
@@ -446,11 +464,16 @@ def control_answer(
 
 
 def _row_matches(row: dict, host: str, path: str) -> bool:
+    """Host first, for every kind of row — a path alone is not a match. The same
+    path means one thing on the boot host and the opposite on the login hosts,
+    and a row that forgets to say which it meant defaults to the boot host."""
+    if host not in row.get("hosts", DEFAULT_ANSWER_HOSTS):
+        return False
     if "exact" in row:
         return path == row["exact"]
     if "prefix" in row:
         return path.startswith(row["prefix"])
-    return host in row.get("hosts", ())
+    return True
 
 
 def _fill(value, project: str, topic: str, rc: bool):
