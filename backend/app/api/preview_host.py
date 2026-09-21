@@ -26,10 +26,10 @@ from app.core.db import get_db
 from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
+from app.domain.library import service as library
 from app.domain.room_task.place import Place
 from app.domain.site.hosting import content_origin
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 
 AUTH_PATH = "/_cheese/session"
 GRANT_TTL = 30
@@ -100,7 +100,7 @@ async def require_preview_access(
 ) -> Place:
     place = await TopicService(session).place_or_404(topic_id)
     resolver = ActorResolver(session=session, bearer=None, cheese_token="")
-    actor = Actor(handle=handle, user_id=None, is_agent=False, via="token")
+    actor = Actor(handle=handle, user_id=None, via="token")
     if not await resolver.can_access_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     ):
@@ -265,7 +265,7 @@ class PreviewHostMiddleware:
             return Response(status_code=405)
         relative = request.url.path.lstrip("/") or PurePosixPath(entry).name
         data = await asyncio.to_thread(
-            ws.read_preview_file, project, topic_id, entry, relative
+            library.read_preview_file, project, topic_id, entry, relative
         )
         media = (
             mime

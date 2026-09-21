@@ -28,10 +28,10 @@ from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.turn_log import open_turn
 

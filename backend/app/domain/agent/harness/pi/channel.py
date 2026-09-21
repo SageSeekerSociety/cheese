@@ -34,12 +34,12 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.library import service as library
 from app.domain.topic.models import Topic
-from app.domain.workspace import service as ws
 
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
 logger = logging.getLogger(__name__)
@@ -78,9 +78,9 @@ class PiChannel:
         )
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
-        precheck = await self.channel.precheck(session)
-        assert isinstance(precheck, tuple)
-        device_id, _agent_user_id, agent = precheck
+        precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
+        assert isinstance(precheck, Placement)
+        device_id, agent = precheck.machine, precheck.agent_handle
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
         token = mint_scoped_token(
@@ -269,7 +269,7 @@ class PiChannel:
         return [
             {
                 "data": base64.b64encode(
-                    ws.read_attachment(
+                    library.read_attachment(
                         handle.session.project_id,
                         handle.session.topic_id,
                         image["path"],

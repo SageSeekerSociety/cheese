@@ -375,11 +375,56 @@ describe('文件面板', () => {
     const overwrite = buttons(container).find((b) => b.textContent?.includes('仍然覆盖保存'))
     expect(overwrite).toBeTruthy()
 
-    // 覆盖 is the human's explicit choice — it goes out with no version.
+    // The explicit overwrite still detects another write after the refresh.
+    readFile.mockResolvedValue(textFile('a.py', 'Agent changed this', 'v2'))
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v3' })
     await fireEvent.click(overwrite!)
     await flush()
-    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', null, 'task-topic-A')
+    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v2', 'task-topic-A')
+  })
+
+  it('committed files are read-only and switching back retains the live draft', async () => {
+    readFile.mockImplementation((_p, _path, _room, _task, source) =>
+      Promise.resolve({
+        ...textFile('a.py', source === 'committed' ? 'Committed content' : 'Live content'),
+        source,
+        editable: source === 'live',
+      })
+    )
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    await fireEvent.update(editor(container)!, 'Unsaved human draft')
+    await fireEvent.click(buttonByText(container, '已提交版本')!)
+    await flush()
+    expect(editor(container)?.value).toBe('Committed content')
+    expect(editor(container)?.readOnly).toBe(true)
+    expect(buttonByText(container, '保存')).toBeUndefined()
+    expect(listFiles).toHaveBeenLastCalledWith('p1', 'topic-A', 'task-topic-A', 'committed')
+    await fireEvent.click(buttonByText(container, '机器实时文件')!)
+    await flush()
+    expect(editor(container)?.value).toBe('Unsaved human draft')
+    await fireEvent.click(buttonByText(container, '保存')!)
+    await flush()
+    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', 'Unsaved human draft', 'topic-A', 'v1', 'task-topic-A')
+  })
+
+  it('an offline machine leaves committed files available through the version selector', async () => {
+    listFiles.mockImplementation((_p, _room, _task, source) =>
+      source === 'live'
+        ? Promise.reject(new Error('任务机器尚未连接'))
+        : Promise.resolve({ data: [{ path: 'a.py', bytes: 10 }], total: 1, source })
+    )
+    readFile.mockResolvedValue({ ...textFile('a.py', 'Committed content'), source: 'committed', editable: false })
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openFilesTool(container)
+    expect(container.textContent).toContain('任务机器尚未连接')
+    await fireEvent.click(buttonByText(container, '切换到已提交版本')!)
+    await flush()
+    expect(editor(container)?.value).toBe('Committed content')
+    expect(editor(container)?.readOnly).toBe(true)
+    expect(writeFile).not.toHaveBeenCalled()
   })
 })
 
@@ -532,7 +577,7 @@ describe('task file navigation', () => {
     expect(readFile).not.toHaveBeenCalled()
     await fireEvent.click(groups[1].querySelector('.task-change-file')!)
     await flush()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A-two')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A-two', 'live')
     expect(container.querySelector('.source-current')?.textContent).toContain('two')
     expect(container.querySelector('.task-select')).toBeNull()
   })
@@ -557,7 +602,7 @@ describe('task file navigation', () => {
     await fireEvent.click(container.querySelector('.task-change-file')!)
     await flush()
     expect(readFile).toHaveBeenCalledTimes(1)
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'topic-A', 'task-topic-A', 'live')
     finishRead(textFile('a.py', 'directed content'))
     await flush()
     expect(container.querySelector('.file-bar__path')?.textContent).toBe('a.py')
@@ -604,7 +649,7 @@ describe('task file navigation', () => {
     await openRoom(container)
     vi.mocked(listRoomTasks).mockImplementation(original)
     expect(container.querySelector('.room-changes')).toBeNull()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'single-room', 'single')
+    expect(readFile).toHaveBeenLastCalledWith('p1', 'a.py', 'single-room', 'single', 'live')
   })
 
   it('preserves an unsaved draft and its original version while switching tasks', async () => {

@@ -432,7 +432,214 @@ def _redis_client_per_loop() -> Iterator[None]:
 
 
 @pytest.fixture
-def client(_pg_schema, stub_hooks: StubChannel, tmp_path) -> Iterator[TestClient]:
+def stub_project_forge(monkeypatch, tmp_path):
+    """Supply project creation's external forge in API lifecycle tests.
+
+    The test Git store stands in for committed remote branches. Proposal and
+    merge tests supply their own PR state; tests/forgejo exercises the real API.
+    """
+    from app.domain.project import forge
+    from app.domain.project.models import Project, ProjectForge
+    from app.domain.repository import forge_files
+    from tests.support import git_store
+
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
+
+    provision = forge.provision_repository
+    default_branch = forge.default_branch
+    remote_head = forge_files.branch_head
+    remote_data = forge_files.repository_data
+    remote_tokens = forge_files.tokens_for_project
+    remote_status = forge_files.status_client
+    remote_author_email = forge.ensure_author_email
+
+    async def provision_repository(project_id, session, **kwargs):
+        existing = await forge.binding_for_project(project_id, session)
+        project = await session.get(Project, project_id)
+        if (
+            existing is not None
+            or (project.settings or {}).get("forge_kind") == "github_app"
+        ):
+            return await provision(project_id, session, **kwargs)
+        binding = ProjectForge(
+            project_id=project_id,
+            kind="forgejo",
+            repo=f"project-{project_id.hex}/code",
+            url=f"https://forge.test/project-{project_id.hex}/code.git",
+            api_url="https://forge.test/api/v1",
+            default_branch="main",
+        )
+        session.add(binding)
+        await session.flush()
+        git_store.ensure_repo(project_id)
+        return binding
+
+    async def read_default_branch(project_id, session):
+        binding = await forge.binding_for_project(project_id, session)
+        if binding is None:
+            return await default_branch(project_id, session)
+        return binding.default_branch
+
+    async def test_repository(project_id, session):
+        binding = await forge.binding_for_project(project_id, session)
+        return binding is not None and binding.api_url == "https://forge.test/api/v1"
+
+    async def ensure_author_email(project_id, session, email, **kwargs):
+        if not await test_repository(project_id, session):
+            await remote_author_email(project_id, session, email, **kwargs)
+
+    async def branch_head(project_id, session, branch):
+        if not await test_repository(project_id, session):
+            return await remote_head(project_id, session, branch)
+        repo = git_store.path(project_id)
+        if not repo.exists():
+            return None
+        result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    async def tokens_for_project(project_id, session):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        if not await test_repository(project_id, session):
+            return await remote_tokens(project_id, session)
+        return SimpleNamespace(
+            installation_token=AsyncMock(return_value=("test-token", ""))
+        )
+
+    async def status_client(project_id, session):
+        from types import SimpleNamespace
+
+        if not await test_repository(project_id, session):
+            return await remote_status(project_id, session)
+
+        async def compare_status(*, base, head, **kwargs):
+            repo = git_store.path(project_id)
+            revisions = [
+                git_store.git(repo, "rev-parse", revision).strip()
+                for revision in (base, head)
+            ]
+            if revisions[0] == revisions[1]:
+                return "identical"
+            result = git_store.run(
+                ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
+            )
+            return "ahead" if result.returncode == 0 else "diverged"
+
+        return SimpleNamespace(compare_status=compare_status)
+
+    async def repository_data(project_id, session, path="", **kwargs):
+        import base64
+        import subprocess
+        from urllib.parse import parse_qs, unquote, urlsplit
+
+        if not await test_repository(project_id, session):
+            return await remote_data(project_id, session, path, **kwargs)
+        repo = git_store.path(project_id)
+        route = unquote(urlsplit(path).path)
+        if route.startswith("/git/commits/") and route.endswith(".diff"):
+            revision = route.removeprefix("/git/commits/").removesuffix(".diff")
+            return git_store.git(repo, "show", "--format=", revision)
+
+        def commits(revision):
+            return [
+                {
+                    "sha": sha,
+                    "commit": {
+                        "author": {
+                            "name": git_store.git(
+                                repo, "show", "-s", "--format=%an", sha
+                            ).strip()
+                        },
+                        "message": git_store.git(
+                            repo, "show", "-s", "--format=%B", sha
+                        ).strip(),
+                    },
+                }
+                for sha in git_store.git(
+                    repo, "rev-list", "--max-count=50", revision
+                ).splitlines()
+            ]
+
+        if route == "/commits":
+            return commits(parse_qs(urlsplit(path).query)["sha"][0])
+        if route.startswith("/pulls/") and route.endswith(".diff"):
+            from sqlalchemy import select
+
+            from app.domain.room_task.models import Task
+
+            number = int(route.removeprefix("/pulls/").removesuffix(".diff"))
+            task = await session.scalar(
+                select(Task).where(
+                    Task.project_id == project_id, Task.pr_number == number
+                )
+            )
+            assert task is not None
+            return git_store.git(
+                repo, "diff", f"{task.base_branch}...{task.branch_name}"
+            )
+        if route.startswith("/git/trees/"):
+            revision = route.removeprefix("/git/trees/")
+            tree = []
+            for row in git_store.git(repo, "ls-tree", "-zl", revision).split("\0"):
+                if not row:
+                    continue
+                metadata, name = row.split("\t", 1)
+                mode, kind, oid, size = metadata.split()
+                tree.append(
+                    {
+                        "path": name,
+                        "mode": mode,
+                        "type": kind,
+                        "sha": oid,
+                        "size": int(size) if size != "-" else 0,
+                    }
+                )
+            return {"tree": tree, "truncated": False}
+        if route.startswith("/git/blobs/"):
+            oid = route.removeprefix("/git/blobs/")
+            data = subprocess.check_output(
+                ["git", "-C", str(repo), "cat-file", "blob", oid]
+            )
+            return {"encoding": "base64", "content": base64.b64encode(data).decode()}
+        if not route.startswith("/compare/"):
+            return await remote_data(project_id, session, path, **kwargs)
+        base, head = route.removeprefix("/compare/").split("...")
+        statuses = {"A": "added", "D": "removed", "M": "modified"}
+        return {
+            "commits": commits(f"{base}..{head}"),
+            "total_commits": int(
+                git_store.git(repo, "rev-list", "--count", f"{base}..{head}")
+            ),
+            "files": [
+                {"filename": name, "status": statuses[status]}
+                for status, name in (
+                    row.split("\t", 1)
+                    for row in git_store.git(
+                        repo,
+                        "diff",
+                        "--no-renames",
+                        "--name-status",
+                        f"{base}...{head}",
+                    ).splitlines()
+                )
+            ],
+        }
+
+    monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
+    monkeypatch.setattr(forge, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge_files, "branch_head", branch_head)
+    monkeypatch.setattr(forge_files, "repository_data", repository_data)
+    monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
+    monkeypatch.setattr(forge_files, "status_client", status_client)
+
+
+@pytest.fixture
+def client(
+    _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge
+) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).

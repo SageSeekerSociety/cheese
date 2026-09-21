@@ -20,12 +20,10 @@ pytestmark = pytest.mark.anyio
 
 def _resolver(monkeypatch, *, token: str, user):
     """An ActorResolver whose only live dependency is the user lookup."""
-    monkeypatch.setattr(
-        auth_mod,
-        "IdentityService",
-        lambda _session: SimpleNamespace(is_agent=AsyncMock(return_value=False)),
+    repo = SimpleNamespace(
+        get_by_id=AsyncMock(return_value=user),
+        get_by_username=AsyncMock(return_value=None),
     )
-    repo = SimpleNamespace(get_by_id=AsyncMock(return_value=user))
     monkeypatch.setattr(auth_mod, "UserRepository", lambda _session: repo)
     resolver = auth_mod.ActorResolver(
         session=MagicMock(), bearer=token, cheese_token=""

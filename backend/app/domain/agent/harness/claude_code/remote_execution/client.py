@@ -53,7 +53,7 @@ PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
     "Save finished documents through cheese doc set and publish artifacts "
-    "through cheese artifact. Scratch files can disappear when execution "
+    "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
 

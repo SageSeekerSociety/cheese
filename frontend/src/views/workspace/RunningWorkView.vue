@@ -23,6 +23,8 @@ import { getAvatarUrl } from '@/utils/materials'
 import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import NeedsYou from '@/components/NeedsYou.vue'
+import PublishedSite from '@/components/PublishedSite.vue'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
@@ -267,14 +269,22 @@ function openTask(task: RoomTask) {
 
 <template>
   <div class="board">
-    <!-- 这一页是项目的落点，所以顶上是项目名：下面两块（做出了什么、看板）各自
-         带自己的标题，答的是这个项目的两个问题——交出去了什么，现在轮到谁。 -->
+    <!-- 这一页是项目的落点，所以顶上是项目名：下面每一块各自带自己的标题，答的
+         是这个项目的几个问题——谁在等你、交出去了什么、对外的地址是哪个、现在轮到
+         谁。除了板以外，每一块在没有内容时都整个不出现：首页上的一块框出现，就意味
+         着这个项目现在真有这样东西。 -->
     <header v-if="store.projectName" class="board__title">
       <h1 class="t-page-title">{{ store.projectName }}</h1>
     </header>
 
+    <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
+    <NeedsYou :project-id="projectId" />
+
     <!-- 做出了什么：清单为空时它自己整个不出现（#1085 结论三）。 -->
     <ArtifactManifest :project-id="projectId" />
+
+    <!-- 网站：发布出去的地址就是交出去的东西之一，所以它紧挨着清单。 -->
+    <PublishedSite :project-id="projectId" />
 
     <header class="board__head">
       <div class="board__head-row">

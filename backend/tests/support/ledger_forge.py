@@ -46,7 +46,7 @@ _DETAIL: dict[Conclusion, str] = {
 class LedgerForge(forge_mod.Forge):
     """A forge whose conclusion a test dictates, and whose calls it can read."""
 
-    kind = forge_mod.ForgeKind.external_remote
+    kind = forge_mod.ForgeKind.forgejo
 
     @property
     def declaration(self) -> str:

@@ -22,7 +22,7 @@ from app.domain.identity.handles import (
     topic_agent_handle,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicMembership, TopicRole
+from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
@@ -302,6 +302,43 @@ class TopicMemberService:
             if (user := by_handle.get(m.member_handle)) is not None
             and user.id in agent_ids
         ]
+
+    async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
+        """Does ``handle`` answer THIS room as one of its agents?
+
+        The question every caller used to ask of the actor itself ("is this an
+        agent?") and answer away from the room it was acting in. A participant
+        is not typed; it holds a seat, and the seat is what says an agent
+        answers here — so a teammate seated in some OTHER room, this project's
+        rooms included, is in this one simply not one of its agents. That is
+        also the capability the whole change exists to provide: revoking a
+        room's seat revokes the authorization, which only holds while the
+        question stays 「这个房间认不认它」 and does not widen to
+        「这个项目认不认它」.
+
+        One handle answers without a seat here, and it is one handle rather than
+        a second roster: ``ProjectAgentCredentialService.agent_handle`` — i.e.
+        ``topic_agent_handle(root_topic_id)`` — is what a project credential
+        authenticates as, derived from the project's root room and borrowing no
+        room's seat by definition. An off-platform 芝士 (local agent, bot, CI)
+        holds exactly that credential and acts in every room of its project, so
+        asking only the destination room's roster would answer "not an agent"
+        for it in every room but the root one: a 403 instead of a published
+        message, and a turn that reads its own question back as unread input.
+        Reading the root room's whole roster instead of this one handle is what
+        would widen the check back to the project — 总览's roster is every
+        project member, so any agent seated there would pass everywhere.
+
+        Pass the ROOM: threads have no roster of their own, and the project the
+        room belongs to is where that credential handle is derived from.
+        """
+        if handle in await self.agent_handles(room.id):
+            return True
+        project = await ProjectRepository(self._session).get(room.project_id)
+        root_id = project.root_topic_id if project is not None else None
+        if root_id is None or root_id == room.id:
+            return False
+        return handle == topic_agent_handle(root_id)
 
     async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
         """Seat THIS agent in this room, and return the handle it acts under.

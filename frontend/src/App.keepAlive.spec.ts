@@ -64,7 +64,6 @@ function mountApp() {
     routes: [
       // 懒加载的路由记录（真实路由全是 `() => import(...)`）——保活的名字匹配
       // 必须穿得过这一层，不然线上一个页面都保不住。
-      { path: '/overview', component: () => Promise.resolve(page('OverviewView', '总览内容')) },
       { path: '/calendar', component: () => Promise.resolve(page('CalendarView', '日历内容')) },
       { path: '/elsewhere', component: page('ElsewhereView', '别处的内容') },
       {
@@ -96,15 +95,15 @@ async function goTo(router: ReturnType<typeof mountApp>, path: string, expected:
 describe('装页面的 router-view', () => {
   it('白名单里的页面走开再回来还是原来那一个，不重新挂载', async () => {
     const router = mountApp()
-    await goTo(router, '/overview', '总览内容')
+    await goTo(router, '/calendar', '日历内容')
     await goTo(router, '/elsewhere', '别处的内容')
-    await goTo(router, '/overview', '总览内容')
+    await goTo(router, '/calendar', '日历内容')
 
     // 只挂载过一次：回来的是同一个组件实例，所以它 onMounted 里的取数不会再跑
     // 一遍，屏幕上也就不会再转一次圈。
-    expect(lifecycle.filter((e) => e === 'mount:OverviewView')).toHaveLength(1)
-    expect(lifecycle).toContain('activate:OverviewView')
-    expect(lifecycle).not.toContain('unmount:OverviewView')
+    expect(lifecycle.filter((e) => e === 'mount:CalendarView')).toHaveLength(1)
+    expect(lifecycle).toContain('activate:CalendarView')
+    expect(lifecycle).not.toContain('unmount:CalendarView')
   })
 
   it('白名单外的页面照旧卸载——登录页绝不能被留在内存里', async () => {
@@ -126,13 +125,13 @@ describe('装页面的 router-view', () => {
     // 是第一次渲染的那个组件」，路由再怎么切页面都不换，而且一声不吭。
     const router = mountApp()
 
-    await goTo(router, '/overview', '总览内容')
+    await goTo(router, '/calendar', '日历内容')
+    expect(screen.queryByText('别处的内容')).toBeNull()
+
+    await goTo(router, '/elsewhere', '别处的内容')
     expect(screen.queryByText('日历内容')).toBeNull()
 
     await goTo(router, '/calendar', '日历内容')
-    expect(screen.queryByText('总览内容')).toBeNull()
-
-    await goTo(router, '/overview', '总览内容')
-    expect(screen.queryByText('日历内容')).toBeNull()
+    expect(screen.queryByText('别处的内容')).toBeNull()
   })
 })

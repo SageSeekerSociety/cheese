@@ -2,7 +2,7 @@
 
 import mimetypes
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Request, Response
@@ -16,11 +16,11 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
 
@@ -85,7 +85,6 @@ async def require_project_access(
             raise ValidationError("任务已结束，文件只读")
         if work.branch_name is None:
             raise NotFoundError("Historical task has no individual workspace")
-        TaskService._bind_workspace(work)
 
 
 @router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
@@ -94,11 +93,12 @@ async def list_files(
     db: DbSession,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
-    files = ws.list_files(project_id, topic_id=task)
-    return ok(page(files, len(files)))
+    files, actual_source = await ProjectFiles(db, project_id, task).files(source)
+    return ok({**page(files, len(files)), "source": actual_source})
 
 
 @router.get("/{project_id}/file", dependencies=[Depends(require_project_access)])
@@ -108,6 +108,7 @@ async def read_file(
     db: DbSession,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> dict:
     """Read a worktree file for the 文件 panel.
 
@@ -117,7 +118,7 @@ async def read_file(
     `version` is what a later write echoes back so a lost race is caught.
     """
     await ProjectService(db).get_or_404(project_id)
-    return ok(ws.read_text_file(project_id, path, topic_id=task))
+    return ok(await ProjectFiles(db, project_id, task).text(path, source))
 
 
 @router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
@@ -128,15 +129,18 @@ async def read_file_raw(
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     download: bool = False,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """Raw bytes of a worktree file — the 文件 panel renders images as images
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
-    data = ws.read_file_bytes(project_id, path, topic_id=task)
+    data, actual_source = await ProjectFiles(db, project_id, task).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
     download = download or not mime.startswith("image/")
     headers = {
+        "X-Cheese-File-Source": actual_source,
+        "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "default-src 'none'; sandbox",
     }
@@ -174,10 +178,8 @@ async def write_file(
         raise ValidationError("path is required")
     if task is None:
         raise ValidationError("请选择要修改的任务")
-    new_version = ws.write_file(
-        project_id, path, content, topic_id=task, expected_version=version
-    )
-    return ok({"path": path, "version": new_version})
+    saved = await ProjectFiles(db, project_id, task).write(path, content, version)
+    return ok({"path": path, "version": saved["version"], "source": "live"})
 
 
 @router.get("/{project_id}/git/log", dependencies=[Depends(require_project_access)])
@@ -190,7 +192,7 @@ async def git_log(
     await ProjectService(db).get_or_404(project_id)
     # A topic asks about ITS commits (its branch minus the base), never the
     # project's — the project log is other topics' work.
-    rows = ws.git_log(project_id, topic_id=task)
+    rows = await ProjectFiles(db, project_id, task).history()
     return ok(page(rows, len(rows)))
 
 
@@ -201,14 +203,10 @@ async def git_diff(
     ref: str | None = None,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "committed",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
-    # A topic shows its branch's full diff vs the base (what 采纳 would merge).
-    if task is not None:
-        return ok({"diff": ws.topic_diff(project_id, task)})
-    if ref:
-        ref = ws.accepted_commit_revision(project_id, ref)
-    return ok({"diff": ws.git_diff(project_id, ref)})
+    return ok({"diff": await ProjectFiles(db, project_id, task).diff(source, ref)})
 
 
 @router.get(
@@ -238,8 +236,7 @@ async def topic_work_summary(
     paths = set()
     for work in tasks:
         if work.branch_name and work.status == "open":
-            TaskService._bind_workspace(work)
-            paths.update(ws.topic_changed_files(project_id, work.id))
+            paths.update(await ProjectFiles(db, project_id, work.id).changed_files())
     # 跑过没有 = 这个地点有没有哪个 agent 留下过会话。
     has_run = await AgentSessionService(db).has_run(place.room_id)
     return ok({"changed_files": sorted(paths), "has_run": has_run})

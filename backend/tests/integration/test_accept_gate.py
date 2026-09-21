@@ -14,6 +14,10 @@ hold without any gate in between.
 
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_approvals import _make_card as _file_card
+from tests.integration.test_accept_pr import _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _authed(client):
@@ -31,21 +35,6 @@ def _make_topic(client, project_id: str) -> str:
     r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
-
-
-def _file_card(client, topic_id: str, reviewer: str = "alice") -> dict:
-    r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
-        headers=delivery_headers(client, topic_id),
-        json={
-            "new_artifact": "报告",
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
-        },
-    )
-    assert r.status_code == 200
-    return r.json()["data"]
 
 
 def _latest_card(client, topic_id: str) -> dict:
@@ -69,15 +58,17 @@ def test_card_born_pending_with_no_gate(client):
 
 
 def test_a_pending_card_is_acceptable_immediately(client):
-    """No gate stands between filing and accepting (local merge, since no
-    GitHub App is configured in the test env)."""
+    """The remote PR can merge without a retired local quality gate."""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
     card = _file_card(client, tid)
     assert card["status"] == "pending"
 
-    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
 
@@ -113,7 +104,10 @@ def test_an_accepted_card_still_cannot_be_rejected(client):
     card = _file_card(client, tid)
     assert card["status"] == "pending"
 
-    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
     assert r.status_code == 200, r.text
 
     r = client.post(

@@ -5,9 +5,17 @@ which is not a check on the caller. Worth pinning explicitly because what these
 routes return is the source itself, not a rendering of it.
 """
 
-import uuid
+import pytest
 
-from tests.machine_work import declare_task
+from tests.delivery import delivery_task_id
+from tests.integration.test_file_panel_safety import (
+    _mkproject,
+    _mktopic,
+    _owner,
+    _put,
+    _worktree,
+    task_machine,  # noqa: F401
+)
 
 
 def test_listing_a_projects_files_needs_a_credential(client):
@@ -34,113 +42,24 @@ def test_reading_a_file_needs_a_credential(client):
     )
 
 
-def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch):
-    """A machine that owns its tree pushes to the branch, and the file panel
-    reads out of the backend's own checkout of it. A checkout that does not
-    move with the branch shows nothing — the push looks like it did nothing."""
-    from app.api.routes.git_http import _configure_for_push
-    from app.domain.workspace import service as ws
+@pytest.mark.usefixtures("task_machine")
+def test_live_listing_tracks_machine_writes_without_discarding_edits(client):
+    project = _mkproject(client)
+    room = _mktopic(client, project)
+    _put(client, project, room, "being_edited.txt", b"a human is typing here\n")
+    params = {"task": str(delivery_task_id(client, room)), "source": "live"}
+    headers = _owner(client)
 
-    monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    repo = ws.ensure_repo(project)
-    declare_task(project, topic)
-    branch = ws.branch_for_task(topic)
-    ws._ensure_worktree(project, topic)
-    _configure_for_push(repo)
+    def listed():
+        response = client.get(
+            f"/projects/{project}/files", params=params, headers=headers
+        )
+        assert response.status_code == 200, response.text
+        return {item["path"] for item in response.json()["data"]["data"]}
 
-    import subprocess
-
-    work = tmp_path / "machine"
-    for args in (
-        ["clone", "-q", str(repo), str(work)],
-        None,
-    ):
-        if args:
-            subprocess.run(["git", *args], cwd=tmp_path, capture_output=True)
-    for args in (
-        ["config", "user.email", "c@z"],
-        ["config", "user.name", "c"],
-        ["checkout", "-q", "-B", branch, f"origin/{branch}"],
-    ):
-        subprocess.run(["git", *args], cwd=work, capture_output=True)
-    (work / "made_on_the_machine.txt").write_text("hello\n")
-    for args in (
-        ["add", "-A"],
-        ["commit", "-q", "-m", "w"],
-        ["push", "origin", branch],
-    ):
-        subprocess.run(["git", *args], cwd=work, capture_output=True)
-
-    listed = [
-        f.get("path", f) if isinstance(f, dict) else f
-        for f in ws.list_files(project, topic_id=topic)
-    ]
-    assert any("made_on_the_machine" in str(f) for f in listed), (
-        f"pushed file missing from the topic listing: {listed}"
+    assert "being_edited.txt" in listed()
+    _put(client, project, room, "from_machine.txt", b"new work\n")
+    assert {"being_edited.txt", "from_machine.txt"} <= listed()
+    assert (_worktree(client, room) / "being_edited.txt").read_bytes() == (
+        b"a human is typing here\n"
     )
-
-
-def _push_a_file(repo, tmp_path, branch: str, name: str) -> None:
-    """What a machine that owns its tree does."""
-    import subprocess
-
-    from app.api.routes.git_http import _configure_for_push
-
-    _configure_for_push(repo)
-    work = tmp_path / f"m-{name}"
-    subprocess.run(["git", "clone", "-q", str(repo), str(work)], capture_output=True)
-    for args in (
-        ["config", "user.email", "c@z"],
-        ["config", "user.name", "c"],
-        ["checkout", "-q", "-B", branch, f"origin/{branch}"],
-    ):
-        subprocess.run(["git", *args], cwd=work, capture_output=True)
-    (work / name).write_text("from the machine\n")
-    for args in (
-        ["add", "-A"],
-        ["commit", "-q", "-m", name],
-        ["push", "origin", branch],
-    ):
-        subprocess.run(["git", *args], cwd=work, capture_output=True)
-
-
-def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
-    """Catching up must not cost a person the edit they are looking at.
-
-    Someone editing in the workspace has changes that exist nowhere else. A
-    fast-forward that discarded them would lose work to make a listing fresher,
-    which is the wrong trade in every case.
-    """
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    repo = ws.ensure_repo(project)
-    declare_task(project, topic)
-    branch = ws.branch_for_task(topic)
-    wt = ws._ensure_worktree(project, topic)
-
-    (wt / "being_edited.txt").write_text("a human is typing here\n")
-    _push_a_file(repo, tmp_path, branch, "from_machine.txt")
-
-    listed = {f["path"] for f in ws.list_files(project, topic_id=topic)}
-
-    assert "being_edited.txt" in listed, "the local edit was discarded"
-    assert (wt / "being_edited.txt").read_text() == "a human is typing here\n"
-
-
-def test_a_clean_workspace_picks_the_push_up(tmp_path, monkeypatch):
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws2"))
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    repo = ws.ensure_repo(project)
-    declare_task(project, topic)
-    branch = ws.branch_for_task(topic)
-    ws._ensure_worktree(project, topic)
-
-    _push_a_file(repo, tmp_path, branch, "landed.txt")
-
-    listed = {f["path"] for f in ws.list_files(project, topic_id=topic)}
-    assert "landed.txt" in listed

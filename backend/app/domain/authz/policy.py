@@ -18,6 +18,7 @@ TopicRoleReader = Callable[[uuid.UUID, str], Awaitable[TopicRole | None]]
 ProjectMemberCheck = Callable[[uuid.UUID, str], Awaitable[bool]]  # project, handle
 ProjectRoleReader = Callable[[uuid.UUID, str], Awaitable[ProjectRole | None]]
 ProjectOwnerReader = Callable[[uuid.UUID], Awaitable[str | None]]
+AgentBindingCheck = Callable[[str], Awaitable[bool]]  # handle → carries a binding?
 
 # Project roles allowed to mutate the project roster (add / remove / role). The
 # owner is authorized separately — ``projects.owner_handle`` may name someone who
@@ -78,6 +79,41 @@ def refuse_unauthenticated_chat(
     if allow_anonymous:
         return None
     return ("auth_required", "请先登录再进入话题")
+
+
+async def refuse_management_action(
+    actor: Actor, *, carries_agent_binding: AgentBindingCheck
+) -> str | None:
+    """The refusal a management surface owes, or ``None`` to let ``actor`` in.
+
+    Management is what a person does in their own session, so the refusal is two
+    questions of two different things, and neither subsumes the other:
+
+    - the CREDENTIAL. A scoped credential (``via="cheese"``) is a per-request
+      capability handed to something running unattended — a device screen's
+      ``X-Cheese-Screen`` token resolves on any path, including one with no
+      topic in it. Whoever holds it is not sitting in their own session, so it
+      cannot carry a management action whatever the handle turns out to be.
+      This is a SCOPE question, which is the credential's own business (see the
+      module docstring): it does not type the participant, and a handle with no
+      agent-binding arriving this way is refused just the same.
+    - the PARTICIPANT. Whether the handle carries an agent-binding, asked of the
+      binding through the injected adapter rather than read off the actor. An
+      allow-list is a list of handles and nothing stops an agent's from being on
+      one, so without this the binding would be the one thing nobody asked.
+
+    It lives here rather than in the route because "what may this actor do" has
+    one answer per question in this codebase, and this is a question — the route
+    calls it. Where the refusal is *reached from* is a separate matter and does
+    stay in the route body: ``/admin/*`` is not in ``_CHEESE_WRITE_PATHS``, and
+    that table is a whitelist, so nothing in the middleware looks at that prefix
+    and a refusal written there would not exist.
+    """
+    if actor.via == "cheese":
+        return "作用域凭证不能执行管理动作，请用本人会话"
+    if await carries_agent_binding(actor.handle):
+        return "agent 不能执行管理动作"
+    return None
 
 
 async def can_manage_project_members(

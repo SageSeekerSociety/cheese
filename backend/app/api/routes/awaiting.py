@@ -1,9 +1,9 @@
 """待我处理：跨项目的那一份清单。
 
 看板回答「这个项目现在有什么在等人」，这里回答「**我**现在要处理什么」—— 同一份规则
-（`room_task/presentation.py`）、同一份收件人判据（`room_task/awaiting.py`），范围换
-成我能看见的全部项目。为什么它不能由通知表拼出来，写在 `room_task/awaiting.py` 的模
-块说明里。
+（`room_task/presentation.py`）、同一份收件人判据（`delivery/addressing.py`，投递用的
+也是它），范围换成我能看见的全部项目。为什么它不能由通知表拼出来，写在
+`room_task/awaiting.py` 的模块说明里。
 
 查询留在这一层，不进领域：这一份要问项目、房间、活、验收卡、消息块、轮次六个地方，
 而项目看板那两份（`projects.list_project_tasks` / `topics.list_topics`）也是在路由里
@@ -24,6 +24,7 @@ from app.core.db import get_db
 from app.domain.agent.chat import ChatService
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -114,14 +115,18 @@ async def list_awaiting_me(
             ),
             now=now,
         )
-        if shown.column is not presentation.Column.needs_you:
-            continue
-        reason = awaiting.why_a_task_is_mine(
-            task,
-            task_cards.get(task.id),
-            handle,
-            asked=task.id in asked_tasks and waiting_for.get(task.room_id) == handle,
+        card = task_cards.get(task.id)
+        addressed = address(
+            Event(
+                reviewers=() if card is None else (card.reviewer_handle,),
+                reporter=task.reporter_handle,
+                asked=(
+                    waiting_for.get(task.room_id) if task.id in asked_tasks else None
+                ),
+            ),
+            hand_of(shown.column),
         )
+        reason = addressed.reason_for(handle)
         if reason is None:
             continue
         items.append(
@@ -150,13 +155,16 @@ async def list_awaiting_me(
             ),
             now=now,
         )
-        if shown.column is not presentation.Column.needs_you:
-            continue
-        reason = awaiting.why_a_room_is_mine(
-            room_cards.get(topic.id),
-            handle,
-            asked=topic.id in asked_rooms and waiting_for.get(topic.id) == handle,
+        card = room_cards.get(topic.id)
+        addressed = address(
+            # 房间没有「提需求的人」这一栏 —— 那是一条活上的字段。
+            Event(
+                reviewers=() if card is None else (card.reviewer_handle,),
+                asked=waiting_for.get(topic.id) if topic.id in asked_rooms else None,
+            ),
+            hand_of(shown.column),
         )
+        reason = addressed.reason_for(handle)
         if reason is None:
             continue
         items.append(

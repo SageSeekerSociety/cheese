@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
 from app.core.obs import scrub_secrets
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.repositories import ProjectRepository
@@ -421,9 +422,11 @@ async def record(
             if verdict.kind == "summary"
             else event_content(err)
         )
+        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
         await blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="backend",
             author_type=AuthorType.system,
             content=content,
@@ -446,9 +449,15 @@ async def flush_expired(now: float | None = None) -> int:
     async with async_session_factory() as session:
         blocks = BlockRepository(session)
         for burst in bursts:
-            await blocks.add(
+            landed = landing(
+                EventAbout.room,
                 project_id=burst.project_uuid,
-                topic_id=burst.topic_id,
+                room_id=burst.topic_id,
+            )
+            await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author="backend",
                 author_type=AuthorType.system,
                 content=summary_content(burst.sample, burst.count),

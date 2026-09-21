@@ -32,6 +32,26 @@ logger = logging.getLogger(__name__)
 OWNER_CONNECT_RETRY_WINDOW_S = 60
 OWNER_CONNECT_RETRY_MAX_DELAY_S = 5
 
+# How long this side waits for the owner to answer a call that declares no
+# deadline of its own, and how much longer than a declared one it waits.
+#
+# The owner is handed the deadline in the call's payload and enforces it against
+# the device; this is the caller's own bound on the same wait. Without one, an
+# owner that accepted the request and then stopped speaking — a wedged container,
+# a connection the network dropped without a FIN — held the caller forever, and
+# a caller holding a database session (a room's setup) held its pooled
+# connection with it until the process restarted.
+#
+# The slack mirrors the in-process hub, which waits `timeout + 5` on a device
+# call for the same reason: the far end's own timer has to be the one that fires,
+# so its answer ("the device did not respond") reaches the caller instead of
+# being replaced by a blank local timeout.
+OWNER_CALL_TIMEOUT_SLACK_S = 5
+OWNER_CALL_DEFAULT_TIMEOUT_S = 30
+# Reaching the owner is a connect on the box's own network; a SYN that goes
+# unanswered this long is a host that is not there, not a slow one.
+OWNER_CONNECT_TIMEOUT_S = 10
+
 
 def screen_to_json(screen: HubScreen) -> dict[str, Any]:
     return {
@@ -106,7 +126,10 @@ class RemoteDeviceHub:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=self._headers,
-                timeout=None,
+                timeout=httpx.Timeout(
+                    OWNER_CALL_DEFAULT_TIMEOUT_S + OWNER_CALL_TIMEOUT_SLACK_S,
+                    connect=OWNER_CONNECT_TIMEOUT_S,
+                ),
                 transport=self._transport,
             )
         await self.refresh()
@@ -242,16 +265,35 @@ class RemoteDeviceHub:
 
         Retries a refused connect and nothing else: a failure any later — a
         reset, a lost response — can follow work the owner already did, and
-        repeating that is not ours to decide.
+        repeating that is not ours to decide. A connect that times out is the
+        same situation as a refused one and is retried for the same reason:
+        nothing was sent, so nothing can have happened twice.
+
+        The wait for the answer is the deadline the call declares to the owner
+        plus `OWNER_CALL_TIMEOUT_SLACK_S`, so the owner's own timer fires first
+        and its answer arrives instead of a blank local timeout.
         """
         deadline = time.monotonic() + OWNER_CONNECT_RETRY_WINDOW_S
+        declared = payload.get("timeout")
+        answer_timeout = httpx.Timeout(
+            (
+                float(declared)
+                if isinstance(declared, int | float)
+                else OWNER_CALL_DEFAULT_TIMEOUT_S
+            )
+            + OWNER_CALL_TIMEOUT_SLACK_S,
+            connect=OWNER_CONNECT_TIMEOUT_S,
+        )
         attempt = 0
         while True:
             try:
                 return await self._request(
-                    "POST", f"/internal/device-connection/call/{name}", json=payload
+                    "POST",
+                    f"/internal/device-connection/call/{name}",
+                    json=payload,
+                    timeout=answer_timeout,
                 )
-            except httpx.ConnectError:
+            except (httpx.ConnectError, httpx.ConnectTimeout):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise
@@ -362,10 +404,24 @@ class RemoteDeviceHub:
         )
 
     async def exec(
-        self, device_id: str, argv: list[str], **kwargs: Any
+        self,
+        device_id: str,
+        argv: list[str],
+        *,
+        timeout: float = 60,
+        **kwargs: Any,
     ) -> dict[str, Any]:
+        # Spelled out rather than left to the owner's own default: this side now
+        # bounds its wait by what the payload declares, so a deadline it cannot
+        # see is one it would wait the wrong amount of time for.
         return await self._call(
-            "exec", {"device_id": device_id, "argv": argv, **_jsonable(kwargs)}
+            "exec",
+            {
+                "device_id": device_id,
+                "argv": argv,
+                "timeout": timeout,
+                **_jsonable(kwargs),
+            },
         )
 
     async def call_executor(
