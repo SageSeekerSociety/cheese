@@ -10,7 +10,7 @@ from app.api.deps import _cloud_lease
 from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.device.supply import Supply
+from app.domain.device.supply import Supply, Visibility
 from app.domain.identity.actor import Actor
 from app.domain.machine.models import AiStatus, MachineStatus
 
@@ -120,6 +120,8 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
             return_value=SimpleNamespace(device_id="own-cloud", supply=Supply.cloud)
         ),
         topic_binding=AsyncMock(return_value=None),
+        # 绑定时的可见性档由供给决定，绑定点只是问一句——所以这个替身也要答得出。
+        binding_visibility=AsyncMock(return_value=Visibility.host),
         bind_topic_device=AsyncMock(),
     )
     monkeypatch.setattr(
