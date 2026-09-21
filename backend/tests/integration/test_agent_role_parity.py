@@ -32,6 +32,17 @@ def _agent(project, origin, *, scope="project", ttl=3600):
     }
 
 
+def _seated_agent(client, room: str) -> str:
+    """房间名册上那条 agent 席位的 handle。
+
+    一个房间作用域的凭据就是以它的身份说话（`ActorResolver.seated_agent`），所以
+    「撤席位」「给席位升权」这类断言要问名册，不能自己按房间 id 拼一个名字出来：
+    项目总览坐的是项目芝士自己的席位。
+    """
+    rows = client.get(f"/topics/{room}/members").json()["data"]["data"]
+    return next(row["member_handle"] for row in rows if row["agent"])
+
+
 def _join(client, room, handle):
     response = client.post(
         f"/topics/{room}/members",
@@ -166,7 +177,7 @@ def test_revoked_room_membership_also_closes_agent_write_gate(client):
         ).status_code
         == 200
     )
-    handle = topic_agent_handle(uuid.UUID(origin))
+    handle = _seated_agent(client, origin)
     assert (
         client.delete(
             f"/topics/{origin}/members/{handle}",
@@ -246,7 +257,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
     project, origin, _ = _rooms(client)
     auth = _agent(project, origin)
-    handle = topic_agent_handle(uuid.UUID(origin))
+    handle = _seated_agent(client, origin)
     endpoint = f"/topics/{origin}/members"
     assert (
         client.post(endpoint, json={"handle": "bob", "actor": "alice"}).status_code
@@ -368,7 +379,7 @@ def test_people_and_agents_can_ask_and_record_decisions_with_their_own_identity(
     client.headers.pop("X-Cheese-Token", None)
     for handle, auth in (
         ("alice", session_auth_headers("alice")),
-        (topic_agent_handle(uuid.UUID(origin)), _agent(project, origin)),
+        (_seated_agent(client, origin), _agent(project, origin)),
     ):
         for action, body in (
             ("ask", {"question": "Which?", "options": ["A", "B"]}),
