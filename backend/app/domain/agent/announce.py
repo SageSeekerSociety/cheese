@@ -45,16 +45,13 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.addressing import (
     NAMES_NOBODY,
-    Addressed,
     Event,
     Hand,
     address,
 )
-from app.domain.identity.arrival import Arrival, how_it_arrives
+from app.domain.delivery.ledger import DeliveryEvent, deliver
 from app.domain.notification.models import NotificationType
-from app.domain.notification.publisher import publish_notification_event
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.user.services import user_by_handle
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
 #: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
@@ -117,6 +114,7 @@ async def announce(
     await _notify(
         session,
         place=place,
+        block=block,
         content=content,
         meta=meta or {},
         points_at=points_at,
@@ -128,7 +126,7 @@ async def notify_question(
     session: AsyncSession,
     *,
     place: Place,
-    block_id: uuid.UUID,
+    block: Block,
     question: str,
     asker: str,
     asked: str | None,
@@ -146,76 +144,57 @@ async def notify_question(
     了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
     不到具体的人」（平台发起的轮次），那就谁也不通知。
     """
-    recipient_ids = await _mailbox_ids(
-        session, address(Event(asked=asked), Hand.participant)
-    )
-    if not recipient_ids:
-        return
-    await publish_notification_event(
+    await deliver(
         session,
-        recipient_ids=recipient_ids,
-        type_=NotificationType.CHEESE_QUESTION,
-        payload={
-            "projectId": str(place.project_id),
-            "topicId": str(place.room_id),
-            "topicTitle": place.title,
-            "question": question,
-            "asker": asker,
-            # 提问固定在对话末尾（本轮停在它这里），所以进入房间即可看到 ——
-            # 这个 id 留给「定位到该条消息」用，当前不依赖它也能找到。
-            "blockId": str(block_id),
-        },
+        DeliveryEvent(
+            # 这条事件的身份就是那条提问消息 —— 去重键跟着它走，所以同一个问题被
+            # 算第二遍也只打扰他一次。
+            id=block.id,
+            type=NotificationType.CHEESE_QUESTION,
+            payload={
+                "projectId": str(place.project_id),
+                "topicId": str(place.room_id),
+                "topicTitle": place.title,
+                "question": question,
+                "asker": asker,
+                # 提问固定在对话末尾（本轮停在它这里），所以进入房间即可看到 ——
+                # 这个 id 留给「定位到该条消息」用，当前不依赖它也能找到。
+                "blockId": str(block.id),
+            },
+            # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
+            # id，就是为了这个时刻拿得到。
+            occurred_at=block.created_at,
+        ),
+        address(Event(asked=asked), Hand.participant),
     )
-
-
-async def _mailbox_ids(session: AsyncSession, addressed: Addressed) -> set[int]:
-    """寻址结果里走站内信的那些人 → 真实用户 id。
-
-    agent 那一档不落在这里：它在自己房间的时间线上读到这条事件，往它的收件箱里塞一
-    行写的是一条谁都不会打开的记录（`identity/arrival.py`）。
-
-    人解析不到用户行是常态而非错误：`reporter_handle` 可能是外部提交的一个名字。少
-    发一条通知，好于为一个不存在的人抛错。
-    """
-    ids: set[int] = set()
-    people = sorted(
-        {
-            r.handle
-            for r in addressed.recipients
-            if how_it_arrives(r.handle) is Arrival.mailbox
-        }
-    )
-    for handle in people:
-        user = await user_by_handle(session, handle)
-        if user is not None:
-            ids.add(user.id)
-    return ids
 
 
 async def _notify(
     session: AsyncSession,
     *,
     place: Place,
+    block: Block,
     content: str,
     meta: dict,
     points_at: Event,
 ) -> None:
-    addressed = address(points_at, _HAND_OF_WHO[meta.get("who")])
-    recipient_ids = await _mailbox_ids(session, addressed)
-    if not recipient_ids:
-        return
-    await publish_notification_event(
+    await deliver(
         session,
-        recipient_ids=recipient_ids,
-        # 一个类别码走完所有平台提示，具体是哪件事看 `eventType` —— 通知要显示的
-        # 那句话是后端给的 `content`，不是前端按类别码拼出来的模板。
-        type_=NotificationType.ROOM_NOTICE,
-        payload={
-            "projectId": str(place.project_id),
-            "topicId": str(place.room_id),
-            "topicTitle": place.title,
-            "content": content,
-            "eventType": str(meta.get("event_type") or ""),
-            "severity": str(meta.get("severity") or SEVERITY_INFO),
-        },
+        DeliveryEvent(
+            # 房间里刚落下的那一行就是这条事件 —— 投递账本按它去重、按它补发。
+            id=block.id,
+            # 一个类别码走完所有平台提示，具体是哪件事看 `eventType` —— 通知要显示
+            # 的那句话是后端给的 `content`，不是前端按类别码拼出来的模板。
+            type=NotificationType.ROOM_NOTICE,
+            payload={
+                "projectId": str(place.project_id),
+                "topicId": str(place.room_id),
+                "topicTitle": place.title,
+                "content": content,
+                "eventType": str(meta.get("event_type") or ""),
+                "severity": str(meta.get("severity") or SEVERITY_INFO),
+            },
+            occurred_at=block.created_at,
+        ),
+        address(points_at, _HAND_OF_WHO[meta.get("who")]),
     )

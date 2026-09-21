@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.redis import get_redis_client
-from app.domain.notification.dedup import NotificationDeduplicator
 from app.domain.notification.events import NotificationTriggerEvent
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
@@ -19,12 +18,6 @@ from app.domain.notification.push import RedisPushQueueNotificationHandler
 
 def build_notification_event_handler(session: AsyncSession) -> NotificationEventHandler:
     redis_client = get_redis_client()
-    deduplicator = None
-    if redis_client is not None:
-        deduplicator = NotificationDeduplicator(
-            redis_client,
-            ttl_seconds=settings.notification_dedup_ttl_seconds,
-        )
 
     channel_handlers: list[NotificationChannelHandler] = [
         InAppNotificationHandler(session=session),
@@ -47,7 +40,6 @@ def build_notification_event_handler(session: AsyncSession) -> NotificationEvent
 
     return NotificationEventHandler(
         session=session,
-        deduplicator=deduplicator,
         channel_handlers=channel_handlers,
     )
 
