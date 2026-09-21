@@ -684,12 +684,10 @@ class Settings(BaseSettings):
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
     # --- notifications and deadlines ---
-    # Three jobs nothing in a request path can do. An aggregation window that
-    # never closes is a notification written and never delivered; an undrained
-    # email queue is an inbox that never receives; an unswept deadline is a
-    # promise the platform made and quietly did not keep. Each failure is
-    # silent, which is why the intervals are on by default. 0 disables one.
-    notification_finalize_interval_s: int = 60
+    # Two jobs nothing in a request path can do. An undrained email queue is an
+    # inbox that never receives; an unswept deadline is a promise the platform
+    # made and quietly did not keep. Each failure is silent, which is why the
+    # intervals are on by default. 0 disables one.
     notification_email_drain_interval_s: int = 60
     #: 推送比邮件跑得勤：推送的全部价值在于它比人自己回来看更早，一分钟的排队等待
     #: 已经吃掉不少。邮件反过来 —— #1084 要它比推送晚一档。
