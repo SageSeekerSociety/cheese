@@ -1,8 +1,9 @@
-// 「AI 队友」—— 项目设置里的一节。四件事值得被盯着，都是渲染不会失败但人会被误导的：
+// 「AI 队友」—— 项目设置里的一节。五件事值得被盯着，都是渲染不会失败但人会被误导的：
 //   1. 一行里那个数字要真的对上这个队友（记忆条数）
 //   2. 后端那一半还没上线时，这一节得说「还没上线」，不能是白屏也不能是报错
 //   3. 空名册要说清楚队友是什么、能拿它干嘛，不能只画个空盒子
 //   4. 停用必须先问一遍，并且说明「已经在用的话题照常工作、记忆保留」
+//   5. 一行上不出现模型 —— 模型是一条活的事，卡是它唯一的住处
 import type { ProjectAgent } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -16,7 +17,6 @@ const listAgentTypes = vi.fn()
 const listMemory = vi.fn()
 const setProjectDefaultAgent = vi.fn()
 const deactivateProjectAgent = vi.fn()
-const getProjectAgentOptions = vi.fn()
 
 vi.mock('@/api', async (importOriginal) => {
   // ApiError / isEndpointMissing stay REAL: "the backend is not deployed here"
@@ -30,7 +30,6 @@ vi.mock('@/api', async (importOriginal) => {
     listMemory: (...a: unknown[]) => listMemory(...a),
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
     deactivateProjectAgent: (...a: unknown[]) => deactivateProjectAgent(...a),
-    getProjectAgentOptions: (...a: unknown[]) => getProjectAgentOptions(...a),
   }
 })
 
@@ -43,7 +42,7 @@ const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 
 function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
   return {
-    configuration: { body: '', model: 'sonnet', harness: 'claude-code', skills: [], mcp_servers: [], effort: null },
+    configuration: { body: '', skills: [], mcp_servers: [] },
     id: 'a1',
     project_id: PROJECT,
     handle: 'cheese',
@@ -98,40 +97,31 @@ beforeEach(() => {
   listMemory.mockReset().mockResolvedValue({ data: [], total: 0 })
   setProjectDefaultAgent.mockReset()
   deactivateProjectAgent.mockReset()
-  getProjectAgentOptions.mockReset().mockResolvedValue({
-    harness: {
-      state: 'choosable',
-      choices: [
-        { id: 'claude-code', label: 'Claude Code', default: true, models: ['sonnet'] },
-        { id: 'pi', label: 'pi', default: false, models: ['sonnet'] },
-      ],
-    },
-    model: { state: 'choosable', choices: [{ id: 'sonnet', label: 'Sonnet', default: true }] },
-  })
 })
 
 afterEach(() => cleanup())
 
 describe('队友名册', () => {
-  // 「用什么跑」和「哪个模型」现在都是人挑的，名册就得把两件都说出来 —— 否则
-  // 一个走 pi、一个走 Claude Code 的两个队友，这一栏长得一模一样。
-  it('每一行说清这个队友用什么跑、背后是哪个模型', async () => {
+  // 一行说的是「这是谁、它是什么角色」。用哪个模型不在这里 —— 那是一条活的
+  // 事，写在卡上；把它印在名册上等于给了它第二个住处。
+  it('每一行说清这个队友是谁、什么角色，不说模型', async () => {
+    listAgentTypes.mockResolvedValue({
+      data: [
+        { name: 'reviewer', title: '代码评审', description: '', body: '', skills: [], mcp_servers: [], builtin: false },
+      ],
+      total: 1,
+    })
     listProjectAgents.mockResolvedValue({
       data: [
         agent({ id: 'a1', handle: 'cheese', display_name: '芝士' }),
-        agent({
-          id: 'a2',
-          handle: 'pi-mate',
-          display_name: 'pi 队友',
-          is_default: false,
-          configuration: { body: '', model: 'sonnet', harness: 'pi', skills: [], mcp_servers: [], effort: null },
-        }),
+        agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false, type_name: 'reviewer' }),
       ],
       total: 2,
     })
     mountPage()
-    expect(await screen.findByText('@cheese · Claude Code · sonnet')).toBeTruthy()
-    expect(await screen.findByText('@pi-mate · pi · sonnet')).toBeTruthy()
+    expect(await screen.findByText('@cheese · 通用')).toBeTruthy()
+    expect(await screen.findByText('@reviewer · 代码评审')).toBeTruthy()
+    expect(screen.queryByText(/sonnet/)).toBeNull()
   })
 
   it('每一行带上这个队友自己的记忆条数和在用话题数', async () => {

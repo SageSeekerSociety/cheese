@@ -3,7 +3,7 @@
 // 它不是随页面一起长出来的展示逻辑，是这一页存在的理由：光看名字和类型，
 // 分不出哪个队友真的在学、哪个是建完就没人用的空壳。所以这里单独成文件，
 // 由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
-import type { AgentFieldChoice, MemoryEntryOut } from '../api'
+import type { MemoryEntryOut } from '../api'
 import type { AgentType, ProjectAgent } from '../cx_types'
 
 // 每个队友攒下了多少条记忆，按 handle 归。
@@ -49,28 +49,4 @@ export function displayNameError(name: string): string | null {
   if (!trimmed) return '请填写名字'
   if (trimmed.length > 64) return '名字最长 64 个字'
   return null
-}
-
-// ---- 编辑器能提供什么设置 ----
-//
-// 后端那份目录（GET /agent-types/options）说了每个字段能不能设、不能设的理由。
-// 把「怎么读它」放在这里而不是组件里，理由和这个文件开头那条一样：这是这一页
-// 的承诺所在 —— 提供出来的每个值都必须真的会生效 —— 值得被测试直接盯着，而不是
-// 靠在 jsdom 里点开一个浮层去间接验证。
-
-export interface FieldOptionsLike {
-  state: string
-  choices: AgentFieldChoice[]
-  reason: string
-  note: string
-}
-
-export function fieldIsChoosable(options: Record<string, FieldOptionsLike>, name: string): boolean {
-  return options[name]?.state === 'choosable'
-}
-
-export function fieldChoices(options: Record<string, FieldOptionsLike>, name: string): FieldOptionsLike['choices'] {
-  // 只有 choosable 的字段才交出选项。一个 unavailable 的字段哪天带着残留的
-  // choices 回来，也不该被渲染成能选 —— state 是唯一的判据。
-  return fieldIsChoosable(options, name) ? options[name]?.choices ?? [] : []
 }

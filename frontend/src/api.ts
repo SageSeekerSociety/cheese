@@ -867,37 +867,17 @@ export function setTopicComputeProfile(
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
-// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
-// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
 export interface AgentFieldChoice {
   id: string
   label: string
   description: string
   default: boolean
-  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
-   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
-   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
-  models?: string[]
-}
-
-export interface AgentFieldOptions {
-  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
-  state: 'choosable' | 'unavailable'
-  choices: AgentFieldChoice[]
-  reason: string
-  note: string
-}
-
-export type AgentTypeOptions = Record<string, AgentFieldOptions>
-
-export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
 }
 
 // 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
-// 旧 UI 是 agent 上选模型反推池；现在主线读项目默认，agent 上的模型只在派子 agent
-// 时用。这条端点给项目默认一个真正的写入口（之前只能手改数据库）。
+// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
 export interface ProjectDefaultModel {
   /** 项目显式设的模型；null = 没设，走 deployment_default */
   model: string | null

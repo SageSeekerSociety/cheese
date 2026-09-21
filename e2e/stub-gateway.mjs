@@ -1,8 +1,5 @@
-// The model picker's source of truth is the gateway (/model/info), so a
-// deployment without one offers only the model it is configured to run. These
-// specs check what a person can PICK, which needs more than one thing to pick
-// from — and a label that differs from the id it saves, since sending the label
-// back is exactly the bug the 模型 step would otherwise stop catching.
+// 后端启动时要有一份模型目录：一条活绑哪个模型，选项来自网关（/model/info），
+// 没有网关的部署就只剩它配置里的那一个。这里只答这一个问题。
 //
 // This is not an inference provider and does not become one: it answers the
 // admin question "what do you route", and 404s everything else, which the
