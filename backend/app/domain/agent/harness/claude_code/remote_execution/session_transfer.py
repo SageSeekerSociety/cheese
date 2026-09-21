@@ -8,6 +8,13 @@ import subprocess
 import uuid
 from pathlib import Path
 
+# The checkout inside a room's home, whose path is one of the two a session name
+# is derived from. A copy of `place.CHECKOUT_DIR`: this file is piped to the
+# machine on stdin and runs with nothing of ours importable. It is held to the
+# original by test_footprint_root.py — a name that drifted here would hash to a
+# session nobody has, and every transfer would report "another room".
+CHECKOUT_DIR = "room"
+
 
 def transfer(payload):
     home = (
@@ -33,7 +40,7 @@ def transfer(payload):
                 + subprocess.check_output(["cksum"], input=str(path).encode())
                 .decode()
                 .split()[0]
-                for path in (work, home / "room")
+                for path in (work, home / CHECKOUT_DIR)
             }
             if session not in sessions:
                 raise RuntimeError("Session marker names another room")

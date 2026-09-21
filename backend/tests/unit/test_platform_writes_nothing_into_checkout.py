@@ -25,6 +25,7 @@
 """
 
 import ast
+import asyncio
 import base64
 import uuid
 from pathlib import Path
@@ -112,9 +113,11 @@ class Machine:
 
     def __init__(self) -> None:
         self.wrote: list[tuple[str, bytes]] = []
+        self.budget: float | None = None
 
     async def put_file(self, device_id, sid, path, data, *, timeout=30):
-        del device_id, sid, timeout
+        del device_id, sid
+        self.budget = timeout
         self.wrote.append((path, data))
         return {"ok": True, "path": f"/home/owner/{path.removeprefix('$HOME/')}"}
 
@@ -200,6 +203,51 @@ async def test_a_screen_with_an_executor_is_written_through_it(executor):
     assert not payload["path"].startswith("$HOME"), "执行器要的是相对它自己 home 的"
     assert base64.b64decode(payload["data"]) == b"bytes"
     assert landed == "/root/.cheese/attachments/uploads/abc/图.png"
+
+
+async def test_the_callers_budget_holds_on_both_transports(monkeypatch):
+    """`timeout` 是调用方的预算，两条通路都归它管。
+
+    唯一的调用者给的是 20 秒（`device_provider._FILE_STAGE_TIMEOUT_S`），理由写在
+    那个常量上：过了这个点消息就不带这张图继续走，所以等待的代价是读的人付的。执
+    行器那条通路调的 `private_chat.control` 自己没有 timeout 参数，里面写死的是
+    660 秒——一轮活的合理上限，一张图片的十一分钟。图片是一张一张送的，于是没有这
+    条断言，一个卡住的执行器能把一条消息按住「每张图各一次」那么久。
+
+    一个收下参数却只对一条通路生效的入口，比没有这个参数更坏：调用方读到的是它已
+    经定好了上限。
+    """
+    machine = Machine()
+    home = device_provider.device_home_dir(uuid.uuid4(), uuid.uuid4())
+    await place.write(
+        b"bytes",
+        home=home,
+        name="图.png",
+        hub=machine,
+        device_id="device",
+        screen="screen",
+        timeout=7,
+    )
+    assert machine.budget == 7
+
+    from app.domain.agent import private_chat
+
+    async def never_answers(target, payload, *, hub=None, trace_id=None):
+        del target, payload, hub, trace_id
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(private_chat, "control", never_answers)
+    with pytest.raises(TimeoutError):
+        await place.write(
+            b"bytes",
+            home=home,
+            name="图.png",
+            hub=machine,
+            device_id="device",
+            screen="screen",
+            execution_target={"kind": "private", "home": home},
+            timeout=0.01,
+        )
 
 
 @pytest.mark.parametrize(

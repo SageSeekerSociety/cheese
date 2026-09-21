@@ -26,6 +26,12 @@ from pathlib import Path
 # that never existed while the real hundreds of gigabytes stay on the machine.
 FOOTPRINT_ROOT = ".cheese"
 
+# The checkout inside a room's home — a copy of `place.CHECKOUT_DIR`, held to it
+# by test_footprint_root.py. The teardown has to look in the same directory the
+# launcher built, and this is also the directory `place.write` refuses: the one
+# name serves both, so a rename that reaches only one of them cannot happen.
+CHECKOUT_DIR = "room"
+
 # The platform's directories INSIDE a room's home, the current one first — the
 # pair is `place.session_platform_dirs()`, and it is a pair only in there. The
 # machine's own `$HOME` has never held more than FOOTPRINT_ROOT.
@@ -188,7 +194,7 @@ def end_holders(paths: list[Path]) -> None:
 def check_resource_publication(home: Path, work: Path) -> None:
     """Check both legacy checkouts and task worktrees before deleting a home."""
     check_published(work)
-    check_published(home / "room")
+    check_published(home / CHECKOUT_DIR)
     tasks = home / ".cheese/tasks"
     if tasks.is_symlink():
         raise RuntimeError("task storage is a symlink")
@@ -227,7 +233,7 @@ def request_exit(home: Path, work: Path, lock_fd: int) -> None:
     socket, name, *_ = json.loads(marker.read_text())
     # cksum consumes stdin below; do not trust a session name from an arbitrary file.
     expected = set()
-    for directory in (work, home / "room"):
+    for directory in (work, home / CHECKOUT_DIR):
         checksum = subprocess.run(
             ["cksum"], input=str(directory).encode(), capture_output=True, check=True
         )

@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.domain.agent import execution  # noqa: E402
+from app.domain.agent import execution, place  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution import runtime  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution.launch import script  # noqa: E402
 
@@ -25,7 +25,7 @@ class RoomExecutor:
         self.task = str(uuid.uuid4())
         self.owner = folder / "execution-host"
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
-        self.work = self.home / "room"
+        self.work = self.home / place.CHECKOUT_DIR
         self.state = self.home / ".cheese/executor"
         repository = folder / "task-origin"
         repository.mkdir()

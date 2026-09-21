@@ -26,8 +26,12 @@ from app.domain.agent import (
     machine_launcher,
     resource_cleanup,
 )
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+from app.domain.agent.harness.claude_code.remote_execution import (
+    bootstrap,
+    session_transfer,
+)
 from app.domain.agent.place import (
+    CHECKOUT_DIR,
     STAGED_DIR,
     footprint_root,
     session_platform_dirs,
@@ -51,6 +55,31 @@ def test_the_shipped_programs_carry_the_root_that_place_chose():
     assert (bootstrap.PLATFORM_DIR, bootstrap.PREVIOUS_PLATFORM_DIR) == (
         session_platform_dirs()
     )
+
+
+def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():
+    """The name `place.write` refuses, held to the name the checkout gets.
+
+    `place.write` turns a staged file away when the destination has the checkout
+    as a path segment. That rule can only be checked while the name it refuses
+    and the name the checkout is actually given are the same string, and the
+    code that gives it is not the code that refuses it: the backend builds the
+    path it hands a machine, and three programs that run ON the machine build
+    theirs — the bootstrap creates the directory, the teardown looks in it
+    before deleting a home, and the session transfer hashes its path into a
+    session name.
+
+    Drift is silent in each direction. A bootstrap that made `checkout/` while
+    `place.py` still said `room/` would leave the one assertion standing between
+    the platform and somebody's repository rejecting a directory nothing writes
+    to and waving through the one it does; a teardown or a transfer pointed one
+    directory over passes every check vacuously.
+    """
+    assert resource_cleanup.CHECKOUT_DIR == CHECKOUT_DIR
+    assert bootstrap.CHECKOUT_DIR == CHECKOUT_DIR
+    assert session_transfer.CHECKOUT_DIR == CHECKOUT_DIR
+    project, room = uuid.uuid4(), uuid.uuid4()
+    assert device_provider.device_work_dir(project, room).endswith(f"/{CHECKOUT_DIR}")
 
 
 def test_the_connector_uninstalls_the_root_the_platform_writes():

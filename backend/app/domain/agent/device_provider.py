@@ -50,7 +50,11 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
-from app.domain.agent.place import footprint_root, session_platform_dirs
+from app.domain.agent.place import (
+    CHECKOUT_DIR,
+    footprint_root,
+    session_platform_dirs,
+)
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -872,7 +876,7 @@ class DeviceChannel(Channel):
         changes this boundary: files cross it through git or `file.put`, never by
         translating a backend path into the device's namespace.
         """
-        return f"{device_home_dir(project_id, topic_id)}/room"
+        return f"{device_home_dir(project_id, topic_id)}/{CHECKOUT_DIR}"
 
     def _no_proxy_hosts(self) -> str:
         """What the screen's HTTPS_PROXY must NOT capture: the backend itself

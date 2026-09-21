@@ -27,17 +27,18 @@ what the platform writes on a borrowed machine goes under this root, and the
 hosted checkout is not under it. One function means one assertion rather than a
 path-prefix argument spread over every caller (结论 49，不变量 I21b).
 
-Five programs cannot ask this module and carry the name themselves: the
-environment runner, the cleanup script, the executor bootstrap and the sandbox
-CLI (`backend/sandbox/cheese`) all run where nothing of ours is importable — one
-is written out beside the room's own files and run as a script, one is piped in
-on stdin and has no `__file__` to look at, one is exec'd out of a string, one is
-shipped into the agent's container as a standalone program — and the connector
-is Go. Their copies are checked against this module by
-`backend/tests/unit/test_footprint_root.py`. The value is chosen here and
-nowhere else.
+Six programs cannot ask this module and carry the names themselves: the
+environment runner, the cleanup script, the executor bootstrap, the session
+transfer and the sandbox CLI (`backend/sandbox/cheese`) all run where nothing of
+ours is importable — two are piped in on stdin and have no `__file__` to look
+at, one is written out beside the room's own files and run as a script, one is
+exec'd out of a string, one is shipped into the agent's container as a
+standalone program — and the connector is Go. Their copies are checked against
+this module by `backend/tests/unit/test_footprint_root.py`. The values are
+chosen here and nowhere else.
 """
 
+import asyncio
 import base64
 
 _ROOT = ".cheese"
@@ -69,9 +70,19 @@ def session_platform_dirs() -> tuple[str, ...]:
 # file and belong in the same directory.
 STAGED_DIR = "attachments"
 
-#: The checkout, relative to a session's home. Named here because the whole
-#: point of `write` is to stay out of it, and a rule that names the directory it
-#: excludes is a rule a reader can check.
+#: The checkout, relative to a session's home — **the name is chosen here**, and
+#: the code that creates the directory reads it from here. That is the whole
+#: point: a rule that names the directory it excludes is only checkable while
+#: the name it excludes and the name the checkout actually gets are the same
+#: string. Declared beside the rule and read by nobody who makes the directory,
+#: it would go on rejecting `room/` after a rename while waving the real
+#: checkout through.
+#:
+#: `device_provider._work_dir` builds the path the backend hands a machine.
+#: Three programs run ON the machine with nothing of ours importable — the
+#: executor bootstrap, the cleanup script and the session transfer — so they
+#: carry copies, held to this one by `tests/unit/test_footprint_root.py`, the
+#: same way they already carry the footprint root.
 #:
 #: `write` rejects it as a SEGMENT anywhere under the footprint, not just at the
 #: one place a session's own checkout sits, so that a `home` already pointing
@@ -178,14 +189,23 @@ async def write(
     if execution_target:
         from app.domain.agent import private_chat
 
-        answer = await private_chat.control(
-            execution_target,
-            {
-                "subtype": "stage_file",
-                "path": relative,
-                "data": base64.b64encode(data).decode(),
-            },
-            hub=hub,
+        # `timeout` is the CALLER's budget, and both transports owe it the same
+        # answer. `private_chat.control` takes no timeout of its own and spends
+        # 660s inside — the right ceiling for a turn, eleven minutes too long
+        # for a file whose caller said the message rides on without it. The one
+        # caller stages images one at a time, so a wedged executor would hold
+        # somebody's message for that budget once per image.
+        answer = await asyncio.wait_for(
+            private_chat.control(
+                execution_target,
+                {
+                    "subtype": "stage_file",
+                    "path": relative,
+                    "data": base64.b64encode(data).decode(),
+                },
+                hub=hub,
+            ),
+            timeout,
         )
     else:
         answer = await hub.put_file(
