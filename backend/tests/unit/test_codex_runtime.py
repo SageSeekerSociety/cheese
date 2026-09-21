@@ -79,7 +79,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
     project = uuid.uuid4()
     handles = [
         Handle(
-            SessionRef(project, uuid.uuid4()),
+            SessionRef(project, uuid.uuid4(), harness="codex"),
             "center",
             state,
             "thread",
@@ -107,7 +107,7 @@ async def test_recovery_continues_when_a_discovered_runner_disappears(
 
 @pytest.mark.anyio
 async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="codex")
     work = uuid.uuid4()
     handle = Handle(session, "center", "/state", "thread", "agent", tmp_path / "mirror")
     journal = Journal(tmp_path / "remote")

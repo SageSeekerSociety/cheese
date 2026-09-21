@@ -67,7 +67,7 @@ def channel(client, monkeypatch, executors=("executor",)):
 async def _open(central, project, topic, agent, executor, *, resume=None):
     """One turn of one agent's session, through the resolution entry."""
     await central.ensure_ready(
-        session=SessionRef(project, topic, agent, "claude-code"),
+        session=SessionRef(project, topic, agent, harness="claude-code"),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System", resume_session_id=resume),

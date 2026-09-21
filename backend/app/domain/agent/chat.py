@@ -2108,15 +2108,21 @@ class ChatService:
         the broker so open clients see the backfill live."""
         async with self._sessions() as session:
             topic = await TopicRepository(session).get(topic_id)
-        if topic is None:
-            return 0
+            if topic is None:
+                return 0
+            # 这间房的轮次跑在哪个骨架上（结论 28）——读 spool 的那个 ref 得和轮次
+            # 用的是同一个答案，不然读的是另一个骨架的日志。
+            project = await ProjectRepository(session).get(topic.project_id)
+        harness = harness_for(project.settings if project else None)
         from app.domain.agent.runtime import get_broker
 
         broker = get_broker()
         channel = str(topic_id)
         landed = 0
         async with self._lock_for(topic_id):
-            async for frame in self._reconcile_spool(topic.project_id, topic_id, None):
+            async for frame in self._reconcile_spool(
+                topic.project_id, topic_id, None, harness=harness
+            ):
                 await broker.publish(channel, frame)
                 landed += 1
         return landed
@@ -3796,11 +3802,20 @@ class ChatService:
         )
 
     async def _reconcile_spool(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        *,
+        harness: str,
     ) -> AsyncIterator[dict]:
         """Land what a session said while nobody was listening (backend down, or
         no listener during a prior turn) — idempotent by event id, best-effort,
         and never blocking the turn.
+
+        ``harness`` is the one this room's turns run on, resolved by the caller
+        — the ref that reads the spool carries the same answer the turn used,
+        rather than asking again and possibly getting a different one.
 
         The harness's ``backlog`` says WHAT was said; this decides what to do
         about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
@@ -3828,7 +3843,7 @@ class ChatService:
         phases_ms: dict[str, float] = {}
         event_count = 0
         try:
-            session_ref = SessionRef(project_id, topic_id)
+            session_ref = SessionRef(project_id, topic_id, harness=harness)
             backlog = self._compute.backlog(session_ref)
             spooled = backlog.unread()
             event_count = len(spooled)
@@ -5114,7 +5129,9 @@ class ChatService:
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
         # event-id. No-op for an empty spool.
-        async for frame in self._reconcile_spool(project_id, topic_id, turn_id):
+        async for frame in self._reconcile_spool(
+            project_id, topic_id, turn_id, harness=prepared.harness
+        ):
             yield frame
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=spool_reconciled "
@@ -5199,7 +5216,7 @@ class ChatService:
                 project_id,
                 topic_id,
                 prepared.agent.handle,
-                prepared.harness,
+                harness=prepared.harness,
             )
             await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
@@ -5305,6 +5322,18 @@ class ChatService:
             # 这个项目跑的骨架（结论 28），趁项目行还在手上解析一次——下面把会话
             # 指针写回去的那一段在另一个事务里，那里已经没有项目可读。
             harness = harness_for(project.settings)
+            # 选机器也用这个答案。这一段以前问的是 ``platform_work``，它按部署的
+            # 骨架挑：一套跑 claude-code 的部署上，一个设成别的骨架的项目会真跑在
+            # claude-code 上，而会话行按项目那个骨架落键——同一间房的活动轮和普通
+            # 轮成了两行，下一轮把这一轮的 resume token 递给了另一个骨架。
+            compute_id = _resolve_compute_id(project.settings)
+            provider = self._compute.select(provider_id=compute_id, harness=harness)
+            if provider is None:
+                # 机器没问题，是这套部署没把这个项目要的骨架部署在上面。跟
+                # ``_assemble_turn`` 一样说出来，而不是改用别的骨架跑一轮。
+                raise ValidationError(
+                    f"本项目选的机器上没有部署 {harness}，活动没有接入"
+                )
 
             title = " ".join(text.split())[:40] or "活动记录"
             topic = await topics.add(
@@ -5328,9 +5357,6 @@ class ChatService:
             )
             memories = await self._recall_agent_memories(memory, session, topic=topic)
             topic_id = topic.id
-            compute_id = _resolve_compute_id(
-                project.settings,
-            )
             await session.commit()
 
         # --- run 芝士 with the activity-digestion skill + tools ---
@@ -5348,7 +5374,6 @@ class ChatService:
             "如果这是个关键节点就用 cheese 钉成里程碑；"
             "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
-        provider = self._compute.platform_work(compute_id)
         runtime = runtime_for(provider)
         final_text = ""
         new_session_id = None

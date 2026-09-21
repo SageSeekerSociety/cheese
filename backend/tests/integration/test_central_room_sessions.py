@@ -50,7 +50,7 @@ AGENT = "agent"
 
 def ref(project, topic, agent=AGENT):
     """A session key, which is what a place is recorded under."""
-    return SessionRef(project, topic, agent, "claude-code")
+    return SessionRef(project, topic, agent, harness="claude-code")
 
 
 async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
@@ -280,7 +280,7 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
     ]
     codex = CodexChannel(central, ClaudeLaunch("system").execution)
-    session = SessionRef(project, topic, AGENT, "codex")
+    session = SessionRef(project, topic, AGENT, harness="codex")
     handle = await codex.ensure(
         session, Opening("shared system", model="fixture", agent_handle="agent")
     )

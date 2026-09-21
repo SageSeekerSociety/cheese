@@ -155,18 +155,24 @@ class SessionRef:
     project — not the seat it authors under. The two differ, and reading under
     one while writing under the other hands back None rather than failing.
 
-    The two halves are left unset by the calls that address a PLACE rather than
+    ``agent_handle`` is left unset by the calls that address a PLACE rather than
     a conversation: a room's event spool and the screen it is watched in are one
     per room, so reading them names no agent. Anything that resolves where a
-    session runs must fill them in — that resolution is per session and there is
+    session runs must fill it in — that resolution is per session and there is
     nothing on the room left to fall back to.
+
+    ``harness`` has none of that leeway: it is keyword-only and has no default.
+    跑的是哪个骨架由部署设置加项目设置答（结论 28），所以一个默认值就是第二个答
+    法——而且是个够不着项目那一层的答法：它只看得见部署设置，于是一个项目盖过了
+    部署的房间，ref 会带着部署那个名字去写会话行，把一条对话拆成两行。每个构造点
+    都说得出一个自己知道的答案：适配器里面是 ``self.harness``（它就是那个
+    runtime），轮次那一路是这一轮解析出来的那个。
     """
 
     project_id: uuid.UUID
     topic_id: uuid.UUID
     agent_handle: str = ""
-    # 没说是哪个骨架，就是这套部署跑的那个——读设置，不是写死一个名字。
-    harness: str = field(default_factory=deployment_harness)
+    harness: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

@@ -306,7 +306,7 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
 
     recovered = await provider.recover("dev1")
 
-    assert recovered == [SessionRef(project_id, topic_id)]
+    assert recovered == [SessionRef(project_id, topic_id, harness="claude-code")]
     assert channel._subscription_devices[topic_id] == "dev1"
     await provider.replay(recovered[0], known_texts=set())
     router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
@@ -814,7 +814,7 @@ async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
     router = HookRouter()
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    session = SessionRef(project_id, topic_id)
+    session = SessionRef(project_id, topic_id, harness="claude-code")
     try:
         if api == "send":
             call = provider.send(
@@ -2370,7 +2370,7 @@ async def test_interrupt_presses_escape_rather_than_saying_something():
     say about it, and the session survives it."""
     hub = FakeHub()
     provider = _provider(hub, HookRouter(), uuid.uuid4())
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     screen = await hub.open_screen(
         "dev1",
         "claude",

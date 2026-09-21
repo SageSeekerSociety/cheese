@@ -311,7 +311,12 @@ def _advance_replay_cursor(subscription: TopicSubscription) -> None:
         subscription.replay_done.clear()
     if reached is not None and subscription.replaying:
         acknowledge_log(
-            SessionRef(subscription.project_id, subscription.topic_id), through=reached
+            SessionRef(
+                subscription.project_id,
+                subscription.topic_id,
+                harness=CLAUDE_CODE,
+            ),
+            through=reached,
         )
 
 
@@ -1001,7 +1006,7 @@ class ClaudeCodeRuntime:
                 # A failed subscription does not prove a surviving screen died.
                 logger.warning("Hook recovery failed for topic %s: %s", topic_id, exc)
                 continue
-            recovered.append(SessionRef(project_id, topic_id))
+            recovered.append(SessionRef(project_id, topic_id, harness=self.harness))
         return recovered
 
     async def drop_device_subscriptions(self, device_id: str) -> None:
@@ -1652,7 +1657,7 @@ class ClaudeCodeRuntime:
                 is_error=True,
             )
             return
-        session = SessionRef(project_id, topic_id, session_agent, self.harness)
+        session = SessionRef(project_id, topic_id, session_agent, harness=self.harness)
 
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.

@@ -108,12 +108,8 @@ class AgentSession(UuidPk, Timestamps, Base):
     # 哪个骨架跑的这条会话。模型上没有默认值：一个不说骨架的写入，等于把「跑的是
     # 哪个」又答了一遍（结论 28 说只许有一个答法，那个答法是部署设置加项目设置）。
     # 每一条写路径都说得出来——全走 ``AgentSessionRepository._upsert``，它显式传
-    # harness——所以这里不必替谁猜。
-    #
-    # 只有模型上没有：库里那一列的 DDL 默认值还在，要一条 alter_column
-    # (server_default=None) 才删得掉。所以「不说骨架的写入会炸」今天只在按 metadata
-    # 建表的测试库里成立，dev/prod 上它仍然会静默落成 claude-code。拿这一行判断那
-    # 件事的下一个人，先看库里那一列。
+    # harness——所以这里不必替谁猜。库里那一列的 DDL 默认值也在同一次改动里去掉了
+    # （迁移 c9f41b7a2e08），不然这条保证只在按 metadata 建表的测试库上成立。
     harness: Mapped[str] = mapped_column(String(64))
     # What the harness resumes this conversation by. Opaque to the platform: it
     # is Claude Code's session id today and whatever the next harness hands back

@@ -198,7 +198,9 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
             "created_by": "alice",
         },
     ).json()["data"]
-    session = SessionRef(uuid.UUID(project["id"]), uuid.UUID(topic["id"]))
+    session = SessionRef(
+        uuid.UUID(project["id"]), uuid.UUID(topic["id"]), harness="codex"
+    )
     path = tmp_path / "events.sqlite"
     remote = AsyncMock(
         return_value={
