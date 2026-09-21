@@ -88,10 +88,10 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       delivered_at: '2026-09-20T12:00:00Z', decided_by: 'alice',
       kind: 'file', filename: 'report.txt', url: null,
     }));
-    await page.route(`**/projects/${projectId}/artifacts/${artifactId}`, route => route.fulfill({
+    await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}`, route => route.fulfill({
       json: { data: { id: artifactId, name: 'Version comparison fixture', version: 2, delivered_at: versions[1].delivered_at, versions } },
     }));
-    await page.route(`**/projects/${projectId}/artifacts/${artifactId}/compare?*`, route => route.fulfill({
+    await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}/compare?*`, route => route.fulfill({
       json: { data: { kind: 'file', identical: false, note: null, files: [{ path: 'report.txt', diff: '--- report.txt\n+++ report.txt\n@@ -1 +1 @@\n-before\n+after', note: null }] } },
     }));
     await page.goto(`/projects/${projectId}/artifacts/${artifactId}`);
