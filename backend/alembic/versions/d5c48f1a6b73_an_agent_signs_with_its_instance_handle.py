@@ -1,7 +1,7 @@
 """房间攒下的那些记忆，重键到 agent 自己名下
 
 Revision ID: d5c48f1a6b73
-Revises: b4d1a70c9e52
+Revises: e5b31c07af28
 Create Date: 2026-09-21 10:00:00
 
 记忆以前按房间记：一间房的芝士写进 ``agent_project`` 池，scope_id 是
@@ -37,7 +37,7 @@ from pathlib import Path
 from alembic import op
 
 revision: str = "d5c48f1a6b73"
-down_revision: str | Sequence[str] | None = "b4d1a70c9e52"
+down_revision: str | Sequence[str] | None = "e5b31c07af28"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -50,6 +50,10 @@ depends_on: str | Sequence[str] | None = None
 #: 把那种情况也挡在外面——它只会让这条 UPDATE 不动那一行，不会把两个池搅在一起。
 #:
 #: 幂等：跑完之后没有一行的 scope_id 还等于某间房派生出来的键，所以第二遍零行。
+#:
+#: ``':' || 'cheese-'`` 拆成两段不是排版：这段 SQL 走 ``sqlalchemy.text()``，
+#: ``':cheese-'`` 会被当成一个名叫 cheese 的绑定参数，跑起来直接报「A value is
+#: required for bind parameter 'cheese'」。
 REKEY_AGENT_MEMORY = """
     UPDATE memory_entries AS m
        SET scope_id = p.id::text || ':' || a.handle,
@@ -58,8 +62,8 @@ REKEY_AGENT_MEMORY = """
       JOIN projects AS p ON p.id = t.project_id
       JOIN agent_instances AS a ON a.id = p.default_agent_instance_id
      WHERE m.scope = 'agent_project'
-       AND m.scope_id =
-           p.id::text || ':cheese-' || left(replace(t.id::text, '-', ''), 12)
+       AND m.scope_id = p.id::text || ':' || 'cheese-'
+           || left(replace(t.id::text, '-', ''), 12)
        AND m.scope_id <> p.id::text || ':' || a.handle
 """
 
