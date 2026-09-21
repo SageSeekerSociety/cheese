@@ -108,8 +108,8 @@ class PullRequestStatus:
 class MergeResult:
     """Outcome of one merge attempt.
 
-    Exactly one side is set: `sha` when GitHub actually merged, else
-    `blocked_reason` — a human-readable, secret-free explanation of why
+    `queued` means GitHub accepted queue entry; it is not a completed merge.
+    Otherwise `sha` records an actual merge, or `blocked_reason` explains why
     GitHub refused (405/409). The refusal MUST carry a reason: returning a
     bare None here is what hid the squash-only bug for half a day (405 on a
     disabled merge_method never clears, so "just retry next tick" looped
@@ -124,6 +124,59 @@ class MergeResult:
     sha: str | None = None
     blocked_reason: str | None = None
     stale_head: bool = False
+    queued: bool = False
+
+
+async def _queue_request(client, api_base, headers, query, variables):
+    response = await client.post(
+        f"{api_base}/graphql",
+        headers=headers,
+        json={"query": query, "variables": variables},
+    )
+    if response.status_code != 200:
+        raise GitHubPrError(f"GitHub queue request failed: {_github_message(response)}")
+    payload = response.json()
+    if payload.get("errors") or not payload.get("data"):
+        raise GitHubPrError(
+            f"GitHub queue request failed: {str(payload.get('errors'))[:300]}"
+        )
+    return payload["data"]
+
+
+async def _queue_pr(client, api_base, headers, owner, repo, number):
+    data = await _queue_request(
+        client,
+        api_base,
+        headers,
+        "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){"
+        "pullRequest(number:$number){id headRefOid isMergeQueueEnabled "
+        "mergeQueueEntry{id}}}}",
+        {"owner": owner, "repo": repo, "number": number},
+    )
+    pr = (data.get("repository") or {}).get("pullRequest")
+    if not pr:
+        raise GitHubPrError("GitHub queue request returned no pull request")
+    return pr
+
+
+async def _enqueue_if_required(client, api_base, headers, owner, repo, number, sha):
+    pr = await _queue_pr(client, api_base, headers, owner, repo, number)
+    if not pr["isMergeQueueEnabled"]:
+        return None
+    if sha and sha != pr["headRefOid"]:
+        return MergeResult(blocked_reason="Pull request head changed", stale_head=True)
+    if not pr.get("mergeQueueEntry"):
+        data = await _queue_request(
+            client,
+            api_base,
+            headers,
+            "mutation($id:ID!,$sha:GitObjectID!){enqueuePullRequest(input:{"
+            "pullRequestId:$id,expectedHeadOid:$sha}){mergeQueueEntry{id}}}",
+            {"id": pr["id"], "sha": sha or pr["headRefOid"]},
+        )
+        if not (data.get("enqueuePullRequest") or {}).get("mergeQueueEntry"):
+            raise GitHubPrError("GitHub did not confirm queue entry")
+    return MergeResult(queued=True)
 
 
 @dataclass
@@ -900,6 +953,11 @@ class HttpxGitHubPrClient:
             # longer matches, instead of merging whatever is there now.
             body["sha"] = sha
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            queued = await _enqueue_if_required(
+                client, self._api_base, self._headers(token), owner, repo, number, sha
+            )
+            if queued is not None:
+                return queued
             resp = await client.put(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/merge",
                 headers=self._headers(token),
@@ -923,6 +981,27 @@ class HttpxGitHubPrClient:
         raise GitHubPrError(
             f"GitHub 拒绝合并 PR（HTTP {resp.status_code}）：{resp.text[:300]}"
         )
+
+    async def merge_queue_entry(self, *, owner, repo, number, token) -> bool:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            pr = await _queue_pr(
+                client, self._api_base, self._headers(token), owner, repo, number
+            )
+        return bool(pr.get("mergeQueueEntry"))
+
+    async def dequeue_pull_request(self, *, owner, repo, number, token) -> None:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            pr = await _queue_pr(
+                client, self._api_base, self._headers(token), owner, repo, number
+            )
+            if pr.get("mergeQueueEntry"):
+                await _queue_request(
+                    client,
+                    self._api_base,
+                    self._headers(token),
+                    "mutation($id:ID!){dequeuePullRequest(input:{id:$id}){clientMutationId}}",
+                    {"id": pr["id"]},
+                )
 
     async def list_check_runs(
         self, *, owner: str, repo: str, ref: str, token: str
@@ -1544,7 +1623,7 @@ class GitHubPRClient:
 
     @_as_pr_error
     async def mark_ready_for_review(self, node_id: str) -> None:
-        """Flip a draft PR to ready — the ONE call here that is not REST.
+        """Flip a draft PR to ready using GitHub's GraphQL API.
 
         REST can open a PR as a draft and cannot take it out of draft:
         `PATCH /pulls/{n}` has no `draft` field, and GitHub exposes the
@@ -1598,6 +1677,20 @@ class GitHubPRClient:
         """
         token, _ = await self._tokens.write_token()
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            try:
+                queued = await _enqueue_if_required(
+                    client,
+                    self._api_base,
+                    self._headers(token),
+                    self._owner,
+                    self._repo,
+                    number,
+                    None,
+                )
+            except GitHubPrError as exc:
+                raise GitHubPRError(str(exc)) from exc
+            if queued is not None:
+                return {"merged": False, "queued": True, "sha": None}
             resp = await client.put(
                 self._url(f"/pulls/{number}/merge"),
                 json={

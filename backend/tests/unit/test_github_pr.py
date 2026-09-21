@@ -31,11 +31,33 @@ class _FakeTokens:
 
 
 def _client(handler) -> GitHubPRClient:
+    def route(request):
+        if (
+            request.url.path == "/graphql"
+            and "isMergeQueueEnabled" in request.content.decode()
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "id": "PR_7",
+                                "headRefOid": "abc",
+                                "isMergeQueueEnabled": False,
+                                "mergeQueueEntry": None,
+                            }
+                        }
+                    }
+                },
+            )
+        return handler(request)
+
     return GitHubPRClient(
         "acme",
         "widgets",
         cast(GitHubAppTokens, _FakeTokens()),
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(route),
     )
 
 
