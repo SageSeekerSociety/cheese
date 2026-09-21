@@ -118,9 +118,20 @@ async def execute(
     # 因为这张表是随这次改动一起建的：认识这个模型的镜像和建表的那次迁移是同一次
     # 发布，而 `deploy-docker.sh` 先跑 `alembic upgrade head` 再换容器。旧属主只是
     # 一行都不记 —— 记不下的那些读出来是「没有派发过」，和今天一模一样。
+    #
+    # 记的是**哪一个工具**，不是哪一种调用方法：带 id 的只有 ``invoke`` 一种（其余六
+    # 种的载荷里都没有 ``id``，见 ``remote_execution/client.py`` 的各调用点），记方法
+    # 名那一栏于是每次都长成同一个常量，而这一栏是人在通知里唯一读得到的一句。没有
+    # ``tool`` 的（将来某个带 id 的新方法）退回方法名，总比空着强。
     key = payload.params.get("id")
+    tool = payload.params.get("tool")
     dispatch = (
-        dispatch_log.record(db, place_id=topic_id, key=str(key), method=payload.method)
+        dispatch_log.record(
+            db,
+            place_id=topic_id,
+            key=str(key),
+            tool=str(tool) if tool else payload.method,
+        )
         if key
         else None
     )
@@ -197,12 +208,25 @@ async def execute(
 async def _settle(
     db: AsyncSession, dispatch: uuid.UUID | None, outcome: dispatch_log.Outcome
 ) -> None:
-    """把结果写回那一行，并在这里就提交。
+    """把结果写回那一行，并在这里就提交。**结不上账不许改变这次调用的结局。**
 
     在执行调用**之后**才重新向池子要连接，是上面那段注释的另一半：整个远端调用期间
-    这个请求手上不能有连接，而这一次结清只占它几毫秒。
+    这个请求手上不能有连接，而这一次结清只占它几毫秒。而那一次「再要一次连接」正是
+    这里非吞不可的原因：池子被占满的样子，上面那段注释记的就是那次事故，而现在每一
+    次工具调用在远端调用结束之后都要再向池子要一次。
+
+    让它抛出去，代价是这个函数的两种调用位置各毁一样东西：``done`` 那一档排在
+    ``return answer`` 前面，一次已经 200 回来的结果会变成 500 交给沙箱；两个 except
+    分支里它排在 ``raise`` 前面，于是 409 / 502 连同 ``DeviceCallError`` 要带进房间的
+    机器原话一起退化成一个未处理的 500。
+
+    吞掉它，代价只是这一行留着不结清 —— 那本来就是这份记录的默认那一档，读出来是
+    ``unknown``，最坏是有人被问一句。
     """
     if dispatch is None:
         return
-    await dispatch_log.settle(db, dispatch, outcome)
-    await db.commit()
+    try:
+        await dispatch_log.settle(db, dispatch, outcome)
+        await db.commit()
+    except Exception:  # noqa: BLE001 — 见上：结不上账比毁掉这次调用的结局便宜
+        logger.exception("dispatch %s not settled as %s", dispatch, outcome.value)

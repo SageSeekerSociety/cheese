@@ -1270,6 +1270,12 @@ class AgentWorkRunner:
         一遍，是把一次可能已经落地的写操作再做一次，比什么都不做更坏。这类事情的
         下一步在人手上。
 
+        「悬着」在这里不带年龄条件，而这个判断的整个重量压在**送到这个函数的话题是
+        哪一种**上：屏幕没了，或者那条消息根本没送到屏幕，而且那几轮已经被上面的
+        `_close_turns` 关掉了。所以一次还没写回来的调用，结果再也到不了 agent 面前，
+        无论那台机器此刻怎么样（`dispatch_log` 开头第二节）。这里也没有「先放着、
+        下一次扫底再说」这个选项：轮次的区间已经关了，下一次扫底不会再看见这个话题。
+
         `since` 是这个话题里最早那个孤儿轮次的开始时刻，读只读那之后派出去的
         （`dispatch_log.unsettled`）。"""
         async with chat_service.session_factory() as ledger:
@@ -1329,7 +1335,7 @@ class AgentWorkRunner:
             # 这条恰恰是平台做不了了才发的。关着门的那一档正是话题里有轮次卡死 ——
             # 机器死在手上，最需要说这句话的那一档。
             waiting = "、".join(
-                f"{dispatch.method}（{dispatch.key}）" for dispatch in unknown
+                f"{dispatch.tool}（{dispatch.key}）" for dispatch in unknown
             )
             await self._post_orphan_event(
                 chat_service,

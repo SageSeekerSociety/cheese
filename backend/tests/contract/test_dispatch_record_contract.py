@@ -15,6 +15,10 @@
 空行会一直空着（那一轮照常跑完，没有谁会再碰它），而几天后它不该顶掉另一轮一次合法
 的重发。
 
+这里的时刻按真实时序摆：崩溃和属主重启发生在派发之后几秒到几分钟内，启动扫底紧跟着
+就跑。所以这几条用例里的记录都比一次调用能在飞的 660 秒年轻得多 —— 把判据换回「够老
+才算悬着」，第 ①②条当场全红。
+
 哪一种落点被记成什么，则只有走真的路由才问得出来。那套分类整个长在
 ``api/routes/execution.py`` 的 except 上，而它最要命的一档 —— 帧已经写出去了，之后
 链路才断 —— 从异常的类型上看和「链路一开始就不在」一模一样。所以下半篇打真的
@@ -36,7 +40,7 @@ from sqlalchemy import select
 from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import dispatch_log, execution
-from app.domain.agent.device_hub import EXECUTOR_CALL_TIMEOUT_S, DeviceHub
+from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.services import ProjectService
@@ -47,10 +51,15 @@ from tests.turn_log import a_topic, open_turn
 # 而它要等的那次落库是真的数据库往返。
 _REAL_SLEEP = asyncio.sleep
 
-#: 被打断的那一轮多老。必须比它自己派出去的那些调用还老 —— 一次派发是那一轮做的，
-#: 不可能早于那一轮开始，而重派路径正是按这个把「这几轮里悬着的」和上一轮遗留的空行
-#: 分开的（`dispatch_log.unsettled` 的 `since`）。
-_TURN_AGE_S = EXECUTOR_CALL_TIMEOUT_S + 120
+#: 被打断的那一轮多老。两分钟：一次部署打断一轮，启动扫底跟着就跑，这是它常见的样
+#: 子。必须比它自己派出去的那些调用还老 —— 一次派发是那一轮做的，不可能早于那一轮开
+#: 始，而重派路径正是按这个把「这几轮里悬着的」和上一轮遗留的空行分开的
+#: （`dispatch_log.unsettled` 的 `since`）。
+_TURN_AGE_S = 120
+
+#: 卡死那一档里，那一轮多老：机器死在它手上，它于是一个字都不再输出，直到
+#: `SILENT_TURN_S` 判它卡死。
+_WEDGED_TURN_AGE_S = 4000
 
 
 def _a_wide_window() -> datetime:
@@ -112,18 +121,16 @@ async def _dispatched(
     topic_id,
     *,
     key: str,
-    method: str = "invoke",
-    ago_s: float = EXECUTOR_CALL_TIMEOUT_S + 60,
+    tool: str = "Bash",
+    ago_s: float = 60,
 ):
     """派出去一次，然后这个进程就没了 —— 记录提交了，结果没人写回来。
 
-    ``ago_s`` 是这一行多老。默认比一次调用能在飞的时间还老：只有那样才谈得上「结果
-    不会回来了」，更年轻的一行说的是「属主大概还在跑」（见 `dispatch_log` 开头）。
+    ``ago_s`` 默认一分钟：属主是在派发之后一分钟没的，而不是十一分钟之后。这一档才
+    是真实时序，也是这份记录唯一有机会拦住重发的那一档。
     """
     async with factory() as session:
-        dispatch = dispatch_log.record(
-            session, place_id=topic_id, key=key, method=method
-        )
+        dispatch = dispatch_log.record(session, place_id=topic_id, key=key, tool=tool)
         await session.flush()
         row = await session.get(dispatch_log.DispatchRow, dispatch)
         row.dispatched_at = datetime.now(UTC) - timedelta(seconds=ago_s)
@@ -148,27 +155,6 @@ async def _outcomes(factory, topic_id) -> list[tuple[str, str | None]]:
         return [(row.key, row.outcome) for row in rows]
 
 
-async def _age(factory, topic_id) -> None:
-    """把这个房间里所有记录往前推到「不可能再有答复在路上」。"""
-    async with factory() as session:
-        rows = (
-            (
-                await session.execute(
-                    select(dispatch_log.DispatchRow).where(
-                        dispatch_log.DispatchRow.place_id == topic_id
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for row in rows:
-            row.dispatched_at = datetime.now(UTC) - timedelta(
-                seconds=EXECUTOR_CALL_TIMEOUT_S + 60
-            )
-        await session.commit()
-
-
 @pytest.mark.anyio
 async def test_a_dispatch_whose_process_died_reads_unknown(db_factory):
     """①发出后崩，重启时这条记录是 `unknown`。
@@ -177,31 +163,15 @@ async def test_a_dispatch_whose_process_died_reads_unknown(db_factory):
     它是「没有人写回来」，读出来才是 `unknown` —— 而不是某处写下的一句猜测。
     """
     topic = await a_topic(db_factory)
-    await _dispatched(db_factory, topic, key="tool-1", method="invoke")
+    await _dispatched(db_factory, topic, key="tool-1", tool="Bash")
 
     async with db_factory() as session:
         window = _a_wide_window()
         pending = await dispatch_log.unsettled(session, topic, since=window)
 
-    assert [(d.key, d.method, d.outcome) for d in pending] == [
-        ("tool-1", "invoke", dispatch_log.Outcome.unknown)
+    assert [(d.key, d.tool, d.outcome) for d in pending] == [
+        ("tool-1", "Bash", dispatch_log.Outcome.unknown)
     ]
-
-
-@pytest.mark.anyio
-async def test_a_call_that_could_still_answer_is_not_yet_unknown(db_factory):
-    """写这一行的进程跨发布活着，读它的扫底不是 —— 所以「空」还不足以判死。
-
-    一次平常的发布：属主手上有个还要跑两分钟的调用，新后端一起来就扫底。按「空就是
-    未知」判，这次还好好跑着的调用会被当场判死，房间里发一条要人确认的通知，而两分
-    钟后属主拿着结果回来写回的，是一行已经被人接手的记录。
-    """
-    topic = await a_topic(db_factory)
-    await _dispatched(db_factory, topic, key="tool-1", ago_s=120)
-
-    async with db_factory() as session:
-        window = _a_wide_window()
-        assert await dispatch_log.unsettled(session, topic, since=window) == []
 
 
 @pytest.mark.anyio
@@ -237,7 +207,7 @@ async def test_an_unknown_dispatch_is_handed_to_a_person_instead_of_resent(
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
     await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
-    await _dispatched(db_factory, topic, key="tool-1", method="invoke")
+    await _dispatched(db_factory, topic, key="tool-1", tool="Bash")
     chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
 
@@ -248,9 +218,11 @@ async def test_an_unknown_dispatch_is_handed_to_a_person_instead_of_resent(
     assert [meta["event_type"] for _, _, meta in chat.events] == ["dispatch_unknown"]
     _, text, meta = chat.events[0]
     assert meta["who"] == "human"
-    # 人要确认的是哪一次调用，这句话里得说得出来。
-    assert "tool-1" in meta["detail"]
+    # 人要确认的是哪一次调用，这句话里得说得出来：哪个工具，哪一次。「invoke」不是
+    # 一句话 —— 带 id 的调用只有它一种。
+    assert "Bash（tool-1）" in meta["detail"]
     assert "重试" in text
+    assert await _outcomes(db_factory, topic) == [("tool-1", "unknown")]
 
     # 问过一次就结清：同一个人不该在这个房间此后每一次扫底里被问同一件事。
     async with db_factory() as session:
@@ -269,8 +241,10 @@ async def test_a_wedged_room_is_told_which_calls_are_in_doubt(db_factory, monkey
     """
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
-    turn = await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
-    await _dispatched(db_factory, topic, key="tool-1", method="invoke")
+    turn = await open_turn(
+        db_factory, topic, content="把迁移跑上去", age_s=_WEDGED_TURN_AGE_S
+    )
+    await _dispatched(db_factory, topic, key="tool-1", tool="Bash")
     chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
 
@@ -310,7 +284,7 @@ async def test_a_failed_dispatch_does_not_stand_in_the_way_of_a_resend(
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
     await open_turn(db_factory, topic, content="把迁移跑上去", age_s=_TURN_AGE_S)
-    dispatch = await _dispatched(db_factory, topic, key="tool-1", method="invoke")
+    dispatch = await _dispatched(db_factory, topic, key="tool-1", tool="Bash")
     async with db_factory() as session:
         await dispatch_log.settle(session, dispatch, dispatch_log.Outcome.failed)
         await session.commit()
@@ -413,7 +387,7 @@ async def _drops_the_link(link: _Link, _call_id: str) -> None:
 class _NeverAnswers:
     """只答应一件事：这次调用等到超时。
 
-    一次真的超时要等 ``EXECUTOR_CALL_TIMEOUT_S``，测试等不起；而超时这一档里没有
+    一次真的超时要等 ``device_hub`` 的那个时限，测试等不起；而超时这一档里没有
     「发出前还是发出后」可分，所以这里替 hub 的身不会把答案写进测试。
     """
 
@@ -543,8 +517,8 @@ async def test_a_link_that_died_after_the_frame_left_is_left_unsettled(
 
     assert response.status_code == 409
     assert await _outcomes(db_factory, topic) == [("tool-1", None)]
-    # 等到不可能再有答复在路上，它就是那件要人确认的事。
-    await _age(db_factory, topic)
+    # 而对重派路径来说它当场就是那件要人确认的事：屏幕没了的房间里，一次没写回来的
+    # 调用，结果再也到不了 agent 面前。
     async with db_factory() as session:
         window = _a_wide_window()
         pending = await dispatch_log.unsettled(session, topic, since=window)

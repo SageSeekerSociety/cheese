@@ -35,7 +35,7 @@ def upgrade() -> None:
             sa.ForeignKey("topics.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("method", sa.String(32), nullable=False),
+        sa.Column("tool", sa.String(128), nullable=False),
         sa.Column("dispatched_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("outcome", sa.String(16), nullable=True),
         sa.Column("settled_at", sa.DateTime(timezone=True), nullable=True),

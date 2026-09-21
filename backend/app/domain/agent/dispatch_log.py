@@ -16,6 +16,15 @@ id 重放」），而它记在那台机器上 —— 机器突然损坏的那一
 ``context``、``prepare``）按它自己的协议问两遍和问一遍一样，为它们记一行只会让每一
 次超时的探活都变成一件要人确认的事。
 
+树里形状最近的是 ``idempotency/store.py`` 加 ``idempotency/models.py``，不是投递那边
+的去重：同样是「副作用之前先在调用方自己的 session 上写一行、按 key 判重、结果回
+填」，连 ``result`` 为 NULL 的含义都撞上。这份记录仍然不能落在它上面，理由是
+``idempotency_keys`` 的不变式 ——「行在 ⇒ 效果发生过」—— 在远端正好不成立：那张表的
+行和它守的副作用同一个事务提交，而这里的一行只说「发出去过」，发出去过和发生过之间
+隔着一台可能已经没了的机器，这份记录存在的全部理由就是这句话。两张表合成一张，就是
+把那条不变式弱化成「行在 ⇒ 效果大概发生过」，而今天靠它判重的那几处副作用（消息、
+拆卡）会跟着一起弱。
+
 三种结果，其中一种写不出来
 --------------------------
 
@@ -28,24 +37,37 @@ id 重放」），而它记在那台机器上 —— 机器突然损坏的那一
 之前和之后，这一行读出来都是 ``unknown``——变的不是这次调用的结果，是平台还问不问。
 不写的话，一次未知会让这个房间此后每一次扫底都重新问一遍同一个人同一件事。
 
-「还没人写回来」不等于「不会有人写回来」
-----------------------------------------
+「没有人写回来」在什么时候等于「不会有人写回来」
+------------------------------------------------
 
-这两件事在库里长得一模一样，而分开它们的是时间。写这一行的是**设备连接属主**进程，
-它按设计跨业务后端的发布活着；读这一行的扫底在业务后端，启动时一次、此后每
-``orphan_sweep_interval_s`` 一次。所以一次平常的发布里，新后端一起来就会看见属主手
-上那些还在正常跑着的调用 —— 照「空就是未知」判，它们会被当场判死：房间里发一条要人
-确认的通知，而属主几分钟后拿着结果回来写回，写进的是一行已经被人接手的记录。
+这两件事在库里长得一模一样，而分开它们的**不是时间**。写这一行的是设备连接属主进
+程，它按设计跨业务后端的发布活着；一次平常的发布里，属主手上那些还在正常跑着的调用
+最后照样会把结果写回来，只是此刻库里它们和死掉的那些一样空。
 
-所以 ``unsettled()`` 多问一句年龄：一次调用最长只能在飞 ``EXECUTOR_CALL_TIMEOUT_S``
-（``device_hub.call_executor`` 的时限），而这一行是在**发出之前**写的，它的
-``dispatched_at`` 必定早于那次调用自己的计时起点。于是「这一行比那个时限还老」是一
-句能保证的话：不可能再有答复在路上了。
+分开它们的是**谁在读**。这张表只有一个读的地方：孤儿轮次扫底里的重派路径
+（``runtime.py`` 的 ``_settle_restart_orphans``），而送到它面前的话题都是屏幕已经没
+了、或者那条消息根本没送到屏幕的话题 —— 派出这些调用的那几轮，扫底在读之前就已经关
+掉了（``_close_turns``）。在这样的话题里，一次还悬着的调用无论那台机器后来怎么样，
+结果都再也到不了 agent 面前：要它的那一轮没了。所以对这个读的人来说，「还没人写回
+来」就是「不会有人写回来」，``unsettled()`` 不必、也没法再问第二个问题。
+
+这里曾经拿墙上时钟当那第二个问题 ——「比一次调用能在飞的时间（``call_executor`` 的
+时限，660 秒）还老才算数」。它在真实时序下整档落空：崩溃和属主重启通常发生在派发之
+后几秒到几分钟内，而启动扫底（``main.py`` 的 ``resume_orphans``）紧跟着就跑，每一行
+都还太年轻，于是重派照样原样重发 —— 正是这份记录要拦的那一件事。更糟的是这一轮被那
+次扫底关掉之后就不再是孤儿，后面任何一轮的 ``since`` 都晚于这行的 ``dispatched_at``，
+这行于是永远空着、永远不通知、永远不结清。
+
+判错的代价现在倒向另一头：属主其实还活着、那次调用最后成功了，人却被问了一句本不必
+问的话（那一行也就此结清，迟到的 ``done`` 写不进去，见 ``settle``）。要撞上它，得是
+这个房间的屏幕已经没了、而同一个房间里另有一轮正在正常调工具 —— 房间里的轮次是排队
+跑的，所以这本就少见；就算撞上，代价是有人被问一句，另一头的代价是一次可能已经落地
+的写被再做一遍。
 """
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, select, update
@@ -53,7 +75,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.domain.agent.device_hub import EXECUTOR_CALL_TIMEOUT_S
 from app.domain.common import UuidPk
 
 
@@ -93,9 +114,12 @@ class DispatchRow(UuidPk, Base):
     place_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
-    #: 派出去的是哪一种调用。人要确认「可能已经做过」的是什么，这是他能读到的唯一
-    #: 一句；参数不进来，它们是这条活的内容，不是这份记录的。
-    method: Mapped[str] = mapped_column(String(32))
+    #: 派出去的是哪一个工具（``invoke`` 载荷里的 ``params["tool"]``）。人要确认
+    #: 「可能已经做过」的是什么，这是他能读到的唯一一句 —— 记调用方法名没有用，带 id
+    #: 的调用只有 ``invoke`` 一种，那一栏于是每次都长成同一个常量。参数不进来：它们
+    #: 是这条活的内容，不是这份记录的。长度按 ``mcp__<server>__<tool>`` 给，那种名字
+    #: 轻易超过几十个字符。
+    tool: Mapped[str] = mapped_column(String(128))
     dispatched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
     )
@@ -112,7 +136,7 @@ class Dispatch:
 
     id: uuid.UUID
     key: str
-    method: str
+    tool: str
     dispatched_at: datetime
     outcome: Outcome
 
@@ -121,14 +145,14 @@ def _read(row: DispatchRow) -> Dispatch:
     return Dispatch(
         id=row.id,
         key=row.key,
-        method=row.method,
+        tool=row.tool,
         dispatched_at=row.dispatched_at,
         outcome=Outcome(row.outcome) if row.outcome else Outcome.unknown,
     )
 
 
 def record(
-    session: AsyncSession, *, place_id: uuid.UUID, key: str, method: str
+    session: AsyncSession, *, place_id: uuid.UUID, key: str, tool: str
 ) -> uuid.UUID:
     """在**发出之前**记下这次派发，返回这一行的 id。
 
@@ -138,7 +162,7 @@ def record(
     id 在这里就定下来，不等 flush：调用方拿着它去发请求，而这一行要在那之前提交，
     两件事之间没有可以插进一次 flush 的位置。
     """
-    row = DispatchRow(id=uuid.uuid4(), place_id=place_id, key=key, method=method)
+    row = DispatchRow(id=uuid.uuid4(), place_id=place_id, key=key, tool=tool)
     session.add(row)
     return row.id
 
@@ -170,12 +194,10 @@ async def settle(
 async def unsettled(
     session: AsyncSession, place_id: uuid.UUID, *, since: datetime
 ) -> list[Dispatch]:
-    """这个地点里 ``since`` 之后派出去、而结果**不会再回来**的那些，最早的在前。
+    """这个地点里 ``since`` 之后派出去、而没有人写回来的那些，最早的在前。
 
-    不是「此刻还没写回来的那些」。两道门，各挡一样东西。
-
-    年龄：那一堆里混着属主手上正在正常跑的调用（见模块开头的第二节）。比一次调用能
-    在飞的时间还老，才是「不会再回来」。
+    在这唯一一个调用者那里，「没有人写回来」就是「不会有人写回来」——为什么，见模块
+    开头的第二节。这里不问年龄：问了，真实时序下这个函数整档返回空。
 
     ``since``：重派路径收拾的是某几轮被打断的对话，而这张表按房间存。一次超时留下的
     空行是会一直空着的 —— 那一轮照常跑完，没有任何路径会再碰它（路由不替它猜，见
@@ -193,8 +215,6 @@ async def unsettled(
                     DispatchRow.place_id == place_id,
                     DispatchRow.outcome.is_(None),
                     DispatchRow.dispatched_at >= since,
-                    DispatchRow.dispatched_at
-                    < _now() - timedelta(seconds=EXECUTOR_CALL_TIMEOUT_S),
                 )
                 .order_by(DispatchRow.dispatched_at)
             )

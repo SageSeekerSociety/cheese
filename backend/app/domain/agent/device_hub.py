@@ -33,11 +33,6 @@ from app.domain.agent import connector_build, device_link
 
 logger = logging.getLogger(__name__)
 
-#: 一次执行调用最长能在飞多久 —— ``call_executor`` 的时限。平台侧那份执行记录
-#: （``agent/dispatch_log.py``）拿同一个数当「这一行不可能还有答复在路上了」的那条
-#: 线，所以它是一个名字，不是两处各写一遍的 660。
-EXECUTOR_CALL_TIMEOUT_S = 660
-
 
 class DeviceOffline(RuntimeError):
     """The device has no live link, so a frame to it would go nowhere.
@@ -625,7 +620,7 @@ class DeviceHub:
         method: str,
         params: dict,
         *,
-        timeout: float = EXECUTOR_CALL_TIMEOUT_S,
+        timeout: float = 660,
         trace_id: str | None = None,
     ) -> dict:
         device = self._device(device_id)
