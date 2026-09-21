@@ -68,9 +68,15 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
 
 
 def _turn(client, topic_id: str, content: str = "hi") -> list[dict]:
-    """Run one summoned turn against the stub agent, return its frames."""
+    """Run one addressed turn against the stub agent, return its frames.
+
+    点名由正文说了算（I13），所以每条都得点到人；已经点了名的原样发出去。在一句
+    「<@ops> hi」前面再补一个 `@芝士`，点到的就是名册上排在前面的那一个，答话的于
+    是不是被叫的那个队友 —— 这个文件恰好就是为分辨这件事写的。
+    """
+    addressed = content if "<@" in content else f"@芝士 {content}"
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 " + content})
+        ws.send_json({"type": "message", "content": addressed})
         frames = []
         while True:
             frame = ws.receive_json()
