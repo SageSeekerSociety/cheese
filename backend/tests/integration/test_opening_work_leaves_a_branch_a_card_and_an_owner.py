@@ -14,6 +14,7 @@ import uuid
 
 from sqlalchemy import func, select
 
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.models import AgentSession
 
 _LEASE = {
@@ -43,6 +44,9 @@ def _room_with_a_session_on_a_machine(client) -> tuple[str, str]:
                 AgentSession(
                     topic_id=uuid.UUID(room_id),
                     agent_handle="cheese",
+                    # 同一个骨架，不然这条会话和开活时写的那条各占一行，
+                    # 「不多行」就变成了「多了一行，但那一行本来就该多」。
+                    harness=deployment_harness(),
                     runtime_location={
                         "device_id": "machine-1",
                         "channel": "device",
