@@ -1262,7 +1262,7 @@ class Executor:
         raise ValueError("Unknown task filesystem operation")
 
     def repo_search(self, params):
-        """Find lines in this room's checkout that carry the given keywords.
+        """Find lines in this room's checkout carrying ALL the given keywords.
 
         What it is for: 记忆只记 repo 里查不到的东西（结论 61），and the only
         place that can answer "is it in the repo" is the machine holding the
@@ -1270,19 +1270,30 @@ class Executor:
         ones both count: a fact written in a file that is not committed yet is
         still written down somewhere a person will read.
 
-        A private chat rents no place and has no checkout (结论 19), so it
-        answers with nothing rather than searching whatever the process happens
-        to be standing in.
+        ``--and`` between the keywords, not one ``-e`` each: OR is how this
+        fails in exactly the repo it matters in. 「前端构建用 pnpm，不要用 npm」
+        carries the keyword ``npm``, which in a real frontend repo is in the
+        lockfile, every `package.json`, CI and half of `docs/` — the caller's
+        window fills up in path order and the one line that actually states the
+        fact never arrives. Which keywords to AND is the platform's call; this
+        answers the question it was handed.
+
+        ``searched`` is the first field, not a convenience: 「repo 里确实没写」
+        and 「这次没查成」 are opposite answers. A caller that cannot tell them
+        apart keeps accepting writes on a machine where this never runs, with
+        nothing anywhere saying so. A private chat rents no place and has no
+        checkout (结论 19), so it says that rather than searching whatever the
+        process happens to be standing in.
         """
         if self.config.get("private"):
-            return {"hits": []}
+            return {"searched": False, "reason": "no-checkout", "hits": []}
         terms = [
             term
             for term in params.get("terms", [])
             if isinstance(term, str) and term.strip()
-        ][:12]
+        ][:12]  # a bound on argv, not the choice of keywords
         if not terms:
-            return {"hits": []}
+            return {"searched": False, "reason": "no-terms", "hits": []}
         argv = [
             "git",
             "-C",
@@ -1294,19 +1305,23 @@ class Executor:
             "-F",  # the keywords are literals, not patterns
             "-i",
             "--untracked",
-            "--max-count",
-            "3",
         ]
-        for term in terms:
-            argv += ["-e", term]
+        for index, term in enumerate(terms):
+            argv += (["--and"] if index else []) + ["-e", term]
         try:
             result = subprocess.run(argv, capture_output=True, timeout=20)
-        except (OSError, subprocess.SubprocessError):
-            return {"hits": []}
-        # 1 = 一行都没匹配上，是答案；其余（没有 git、这里不是仓库）是查不成，
-        # 两种都还回空，由调用端决定怎么办。
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"searched": False, "reason": f"did not run: {exc}", "hits": []}
+        # 1 = 一行都没匹配上，那是一个答案。其余都是没查成：这个仓库不是仓库、
+        # 这台机器上没有 git、这个 git 不认某个选项。说出来——「从此一条都拦不住
+        # 而日志里一个字都没有」是这套东西最坏的坏法，因为它看起来跟一切正常一样。
         if result.returncode not in (0, 1):
-            return {"hits": []}
+            stderr = result.stderr.decode("utf-8", "replace").strip()[:200]
+            return {
+                "searched": False,
+                "reason": f"exit {result.returncode}: {stderr}",
+                "hits": [],
+            }
         hits = []
         for line in result.stdout.decode("utf-8", "replace").splitlines()[:200]:
             path, _, rest = line.partition(":")
@@ -1314,7 +1329,7 @@ class Executor:
             if not number.isdigit():
                 continue
             hits.append({"path": path, "line": int(number), "text": text[:400]})
-        return {"hits": hits}
+        return {"searched": True, "hits": hits}
 
     def context_fs(self, params):
         """Expose the native project context as a bounded read-only file view."""

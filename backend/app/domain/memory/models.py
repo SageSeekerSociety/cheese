@@ -78,9 +78,9 @@ def project_scope_prefix(project_id: str | uuid.UUID) -> str:
 def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> str:
     """scope_id for :attr:`MemoryScope.agent_project`.
 
-    ``scope_id`` is a plain 128-char string shared by every scope, so the two
-    parts are joined rather than given columns of their own. A handle cannot
-    contain ``:`` (it is a username), so the split is unambiguous.
+    ``scope_id`` is one plain string shared by every scope, so the two parts
+    are joined rather than given columns of their own. A handle cannot contain
+    ``:`` (it is a username), so the split is unambiguous.
     """
     return f"{project_scope_prefix(project_id)}{agent_handle}"
 
@@ -148,8 +148,13 @@ class MemoryEntry(UuidPk, Timestamps, Base):
         Enum(MemoryScope, native_enum=False, length=16), index=True
     )
     # Which pool: a project id, or one of the composite keys built by
-    # `agent_project_scope_id` / `user_scope_id`.
-    scope_id: Mapped[str] = mapped_column(String(128), index=True)
+    # `agent_project_scope_id` / `user_scope_id`. 200 because the longest key
+    # this can hold is `user_scope_id`: a uuid (36) plus an agent handle and a
+    # person handle (64 each, `agent_instance.handle` / `topic_memberships.
+    # member_handle`) plus two separators — 166. A key that does not fit is not
+    # a truncated pool, it is a 500 out of `cheese remember` and a failed
+    # migration, so the column has to outrun the widest key by construction.
+    scope_id: Mapped[str] = mapped_column(String(200), index=True)
     content: Mapped[str] = mapped_column(Text)
     # Default `fact`: a memory earns its permanent seat, it is not born with
     # one. Anything written without saying otherwise is something learned.

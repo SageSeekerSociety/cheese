@@ -6,7 +6,7 @@ The block tree remains the source of truth; memory is a fast-recall projection.
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.memory.keywords import is_relevant, match_content, query_terms
@@ -46,16 +46,19 @@ class MemoryStore(Protocol):
         raw facts of every layer."""
         ...
 
-    async def recall_core(self, scope: MemoryScope, scope_id: str) -> list[str]:
-        """The pool's core layer, in full, oldest first. Prompt injection puts
-        all of it in every turn, so what is in here is a curation decision, not
-        a retrieval one."""
-        ...
+    async def core_and_counts(
+        self, pools: list[tuple[MemoryScope, str]]
+    ) -> dict[tuple[MemoryScope, str], tuple[int, list[str]]]:
+        """Per pool: how many facts it holds, and its core layer oldest-first.
 
-    async def count(self, scope: MemoryScope, scope_id: str) -> int:
-        """How many facts the pool actually holds — including the ones a turn
-        did not retrieve. Injection compares the two so what is missing from
-        this turn can be stated."""
+        Several pools at once, because a turn reads one pool per person it is
+        sitting with (结论 54) and 总览 seats every member of the project — so
+        "one query per pool" is a query count that grows with the team, on the
+        path every single turn takes. The count is what injection compares
+        against what it carried; the core layer is what it carries.
+
+        A pool with nothing in it may be missing from the result.
+        """
         ...
 
     async def remember(
@@ -109,10 +112,12 @@ async def recall_pools(
     core_used = 0
     core_omitted = 0
     stored = 0
-    for scope, scope_id in pools:
-        stored += await store.count(scope, scope_id)
+    found = await store.core_and_counts(pools)
+    for pool in pools:
+        count, core_facts = found.get(pool, (0, []))
+        stored += count
         kept: list[str] = []
-        for fact in reversed(await store.recall_core(scope, scope_id)):
+        for fact in reversed(core_facts):
             cost = len(fact) + 2
             # `core or kept` — one core fact always gets in, even alone over
             # budget. An empty core layer is indistinguishable from having no
@@ -181,19 +186,43 @@ class DbMemoryStore:
         rows = (await self._session.scalars(stmt)).all()
         return [r.content for r in reversed(rows)]
 
-    async def recall_core(self, scope: MemoryScope, scope_id: str) -> list[str]:
-        stmt = (
-            select(MemoryEntry)
-            .where(
-                MemoryEntry.scope == scope,
-                MemoryEntry.scope_id == scope_id,
-                MemoryEntry.layer == MemoryLayer.core,
-                live_entries(),
+    async def core_and_counts(
+        self, pools: list[tuple[MemoryScope, str]]
+    ) -> dict[tuple[MemoryScope, str], tuple[int, list[str]]]:
+        """Two queries whatever the number of pools: the counts, then the core.
+
+        Two and not one: the count has to see every row, and fetching every
+        fact's text just to count them would put a whole project's memory on
+        the wire for the sake of a number that injection only prints.
+        """
+        if not pools:
+            return {}
+        # `or_` over `(scope, scope_id)` pairs rather than a row-value `IN`:
+        # the pools of one turn do not share a scope, so there is no column to
+        # put a list against.
+        named = or_(
+            *(
+                and_(MemoryEntry.scope == scope, MemoryEntry.scope_id == scope_id)
+                for scope, scope_id in pools
             )
+        )
+        counts = await self._session.execute(
+            select(MemoryEntry.scope, MemoryEntry.scope_id, func.count())
+            .where(named, live_entries())
+            .group_by(MemoryEntry.scope, MemoryEntry.scope_id)
+        )
+        found: dict[tuple[MemoryScope, str], tuple[int, list[str]]] = {
+            (scope, scope_id): (int(total), [])
+            for scope, scope_id, total in counts.all()
+        }
+        core = await self._session.scalars(
+            select(MemoryEntry)
+            .where(named, MemoryEntry.layer == MemoryLayer.core, live_entries())
             .order_by(MemoryEntry.created_at)
         )
-        rows = (await self._session.scalars(stmt)).all()
-        return [r.content for r in rows]
+        for row in core.all():
+            found[(row.scope, row.scope_id)][1].append(row.content)
+        return found
 
     async def remember(
         self,
@@ -207,18 +236,6 @@ class DbMemoryStore:
             MemoryEntry(scope=scope, scope_id=scope_id, content=content, layer=layer)
         )
         await self._session.flush()
-
-    async def count(self, scope: MemoryScope, scope_id: str) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(MemoryEntry)
-            .where(
-                MemoryEntry.scope == scope,
-                MemoryEntry.scope_id == scope_id,
-                live_entries(),
-            )
-        )
-        return int(await self._session.scalar(stmt) or 0)
 
     async def search(
         self, scope: MemoryScope, scope_id: str, query: str, limit: int = 8

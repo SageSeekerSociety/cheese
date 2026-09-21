@@ -33,6 +33,8 @@ Create Date: 2026-09-21 12:00:00
 
 from collections.abc import Callable, Sequence
 
+import sqlalchemy as sa
+
 from alembic import op
 
 revision: str = "c9a4e2f71d38"
@@ -123,6 +125,17 @@ DROP_COPIED_PERSONAL_MEMORY = """
 """
 
 
+#: 新键放不下的话，这条迁移自己就是第一个炸的：``COPY_PERSONAL_MEMORY`` 拼出来的
+#: ``<项目>:<agent handle>:<人的 handle>`` 最长 36+1+64+1+64 = 166，而列是 128。
+#: 旧键（一个 handle，或 ``<项目>:<agent handle>``，最长 101）一直在安全区，这 65
+#: 个字符的余量是重键这一步新要的，所以放宽要排在搬行之前。
+#:
+#: PG 里放宽 varchar 长度只改目录，不重写表、不重建索引，所以它在发布窗口里不占
+#: 时间——而列不够宽的后果是 ``alembic upgrade head`` 当场失败，部署停在换容器
+#: 之前。
+WIDEN_SCOPE_ID = 200
+
+
 def rekey_personal_memory(execute: Callable[[str], object]) -> None:
     """三步，按顺序。``upgrade()`` 和
     ``tests/integration/test_a_pool_about_a_person_is_rekeyed.py`` 调的是同一个
@@ -135,6 +148,13 @@ def rekey_personal_memory(execute: Callable[[str], object]) -> None:
 
 
 def upgrade() -> None:
+    op.alter_column(
+        "memory_entries",
+        "scope_id",
+        existing_type=sa.String(128),
+        type_=sa.String(WIDEN_SCOPE_ID),
+        existing_nullable=False,
+    )
     rekey_personal_memory(op.execute)
 
 
