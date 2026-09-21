@@ -33,6 +33,7 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/localfs"
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
@@ -56,6 +57,13 @@ type Host struct {
 
 	execMu sync.Mutex
 	execs  map[string]context.CancelFunc // in-flight exec id -> cancel
+
+	// 本机目录授权: the folders on this machine the assistant has been granted, as
+	// the platform last sent them, and the check that keeps an op inside them.
+	// Held here rather than fetched per request so that an unreachable platform
+	// does not turn every access into a failure — see localfs.LoadStore.
+	localFSMu  sync.Mutex
+	localFSSet *localfs.GrantSet
 
 	updating atomic.Bool // guards against concurrent / re-entrant self-updates
 }
@@ -121,6 +129,10 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 // `cheese link disconnect` / `cheese uninstall`, which tear the server down.
 func (h *Host) Run(ctx context.Context) error {
 	h.ctx = ctx
+	// Restore what this machine was last granted, before the connection is up, so
+	// that an op arriving immediately after a reconnect is answered from the set
+	// rather than from nothing.
+	h.loadLocalFS()
 	h.publishState()
 	defer h.clearState()
 	defer h.releaseAll()
@@ -262,6 +274,13 @@ func (h *Host) onMsg(m link.Msg) {
 		go h.runExecutor(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
+	case "localfs.grants": // the platform's copy of what this machine may touch
+		// Synchronous, and deliberately so: this is the read loop, so applying the
+		// set before the next message is read is what guarantees an op that
+		// follows a revoke cannot be answered from the set that still had it.
+		h.setLocalFSGrants(m)
+	case "localfs.op": // read, write or list inside a granted directory
+		go h.runLocalFSOp(m)
 	case "update": // server-pushed forced update: update in place and re-exec
 		go h.performUpdate()
 	case "screen.resize":

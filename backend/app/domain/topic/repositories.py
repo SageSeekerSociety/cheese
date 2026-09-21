@@ -278,11 +278,6 @@ class TopicRepository:
             kind=TopicKind.topic,
             created_by=owner,
             is_private=True,
-            # 两席的出处是名册（建完这间房 `TopicMemberService.seed_private`
-            # 写的那两行）。这两列写而不读，留着只为让上一版镜像在换容器之前还
-            # 答得出私聊；P13 连同它们一起删。
-            private_owner=owner,
-            private_peer=peer,
         )
         self._session.add(topic)
         await self._session.flush()

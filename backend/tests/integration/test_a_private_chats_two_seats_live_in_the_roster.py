@@ -3,9 +3,14 @@
 一间私聊就是项目内名册两席的房间。所以「对面是谁」只有名册一个出处：谁答这间房、
 个人记忆记在谁名下、未读按谁归类、再打开是不是同一间，四个问题问的都是这两席。
 
-每个用例都先把 ``topics.private_owner`` / ``private_peer`` 两列清空再断言。那两列记
-的正是同一件事，记在了第二个地方；清空它们，剩下的行为就只能是名册答出来的。P13 会
-把两列删掉，到那时这些用例一个字都不用改。
+名册是唯一的出处：同一件事没有第二个地方记着，所以这里的每一条断言都只能是名册答
+出来的。
+
+后半部分是存量私聊怎么收成两席：``f1a9c3e07b42`` 的 ``only_the_two_parties``。它还
+没有退役——``topics`` 那两列还在库上，``DROP COLUMN`` 那一条迁移会在删列之前把它原样
+再跑一遍，接住这次发布窗口里旧镜像建的私聊。所以这几条用例盯的是那一遍会不会把撤掉
+的席位插回来、会不会把四席收成两席。列的值从本次发布起没有代码再写，用例自己按窗口
+里那版镜像留下的样子写进去（``_as_the_old_image_left_it``）。
 """
 
 import asyncio
@@ -20,7 +25,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _MIGRATION = _VERSIONS / "f1a9c3e07b42_a_private_chats_two_seats_live_in_the_roster.py"
@@ -63,23 +68,6 @@ def _dm(client, project_id: str, user: str, **params) -> str:
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
-
-
-def _forget_the_columns(client, topic_id: str) -> None:
-    """把两列清空。P13 会把它们删掉，这里先让它们说不出话。"""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            await session.execute(
-                sa.text(
-                    "UPDATE topics SET private_owner=NULL, private_peer=NULL"
-                    " WHERE id=:t"
-                ),
-                {"t": uuid.UUID(topic_id)},
-            )
-            await session.commit()
-
-    asyncio.run(_run())
 
 
 def _seats(client, topic_id: str) -> tuple[str, str] | None:
@@ -126,6 +114,209 @@ def _seat_by_hand(client, topic_id: str, handle: str) -> None:
                     " VALUES (gen_random_uuid(), :t, :h, 'member', now(), now())"
                 ),
                 {"t": uuid.UUID(topic_id), "h": handle},
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _say(client, project_id: str, topic_id: str, author: str) -> None:
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await BlockRepository(session).add(
+                project_id=uuid.UUID(project_id),
+                topic_id=uuid.UUID(topic_id),
+                author=author,
+                author_type=AuthorType.participant,
+                content="msg",
+                kind=BlockKind.message,
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def test_a_dm_names_its_teammate_from_the_roster(client):
+    """合同：私聊的名册恰好两席，「谁被点名」由此推出。"""
+    project_id = _project(client)
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+
+    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+    assert _who_answers(client, dm) == "reviewer"
+
+
+def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
+    """个人记忆只在当事人自己的私聊里读写。当事人是谁，名册说了算。"""
+    project_id = _project(client)
+    dm = _dm(client, project_id, "user-1")
+
+    mine = client.post(
+        f"/projects/{project_id}/memory",
+        json={
+            "content": "偏好简洁汇报",
+            "scope": "user",
+            "owner": "user-1",
+            "topic": dm,
+        },
+    )
+    assert mine.status_code == 200, mine.text
+
+    someone_elses = client.post(
+        f"/projects/{project_id}/memory",
+        json={
+            "content": "别人的事",
+            "scope": "user",
+            "owner": "user-2",
+            "topic": dm,
+        },
+    )
+    assert someone_elses.status_code == 403, someone_elses.text
+
+
+def test_a_dm_badge_is_keyed_by_the_other_seat(client):
+    """未读按对面那一席归类：人按 handle，队友按 agent: 前缀。"""
+    project_id = _project(client)
+    _add_agent(client, project_id, "reviewer", "评审")
+    with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
+    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    reviewer_seats = _seats(client, with_reviewer)
+    assert reviewer_seats is not None
+
+    _say(client, project_id, with_person, "mentor-1")
+    _say(client, project_id, with_reviewer, reviewer_seats[1])
+
+    assert _badge(client, project_id, "user-1") == {"mentor-1": 1, "agent:reviewer": 1}
+
+
+def test_opening_the_same_dm_again_finds_it_by_its_two_seats(client):
+    """再打开是同一间房，认的是名册上的两席。"""
+    project_id = _project(client)
+    _add_agent(client, project_id, "reviewer", "评审")
+    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
+
+    assert _dm(client, project_id, "user-1", agent_handle="reviewer") == with_reviewer
+    # 人对人的那间两边都找得到，谁先开的不影响。
+    assert _dm(client, project_id, "mentor-1", peer_handle="user-1") == with_person
+    assert with_reviewer != with_person
+
+
+def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
+    """名册多出一席的房间还是这间 DM：再打开给的是它，历史都在里面。
+
+    私聊不进话题树，角标又被两席那道闸滤掉，所以旧那间房在界面上没有别的入口：
+    这里另开一间，里面的对话就再也找不回来。多出一席这间房确实答不出对面是谁，
+    但那件事由 ``private_seats`` 一处答，它退回项目默认那位，不另开房。
+    """
+    project_id = _project(client)
+    _add_agent(client, project_id, "reviewer", "评审")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    _say(client, project_id, dm, "user-1")
+    _seat_by_hand(client, dm, "mentor-1")
+    assert _seats(client, dm) is None
+
+    again = _dm(client, project_id, "user-1", agent_handle="reviewer")
+
+    assert again == dm
+    # 答不出对面是谁的那一条退路照走：项目默认那位答这间房。
+    assert _who_answers(client, dm) == "cheese"
+
+
+def _project_with_a_roster(client, owner: str, member: str) -> str:
+    """一个真有名册的项目：所有者，加一位成员。@ 要解析得到人，名册里就得有人。"""
+    project_id = client.post(
+        "/projects", json={"name": "Demo", "owner_handle": owner}
+    ).json()["data"]["id"]
+    r = client.post(
+        f"/projects/{project_id}/members",
+        json={"user_handle": member, "role": "member"},
+        headers=session_auth_headers(owner),
+    )
+    assert r.status_code == 200, r.text
+    return project_id
+
+
+def _send(client, topic_id: str, content: str, author: str) -> None:
+    """人在房间里说一句话（不唤醒芝士）：@ 的通知在这条消息落库时就发出去了。"""
+    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+        ws.send_json({"type": "message", "content": content, "summon": False})
+        while True:
+            if ws.receive_json()["type"] in ("done", "error"):
+                break
+
+
+def _alerts(client, project_id: str, handle: str) -> list[dict]:
+    return client.get(
+        f"/projects/{project_id}/alerts",
+        headers=session_auth_headers(handle),
+    ).json()["data"]["data"]
+
+
+def _texts(client, topic_id: str, reader: str) -> list[str]:
+    r = client.get(f"/topics/{topic_id}/blocks", headers=session_auth_headers(reader))
+    assert r.status_code == 200, r.text
+    return [b["content"] for b in r.json()["data"]["data"]]
+
+
+def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
+    """私聊里的 @ 出不了这间房，席位不齐的时候也一样。
+
+    「这间房有没有名册」和「两席里的人是哪一位」是两个问题。名册解析不到的 @ 只
+    是一条 ⚠️；解析得到，正文前 200 字就进了那个人的强提醒
+    （``_notify_mentions``），而他不在这间房里。所以席位不齐的时候不能退：答不出
+    对面是谁，可以退回项目默认那位；答错「有没有名册」，是把私聊正文发出去。
+
+    席位不齐这件事真实存在：#1380 那次发布的窗口里旧镜像建的私聊一行席位都没有，
+    回填还没跑在真数据上；房间被加进第三个人也是同一种。
+    """
+    project_id = _project_with_a_roster(client, owner="user-1", member="mentor-1")
+    _add_agent(client, project_id, "reviewer", "评审")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    # 名册不是两席了，而 mentor-1 从头到尾不在这间房里。
+    _seat_by_hand(client, dm, "intruder-1")
+    assert _seats(client, dm) is None, "前提：这间私聊的名册已经不是两席"
+
+    _send(client, dm, "@mentor-1 这段先别说出去", author="user-1")
+
+    assert _alerts(client, project_id, "mentor-1") == []
+    # 名册解析不到，@ 原样留在正文里（渲染成「项目成员里没有这个 handle」的 ⚠️）。
+    assert "@mentor-1 这段先别说出去" in _texts(client, dm, "user-1")
+
+
+def test_a_pairs_own_dm_wins_over_a_room_that_grew_into_the_pair(client):
+    """两间房都坐着这两位时，还是两席的那间才是他们的 DM。
+
+    第三个人被加进 A 和队友的那间房之后，A 和他的私聊与那间房都坐着这两位。挑错
+    一间，A 和他之间的对话就落在另一间房里，而那间房在界面上没有别的入口。
+    """
+    project_id = _project(client)
+    _add_agent(client, project_id, "reviewer", "评审")
+    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    with_mentor = _dm(client, project_id, "user-1", peer_handle="mentor-1")
+    assert with_mentor != with_reviewer
+
+    # 有人把 mentor-1 加进了 user-1 与评审的那间房。
+    _seat_by_hand(client, with_reviewer, "mentor-1")
+
+    assert _dm(client, project_id, "user-1", peer_handle="mentor-1") == with_mentor
+
+
+def _as_the_old_image_left_it(client, topic_id: str, owner: str, peer: str) -> None:
+    """把两列写成这次发布之前那版镜像留下的样子。
+
+    从本次发布起建私聊只写名册，两列再也没有写点；而 ``only_the_two_parties`` 补席
+    位的唯一输入就是这两列。窗口里旧镜像建的那批私聊长的正是这个样子，下面几条用例
+    要的也正是那一批。
+    """
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                sa.text(
+                    "UPDATE topics SET private_owner=:o, private_peer=:p WHERE id=:t"
+                ),
+                {"t": uuid.UUID(topic_id), "o": owner, "p": peer},
             )
             await session.commit()
 
@@ -210,98 +401,6 @@ def _run_the_migration(client) -> None:
     asyncio.run(_run())
 
 
-def _say(client, project_id: str, topic_id: str, author: str) -> None:
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            await BlockRepository(session).add(
-                project_id=uuid.UUID(project_id),
-                topic_id=uuid.UUID(topic_id),
-                author=author,
-                author_type=AuthorType.participant,
-                content="msg",
-                kind=BlockKind.message,
-            )
-            await session.commit()
-
-    asyncio.run(_run())
-
-
-def test_a_dm_names_its_teammate_from_the_roster(client):
-    """合同：私聊的名册恰好两席，「谁被点名」由此推出。"""
-    project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    seats = _seats(client, dm)
-    assert seats is not None
-    reviewer_seat = seats[1]
-
-    _forget_the_columns(client, dm)
-
-    assert _seats(client, dm) == ("user-1", reviewer_seat)
-    assert _who_answers(client, dm) == "reviewer"
-
-
-def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
-    """个人记忆只在当事人自己的私聊里读写。当事人是谁，名册说了算。"""
-    project_id = _project(client)
-    dm = _dm(client, project_id, "user-1")
-    _forget_the_columns(client, dm)
-
-    mine = client.post(
-        f"/projects/{project_id}/memory",
-        json={
-            "content": "偏好简洁汇报",
-            "scope": "user",
-            "owner": "user-1",
-            "topic": dm,
-        },
-    )
-    assert mine.status_code == 200, mine.text
-
-    someone_elses = client.post(
-        f"/projects/{project_id}/memory",
-        json={
-            "content": "别人的事",
-            "scope": "user",
-            "owner": "user-2",
-            "topic": dm,
-        },
-    )
-    assert someone_elses.status_code == 403, someone_elses.text
-
-
-def test_a_dm_badge_is_keyed_by_the_other_seat(client):
-    """未读按对面那一席归类：人按 handle，队友按 agent: 前缀。"""
-    project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
-    with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
-    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    reviewer_seats = _seats(client, with_reviewer)
-    assert reviewer_seats is not None
-    _forget_the_columns(client, with_person)
-    _forget_the_columns(client, with_reviewer)
-
-    _say(client, project_id, with_person, "mentor-1")
-    _say(client, project_id, with_reviewer, reviewer_seats[1])
-
-    assert _badge(client, project_id, "user-1") == {"mentor-1": 1, "agent:reviewer": 1}
-
-
-def test_opening_the_same_dm_again_finds_it_by_its_two_seats(client):
-    """再打开是同一间房，认的是两席，不是那两列。"""
-    project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
-    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
-    _forget_the_columns(client, with_reviewer)
-    _forget_the_columns(client, with_person)
-
-    assert _dm(client, project_id, "user-1", agent_handle="reviewer") == with_reviewer
-    # 人对人的那间两边都找得到，谁先开的不影响。
-    assert _dm(client, project_id, "mentor-1", peer_handle="user-1") == with_person
-    assert with_reviewer != with_person
-
-
 def test_an_old_dms_two_seats_are_backfilled(client):
     """存量私聊：名册空着、两列还在，迁移把两席补回来，这间房又答得出对面是谁。
 
@@ -314,9 +413,11 @@ def test_an_old_dms_two_seats_are_backfilled(client):
     assert seats is not None
     reviewer_seat = seats[1]
 
-    async def _age_and_backfill() -> None:
+    # 名册还没有这间房的时候建的私聊：两列有值，席位一行没有。
+    _as_the_old_image_left_it(client, dm, "user-1", reviewer_seat)
+
+    async def _age() -> None:
         async with client.test_factory() as session:
-            # 名册还没有这间房的时候建的私聊：两列有值，席位一行没有。
             await session.execute(
                 sa.text("DELETE FROM topic_memberships WHERE topic_id=:t"),
                 {"t": uuid.UUID(dm)},
@@ -325,24 +426,17 @@ def test_an_old_dms_two_seats_are_backfilled(client):
         async with client.test_factory() as session:
             members = TopicMemberService(session)
             assert await members.private_seats(uuid.UUID(dm)) is None
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
-            )
-            await session.commit()
 
-    asyncio.run(_age_and_backfill())
+    asyncio.run(_age())
+    _run_the_migration(client)
 
     assert _seats(client, dm) == ("user-1", reviewer_seat)
     assert _who_answers(client, dm) == "reviewer"
 
-    async def _again() -> int:
-        async with client.test_factory() as session:
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
-            )
-            await session.commit()
+    # 幂等：再跑一遍不多一行。
+    _run_the_migration(client)
+
+    async def _count() -> int:
         async with client.test_factory() as session:
             return int(
                 await session.scalar(
@@ -351,47 +445,7 @@ def test_an_old_dms_two_seats_are_backfilled(client):
                 )
             )
 
-    # 幂等：再跑一遍不多一行。
-    assert asyncio.run(_again()) == 2
-
-
-def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
-    """名册多出一席的房间还是这间 DM：再打开给的是它，历史都在里面。
-
-    私聊不进话题树，角标又被两席那道闸滤掉，所以旧那间房在界面上没有别的入口：
-    这里另开一间，里面的对话就再也找不回来。多出一席这间房确实答不出对面是谁，
-    但那件事由 ``private_seats`` 一处答，它退回项目默认那位，不另开房。
-    """
-    project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    _say(client, project_id, dm, "user-1")
-    _seat_by_hand(client, dm, "mentor-1")
-    assert _seats(client, dm) is None
-
-    again = _dm(client, project_id, "user-1", agent_handle="reviewer")
-
-    assert again == dm
-    # 答不出对面是谁的那一条退路照走：项目默认那位答这间房。
-    assert _who_answers(client, dm) == "cheese"
-
-
-def test_a_pairs_own_dm_wins_over_a_room_that_grew_into_the_pair(client):
-    """两间房都坐着这两位时，还是两席的那间才是他们的 DM。
-
-    第三个人被加进 A 和队友的那间房之后，A 和他的私聊与那间房都坐着这两位。挑错
-    一间，A 和他之间的对话就落在另一间房里，而那间房在界面上没有别的入口。
-    """
-    project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
-    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    with_mentor = _dm(client, project_id, "user-1", peer_handle="mentor-1")
-    assert with_mentor != with_reviewer
-
-    # 有人把 mentor-1 加进了 user-1 与评审的那间房。
-    _seat_by_hand(client, with_reviewer, "mentor-1")
-
-    assert _dm(client, project_id, "user-1", peer_handle="mentor-1") == with_mentor
+    assert asyncio.run(_count()) == 2
 
 
 def test_an_old_dms_extra_seats_are_unseated(client):
@@ -441,6 +495,7 @@ def test_an_old_dm_gets_its_human_back_after_the_extra_seats_go(client):
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
     dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
     # 名册还没有人这一席的年代建的私聊，人只在 ``private_owner`` 那一列里。
+    _as_the_old_image_left_it(client, dm, "user-1", reviewer["seat_handle"])
     _unseat_by_hand(client, dm, "user-1")
     _seat_by_hand(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
     _retire_the_stand_ins(client)
@@ -461,6 +516,7 @@ def test_a_swapped_teammate_is_not_seated_back_by_the_migration(client):
     reviewer = _add_agent(client, project_id, "reviewer", "评审")
     writer = _add_agent(client, project_id, "writer", "写手")
     dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    _as_the_old_image_left_it(client, dm, "user-1", reviewer["seat_handle"])
 
     # 评审那一席被撤掉，换成写手；``private_peer`` 还停在评审身上。
     _unseat_by_hand(client, dm, reviewer["seat_handle"])

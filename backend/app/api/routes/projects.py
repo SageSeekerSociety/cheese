@@ -60,6 +60,7 @@ from app.domain.agent_instance.services import (
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.documents.text import delivered_comparison
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
 from app.domain.library import service as library
@@ -105,7 +106,6 @@ from app.domain.room_task.schemas import TaskOut
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shell, effective_shells
-from app.domain.textfile import compare_bytes
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -645,7 +645,7 @@ async def compare_artifact_versions(
         old = library.read_artifact_snapshot(project_id, before, left.filename)
         new = library.read_artifact_snapshot(project_id, after, right.filename)
         comparison = await asyncio.to_thread(
-            compare_bytes, old, new, left.filename, right.filename
+            delivered_comparison, old, new, left.filename, right.filename
         )
         result = {
             "kind": "file",
