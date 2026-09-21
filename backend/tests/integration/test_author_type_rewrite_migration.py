@@ -119,7 +119,9 @@ def test_every_author_type_row_comes_back_as_a_value_the_enum_has(client):
 
     async def _rewrite() -> None:
         async with client.test_factory() as s:
-            await s.run_sync(_upgrade)
+            # 迁移拿到的必须是一条 Connection（`op` 要从它读 dialect），
+            # 而 `AsyncSession.run_sync` 递过来的是 Session。
+            await (await s.connection()).run_sync(_upgrade)
             await s.commit()
 
     asyncio.run(_rewrite())
