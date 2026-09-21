@@ -41,6 +41,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_topic
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -134,6 +135,17 @@ class FeedbackService:
         的：按现在取的话，把谁加进这个房间就等于把这个房间历史上的每一条私密反馈一
         并交给他，而加人的那个人并不知道自己在授权。
 
+        它**还要**今天读得到那个房间（`may_read_topic`），两句都成立才开门。少了后
+        一句，这一档就是一扇撤不回的门：退房间是硬删名册行，所以撤得掉；退项目不是
+        —— `MemberService.remove` 只删 `ProjectMember` 一行，被移出项目的人从此进
+        不了这个项目的任何房间，而他在各房间的名册行原地不动。那些行今天是惰性的
+        （房间门读的是项目读权，`may_read_topic`），本档把它们变成门，于是「一次加
+        人变成一次授权」在离场那一侧原样长了回来。判据留在这里而不是靠名册干净：
+        退项目、退队、不再是出题者是三条路，只有「今天还读得到吗」一句话同时管住。
+
+        问的是**房间自己的项目**（`may_read_topic` 从 topic 解出来），不是
+        `row.project_id` —— 后者是 `create` 里原样收下的请求体字段，提交者说了算。
+
         `security` narrows the public arm, so it is checked in the same breath:
         a row an admin flagged as a security matter is not public even though the
         reporter left `visibility` at its default. That flag is set on triage, by
@@ -142,9 +154,10 @@ class FeedbackService:
         access to a row that was flagged: 「不能泄露」说的是泄露给没看过它的人，而
         那个房间的人看过。
 
-        Async because the roster is a table — the three arms above are on the
-        row, this one is not. It is the only read path's predicate, so the cost
-        is one query on a row nothing else made visible.
+        Async because the roster and the project's claims are tables — the three
+        arms above are on the row, this one is not. Those queries are reached
+        only by a row the three cheap arms already refused, and `topic_id is
+        None` (报在沙箱里、或房间已删) turns both of them off before either runs.
         """
         if row.visibility == FeedbackVisibility.public and not row.security:
             return True
@@ -154,7 +167,11 @@ class FeedbackService:
             return False
         if handle in (row.author_handle, row.submitted_by_handle):
             return True
-        return await self._repo.filed_in_a_room_of_mine(row.id, handle)
+        if row.topic_id is None:
+            return False
+        if not await self._repo.filed_in_a_room_of_mine(row.id, handle):
+            return False
+        return await may_read_topic(self._session, topic_id=row.topic_id, handle=handle)
 
     async def visible_row(
         self, feedback_id: uuid.UUID, *, handle: str | None, is_admin: bool

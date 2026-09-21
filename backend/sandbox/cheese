@@ -1514,7 +1514,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--visibility",
         choices=["public", "private"],
         default="public",
-        help="private 只有管理员和提交者本人看得见",
+        help="private 只有管理员、提交者本人、以及提出它时在那个房间里的人看得见",
     )
     pfbprop.add_argument(
         "--attach-logs",

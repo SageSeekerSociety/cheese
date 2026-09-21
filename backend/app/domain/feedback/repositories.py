@@ -178,17 +178,21 @@ def filed_in_a_room_of(handle: str) -> Any:
     自己在授权。
 
     ``topic_id`` 是 ``ON DELETE SET NULL``（反馈比提它的房间活得久），房间没了这一
-    档就自动关上：没有房间，就没有「那个房间的成员」。
+    档就自动关上，**不用额外写一句**：``topic_id`` 是 NULL 的时候
+    ``tm.topic_id = feedback.topic_id`` 恒为 unknown，``EXISTS`` 本来就假。没有房间，
+    就没有「那个房间的成员」。
+
+    这条子句是「当时在不在那个房间里」，**不是**整档判据：门还要问「今天还读得到这
+    个房间」，那一句在 :meth:`FeedbackService.may_see` 里 —— 见那里的理由。
     """
-    return and_(
-        Feedback.topic_id.is_not(None),
+    return (
         select(TopicMembership.id)
         .where(
             TopicMembership.topic_id == Feedback.topic_id,
             TopicMembership.member_handle == handle,
             TopicMembership.created_at <= Feedback.created_at,
         )
-        .exists(),
+        .exists()
     )
 
 
@@ -209,6 +213,18 @@ def visible_to(handle: str | None, *, is_admin: bool) -> Any:
     about one row (`FeedbackRepository.filed_in_a_room_of_mine`) rather than
     re-deciding it in Python, because it needs the roster and the roster is in
     the database either way.
+
+    One half of the room arm is deliberately missing here: `may_see` also asks
+    「今天还读得到那个房间」 (`may_read_topic`), which is four claims across four
+    tables and would have to be spelled a second time to live in SQL — the very
+    drift this docstring is about. The asymmetry is in the safe direction
+    *because of where this predicate is used*: it narrows 指派给我的 and nothing
+    else, so the widest thing it can do is leave the title of a report in the
+    assignee's own list after they left the project — a report filed in a room
+    they sat in, whose contents they read there. The row itself, its comments,
+    its supports and its proposals all go through `visible_row`, so none of them
+    open. If this predicate ever gains a second reader, that reader has to close
+    this gap or say why it may stay open.
     """
     if is_admin:
         # may_see's second arm: an admin is never narrowed. Said once here rather
@@ -367,6 +383,9 @@ class FeedbackRepository:
         instead of re-deciding the rule in Python: the answer needs the roster,
         the roster is a table, and a second spelling of a visibility rule is what
         `PUBLIC_ONLY` and `visible_to` both exist to prevent.
+
+        「当时在不在那个房间里」 only. 「今天还读得到那个房间」 is the other half
+        and stays in `may_see`.
         """
         stmt = select(Feedback.id).where(
             Feedback.id == feedback_id, filed_in_a_room_of(handle)

@@ -126,7 +126,7 @@ async function submit() {
             class="mb-2"
           />
           <v-alert v-if="store.draft.attachContext" type="warning" density="compact" variant="tonal" class="mb-4">
-            现场里可能包含你的代码片段、文件路径或对话内容。选「私密」时只有你和平台管理员能看到它们。
+            现场里可能包含你的代码片段、文件路径或对话内容。选「私密」时，能看到它们的是你、平台管理员、以及提出它时在那个房间里的人。
           </v-alert>
         </template>
 
@@ -144,7 +144,9 @@ async function submit() {
             <template #label>
               <div>
                 <div class="fb-radio__title">私密</div>
-                <div class="fb-radio__hint">只有你和管理员可见，不进公开列表、不能被支持</div>
+                <div class="fb-radio__hint">
+                  只有你、平台管理员、以及提出它时在那个房间里的人可见，不进公开列表、不能被支持
+                </div>
               </div>
             </template>
           </v-radio>

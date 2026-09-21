@@ -48,6 +48,7 @@ REPORTER = "fb-reporter"
 ROOMMATE = "fb-roommate"
 OUTSIDER = "fb-outsider"
 LATECOMER = "fb-latecomer"
+DEPARTED = "fb-departed"
 
 #: 竞态用例把删除的锁拿满这么久才提交，窗口就是这么撑开的。长到「排队等锁」
 #: （约等于这一整段）和「根本没排」（毫秒）之间差三个数量级，短到整个用例还能忍受。
@@ -96,6 +97,14 @@ def _join_project(client, project: str, handle: str, *, by: str) -> None:
     r = client.post(
         f"/projects/{project}/members",
         json={"user_handle": handle, "role": "member"},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _remove_from_project(client, project: str, handle: str, *, by: str) -> None:
+    r = client.delete(
+        f"/projects/{project}/members/{handle}",
         headers=session_auth_headers(by),
     )
     assert r.status_code == 200, r.text
@@ -232,15 +241,19 @@ def test_the_room_that_filed_it_can_see_it(client):
     提出来的，而那个房间的人本来就看过它的内容——agent 提的东西在它的房间里全部留痕。
     对他们藏起来，藏掉的只是追踪它的那条路。
 
-    三条一起写，因为它们钉的是同一条规则的三个边：**在那个房间里**（不是同项目就
-    行），**当时在**（不是现在在），而不满足的人拿到的是 404 而不是 403——藏起来的
-    条目不确认自己存在。
+    四条一起写，因为它们钉的是同一条规则的四个边：**在那个房间里**（不是同项目就
+    行），**当时在**（不是现在在），**今天还读得到那个房间**（不是当时在就永远算），
+    而不满足的人拿到的是 404 而不是 403——藏起来的条目不确认自己存在。
     """
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
+    _join_project(client, project, ROOMMATE, by=REPORTER)
     _join_room(client, topic, ROOMMATE, by=REPORTER)
     # 同项目、不在那个房间：这一条要排除的正是「同项目就算数」那种读法。
     _join_project(client, project, OUTSIDER, by=REPORTER)
+    # 提出的那一刻两样都满足，之后被移出项目：这一档撤得回来吗。
+    _join_project(client, project, DEPARTED, by=REPORTER)
+    _join_room(client, topic, DEPARTED, by=REPORTER)
 
     row = _report(
         client,
@@ -262,6 +275,12 @@ def test_the_room_that_filed_it_can_see_it(client):
     assert opened(OUTSIDER) == 404
     assert opened(LATECOMER) == 404
     assert opened(STRANGER) == 404
+
+    # 负向对照：移出项目就读不到了。断言分两步——先证明这个人此刻确实开得了，
+    # 再移出、再开——否则一条永远 404 的断言也能绿，而那正是要排除的。
+    assert opened(DEPARTED) == 200
+    _remove_from_project(client, project, DEPARTED, by=REPORTER)
+    assert opened(DEPARTED) == 404
 
 
 def test_a_report_filed_outside_any_room_opens_no_second_door(client):
@@ -1483,6 +1502,7 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     # 和 `may_see` 各自新长出来的那条手臂，两边同时长错的话只有这里看得见。
     project = _project(client, REPORTER)
     room = _topic(client, project, REPORTER, title="我也在的房间")
+    _join_project(client, project, STRANGER, by=REPORTER)
     _join_room(client, room, STRANGER, by=REPORTER)
     theirs_in_my_room = _report(
         client,
