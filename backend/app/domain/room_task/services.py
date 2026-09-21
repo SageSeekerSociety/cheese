@@ -106,11 +106,6 @@ class TaskService:
         """
         return await self._repo.list_by_ids(task_ids)
 
-    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
-        """Stamp the thread with when its device home's transcripts reached
-        the platform (topic/retire.py). False when no thread has this id."""
-        return await self._repo.mark_transcripts_archived(task_id, at)
-
     async def open_by_thread_label(
         self, *, room_id: uuid.UUID, thread_label: str
     ) -> Task | None:

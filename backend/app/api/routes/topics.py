@@ -2124,8 +2124,9 @@ async def split_topic(
         # 归属跟推进者走: who is DRIVING this room right now. 芝士 splits under her
         # own handle, so `created_by` names the robot and the person who asked for
         # the split is nowhere in the request — the runner is the only place that
-        # answer exists. None whenever no person is identifiable (an autonomous
-        # 分身, a platform-initiated turn), and the ladder in the service then
+        # answer exists. None whenever no person is identifiable (a
+        # platform-initiated turn, or one this room's agent started itself off a
+        # worker's completion notice), and the ladder in the service then
         # behaves exactly as it did before.
         triggered_by=runner.turn_author_for(topic_id),
     )
