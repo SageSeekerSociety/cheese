@@ -493,6 +493,12 @@ class Harness:
     # 持」而指不出是哪一行做的，下一个人没有办法核，也没有办法在它失效的时候发现
     # ——和 ``capability`` 那张表里的格子同一条规矩。
     #
+    # 反引号里写的是**本仓库的代码**：以 `.py` 结尾的是路径（从 `app/domain/` 起
+    # 算），其余的是符号名，每个都要在同一句引的某个文件里找得到。
+    # ``test_subagent_requirements.py`` 两样都核——只核路径的话，符号被删掉而文件
+    # 还在，这句话就已经是假的了，而它读起来和真的一模一样。上游的工具名（Task、
+    # Agent）不加反引号：那不是这里能核的东西。
+    #
     # 值只能是一句话。``Difference`` 是 StrEnum，填进来照样是个 ``str``，所以
     # ``__post_init__`` 认的是类型本身：硬性要求没有「这个骨架做不到」那一档。
     subagents: Mapping[SubagentRequirement, str]
@@ -540,25 +546,29 @@ HARNESSES: dict[str, Harness] = {
         "Claude Code",
         subagents={
             SubagentRequirement.SPAWNS_WITH_A_MODEL: (
-                "`Task` / `Agent` 工具起一条子线程；跑哪个模型由启动环境里那三个别"
-                "名决定（`agent/device_provider.py` 的 ANTHROPIC_DEFAULT_HAIKU / "
-                "SONNET / OPUS_MODEL），agent 在调用里选家族。"
+                "Task / Agent 工具起一条子线程；跑哪个模型由启动环境里那三个别名决"
+                "定（`agent/device_provider.py` 的 "
+                "`ANTHROPIC_DEFAULT_HAIKU_MODEL` / "
+                "`ANTHROPIC_DEFAULT_SONNET_MODEL` / "
+                "`ANTHROPIC_DEFAULT_OPUS_MODEL`），agent 在调用里选家族。"
             ),
             SubagentRequirement.LABELS_ITS_THREAD: (
-                "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识写"
-                "在起它的那段 prompt 里（`room_task/thread_label.py`），PostToolUse "
-                "的 tool_response.agentId 把它钉在这个 worker 上，此后这条子线程的"
-                "每条记录都带着它出来。"
+                "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识由"
+                "`room_task/thread_label.py` 的 `thread_label` 算出来、写在起它的那"
+                "段 prompt 里，PostToolUse 的 tool_response.agentId 把它钉在这个 "
+                "worker 上，此后这条子线程的每条记录都带着它出来。"
             ),
             SubagentRequirement.PARENT_RETASKS_IT: (
                 "人对卡的操作投递给父线程执行：`agent/chat.py` 经 "
-                "`AgentRuntime.deliver` 送进这条会话，子线程的指令由起它的父线程自"
-                "己改——平台不认子线程，也不直接对它说话。"
+                "`agent/harness/__init__.py` 上的 `AgentRuntime.deliver` 送进这条会"
+                "话，子线程的指令由起它的父线程自己改——平台不认子线程，也不直接对"
+                "它说话。"
             ),
             SubagentRequirement.PARENT_STOPS_IT: (
-                "`AgentRuntime.interrupt` 停的是父线程；一条会话就是机器上的一个 "
-                "claude 进程（`agent/harness/claude_code/hooks_substrate.py`），子线"
-                "程跑在它里面，与它同生同死。"
+                "`agent/harness/__init__.py` 上的 `AgentRuntime.interrupt` 停的是父"
+                "线程；一条会话就是机器上的一个 claude 进程"
+                "（`agent/harness/claude_code/hooks_substrate.py`），子线程跑在它里"
+                "面，与它同生同死。"
             ),
         },
         carries_subscription=True,

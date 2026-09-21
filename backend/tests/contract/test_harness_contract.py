@@ -221,20 +221,26 @@ def test_every_harness_this_deployment_runs_has_a_cell(scenario: dict) -> None:
     assert set(HARNESSES) <= set(scenario["harnesses"])
 
 
+#: 子线程那几条场景，写死了名字。挑场景挑得动的话（``"subagent" in name``），一次
+#: 改名就能让下面这条守卫一个用例都不剩：pytest 对空的 parametrize 只收出一条
+#: skip，没人会因此红，而「不许用差异码回答子线程那几条」就这么安静地不再守任何东
+#: 西了。
+_SUBAGENT_SCENARIOS = ("a-subagent-worked.json", "a-subagent-reported-back.json")
+
+
+def _subagent_cells() -> list[tuple[dict, str]]:
+    by_name = {s["name"]: s for s in _record_scenarios()}
+    missing = [name for name in _SUBAGENT_SCENARIOS if name not in by_name]
+    assert not missing, f"子线程场景没了：{missing}"
+    return [
+        (by_name[name], h) for name in _SUBAGENT_SCENARIOS for h in sorted(HARNESSES)
+    ]
+
+
 @pytest.mark.parametrize(
     ("scenario", "harness"),
-    [
-        (s, h)
-        for s in _record_scenarios()
-        for h in sorted(HARNESSES)
-        if "subagent" in s["name"]
-    ],
-    ids=[
-        f"{s['name'].removesuffix('.json')}-{h}"
-        for s in _record_scenarios()
-        for h in sorted(HARNESSES)
-        if "subagent" in s["name"]
-    ],
+    _subagent_cells(),
+    ids=[f"{s['name'].removesuffix('.json')}-{h}" for s, h in _subagent_cells()],
 )
 def test_a_running_harness_answers_the_subagent_scenarios_with_records(
     scenario: dict, harness: str

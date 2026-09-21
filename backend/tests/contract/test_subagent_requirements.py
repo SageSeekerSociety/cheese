@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent.capability import Difference
 from app.domain.agent.harness import (
     CLAUDE_CODE,
@@ -47,8 +46,11 @@ SESSION = SessionRef(
 OPENING = Opening(system_prompt="CONTRACT")
 LABEL = thread_label(uuid.UUID("00000000-0000-4000-8000-000000000003"))
 
-#: 一句答案里指着的代码。反引号里以 `.py` 结尾的那些，路径从 ``app/domain/`` 起算。
-_CITED = re.compile(r"`([a-z0-9_/]+\.py)`")
+#: 一句答案里反引号引起来的东西。以 ``.py`` 结尾的是路径（从 ``app/domain/`` 起
+#: 算），其余的是符号名。
+_CITED = re.compile(r"`([A-Za-z0-9_./]+)`")
+#: 一个符号名长什么样：``SubThreads``、``thread_label``、``AgentRuntime.deliver``。
+_SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\Z")
 
 
 def _every_answer() -> list[tuple[str, SubagentRequirement]]:
@@ -80,14 +82,26 @@ def test_an_answer_points_at_code_that_exists(
     """一句「已支持」指不出是哪一行做的，下一个人没有办法核，也没有办法在它失效的
     时候发现——和功能矩阵里那些格子同一条规矩。
 
-    文件被搬走或者删掉，这里红：那一句话此刻就已经不成立了，而它读起来跟成立的时
-    候一模一样。
+    核到符号那一层，不是只核文件在不在。一句答案的实质是里面那几个名字——
+    ``SubThreads``、``thread_label``、``AgentRuntime.deliver``、启动环境里那三个模
+    型别名——而删掉一个符号比搬走一个文件常见得多：文件照样在，这句话已经是假的
+    了，读起来却和真的一模一样。
     """
     answer = HARNESSES[name].subagents[requirement]
     cited = _CITED.findall(answer)
-    assert cited, f"{name}/{requirement} 没有指出代码在哪"
-    missing = [path for path in cited if not (DOMAIN / path).exists()]
+    paths = [c for c in cited if c.endswith(".py")]
+    assert paths, f"{name}/{requirement} 没有指出代码在哪个文件里"
+    missing = [path for path in paths if not (DOMAIN / path).exists()]
     assert not missing, f"{name}/{requirement} 指着不存在的文件：{missing}"
+
+    sources = [(DOMAIN / path).read_text(encoding="utf-8") for path in paths]
+    for symbol in (c for c in cited if not c.endswith(".py") and _SYMBOL.match(c)):
+        for part in symbol.split("."):
+            found = any(re.search(rf"\b{re.escape(part)}\b", src) for src in sources)
+            assert found, (
+                f"{name}/{requirement} 指着 `{symbol}`，但 {paths} 里没有 {part}——"
+                "这句话此刻已经不成立了"
+            )
 
 
 def test_a_harness_that_cannot_answer_cannot_be_built() -> None:
@@ -117,10 +131,12 @@ def test_a_difference_code_is_not_an_answer() -> None:
 def test_a_harness_that_is_not_registered_still_has_its_code() -> None:
     """摘掉的是注册，不是代码（结论 43）。
 
-    两个方向都断言。代码还在而注册没了，才是那次产品收缩本身；哪天谁把适配层也删
-    了，这里红，因为那是另一个决定。
+    两个方向都断言，但只断言这两个骨架：代码还在而注册没了，才是那次产品收缩本
+    身；哪天谁把适配层也删了，这里红，因为那是另一个决定。把整张注册表钉成等号是
+    另一回事——将来多一个答得出四条的骨架，那是这条回路走通了，不是回归。
     """
-    assert set(HARNESSES) == {CLAUDE_CODE}
+    assert CODEX not in HARNESSES
+    assert PI not in HARNESSES
     for name in (CODEX, PI):
         assert (HARNESS_PACKAGE / name.replace("-", "_") / "behaviour.py").exists()
 
@@ -137,8 +153,21 @@ async def _session() -> ContractHarness:
 async def test_a_parent_thread_spawns_a_worker_and_names_its_model() -> None:
     runtime = await _session()
     worker = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
-    assert worker.running and worker.model == "opus"
+    assert worker.running
     assert runtime.workers(SESSION) == [worker]
+
+
+async def test_a_worker_spawned_without_a_model_is_not_spawned_at_all() -> None:
+    """「并指定模型」那半，要有一天能红。
+
+    断言 ``worker.model == "opus"`` 只是把构造参数读回来：那个字段再没有第二个读
+    者，谁也不校验它，把它从那次调用里删掉测试照绿。所以不指定模型这件事本身就是
+    个错——一条起不出来的子线程，而不是一条跑着不知道什么模型的子线程。
+    """
+    runtime = await _session()
+    with pytest.raises(ValueError, match="模型"):
+        runtime.spawn(SESSION, label=LABEL, model="", instruction="查分页")
+    assert runtime.workers(SESSION) == []
 
 
 async def test_everything_a_worker_says_carries_its_thread_label() -> None:
@@ -162,17 +191,25 @@ async def test_everything_a_worker_says_carries_its_thread_label() -> None:
 
 
 async def test_a_parent_thread_retasks_its_worker() -> None:
-    """人对卡的操作投递给父线程执行，改指令的是父线程自己。"""
+    """人对卡的操作投递给父线程执行，改指令的是父线程自己。
+
+    断在看得见的那一侧：``worker.instruction`` 读回刚写进去的那句话，证明的只是那
+    个方法是个 setter。换了要求之后这条子线程还在说话、说的话还带着同一个标识出
+    来——「还是那条活、还归那张卡」是这么读出来的。
+    """
     runtime = await _session()
     worker = runtime.spawn(SESSION, label=LABEL, model="opus", instruction="查分页")
 
+    # 送到的是父线程，不是那条子线程（结论 43）。
     assert await runtime.deliver(SESSION.topic_id, "先只改后端") is True
-    assert runtime.delivered(SESSION) == ["先只改后端"]
-    worker.retask("先只改后端")
+    (instruction,) = runtime.delivered(SESSION)
+    # 父线程读到它，自己去改子线程的指令。
+    worker.retask(instruction)
+    worker.says("改完了")
 
-    assert worker.instruction == "先只改后端"
-    # 换了要求还是那条活：标识不动，卡不变。
-    assert worker.label == LABEL
+    backlog = runtime.backlog(SESSION)
+    events = [e for entry in backlog.unread() for e in backlog.assemble(entry)]
+    assert [(e.text, e.thread_label) for e in events] == [("改完了", LABEL)]
 
 
 async def test_a_parent_thread_stops_its_worker() -> None:
@@ -186,6 +223,9 @@ async def test_a_parent_thread_stops_its_worker() -> None:
     assert not worker.running
     with pytest.raises(SubagentStopped):
         worker.says("我还在说")
+    # 停掉的子线程也接不了新指令——负向对照：停不住的话，改指令会照常成功。
+    with pytest.raises(SubagentStopped):
+        worker.retask("再改一版")
     # interrupt 比 close 弱：会话还在，下一个 send 接着走。
     assert runtime.holds(SESSION.topic_id)
 
@@ -201,26 +241,3 @@ async def test_a_worker_dies_with_the_parent_session() -> None:
     assert not worker.running
     assert not runtime.holds(SESSION.topic_id)
     assert runtime.workers(SESSION) == []
-
-
-# --- 结论 53：请求不必归卡 ---------------------------------------------------
-
-
-def test_a_model_request_carries_no_card_identifier() -> None:
-    """账按项目记；卡上「这条活花了多少」从 hook 事件的用量按线程标识算出来。
-
-    所以模型请求这一侧不带卡的标识——它带的是项目和地点。往里加一个卡的 id 是很自
-    然的一步（「这样就能按卡拒绝单个请求了」），而结论 53 放弃的正是那件事：拒绝
-    本来就在项目额度这一层。归属走的是另一条路，见
-    ``tests/integration/test_worker_events_reach_their_work.py``。
-    """
-    token = mint_scoped_token(
-        project_id=str(uuid.uuid4()),
-        topic_id=str(SESSION.topic_id),
-        agent_handle="cheese",
-    )
-    claims = scoped_token_claims(token)
-    assert claims is not None
-    # 项目、地点、谁在做、到期——名单是封闭的。地点是房间，不是卡：签进凭据的
-    # 东西撤不回来，所以这里多一个键的那一天就是「请求归卡」回来的那一天。
-    assert set(claims) == {"p", "t", "a", "exp"}

@@ -47,6 +47,13 @@ def test_is_valid_accepts_scoped_or_global():
 
 
 def test_token_payload_has_no_secret():
+    """项目、地点、谁在做、到期——名单是封闭的，而这四个里没有一个是卡。
+
+    往里加一个卡的 id 是很自然的一步（「这样就能按卡拒绝单个请求了」），而结论 53
+    放弃的正是那件事：账按项目记，拒绝本来就在项目额度这一层，卡上「这条活花了多
+    少」是从 hook 事件的用量按线程标识算出来的，不靠模型请求自己报。签进凭据的东
+    西撤不回来，所以这里多一个键的那一天，就是「请求归卡」回来的那一天。
+    """
     tok = sa.mint_scoped_token(project_id="P", topic_id="T", agent_handle="cheese-1")
     body = tok.split(".", 1)[0]
     payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
