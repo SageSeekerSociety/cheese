@@ -359,7 +359,7 @@ def test_serve_is_refused_when_the_machine_carries_no_preview_out(client, monkey
     )
 
     assert r.status_code == 422, r.text
-    assert "cheese_show" in r.json()["message"], "must name the way that works"
+    assert "cheese show" in r.json()["message"], "must name the way that works"
     # And nothing was recorded — an unreachable app must not become the preview.
     assert client.get(f"/topics/{tid}/preview").json()["data"] is None
 

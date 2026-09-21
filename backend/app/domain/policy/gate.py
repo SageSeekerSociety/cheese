@@ -168,6 +168,28 @@ def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
     raise OverTier(_refusal_line(call))
 
 
+def because_the_room_is_running(call: Call, actor: str) -> Proposal:
+    """档内，但房间已经开跑了 —— 同样要人点头（结论 23）。
+
+    `check` 答的是「这一档可不可以自己发生」；这一条答的是另一件事，所以它是一个
+    单独的入口而不是 `check` 里的一个分支：换过去丢掉的是这台机器上的工作区和还
+    没提交的改动，跟那台机器贵不贵无关。调用点先问 `check`（超档的处置更强，拒绝
+    就在那里抛出去），只有判决是 `Allowed` 时才换成这一条。
+
+    正文写在这里而不是调用点，跟 `_proposal_line` 并排：人在房间里和在通知里读到
+    的是同一句，而那句话由产出提议的这个模块统一措辞。
+    """
+    return Proposal(
+        call=call,
+        asked_by=actor,
+        content=(
+            f"{actor} 要把这个房间换到「{call.label}」上去。"
+            "房间已经在跑，换过去会丢掉现在这台机器上的工作区和还没提交的改动；"
+            f"这一步等 @{call.approver} 点头。"
+        ),
+    )
+
+
 _WHAT: Final[dict[Resource, str]] = {
     Resource.model: "模型",
     Resource.machine: "算力",

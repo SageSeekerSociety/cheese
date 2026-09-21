@@ -100,21 +100,176 @@ def artifact_kind_for(path: str) -> str:
     return ARTIFACT_KIND_BY_SUFFIX.get("." + suffix.lower(), "html") if dot else "html"
 
 
-DIRECT_MCP_TOOLS = frozenset(
-    {
-        "cheese_ask",
-        "cheese_close_task",
-        "cheese_decision",
-        "cheese_fetch",
-        "cheese_members",
-        "cheese_milestone",
-        "cheese_notify",
-        "cheese_recall",
-        "cheese_remember",
-        "cheese_status",
-        "cheese_tell",
-        "cheese_title",
-    }
+class ToolTable:
+    """平台的 MCP 工具表 —— 会话侧的一个常量（结论 21）。
+
+    以前这张表是**问出来的**：会话侧的 MCP 服务器收到 `tools/list`，就去执行器要一
+    份（`ping` 拿 capabilities，再 `cli` 要 `tools/list`），执行器再把机器上那棵
+    argparse 树翻成工具。于是一台执行机够不着，整个 `cheese_*` 家族就从清单里消
+    失，agent 被告知 `No such tool available: mcp__native__cheese_status` —— 而它这
+    一刻最需要的恰恰是「跟房间说一句这里出事了」。这件事付过三轮（2026-09-13、
+    -14、-15）。
+
+    表在这里，它就不再问任何人：这六样要的是**平台**，不是文件系统，而平台是会话自
+    己够得着的（`platform_request` 是从会话直接打后端的 HTTP，不经过那台机器）。机
+    器离线时少的是项目那一侧 —— 文件、命令、项目 `.mcp.json`（结论 22），它们如实
+    标不可用，不在会话侧做替身。
+
+    **只有六样**（结论 21）：`chat_send`、`cheese ask`、反馈、要一台机器、同 handle
+    便条、定时投递。别的平台动作不是没有了，是不在 MCP 上：它们是这个 CLI 的子命
+    令，在机器上用 Bash 调，跟机器一起在、一起没。
+    """
+
+    def __init__(self, tools):
+        self._tools = tuple(tools)
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(tool["name"] for tool in self._tools)
+
+    def schemas(self) -> list[dict]:
+        """MCP `tools/list` 要的那一份。"""
+        return list(self._tools)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self.names()
+
+
+PLATFORM_TOOLS = ToolTable(
+    (
+        {
+            "name": "chat_send",
+            "description": (
+                "Publish a message to the current Cheese room. "
+                "Use for user-visible updates and replies; "
+                "ordinary model output is not published."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string"},
+                    "reply_to": {"type": "string"},
+                    "request_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID from an uncertain prior result; "
+                            "reuse with the same content to retry."
+                        ),
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+        {
+            "name": "cheese_ask",
+            "description": (
+                "在对话里发一个带按钮的问题，用户点一下就是答案，自动带回你下一轮。"
+                "要人拍板时首选它，别让人打字。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "问题，一句话问清楚",
+                    },
+                    "option": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "2-4 个选项",
+                    },
+                },
+                "required": ["question", "option"],
+            },
+        },
+        {
+            "name": "cheese_feedback_propose",
+            "description": (
+                "撞到平台本身的毛病时报一条——你不是在抱怨，是在交证据。"
+                "落下的是一张提案卡，人在聊天里按「提交反馈」才算发布。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "visibility": {"type": "string"},
+                    "user_said": {
+                        "type": "string",
+                        "description": "引用用户原话；用户没说过就照抄那句规定好的",
+                    },
+                    "why": {"type": "string"},
+                    "what_happened": {"type": "string"},
+                    "expectation": {"type": "string"},
+                    "repro": {"type": "string"},
+                    "evidence": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "problem": {"type": "string"},
+                    "session_id": {"type": "string"},
+                    "environment": {"type": "string"},
+                    "tags": {"type": "string", "description": "逗号分隔"},
+                },
+                "required": ["title", "kind", "visibility", "user_said"],
+            },
+        },
+        {
+            "name": "cheese_machine",
+            "description": (
+                "要一台机器：把这个房间的算力换成某一档。撞上项目的档位策略时，"
+                "这次调用不报错也不挂着等，它变成一条给机主（或项目主人）的提议。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "profile": {"type": "string", "description": "算力档位名"},
+                    "device_id": {
+                        "type": "string",
+                        "description": "自托管设备的 id，只有自托管档位能指定",
+                    },
+                },
+                "required": ["profile"],
+            },
+        },
+        {
+            "name": "cheese_note",
+            "description": (
+                "给同一个 handle 的另一条线程留一张便条。它直接进那条线程正在跑的"
+                "那一轮，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
+                "跟别的 handle 说话只有 chat 一条路。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "thread": {
+                        "type": "string",
+                        "description": "那条线程的 topic id",
+                    },
+                    "content": {"type": "string"},
+                },
+                "required": ["thread", "content"],
+            },
+        },
+        {
+            "name": "cheese_deliver_at",
+            "description": (
+                "请平台在某个时刻把这条投递给你自己。到点产生的是一条投递，"
+                "不是平台替你想起来该干什么。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "at": {
+                        "type": "string",
+                        "description": "ISO-8601 时刻，带时区，如 2026-09-21T14:00:00Z",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "到点递给你的那句话",
+                    },
+                },
+                "required": ["at", "content"],
+            },
+        },
+    )
 )
 
 
@@ -129,8 +284,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "cheese_ask",
             "cheese_close_task",
             "cheese_decision",
+            "cheese_deliver_at",
             "cheese_feedback_propose",
+            "cheese_machine",
             "cheese_members",
+            "cheese_note",
             "cheese_status",
             "cheese_tell",
             "cheese_title",
@@ -282,6 +440,29 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": f"/topics/{topic}/feedback-proposals",
             "body": body,
+        }
+    if tool == "cheese_machine":
+        body = {"profile": args["profile"]}
+        if args.get("device_id"):
+            body["device_id"] = args["device_id"]
+        return {
+            "method": "PUT",
+            "path": f"/topics/{topic}/compute-profile",
+            "body": body,
+        }
+    if tool == "cheese_note":
+        # 收件人是**那条线程**，不是一个 handle：同 handle 是守卫（I14②），由后端
+        # 拿两条线程的席位比对出来，不由调用方声明。
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/note",
+            "body": {"thread": args["thread"], "content": args["content"]},
+        }
+    if tool == "cheese_deliver_at":
+        return {
+            "method": "POST",
+            "path": f"/topics/{topic}/deliveries",
+            "body": {"at": args["at"], "content": args["content"]},
         }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
@@ -1636,6 +1817,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="一个选项,可重复 2-4 次(少于 2 或多于 4 会被拒)",
     )
 
+    pmach = sub.add_parser(
+        "machine",
+        help="要一台机器：把这个房间的算力换成某一档",
+        description=(
+            "把这个房间的算力换成某一档。撞上项目的档位策略时这次调用不报错、"
+            "也不挂着等，它变成一条给机主（自托管）或项目主人（Cloud）的提议。"
+        ),
+    )
+    pmach.add_argument("profile", help="算力档位名")
+    pmach.add_argument("--device-id", default=None, help="自托管设备的 id")
+
+    pnote = sub.add_parser(
+        "note",
+        help="给同一个 handle 的另一条线程留一张便条",
+        description=(
+            "给你自己在这个项目里的另一条线程留一张便条。它直接进那条线程正在跑的"
+            "那一轮，不进时间线。\n"
+            "\n"
+            "收件人只能是同一个 handle 的另一条线程：跟别的 handle 说话只有 chat "
+            "一条路，agent 对 agent 也是（结论 12）。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pnote.add_argument("thread", help="那条线程的 topic id")
+    pnote.add_argument("content", help="便条正文")
+
+    pdeliver = sub.add_parser(
+        "deliver-at",
+        help="请平台在某个时刻把这条投递给你自己",
+        description=(
+            "请平台在某个时刻把这条投递给你自己。到点产生的是一条投递——"
+            "平台不替你想起来该干什么，想起来要设这个闹钟的是你。"
+        ),
+    )
+    pdeliver.add_argument("at", help="ISO-8601 时刻，带时区，如 2026-09-21T14:00:00Z")
+    pdeliver.add_argument("content", help="到点递给你的那句话")
+
     pa = sub.add_parser(
         "accept-request",
         help="提交当前任务的 PR 给验收人",
@@ -2111,6 +2329,24 @@ def main() -> None:
     elif a.cmd == "notify":
         _planned_call("cheese_notify", a)
         print(f"已发送通知给 {a.to or '所有人'}。")
+    elif a.cmd == "machine":
+        r = _planned_call("cheese_machine", a).get("data") or {}
+        if r.get("proposal"):
+            print(f"已提请 {r['proposal']['approver']} 点头，等他拍板。")
+        else:
+            print(f"这个房间的算力现在是 {r.get('current')}。")
+    elif a.cmd == "note":
+        # `delivered` 是这条工具的答案本身,不是一个状态码:便条直接进那条线程正在
+        # 跑的那一轮,那边这一刻没在跑就没人接住。把它丢掉、一律打"已递",调用方会
+        # 当作对面已经知道了往下走,而那句话其实掉在地上了。
+        r = _planned_call("cheese_note", a).get("data") or {}
+        if r.get("delivered"):
+            print("便条已递给那条线程。")
+        else:
+            print("那条线程这会儿没有在跑的轮次,便条没人接住。")
+    elif a.cmd == "deliver-at":
+        r = _planned_call("cheese_deliver_at", a).get("data") or {}
+        print(f"到 {r.get('at')} 会把它递给你。")
     elif a.cmd == "ready":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)

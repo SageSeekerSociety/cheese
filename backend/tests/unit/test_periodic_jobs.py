@@ -161,6 +161,16 @@ def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
     )
 
 
+def test_the_timed_delivery_alarm_is_scheduled():
+    """一个参与者设下的闹钟，到点得有人递（结论 17）。
+
+    这一条的失败样子和这个文件开头那三个一模一样：`timed_deliveries` 写进去了、
+    部署了，而没有任何一个循环去扫它，于是那张表成了一份没人读的愿望清单 —— 没有
+    报错可看，只有缺席。它的间隔写死在列表里，不是一个设置，所以这里只问它在不在。
+    """
+    assert any(job.name == "timed deliveries" for job in _jobs())
+
+
 def test_every_job_is_named_once():
     names = [job.name for job in _jobs()]
     assert len(names) == len(set(names)), f"duplicate job names: {names}"
