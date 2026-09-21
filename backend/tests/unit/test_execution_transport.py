@@ -846,6 +846,11 @@ def test_a_tool_call_waits_out_a_platform_that_is_being_redeployed(monkeypatch):
 
 
 def test_a_refusal_that_outlasts_the_window_is_still_reported(monkeypatch):
+    """窗口走完还是没人接，报的就是「这台机器够不着」。
+
+    一个字也没发出去，所以这条路上没有任何改动可能已经落地 —— 说它够不着是安全
+    的，而说出来才使这一轮余下的文件与命令调用不必各自再排一次同样的队。
+    """
     client = executor_transport.RemoteClient(
         {"kind": "device", "url": "http://executor.test"}
     )
@@ -864,8 +869,9 @@ def test_a_refusal_that_outlasts_the_window_is_still_reported(monkeypatch):
 
     monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
     client.transport.headers = {}
-    with pytest.raises(ConnectionRefusedError):
+    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
         client.call("invoke")
+    assert isinstance(raised.value.__cause__, ConnectionRefusedError)
 
 
 def test_a_lost_response_is_never_replayed(monkeypatch):

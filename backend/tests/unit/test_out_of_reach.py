@@ -110,21 +110,8 @@ def test_the_status_and_the_body_survive_in_the_platform_log(
     assert "context_fs" in logged
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [TimeoutError("timed out"), ConnectionResetError("closed without answering")],
-    ids=["read timed out", "hung up without answering"],
-)
-def test_a_machine_that_never_answers_is_out_of_reach_too(
-    monkeypatch, tmp_path, failure
-):
-    """够不着的那一档里最常见的一个：执行器一个字也没答（结论 23）。
-
-    答了 502/503/504 的机器至少还答了。真正够不着的那台什么也不答，调用方等到的
-    是这条连接的读超时或者一次被挂断的连接 —— 而调用方要认的是同一件事，所以它得
-    是**判得出来的一种**，不是一句拿去比对的话。认不出来的后果不是少一行日志：那一
-    轮余下的每一次文件与命令调用都会再各等一次同样的超时。
-    """
+def _client_whose_answer_never_comes(monkeypatch, tmp_path, failure):
+    """一个执行器：请求发得出去，应答按 `failure` 的方式不回来。"""
     token = tmp_path / "execution.token"
     token.write_text("t")
 
@@ -147,6 +134,20 @@ def test_a_machine_that_never_answers_is_out_of_reach_too(
     )
     monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
     client.transport.headers = {}
+    return client
+
+
+def test_a_machine_that_never_answers_is_out_of_reach_too(monkeypatch, tmp_path):
+    """够不着的那一档里最常见的一个：执行器一个字也没答（结论 23）。
+
+    答了 502/503/504 的机器至少还答了。真正够不着的那台什么也不答，调用方等到的
+    是这条连接的读超时或者一次被挂断的连接 —— 而调用方要认的是同一件事，所以它得
+    是**判得出来的一种**，不是一句拿去比对的话。认不出来的后果不是少一行日志：那一
+    轮余下的每一次文件与命令调用都会再各等一次同样的超时。
+    """
+    client = _client_whose_answer_never_comes(
+        monkeypatch, tmp_path, TimeoutError("timed out")
+    )
 
     with pytest.raises(executor_transport.MachineOutOfReach) as raised:
         client.call("context_fs")
@@ -164,6 +165,25 @@ def test_a_handler_that_threw_is_still_not_that_type(monkeypatch, tmp_path):
     client = failing_client(monkeypatch, tmp_path, 500)
 
     with pytest.raises(RuntimeError) as raised:
+        client.call("context_fs")
+
+    assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
+
+
+def test_a_connection_reset_mid_answer_is_not_the_machine_being_gone(
+    monkeypatch, tmp_path
+):
+    """丢的是应答，不是这双手。
+
+    请求已经发出去了，执行器很可能已经把那次改动做完了 —— 一台做得完事的机器不叫
+    够不着。说它够不着，调用方那道「这一轮别再问了」的闸就会被一次丢包按下去，接
+    下来一整段时间里每一次文件与命令调用都当场被拒，而机器好好的。
+    """
+    client = _client_whose_answer_never_comes(
+        monkeypatch, tmp_path, ConnectionResetError("peer went away mid-answer")
+    )
+
+    with pytest.raises(ConnectionResetError) as raised:
         client.call("context_fs")
 
     assert not isinstance(raised.value, executor_transport.MachineOutOfReach)

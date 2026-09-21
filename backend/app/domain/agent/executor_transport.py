@@ -384,11 +384,15 @@ class RemoteClient:
                     if not _retry_connect(attempt, deadline):
                         raise MachineOutOfReach from exc
                     attempt += 1
-                except (TimeoutError, OSError) as exc:
-                    # 连接层的失败：读超时（660 秒那一档）、连接被重置、名字解析不
-                    # 出来。执行器一个字也没答，所以这不是「某次调用失败了」，是这
-                    # 台机器这一刻够不着。到这里的调用一次也不重放 —— 丢掉的那个应
-                    # 答后面可能跟着一次已经提交的改动。
+                except TimeoutError as exc:
+                    # 读超时那一档（连接的 660 秒）：执行器一个字也没答。这不是
+                    # 「某次调用失败了」，是这台机器这一刻够不着 —— 而认出它来，正是
+                    # 为了让这一轮余下的文件与命令调用不必各自再等一次 660 秒。
+                    #
+                    # 只有这一种。**连接被重置不在内**：那次请求已经发出去了，执行
+                    # 器很可能已经把那次改动做完了，丢的只是应答 —— 一台答得出话的
+                    # 机器不叫够不着，把它也说成够不着，接下来一整段时间里每一次工
+                    # 具调用都会被一次丢包当掉。
                     connection.close()
                     self.transport.connection = None
                     raise MachineOutOfReach from exc

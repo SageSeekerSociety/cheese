@@ -69,16 +69,13 @@ CALLS = {
 }
 
 
-def _a_session_without_a_machine(tmp_path, refuse):
+@pytest.fixture
+def machine_is_gone(tmp_path):
     """一个平台在、机器不在的会话。
 
-    同一个进程既当平台 API 又当执行器端点：`/execution` 按 `refuse` 交代的方式不干
-    活，别的地址是平台，照常答 200。这样「打的是平台还是那台机器」在用例里是一个可
-    数的事实，不是一句话。
-
-    机器够不着有两种样子，两种都要能摆出来：答一个 502/503/504（中间那一跳转不过
-    去、或者执行器没在听），和**一个字也不答**。后一种才是真正够不着的那台机器的样
-    子，也是调用方最容易认漏的那一种。
+    同一个进程既当平台 API 又当执行器端点：`/execution` 一律答 503（「够不着」正是
+    这三个码之一），别的地址是平台，照常答 200。这样「打的是平台还是那台机器」在用
+    例里是一个可数的事实，不是一句话。
     """
     platform_calls = []
     executor_calls = []
@@ -94,7 +91,9 @@ def _a_session_without_a_machine(tmp_path, refuse):
             payload = json.loads(self.rfile.read(length)) if length else {}
             if self.path == "/execution":
                 executor_calls.append(payload)
-                refuse(self)
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
                 return
             platform_calls.append((self.command, self.path, payload))
             data = json.dumps({"data": {"ok": True, **payload}}).encode()
@@ -141,34 +140,6 @@ def _a_session_without_a_machine(tmp_path, refuse):
         server.shutdown()
         server.server_close()
         log.close()
-
-
-def _answer_503(handler):
-    handler.send_response(503)
-    handler.send_header("Content-Length", "0")
-    handler.end_headers()
-
-
-def _never_answer(handler):
-    """收下这次调用，然后挂断 —— 执行器一个字也没答。
-
-    真正够不着的机器就是这样：连接建得起来（中间那一跳还在），应答永远不来。用挂断
-    代替干等，是因为这条连接的读超时是 660 秒 —— 而这一档失败在调用方那里和读超时
-    是同一种（连接层），用例不必真的等上十一分钟去证明这一点。
-    """
-    handler.close_connection = True
-
-
-@pytest.fixture
-def machine_is_gone(tmp_path):
-    """够不着的那台机器答了一个 503。"""
-    yield from _a_session_without_a_machine(tmp_path, _answer_503)
-
-
-@pytest.fixture
-def machine_never_answers(tmp_path):
-    """够不着的那台机器什么也没答。"""
-    yield from _a_session_without_a_machine(tmp_path, _never_answer)
 
 
 def _listing(process):
@@ -253,39 +224,6 @@ def test_a_project_tool_says_the_machine_is_gone_instead_of_waiting(machine_is_g
         )
 
     # 第一次是去问的那一次 —— 机器够不着，只有问过才知道。
-    with pytest.raises(RuntimeError, match=MACHINE_OUT_OF_REACH):
-        read_a_file()
-
-    for _ in range(2):
-        outcome = json.loads(read_a_file()["content"][0]["text"])
-        assert outcome["deny"] == MACHINE_OUT_OF_REACH, outcome
-    assert len(executor_calls) == 1, f"后面几次又去撞了一遍：{executor_calls}"
-
-
-def test_a_machine_that_never_answers_is_asked_exactly_once_too(machine_never_answers):
-    """执行器一个字也不答时，项目工具同样只问一次（结论 23）。
-
-    这才是「机器够不着」真正的样子：没有 503，没有任何应答，调用方等到的是这条连
-    接的读超时（660 秒）。只认「答了 502/503/504」的调用方在这里认不出任何东西，于
-    是这一轮余下的每一次文件与命令调用都要再各等一次 660 秒 —— 正是上面那条用例要
-    消除的场景，只是这一次机器是真的没了。
-    """
-    process, _, executor_calls = machine_never_answers
-
-    def read_a_file():
-        return process.call(
-            "tools/call",
-            {
-                "name": "invoke",
-                "arguments": {
-                    "id": str(uuid.uuid4()),
-                    "session_id": "fixture",
-                    "tool": "Read",
-                    "args": {"file_path": "/work/README.md"},
-                },
-            },
-        )
-
     with pytest.raises(RuntimeError, match=MACHINE_OUT_OF_REACH):
         read_a_file()
 
