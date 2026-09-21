@@ -21,7 +21,10 @@ export function isAgentHandle(handle: string): boolean {
 
 /** 这条是平台自己写的（部署提醒、闸门结论、自动重发），不是谁说的话。 */
 function isPlatformBlock(b: Pick<Block, 'author_type'>): boolean {
-  return b.author_type === 'platform'
+  // 判「不是参与者」而不是列举平台那一档的名字：存量行上它还叫 `system`（后端下
+  // 一次发布才改写），漏掉的话「<@bobby> 合并了 #12」会按 bobby 的发言渲染——完整
+  // 气泡加头像，一条 bobby 从没说过的话。
+  return b.author_type !== 'participant'
 }
 
 /** 这条是芝士说的话。 */

@@ -1,13 +1,18 @@
-"""存量行的三个旧作者档位改写成两档（迁移 c1a7e05d4b83）—— 功能测试.
+"""两个旧作者档位的存量行改写成 participant（迁移 c1a7e05d4b83）—— 功能测试.
 
 `blocks.author_type` 绑的是 Python 枚举（`Enum(AuthorType, native_enum=False)`），
 所以「枚举里没有这个值」不是画错头像，是**一读就抛**：一条还写着 `human` 的行会
-让任何取到它的查询 `LookupError`，整条时间线打不开。枚举改形状的那一次发布，行
-必须跟着改。
+让任何取到它的查询 `LookupError`，整条时间线打不开。枚举删掉一档的那一次发布，
+带着那一档的行必须跟着改。
+
+反过来同样成立，这一份的第二个判据就是它：`system` 的行**不许动**。这一次发布只
+把平台那一档在代码里改叫 `platform`，而迁移是在换容器之前跑的——窗口里服务的还是
+上一版镜像，它的枚举里没有 `platform`。所以改写 `system` 的那一行 SQL 属于下一次
+发布，这里出现它就是把 dev 在窗口里打穿。
 
 测试跑的是**迁移里那段真实 SQL**（`rewrite_old_author_types`，从迁移模块导入），
 不是照抄一份——不然测的就不是要发布的东西了。判据也落在读得出来的那一头：改写完
-之后，同一批行由 ORM 取回来，每一条都是今天枚举里的一档。
+之后，同一批行由 ORM 取回来，每一条都是枚举认得的值。
 """
 
 import asyncio
@@ -26,23 +31,26 @@ _MIGRATION = (
     Path(__file__).resolve().parents[2]
     / "alembic"
     / "versions"
-    / "c1a7e05d4b83_author_type_keeps_only_participant_and_platform.py"
+    / "c1a7e05d4b83_the_two_old_author_values_leave_the_enum.py"
 )
 
-# 库里有过的每一个值，各来一行：P8 之前的人/芝士两档、平台那一档的旧名字，以及
-# P8 之后已经在写的 participant。
+# 库里有过的每一个值，各来一行：上一版之前的人/芝士两档、平台那一档写下的名字，
+# 上一版起就在写的 participant，以及这一版起写下的 platform。
 SEEDED = {
     "old_person": "human",
     "old_agent": "ai",
-    "old_platform": "system",
+    "platform_under_its_old_name": "system",
     "already_participant": "participant",
+    "new_platform": "platform",
 }
 
 EXPECTED = {
     "old_person": AuthorType.participant,
     "old_agent": AuthorType.participant,
-    "old_platform": AuthorType.platform,
+    # 不动：改写它的是下一次发布，这一次动了就是让窗口里的上一版镜像读不了。
+    "platform_under_its_old_name": AuthorType.system,
     "already_participant": AuthorType.participant,
+    "new_platform": AuthorType.platform,
 }
 
 
@@ -54,7 +62,7 @@ def _load_migration():
     return module
 
 
-def test_every_old_author_type_row_comes_back_as_one_of_the_two(client):
+def test_every_author_type_row_comes_back_as_a_value_the_enum_has(client):
     """铺出库里有过的每一个值，跑一遍改写，再从 ORM 读回来核对。"""
     rewrite = _load_migration().rewrite_old_author_types
     ids: dict[str, uuid.UUID] = {}
@@ -77,7 +85,8 @@ def test_every_old_author_type_row_comes_back_as_one_of_the_two(client):
             for key, stored in SEEDED.items():
                 block_id = uuid.uuid4()
                 ids[key] = block_id
-                # 旧值进不了 ORM——枚举里已经没有它们了，这正是要改写的理由。
+                # `human`/`ai` 进不了 ORM——枚举里已经没有它们了，这正是要改写
+                # 的理由；其余三个值照样从这里铺，同一条路，少一处差别。
                 await s.execute(
                     text(
                         "INSERT INTO blocks (id, project_id, topic_id, kind, "
@@ -125,5 +134,5 @@ def test_every_old_author_type_row_comes_back_as_one_of_the_two(client):
     got, distinct = asyncio.run(_read_back())
 
     assert got == EXPECTED
-    # 整张表只剩枚举认得的两个值——一条旧行残留下来，下一次取到它就是 LookupError。
-    assert distinct == {"participant", "platform"}
+    # 整张表只剩枚举认得的值——一条 human/ai 残留下来，下一次取到它就是 LookupError。
+    assert distinct == {"participant", "platform", "system"}

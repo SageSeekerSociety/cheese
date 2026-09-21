@@ -3476,7 +3476,7 @@ class ChatService:
             return None
         if isinstance(event, AgentSubagentStart):
             # The platform's own sentence about a worker, not anybody's words —
-            # so `system`, the same as every other line the platform says out
+            # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
             # a remark 芝士 never made.
             content, author_type = "分身开工", AuthorType.platform

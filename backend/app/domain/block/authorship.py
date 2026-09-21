@@ -8,6 +8,10 @@
 
 所以这里只答一个问题：**这条事件是参与者写的，还是平台自己写的。**「是不是芝士
 说的」去问署名（`app.domain.identity.handles`）。
+
+判据写成「是不是 participant」而不是「是不是 platform」，存量行才不用管：平台那
+一档的旧名字 `system` 还在库里（改写在下一次发布，见 `AuthorType.system`），它同
+样不是 participant，于是同样判成平台自己写的。
 """
 
 from sqlalchemy import ColumnElement

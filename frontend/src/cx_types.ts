@@ -80,8 +80,9 @@ export interface Topic {
 }
 
 // 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
-// ——见 `lib/authorship.ts`。
-export type AuthorType = 'participant' | 'platform'
+// ——见 `lib/authorship.ts`。`system` 是 `platform` 在存量行上的旧名字，后端下一次
+// 发布把那些行改写过来之后它消失。
+export type AuthorType = 'participant' | 'platform' | 'system'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
 // e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.

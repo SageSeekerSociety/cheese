@@ -52,4 +52,13 @@ describe('platform：不是谁说的话', () => {
     expect(isAgentBlock(block('bobby', 'platform'))).toBe(false)
     expect(isPersonBlock(block('bobby', 'platform'))).toBe(false)
   })
+
+  it('旧名字 system 的存量行，答案一模一样', () => {
+    // 后端这一版只在枚举里改了名字，库里的行还写着 `system`，改写在下一次发布。
+    // 这一条要是红的，时间线上每一条历史平台事件都会变成 bobby 的聊天气泡。
+    expect(isAgentBlock(block('cheese', 'system'))).toBe(false)
+    expect(isPersonBlock(block('cheese', 'system'))).toBe(false)
+    expect(isAgentBlock(block('bobby', 'system'))).toBe(false)
+    expect(isPersonBlock(block('bobby', 'system'))).toBe(false)
+  })
 })

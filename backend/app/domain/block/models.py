@@ -69,6 +69,19 @@ class AuthorType(enum.StrEnum):
     # 平台自己产的事件：部署提醒、闸门结论、自动重发。
     platform = "platform"
 
+    # 上一档在存量行里的旧名字。没有一处代码再写它，读它的只有
+    # `block/authorship.py`（它不是 participant，于是照样判成平台自己写的）和前端
+    # 的 `lib/authorship.ts`。
+    #
+    # 为什么不在这一次连行一起改掉：`Enum(AuthorType, native_enum=False)` 绑的是
+    # Python 枚举，而 `deploy/deploy-docker.sh` 是先 `alembic upgrade head` 再换
+    # 容器——改写发生的那一刻，服务的还是上一版镜像，它的枚举里没有 platform，
+    # 取到一行就是 LookupError，而平台事件几乎每个房间都有。所以「加值」和「改
+    # 数据」隔一次发布：这一次只把 platform 加进来、写入端全改成它；等这一版镜像
+    # 上了 dev，下一次再 `UPDATE ... SET 'platform' WHERE author_type='system'`
+    # 并把这一档删掉。
+    system = "system"
+
 
 # `meta` key carried by every new message/attachment that arrives as an input.
 # Its value is null

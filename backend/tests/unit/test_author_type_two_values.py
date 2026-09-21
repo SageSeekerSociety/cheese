@@ -1,9 +1,11 @@
 """守卫：事件行的作者只分「参与者」和「平台」两档。
 
-第一条判据是枚举自己：成员集合恰好是那两个。合并档位的难处从来不在改枚举，在于
+第一条判据是枚举自己：成员集合恰好是那两档——`participant`、`platform`，加上
+`platform` 在存量行里的旧名字 `system`，它随下一次发布的改写一起消失（为什么不能
+和改名同一次上线，见 ``AuthorType.system``）。合并档位的难处从来不在改枚举，在于
 全仓 30 多处读点各自用 ``author_type == ai`` 回答了一个它答不了的问题（「这句是
-不是芝士说的」）；只要枚举里还留着第三档，下一个人写下 ``AuthorType.ai`` 时什么
-也不会响。现在它会响：那个名字不存在了，一取就是 ``AttributeError``。
+不是芝士说的」）；只要枚举里还留着 ``human``/``ai``，下一个人写下 ``AuthorType.ai``
+时什么也不会响。现在它会响：那两个名字不存在了，一取就是 ``AttributeError``。
 
 第二条判据补的是第一条抓不到的那一半。``AuthorType.ai`` 是属性访问，没了就炸；
 而 ``author_type.value in {"human": 0, "ai": 0}`` 里旧值是一个**字符串字面量**，
@@ -78,8 +80,16 @@ def _author_type_as_a_string_lines(tree: ast.AST) -> list[int]:
 
 
 def test_the_column_answers_participant_or_platform_and_nothing_else() -> None:
-    """再加一档就是再一次「按种类分叉」，而那正是这一列被改掉的理由。"""
-    assert {member.value for member in AuthorType} == {"participant", "platform"}
+    """再加一档就是再一次「按种类分叉」，而那正是这一列被改掉的理由。
+
+    `system` 不是第三档，是 `platform` 在存量行里的旧名字：没有一处代码再写它，
+    下一次发布把那些行改写过来之后它从这里消失。
+    """
+    assert {member.value for member in AuthorType} == {
+        "participant",
+        "platform",
+        "system",
+    }
 
 
 def test_every_scanned_root_still_exists() -> None:
