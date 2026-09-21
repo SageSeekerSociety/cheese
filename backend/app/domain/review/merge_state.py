@@ -62,6 +62,7 @@ MergeState = Literal["clean", "unstable", "blocked", "behind", "dirty", "unknown
 #: 透传模式下 GitHub 的原话；``no_obstacle`` → clean，没有任何东西拦着；
 #: ``no_signal`` → 什么都还不知道。
 ReasonKind = Literal[
+    "dependency",
     "github_verdict",
     "conflict",
     "draft",

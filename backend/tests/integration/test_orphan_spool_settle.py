@@ -21,8 +21,8 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
@@ -254,7 +254,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
             project_id=_pid,
             topic_id=tid,
             author="u",
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             content="修一下登录页",
             kind=BlockKind.message,
         )

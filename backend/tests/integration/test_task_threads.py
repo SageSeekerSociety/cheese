@@ -85,7 +85,7 @@ def _room_with_threads(client) -> dict:
                     topic_id=room.id,
                     task_id=task.id if task else None,
                     kind=kind,
-                    author_type=AuthorType.human,
+                    author_type=AuthorType.participant,
                     author="alice",
                     content=content,
                     created_at=at,

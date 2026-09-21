@@ -1,6 +1,7 @@
 """Drive central chat turns through native Claude Code and RC."""
 
 import argparse
+import asyncio
 import json
 import os
 import shlex
@@ -26,6 +27,74 @@ from tests.support.harness_prompts import event_prompts, system_prompt  # noqa: 
 sys.path.insert(0, str(SOURCE))
 from client import RemoteClient, prepare  # noqa: E402
 from private import release, target  # noqa: E402
+
+
+def checkout_after_the_round(room):
+    """Stage one attachment, then read the checkout's own working-tree status.
+
+    This is the acceptance behind 结论 49 / 不变量 I21b, and it is the half the
+    unit guards cannot reach. They count the call sites that ship file bytes and
+    make that one entry point assert its prefix; they see nothing of the files
+    the platform lays down by shipping shell to `hub.exec`, nothing of what the
+    agent's own harness writes, and nothing of a path assembled at runtime. The
+    checkout can answer all of that itself, because git already tracks exactly
+    the distinction the rule is about: what is in the tree, and what is sitting
+    untracked beside it in somebody's repository waiting for them to wonder who
+    put it there.
+
+    The attachment is staged first so the round ends having actually exercised
+    the write this rule permits — a clean checkout proves nothing if nothing was
+    written. It goes through the real `place.write` and the real executor, and
+    lands in the session's home; the checkout is that home's `room/`.
+    """
+    from app.domain.agent import device_provider, place
+
+    home = device_provider.device_home_dir(
+        uuid.UUID(room.project), uuid.UUID(room.target["resource_id"])
+    )
+    landed = asyncio.run(
+        place.write(
+            b"attachment bytes",
+            home=home,
+            name="uploads/acceptance/图.png",
+            hub=room,
+            device_id="executor",
+            screen="screen",
+            execution_target=room.target,
+        )
+    )
+    # Resolved on both sides: the executor answers with the path it resolved
+    # against its own `HOME`, symlinks already followed.
+    expected = (room.home / "attachments/uploads/acceptance/图.png").resolve()
+    assert Path(landed) == expected, (landed, str(expected))
+    assert Path(landed).read_bytes() == b"attachment bytes"
+
+    def git(*arguments):
+        return subprocess.run(
+            ["git", "-C", str(room.work), *arguments],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    # Named one by one, not "non-empty is fine": the three files this round's
+    # own actions create are the agent's work, and a platform file mixed in
+    # among them is precisely what would otherwise read as normal.
+    porcelain = git("status", "--porcelain", "--untracked-files=all").splitlines()
+    assert set(porcelain) == {"?? custom.txt", "?? draft.md", "?? setup-result"}, (
+        porcelain
+    )
+    # Both lists, because the rule has two halves and they fail differently: a
+    # platform directory committed is in `ls-files`, one merely dropped beside
+    # the work is only in the untracked half — and that is the half nobody
+    # notices until it is in someone else's `git status` forever.
+    present = set(git("ls-files").split()) | {line[3:] for line in porcelain}
+    for name in (".claude", ".cheese", "docs/topics"):
+        intruders = sorted(
+            path for path in present if path == name or path.startswith(name + "/")
+        )
+        assert not intruders, (name, intruders)
+    return porcelain
 
 
 def main():
@@ -329,6 +398,9 @@ def main():
         )
         for event in platform_events:
             assert event in user_text, event
+        checkout = None
+        if room:
+            checkout = checkout_after_the_round(room)
         dump(folder / "provider-requests.json", requests)
         terminal()
         dump(
@@ -340,6 +412,7 @@ def main():
                 "platform_events": list(event_prompts()),
                 "model_requests": len(server.state["requests"]),
                 "central_file_unchanged": True,
+                **({"checkout_after_the_round": checkout} if checkout else {}),
             },
         )
     finally:

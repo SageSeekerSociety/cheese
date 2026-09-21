@@ -66,7 +66,7 @@ async def _event(
             topic_id=uuid.UUID(room_id),
             task_id=uuid.UUID(task_id) if task_id else None,
             author="cheese",
-            author_type=AuthorType.ai,
+            author_type=AuthorType.participant,
             content=text,
             kind=BlockKind.event,
         )

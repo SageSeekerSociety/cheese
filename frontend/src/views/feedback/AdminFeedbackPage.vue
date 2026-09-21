@@ -141,7 +141,12 @@ onMounted(async () => {
             </td>
             <td class="fb-td">
               <div class="d-flex align-center ga-2">
-                <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="22" />
+                <FeedbackAuthorAvatar
+                  :handle="item.author_handle"
+                  :is-agent="item.author_is_agent"
+                  :avatar-id="item.author_avatar_id"
+                  :size="22"
+                />
                 <span>{{ item.author_handle }}</span>
                 <!-- 私密反馈在管理端必须看得出来：它和公开的挤在同一栏里长得一样，
                      管理员就得靠读正文才发现「这条别人看不到」。 -->

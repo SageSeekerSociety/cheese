@@ -330,43 +330,6 @@ def test_resolve_attributes_the_decision_to_the_verified_caller(client):
     assert decision["author"] == "alice"
 
 
-# ---- The overview board no longer republishes everyone's mailbox --------------
-
-
-def test_overview_requires_auth_and_shows_only_the_callers_items(client):
-    pid = _project(client)
-    # Both handles are teammates by intent: the property under test is that
-    # membership gets you the board, not that it gets you someone else's mail.
-    _add_member(client, pid, "alice")
-    _add_member(client, pid, "bob")
-    _decision(client, pid, "alice的事", target="alice")
-    _decision(client, pid, "bob的事", target="bob")
-    r = client.post(
-        f"/projects/{pid}/alerts",
-        json={
-            "level": "strong",
-            "kind": "accept_request",
-            "title": "大家的事",
-        },
-    )
-    assert r.status_code == 200, r.text
-
-    # Anonymous → 401, and no titles/ids leak.
-    r = client.get(f"/projects/{pid}/overview")
-    assert r.status_code == 401, r.text
-    assert "bob的事" not in r.text
-
-    # Alice sees her own slice + broadcasts — never bob's.
-    ov = client.get(
-        f"/projects/{pid}/overview", headers=session_auth_headers("alice")
-    ).json()["data"]
-    waiting = ov["waiting_on_you"]
-    assert [x["title"] for x in waiting.get("alice", [])] == ["alice的事"]
-    assert "bob" not in waiting
-    flat = [x["title"] for items in waiting.values() for x in items]
-    assert "大家的事" in flat and "bob的事" not in flat
-
-
 # ---- topic-unread: same rule, same layer --------------------------------------
 
 
@@ -400,7 +363,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
                 author=author,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content="msg",
                 kind=BlockKind.message,
             )
@@ -422,7 +385,7 @@ def _topic_unread(client, project_id: str, handle: str) -> dict:
 
 
 def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
-    """Sibling of the /overview hole: /members/{handle}/summary read the NAMED
+    """Sibling of the mailbox hole: /members/{handle}/summary read the NAMED
     member's inbox with no auth at all, so anyone could harvest anybody's
     pending decisions (titles + ids) by naming them in the URL."""
     pid = _project(client)

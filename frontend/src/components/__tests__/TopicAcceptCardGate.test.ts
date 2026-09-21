@@ -53,11 +53,10 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals_required: 1,
     pr_number: null,
     forge: {
-      kind: 'platform',
+      kind: 'forgejo',
       reports_checks: false,
       hosts_proposals: false,
       can_write_remote: false,
-      has_external_remote: false,
       pushes_to_external_remote: false,
       identity: 'platform',
       declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',

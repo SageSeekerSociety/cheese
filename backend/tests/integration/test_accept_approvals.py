@@ -10,6 +10,10 @@ import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import _make_card as _remote_card
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 @pytest.fixture(autouse=True)
@@ -32,18 +36,12 @@ def _make_topic(client, project_id: str) -> str:
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
-    r = client.post(
-        f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
-        headers=delivery_headers(client, topic_id),
-        json={
-            "new_artifact": "报告",
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
-        },
+    card_id = _remote_card(client, topic_id, reviewer)
+    return next(
+        card
+        for card in client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
+        if card["id"] == card_id
     )
-    assert r.status_code == 200
-    return r.json()["data"]
 
 
 def _require(client, project_id: str, n: int) -> None:
@@ -56,7 +54,7 @@ def _require(client, project_id: str, n: int) -> None:
 def _approve(client, card_id: str, handle: str):
     return client.post(
         f"/accept-cards/{card_id}/approve",
-        json={"approver_handle": handle},
+        json={"approver_handle": handle, "head_sha": _rendered_head(client, card_id)},
         headers=session_auth_headers(handle),
     )
 
@@ -69,7 +67,10 @@ def test_default_single_approval_backward_compat(client):
     assert card["approvals_required"] == 1
     assert card["approvals"] == []
 
-    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
     assert r.status_code == 200
     out = r.json()["data"]
     assert out["status"] == "accepted"
@@ -84,7 +85,10 @@ def test_accept_short_of_votes_structured_error(client):
     card = _make_card(client, tid)
     assert card["approvals_required"] == 3
 
-    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
     assert r.status_code == 422
     # Structured shortfall the frontend can display: 还差 N 票 (alice's own
     # accept would count as 1 of 3).
@@ -107,7 +111,10 @@ def test_approvals_then_accept_merges(client):
     assert r.json()["data"]["approvals"] == ["bob"]
 
     # bob's vote + alice's accept = 2/2 → the accept executes.
-    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    r = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
     assert r.status_code == 200
     out = r.json()["data"]
     assert out["status"] == "accepted"
@@ -150,7 +157,10 @@ def test_approve_decided_card_422(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     card = _make_card(client, tid)
-    client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
 
     r = _approve(client, card["id"], "bob")
     assert r.status_code == 422
@@ -162,7 +172,10 @@ def test_revoke_keeps_approvals_history(client):
     _require(client, pid, 2)
     card = _make_card(client, tid)
     _approve(client, card["id"], "bob")
-    client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card["id"])},
+    )
 
     r = client.post(f"/accept-cards/{card['id']}/revoke", json={"decided_by": "alice"})
     assert r.status_code == 200

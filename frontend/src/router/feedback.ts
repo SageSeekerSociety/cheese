@@ -1,9 +1,9 @@
 import type { RouteRecordRaw } from 'vue-router'
 
 /**
- * 反馈的路由。五条都在这里，预览入口（`src/proto-feedback.ts`）也直接用它。
+ * 反馈的路由。四条都在这里，预览入口（`src/proto-feedback.ts`）也直接用它。
  *
- * 五条都是**顶层**的，没有一个挂在 /projects/:id 下面 —— 反馈说的是平台本身，
+ * 四条都是**顶层**的，没有一个挂在 /projects/:id 下面 —— 反馈说的是平台本身，
  * 跟「我现在在哪个项目里」没有关系，挂在项目下面会让人以为这条反馈只属于那个项目。
  *
  * `/feedback/mine` 写在 `/feedback/:id` **前面**：vue-router 4 的排序本来就把静态段
@@ -43,11 +43,5 @@ export default [
     name: 'AdminFeedback',
     component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
     meta: { title: '反馈管理', isFullPage: true },
-  },
-  {
-    path: '/design/feedback',
-    name: 'FeedbackDesign',
-    component: () => import('@/views/feedback/FeedbackDesignPage.vue'),
-    meta: { title: '数据与架构', isFullPage: true },
   },
 ] as RouteRecordRaw[]

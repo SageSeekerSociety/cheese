@@ -57,7 +57,7 @@ function message(roomId: string, author: string) {
     id: 'b1',
     topic_id: roomId,
     kind: 'message',
-    author_type: 'human' as const,
+    author_type: 'participant' as const,
     author,
     content: '这条谁发的？',
     created_at: '2026-08-15T09:00:00Z',

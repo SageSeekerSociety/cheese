@@ -2,11 +2,13 @@
 
 import asyncio
 import uuid
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
+from app.domain.agent import place
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
 from app.domain.agent.platform_failures import TURN_TIMEOUT_MESSAGE
+from app.domain.device.supply import Supply
 
 
 class ActivityClock(Protocol):
@@ -27,6 +29,26 @@ class ScreenSetupError(Exception):
     def __init__(self, message: str, *, failure_code: str | None = None) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+
+
+class Placement(NamedTuple):
+    """``precheck`` 的答案：这一轮落在哪台机器上、以这个房间的哪个分身，以及这台
+    机器是不是为这一轮租来的一双手 (结论 19)。
+
+    ``rented`` 是「这一轮要不要一双手」这一问的答案本身，落在解析的产物上，下游
+    读它而不是各自再推一遍：没租手的一轮跑在这条会话自己的草稿区里，租到手的一轮
+    跑在项目的工作区里。房间是不是私聊、记忆算谁的，都是另外的事实，谁也不兼这一
+    份差。
+
+    ``machine`` 在中心通道上是租来的那台执行机，在别的通道上就是开屏的那一台；
+    没租手时三条通道给的都是这条会话自己的机器。哪一种都解析得出一台在线的机器，
+    解析不出来这一轮就已经带着原因停了，所以这里没有「没有机器」这一档。
+    """
+
+    machine: str
+    agent_user_id: int
+    agent_handle: str
+    rented: bool
 
 
 class Channel:
@@ -110,6 +132,34 @@ class Channel:
     needs_topic_message: str = "本轮需要话题上下文"
     timeout_message: str = TURN_TIMEOUT_MESSAGE
 
+    # --- 地点：这条通道租出来的那双手 (结论 24、60) ---------------------------
+    #
+    # 物理事实写在这里，能力位（名字在 `place`）从它推出来，上游读能力位。
+    # 直接声明一张能力表的话，它会退化成「写它那天恰好有这个本事的通道」的清单，
+    # 而继承一份表的子类会连那张过期的清单一起继承走——`compute.py` 里那条恒为真
+    # 的 `isinstance(c, DeviceChannel)` 就是这么来的。
+
+    #: 这台机器是谁开的。它今天只回答一个问题：一台这样进来的机器归哪条通道认领
+    #: （`owns` 就在下面）。
+    supply: Supply = Supply.self_hosted
+
+    #: 这条通道上的手，是不是就是跑会话进程的那台机器。False 表示工具要再跳一程
+    #: 到执行机上去——进程和工作区不在一起的骨架才需要那一跳。
+    hands_here: bool = True
+
+    def capabilities(self) -> frozenset[str]:
+        """这个地点给得出什么 —— 由上面那些物理事实推出来，不是各家自己报一份。"""
+        return frozenset({place.HANDS_HERE}) if self.hands_here else frozenset()
+
+    def owns(self, supply: Supply) -> bool:
+        """一台这样进来的机器，是不是这条通道该认领的。
+
+        两条通道把话题绑进同一张表，所以一条绑定不说是谁做的——机器说，而供给正是
+        分开它们的那根轴。这里读的是同一位 `supply`，不是各通道自己写一条反过来的
+        判断：反着写的那一条，在轴上多一个取值的那天就是错的。
+        """
+        return supply is self.supply
+
     def available(self) -> bool:
         return True
 
@@ -158,13 +208,22 @@ class Channel:
         """Drop whatever this channel remembers about a topic being torn down."""
         del topic_id
 
-    async def precheck(self, session: SessionRef) -> object:
+    async def precheck(self, session: SessionRef, *, needs_place: bool) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the
         hook queue is claimed — a turn that cannot run at all must never touch
         the router. Raise ``ScreenSetupError`` to end the turn with a clean
         error result. The return value is handed to ``ensure_ready`` as
         ``precheck`` so a channel doesn't resolve twice (the device channel
-        resolves its pinned device here)."""
+        resolves its pinned device here).
+
+        ``needs_place`` is this TURN's answer to 「要不要一双手」 (结论 19).
+        It has no default: every caller says which kind of turn this is, so a
+        new one cannot inherit 「租」 by saying nothing. Every channel that
+        resolves a work machine has to answer it, because a turn that touches no
+        file must not be refused for a work machine being offline (不变量 I2) —
+        it runs on the session's own machine instead. This base resolves
+        nothing, so it has nothing to decline."""
+        del needs_place
         return None
 
     async def ensure_ready(

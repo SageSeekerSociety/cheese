@@ -1,4 +1,4 @@
-"""Aggregation routes — project overview (§7.2) and Space board (§7.3)."""
+"""Aggregation routes — 成员页 (§7.2) and Space board (§7.3)."""
 
 import uuid
 from typing import Annotated
@@ -20,28 +20,6 @@ router = APIRouter(prefix="", tags=["dashboard"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-@router.get("/projects/{project_id}/overview")
-async def project_overview(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """事维度总览 — for a verified caller; 等你处理的事 shows THEIR items plus
-    broadcasts, never other members' mailboxes (those ids/titles used to leak
-    here unauthenticated).
-
-    ``resolve_recipient`` answers whose mailbox this is, which is a different
-    question from whether this caller may look at this project at all — and it
-    answered the second one with "anybody signed in". The card it returns
-    carries the roster with roles and every topic's title and status, i.e. the
-    same project content ``/contributions`` and ``/usage`` next door guard, so
-    the 项目成员 door comes first and the mailbox is resolved behind it."""
-    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    viewer = await resolver.resolve_recipient(
-        requested=None, project_id=project_id, allow_anonymous=False
-    )
-    return ok(await DashboardService(db).project_overview(project_id, viewer=viewer))
-
-
 @router.get("/spaces/{space_id}/dashboard")
 async def space_dashboard(space_id: int, db: DbSession) -> dict:
     return ok(await DashboardService(db).space_board(space_id))
@@ -57,9 +35,9 @@ async def member_summary(
     """成员页 (spec §7.2): one member's topics + waiting items + role.
 
     ``user_handle`` says whose page this is, not who is asking — the caller is
-    resolved like on /overview above, and ``waiting_on_you`` is trimmed to what
-    the viewer may see (this route used to hand the named member's inbox to
-    anyone unauthenticated).
+    resolved from the credential, and ``waiting_on_you`` is trimmed to what the
+    viewer may see (this route used to hand the named member's inbox to anyone
+    unauthenticated).
 
     The half that is the same for everyone is still project content: the names
     of the members who started these topics, the topics' titles and statuses,

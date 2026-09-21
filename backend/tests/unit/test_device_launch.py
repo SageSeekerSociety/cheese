@@ -446,7 +446,6 @@ def _screen_launch(
     resume_session_id=None,
     extra_env=None,
     topic_id="",
-    git_remote=None,
     execution_target=None,
     remote_control=False,
     ca_pem="",
@@ -466,7 +465,6 @@ def _screen_launch(
         project_id="P",
         topic_id=topic_id,
         agent_handle="ops",
-        git_remote=git_remote,
         execution_target=execution_target,
         remote_control=remote_control,
         ca_pem=ca_pem,
@@ -523,7 +521,6 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
         model="test",
-        git_remote="http://h/projects/P/git",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
