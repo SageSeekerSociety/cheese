@@ -139,11 +139,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
         ("app.domain.topic.services", "app.domain.project.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.identity.repositories"),
         ("app.domain.topic_membership.services", "app.domain.membership.repositories"),
         ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.user.repositories"),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         # --- app/api/routes ---

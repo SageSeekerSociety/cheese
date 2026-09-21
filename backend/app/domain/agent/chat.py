@@ -2883,12 +2883,38 @@ class ChatService:
                 # Private topics have no roster to resolve against (and expose
                 # no member list), so they store the content verbatim.
                 # 队友已经在这张名册上（``membership/roster.py``），每一位带着自己
-                # 的名字，所以这里不再把席位和人拼一次——拼出来的那份就是第二份声明。
+                # 的名字，所以名字不再另拼一份——拼出来的那份就是第二份声明。
                 roster = (
                     []
                     if topic.is_private or "@" not in content
                     else await roster_rows(session, topic.project_id)
                 )
+                # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
+                # 的补一行。一间还挂着共用 `cheese` 席位的老房间（那一步是惰性的，
+                # 等这间房的 agent 下次动手才迁，见 `migrate_shared_agent_seat`）在
+                # 项目名册上没有对应的行——名册上叫「芝士」的是项目的默认实例，
+                # 「@芝士」展开成它就等于 @ 了一个没坐在这间房里的队友：这一轮起不
+                # 来，通知还发给了它。反过来也成立：成员表里历史上落过的一行
+                # `cheese` 会以人的身份排在名册最前，在**正常**房间里把「@芝士」抢
+                # 成 <@cheese>。谁坐在这间房里，谁先答。
+                # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
+                # 的定位一致。
+                if roster and agent_handles:
+                    row_of = {row["handle"]: row for row in roster}
+                    seated = set(agent_handles)
+                    roster = [
+                        row_of[handle]
+                        if handle in row_of
+                        else {
+                            "handle": handle,
+                            "name": (
+                                by_seat[handle].display_name
+                                if handle in by_seat
+                                else agent.display_name
+                            ),
+                        }
+                        for handle in agent_handles
+                    ] + [row for row in roster if row["handle"] not in seated]
                 if roster:
                     topic_refs = [
                         {"id": str(t.id), "title": t.title}
