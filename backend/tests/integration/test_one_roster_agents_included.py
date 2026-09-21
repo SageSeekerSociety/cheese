@@ -195,9 +195,15 @@ def test_a_retired_teammate_is_not_offered_as_someone_to_hand_work_to(
     retired = _teammate(client, project_id, "old-hand", "退休")
     _retire(client, project_id, retired["id"])
     room = _room(client, project_id)
+    answering = next(row for row in _agents(client, project_id) if row["is_default"])
 
+    # 这一轮得先跑起来才有提示词可看，而跑不跑只由正文里点了谁的名决定（不变量
+    # I13）：帧上没有「叫不叫它」这一位，一句谁也没 @ 的「开始吧」落库之后就到此
+    # 为止。点的是这间房落到的那一位，也就是项目的默认队友。
     with client.websocket_connect(chat_ws_url(room, OWNER)) as ws:
-        ws.send_json({"type": "message", "content": "开始吧", "summon": True})
+        ws.send_json(
+            {"type": "message", "content": f"@{answering['seat_handle']} 开始吧"}
+        )
         while True:
             frame = ws.receive_json()
             if frame["type"] in {"done", "error"}:
