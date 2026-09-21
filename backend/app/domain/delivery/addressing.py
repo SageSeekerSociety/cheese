@@ -123,11 +123,6 @@ class Addressed:
 
     recipients: tuple[Recipient, ...] = ()
 
-    @property
-    def handles(self) -> tuple[str, ...]:
-        """收件人的 handle，顺序同 `recipients`。"""
-        return tuple(r.handle for r in self.recipients)
-
     def reason_for(self, handle: str) -> str | None:
         """这条事件凭什么点到 `handle` —— None = 没点到他。"""
         for r in self.recipients:
@@ -143,9 +138,12 @@ NOBODY = Addressed()
 def address(event: Event, next_hand: Hand) -> Addressed:
     """这条事件点到了谁。
 
-    下一步在平台手上就没有收件人 —— 那一档是结论 15 收紧「一律告诉人」的那一半，
-    而它在这里是**结构上**成立的：平台在处理的事拿不出收件人，不是靠调用点记得别
-    点名。
+    下一步在平台手上就没有收件人 —— 那一档是结论 15 收紧「一律告诉人」的那一半。
+
+    `next_hand` 是调用点**声明**的，不是这里从状态算出来的：今天三个投递调用点都写
+    死 `Hand.participant`，所以一条平台在处理的事件被声明成「在参与者手上」，这里照
+    样会算出收件人来。这一档要变成拿不出收件人，得等投递侧也从看板那一列取答案（`hand_of`
+    已经在那儿，今天只有「待我处理」那份清单在用）。
 
     同一个人只出现一次，带他最强的那个理由 —— 下面这个顺序就是判据本身：一个待确
     认问题挡住其余所有事，所以「被问的那个人」压过「验收人」，而卡递给谁又比「他

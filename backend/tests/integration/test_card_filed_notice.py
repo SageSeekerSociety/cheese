@@ -19,6 +19,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -121,6 +122,28 @@ def test_one_person_wearing_both_hats_hears_about_it_once(client):
     assert len(_notices(client, alice)) == 1
 
 
+def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
+    """卡递给 agent：房间里那一行照落，提需求的人照收，agent 的收件箱是空的。
+
+    agent 有用户行，handle 解析得出用户 id，所以它以前照样收到一条站内信 —— 一条
+    谁都不会打开的记录，没有报错也没有人看得见。同一条事件对人和 agent 说的是同一
+    句话（谁该收到），分岔只在怎么送到（`identity/arrival.py`）。
+    """
+    room = _room(client)
+    agent = topic_agent_handle(uuid.UUID(room))
+    agent_token = seed_user(client, agent)
+    reporter = seed_user(client, "bob")
+    _set_reporter(client, room, "bob")
+
+    assert _file_card(client, room, reviewer=agent).status_code == 200
+
+    (event,) = _filed_events(client, room)
+    assert f"待 {agent} 验收" in event["content"]
+    (row,) = _notices(client, reporter)
+    assert row["contextMetadata"]["content"] == event["content"]
+    assert _notices(client, agent_token) == []
+
+
 def test_a_notice_that_names_nobody_reaches_nobody(client):
     """驳回同样在房间里留一行，但它没点名收件人，所以谁的铃也不响。
 
@@ -147,11 +170,12 @@ def test_a_notice_that_names_nobody_reaches_nobody(client):
 
 
 def test_a_notice_the_platform_is_handling_reaches_nobody(client):
-    """下一步在平台手上的事，点了名也没有收件人。
+    """调用点声明下一步在平台手上，点了名也没有收件人。
 
     平台或芝士正在处理的事发一条通知出去，等于把一条不需要任何人动手的消息推到别
-    人面前。这一条现在是**结构上**成立的：寻址在平台那一档拿不出收件人，所以调用
-    点连一个人都递不进来 —— 不靠它记得别点名。
+    人面前。测的是「声明了平台，寻址就不给收件人，投递那一侧也就不发」这条通路 ——
+    不是「调用点不可能声明错」：哪一档由调用点给，今天三个投递调用点写死的都是
+    `Hand.participant`。
     """
     alice = seed_user(client, "alice")
     room = _room(client)

@@ -108,7 +108,6 @@ def test_reason_for_answers_only_about_the_people_it_named():
     assert addressed.reason_for("alice") == REASON_REVIEWER
     assert addressed.reason_for("bob") == REASON_REPORTER
     assert addressed.reason_for("carol") is None
-    assert addressed.handles == ("alice", "bob")
 
 
 # —— 看板那一列说的就是下一步在谁手上 ——————————————————————————
