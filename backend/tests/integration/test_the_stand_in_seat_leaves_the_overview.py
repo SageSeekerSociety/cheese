@@ -8,9 +8,10 @@
 留着不动的是另一种房间：总览里还坐着别的 agent，那就说不出替身站的是哪一个，和
 `f3a8c5d2e917` 当时的判断一致。
 
-退了役就不许自己回来：房间在 agent 开口前自己迁移共享席位那一步
-（`migrate_shared_agent_seat`），撞见总览上遗留的裸 `cheese` 行时也只是把它删掉，
-不再顺手种一个替身进去。
+退了役就不许自己回来：房间派生的 handle 已经没有铸造它的代码了（agent 的名字
+只从 agent 自己来），所以房间在 agent 开口前自己迁移共享席位那一步
+（`migrate_shared_agent_seat`）撞见总览上遗留的裸 `cheese` 行时只是把它删掉，
+补席位补的是这个项目自己那位芝士。替身只作为库里的存量出现在这里。
 """
 
 import importlib.util
@@ -22,11 +23,8 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.identity.handles import (
-    CHEESE_HANDLE,
-    agent_instance_handle,
-    topic_agent_handle,
-)
+from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
+from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -41,6 +39,24 @@ def _migration():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _stand_in(topic_id: uuid.UUID) -> str:
+    """旧代码从**房间**派生出来的那个 handle。
+
+    铸它的函数已经删了（一间房可以坐好几个 agent，从房间派生会给它们同一个名字），
+    所以这里逐字写出库里存着的那个字符串：这些用例面对的就是存量行。
+    """
+    return f"cheese-{topic_id.hex[:12]}"
+
+
+async def _seat_a_stand_in(session, topic_id: uuid.UUID) -> str:
+    """把一条替身席位放回库里——用户行、execution binding、名册行，旧代码留下的
+    就是这三样，缺了 binding 名册就不认它是 agent。"""
+    handle = _stand_in(topic_id)
+    await IdentityService(session).ensure_agent_user(handle=handle)
+    await TopicMemberService(session).ensure_agent_seat(topic_id, handle)
+    return handle
 
 
 def _unseed(conn, *, project_id: uuid.UUID, root_id: uuid.UUID, seat: str) -> None:
@@ -80,9 +96,8 @@ def test_the_overview_ends_up_with_one_cheese_and_its_lines(db_session, _portal)
         root = project.root_topic_id
         seeded_seat = agent_instance_handle(project.default_agent_instance_id)
         # 替身席位是旧代码的 seed_root 留下的：有自己的用户行和 binding。
-        await TopicMemberService(db_session).ensure_topic_agent_seat(root)
+        stand_in = await _seat_a_stand_in(db_session, root)
         await db_session.flush()
-        stand_in = topic_agent_handle(root)
         connection = await db_session.connection()
 
         def check(conn):
@@ -145,9 +160,8 @@ def test_a_room_seating_another_agent_keeps_its_stand_in(db_session, _portal):
         )
         members = TopicMemberService(db_session)
         await members.ensure_agent_seat(root, agent_instance_handle(other.id))
-        await members.ensure_topic_agent_seat(root)
+        stand_in = await _seat_a_stand_in(db_session, root)
         await db_session.flush()
-        stand_in = topic_agent_handle(root)
         connection = await db_session.connection()
 
         def check(conn):
@@ -193,12 +207,11 @@ async def _drop_seat(session, topic_id: uuid.UUID, handle: str) -> None:
 
 
 def test_migrating_a_shared_seat_does_not_re_seat_the_stand_in(db_session, _portal):
-    """旧房间自己迁移的那一步，不许把刚退役的替身种回总览。
+    """旧房间自己迁移的那一步，不许把替身种回总览。
 
-    回填之前总览上坐着替身，所以那一步里的 `ensure_topic_agent_seat` 是个幂等空
-    操作：删掉裸 `cheese` 行就收工。回填把替身撤掉之后，同一句话会真的插入——
-    名册上于是同时坐着实例席位、裸 `cheese` 和替身，撤掉实例席位后答话的又退回
-    替身，写闸门照样关不上。
+    总览上已经坐着这个项目自己的芝士，所以删掉裸 `cheese` 行就收工：补席位这一步
+    看到房间里还有 agent 就不动手。补种真的发生时补的也是同一位芝士——房间派生的
+    名字已经没有地方能造出来了。
     """
 
     async def run():
@@ -215,14 +228,20 @@ def test_migrating_a_shared_seat_does_not_re_seat_the_stand_in(db_session, _port
 
         roster = {m.member_handle for m in (await members.list_for_topic(root))[0]}
         assert CHEESE_HANDLE not in roster
-        assert topic_agent_handle(root) not in roster
+        assert _stand_in(root) not in roster
+        assert roster & {own} == {own}
         assert await members.resolve_agent_handle(root) == own
 
     _portal.call(run)
 
 
-def test_a_room_whose_last_agent_was_the_shared_seat_gets_its_own(db_session, _portal):
-    """裸 `cheese` 是这个房间最后一个 agent 席位时，迁移照旧给它换上分身。"""
+def test_a_room_whose_last_agent_was_the_shared_seat_gets_the_projects_cheese(
+    db_session, _portal
+):
+    """裸 `cheese` 是这个房间最后一个 agent 席位时，换上的是项目自己那位芝士。
+
+    换的不是一个按房间派生的名字：那样的话同一位芝士在两个房间里会有两个名字，
+    它在这里签的字和它在别处签的字就对不上了。"""
 
     async def run():
         members = TopicMemberService(db_session)
@@ -242,8 +261,10 @@ def test_a_room_whose_last_agent_was_the_shared_seat_gets_its_own(db_session, _p
 
         await members.migrate_shared_agent_seat(room.id)
 
+        own = agent_instance_handle(project.default_agent_instance_id)
         roster = {m.member_handle for m in (await members.list_for_topic(room.id))[0]}
         assert CHEESE_HANDLE not in roster
-        assert topic_agent_handle(room.id) in roster
+        assert _stand_in(room.id) not in roster
+        assert own in roster
 
     _portal.call(run)

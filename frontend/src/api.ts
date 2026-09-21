@@ -237,8 +237,23 @@ export async function refreshNow(): Promise<void> {
   await refreshInFlight
 }
 
+// Room chrome, chat and the work panel request the same roster/task summary
+// on mount. Share only pending reads; the next refresh always goes to the server.
+const pendingRoomReads = new Map<string, Promise<unknown>>()
+function roomRead<T>(path: string): Promise<T> {
+  const key = `${authToken()}:${path}`
+  const pending = pendingRoomReads.get(key)
+  if (pending) return pending as Promise<T>
+  const started = request<T>(path).finally(() => {
+    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
+  })
+  pendingRoomReads.set(key, started)
+  return started
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -307,6 +322,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
+    if (method !== 'GET') pendingRoomReads.clear()
     return envelope.data
   }
 }
@@ -622,7 +638,7 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
@@ -810,10 +826,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),
@@ -842,32 +867,36 @@ export function setTopicComputeProfile(
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
-// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
-// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
 export interface AgentFieldChoice {
   id: string
   label: string
   description: string
   default: boolean
-  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
-   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
-   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
-  models?: string[]
 }
 
-export interface AgentFieldOptions {
-  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
-  state: 'choosable' | 'unavailable'
+// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
+// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
+export interface ProjectDefaultModel {
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
   choices: AgentFieldChoice[]
-  reason: string
-  note: string
+  can_manage: boolean
 }
 
-export type AgentTypeOptions = Record<string, AgentFieldOptions>
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
 
-export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
 }
 
 // Built-in starting configurations, copied only when creating an agent.
@@ -1738,6 +1767,12 @@ export function getPrChecks(topicId: string, taskId?: string | null): Promise<Pr
   )
 }
 
+/** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
+ *  到——他要审的正是这一份。 */
+export function cardDeliverableUrl(cardId: string): string {
+  return `${BASE}/accept-cards/${encodeURIComponent(cardId)}/deliverable`
+}
+
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
 // 带上卡片渲染时 `merge_state.head_sha` 的值。轮询器每分钟把卡刷到 PR 的新
 // head，屏幕上那份不会自己变——不声明看的是哪一版，点下去合的就可能是一段没人
@@ -1881,7 +1916,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {

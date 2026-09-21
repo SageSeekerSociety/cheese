@@ -126,7 +126,7 @@ class CloudChannel(DeviceChannel):
                     lease.device_id,
                     visibility=await devices.binding_visibility(lease.device_id),
                 )
-            # 这个房间的 agent 身份：它的会话就是以这个身份记录和恢复的 (#660)。
-            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
+            # 答这间房的那个 agent 的身份：它的会话就是以这个身份记录和恢复的 (#660)。
+            agent = await IdentityService(session).ensure_room_agent_user(topic_id)
             await session.commit()
             return lease.device_id, agent.id, agent.username

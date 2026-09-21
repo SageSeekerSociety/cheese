@@ -264,6 +264,7 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
         e
         async for e in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -304,6 +305,7 @@ async def test_failed_precheck_never_touches_the_router():
         e
         async for e in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=_uuid.uuid4(),
             topic_id=topic_id,
             prompt="x",
@@ -556,6 +558,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
             event
             async for event in provider.run_turn(
                 session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -615,6 +618,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
             event
             async for event in provider.run_turn(
                 session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -670,6 +674,7 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -716,6 +721,7 @@ async def test_run_refuses_to_clobber_existing_attribution():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="inspect",
@@ -782,6 +788,7 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -831,6 +838,7 @@ async def test_run_turn_stop_drains_a_partial_message():
         event
         async for event in provider.run_turn(
             session_agent="agent",
+            agent_handle="cheese-a7a0268b96ff",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -1036,6 +1044,7 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
             event
             async for event in provider.run_turn(
                 session_agent="agent",
+                agent_handle="cheese-a7a0268b96ff",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -1130,7 +1139,7 @@ async def test_an_accepted_prompt_survives_a_late_first_receipt():
         await provider.send(
             SessionRef(project_id=project_id, topic_id=topic_id),
             "Finish the current command, then answer this message.",
-            Opening(system_prompt=""),
+            Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
             work_id=_uuid.uuid4(),
             on_mark=lambda _work: None,
         )
@@ -1251,7 +1260,7 @@ async def _one_topic_mid_hook(provider, router, project_id, topic_id):
     await provider.send(
         SessionRef(project_id=project_id, topic_id=topic_id),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
@@ -1381,7 +1390,7 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     await provider.send(
         SessionRef(project_id=project_id, topic_id=topic_id),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
@@ -1414,7 +1423,7 @@ async def _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
     await provider.send(
         SessionRef(project_id=project_id, topic_id=topic_id),
         "go",
-        Opening(system_prompt=""),
+        Opening(system_prompt="", agent_handle="cheese-a7a0268b96ff"),
         work_id=_uuid.uuid4(),
         on_mark=lambda _work_id: None,
     )
