@@ -70,7 +70,11 @@ onMounted(load)
       <v-select
         v-model="status"
         autocomplete="off"
-        :items="['PENDING', 'APPROVED', 'REJECTED'].map((value) => ({ value, title: t(`spaces.review.${value}`) }))"
+        :items="[
+          { value: 'PENDING', title: t('spaces.review.PENDING') },
+          { value: 'APPROVED', title: t('spaces.review.APPROVED') },
+          { value: 'REJECTED', title: t('spaces.review.REJECTED') },
+        ]"
         :label="t('spaces.review.status')"
         :disabled="loading || saving"
         hide-details
