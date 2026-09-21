@@ -1138,6 +1138,51 @@ export interface ProjectArtifactDetail extends ProjectArtifact {
   versions: ArtifactVersion[]
 }
 
+export interface ArtifactComparison {
+  kind: 'file' | 'merge' | 'link' | 'unavailable'
+  identical: boolean | null
+  note: string | null
+  files: {
+    path: string
+    diff: string | null
+    note: string | null
+    before_mode?: string | null
+    after_mode?: string | null
+    status?: string
+  }[]
+}
+
+export function compareArtifactVersions(
+  projectId: string,
+  artifactId: string,
+  before: string,
+  after: string
+): Promise<ArtifactComparison> {
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`
+  )
+}
+
+export async function artifactVersionBytes(
+  projectId: string,
+  artifactId: string,
+  cardId: string,
+  asPdf = false
+): Promise<ArrayBuffer> {
+  const response = await fetch(
+    artifactVersionFileUrl(projectId, artifactId, cardId) + (asPdf ? '?preview_pdf=true' : ''),
+    { headers: authHeaders() }
+  )
+  if (response.ok) return response.arrayBuffer()
+  let message = ''
+  try {
+    message = String((await response.json())?.message || '')
+  } catch {
+    /* Keep the HTTP error when the server sent no JSON. */
+  }
+  throw new Error(message || `未能读取这一版（HTTP ${response.status}）`)
+}
+
 export function getProjectArtifact(projectId: string, artifactId: string): Promise<ProjectArtifactDetail> {
   return request<ProjectArtifactDetail>(
     `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`
@@ -1363,7 +1408,7 @@ export async function previewDocumentPdf(
 
 // Downloads carry the same credentials as API requests, including token-only sessions.
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
-  const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })
+  const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
   const url = URL.createObjectURL(await res.blob())
   const link = document.createElement('a')

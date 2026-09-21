@@ -15,10 +15,42 @@ daemon (cheesed) can share them instead of drifting apart.
 """
 
 import hashlib
+from difflib import unified_diff
 
 # Above this, the panel offers download instead of an editor. The old unbounded
 # read turned a 52MB executable into a 127MB JSON body that froze the browser.
 MAX_TEXT_BYTES = 1024 * 1024
+
+
+def compare_bytes(before: bytes, after: bytes, left: str, right: str) -> dict:
+    """Compare retained bytes; an unavailable text diff never means equality."""
+    identical = before == after
+    if max(len(before), len(after)) > MAX_TEXT_BYTES:
+        return {
+            "identical": identical,
+            "diff": None,
+            "note": "oversized",
+        }
+    old, new = decode_text(before), decode_text(after)
+    if old is None or new is None:
+        return {
+            "identical": identical,
+            "diff": None,
+            "note": "binary",
+        }
+    # Keep line endings: a final newline is part of the delivered content too.
+    lines = unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+        fromfile=left,
+        tofile=right,
+    )
+    diff = "".join(
+        line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
+        for line in lines
+    )
+    return {"identical": identical, "diff": diff, "note": None}
+
 
 # A NUL in the first block is the classic binary signal, and cheap to check
 # before attempting a decode of the whole file.

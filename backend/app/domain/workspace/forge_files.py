@@ -26,7 +26,12 @@ from app.domain.project.forge import (
 )
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
-from app.domain.workspace.textfile import MAX_TEXT_BYTES, content_version, decode_text
+from app.domain.workspace.textfile import (
+    MAX_TEXT_BYTES,
+    compare_bytes,
+    content_version,
+    decode_text,
+)
 
 
 def clean_path(path: str) -> str:
@@ -151,6 +156,50 @@ class ProjectFiles:
 
     async def committed_blobs(self, oids: list[str]):
         return {oid: await self._blob({"sha": oid}) for oid in dict.fromkeys(oids)}
+
+    async def compare_revisions(self, before: str, after: str) -> list[dict]:
+        """Compare two delivered trees, never a moving branch or PR merge-base."""
+        old = {entry["path"]: entry for entry in await self.committed_entries(before)}
+        new = {entry["path"]: entry for entry in await self.committed_entries(after)}
+        changes = []
+        for path in sorted(old.keys() | new.keys()):
+            left, right = old.get(path), new.get(path)
+            if left == right:
+                continue
+            entries = [entry for entry in (left, right) if entry]
+            result = {
+                "identical": False,
+                "diff": None,
+                "note": "unsupported",
+            }
+            if all(
+                entry["kind"] == "blob" and entry["bytes"] <= MAX_TEXT_BYTES
+                for entry in entries
+            ):
+                blobs = await self.committed_blobs([entry["oid"] for entry in entries])
+                result = await asyncio.to_thread(
+                    compare_bytes,
+                    blobs[left["oid"]] if left else b"",
+                    blobs[right["oid"]] if right else b"",
+                    path if left else "/dev/null",
+                    path if right else "/dev/null",
+                )
+                if result["diff"] is None:
+                    result["note"] = "unsupported"
+            changes.append(
+                {
+                    "path": path,
+                    "status": "added"
+                    if left is None
+                    else "removed"
+                    if right is None
+                    else "modified",
+                    "before_mode": left["mode"] if left else None,
+                    "after_mode": right["mode"] if right else None,
+                    **result,
+                }
+            )
+        return changes
 
     async def comparison(self):
         task = await self.task()
