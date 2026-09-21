@@ -36,6 +36,17 @@ def _handles(client, project_id: str) -> set[str]:
     return {m["user_handle"] for m in rows}
 
 
+def _granted(client, project_id: str) -> set[str]:
+    """名册上**有自己那一行授权行**的 handle。
+
+    名册比成员表宽：所有者、小队带进来的人、这个项目的 AI 队友都在上面而没有成员行
+    （带 ``source`` 的就是这种）。「邀请有没有把谁放进来」问的是成员表那一半——被邀
+    请的人本来就在名册上的时候，看整张名册答不出这个问题。
+    """
+    rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
+    return {m["user_handle"] for m in rows if "source" not in m}
+
+
 def test_an_invitation_does_not_put_anyone_on_the_roster(client, bearer):
     project_id = _project(client)
     r = _invite(client, bearer, project_id, "alice", "lead")
@@ -296,7 +307,8 @@ def test_a_topic_derived_agent_handle_is_not_invited(client, bearer):
     r = _invite(client, bearer, project_id, handle)
     assert r.status_code == 422
     assert "AI 队友" in r.json()["message"]
-    assert handle not in _handles(client, project_id)
+    # 它是这个项目的队友，名册上本来就有它；这里问的是它有没有被**当人**放进成员表。
+    assert handle not in _granted(client, project_id)
 
 
 def test_an_agent_is_still_added_to_the_roster_directly(client, bearer):
