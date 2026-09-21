@@ -232,12 +232,34 @@ class FeedbackService:
     async def list_mine(
         self, *, handle: str, limit: int, offset: int
     ) -> tuple[list[Feedback], int]:
-        return await self._repo.list_related_to(
+        """「我的反馈」：清单里的每一条，详情页都开得了。
+
+        两步，因为规则只有一份拼写。SQL 那一步（`visible_to`）把「指派给我的」收
+        窄到一个**超集**——它带不动「今天还读得到那个房间」那半句，那是四张表四条
+        主张，抄进 WHERE 就是第二份迟早漂开的答案。最后一刀在这里，用的就是详情页
+        那个 `may_see`，所以清单和它自己的行不会各说一套。
+
+        挡下来的是哪一条：被移出项目、又恰好是某条私密反馈的负责人、而那条反馈提
+        出时他在那个房间里。详情页早就对他 404 了；少了这一步，清单还在把它的标题
+        和状态递给他。
+
+        总数跟着减这一页挡下的条数。一页装不下时它仍可能偏大（别的页上挡下的那几
+        条还算在里面），但只会偏大、不会偏小，而且它是一个数字不是一条能点开的行
+        ——前端拿它写「共 N 条」，一次只取一页。
+        """
+        is_admin = await self.is_admin(handle)
+        rows, total = await self._repo.list_related_to(
             handle,
-            is_admin=await self.is_admin(handle),
+            is_admin=is_admin,
             limit=limit,
             offset=offset,
         )
+        kept = [
+            row
+            for row in rows
+            if await self.may_see(row, handle=handle, is_admin=is_admin)
+        ]
+        return kept, total - (len(rows) - len(kept))
 
     async def counts(
         self, *, handle: str | None, is_admin: bool = False
@@ -539,8 +561,11 @@ class FeedbackService:
             environment=body.environment,
             submitted_by_handle=None,
             submitted_by_user_id=None,
-            topic_id=body.topic_id,
-            project_id=body.project_id,
+            # 没有房间来源，而且不是「客户端这次没填」：请求体里根本没有这个字段
+            # （`FeedbackCreate`）。人从反馈中心提的一条不是在任何房间里说的话，
+            # 所以房间那一档对它关着——`may_see` 的 `row.topic_id is None` 早退。
+            topic_id=None,
+            project_id=None,
             priority=body.priority,
             tags=body.tags,
         )
@@ -577,8 +602,10 @@ class FeedbackService:
             environment=body.environment,
             submitted_by_handle=submitted_by_handle,
             submitted_by_user_id=submitted_by_user_id,
-            topic_id=body.topic_id,
-            project_id=body.project_id,
+            # 从卡上取，不从请求体取——和作者同一条理由，而房间比作者更要紧：它是
+            # 可见性并集里「提出它的那个房间」那一档的授权键（`may_see`）。
+            topic_id=proposal.topic_id,
+            project_id=proposal.project_id,
             priority=body.priority,
             tags=body.tags,
         )

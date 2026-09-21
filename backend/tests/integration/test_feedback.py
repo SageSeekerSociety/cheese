@@ -118,6 +118,25 @@ def _report(client, handle: str, **body) -> dict:
     return r.json()["data"]
 
 
+def _report_in_room(client, project: str, topic: str, handle: str, **body) -> dict:
+    """在一个房间里提一条反馈，并返回创建出来的详情。
+
+    为什么不是 `_report(..., topic_id=...)`：请求体里没有 `topic_id` 这个字段。
+    它是可见性并集里「提出它的那个房间」那一档的授权键，所以由服务端从 URL 解出
+    来，客户端填不了（`FeedbackCreate`）。于是「带房间来源的反馈」在产品里只有一
+    种造法——agent 落一张提案卡，人按发送——测试里也只有这一种。
+    """
+    token = mint_scoped_token(project_id=project, topic_id=topic)
+    block_id = _propose(client, topic, token).json()["data"]["block_id"]
+    r = client.post(
+        f"/topics/{topic}/feedback-proposals/{block_id}/accept",
+        json={"title": "按钮点了没反应", **body},
+        headers=session_auth_headers(handle),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
 def _cards(client, handle: str | None = None, **params) -> list[dict]:
     headers = session_auth_headers(handle) if handle else None
     r = client.get("/feedback", params=params, headers=headers)
@@ -255,15 +274,14 @@ def test_the_room_that_filed_it_can_see_it(client):
     _join_project(client, project, DEPARTED, by=REPORTER)
     _join_room(client, topic, DEPARTED, by=REPORTER)
 
-    row = _report(
-        client,
-        REPORTER,
-        visibility="private",
-        topic_id=topic,
-        project_id=project,
-    )
+    # 提出之后才进这个房间的人：除了入房时刻，他和 ROOMMATE 处处相同——同一个项
+    # 目、同一个房间。不先把他加进项目的话，他的 404 有两个成因（名册时刻不对、
+    # 以及压根读不到这个项目的房间），删掉名册时刻那一句也照样绿。
+    _join_project(client, project, LATECOMER, by=REPORTER)
 
-    # 反馈提出之后才进这个房间的人：加人不是授权。
+    row = _report_in_room(client, project, topic, REPORTER, visibility="private")
+
+    # 加人不是授权：他进来时这条已经提完了。
     _join_room(client, topic, LATECOMER, by=REPORTER)
 
     def opened(handle: str) -> int:
@@ -292,6 +310,10 @@ def test_a_report_filed_outside_any_room_opens_no_second_door(client):
     """
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
+    # 项目也要进：不进的话他读不到这个项目的任何房间，那条 404 就变成「他不是项目
+    # 成员」的结论，而这条用例要钉的是「这条反馈没有房间来源」。挡住他的必须只有
+    # 这一件事。
+    _join_project(client, project, ROOMMATE, by=REPORTER)
     _join_room(client, topic, ROOMMATE, by=REPORTER)
 
     row = _report(client, REPORTER, visibility="private")
@@ -1467,7 +1489,7 @@ def test_a_report_can_point_at_the_topic_it_came_from(client):
     """
     project = _project(client, REPORTER)
     topic = _topic(client, project, REPORTER)
-    row = _report(client, REPORTER, topic_id=topic, project_id=project)
+    row = _report_in_room(client, project, topic, REPORTER)
     assert row["topic_id"] == topic
     assert uuid.UUID(row["id"])
 
@@ -1490,6 +1512,12 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     Written as an agreement over a table of rows rather than as one case: every
     row below is checked with the same two questions, so a future edit that widens
     or narrows either side lands here.
+
+    房间那一档在表里占两行，一开一关：在我还在的房间里提的（开），和在我已经离场
+    的那个项目的房间里提的（关）。后一行钉的是清单的收窄分两步——SQL 的
+    `visible_to` 带不动「今天还读得到那个房间」，`FeedbackService.list_mine` 用
+    `may_see` 补最后一刀。少了那一刀，被移出项目的负责人仍拿得到标题和状态，而详
+    情页对他是 404。
     """
     mine_private = _report(client, STRANGER, title="我提的私密", visibility="private")
     mine_public = _report(client, STRANGER, title="我提的公开")
@@ -1504,16 +1532,38 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     room = _topic(client, project, REPORTER, title="我也在的房间")
     _join_project(client, project, STRANGER, by=REPORTER)
     _join_room(client, room, STRANGER, by=REPORTER)
-    theirs_in_my_room = _report(
+    theirs_in_my_room = _report_in_room(
         client,
+        project,
+        room,
         REPORTER,
         title="别人在我房间里提的私密",
         visibility="private",
-        topic_id=room,
-        project_id=project,
+    )
+    # 第五档是第四档的离场那一侧，单独一个项目，免得撤销把上面那条也撤了：提出它
+    # 的那一刻我在那个房间里，今天我已经被移出那个项目。详情页对我 404（`may_see`
+    # 的房间那一档还要问「今天还读得到那个房间」），所以清单里也不能有它的标题
+    # ——SQL 那半句（`visible_to`）带不动这个判据，最后一刀在 `list_mine` 里。
+    left_project = _project(client, REPORTER)
+    left_room = _topic(client, left_project, REPORTER, title="我待过的房间")
+    _join_project(client, left_project, STRANGER, by=REPORTER)
+    _join_room(client, left_room, STRANGER, by=REPORTER)
+    theirs_in_a_room_i_left = _report_in_room(
+        client,
+        left_project,
+        left_room,
+        REPORTER,
+        title="别人在我待过的房间里提的私密",
+        visibility="private",
     )
 
-    for row in (theirs_private, theirs_public, theirs_security, theirs_in_my_room):
+    for row in (
+        theirs_private,
+        theirs_public,
+        theirs_security,
+        theirs_in_my_room,
+        theirs_in_a_room_i_left,
+    ):
         patched = client.patch(
             f"/admin/feedback/{row['id']}",
             json={"assignee_handle": STRANGER},
@@ -1528,6 +1578,9 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         headers=session_auth_headers(as_admin),
     )
     assert flagged.status_code == 200, flagged.text
+
+    # 指派落完之后才离场，否则测的是「指派给一个非成员」而不是「离场撤掉了它」。
+    _remove_from_project(client, left_project, STRANGER, by=REPORTER)
 
     listed = {card["id"] for card in _mine(client, STRANGER)}
 
@@ -1546,11 +1599,15 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         theirs_public,
         theirs_security,
         theirs_in_my_room,
+        theirs_in_a_room_i_left,
     ):
         assert (row["id"] in listed) == openable(row), row["title"]
-    # …and that row is on the opening side of the agreement, not the closed one:
-    # an agreement both halves get wrong the same way still passes the loop.
+    # …and the two room rows sit on **opposite** sides of the agreement, each one
+    # named: an agreement both halves get wrong the same way still passes the
+    # loop, and it would pass it twice if both rows happened to land closed.
     assert openable(theirs_in_my_room)
+    assert not openable(theirs_in_a_room_i_left)
+    assert theirs_in_a_room_i_left["id"] not in listed
 
     # The third arm — 我提的和 agent 替我提的 — is checked from the other side:
     # the reporter did not write this row (the agent did), and it is still theirs,
