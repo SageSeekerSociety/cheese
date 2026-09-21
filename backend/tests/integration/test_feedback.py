@@ -43,6 +43,12 @@ ADMIN = "fb-admin"
 STRANGER = "fb-stranger"
 REPORTER = "fb-reporter"
 
+#: 结论 47 第二档的三个角色：和提交者同在一个房间的人、同项目但不在那个房间的人、
+#: 以及反馈提出之后才被加进那个房间的人。
+ROOMMATE = "fb-roommate"
+OUTSIDER = "fb-outsider"
+LATECOMER = "fb-latecomer"
+
 #: 竞态用例把删除的锁拿满这么久才提交，窗口就是这么撑开的。长到「排队等锁」
 #: （约等于这一整段）和「根本没排」（毫秒）之间差三个数量级，短到整个用例还能忍受。
 _HOLD_SECONDS = 2.0
@@ -75,6 +81,24 @@ def _topic(client, project: str, handle: str, title: str = "反馈话题") -> st
         json={"project_id": project, "title": title},
         headers=session_auth_headers(handle),
     ).json()["data"]["id"]
+
+
+def _join_room(client, topic: str, handle: str, *, by: str) -> None:
+    r = client.post(
+        f"/topics/{topic}/members",
+        json={"handle": handle},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _join_project(client, project: str, handle: str, *, by: str) -> None:
+    r = client.post(
+        f"/projects/{project}/members",
+        json={"user_handle": handle, "role": "member"},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
 
 
 def _report(client, handle: str, **body) -> dict:
@@ -196,6 +220,66 @@ def test_security_is_a_subclass_of_private(client, as_admin):
     assert (
         client.get(
             f"/feedback/{row['id']}", headers=session_auth_headers(STRANGER)
+        ).status_code
+        == 404
+    )
+
+
+def test_the_room_that_filed_it_can_see_it(client):
+    """结论 47 的第二档：提出它的那个房间的成员看得见，别人看不见。
+
+    反馈中心是平台级的收件箱，一条私密反馈在那里对所有人是 404。但它是在某个房间里
+    提出来的，而那个房间的人本来就看过它的内容——agent 提的东西在它的房间里全部留痕。
+    对他们藏起来，藏掉的只是追踪它的那条路。
+
+    三条一起写，因为它们钉的是同一条规则的三个边：**在那个房间里**（不是同项目就
+    行），**当时在**（不是现在在），而不满足的人拿到的是 404 而不是 403——藏起来的
+    条目不确认自己存在。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+    # 同项目、不在那个房间：这一条要排除的正是「同项目就算数」那种读法。
+    _join_project(client, project, OUTSIDER, by=REPORTER)
+
+    row = _report(
+        client,
+        REPORTER,
+        visibility="private",
+        topic_id=topic,
+        project_id=project,
+    )
+
+    # 反馈提出之后才进这个房间的人：加人不是授权。
+    _join_room(client, topic, LATECOMER, by=REPORTER)
+
+    def opened(handle: str) -> int:
+        return client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(handle)
+        ).status_code
+
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 404
+    assert opened(LATECOMER) == 404
+    assert opened(STRANGER) == 404
+
+
+def test_a_report_filed_outside_any_room_opens_no_second_door(client):
+    """没有房间来源的反馈，房间这一档就关着。
+
+    `topic_id` 是可空的（沙箱里撞到墙的那一类根本没有房间），而且是 `ON DELETE SET
+    NULL`——房间被删掉以后这一列变 NULL。两种情况下这条规则都必须退化成「谁也不是
+    那个房间的成员」，而不是退化成「NULL 匹配上了谁」。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+
+    row = _report(client, REPORTER, visibility="private")
+
+    assert (
+        client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(ROOMMATE)
         ).status_code
         == 404
     )
@@ -1376,7 +1460,8 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     """「我的反馈」 是一份**能打开的**清单：里面有的都能开，能开的都在里面。
 
     Being *assigned* a report is not access to it. §8.9 gives the assignee no
-    management power, and §4.3's visibility union is 提交者 ∪ 管理员. The list used
+    management power, and the visibility union is
+    提交者 ∪ 管理员 ∪ 提出它的房间. The list used
     to include the assignee arm unfiltered, so a third party was handed the title
     and status of a private report on one endpoint while the detail endpoint
     answered 404 for it — one rule, two answers, depending on which one you asked.
@@ -1394,8 +1479,21 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
     )
     theirs_public = _report(client, REPORTER, title="别人提的公开")
     theirs_security = _report(client, REPORTER, title="别人提的安全")
+    # 第四档也要在这张表里：别人提的私密，但是在我在的那个房间里提的。它是 `visible_to`
+    # 和 `may_see` 各自新长出来的那条手臂，两边同时长错的话只有这里看得见。
+    project = _project(client, REPORTER)
+    room = _topic(client, project, REPORTER, title="我也在的房间")
+    _join_room(client, room, STRANGER, by=REPORTER)
+    theirs_in_my_room = _report(
+        client,
+        REPORTER,
+        title="别人在我房间里提的私密",
+        visibility="private",
+        topic_id=room,
+        project_id=project,
+    )
 
-    for row in (theirs_private, theirs_public, theirs_security):
+    for row in (theirs_private, theirs_public, theirs_security, theirs_in_my_room):
         patched = client.patch(
             f"/admin/feedback/{row['id']}",
             json={"assignee_handle": STRANGER},
@@ -1427,8 +1525,12 @@ def test_the_mine_list_offers_exactly_what_the_detail_route_will_open(client, as
         theirs_private,
         theirs_public,
         theirs_security,
+        theirs_in_my_room,
     ):
         assert (row["id"] in listed) == openable(row), row["title"]
+    # …and that row is on the opening side of the agreement, not the closed one:
+    # an agreement both halves get wrong the same way still passes the loop.
+    assert openable(theirs_in_my_room)
 
     # The third arm — 我提的和 agent 替我提的 — is checked from the other side:
     # the reporter did not write this row (the agent did), and it is still theirs,
