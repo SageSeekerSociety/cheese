@@ -9,10 +9,16 @@
 * **I2** 所有工作机离线时，私聊里发一句仍然有回复；
 * **I1** 清空 device / device_topic / project_machines / device_health 四张表之后，
   名册、时间线与 ``GET /awaiting-me`` 照常。
+
+不租手就是不占机器，所以私聊在 ``device_topic`` 上不该有行：写这行的那条分支已经
+删了，存量由迁移 ``a7f1c0d4e2b9`` 收干净，最后一条测的就是它那段 SQL。
 """
 
+import importlib.util
 import json
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -31,9 +37,12 @@ from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.device.models import DeviceRow, DeviceTopicRow
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.services import ProjectService
+from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.services import TopicService
+from app.domain.user.models import User
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import session_auth_headers
 
@@ -375,3 +384,90 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     )
     assert awaiting.status_code == 200, awaiting.text
     assert overview.status_code == 200, overview.text
+
+
+def _release_private_room_pins():
+    """迁移 a7f1c0d4e2b9 里的那段 SQL 本人——照抄一份就测不到要发布的东西了。"""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "a7f1c0d4e2b9_private_rooms_hold_no_machine.py"
+    )
+    spec = importlib.util.spec_from_file_location("_private_room_pins", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.release_private_room_pins
+
+
+async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(client, room):
+    """私聊不占机器（结论 19），所以 ``device_topic`` 上不该有它的行。
+
+    删掉写这一行的那条分支只挡住「以后不再写」；库里已经写下的旧行没有人再维护，
+    而读它的人还在，读的时候也不问这一轮租没租手——``judge_host_failure`` 会把一
+    轮根本没用过的机器判成连续失败并在房间里点它的名，归档清理会去要一台什么都
+    不放的机器交出目录。存量由迁移收干净，房间自己的绑定一行不动。
+    """
+    project, work_room = room
+    private_room = uuid.uuid4()
+
+    async with client.test_factory() as session:
+        owner = User(
+            username="pin-owner",
+            email="pin-owner@example.io",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(owner)
+        await session.flush()
+        session.add(
+            Topic(
+                id=private_room,
+                project_id=project,
+                title="芝士",
+                kind=TopicKind.topic,
+                is_private=True,
+                private_owner="alice",
+            )
+        )
+        session.add(
+            DeviceRow(
+                device_id="moved-away",
+                name="moved-away",
+                token="tok-moved-away",
+                owner_user_id=owner.id,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.flush()
+        session.add_all(
+            [
+                DeviceTopicRow(topic_id=private_room, device_id="moved-away"),
+                DeviceTopicRow(topic_id=work_room, device_id="moved-away"),
+            ]
+        )
+        await session.commit()
+
+    release = _release_private_room_pins()
+
+    async def _run() -> dict:
+        async with client.test_factory() as session:
+            report = await session.run_sync(lambda conn: release(conn))
+            await session.commit()
+            return report
+
+    report = await _run()
+    assert report == {"before": 1, "deleted": 1, "after": 0}
+
+    async with client.test_factory() as session:
+        pinned = set(
+            (await session.execute(sql("SELECT topic_id FROM device_topic")))
+            .scalars()
+            .all()
+        )
+    assert private_room not in pinned
+    assert work_room in pinned
+
+    # 幂等：再跑一遍什么都不匹配。
+    assert await _run() == {"before": 0, "deleted": 0, "after": 0}
