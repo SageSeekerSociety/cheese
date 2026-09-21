@@ -13,6 +13,7 @@ import uuid
 
 import pytest
 
+from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import deployment_harness
 from app.domain.agent_session.services import AgentSessionService
@@ -24,7 +25,7 @@ from tests.conftest import StubChannel, stub_compute
 
 @pytest.mark.anyio
 async def test_a_project_that_asks_for_a_harness_nobody_deployed_does_not_run(
-    client, tmp_path
+    client, tmp_path, monkeypatch
 ):
     """这台机器上没有 codex，那这一轮就不开始——不改用 claude-code 跑。
 
@@ -39,9 +40,12 @@ async def test_a_project_that_asks_for_a_harness_nobody_deployed_does_not_run(
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
+    # codex 既不说网关那套话也拿不到订阅凭据，所以运营者不点名的话它一个模型都指
+    # 不到，这一轮会早在挑模型时就停下——那验的就不是这里要验的东西了。
+    monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["gpt-5-codex"]})
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
-        project.settings = {"harness": "codex"}
+        project.settings = {"harness": "codex", "default_model": "gpt-5-codex"}
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
