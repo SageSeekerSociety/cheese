@@ -258,7 +258,6 @@ def test_malformed_work_summary_room_is_rejected(client, private_workspace):
 @pytest.mark.parametrize(
     "endpoint, body",
     [
-        ("bind", {"agent_id": "outsider"}),
         ("title", {"title": "unauthorized edit"}),
         ("close", {"conclusion": "unauthorized close"}),
     ],

@@ -112,7 +112,6 @@ from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.relay import TopicRelayService
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
-    BindSubagentIn,
     CheckResultIn,
     ConclusionIn,
     DocEditIn,
@@ -704,7 +703,7 @@ async def say_on_task(
     So this lands what was said WHERE THE WORK IS, and wakes the ROOM to act on
     it. Nothing is woken on the card — there is no session there to wake.
 
-    Through the room's id for the same reason `/bind` and `/title` are: a card
+    Through the room's id for the same reason `/conclude` and `/title` are: a card
     is not a place, so it has no address of its own and no token scoped to it.
     """
     place = await TopicService(db).place_or_404(topic_id)
@@ -765,34 +764,6 @@ async def say_on_task(
     return ok(payload)
 
 
-@router.post("/{topic_id}/tasks/{task_id}/bind")
-async def bind_task_subagent(
-    topic_id: uuid.UUID,
-    task_id: uuid.UUID,
-    body: BindSubagentIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """认领: the room says which worker in its session is doing this thread.
-
-    The one new thing a room has to tell the platform under 任务=分身. A worker
-    id is minted inside the container when the worker starts, so nothing handed
-    out at dispatch could name it — the room spawns one and reports back, and
-    only then can the platform tell that worker's events from its own.
-
-    ONLY the room may call it, and only the room can: a card is not a place,
-    so `{topic_id}` naming one is a 404 before the body is read.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    task = await TaskService(db).bind_subagent(
-        room_id=place.room_id, task_id=task_id, subagent_id=body.agent_id
-    )
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    await db.commit()
-    return ok(out)
-
-
 @router.post("/{topic_id}/tasks/{task_id}/title")
 async def set_task_title(
     topic_id: uuid.UUID,
@@ -833,17 +804,18 @@ async def conclude_task(
     """收卡, said by the ROOM about one of its threads.
 
     The worker's conclusion is already on the card: the platform writes it there
-    on every `SubagentStop` from a bound worker. This is the other half — the
-    room saying the work is over — and it is deliberately a separate act, done
-    by hand.
+    on every `SubagentStop` whose label names this card. This is the other half
+    — the room saying the work is over — and it is deliberately a separate act,
+    done by hand.
 
     It has to be. A worker reports finished more than once (parking a long
     command in its own background counts as finishing), and stops arrive from
-    workers the platform never bound — measured on 2.1.224: after the session's
-    own Stop, with an unknown id, an empty type and a fragment of a prompt as
-    their closing message. Closing on either of those would collapse work that
-    is still going. The room decides when work has ended; code acceptance merges
-    the task's branch and closes it through the separate acceptance flow.
+    sub-threads the harness started for its own purposes — measured on 2.1.224:
+    after the session's own Stop, with an unknown id, an empty label and a
+    fragment of a prompt as their closing message. Closing on either of those
+    would collapse work that is still going. The room decides when work has
+    ended; code acceptance merges the task's branch and closes it through the
+    separate acceptance flow.
 
     `conclusion` is optional: given, it overwrites the worker's last word (which
     is sometimes the fragment above); omitted, that last word stands.
@@ -1985,15 +1957,15 @@ async def split_topic(
     """从上往下拆解：dispatch a todo as a card of work in this room (eval A2).
 
     Writes the card and stops there. The WORKER is the caller's to start: it
-    spawns one inside its own session and reports the id back with
-    `/tasks/{id}/bind`. The platform used to raise a whole second container per
-    piece of work — its own screen, its own home, its own clone of the
-    repository — to run something that is a second worker in a session the room
-    already has.
+    spawns one inside its own session carrying this card's thread label, and the
+    platform reads whose work each event is off that label. The platform used to
+    raise a whole second container per piece of work — its own screen, its own
+    home, its own clone of the repository — to run something that is a second
+    worker in a session the room already has.
 
     So a card returned from here has no worker yet, and that is a normal state
-    rather than a half-finished dispatch: 认领 is a separate call because the id
-    it carries does not exist until the worker does."""
+    rather than a half-finished dispatch: nothing here reports a worker, because
+    the id it would carry does not exist until the worker does."""
     service = TopicService(db)
     parent_place = await service.place_or_404(topic_id)
     # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall
@@ -2048,7 +2020,8 @@ async def split_topic(
         await idem.record_result(db, key, out)
     # The thread and its idempotency key commit together, so a crash here cannot
     # produce a second thread on resume — and the caller must see the row and
-    # its brief doc before it can bind a worker to them.
+    # its brief doc, and the thread label on it, before it can put a worker on
+    # them.
     await db.commit()
     return ok(out)
 
