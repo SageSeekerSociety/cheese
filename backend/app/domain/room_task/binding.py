@@ -38,6 +38,8 @@
 from dataclasses import dataclass
 
 from app.core.errors import ValidationError
+from app.domain.agent.market import subscription_model_alias
+from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.configuration import model_choices
 from app.domain.room_task.models import Task
 
@@ -82,3 +84,28 @@ def resolve(task: Task | None, choices: dict[str, dict]) -> WorkBinding:
     if chosen is None:
         raise ValidationError(f"这条活绑的模型 {bound!r} 在当前项目里用不了，请改绑")
     return WorkBinding(model=chosen["id"], supply=chosen["supply"], effort=effort)
+
+
+def catalog_id(spent: str, choices: dict[str, dict]) -> str | None:
+    """真发出去的那个模型名 → 目录里的 id；目录认不出来就 `None`。
+
+    目录和用量行说的不是同一套词：目录里订阅模型的 id 是 `sonnet` 这样的短名，
+    真发到上游、也真记进 `usage` 的是 `claude-sonnet-5`。卡上一分钱没花时显示
+    「用哪个模型」要从绑定算（短名），花过之后要从用量算（全名），两头直接吐出来
+    就是同一张卡、同一个模型，在第一次请求之后换了个名字 —— 用户读到的是「模型
+    被换了」。
+
+    这一道翻译放在目录这边，不在渲染那边：知道 id 和全名互为表里的只有目录。
+    网关模型的 id 就是它自己那个名字，所以只有订阅那一支要问别名。
+
+    认不出来就 `None`，由调用方照原样显示：上游给回一个目录里没有的名字（换了
+    代次、带上了日期），显示它真花在谁身上，仍然比显示一个猜出来的短名诚实。
+    """
+    if spent in choices:
+        return spent
+    for choice in choices.values():
+        if choice["supply"] != SUBSCRIPTION:
+            continue
+        if subscription_model_alias(choice["id"]) == spent:
+            return choice["id"]
+    return None

@@ -1,7 +1,7 @@
 """a piece of work carries the model it runs on
 
 Revision ID: d3b8f1c72a94
-Revises: b4d1a70c9e52
+Revises: b9e4c17d0a52
 Create Date: 2026-09-21 10:00:00
 
 Two nullable scalar columns on ``tasks``: which model this piece of work runs
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d3b8f1c72a94"
-down_revision: str | Sequence[str] | None = "d7b3f0a9c651"
+down_revision: str | Sequence[str] | None = "b9e4c17d0a52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
-from app.domain.room_task.binding import resolve
+from app.domain.room_task.binding import catalog_id, resolve
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -282,11 +282,18 @@ def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> st
     不出来，连带把改回来的入口也关上。拒绝留在执行路径上（`binding.resolve` 自己，
     I27）。
 
+    **花过和没花过，写出来的得是同一套词。** 目录里订阅模型的 id 是 `sonnet`，
+    用量行里记的是真发出去的 `claude-sonnet-5`；两头各吐各的，同一张卡、同一个
+    模型，在第一次请求之后换了个名字，用户读到的是「模型被换了」。所以 `spent`
+    先过一遍目录反查（`binding.catalog_id`），认得出就写目录里那个 id。认不出来
+    才照原样写：上游给回一个目录里没有的名字，写它真花在谁身上仍然比写一个猜出
+    来的短名诚实。
+
     `spent` 和 `choices` 都从外面喂进来，和 `awaiting_answer` 一样：一个要查库，
     一个按项目算一次就够，而这一层不碰 I/O（见模块开头）。
     """
     if spent:
-        return spent
+        return catalog_id(spent, choices) or spent
     try:
         return resolve(task, choices).model
     except ValidationError:

@@ -108,8 +108,32 @@ def test_a_card_shows_the_model_the_work_actually_spent_on(subscribed):
     task = _work(model="opus")
     assert (
         presentation.card_model(task, spent="claude-sonnet-5", choices=catalog(None))
-        == "claude-sonnet-5"
+        == "sonnet"
     )
+
+
+def test_spending_on_a_model_does_not_rename_it_on_the_card(subscribed):
+    """同一个模型，花钱前后卡上是同一个字。
+
+    绑定说的是目录 id（`sonnet`），用量行记的是真发出去的名字
+    （`claude-sonnet-5`）。两边各吐各的，这张卡就会在第一次请求之后自己换个名字，
+    而模型根本没动。
+    """
+    unspent = presentation.card_model(
+        _work(model="sonnet"), spent=None, choices=catalog(None)
+    )
+    spent = presentation.card_model(
+        _work(model="sonnet"), spent="claude-sonnet-5", choices=catalog(None)
+    )
+    assert unspent == spent == "sonnet"
+
+
+def test_a_model_the_catalog_cannot_name_is_shown_as_it_was_spent(subscribed):
+    """目录反查不出来的，照原样写 —— 显示真花在谁身上，好过显示一个猜的短名。"""
+    shown = presentation.card_model(
+        _work(model="opus"), spent="claude-sonnet-5-20260929", choices=catalog(None)
+    )
+    assert shown == "claude-sonnet-5-20260929"
 
 
 def test_what_a_card_shows_is_written_in_no_column_of_the_row(subscribed):

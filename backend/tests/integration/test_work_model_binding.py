@@ -277,7 +277,8 @@ async def test_the_card_shows_the_last_model_the_work_actually_spent_on(
         await session.commit()
 
     # 它真花的最后一个，不是它绑的那个 —— 绑定说的是下一轮，用量说的是已经发生的。
-    assert _card(client, ids)["model"] == "claude-sonnet-5"
+    # 写的是目录里的 id：钱花在 `claude-sonnet-5` 上，卡上仍然是 `sonnet`。
+    assert _card(client, ids)["model"] == "sonnet"
 
     async with client.test_factory() as session:
         work = await session.get(Task, ids["work"])
@@ -287,5 +288,38 @@ async def test_the_card_shows_the_last_model_the_work_actually_spent_on(
 
     # 守卫：显示出来的那个值，在 `tasks` 的任何一列里都找不到。一列存「显示什么」
     # 就是第二份声明，它和账单对不上的那天没人说得清是谁写错的。
-    assert "claude-sonnet-5" not in stored.values()
+    assert "sonnet" not in stored.values()
     assert stored["model"] == "opus"
+
+
+@pytest.mark.anyio
+async def test_spending_does_not_change_the_word_the_card_uses_for_one_model(
+    client, subscribed
+):
+    """同一个模型，花钱前后卡上是同一个字。
+
+    绑定说的是目录里的 id（`sonnet`），用量行记的是真发出去的名字
+    （`claude-sonnet-5`）。两边各吐各的，这张卡就会在第一次请求之后自己换一个名
+    字，而模型根本没动 —— 用户读到的是「模型被换了」。③ 的字面（显示 = 最后一行
+    用量的 model）两种写法都满足，所以只有这一条能把它钉住。
+    """
+    ids = await _room(client)
+    before = _card(client, ids)["model"]
+
+    async with client.test_factory() as session:
+        session.add(
+            ResourceUsage(
+                project_id=ids["project"],
+                topic_id=ids["room"],
+                task_id=ids["work"],
+                model="claude-sonnet-5",
+                input_tokens=1,
+                output_tokens=1,
+                total_tokens=2,
+                created_at=datetime(2026, 9, 1, tzinfo=UTC),
+            )
+        )
+        await session.commit()
+
+    assert before == "sonnet"
+    assert _card(client, ids)["model"] == before

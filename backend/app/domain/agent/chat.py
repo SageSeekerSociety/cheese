@@ -3932,10 +3932,14 @@ class ChatService:
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
     ) -> tuple[dict, str]:
-        """Resolve a turn's explicit agent model, model environment and usage route.
+        """Resolve a turn's model, model environment and usage route.
+
+        Which model comes from the binding of the work this turn belongs to —
+        and a room's main thread is not a piece of work, so it always gets the
+        project default (`room_task/binding.py`).
 
         Machine providers assemble their own scoped credentials. Other providers
-        retain their gateway/profile transport, with the agent's saved model.
+        retain their gateway/profile transport, carrying that resolved model.
         The optional snapshots keep model, role and author consistent within a turn.
 
         ``provider=None`` means there is no machine in this turn at all (私聊 走

@@ -346,17 +346,6 @@ def test_rc_bootstrap_routes_to_cheese_before_credential_injection(
     assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
 
 
-def test_rc_profile_retains_its_provider_identity(monkeypatch, tmp_path):
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    token = _scoped_token("test-secret", rc=True)
-    flow = _make_flow(path="/api/oauth/profile", caller_bearer=token)
-    asyncio.run(mod.requestheaders(flow))
-    assert flow.response is None
-    assert flow.request.headers["authorization"] == "Bearer provider-secret"
-
-
 def _admission_pool(mod, monkeypatch, pool: str):
     """A control plane that answers every project with this pool."""
     monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
@@ -365,7 +354,12 @@ def _admission_pool(mod, monkeypatch, pool: str):
         "ADMISSION",
         SimpleNamespace(
             check=lambda project, topic, bearer: SimpleNamespace(
-                allow=True, reason="", pool=pool, key="project-key", upstream=None
+                allow=True,
+                reason="",
+                pool=pool,
+                key="project-key",
+                upstream=None,
+                fail_open=False,
             )
         ),
     )
@@ -436,6 +430,64 @@ def test_a_subscription_sessions_profile_still_goes_to_its_own_account(
     asyncio.run(mod.requestheaders(flow))
     assert flow.response is None
     assert flow.request.headers["authorization"] == "Bearer provider-secret"
+
+
+def _assert_answered_by_cheese(mod, flow) -> None:
+    """这一跳没出去，回的是这条活自己的地点，平台的订阅凭据没挂上去。"""
+    asyncio.run(mod.requestheaders(flow))
+    assert flow.response is not None
+    assert flow.response.status_code == 200
+    assert flow.request.headers.get("authorization") != "Bearer provider-secret"
+    data = json.loads(flow.response.content)
+    assert data["organization"]["uuid"] == "p1"
+    assert data["account"]["uuid"] == "t1"
+
+
+def test_an_unconfigured_admission_does_not_echo_the_platform_account(
+    monkeypatch, tmp_path
+):
+    """没设 `CHEESE_ADMISSION_URL` 的盒子上，`/api/oauth/profile` 仍然本地应答。
+
+    准入答不出池的时候，`pool` 那一格是没人填过的默认值，读出来是订阅。拿它去决定
+    「谁有资格回答 `/api/oauth/profile`」，就会在最不知情的那一刻判成订阅会话：
+    请求一路走到底挂上平台自己的订阅凭据，回包里是那个账号的 uuid 和 email，而
+    收件人是一个在跑别人代码的沙箱。判据因此是「**确证**是订阅」，不是「不是网关」。
+
+    没设过这个变量不是假设 —— 它是 `billing_addon` 里那段注释记着的、烧掉一天的
+    那次。这条会话还带着自己的 ccproxy 票：那一支从前会撞上「说不出用谁的身份发」
+    的 503，RC 会话根本起不来。
+    """
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    mod.http_connect(_make_connect_flow(_basic(_scoped_token("test-secret", rc=True))))
+    _assert_answered_by_cheese(
+        mod, _make_flow(path="/api/oauth/profile", caller_bearer="machine-ticket")
+    )
+
+
+def test_an_unreachable_admission_does_not_echo_the_platform_account(
+    monkeypatch, tmp_path
+):
+    """后端不可达时准入 fail-open 放行，而那份放行答复里没有池。
+
+    放行的是花钱，不是身份：一个连不上的控制面说不出这个项目在哪个池，所以它说
+    不出谁有资格代表一个 Anthropic 账号回话。
+    """
+
+    def unreachable(url, bearer, timeout_s):
+        raise OSError("control plane is down")
+
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
+    )
+    url = "http://control-plane.invalid/admission"
+    monkeypatch.setattr(mod, "ADMISSION_URL", url)
+    monkeypatch.setattr(mod, "ADMISSION", mod.AdmissionGate(url, post=unreachable))
+    token = _scoped_token("test-secret", rc=True)
+    _assert_answered_by_cheese(
+        mod, _make_flow(path="/api/oauth/profile", caller_bearer=token)
+    )
 
 
 def test_rc_without_backend_never_falls_through_to_official_service(
