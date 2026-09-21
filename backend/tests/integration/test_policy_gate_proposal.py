@@ -129,7 +129,7 @@ def test_asking_for_a_self_hosted_machine_reaches_its_owner_as_a_proposal(
     response = client.put(
         f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": device_id},
-        headers=session_auth_headers("cheese"),
+        headers=session_auth_headers("andyl"),
     )
 
     assert response.status_code == 200, response.text
@@ -157,12 +157,14 @@ def test_a_proposal_does_not_take_the_machine(client, gated_project):
     pid, tid, device_id, _owner_id = gated_project
     before = client.get(f"/topics/{tid}/compute-profile").json()["data"]["current"]
 
-    client.put(
+    response = client.put(
         f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": device_id},
-        headers=session_auth_headers("cheese"),
+        headers=session_auth_headers("andyl"),
     )
 
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["proposal"] is not None
     assert _topic_binding(client, tid) is None
     after = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert after["current"] == before
