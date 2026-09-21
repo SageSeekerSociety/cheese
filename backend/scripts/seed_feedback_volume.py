@@ -65,8 +65,10 @@ handle：这个脚本只跑在开发库上，一个前缀能一次清干净比�
 `scripts/`，`import app` 找不到包（除非自己带上 `PYTHONPATH=.`）。库里几个老脚本的
 用法行写的是后者 —— 它们现在是跑不起来的，别照抄。
 
-⚠️ 只该跑在开发/测试库上。它会往库里加几万行，而且默认那 800 条是**追加**的，
-不认识的库不要跑。
+⚠️ 只该跑在开发/测试库上 —— 这句话现在是**代码**在管，不再只是这一行字：加 `--apply`
+之前会先看目标库叫什么都不叫，名字里没有 `test`/`dev`/`e2e`/`seed`/`scratch` 就直接
+拒绝并打印实际连接串（`require_seedable_target`）。它会往库里加几万行，而且默认那
+800 条是**追加**的。`--allow-any-database` 能松掉这一关，但那一下得你自己按。
 """
 
 from __future__ import annotations
@@ -74,6 +76,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import random
+import re
 import sys
 import uuid
 from collections.abc import Iterable, Sequence
@@ -81,10 +84,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.models  # noqa: F401 — 所有表都注册到 Base.metadata，FK 才解析得出来
-from app.core.db import async_session_factory
+from app.core.db import async_session_factory, engine
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
@@ -862,6 +866,70 @@ async def _purge_preview(session: AsyncSession, prefix: str) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# 落库闸门
+# ---------------------------------------------------------------------------
+
+#: 库名里出现这些词之一，才认这是一台可以随便灌的库。判**词**不判完整名字：
+#: `cheese_test_sec1`、`cheese_e2e_7`、`fusion_test` 都得过，写死几个整名等于每换一个
+#: CI 槽位就回来改一次。
+SEEDABLE_DB_WORDS = frozenset({"test", "dev", "e2e", "seed", "scratch"})
+
+
+def database_name(url: URL | str) -> str:
+    """这个 URL 选中的库，取裸名字（sqlite 那种就是文件名）。"""
+    return (make_url(url).database or "").rsplit("/", 1)[-1]
+
+
+def describe_target(url: URL | str) -> str:
+    """连接串的人话形式，密码打掉。
+
+    拒绝的时候要的是「我知道刚才打的是哪台」，不是那个密码本身 —— 这句话会进终端
+    回滚、进 CI 日志、进粘贴给别人的截图。
+    """
+    return make_url(url).render_as_string(hide_password=True)
+
+
+def looks_like_a_throwaway_database(name: str) -> bool:
+    """库名像不像一台可以随便灌的库。
+
+    判据只看**库名**，因为 URL 里再没有别的字段能回答这个问题；而且在这个仓库的两台
+    机器上，主机名这条线索**正好是反的**：开发机的库在局域网地址（`192.168.16.7:5432`），
+    生产那台反而是回环地址（`scripts/ops/README.md`：PG 是 prod 本机 `127.0.0.1:5433`
+    上的 docker `cheesex-pg`）。所以「localhost 就是安全的」这条直觉会**把生产放进来、
+    把开发拦在外面**，任何一个按主机名放行的写法都是错的。
+    """
+    return bool(set(re.split(r"[^a-z0-9]+", name.lower())) & SEEDABLE_DB_WORDS)
+
+
+def require_seedable_target(url: URL | str, *, allow_any: bool) -> None:
+    """`--apply` 之前必须先过这一关，否则抛 `SystemExit`。
+
+    为什么需要它：`settings.database_url` 的默认值是
+    `postgresql+asyncpg://postgres:postgres@localhost:5432/cheese`，也就是**开发库**
+    —— 一个手滑就是往一台有人正在用的库上灌十几万行，而那台库没有一步回退的备份。
+    在这之前，唯一挡着这件事的是 docstring 里那句 ⚠️：`--apply` 跑完 `parse_args`
+    就直接开写了，没有任何一行代码读过目标是谁。
+    """
+    name = database_name(url)
+    if looks_like_a_throwaway_database(name):
+        return
+    if allow_any:
+        print(
+            f"⚠️  目标库 {name!r} 不像是造数库 ——"
+            " `--allow-any-database` 是你自己松的闸。"
+        )
+        print("    这个脚本会往它里面加几万行，默认那 800 条还是追加的。")
+        return
+    raise SystemExit(
+        f"拒绝在 {name!r} 上写库：这个库名不像是测试/开发库。\n"
+        f"  目标: {describe_target(url)}\n"
+        "  造数库的库名里带 test / dev / e2e / seed / scratch 之一"
+        "（CI 槽位库、cheese_test、fusion_test 都算）。\n"
+        "  确实要灌这一台就加 --allow-any-database；只想看形状就别加 --apply。"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 
@@ -888,11 +956,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--purge", action="store_true", help="删掉带前缀的行，不造新的")
     parser.add_argument("--apply", action="store_true", help="真的写库（不加就只打印）")
+    parser.add_argument(
+        "--allow-any-database",
+        action="store_true",
+        help="松掉落库闸门：往库名不像造数库的库上写（默认直接拒绝）",
+    )
     return parser.parse_args(argv)
 
 
 async def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # 判的是 `engine.url`，不是 `settings.database_url` 那个字符串：`app/core/db.py`
+    # 会把同步写法的 URL 规范化成 asyncpg 再建引擎，两处可能不是一个值 —— 闸门要问的
+    # 是「马上要写的是哪台」，那就得问那台本身。
+    print(f"目标库: {describe_target(engine.url)}")
+    if args.apply:
+        require_seedable_target(engine.url, allow_any=args.allow_any_database)
+
     spec = Spec(
         feedback=args.feedback,
         days=args.days,
