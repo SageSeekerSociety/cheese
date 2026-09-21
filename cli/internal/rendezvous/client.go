@@ -87,6 +87,9 @@ var ErrClosed = errors.New("rendezvous: connection closed")
 // ErrRejected is returned when the session explicitly refused a frame.
 var ErrRejected = errors.New("rendezvous: frame rejected by session")
 
+// ErrUnavailable means no connection was established and no prompt was written.
+var ErrUnavailable = errors.New("rendezvous: socket unavailable")
+
 // Options configure a Client. Zero values are sensible.
 type Options struct {
 	// InitialPrompt follows authentication on the same ordered connection.
@@ -153,7 +156,7 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	dialStarted := time.Now()
 	conn, err := dialWhenReady(ctx, path, wait)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	connectedAt := time.Now()
 

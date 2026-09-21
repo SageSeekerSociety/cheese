@@ -63,6 +63,10 @@ class DeviceCallError(RuntimeError):
     these out keeps doing so.
     """
 
+    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
+
 
 class DeviceNotReady(DeviceCallError):
     """The link is up, but this machine cannot serve calls yet.
@@ -779,7 +783,12 @@ class DeviceHub:
             fut = device.call_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(DeviceCallError(msg.error))
+                    code = (
+                        msg.value.get("failure_code")
+                        if isinstance(msg.value, dict)
+                        else None
+                    )
+                    fut.set_exception(DeviceCallError(msg.error, failure_code=code))
                 else:
                     fut.set_result(msg.value)
             return
