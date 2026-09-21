@@ -61,6 +61,7 @@ model_list:
       # This deployment's alias supports native thinking/effort. Without these
       # capabilities LiteLLM 1.96 drops thinking when Claude Code sends effort.
       supports_reasoning: true
+      supports_vision: true
       supports_adaptive_thinking: true
       supports_output_config: true
 

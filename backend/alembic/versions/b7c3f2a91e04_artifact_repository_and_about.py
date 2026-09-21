@@ -1,7 +1,7 @@
 """产物清单：仓库那一项的标记，以及说清它是什么的那一句话
 
 Revision ID: b7c3f2a91e04
-Revises: c1a7e05d4b83
+Revises: b4d1a70c9e52
 """
 
 import sqlalchemy as sa
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b7c3f2a91e04"
-down_revision = "c1a7e05d4b83"
+down_revision = "b4d1a70c9e52"
 branch_labels = None
 depends_on = None
 

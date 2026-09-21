@@ -4,11 +4,15 @@ Older topics (and demo topics built via raw ORM) landed with empty
 `topic_memberships`, so a topic showed "0 人 + 芝士" — or nothing. This walks
 every topic and seeds the roster the same way topic-create now does:
 
-  - ROOT topic (总览/项目本体): all ProjectMember handles + 芝士.
+  - ROOT topic (总览/项目本体): all ProjectMember handles. 芝士 is not seeded
+    here — the project's own agent is seated where that agent is created
+    (`AgentInstanceService.materialize_default`), the one place that decides
+    「这个项目的芝士是谁」.
   - other topics: the creator (created_by) as owner + 芝士.
 
 Idempotent — `_ensure_member` skips rows that already exist, so re-running never
-duplicates. A topic with no `created_by` still gets 芝士 (matches seed()).
+duplicates. A non-root topic with no `created_by` still gets 芝士 (matches
+seed()).
 """
 
 import asyncio
@@ -34,7 +38,7 @@ async def backfill() -> None:
                 await members.seed_root(
                     t.id, owner_handle=t.created_by, member_handles=handles
                 )
-                who = f"root: {handles or '(no project members)'} + cheese"
+                who = f"root: {handles or '(no project members)'}"
             else:
                 await members.seed(t.id, owner_handle=t.created_by)
                 who = f"{t.created_by or '(no creator)'} + cheese"

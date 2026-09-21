@@ -24,7 +24,6 @@ from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent_instance.services import (
-    IMPLICIT_DEFAULT,
     AgentInstanceService,
     ResolvedAgent,
 )
@@ -240,28 +239,21 @@ class TopicService:
             raise ConflictError("房间已归档，请先取消归档再继续工作")
         return topic
 
-    async def _starting_agent_handle(self, topic: Topic) -> str | None:
-        """The identity of the agent this room starts with, or None.
+    async def _starting_agent_handle(self, topic: Topic) -> str:
+        """The identity of the agent this room starts with.
 
         A room does not have an agent; it seats one, and seating needs the
         agent's own identity rather than a name derived from the room. Which
         agent a new room starts with is still the project's choice — replacing
         that choice with explicit seating is the next step, and this is the seam
         it will land on.
+
+        Always an answer: a project is created with its 芝士, so the agent a new
+        room starts with is a saved row with an identity of its own.
         """
         from app.domain.identity.handles import agent_instance_handle
-        from app.domain.identity.services import IdentityService
 
-        resolved = await self.resolve_agent(topic)
-        if resolved.instance_id is None:
-            return None
-        # Read-only on purpose. Creating an identity here would put a user
-        # insert inside the transaction that creates a topic, and seeding a
-        # roster is not where an agent comes into being: an agent gets its
-        # identity when it is created. An agent that predates identities has
-        # none to seat yet, and the room-derived seat still answers for it.
-        handle = agent_instance_handle(resolved.instance_id)
-        return handle if await IdentityService(self._session).is_agent(handle) else None
+        return agent_instance_handle((await self.resolve_agent(topic)).instance_id)
 
     async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
         """The agent a turn here runs as when nobody was addressed.
@@ -272,7 +264,7 @@ class TopicService:
         """
         project = await self._projects.get(topic.project_id)
         if project is None:
-            return IMPLICIT_DEFAULT
+            raise NotFoundError("Project not found")
         return await AgentInstanceService(self._session).for_topic(topic, project)
 
     async def create(
@@ -648,7 +640,7 @@ class TopicService:
                 topic_id=landed.topic_id,
                 task_id=landed.task_id,
                 author=by,
-                author_type=AuthorType.system,
+                author_type=AuthorType.platform,
                 content=f"随父话题「{topic.title}」一同归档",
                 kind=BlockKind.event,
                 meta={"platform": True},
@@ -721,7 +713,7 @@ class TopicService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author=by,
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=note,
             kind=BlockKind.event,
             meta={"platform": True},
@@ -768,7 +760,7 @@ class TopicService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author=by,
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=f"<@{by}> 取消归档，房间「{topic.title}」恢复活跃",
             kind=BlockKind.event,
             meta={"platform": True},
@@ -913,7 +905,7 @@ class TopicService:
             project_id=topic.project_id,
             topic_id=topic.id,
             author="system",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=content,
             kind=BlockKind.doc,
         )
@@ -942,7 +934,7 @@ class TopicService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="system",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=f"派出一条活：{task.title}",
             kind=BlockKind.event,
             meta={"platform": True, "action": "split", "task_id": str(task.id)},
@@ -1236,7 +1228,7 @@ class TopicService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author=author,
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=f"{actor} 编辑了文档",
             kind=BlockKind.event,
             refs=[str(doc.id)],

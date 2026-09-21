@@ -49,8 +49,8 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     handle: 'cheese',
     type_name: null,
     display_name: '芝士',
+    seat_handle: 'cheese-a1',
     is_default: true,
-    configured: true,
     is_active: true,
     ...overrides,
   }

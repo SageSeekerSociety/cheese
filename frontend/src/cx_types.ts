@@ -80,8 +80,9 @@ export interface Topic {
 }
 
 // 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
-// ——见 `lib/authorship.ts`。平台那一档正在改名：行上写的今天是 `system`，后端往后
-// 两次发布改写成 `platform`，这里两个名字都得认得。
+// ——见 `lib/authorship.ts`。平台那一档正在改名，两个名字现在同时在库里：新行写的是
+// `platform`，`system` 只出现在存量行上，所以这里两个都得认得。后端还剩一次发布把
+// 那些行改写掉，届时 `system` 从这里删掉。
 export type AuthorType = 'participant' | 'platform' | 'system'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
@@ -1112,20 +1113,16 @@ export interface AgentConfiguration {
 
 export interface ProjectAgent {
   configuration: AgentConfiguration
-  // Current project rosters always return saved IDs; nullable for older clients.
-  id: string | null
+  id: string
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
   // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
-  // 旧客户端和还没保存的行没有。
-  seat_handle?: string | null
+  seat_handle: string
   type_name: string | null
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // Retained for older clients; current project roster entries are always saved.
-  configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
