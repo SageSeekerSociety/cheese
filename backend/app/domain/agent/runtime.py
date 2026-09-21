@@ -1192,11 +1192,18 @@ class AgentWorkRunner:
         # --- what is left after adoption: no screen answers for this topic, or
         # one does and never heard the prompt. Decide per TOPIC, because a
         # remedy is a prompt into a room and one room takes one.
+        # 每一个孤儿话题都要走一趟下面那个函数，**卡死的那些也要** —— 它是读平台侧
+        # 执行记录的地方，而机器整台死掉正是那份记录存在的旗舰场景（6.5「突然损
+        # 坏」）：那一轮会在 `SILENT_TURN_S` 之后被判卡死，如果卡死的话题就此不再往下
+        # 走，悬着的调用既不会被说出来也不会被结清，房间里只剩一条「平台不会自动重
+        # 试……@ 芝士，它会从断点接着做」，一个字没提有一次写可能已经落地一半。
+        # 卡死的轮次自己不进 `entries`：它们已经在上面各自了结过，这里给的是一个话题
+        # 里**还没了结**的那些，可以是空的。
         by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
         for turn_id, record in orphans.items():
-            if turn_id in wedged:
-                continue
-            by_topic.setdefault(record.topic_id, []).append(record)
+            entries = by_topic.setdefault(record.topic_id, [])
+            if turn_id not in wedged:
+                entries.append(record)
         for topic_id, entries in by_topic.items():
             remedied += await self._settle_restart_orphans(
                 chat_service,
@@ -1224,6 +1231,10 @@ class AgentWorkRunner:
         that got through has already been excluded upstream by `_adopted` — what
         arrives here is a topic whose screen is gone, or whose screen never
         heard the prompt.
+
+        `entries` 可以是空的：一个话题里的孤儿轮次全都卡死、上面已经各自了结过时，
+        这个话题照样要来一趟，因为平台侧执行记录是在这里读的（见下）。那一趟
+        `allow_actions` 是假的，除了那份记录之外什么也不做。
 
         A re-send is for the newest re-sendable turn (see `_execute` for what
         that means): the pending-message mechanism re-hands its ORIGINAL text
@@ -1295,10 +1306,14 @@ class AgentWorkRunner:
         #   次部署。这时自动重发多半已经不是他要的了，得他自己决定还发不发。
         # - 这轮本身是一次重发（`resendable` 为假）。重发只把原始消息递一次，
         #   打断了就不连着再递，平台不会自动跑第二次。
-        if unknown and allow_actions:
+        if unknown:
             # 5.2「通知他一次」：说清悬着的是哪几次调用，然后把这几行结清成
             # `unknown` —— 平台不再等它们了，问题在人手上。不写这一笔，同一个人会在
             # 这个房间此后每一次扫底里被问同一件事。
+            #
+            # 不受 `allow_actions` 管：那道门挡的是「平台还要不要替他做点什么」，而
+            # 这条恰恰是平台做不了了才发的。关着门的那一档正是话题里有轮次卡死 ——
+            # 机器死在手上，最需要说这句话的那一档。
             waiting = "、".join(
                 f"{dispatch.method}（{dispatch.key}）" for dispatch in unknown
             )

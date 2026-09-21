@@ -27,11 +27,25 @@ id 重放」），而它记在那台机器上 —— 机器突然损坏的那一
 这个问题已经交给人（结论 57「结果未知的操作交人确认」，5.2「通知他一次」）。写下它
 之前和之后，这一行读出来都是 ``unknown``——变的不是这次调用的结果，是平台还问不问。
 不写的话，一次未知会让这个房间此后每一次扫底都重新问一遍同一个人同一件事。
+
+「还没人写回来」不等于「不会有人写回来」
+----------------------------------------
+
+这两件事在库里长得一模一样，而分开它们的是时间。写这一行的是**设备连接属主**进程，
+它按设计跨业务后端的发布活着；读这一行的扫底在业务后端，启动时一次、此后每
+``orphan_sweep_interval_s`` 一次。所以一次平常的发布里，新后端一起来就会看见属主手
+上那些还在正常跑着的调用 —— 照「空就是未知」判，它们会被当场判死：房间里发一条要人
+确认的通知，而属主几分钟后拿着结果回来写回，写进的是一行已经被人接手的记录。
+
+所以 ``unsettled()`` 多问一句年龄：一次调用最长只能在飞 ``EXECUTOR_CALL_TIMEOUT_S``
+（``device_hub.call_executor`` 的时限），而这一行是在**发出之前**写的，它的
+``dispatched_at`` 必定早于那次调用自己的计时起点。于是「这一行比那个时限还老」是一
+句能保证的话：不可能再有答复在路上了。
 """
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, select
@@ -39,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.domain.agent.device_hub import EXECUTOR_CALL_TIMEOUT_S
 from app.domain.common import UuidPk
 
 
@@ -128,16 +143,26 @@ def record(
 async def settle(
     session: AsyncSession, dispatch_id: uuid.UUID, outcome: Outcome
 ) -> None:
-    """把结果写回这一行。``unknown`` 的含义见模块开头：平台不再问了。"""
+    """把结果写回这一行，**第一笔算数**。``unknown`` 的含义见模块开头：平台不再问了。
+
+    结清是一次性的：这一行一旦读出来不是「没人写回来」，它就已经参与过一次判断 ——
+    最要紧的那种是 ``unknown``，写下它的同时房间里已经有一条通知，有人正照着它去看
+    那次改动落地没有。这时候一个迟到的 ``done`` 把它抹平，留下的是一行说「都办妥了」
+    的记录和一个仍然被要求去确认的人，而没有任何地方还留着他为什么被叫来。
+    """
     row = await session.get(DispatchRow, dispatch_id)
-    if row is None:
+    if row is None or row.outcome is not None:
         return
     row.outcome = outcome.value
     row.settled_at = _now()
 
 
 async def unsettled(session: AsyncSession, place_id: uuid.UUID) -> list[Dispatch]:
-    """这个地点里结果还没回来的派发，最早的在前 —— 重派路径读的就是它。"""
+    """这个地点里结果**不会再回来**的派发，最早的在前 —— 重派路径读的就是它。
+
+    不是「此刻还没写回来的那些」：那一堆里混着属主手上正在正常跑的调用（见模块开头
+    的第二节）。比一次调用能在飞的时间还老，才是「不会再回来」。
+    """
     rows = (
         (
             await session.execute(
@@ -145,6 +170,8 @@ async def unsettled(session: AsyncSession, place_id: uuid.UUID) -> list[Dispatch
                 .where(
                     DispatchRow.place_id == place_id,
                     DispatchRow.outcome.is_(None),
+                    DispatchRow.dispatched_at
+                    < _now() - timedelta(seconds=EXECUTOR_CALL_TIMEOUT_S),
                 )
                 .order_by(DispatchRow.dispatched_at)
             )

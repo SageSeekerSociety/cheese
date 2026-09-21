@@ -20,7 +20,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import dispatch_log, execution
-from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
+from app.domain.agent.device_hub import DeviceNotReady, DeviceUnreachable
 from app.domain.device import owner_reads
 from app.domain.topic.models import Topic
 
@@ -128,15 +128,25 @@ async def execute(
     # owner already counts active RPCs and gates executor release, so the
     # business route must release its database connection before crossing that
     # boundary.
+    #
+    # 下面这三个出口就是这条记录的全部分类，**默认那一档是「不写」**：结清成
+    # ``failed`` 是在说「这件事确定没发生，重派它安全」，说错了的代价是同一次写做两
+    # 遍；而留着不结清读出来是 ``unknown``，代价只是有人被问一句。所以只有确实走不
+    # 出这台平台的那一类才结清。
     try:
         answer = await execution.call(
             target, payload.method, payload.params, trace_id=trace_id
         )
-    except (DeviceOffline, DeviceCallError):
-        # 确定没发出去：链路不在（``DeviceOffline``），或者机器自己回话说它没能把
-        # 这次调用转交出去（``DeviceCallError``：连接器找不到执行器的 socket、
-        # 连接器还在自更新）。两者都是**答复**，说的是「没有受理」，所以这一条重派
-        # 是安全的 —— 这正是 ``failed`` 和 ``unknown`` 的分界。
+    except (DeviceUnreachable, DeviceNotReady):
+        # 确定没发出去，而且只有这一档：链路不在（``DeviceUnreachable``），或者链路
+        # 在而这台机器的连接器还在自更新（``DeviceNotReady``，同样挡在发出之前）。
+        # 那台机器没见过这次调用，所以重派它是安全的。
+        #
+        # 剩下的都**不结清**，因为它们都盖着「帧已经写出去了」：等结果时链路断掉是
+        # ``DeviceOffline``（``drop_transport`` 把在飞的 future 全置成它），而
+        # ``DeviceCallError`` 里就有执行器那句「Request accepted; outcome is
+        # pending or unknown. Do not replay with a new ID」。把这些记成 ``failed``，
+        # 就是让扫底原样再发一遍一次可能已经落地的写。
         await _settle(db, dispatch, dispatch_log.Outcome.failed)
         raise
     except TimeoutError as exc:
