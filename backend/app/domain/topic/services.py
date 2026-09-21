@@ -961,9 +961,9 @@ class TopicService:
         (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
 
         No worker is started here, and none is started for us. The caller spawns
-        one in its own session and binds it (`/tasks/{id}/bind`), so a thread
-        exists for a moment with nobody on it — which is also the state a thread
-        stays in if the caller never gets around to it.
+        one in its own session carrying this thread's label, so a thread exists
+        for a moment with nobody on it — which is also the state a thread stays
+        in if the caller never gets around to it.
 
         `place_id` is wherever the splitter was standing, which may itself be a
         thread: 芝士 working on one piece of work often finds a second. Work does

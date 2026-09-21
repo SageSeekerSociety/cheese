@@ -8,10 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import (
-    Task,
-    TaskStatus,
-)
+from app.domain.room_task.models import Task
 
 
 class TaskRepository:
@@ -62,30 +59,6 @@ class TaskRepository:
         self._session.add(task)
         await self._session.flush()
         return task
-
-    async def open_by_subagent(
-        self, room_id: uuid.UUID, subagent_id: str
-    ) -> Task | None:
-        """The open thread in *room_id* this worker is doing, if any.
-
-        `open` is part of the question, not a filter on the answer: a worker id
-        is only meaningful while the work is live, and a finished thread that
-        kept its id would silently swallow the events of whatever came after it.
-
-        Newest first so that even if a stale binding somehow survived, the
-        events land on the work that is actually going on.
-        """
-        stmt = (
-            select(Task)
-            .where(
-                Task.room_id == room_id,
-                Task.subagent_id == subagent_id,
-                Task.status == TaskStatus.open,
-            )
-            .order_by(Task.created_at.desc(), Task.id)
-            .limit(1)
-        )
-        return (await self._session.scalars(stmt)).first()
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
         """These threads, oldest first. Ids that name nothing are simply absent

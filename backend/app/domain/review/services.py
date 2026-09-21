@@ -1956,7 +1956,7 @@ class AcceptService:
         onto the card, send the events the 「谁的活」 table names (deduped
         through the nudge ledger), and merge a card whose auto-merge is armed
         once the rules are satisfied. Called by
-        SchedulerService.poll_open_prs(); never raises for a transient GitHub
+        `review/pr_poll.py::poll_open_prs`; never raises for a transient GitHub
         hiccup — the next poll just retries."""
         # A webhook and the reconciliation clock may observe the same card.
         # Only one transaction may advance it or emit its notifications.
@@ -2300,7 +2300,7 @@ class AcceptService:
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
         """Same explanation as `_note_poll_failed`, for a poll that died on
-        something other than a GitHub error (the scheduler's own catch-all).
+        something other than a GitHub error (the poller's own catch-all).
 
         Its caller rolled the failed tick back, so this runs on a fresh session
         and is a no-op for a card that has since settled or lost its PR.

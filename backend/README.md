@@ -12,7 +12,7 @@ which are retired.
 - **ORM**: SQLAlchemy 2.x (async)
 - **Database**: PostgreSQL 16
 - **Configuration**: Pydantic v2 + pydantic-settings
-- **Periodic jobs**: in-process interval loops (`app/domain/scheduler/jobs.py`)
+- **Periodic jobs**: in-process interval loops (`app/core/background.py`)
 - **Package Manager**: uv
 
 ## Quick Start

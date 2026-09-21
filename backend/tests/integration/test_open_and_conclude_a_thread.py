@@ -1,16 +1,13 @@
-"""房间开一条活、认领一个分身、验完货把它收掉——这条链上的三个端点。
+"""房间开一条活、分身交回结论、验完货把它收掉——这条链上的端点。
 
-Under 任务=分身 the platform stops raising a container per thread. `split` writes
-the row and stops; the room spawns a worker in the session it already has and
-says which one with `bind`; the worker's own stops write themselves onto the
-card as its conclusion; and when the room has read what came back and folded the
-changes in, it closes the card with `conclude`.
+`split` 写下那一行就停，并把这张卡的**线程标识**交出来；房间在自己已有的会话里起
+一个分身、把标识带上，平台就能把它干的事记到这张卡上（结论 43）——**没有一个
+「认领」的调用**：分身的 id 在容器里才诞生，而标识两边事先都知道，所以谁也不用把
+什么报回来。分身每一次收工把那句话写在卡上；房间读过交回来的东西、把改动并进来
+之后，用 `close` 收卡。
 
 Every refusal here is one somebody would otherwise hit silently: an id that
-names another room's work, a thread that already finished, a worker already
-doing something else. None of those fail loudly on their own — they just
-re-address a running worker's events and leave the first thread wondering where
-its tool calls went.
+names another room's work, a thread that already finished.
 """
 
 import uuid
@@ -51,132 +48,45 @@ def test_a_fresh_thread_has_nobody_on_it(client):
     assert "slots_held_by" not in task
 
 
-def test_binding_says_which_worker_is_on_it(client):
+def test_opening_work_hands_out_the_label_its_events_will_carry(client):
+    """开卡就拿到了线程标识——起子 agent 时带上它，它干的事就落在这张卡上。
+
+    这是平台在派活之前就能说出口的那一句：分身的 id 要到容器里才诞生，而这个标识
+    两边事先都知道，所以归属不再需要谁回头报一次（结论 43）。
+    """
     _, room_id = _room(client)
     task = _split(client, room_id)
 
-    r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["subagent_id"] == "worker-1"
+    assert task["thread_label"], task
+    assert task["id"].replace("-", "") in task["thread_label"]
 
     listed = client.get(f"/topics/{room_id}/tasks", headers=_bearer("alice")).json()[
         "data"
     ]["data"]
-    assert [t["subagent_id"] for t in listed] == ["worker-1"]
+    assert [t["thread_label"] for t in listed] == [task["thread_label"]]
 
 
-def test_binding_the_same_worker_twice_is_refused(client):
-    """一个分身同时只做一条活。
+def test_a_card_cannot_conclude_itself(client):
+    """收卡是房间的事：活自己说了不算，它就是被评价的那一方。
 
-    Not a bookkeeping nicety: rebinding would not move the work, it would
-    re-address a running worker's events, and the first thread would stop
-    receiving its own tool calls without anything saying so.
-    """
-    _, room_id = _room(client)
-    first = _split(client, room_id, title="活一")
-    second = _split(client, room_id, title="活二")
-    client.post(
-        f"/topics/{room_id}/tasks/{first['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
-
-    r = client.post(
-        f"/topics/{room_id}/tasks/{second['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
-    assert r.status_code == 409
-    assert "活一" in r.text
-
-
-def test_rebinding_the_same_thread_to_the_same_worker_is_fine(client):
-    """重发一次 bind 不该报错——同一条活、同一个分身,答案没变。"""
-    _, room_id = _room(client)
-    task = _split(client, room_id)
-    for _ in range(2):
-        r = client.post(
-            f"/topics/{room_id}/tasks/{task['id']}/bind",
-            json={"agent_id": "worker-1"},
-            headers=_bearer("alice"),
-        )
-        assert r.status_code == 200, r.text
-
-
-def test_another_rooms_thread_cannot_be_bound_here(client):
-    _, room_a = _room(client)
-    _, room_b = _room(client)
-    task = _split(client, room_b)
-
-    r = client.post(
-        f"/topics/{room_a}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
-    assert r.status_code == 404
-
-
-def test_a_finished_thread_cannot_be_bound(client):
-    """收了的活不接新分身——接了,它的事件会被一条谁也不看的线吸走。"""
-    _, room_id = _room(client)
-    task = _split(client, room_id)
-    closed = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/close",
-        json={"conclusion": "做完了"},
-        headers=_bearer("alice"),
-    )
-    assert closed.status_code == 200, closed.text
-
-    r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-2"},
-        headers=_bearer("alice"),
-    )
-    assert r.status_code == 409
-
-
-def test_an_outsider_cannot_bind(client):
-    _, room_id = _room(client)
-    task = _split(client, room_id)
-
-    r = client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("mallory"),
-    )
-    assert r.status_code == 403
-
-
-def test_a_card_cannot_bind_or_conclude_itself(client):
-    """认领和收卡都是房间的事:活自己说了不算,它就是被评价的那一方。
-
-    这两条路的第一段是房间的地址,而一张卡不是地点,所以它连入口都走不到 —— 404,
+    这条路的第一段是房间的地址，而一张卡不是地点，所以它连入口都走不到 —— 404，
     不是一条判出来的拒绝。
     """
     _, room_id = _room(client)
     task = _split(client, room_id)
 
-    for path, body in (
-        (f"/topics/{task['id']}/tasks/{task['id']}/bind", {"agent_id": "w"}),
-        (f"/topics/{task['id']}/tasks/{task['id']}/close", {"conclusion": "做完了"}),
-    ):
-        r = client.post(path, json=body, headers=_bearer("alice"))
-        assert r.status_code == 404, (path, r.status_code, r.text)
+    r = client.post(
+        f"/topics/{task['id']}/tasks/{task['id']}/close",
+        json={"conclusion": "做完了"},
+        headers=_bearer("alice"),
+    )
+    assert r.status_code == 404, r.text
 
 
 def test_the_room_closing_a_card_is_what_ends_the_work(client):
     """收卡:状态翻 closed、盖上收卡时刻,结论留在卡上。"""
     _, room_id = _room(client)
     task = _split(client, room_id)
-    client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
 
     r = client.post(
         f"/topics/{room_id}/tasks/{task['id']}/close",
@@ -199,16 +109,12 @@ def test_closing_without_a_word_keeps_what_the_worker_handed_back(client, stub_h
     """结论已经在卡上了(分身停下时平台写的),收卡不用房间抄一遍。"""
     _, room_id = _room(client)
     task = _split(client, room_id)
-    client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
+    stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     stub_hooks.hook(
         uuid.UUID(room_id),
         hook_event_name="SubagentStop",
@@ -272,21 +178,19 @@ def _pump(client, room_id: str, rounds: int = 20) -> None:
         time.sleep(0.02)
 
 
-def test_a_thread_whose_room_has_no_screen_says_it_is_out_of_contact(client):
-    """分身住在房间的会话里 —— 屏幕没了它一定也没了，而它不会来说一声。看板不问，
-    这条活就永远转圈。"""
+def test_a_card_nobody_has_started_on_is_idle_not_out_of_contact(client):
+    """还没分身开工的活是「空闲」，不是「失联」。
+
+    开卡只留下分支、卡和负责人；谁在做要等平台看见一条带着这张卡线程标识的开工
+    事件才知道（下一条）。屏幕没了、分身跟着没了那一格在
+    `tests/unit/test_presentation.py`。
+    """
     _, room_id = _room(client)
     task = _split(client, room_id)
+
     assert _shown(client, room_id, task["id"])["display_status"] == "空闲", (
         "还没人做的活不是失联,是没人做"
     )
-
-    client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
-    assert _shown(client, room_id, task["id"])["display_status"] == "失联"
 
 
 def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
@@ -295,17 +199,15 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     看板绝不能把它翻成「已收工」—— 只有房间验过货、落了结论才算。"""
     _, room_id = _room(client)
     task = _split(client, room_id)
-    client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
     # 一轮普通的轮次，房间因此有了一块活着的屏幕（也才有钩子可以推）。
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
+    # 分身开工：标识写在起它的那次调用里，平台因此知道是谁在做。
+    stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
+    _pump(client, room_id)
     assert _shown(client, room_id, task["id"])["display_status"] == "运行中"
 
     stub_hooks.hook(
@@ -332,32 +234,26 @@ def test_a_worker_reporting_in_is_not_the_work_finishing(client, stub_hooks):
     assert [t["status"] for t in listed] == ["open"]
 
 
-def test_the_last_stop_wins_and_a_worker_nobody_bound_writes_nothing(
-    client, stub_hooks
-):
-    """结论取最后一条,且只认绑过的 id。
+def test_the_last_stop_wins_and_an_unlabelled_worker_writes_nothing(client, stub_hooks):
+    """结论取最后一条，且只认标识指向这张卡的。
 
     Both halves are measured behaviour, not preference. A worker stops more than
     once — parking a long command in its own background reads as finishing —
     so an early "跑起来了" must not stand as the answer. And after the session's
-    own Stop, a SubagentStop arrives from something inside Claude Code: an id
-    nobody bound, an empty type, a fragment of a prompt where the closing
-    message should be. Letting that land would put a stranger's half-sentence on
-    somebody's card.
+    own Stop, a SubagentStop arrives from something inside Claude Code,
+    and a fragment of a prompt where the closing message should be — a worker
+    this session never spawned. Letting that land would put a stranger's
+    half-sentence on somebody's card.
     """
     _, room_id = _room(client)
     task = _split(client, room_id)
-    client.post(
-        f"/topics/{room_id}/tasks/{task['id']}/bind",
-        json={"agent_id": "worker-1"},
-        headers=_bearer("alice"),
-    )
     with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
     _wait_work_idle()
 
+    stub_hooks.spawns(uuid.UUID(room_id), thread_label=task["thread_label"])
     for message in ("测试跑起来了，我等它", "全绿，3617 passed"):
         stub_hooks.hook(
             uuid.UUID(room_id),
@@ -369,7 +265,8 @@ def test_the_last_stop_wins_and_a_worker_nobody_bound_writes_nothing(
     stub_hooks.hook(
         uuid.UUID(room_id),
         hook_event_name="SubagentStop",
-        agent_id="nobody-bound-this-one",
+        agent_id="a-stranger",
+        agent_type="general-purpose",
         last_assistant_message="…请用一句话概括",
     )
     _pump(client, room_id)

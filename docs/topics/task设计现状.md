@@ -124,9 +124,10 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
    （`additions=0` 合进 main）。后来补上的只是**失败会留痕**（push 结果通过 `cheese-hook` 回报），
    那一行提前退出还在。已有的 <&backend/tests/unit/test_device_sync_reports_failure.py> 两个用例
    都只造「有未提交改动」的仓库，所以这条路从没被测到。
-2. **`PrPollRunner` 看起来像挂了，其实没挂**：手动打 `POST /admin/scheduler/poll-open-prs` 立刻就推，
-   而那个接口 30.5 秒返回 `{"cards_checked":4}`，`cheese api` 的读超时正好 30 秒——
-   **它每次都在终点线前一步被客户端掐断**。排查这条路时别把「客户端超时」读成「调度器没转」。
+2. **轮询看起来像挂了，其实没挂**：当时手动打 `POST /admin/scheduler/poll-open-prs`（那个手动
+   扳机后来随 scheduler 包一起退役了）立刻就推，而那个接口 30.5 秒返回 `{"cards_checked":4}`，
+   `cheese api` 的读超时正好 30 秒——**它每次都在终点线前一步被客户端掐断**。排查这条路时别把
+   「客户端超时」读成「轮询没转」。
 
 **已核实是虚惊的**：`4ecbeea2` 和 `b5074534` 两个工作区不存在滞留的活（前者一个提交都没落下，
 后者那个 `feat(memory)` 已随 #589 进 main，内容逐字节相同）。**真正丢过活的只有 `94dad87f` 一个。**
