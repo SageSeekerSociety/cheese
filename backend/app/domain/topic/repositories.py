@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Select, and_, func, or_, select, update
+from sqlalchemy import Select, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import (
@@ -228,14 +228,22 @@ class TopicRepository:
         teammate's seat — is the service's decision; here a DM is two handles.
 
         Found by its two seats, because that is where they live (结论 19): the
-        private room of this project that seats both handles, and seats nobody
-        else. Two memberships, each asked for on its own, so which of the two
-        opens the conversation does not decide whether it is found.
+        private room of this project that seats both handles. Two memberships,
+        each asked for on its own, so which of the two opens the conversation
+        does not decide whether it is found.
 
-        「恰好两席」是这里的闸，和 `TopicMemberService.private_seats`、
-        `private_unread_counts` 同一条：席位多出一个，这间房就答不出对面是谁，
-        再打开它等于落进一间谁也说不清的房间，而 `.first()` 在同时匹配上好几间
-        时返回哪一间也没有定数。答不出就不认它，开一间正好两席的。
+        名册长到三席的房间也认，认的是同一间。多出一席这间房确实答不出对面是谁，
+        但那件事有它自己的出处（`TopicMemberService.private_seats` 答 None，调用方
+        退回项目默认那位），而这里只答「再打开的是不是同一间」。不认它就等于每次
+        打开都新开一间：私聊不进话题树（`TopicService.list_for_project` 把它们藏
+        起来），角标又被 `private_unread_counts` 的两席闸滤掉，旧那间房在界面上
+        一个入口都没有，里面的对话就此找不回来。
+
+        同时匹配上好几间时次序是定死的：还是两席的那间先，然后按建的时间。没有
+        `order_by` 的 `.first()` 返回哪一间没有定数，同一个人两次打开可能落进两间
+        不同的房。两席那一项不是把闸装回来，是在好几间都坐着这两位的时候挑出哪一
+        间才是这两位的 DM：第三个人被加进 A 和 B 的那间房之后，A 打开与他的私聊，
+        两间都匹配得上，而只有一间是 A 和他的。
         """
 
         def seats(handle: str) -> Select[tuple[uuid.UUID]]:
@@ -243,16 +251,21 @@ class TopicRepository:
                 TopicMembership.member_handle == handle
             )
 
-        stmt = select(Topic).where(
-            Topic.project_id == project_id,
-            Topic.is_private.is_(True),
-            Topic.id.in_(seats(owner)),
-            Topic.id.in_(seats(peer)),
+        seat_count = (
             select(func.count())
             .select_from(TopicMembership)
             .where(TopicMembership.topic_id == Topic.id)
             .scalar_subquery()
-            == 2,
+        )
+        stmt = (
+            select(Topic)
+            .where(
+                Topic.project_id == project_id,
+                Topic.is_private.is_(True),
+                Topic.id.in_(seats(owner)),
+                Topic.id.in_(seats(peer)),
+            )
+            .order_by(case((seat_count == 2, 0), else_=1), Topic.created_at)
         )
         existing = (await self._session.scalars(stmt)).first()
         if existing is not None:

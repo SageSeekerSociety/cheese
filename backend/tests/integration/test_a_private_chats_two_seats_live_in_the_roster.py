@@ -22,20 +22,25 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.integration.conftest import session_auth_headers
 
-_MIGRATION = (
-    Path(__file__).resolve().parents[2]
-    / "alembic"
-    / "versions"
-    / "f1a9c3e07b42_a_private_chats_two_seats_live_in_the_roster.py"
-)
+_VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+_MIGRATION = _VERSIONS / "f1a9c3e07b42_a_private_chats_two_seats_live_in_the_roster.py"
+_STAND_INS = _VERSIONS / "d5c48f1a6b73_an_agent_signs_with_its_instance_handle.py"
 
 
-def _migration():
-    spec = importlib.util.spec_from_file_location("_two_seats", _MIGRATION)
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _migration():
+    return _load("_two_seats", _MIGRATION)
+
+
+def _stand_ins():
+    return _load("_agent_signs", _STAND_INS)
 
 
 def _project(client) -> str:
@@ -109,8 +114,8 @@ def _badge(client, project_id: str, user: str) -> dict:
 
 
 def _seat_by_hand(client, topic_id: str, handle: str) -> None:
-    """名册上直接加一行，存量三席的私聊就是这么来的：``e7d2b91a4c06`` 补上了队友
-    那一席，``d5c48f1a6b73`` 因为房里坐着别的实例把替身留了下来。"""
+    """名册上直接加一行。私聊在队友有自己的席位之前就坐着房间派生的替身，
+    ``POST /topics/{topic_id}/members`` 今天也往私聊里加得进第三个人。"""
 
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -153,6 +158,38 @@ def _stale_peer_column(client, topic_id: str, handle: str) -> None:
             await session.execute(
                 sa.text("UPDATE topics SET private_peer=:h WHERE id=:t"),
                 {"t": uuid.UUID(topic_id), "h": handle},
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _roster(client, topic_id: str) -> set[str]:
+    """名册上现在坐着谁。"""
+
+    async def _run() -> set[str]:
+        async with client.test_factory() as session:
+            rows = await session.execute(
+                sa.text(
+                    "SELECT member_handle FROM topic_memberships WHERE topic_id=:t"
+                ),
+                {"t": uuid.UUID(topic_id)},
+            )
+            return {row[0] for row in rows}
+
+    return asyncio.run(_run())
+
+
+def _retire_the_stand_ins(client) -> None:
+    """``d5c48f1a6b73`` 的替身退役那一段，原样跑一遍：调的是它自己的
+    ``retire_stand_ins``。存量私聊今天的形状是这一条留下来的，照着手拼一个形状就
+    可能拼出一个数据里根本不存在的样子，再拿它去证明迁移。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            connection = await session.connection()
+            await connection.run_sync(
+                lambda sync: _stand_ins().retire_stand_ins(sync.exec_driver_sql)
             )
             await session.commit()
 
@@ -318,30 +355,51 @@ def test_an_old_dms_two_seats_are_backfilled(client):
     assert asyncio.run(_again()) == 2
 
 
-def test_reopening_a_dm_whose_roster_grew_opens_a_two_seat_one(client):
-    """名册多出一席的房间不再是这间 DM：再打开给的是一间正好两席、答得出对面的房。
+def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
+    """名册多出一席的房间还是这间 DM：再打开给的是它，历史都在里面。
 
-    这样的房间在迁移跑完之前就有，部署窗口里上一版接口也还加得出来。认它就是让
-    「再打开这间 DM」落进一间说不出对面是谁的房间；同时匹配上好几间时，返回哪一
-    间更是没有定数。
+    私聊不进话题树，角标又被两席那道闸滤掉，所以旧那间房在界面上没有别的入口：
+    这里另开一间，里面的对话就再也找不回来。多出一席这间房确实答不出对面是谁，
+    但那件事由 ``private_seats`` 一处答，它退回项目默认那位，不另开房。
     """
     project_id = _project(client)
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    grown = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    _seat_by_hand(client, grown, f"cheese-{uuid.UUID(grown).hex[:12]}")
-    assert _seats(client, grown) is None
+    _add_agent(client, project_id, "reviewer", "评审")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    _say(client, project_id, dm, "user-1")
+    _seat_by_hand(client, dm, "mentor-1")
+    assert _seats(client, dm) is None
 
     again = _dm(client, project_id, "user-1", agent_handle="reviewer")
 
-    assert again != grown
-    assert _seats(client, again) == ("user-1", reviewer["seat_handle"])
-    assert _who_answers(client, again) == "reviewer"
-    # 两席的那间从此是唯一认得出的一间，再打开还是它。
-    assert _dm(client, project_id, "user-1", agent_handle="reviewer") == again
+    assert again == dm
+    # 答不出对面是谁的那一条退路照走：项目默认那位答这间房。
+    assert _who_answers(client, dm) == "cheese"
+
+
+def test_a_pairs_own_dm_wins_over_a_room_that_grew_into_the_pair(client):
+    """两间房都坐着这两位时，还是两席的那间才是他们的 DM。
+
+    第三个人被加进 A 和队友的那间房之后，A 和他的私聊与那间房都坐着这两位。挑错
+    一间，A 和他之间的对话就落在另一间房里，而那间房在界面上没有别的入口。
+    """
+    project_id = _project(client)
+    _add_agent(client, project_id, "reviewer", "评审")
+    with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    with_mentor = _dm(client, project_id, "user-1", peer_handle="mentor-1")
+    assert with_mentor != with_reviewer
+
+    # 有人把 mentor-1 加进了 user-1 与评审的那间房。
+    _seat_by_hand(client, with_reviewer, "mentor-1")
+
+    assert _dm(client, project_id, "user-1", peer_handle="mentor-1") == with_mentor
 
 
 def test_an_old_dms_extra_seats_are_unseated(client):
-    """存量三席的私聊：迁移跑完回到两席，这间房又答得出对面是谁。
+    """存量私聊：迁移跑完回到两席，这间房又答得出对面是谁。
+
+    形状不手拼，让 ``d5c48f1a6b73`` 自己跑出来：房里坐着评审，它说不出替身站的是
+    哪一个，于是留下替身、又照样补上项目芝士那一席，四席就是这么来的。手拼一个
+    三席的样子，拼出来的可能是数据里根本不存在的形状，用例绿而存量坏。
 
     迁移之前它不是私聊，角标里就不该有它：既不翻倍，也不多出一行归给别人。
     """
@@ -351,9 +409,14 @@ def test_an_old_dms_extra_seats_are_unseated(client):
     _say(client, project_id, dm, reviewer["seat_handle"])
     assert _badge(client, project_id, "user-1") == {"agent:reviewer": 1}
 
-    # e7d2b91a4c06 补上队友那一席，d5c48f1a6b73 因为房里坐着别的实例留下了替身。
-    _seat_by_hand(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
+    # 队友有自己的席位之前，私聊名册上坐的是房间派生的那个替身。
+    stand_in = f"cheese-{uuid.UUID(dm).hex[:12]}"
+    _seat_by_hand(client, dm, stand_in)
+    _retire_the_stand_ins(client)
 
+    roster = _roster(client, dm)
+    assert stand_in in roster, "房里坐着评审，d5c48f1a6b73 留下了替身"
+    assert len(roster) == 4, f"[人, 队友, 替身, 项目芝士] 四席，实际 {roster}"
     assert _seats(client, dm) is None
     assert _badge(client, project_id, "user-1") == {}
 
@@ -366,6 +429,26 @@ def test_an_old_dms_extra_seats_are_unseated(client):
     # 幂等：再跑一遍不动任何一行。
     _run_the_migration(client)
     assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+
+
+def test_an_old_dm_gets_its_human_back_after_the_extra_seats_go(client):
+    """人那一席从来没写过的存量私聊：多出来的席位拿掉之后，补种这一步还得跑得到。
+
+    补种的闸是「名册还不到两席」，所以它数的必须是删完之后的名册。反过来跑，这间
+    房在删之前是三席，闸把它挡在外面，删完只剩队友一位，人再也补不回来。
+    """
+    project_id = _project(client)
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    # 名册还没有人这一席的年代建的私聊，人只在 ``private_owner`` 那一列里。
+    _unseat_by_hand(client, dm, "user-1")
+    _seat_by_hand(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
+    _retire_the_stand_ins(client)
+
+    _run_the_migration(client)
+
+    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+    assert _who_answers(client, dm) == "reviewer"
 
 
 def test_a_swapped_teammate_is_not_seated_back_by_the_migration(client):
