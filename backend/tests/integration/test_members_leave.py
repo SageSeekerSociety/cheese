@@ -69,8 +69,14 @@ def _seat(client, tid: str, handle: str, *, by: str, role: str = "member") -> No
 
 
 def _project_handles(client, pid: str) -> list[str]:
+    """名册上**人**那些 handle。
+
+    名册上也有这个项目的 AI 队友（一张名册，队友也在上面）—— 它们不是任何人退出或
+    被移出的结果，本文件问的是人那一半。队友在不在名册上，由
+    ``test_new_project_roster.py`` 守。
+    """
     rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
-    return [m["user_handle"] for m in rows]
+    return [m["user_handle"] for m in rows if not m["agent"]]
 
 
 def _topic_handles(client, tid: str) -> list[str]:
