@@ -24,6 +24,7 @@ from functools import lru_cache
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
+from app.domain.agent import dispatch_log
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
@@ -32,6 +33,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_DEPLOY_INTERRUPTED,
+    EVENT_DISPATCH_UNKNOWN,
     EVENT_TOOLS_RECOVERED,
     EVENT_TURN_FAILED,
     EVENT_TURN_QUEUED,
@@ -1238,7 +1240,15 @@ class AgentWorkRunner:
         own work — a 分身's kickoff, 验收卡被驳回, CI 红了 — strands it just as
         permanently as a person's message, and the room shows nothing either
         way. Re-sending it is what keeps the platform working rather than merely
-        quiet."""
+        quiet.
+
+        重派之前先读平台侧的执行记录（结论 57，6.5），而且是在这个函数做任何别的事
+        情之前 —— 这条顺序由 `tests/unit/test_retry_reads_the_dispatch_record.py`
+        守着。悬着的那些调用说的是「发出去了，而结果永远不会回来了」：把它们重发
+        一遍，是把一次可能已经落地的写操作再做一次，比什么都不做更坏。这类事情的
+        下一步在人手上。"""
+        async with chat_service.session_factory() as ledger:
+            unknown = await dispatch_log.unsettled(ledger, topic_id)
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:
@@ -1251,7 +1261,7 @@ class AgentWorkRunner:
         attach = bool(delivered) or not probe_ok
 
         resend: TurnRecord | None = None
-        if allow_actions and probe_ok:
+        if allow_actions and probe_ok and not unknown:
             candidates = [
                 record
                 for record in entries
@@ -1285,7 +1295,39 @@ class AgentWorkRunner:
         #   次部署。这时自动重发多半已经不是他要的了，得他自己决定还发不发。
         # - 这轮本身是一次重发（`resendable` 为假）。重发只把原始消息递一次，
         #   打断了就不连着再递，平台不会自动跑第二次。
-        stranded = allow_actions and probe_ok and not attach and resend is None
+        if unknown and allow_actions:
+            # 5.2「通知他一次」：说清悬着的是哪几次调用，然后把这几行结清成
+            # `unknown` —— 平台不再等它们了，问题在人手上。不写这一笔，同一个人会在
+            # 这个房间此后每一次扫底里被问同一件事。
+            waiting = "、".join(
+                f"{dispatch.method}（{dispatch.key}）" for dispatch in unknown
+            )
+            await self._post_orphan_event(
+                chat_service,
+                topic_id,
+                f"有 {len(unknown)} 次工具调用发出去了而结果没回来，平台不会替它重试",
+                notice(
+                    EVENT_DISPATCH_UNKNOWN,
+                    severity=SEVERITY_WARN,
+                    # 平台到头了：做没做过只有那台机器知道，而它已经不说话了。
+                    who=WHO_HUMAN,
+                    detail=(
+                        "平台记下了这些调用发出去过，机器没能把结果送回来，所以它们"
+                        f"做没做过只有那台机器知道：{waiting}。自动重发可能把一次已经"
+                        "落地的改动再做一遍——有人确认过之后 @ 芝士，它会从那里接着做。"
+                    ),
+                    detail_label="详细说明",
+                ),
+            )
+            async with chat_service.session_factory() as ledger:
+                for dispatch in unknown:
+                    await dispatch_log.settle(
+                        ledger, dispatch.id, dispatch_log.Outcome.unknown
+                    )
+                await ledger.commit()
+        stranded = (
+            allow_actions and probe_ok and not attach and resend is None and not unknown
+        )
         if stranded and entries:
             newest = max(entries, key=lambda record: record.started_at)
             age_s = newest.age_s(now)

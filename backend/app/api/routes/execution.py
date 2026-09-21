@@ -19,7 +19,8 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sandbox_auth import scoped_token_claims
-from app.domain.agent import execution
+from app.domain.agent import dispatch_log, execution
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.device import owner_reads
 from app.domain.topic.models import Topic
 
@@ -96,6 +97,22 @@ async def execute(
     }:
         raise ForbiddenError("This executor operation is not available to the session")
     target = lease
+    # 发出**之前**写下这次派发，和上面那次 commit 一起落库（结论 57，6.5）。带 id
+    # 的调用才记：那个 id 是执行器自己给这次副作用起的名字（``remote_execution/
+    # runtime.py`` 的 ``invoke`` 按它判重），而不带 id 的调用按它自己的协议问两遍
+    # 和问一遍一样 —— 为一次探活留一行悬着的记录，只会让它变成一件要人确认的事。
+    #
+    # 这条路由由**设备连接属主**服务，而一次 app 发布会刻意把属主留在旧镜像上
+    # （见 `domain/device/owner_reads.py`）。这里加载一个 ORM 模型仍然是安全的，
+    # 因为这张表是随这次改动一起建的：认识这个模型的镜像和建表的那次迁移是同一次
+    # 发布，而 `deploy-docker.sh` 先跑 `alembic upgrade head` 再换容器。旧属主只是
+    # 一行都不记 —— 记不下的那些读出来是「没有派发过」，和今天一模一样。
+    key = payload.params.get("id")
+    dispatch = (
+        dispatch_log.record(db, place_id=topic_id, key=str(key), method=payload.method)
+        if key
+        else None
+    )
     await db.commit()
     logger.debug(
         "execution_timing stage=admitted trace=%s mono_ns=%d",
@@ -112,15 +129,29 @@ async def execute(
     # business route must release its database connection before crossing that
     # boundary.
     try:
-        return await execution.call(
+        answer = await execution.call(
             target, payload.method, payload.params, trace_id=trace_id
         )
+    except (DeviceOffline, DeviceCallError):
+        # 确定没发出去：链路不在（``DeviceOffline``），或者机器自己回话说它没能把
+        # 这次调用转交出去（``DeviceCallError``：连接器找不到执行器的 socket、
+        # 连接器还在自更新）。两者都是**答复**，说的是「没有受理」，所以这一条重派
+        # 是安全的 —— 这正是 ``failed`` 和 ``unknown`` 的分界。
+        await _settle(db, dispatch, dispatch_log.Outcome.failed)
+        raise
     except TimeoutError as exc:
         # The machine holds its link and does not answer. That is a fault of the
         # far end, and answering 500「服务器内部错误」 blames the one process it
         # cannot be — the same reasoning, and the same status, as the connection
         # owner's own RPC path in `device_connection_app.call`.
+        #
+        # 这一行**不写回**：超时之后这次调用做没做过，这一侧不知道，而写下一个猜出
+        # 来的结果，就是把「不知道」变成一句下一次重派会当真的话。留着不结清，它读
+        # 出来就是 ``unknown``，重派路径会把它交给人（结论 57）。
         raise GatewayTimeoutError("机器没有在时限内回应这次执行调用") from exc
+    else:
+        await _settle(db, dispatch, dispatch_log.Outcome.done)
+        return answer
     finally:
         await db.rollback()
         logger.debug(
@@ -128,3 +159,17 @@ async def execute(
             trace_id,
             time.monotonic_ns(),
         )
+
+
+async def _settle(
+    db: AsyncSession, dispatch: uuid.UUID | None, outcome: dispatch_log.Outcome
+) -> None:
+    """把结果写回那一行，并在这里就提交。
+
+    在执行调用**之后**才重新向池子要连接，是上面那段注释的另一半：整个远端调用期间
+    这个请求手上不能有连接，而这一次结清只占它几毫秒。
+    """
+    if dispatch is None:
+        return
+    await dispatch_log.settle(db, dispatch, outcome)
+    await db.commit()
