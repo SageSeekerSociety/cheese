@@ -155,12 +155,35 @@ def test_the_ledger_says_exactly_who_still_depends_on_this_harness():
 # ``deployment_harness()`` 在部署没配的时候取值的地方。适配器自己那个目录也不
 # 例外——``hooks_substrate`` 早就是 ``harness = CLAUDE_CODE``，import 得到的东西
 # 就不该再拼一遍。
+#
+# 三个名字一起守。只守 claude-code 的那一版，是拿一条守着三分之一的守卫当验收：
+# 下一个人往领域层写 ``harness != "codex"``——和这次从 ``central_provider`` 删掉的
+# 那处分岔一模一样的东西——照样全绿。codex 和 pi 两个适配器目录里今天还各有几处在
+# 打自己的名字，一条一条记在下面的 ``_SPELLED_OUT`` 里，清单外的一律红。
 
 _REGISTRY = "app/domain/agent/harness/__init__.py"
 
-#: 注册表里写着的名字。这里按源码认，不 import ``HARNESSES`` ——守卫要抓的正是
-#: 「名字被写成了字面量」，拿被守的东西当判据等于放弃判据。
-_HARNESS_NAMES = ("claude-code",)
+#: 注册表里写着的名字，三个都在。这里按源码认，不 import ``HARNESSES`` ——守卫要
+#: 抓的正是「名字被写成了字面量」，拿被守的东西当判据等于放弃判据。
+_HARNESS_NAMES = ("claude-code", "codex", "pi")
+
+#: 今天还把自己名字原样打出来的地方：模块 → 它打出来的名字（排序后）。和上面的
+#: ``_LEDGER`` 同一个写法，也同样是棘轮——多一条会红（新长出来的字面量，得过一次
+#: review），少一条也会红（还完了忘删这一行）。
+#:
+#: 清单上一条都不在领域层：全是 codex 和 pi 两个适配器自己目录里的，说的是「我是
+#: 谁」而不是「这一轮跑谁」——它们的门口还没有像 claude_code 那样从注册表 import
+#: 自己那个常量。清单外的任何一处新字面量都红，这才是 I5 要守的那条线。
+_SPELLED_OUT: dict[str, tuple[str, ...]] = {
+    "app/domain/agent/harness/codex/channel.py": ("codex",),
+    "app/domain/agent/harness/codex/host.py": ("codex",),
+    "app/domain/agent/harness/codex/runner.py": ("codex",),
+    "app/domain/agent/harness/codex/runtime.py": ("codex",),
+    "app/domain/agent/harness/pi/device_launch.py": ("pi",),
+    "app/domain/agent/harness/pi/events.py": ("pi",),
+    "app/domain/agent/harness/pi/runner.py": ("pi",),
+    "app/domain/agent/harness/pi/runtime.py": ("pi",),
+}
 
 
 def _docstring_constants(tree: ast.AST) -> set[int]:
@@ -192,19 +215,30 @@ def _name_literals(source: str) -> list[tuple[int, str]]:
 
 
 def test_the_harness_name_is_written_down_once_in_the_backend() -> None:
-    offenders: dict[str, list[tuple[int, str]]] = {}
+    spelled: dict[str, tuple[str, ...]] = {}
     for path in sorted(APP.rglob("*.py")):
         relative = str(path.relative_to(APP.parent))
         if relative == _REGISTRY:
             continue
         hits = _name_literals(path.read_text(encoding="utf-8"))
         if hits:
-            offenders[relative] = hits
-    assert not offenders, (
-        f"这些地方把骨架的名字原样写了出来：{offenders}。跑的是哪个骨架由部署设置"
-        f"加项目设置答（``deployment_harness()`` / ``harness_for()``），名字本身"
-        f"只写在 {_REGISTRY} 里。"
+            spelled[relative] = tuple(sorted({value for _, value in hits}))
+    added = sorted(set(spelled) - set(_SPELLED_OUT))
+    paid_off = sorted(set(_SPELLED_OUT) - set(spelled))
+    assert not added, (
+        f"这些地方把骨架的名字原样写了出来：{ {m: spelled[m] for m in added} }。"
+        f"跑的是哪个骨架由部署设置加项目设置答（``deployment_harness()`` / "
+        f"``harness_for()``），名字本身只写在 {_REGISTRY} 里。真的躲不掉就加进 "
+        f"_SPELLED_OUT，顺便在 review 里说清为什么。"
     )
+    assert not paid_off, (
+        f"这些模块已经不打自己的名字了，把它们从 _SPELLED_OUT 里删掉：{paid_off}"
+    )
+    for module in sorted(spelled):
+        assert spelled[module] == _SPELLED_OUT[module], (
+            f"{module} 打出来的名字变了。清单写着 {_SPELLED_OUT[module]}，"
+            f"实际是 {spelled[module]}"
+        )
 
 
 _FRONTEND_SRC = APP.parent.parent / "frontend/src"
@@ -240,6 +274,10 @@ def test_the_interface_does_not_know_any_harness_by_name() -> None:
 # 它什么都没在看的样子。该红的喂进去要命中，不该红的喂进去要放过。
 _MUST_CATCH = {
     "a-branch": 'if harness != "claude-code":\n    pass\n',
+    # 另外两个骨架的名字同样是名字：领域层写 ``harness != "codex"`` 和写
+    # ``!= "claude-code"`` 是同一处分岔，守卫也得同样红。
+    "a-branch-on-another-harness": 'if harness != "codex":\n    pass\n',
+    "a-second-declaration": 'PI = "pi"\n',
     "a-column-default": 'harness = mapped_column(String(64), default="claude-code")\n',
     "a-stamp": 'event = AgentSessionInfo(sid, harness="claude-code")\n',
     "a-dict-value": 'env = {"CHEESE_HARNESS": "claude-code"}\n',
