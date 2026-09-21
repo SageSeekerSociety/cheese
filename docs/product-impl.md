@@ -41,7 +41,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | `refs[]` | 引用 | 决策/结论指回来源（如 `return_conclusion` 写 `refs=[sub_id]`） |
 | `upgraded_to_topic_id` | 活引用 | 升级过的块指向其新话题 |
 | `kind` | 块类型 | `message`/`doc`/`decision`/`event`/`attachment` |
-| `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己；`system` 是它的旧名字，只剩存量行还带着）。「是人还是芝士」看 `author` 这条 handle |
+| `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己）。「是人还是芝士」看 `author` 这条 handle |
 
 这些字段经 `BlockOut`（Batch A）全部暴露给前端。
 
@@ -69,7 +69,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 对话 | `components/ChatPanel.vue` | 飞书群聊式；只显示 message + 系统行（doc/decision/🔧 事件不混入）；本地时区 |
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
 | 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸分身) + 项目文档(章程/决策/周报) + 成员(私聊从名册进)；右缘可拖拽调宽 |
-| 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定 + 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
+| 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定（一叠卡，一次摆一条）+ 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
 | 日历 | `views/CalendarView.vue` | 里程碑倒排 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/下个里程碑/状态 |
 | 个人主页 | `views/MemberView.vue` | 封面+头像+技能+芝士眼中的TA+参与项目；本项目中：发起/在忙/本周贡献 |
@@ -145,7 +145,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
 - **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）对所有人可见。
-- **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。
+- **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
 - **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
 - **实现**：`AlertService`（`backend/app/domain/alert/`）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`。前端 `components/NeedsYou.vue`。
@@ -158,7 +158,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.9 仪表盘（总览 / 看板 / 个人主页）  ✅ / 🟡
 
-- **项目首页**（`views/workspace/RunningWorkView.vue`）：等你决定（项目收件箱）+ 四列看板——施工中 / 交付中 / 待处理按「该谁动」分列，最右边一列是做出了什么（产物清单，已发布的 Site 钉在它最上面）。🟡 人/AI 贡献统计没有落点。
+- **项目首页**（`views/workspace/RunningWorkView.vue`）：等你决定（项目收件箱，摆成一叠，一次一条）+ 四列看板——施工中 / 交付中 / 待处理按「该谁动」分列，最右边一列是做出了什么（产物清单，已发布的 Site 钉在它最上面）。🟡 人/AI 贡献统计没有落点。
 - **机构看板**（`/spaces/{id}/dashboard`）：每个团队一行 + **最近活动时间**、人/AI 比例；**停滞按时间判定**（>7 天无活动）。
 - **个人主页**（`/users/{handle}/profile`）：跨项目简历。**贡献只算本人 human 块**（排除 system 生命周期块）、发起话题数排除私聊（Batch D）。
 - **成员页**（`/projects/{id}/members/{handle}/summary`）：发起的话题 + **在忙的话题** + **本周贡献**（Batch D）。

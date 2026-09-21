@@ -9,7 +9,9 @@ import { defineConfig } from '@playwright/test';
 // must be kept in step with the resolution below by hand.
 const BACKEND_PORT = process.env.E2E_BACKEND_PORT ?? '8081';
 const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
+const STUB_GATEWAY_PORT = process.env.E2E_STUB_GATEWAY_PORT ?? '4010';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
+const STUB_GATEWAY_URL = `http://127.0.0.1:${STUB_GATEWAY_PORT}`;
 
 export default defineConfig({
   testDir: './tests',
@@ -40,6 +42,13 @@ export default defineConfig({
   ],
   webServer: [
     {
+      command: `node ./stub-gateway.mjs`,
+      env: { STUB_GATEWAY_PORT },
+      url: `${STUB_GATEWAY_URL}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+    {
       command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}`,
       // Exercise model selection without configuring a live inference provider.
       //
@@ -52,6 +61,14 @@ export default defineConfig({
       env: {
         AGENT_HARNESS_MODELS: '{"codex": ["codex-ci-fixture"]}',
         FEEDBACK_ADMIN_HANDLES: '["alice"]',
+        // Which models the platform pool offers is the gateway's answer, so a
+        // run without one can only pick AGENT_MODEL — too few to check that
+        // choosing narrows, and all of them labelled with their own id, which
+        // is what would let the picker send a label back as a model name
+        // unnoticed. stub-gateway.mjs answers that one question and nothing
+        // else; it is not an inference provider.
+        LLM_GATEWAY_ADMIN_BASE: STUB_GATEWAY_URL,
+        LLM_GATEWAY_ADMIN_KEY: 'stub-gateway-key',
       },
       url: `${BACKEND_URL}/healthz`,
       reuseExistingServer: !process.env.CI,

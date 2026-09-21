@@ -8,10 +8,6 @@
 
 所以这里只答一个问题：**这条事件是参与者写的，还是平台自己写的。**「是不是芝士
 说的」去问署名（`app.domain.identity.handles`）。
-
-判据写成「是不是 participant」而不是列举平台那一档的名字：那一档正在改名，新行
-写下的已经是 `platform`，存量行上还是 `system`（见 `AuthorType.platform`），而两
-个名字都不是 participant，于是这里一个字都不用跟着改。
 """
 
 from sqlalchemy import ColumnElement
