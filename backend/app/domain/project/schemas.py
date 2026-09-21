@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.project.models import AiMode
+from app.domain.shell.schemas import ShellOut
 
 
 class ProjectCreate(BaseModel):
@@ -37,6 +38,12 @@ class ProjectOut(BaseModel):
     summary: str
     root_topic_id: uuid.UUID | None
     created_at: datetime
+    #: The 壳 in force for this project, already resolved (项目-level setting →
+    #: 赛题 override → 项目集 → default). The frontend renders what it is told and
+    #: keeps no copy of the catalog, so a 壳 added server-side reaches the
+    #: browser without a frontend release. None only on a payload built without
+    #: a session; every route fills it.
+    shell: ShellOut | None = None
 
 
 class ForgeAttributionUpdate(BaseModel):
