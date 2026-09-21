@@ -262,25 +262,31 @@ function seatOf(row: RosterRow | null | undefined): { handle: string; label: str
   return handle ? { handle, label: row?.name || handle } : null
 }
 
-// 这个房间名册上坐着的 AI 队友。座位是**每个话题一份**的（handle 带话题后缀），
-// 项目名册上那行共用的 `cheese` 不是它。
+// 这个房间名册上坐着的 AI 队友。
 //
-// 名册没到时是 null，不拿项目那位顶：那一位也叫「芝士」，顶上去的后果是消息里那
-// 个 @ 指到另一个身份，读的人以为叫了这个房间的它。
+// 名册没到时是 null，不拿项目那位顶：顶上去的后果是消息里那个 @ 指到另一个队友，
+// 读的人以为叫了这个房间的这位。
 const roomAgentSeat = computed(() => (rosterLoaded.value ? seatOf(roomMembers.value.find((m) => m.agent)) : null))
+
+// 这个项目的默认队友：一间**没有 AI 席位**的老房间，后端解析出来的就是它
+// （`topic_membership/services.py` 的 `_project_agent_seat` 读 `default_agent_instance_id`）。
+// 不能拿「名册上第一个带 AI 标的」代替：那是建得最早的那一位，而停用默认队友时
+// 默认会改判给另一位（`agent_instance/services.py` 的 `deactivate`），于是刚退下去
+// 的那位排在最前——界面写着它的名字，答话的是别人，正是「换人没生效」那个报障。
+const projectDefaultAgent = computed(() => props.members.find((m) => m.agent && m.project_default) ?? null)
 
 // 这个房间现在交给的是哪个 AI 队友。名册那一行说了算（后端把芝士那一行的名字
 // 解析成当前队友的名字）。界面上任何一处写死「芝士」，换完队友都不会变，看起来
 // 就是「换人没生效」——这正是它被报上来的样子。
 //
 // 名册到了、这个房间确实没有 AI 座位（座位是后来才有的，老话题没有）时，退回
-// 项目名册上那行共用的芝士——否则这个话题永远叫不动它。名册还没到时两边都不猜，
-// 就写「芝士」：那一刻界面上任何一处说出的名字，都可能是上一个房间那位。
+// 项目的**默认**队友——否则这个话题永远叫不动它。名册还没到时两边都不猜，就写
+// 「芝士」：那一刻界面上任何一处说出的名字，都可能是上一个房间那位。
 const agentName = computed(() => {
   const seat = roomAgentSeat.value
   if (seat) return seat.label
   if (!rosterLoaded.value) return '芝士'
-  return seatOf(props.members.find((m) => m.agent))?.label || '芝士'
+  return seatOf(projectDefaultAgent.value)?.label || '芝士'
 })
 
 // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
@@ -301,11 +307,12 @@ const mentionPool = computed(() => {
     agent: !!m.agent,
   }))
   const inRoom = new Set(room.map((r) => r.handle))
-  // 这个房间已经有自己的芝士时，项目名册上那种共用的 agent 行就不进名单了：
-  // 两行都叫「芝士」的话，@芝士 展开成哪一个纯看顺序。房间里那位才是会动的那个。
-  const roomHasAgent = room.some((r) => r.agent)
+  // 项目名册上的 AI 队友也 @ 得到：它坐的是自己的那个 handle（房间席位用的是同一
+  // 个），所以上面按 handle 去重就够了——@ 一位还没进这间房的队友，和 @ 一个还没
+  // 进来的人是同一件事。已停用的不列：停用就是为了挡住新的活，补全菜单是派活的
+  // 入口。房间那一半不过这道滤——已经在这间房里的它照常 @ 得到。
   const rest = props.members
-    .filter((m) => !inRoom.has(m.user_handle) && !(roomHasAgent && m.agent))
+    .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
     .map((m) => ({ handle: m.user_handle, label: m.name || m.user_handle, agent: !!m.agent }))
   return [...room, ...rest]
 })
@@ -1651,11 +1658,11 @@ function onFilePicked(e: Event) {
 
 // 房间里那位芝士 —— **房间名册**上坐着的那一行，不是项目名册上那行共用的。
 //
-// 名册没到时候没有它（按钮关着，见下面的 `summonReady`）：那时候名单里唯一带 AI
-// 标记的是项目那位，认了它，正文里写下的 @ 就指到另一个身份。名册到了、这个房间
-// 确实没有座位（老话题），才退回项目那一行。
+// 名册没到时候没有它（按钮关着，见下面的 `summonReady`）：那一刻认谁都可能认成上
+// 一个房间那位，正文里写下的 @ 就指到另一个身份。名册到了、这个房间确实没有座位
+// （老话题），才退回项目的**默认**队友——后端给这样一间房解析出来的正是它。
 const agentMention = computed(
-  () => roomAgentSeat.value ?? (rosterLoaded.value ? seatOf(mentionPool.value.find((m) => m.agent)) : null)
+  () => roomAgentSeat.value ?? (rosterLoaded.value ? seatOf(projectDefaultAgent.value) : null)
 )
 
 // 叫不叫芝士，由**这条消息 @ 没 @ 它**决定 —— 和 @ 一个人走的是同一条路，

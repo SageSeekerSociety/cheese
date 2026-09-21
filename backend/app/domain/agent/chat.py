@@ -125,6 +125,7 @@ from app.domain.identity.handles import (
     looks_like_agent_handle,
     names_a_person,
 )
+from app.domain.membership.roster import roster_rows
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
@@ -2863,11 +2864,9 @@ class ChatService:
                 if "@" in content
                 else []
             )
-            # Which agent each seat belongs to. A room may seat several, so one
-            # display name cannot stand for all of them: labelling every seat
-            # with the room's pointed-at agent made the other teammates
-            # unaddressable — their names matched nobody, so no mention token
-            # was written and nobody was ever recorded as addressed (#1192).
+            # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
+            # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
+            # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
             by_seat = (
                 {
                     agent_instance_handle(instance.id): instance
@@ -2924,24 +2923,39 @@ class ChatService:
                 # (<@alice> / <#id>) BEFORE the block is stored, so it renders
                 # as a clickable chip instead of leaking raw "@Alice" text.
                 # 私聊没有名册可以解析（也不暴露成员列表），原样存下来。
+                # 队友已经在这张名册上（``membership/roster.py``），每一位带着自己
+                # 的名字，所以名字不再另拼一份——拼出来的那份就是第二份声明。
                 roster = (
                     []
                     if "@" not in content or _is_dm(topic)
-                    else await ProjectRepository(session).list_members(topic.project_id)
+                    else await roster_rows(session, topic.project_id)
                 )
-                # Use the same room seat and display name as the mention picker,
-                # each seat under its own agent's name.
-                roster = [
-                    {
-                        "handle": handle,
-                        "name": (
-                            by_seat[handle].display_name
-                            if handle in by_seat
-                            else agent.display_name
-                        ),
-                    }
-                    for handle in agent_handles
-                ] + [row for row in roster if row["handle"] not in agent_handles]
+                # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
+                # 的补一行。一间还挂着共用 `cheese` 席位的老房间（那一步是惰性的，
+                # 等这间房的 agent 下次动手才迁，见 `migrate_shared_agent_seat`）在
+                # 项目名册上没有对应的行——名册上叫「芝士」的是项目的默认实例，
+                # 「@芝士」展开成它就等于 @ 了一个没坐在这间房里的队友：这一轮起不
+                # 来，通知还发给了它。反过来也成立：成员表里历史上落过的一行
+                # `cheese` 会以人的身份排在名册最前，在**正常**房间里把「@芝士」抢
+                # 成 <@cheese>。谁坐在这间房里，谁先答。
+                # 这是同一次读的一个渲染顺序，不是第二份名册——和 `roster_rows()`
+                # 的定位一致。
+                if roster and agent_handles:
+                    row_of = {row["handle"]: row for row in roster}
+                    seated = set(agent_handles)
+                    roster = [
+                        row_of[handle]
+                        if handle in row_of
+                        else {
+                            "handle": handle,
+                            "name": (
+                                by_seat[handle].display_name
+                                if handle in by_seat
+                                else agent.display_name
+                            ),
+                        }
+                        for handle in agent_handles
+                    ] + [row for row in roster if row["handle"] not in seated]
                 if roster:
                     topic_refs = [
                         {"id": str(t.id), "title": t.title}
@@ -3374,7 +3388,7 @@ class ChatService:
                 roster = (
                     []
                     if topic is None or _is_dm(topic)
-                    else await ProjectRepository(session).list_members(project_id)
+                    else await roster_rows(session, project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
@@ -3859,7 +3873,7 @@ class ChatService:
                 roster = (
                     []
                     if topic is None or _is_dm(topic)
-                    else await ProjectRepository(session).list_members(project_id)
+                    else await roster_rows(session, project_id)
                 )
                 topic_refs, _ = _topic_ref_lists(
                     await TopicRepository(session).list_for_project(project_id),
@@ -4641,8 +4655,7 @@ class ChatService:
                     memory, session, topic=topic, agent=agent
                 )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
-            projects_repo = ProjectRepository(session)
-            project = await projects_repo.get(topic.project_id)
+            project = await ProjectRepository(session).get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             # 骨架是这套部署跑的那一个（结论 28），不是这个参与者的属性。
@@ -4653,9 +4666,7 @@ class ChatService:
             # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
             # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `_notify_mentions`。
             roster = (
-                []
-                if _is_dm(topic)
-                else await projects_repo.list_members(topic.project_id)
+                [] if _is_dm(topic) else await roster_rows(session, topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
@@ -5047,7 +5058,11 @@ class ChatService:
             doc_text,
             memories.facts,
             role,
-            roster,
+            # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
+            # 加 @」，而一个停用了的实例没有人在驱动它——@ 它等于把活扔进一个没人
+            # 接的地方。@ 解析和通知那几路照旧走全量的 `roster`：老房间里已经在的
+            # 它仍要 @ 得到，停用挡的是新的活，不是已经接手的。
+            [m for m in roster if m["active"]],
             topic_refs_for_prompt,
             untitled,
             artifacts=artifact_refs,
