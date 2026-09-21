@@ -477,12 +477,10 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
             handle="reviewer",
             type_name=None,
             display_name="Reviewer",
-            configuration=AgentConfiguration(model="opus", body="Original role"),
+            configuration=AgentConfiguration(body="Original role"),
         )
         snapshot = agents.resolved(agent)
-        await agents.configure(
-            agent, AgentConfiguration(model="fable", body="Edited role")
-        )
+        await agents.configure(agent, AgentConfiguration(body="Edited role"))
         await session.commit()
         assert await agents.system_prompt(snapshot) == "Original role"
         # A later turn addressed to the same teammate resolves it afresh.

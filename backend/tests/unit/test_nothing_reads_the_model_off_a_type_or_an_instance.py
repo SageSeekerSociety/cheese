@@ -117,19 +117,35 @@ _FRONTEND_ALIAS = re.compile(
 
 
 def _frontend_reads(text: str) -> list[str]:
+    """界面上把这三样东西读出来的行。
+
+    三种写法都认：属性（``a.configuration.model``）、下标（``cfg['model']``），
+    以及解构（``const { model } = agent.configuration``）。第三种是这条守卫最容
+    易漏的一种——它读出来的名字就叫 ``model``，之后每一处用它的地方都不再提持有
+    它的东西，所以只有解构那一行能看见这是一个读点。
+    """
     holders = set(_HOLDERS) | set(_FRONTEND_ALIAS.findall(text))
+    named = "|".join(sorted(holders))
     reads = re.compile(
-        r"\b(" + "|".join(sorted(holders)) + r")(\.value)?\??"
+        r"\b(" + named + r")(\.value)?\??"
         r"(\.(model|harness|effort)\b|\[['\"](model|harness|effort)['\"]\])"
+    )
+    destructured = re.compile(
+        r"(?:const|let|var)\s*\{[^}]*\b(?:model|harness|effort)\b[^}]*\}\s*="
+        r"[^=]*\b(" + named + r")\b"
     )
     return [
         f"line {i}: {line.strip()}"
         for i, line in enumerate(text.splitlines(), 1)
-        if reads.search(line)
+        if reads.search(line) or destructured.search(line)
     ]
 
 
 def test_no_frontend_code_reads_the_three_fields_off_a_type_or_an_instance() -> None:
+    assert FRONTEND_SRC.is_dir(), (
+        f"{FRONTEND_SRC} 不在——这条守卫会扫到零个文件然后绿。"
+        "界面那一半的读点没有被检查过。"
+    )
     offenders: dict[str, list[str]] = {}
     for path in sorted(FRONTEND_SRC.rglob("*")):
         if path.suffix not in (".ts", ".vue"):
@@ -141,6 +157,74 @@ def test_no_frontend_code_reads_the_three_fields_off_a_type_or_an_instance() -> 
         f"界面还在读一个类型或一个实例上的模型/骨架/思考深度：{offenders}。"
         "用户接触模型的地方只有卡。"
     )
+
+
+# --- 守卫自己得能抓到东西 ---------------------------------------------------
+#
+# 一条正则守卫坏掉的时候是绿的：没有一处读点了，所以「扫出来是空的」既是它守住了
+# 的样子，也是它什么都没在看的样子。下面两组片段把这两种情况分开——该红的喂进去
+# 要命中，不该红的喂进去要放过（误红更坏，它把下一个人导去改一处本来对的代码）。
+
+_BACKEND_MUST_CATCH = {
+    "subscript": "agent.configuration['model']\n",
+    "get": "agent.configuration.get('harness')\n",
+    "through-the-schema": (
+        "AgentConfiguration.model_validate(agent.configuration).effort\n"
+    ),
+    "renamed-first": "cfg = agent.configuration\nx = cfg.get('model')\n",
+}
+
+_BACKEND_MUST_PASS = {
+    # 活的绑定就是模型今天的住处（room_task/binding.py），它不是一个读点。
+    "the-work-binding": "model = task.model or project.default_model\n",
+    # 部署设置，不是从一份 configuration 上读出来的。
+    "the-deployment-harness": "harness = DEFAULT_HARNESS\n",
+    # 同名的键，持有它的不是一份 configuration。
+    "somebody-else-s-model": "opening = {'model': binding.model}\n",
+}
+
+
+@pytest.mark.parametrize(
+    "source", _BACKEND_MUST_CATCH.values(), ids=list(_BACKEND_MUST_CATCH)
+)
+def test_self_test_the_backend_guard_goes_red_on(source: str) -> None:
+    assert _reads_a_retired_key(ast.parse(source)), f"没抓到：{source!r}"
+
+
+@pytest.mark.parametrize(
+    "source", _BACKEND_MUST_PASS.values(), ids=list(_BACKEND_MUST_PASS)
+)
+def test_self_test_the_backend_guard_lets_through(source: str) -> None:
+    assert _reads_a_retired_key(ast.parse(source)) == [], f"误红：{source!r}"
+
+
+_FRONTEND_MUST_CATCH = {
+    "attribute": "const name = agent.configuration.model\n",
+    "subscript": "const name = cfg['harness']\n",
+    "destructured": "const { model } = agent.configuration\n",
+    "destructured-several": "const { body, effort } = draft.value\n",
+    "renamed-first": "const cfg = a.configuration\nconst h = cfg.harness\n",
+}
+
+_FRONTEND_MUST_PASS = {
+    "the-card-s-binding": "const { model } = card.binding\n",
+    "the-work-binding": "const label = task.model ?? '默认'\n",
+    "a-field-of-its-own": "const model = await pickModel()\n",
+}
+
+
+@pytest.mark.parametrize(
+    "source", _FRONTEND_MUST_CATCH.values(), ids=list(_FRONTEND_MUST_CATCH)
+)
+def test_self_test_the_frontend_guard_goes_red_on(source: str) -> None:
+    assert _frontend_reads(source), f"没抓到：{source!r}"
+
+
+@pytest.mark.parametrize(
+    "source", _FRONTEND_MUST_PASS.values(), ids=list(_FRONTEND_MUST_PASS)
+)
+def test_self_test_the_frontend_guard_lets_through(source: str) -> None:
+    assert _frontend_reads(source) == [], f"误红：{source!r}"
 
 
 @pytest.mark.parametrize("field", RETIRED)
