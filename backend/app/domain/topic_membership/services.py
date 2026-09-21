@@ -322,32 +322,19 @@ class TopicMemberService:
         question stays 「这个房间认不认它」 and does not widen to
         「这个项目认不认它」.
 
-        One handle answers without a seat here, and it is one handle rather than
-        a second roster: ``ProjectAgentCredentialService.agent_handle`` — i.e.
-        the project's own 芝士 — is what a project credential authenticates as,
-        and it borrows no room's seat by definition. An off-platform 芝士 (local
-        agent, bot, CI) holds exactly that credential and acts in every room of
-        its project, so asking only the destination room's roster would answer
-        "not an agent" for it in every room but 总览: a 403 instead of a
-        published message, and a turn that reads its own question back as unread
-        input. Reading 总览's whole roster instead of this one handle is what
-        would widen the check back to the project — 总览's roster is every
-        project member, so any agent seated there would pass everywhere.
+        The roster is the whole answer, with no handle excepted. There used to be
+        one: a project credential authenticated as a name derived from the
+        project's root room, which by construction sat on no other room's
+        roster, so an off-platform 芝士 (local agent, bot, CI) holding that
+        credential had to be waved through everywhere. It authenticates as the
+        project's own 芝士 now, and that 芝士 is seated in every room it belongs
+        to — so the exception bought nothing and cost the capability this check
+        exists to provide: while it stood, revoking that seat in one room left
+        the credential writing there anyway.
 
-        In 总览 itself the roster is the whole answer: that is where the
-        project's 芝士 holds its seat, so revoking it there revokes it there.
-
-        Pass the ROOM: threads have no roster of their own, and the project the
-        room belongs to is where that credential handle is read from.
+        Pass the ROOM: threads have no roster of their own.
         """
-        if handle in await self.agent_handles(room.id):
-            return True
-        project = await ProjectRepository(self._session).get(room.project_id)
-        if project is None or project.root_topic_id == room.id:
-            return False
-        if project.default_agent_instance_id is None:
-            return False
-        return handle == agent_instance_handle(project.default_agent_instance_id)
+        return handle in await self.agent_handles(room.id)
 
     async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
         """Seat THIS agent in this room, and return the handle it acts under.

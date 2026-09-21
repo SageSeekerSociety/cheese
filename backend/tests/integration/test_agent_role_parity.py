@@ -18,11 +18,11 @@ def _rooms(client):
     return project, project["root_topic_id"], other
 
 
-def _agent(client, project, origin, *, scope="project", ttl=3600):
-    """房间里那位芝士自己的凭据。
+def _agent(client, project, origin, *, scope="project", ttl=3600, as_handle=None):
+    """一位队友的每轮凭据，默认是 origin 里坐着的那一位。
 
     身份是**凭出来**的，不是从房间推出来的：一间房可以坐好几个 agent，所以铸令牌
-    的那一刻必须说清是谁在用它。这里说的就是名册上坐着的那一位。
+    的那一刻必须说清是谁在用它。
     """
     return {
         "X-Cheese-Token": mint_scoped_token(
@@ -30,9 +30,25 @@ def _agent(client, project, origin, *, scope="project", ttl=3600):
             topic_id=origin,
             access_scope=scope,
             ttl_s=ttl,
-            agent_handle=_seated_agent(client, origin),
+            agent_handle=as_handle or _seated_agent(client, origin),
         )
     }
+
+
+def _teammate(client, project, room) -> str:
+    """一个另外建出来的队友，只在 ``room`` 里有席位。
+
+    项目自己那位芝士坐在项目的每一间房里（建房时就播进去），所以拿它问不出「这个
+    房间认不认它」——两间房都认。跨房间的判据要用一个只坐了一间房的队友才问得出来。
+    """
+    made = client.post(
+        f"/projects/{project['id']}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    )
+    assert made.status_code == 200, made.text
+    seat = made.json()["data"]["seat_handle"]
+    _join(client, room, seat)
+    return seat
 
 
 def _seated_agent(client, room: str) -> str:
@@ -58,8 +74,8 @@ def _join(client, room, handle):
 
 def test_cross_room_access_requires_membership_and_preserves_identity(client):
     project, origin, other = _rooms(client)
-    handle = _seated_agent(client, origin)
-    auth = _agent(client, project, origin)
+    handle = _teammate(client, project, origin)
+    auth = _agent(client, project, origin, as_handle=handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     _join(client, other, handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 200
@@ -90,11 +106,12 @@ def test_cross_room_access_requires_membership_and_preserves_identity(client):
 
 def test_room_only_credential_stays_restricted_even_with_membership(client):
     project, origin, other = _rooms(client)
-    _join(client, other, _seated_agent(client, origin))
+    handle = _teammate(client, project, origin)
+    _join(client, other, handle)
     assert (
         client.get(
             f"/topics/{other}/blocks",
-            headers=_agent(client, project, origin, scope="topic"),
+            headers=_agent(client, project, origin, scope="topic", as_handle=handle),
         ).status_code
         == 403
     )
@@ -103,8 +120,9 @@ def test_room_only_credential_stays_restricted_even_with_membership(client):
 def test_project_access_cannot_cross_projects(client):
     project, origin, _ = _rooms(client)
     foreign, _, other = _rooms(client)
-    _join(client, other, _seated_agent(client, origin))
-    auth = _agent(client, project, origin)
+    handle = _teammate(client, project, origin)
+    _join(client, other, handle)
+    auth = _agent(client, project, origin, as_handle=handle)
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     assert (
         client.get(f"/topics?project_id={foreign['id']}", headers=auth).status_code
@@ -206,6 +224,12 @@ def test_project_credential_has_one_identity_and_needs_a_grant(client):
     handle = _seated_agent(client, origin)
     assert issued.json()["data"]["agent_handle"] == handle
     auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
+    # 这位芝士本来就坐在项目的每一间房里，所以先把它从这一间撤下来——「席位即授权」
+    # 这一问，只有在没有席位的房间里才问得出来。
+    assert (
+        client.delete(f"/topics/{other}/members/{handle}", headers=owner).status_code
+        == 200
+    )
     assert client.get(f"/topics/{other}/blocks", headers=auth).status_code == 403
     _join(client, other, handle)
     written = client.post(
@@ -223,9 +247,11 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 ):
     project, origin, _ = _rooms(client)
     owner = session_auth_headers("alice")
+    # 两个人之间的私聊：这个项目的芝士不是其中任何一方，所以「它是不是这间房的
+    # 参与者」是真的在问，而不是在问一间它本来就坐在里面的房。
     private = client.get(
         f"/projects/{project['id']}/private-chat",
-        params={"user_handle": "alice"},
+        params={"user_handle": "alice", "peer_handle": "bob"},
         headers=owner,
     ).json()["data"]["id"]
     handle = _seated_agent(client, origin)

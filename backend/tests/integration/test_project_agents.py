@@ -414,12 +414,18 @@ def test_the_unresolved_sentinel_cannot_be_claimed_as_an_agent(client):
 # --- "we cannot tell who this is" is its own identity ------------------------
 
 
-def test_project_credentials_cannot_borrow_the_destination_agent_seat(client):
-    """The root agent needs its own membership in the destination room."""
+def test_a_project_credential_is_refused_where_its_agent_has_no_seat(client):
+    """The credential names the project's 芝士, and a seat is what lets it speak.
+
+    It normally has one in every room, so this revokes it: what a credential
+    reaches is what its participant reaches, never more.
+    """
     from app.core.sandbox_auth import mint_project_agent_credential
 
     pid = _project(client)
     room = _topic(client, pid)
+    seat = next(a for a in _agents(client, pid) if a["is_default"])["seat_handle"]
+    assert client.delete(f"/topics/{room}/members/{seat}").status_code == 200
 
     r = client.post(
         f"/topics/{room}/comments",

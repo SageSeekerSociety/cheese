@@ -8,10 +8,9 @@
 被读到的布尔），而那个答案在整个项目里都一样，于是没坐下的那位照样发得出来。
 
 这条判据不放宽成「这个项目认不认它」，哪怕只放宽一点：总览的花名册照着整个项目，
-所以「根房间认不认它」等于「项目认不认它」，撤掉的席位就白撤了。不照房间花名册答
-的只有一个 handle——项目凭证认证的那位芝士，也就是这个项目自己的那一位，它按定义
-不借任何房间的席位，只问目的地房间的话，线下那张凭证在除总览外的任何房间里都会被
-答成「不是 agent」。
+所以「根房间认不认它」等于「项目认不认它」，撤掉的席位就白撤了。也没有任何一个
+handle 例外——项目凭证认证的是这个项目自己那位芝士，而它在自己进得去的每一间房里
+都真的有席位，所以照房间花名册答就够了。
 
 **缝二（I9b）：一个 agent 实例只能在建它的那个项目里持有席位。** 人没有这条限制
 ——被邀请到哪就去哪。这是「谁拥有这个参与者」的直接后果：实例由建它的项目拥有，
@@ -133,8 +132,8 @@ def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
     认它」——一个被从房间 X 撤掉席位的队友照样发得出来，而撤席位就是撤授权正是这
     整件事存在的理由。
 
-    兜底要管的只有一个 handle：项目凭证认证的那位芝士，也就是这个项目自己的那一
-    位，它按定义不借任何房间的席位。别的队友一律照房间的花名册答。
+    没有兜底：项目凭证认证的那位芝士自己就坐在房间里，所以它和别的队友一样，照
+    房间的花名册答。
     """
     project = _project(client, "Root seat is not a project pass")
     root = client.get(f"/projects/{project['id']}").json()["data"]["root_topic_id"]
@@ -202,12 +201,12 @@ def _project_credential(client, project) -> tuple[str, str]:
 
 
 def test_the_project_s_own_credential_speaks_in_every_room_of_it(client):
-    """席位问的是「这个房间认不认它」，而项目凭证的那位芝士坐在总览。
+    """席位问的是「这个房间认不认它」，而项目凭证的那位芝士在每一间房里都有席位。
 
-    一张线下的项目凭证（本地 agent、bot、CI 拿的都是它）在任意一个非总览房间里，
-    handle 仍是同一位芝士自己的那一个——它不借别的房间的席位，这是凭证的定义。只
-    问目的地房间的花名册，答案就永远是「不是 agent」，而这条路由不在
-    `_CHEESE_WRITE_PATHS` 里，这一句是它唯一的门：会从 200 变成 403。
+    一张线下的项目凭证（本地 agent、bot、CI 拿的都是它）在任意一个房间里，handle
+    都是同一位芝士自己的那一个，而建房时就把它的席位播了进去——所以它发得出来，
+    靠的是花名册上真有那一行，不是靠一条豁免。撤掉那一行，同一张凭证在这间房里就
+    该被拒（下一条用例）。
     """
     project = _project(client, "Project credential speaks")
     room = _room(client, project, title="不是根房间")
@@ -245,3 +244,26 @@ def test_the_question_that_credential_asks_is_not_an_input_it_must_read(client):
         "started": False,
         "reason": "nothing_pending",
     }, "它自己问出口的那道题不该把它自己叫起来"
+
+
+def test_revoking_that_seat_closes_the_project_credential_too(client):
+    """撤掉席位就是撤掉授权——对线下那张项目凭证也一样。
+
+    以前不是：凭证认证的是一个从根房间派生的名字，它在任何别的房间都没有席位，所以
+    判据里给它开了一个豁免。名字换成这位芝士自己的之后，那个豁免就成了一个洞：这间
+    房把它的席位撤了，凭证照样写得进来。所以豁免没了，这条用例守着它别回来。
+    """
+    project = _project(client, "Revoking the seat revokes the credential")
+    room = _room(client, project, title="把它请出去的那个房间")
+    token, handle = _project_credential(client, project)
+
+    assert _publish(client, room["id"], {"X-Cheese-Token": token}).status_code == 200
+
+    removed = client.delete(
+        f"/topics/{room['id']}/members/{handle}",
+        headers=session_auth_headers("alice"),
+    )
+    assert removed.status_code == 200, removed.text
+
+    refused = _publish(client, room["id"], {"X-Cheese-Token": token})
+    assert refused.status_code == 403, refused.text

@@ -66,10 +66,11 @@ def test_the_identity_does_not_come_from_a_room(client):
 
     mine = agent_instance_handle(made["id"])
     for room in rooms:
-        client.post(
+        seated = client.post(
             f"/topics/{room}/members",
-            json={"user_handle": mine, "role": "member", "actor": "u"},
+            json={"handle": mine, "role": "member", "actor": "u"},
         )
+        assert seated.status_code == 200, seated.text
         roster = client.get(f"/topics/{room}/members").json()["data"]["data"]
         assert mine in [m["member_handle"] for m in roster]
         assert room.replace("-", "")[:12] not in mine
