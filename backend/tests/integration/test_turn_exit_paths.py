@@ -175,7 +175,6 @@ _CHILD = textwrap.dedent(
 
     from app.core.config import settings
     settings.database_url = sys.argv[1]
-    settings.memory_backend = "db"
 
     import app.models  # noqa: F401
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

@@ -338,7 +338,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
     import asyncio as _asyncio
 
     for _ in range(10):
-        pending = [t for t in svc._memory_tasks if not t.done()]
+        pending = [t for t in svc._background_tasks if not t.done()]
         if not pending:
             break
         await _asyncio.gather(*pending, return_exceptions=True)

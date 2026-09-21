@@ -67,13 +67,6 @@ def periodic_jobs(
         PeriodicRunner(
             "scheduler tick", settings.scheduler_interval_seconds, scheduler.tick
         ),
-        PeriodicRunner(
-            "idle memory consolidation",
-            settings.sandbox_reap_interval_seconds,
-            lambda: scheduler.consolidate_idle_device_screens(
-                settings.sandbox_idle_hours
-            ),
-        ),
         # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.
         PeriodicRunner(
