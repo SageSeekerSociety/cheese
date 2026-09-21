@@ -12,7 +12,7 @@
 
 末尾两条按 PR 号收着族 4 里被结论 14、15 根除的那两个方向（#1128 / #1105）。族里另
 外五个（#1081 / #1055 / #1058 / #1063 / #1132）问的不是「该通知谁」，是一条日志或
-告警有没有人读得到、读不读得懂 —— 它们活在 `app/core/{obs,alerting}.py`、前端的
+告警有没有人读得到、读不读得懂。它们活在 `app/core/{obs,alerting}.py`、前端的
 `ErrorHandler.ts` 和 CI 的探针里，这个函数够不着。
 """
 
@@ -119,7 +119,7 @@ def test_reason_for_answers_only_about_the_people_it_named():
 # —— 看板那一列说的就是下一步在谁手上 ——————————————————————————
 
 
-#: 逐列写死的期望。看板多一列，这里就得多一行 —— 由下面那条完整性断言逼出来。
+#: 逐列写死的期望。看板多一列，这里就得多一行，由下面那条完整性断言逼出来。
 COLUMN_HANDS = [
     (Column.building, Hand.platform),
     (Column.delivering, Hand.platform),
@@ -137,7 +137,7 @@ def test_the_board_column_and_the_next_hand_are_one_answer(column, hand):
 def test_the_expected_hands_cover_every_column():
     """看板多一列，上面那张表必须跟着多一行。
 
-    少了这一条，新的一列只会在没人写进上表时悄悄不被断言 —— 而它在生产里落的是
+    少了这一条，新的一列只会在没人写进上表时悄悄不被断言，而它在生产里落的是
     「不通知任何人」那一档。这里不断言 `hand_of` 的返回值属于 `Hand`（那永远为
     真），断言的是这张期望表本身没有落下哪一列。
     """
@@ -150,7 +150,7 @@ def test_the_expected_hands_cover_every_column():
 def test_a_machine_the_platform_is_waiting_on_tells_nobody_however_often_it_asks():
     """#1128：平台自己在等一台机器开机，却每两秒告诉所有人。
 
-    守的是这个方向，不是它当年的现场 —— 那每分钟五条落在 `app/core/alerting.py`
+    守的是这个方向，当年的现场在别处：那每分钟五条落在 `app/core/alerting.py`
     的告警通道上，不经过投递。到了这里，「平台在等」这一档问多少遍都拿不出收件
     人，所以重复本身不可能再变成打扰。
     """

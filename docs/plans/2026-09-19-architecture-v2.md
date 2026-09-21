@@ -1139,7 +1139,7 @@ agent 调「开一台机器 / 换到 Cloud」，撞上项目策略（换到另�
 这次调用就自动变成一条**给人的提议**——下一步从平台手上转到了那个人手上，按同一条规则通知他一次。
 它不是第三个产生方，是「一次列变化」的一个取值。
 
-**今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口——`delivery/addressing.py` 的
+**今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
 `address()` 给出收件人。`chat.py` 里的 @ 仍然自己发一条 `AlertKind.mention`，它随 `alert/` 整包删除一起归拢。
 
