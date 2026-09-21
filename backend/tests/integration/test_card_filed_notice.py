@@ -11,8 +11,6 @@
 
 import uuid
 
-import pytest
-
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_TURN_QUEUED,
@@ -20,6 +18,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -147,28 +146,33 @@ def test_a_notice_that_names_nobody_reaches_nobody(client):
     assert len(_notices(client, alice)) == 1
 
 
-def test_a_notice_the_platform_is_handling_cannot_name_recipients(client):
-    """收件人只有 who=human 能点。
+def test_a_notice_the_platform_is_handling_reaches_nobody(client):
+    """下一步在平台手上的事，点了名也没有收件人。
 
-    另外两个码说的是平台或芝士正在处理 —— 那种事发一条通知出去，等于把一条不需要
-    任何人动手的消息推到别人面前。写错了要当场炸，而不是静悄悄多发一条。
+    平台或芝士正在处理的事发一条通知出去，等于把一条不需要任何人动手的消息推到别
+    人面前。这一条现在是**结构上**成立的：寻址在平台那一档拿不出收件人，所以调用
+    点连一个人都递不进来 —— 不靠它记得别点名。
     """
-    seed_user(client, "alice")
+    alice = seed_user(client, "alice")
     room = _room(client)
 
     async def go() -> None:
         async with client.test_factory() as session:
-            with pytest.raises(ValueError):
-                await announce(
-                    session,
-                    place_id=uuid.UUID(room),
-                    content="这轮在排队",
-                    meta=notice(
-                        EVENT_TURN_QUEUED,
-                        severity=SEVERITY_INFO,
-                        who=WHO_PLATFORM,
-                    ),
-                    recipients=("alice",),
-                )
+            await announce(
+                session,
+                place_id=uuid.UUID(room),
+                content="这轮在排队",
+                meta=notice(
+                    EVENT_TURN_QUEUED,
+                    severity=SEVERITY_INFO,
+                    who=WHO_PLATFORM,
+                ),
+                addressed=address(Event(reviewers=("alice",)), Hand.platform),
+            )
+            await session.commit()
 
     client.portal.call(go)
+
+    blocks = client.get(f"/topics/{room}/blocks").json()["data"]["data"]
+    assert any((b.get("meta") or {}).get("event_type") == "turn_queued" for b in blocks)
+    assert _notices(client, alice) == []

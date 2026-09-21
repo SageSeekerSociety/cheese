@@ -49,6 +49,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project import artifacts
@@ -651,7 +652,13 @@ class AcceptService:
                 detail=detail or None,
                 detail_label="这次改动",
             ),
-            recipients=(card.reviewer_handle, task.reporter_handle or ""),
+            addressed=address(
+                Event(
+                    reviewers=(card.reviewer_handle,),
+                    reporter=task.reporter_handle,
+                ),
+                Hand.participant,
+            ),
         )
 
     async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
@@ -2532,7 +2539,9 @@ class AcceptService:
             content=content,
             meta={"source": "accept", **meta},
             author="accept",
-            recipients=(card.reviewer_handle, *also),
+            addressed=address(
+                Event(reviewers=(card.reviewer_handle, *also)), Hand.participant
+            ),
         )
 
     async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:

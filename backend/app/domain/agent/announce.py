@@ -4,30 +4,35 @@
 的是**怎么说出去**，两件事在一次调用里完成：
 
 1. 这句话落进房间的时间线（`kind=event, author_type=system`）；
-2. `meta.who` 是 `human` 时，同一句话投给点名的人 —— 站内通知一条，邮件队列一条。
+2. 寻址结果点到的那些人各收到同一句话。
 
 芝士自己的提问走 `notify_question`：那条消息已经在时间线上，只缺投递这一半。
 
 通知里的文字就是房间里那一行，没有第二套措辞：人在通知里读到的和回房间看到的是
 同一句，同一件事不会有两种说法。再加一个渠道（浏览器推送之类）也只改这一个函数。
 
-**收件人由调用点给，这个函数不猜。** 「要人来」只说了要人，没说要哪个人：一张验收
-卡知道自己递给了谁，一个挂掉的运行环境只知道自己在哪个房间。凭房间名册推一批收件
-人出来，等于把一条多数人不该收的通知发给一屋子人；所以不点名的调用点只在房间里留
-话，和这个函数存在之前完全一样。
+**入参是一次寻址结果，不是一句文案加一串名字（I11）。** 谁该收到由
+`delivery/addressing.py` 的 `address()` 答，这里不猜也不推：凭房间名册推一批收件人出
+来，等于把一条多数人不该收的通知发给一屋子人。下一步在平台手上的那些事件，寻址结果
+里本来就没有人，所以它们只在房间里留话 —— 以前这一条靠读 `meta.who` 的码当闸门，一
+个给前端看的显示码兼着决定收件人，那就是同一个问题的第三个答案。
+
+怎么送到是 `identity/arrival.py` 的事：人走站内信，agent 在自己房间的时间线上读到上
+面刚落下的那一行。
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_HUMAN
+from app.domain.agent.platform_notices import SEVERITY_INFO
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.addressing import NOBODY, Addressed
+from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import publish_notification_event
 from app.domain.room_task.place import Place, PlaceResolver
@@ -42,9 +47,9 @@ async def announce(
     meta: dict | None = None,
     author: str = "system",
     turn_id: uuid.UUID | None = None,
-    recipients: Sequence[str] = (),
+    addressed: Addressed = NOBODY,
 ) -> Block | None:
-    """把 `content` 说进房间，并按 `meta.who` 决定要不要通知 `recipients`。
+    """把 `content` 说进房间，并投给这条事件点到的那些人。
 
     写的是调用方的 session，不是自己开一个：卡、房间里那句话、通知三者一起提交，
     所以一次回滚不会留下「房间说递了卡，卡却不存在」。要跨事务活下来的调用点
@@ -77,7 +82,7 @@ async def announce(
         place=place,
         content=content,
         meta=meta or {},
-        recipients=recipients,
+        addressed=addressed,
     )
     return block
 
@@ -89,7 +94,7 @@ async def notify_question(
     block_id: uuid.UUID,
     question: str,
     asker: str,
-    recipients: Sequence[str],
+    addressed: Addressed,
 ) -> None:
     """芝士提出待确认问题，本轮停止等待 —— 通知等这个回答的人。
 
@@ -100,10 +105,10 @@ async def notify_question(
     由平台决定。这一条是芝士自己的话，长度取决于它怎么问，两者不是一种东西 ——
     共用一个码，前端就无法区分该按哪一种渲染。
 
-    收件人由调用点给出，理由和 `announce` 一致：等这个回答的只有一个人，而房间里
-    还有其他成员。
+    收件人同样来自寻址结果，理由和 `announce` 一致：等这个回答的只有一个人，而房间
+    里还有其他成员。
     """
-    recipient_ids = await _recipient_ids(session, recipients)
+    recipient_ids = await _mailbox_ids(session, addressed)
     if not recipient_ids:
         return
     await publish_notification_event(
@@ -123,14 +128,24 @@ async def notify_question(
     )
 
 
-async def _recipient_ids(session: AsyncSession, recipients: Sequence[str]) -> set[int]:
-    """handle → 真实用户 id。解析不到的 handle 不出现在结果里。
+async def _mailbox_ids(session: AsyncSession, addressed: Addressed) -> set[int]:
+    """寻址结果里走站内信的那些人 → 真实用户 id。
 
-    解析不到是常态而非错误：`reporter_handle` 可能是外部提交的一个名字，芝士自身
-    也有 handle。少发一条通知，好于为一个不存在的人抛错。
+    agent 那一档不落在这里：它在自己房间的时间线上读到这条事件，往它的收件箱里塞一
+    行写的是一条谁都不会打开的记录（`identity/arrival.py`）。
+
+    人解析不到用户行是常态而非错误：`reporter_handle` 可能是外部提交的一个名字。少
+    发一条通知，好于为一个不存在的人抛错。
     """
     ids: set[int] = set()
-    for handle in sorted({h.strip() for h in recipients if h and h.strip()}):
+    people = sorted(
+        {
+            r.handle
+            for r in addressed.recipients
+            if how_it_arrives(r.handle) is Arrival.mailbox
+        }
+    )
+    for handle in people:
         user = await user_by_handle(session, handle)
         if user is not None:
             ids.add(user.id)
@@ -143,16 +158,9 @@ async def _notify(
     place: Place,
     content: str,
     meta: dict,
-    recipients: Sequence[str],
+    addressed: Addressed,
 ) -> None:
-    if not any(h and h.strip() for h in recipients):
-        return
-    if meta.get("who") != WHO_HUMAN:
-        raise ValueError(
-            "只有 who=human 的提示能点收件人 —— 另外两个码说的是平台或芝士正在"
-            f"处理，不该惊动谁（event_type={meta.get('event_type')!r}）"
-        )
-    recipient_ids = await _recipient_ids(session, recipients)
+    recipient_ids = await _mailbox_ids(session, addressed)
     if not recipient_ids:
         return
     await publish_notification_event(
