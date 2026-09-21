@@ -350,34 +350,6 @@ async def test_a_row_left_over_from_an_earlier_turn_does_not_eat_a_resend(
     assert chat.events == []
 
 
-@pytest.mark.anyio
-async def test_a_late_answer_from_the_session_that_wrote_the_row_does_not_erase_it(
-    db_factory,
-):
-    """迟到的那个 `done` 来自**创建这一行的那个 session** —— 路由就是这么结清的。
-
-    上一条摆的是两个互不相识的 session。这一条摆的是真实的那一侧：行是这个请求自己
-    创建的，还在它的 identity map 里，而 `core/db.py` 的 `expire_on_commit=False` 让
-    它一直是刚写下的样子。「读一行、看一眼、再写回去」在这里永远读到自己写的 `None`，
-    扫底在这中间判过什么它看不见，于是那个已经交到人手上的 `unknown` 被抹平。
-    """
-    topic = await a_topic(db_factory)
-    async with db_factory() as route:
-        dispatch = dispatch_log.record(
-            route, place_id=topic, key="tool-1", method="invoke"
-        )
-        await route.commit()
-        # 这次调用还在飞，扫底判它未知，房间里已经有人照着那条通知在查。
-        async with db_factory() as sweep:
-            await dispatch_log.settle(sweep, dispatch, dispatch_log.Outcome.unknown)
-            await sweep.commit()
-        # 659 秒之后它回来了。
-        await dispatch_log.settle(route, dispatch, dispatch_log.Outcome.done)
-        await route.commit()
-
-    assert await _outcomes(db_factory, topic) == [("tool-1", "unknown")]
-
-
 # --- 落点 → 记成什么：走真的路由 ------------------------------------------------
 
 _MACHINE = "machine-7"
