@@ -15,31 +15,14 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
-from app.domain.agent import harness as harness_module
-from app.domain.agent.harness import (
-    CODEX,
-    HARNESS_SETTING,
-    PI,
-    Harness,
-    SubagentRequirement,
-)
+from app.domain.agent.harness import CODEX, HARNESS_SETTING, PI
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent_instance.configuration import model_choices
+from tests.support.stand_in_harness import registered
 
 
 def _offered(project_settings: dict | None = None) -> set[str]:
     return {item["id"] for item in model_choices(project_settings)}
-
-
-def _registered(monkeypatch, name: str, **bits: bool) -> None:
-    """把一个替身骨架注册进这套部署（结论 43：注册表今天只有 Claude Code）。"""
-    stand_in = Harness(
-        name,
-        name,
-        subagents=dict.fromkeys(SubagentRequirement, "替身，见 `agent/harness/`"),
-        **bits,
-    )
-    monkeypatch.setitem(harness_module.HARNESSES, name, stand_in)
 
 
 def _running(monkeypatch, name: str, **bits: bool) -> None:
@@ -49,7 +32,7 @@ def _running(monkeypatch, name: str, **bits: bool) -> None:
     要求的骨架留着代码不注册），而下面这几条问的是「跑着一个指不到订阅、或者不说
     网关那套话的骨架时，列出来的是哪一批」——那件事跟谁答得出四条无关。
     """
-    _registered(monkeypatch, name, **bits)
+    registered(monkeypatch, name, **bits)
     monkeypatch.setattr(settings, "agent_harness", name)
 
 
@@ -168,7 +151,7 @@ def test_a_project_that_switched_harness_is_filtered_by_that_one(monkeypatch):
     # 部署跑的是 claude-code，没动它——动的只有一个项目的设置。
     assert {"sonnet", "codex-fixture"} <= _offered({})
 
-    _registered(monkeypatch, CODEX, speaks_gateway=False)
+    registered(monkeypatch, CODEX, speaks_gateway=False)
     switched = {HARNESS_SETTING: CODEX}
     assert "sonnet" not in _offered(switched)
     assert "codex-fixture" in _offered(switched)
