@@ -113,9 +113,7 @@ async def test_a_project_notification_never_reaches_the_flat_inbox(
     factory = authed_client.test_factory  # type: ignore[attr-defined]
     mine = await _seed(factory)
 
-    project = await authed_client.post("/projects", json={"name": "并表"})
-    assert project.status_code == 200, project.text
-    pid = project.json()["data"]["id"]
+    pid = await _seed_project(factory)
     posted = await authed_client.post(
         f"/projects/{pid}/alerts",
         json={
@@ -223,6 +221,20 @@ async def test_read_filter_and_type_filter(authed_client: AsyncClient) -> None:
         "/notifications", params={"pageSize": 10, "type": "NOPE"}
     )
     assert resp.status_code == 400
+
+
+async def _seed_project(factory) -> str:
+    """一个项目，直接落行 —— ``POST /projects`` 在这套 harness 里是 503（它要的代码
+    托管服务没配），而这个用例要的只是一个收得下通知的项目。"""
+    from app.domain.project.models import Project
+
+    async with factory() as session:
+        project = Project(name="并表", owner_handle=_AGENT_HANDLE)
+        session.add(project)
+        await session.flush()
+        project_id = str(project.id)
+        await session.commit()
+    return project_id
 
 
 async def _seed_user_with_profile(factory, nickname: str) -> int:

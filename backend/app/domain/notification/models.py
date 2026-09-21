@@ -17,8 +17,8 @@
 那一侧的站内信按数字 id 查。项目收件箱写下的行两个都填（handle 在账号池里找不到对
 应行时后者为空），知是那一侧写下的行只有 `receiver_id`。
 
-**两侧的读各认各的行。** `recipient_handle` 为空的那些才是站内信
-（`repositories._my_mail`），带着名册名字的那些只在项目收件箱里出现（`_mine_in`）。
+**两侧各自列出来的是各自的行。** 知是的收件箱里只有 `recipient_handle` 为空的那些
+（`repositories._my_mail`），带着名册名字的那些只在项目收件箱里列出（`_mine_in`）。
 平台报告自己的那几种在知是的铃铛里没有渲染器 —— 前端按 `type` 找模板，`MENTION`
 那一个读的是 `payload` 里的 `mentioner`/`discussionTitle`，项目通知的文字在
 `title`/`body` 上，落进去就是一排读不出内容的空壳，未读数却照加。

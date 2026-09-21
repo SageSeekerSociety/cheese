@@ -31,7 +31,7 @@ class NotificationRepository:
         self._session = session
 
     def _my_mail(self, stmt, user_id: int):
-        """知是那一侧的站内信：收件人是我，而且这一行不属于哪个项目收件箱。
+        """知是那一侧的收件箱里有哪些信：收件人是我，而且不是项目收件箱的行。
 
         后半句由 `recipient_handle` 为空说出：项目那一侧写下的每一行都带着名册上
         的名字（`add`），投递账本写给知是的那些只有 `receiver_id`
@@ -43,6 +43,11 @@ class NotificationRepository:
         `title`/`body` 上），渲染出来是一句「有人提到了你 / 在讨论 未知讨论 中提到
         了你」，还不带跳转；未读数却照加，知是那边一点「全部已读」还会把项目角标
         一起清掉。
+
+        按 id 点名的那几条（取一条、标一条、删一条）不带这一句：那是**已经拿着
+        行号**的调用者在动自己名下的那一行，两侧都认它 —— 项目那一侧读
+        `deleted_at`，所以这边删掉的不会还在角标里亮着。列表里出不来的东西，
+        UI 也变不出行号来。
         """
         return stmt.where(
             Notification.receiver_id == user_id,
@@ -53,9 +58,13 @@ class NotificationRepository:
     async def get_by_id_for_user(
         self, user_id: int, notification_id: int
     ) -> Notification | None:
-        stmt: Select[tuple[Notification]] = self._my_mail(
-            select(Notification), user_id
-        ).where(Notification.id == notification_id)
+        stmt: Select[tuple[Notification]] = select(Notification).where(
+            and_(
+                Notification.id == notification_id,
+                Notification.receiver_id == user_id,
+                Notification.deleted_at.is_(None),
+            )
+        )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -117,8 +126,14 @@ class NotificationRepository:
         self, user_id: int, notification_id: int, read: bool
     ) -> int:
         stmt = (
-            self._my_mail(update(Notification), user_id)
-            .where(Notification.id == notification_id)
+            update(Notification)
+            .where(
+                and_(
+                    Notification.receiver_id == user_id,
+                    Notification.id == notification_id,
+                    Notification.deleted_at.is_(None),
+                )
+            )
             .values(read=read)
         )
         result = await self._session.execute(stmt)
@@ -130,9 +145,11 @@ class NotificationRepository:
     ) -> list[Notification]:
         if not ids:
             return []
-        stmt: Select[tuple[Notification]] = self._my_mail(
-            select(Notification), user_id
-        ).where(Notification.id.in_(list(ids)))
+        stmt: Select[tuple[Notification]] = select(Notification).where(
+            Notification.receiver_id == user_id,
+            Notification.id.in_(list(ids)),
+            Notification.deleted_at.is_(None),
+        )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
