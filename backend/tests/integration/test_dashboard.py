@@ -38,7 +38,11 @@ def test_contributions_exclude_platform_blocks(client):
 
     c = client.get(f"/projects/{pid}/contributions").json()["data"]
     assert c["by_author"].get("user-1") == 1  # the platform block is not counted
-    assert c["by_author_type"]["platform"] >= 1
+    # `by_author_type` is this endpoint's own three-bucket vocabulary
+    # (human / ai / system), read off the SIGNATURE — not the column's value. The
+    # platform bucket is still spelled "system" there; renaming the wire is its
+    # own change.
+    assert c["by_author_type"]["system"] >= 1
 
 
 def test_member_summary_has_active_and_weekly(client, bearer):
