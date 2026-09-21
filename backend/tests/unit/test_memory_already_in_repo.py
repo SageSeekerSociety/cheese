@@ -52,7 +52,7 @@ async def test_the_file_that_says_it_best_is_the_one_named():
             {
                 "path": "CHANGELOG.md",
                 "line": 88,
-                "text": "前端构建用 pnpm 了，不要用别的",
+                "text": "前端构建用 pnpm 了",
             },
             {
                 "path": "docs/frontend.md",
