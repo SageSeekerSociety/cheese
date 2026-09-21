@@ -306,7 +306,7 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
 
     recovered = await provider.recover("dev1")
 
-    assert recovered == [SessionRef(project_id, topic_id)]
+    assert recovered == [SessionRef(project_id, topic_id, harness="claude-code")]
     assert channel._subscription_devices[topic_id] == "dev1"
     await provider.replay(recovered[0], known_texts=set())
     router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
@@ -432,7 +432,9 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
         result = await central.discover("center")
     screen = hub.screen("survivor")
-    assert result == [(project_id, topic_id, screen, None)]
+    # 第四位是这条会话跑的骨架，从会话行上原样交回来的——中心通道不按骨架挑，
+    # 认领是 runtime 拿自己的骨架去判的（``Channel.discover`` 的契约）。
+    assert result == [(project_id, topic_id, screen, "claude-code")]
     assert screen.resource_id == resource_id
     assert screen.credential_expires == 1234567890
     assert screen.agent_configuration == "original-config"
@@ -812,7 +814,7 @@ async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
     router = HookRouter()
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-    session = SessionRef(project_id, topic_id)
+    session = SessionRef(project_id, topic_id, harness="claude-code")
     try:
         if api == "send":
             call = provider.send(
@@ -2368,7 +2370,7 @@ async def test_interrupt_presses_escape_rather_than_saying_something():
     say about it, and the session survives it."""
     hub = FakeHub()
     provider = _provider(hub, HookRouter(), uuid.uuid4())
-    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     screen = await hub.open_screen(
         "dev1",
         "claude",

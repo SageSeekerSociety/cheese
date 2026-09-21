@@ -205,7 +205,7 @@ def test_core_memory_is_carried_and_an_ordinary_fact_is_only_counted(
     assert "你是芝士，回答先给结论" in prompt
     assert "项目用 FastAPI 写后端" not in prompt
     assert "记忆池里另有 **1 条**" in prompt
-    assert "cheese_recall" in prompt
+    assert "cheese recall" in prompt
 
 
 def test_empty_content_rejected(client):

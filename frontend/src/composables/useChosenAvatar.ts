@@ -11,7 +11,7 @@ import { AvatarsApi } from '@/network/api/avatars'
  * it anyway gives every user who never picked one the same face, which is
  * strictly worse at telling people apart than the per-handle hashed initial —
  * and telling people apart is the entire job of an avatar. The backend already
- * takes this line for the rosters it serves (`ProjectRepository.list_members`);
+ * takes this line for the rosters it serves (`ProjectRepository.people`);
  * this is the same rule for the payloads that carry the raw id, i.e. the
  * logged-in user's own profile.
  *

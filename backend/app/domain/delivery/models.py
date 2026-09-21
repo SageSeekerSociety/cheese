@@ -16,7 +16,7 @@ Redis 一重启就没了，Redis 连不上时直接放行。所以「已经算�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Uuid, text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,3 +63,40 @@ class Delivery(UuidPk, Base):
     #: 发过几次没成。到 `ledger.MAX_ATTEMPTS` 就不再补发 —— 那一行留在这里是死信。
     #: 没有这个上限，一行始终发不出去的投递就是一台每分钟跑一次的定时机器。
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class TimedDelivery(UuidPk, Base):
+    """一个参与者设下的闹钟：到 `due_at` 把 `content` 递给 `recipient_handle`。
+
+    **和账本那张表分开，因为它们记的不是同一件事。** `deliveries` 记的是一条已经发
+    生的事件送到没送到；这一行记的是一条**还没有发生**的事件，以及它该在什么时候发
+    生。把它塞进账本，等于让补发那条扫描去处理一批「故意还没送」的行 —— 而那条扫描
+    的全部含义就是「没送到的就再送一次」。
+
+    递出去之后这一行不删：它是「这个闹钟响过了」的记录，也是重启之后不再响第二遍的
+    依据。
+    """
+
+    __tablename__ = "timed_deliveries"
+    __table_args__ = (
+        # 每一拍扫的就是这一条：到点了还没递的。**部分索引**：递过的行只会越积越多，
+        # 而没有一处按它们查。
+        Index(
+            "idx_timed_deliveries_due",
+            "due_at",
+            postgresql_where=text("delivered_at IS NULL"),
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    #: 请求它的那个地点，也是到点之后这条投递落回去的地方。
+    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    #: 收件人 —— 就是请求者自己（结论 17），所以这条原语没有第二条收件人规则。
+    recipient_handle: Mapped[str] = mapped_column(String(64))
+    content: Mapped[str] = mapped_column(Text)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    #: 递出去的时刻。NULL = 还没到点，或者到点了还没递成。
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

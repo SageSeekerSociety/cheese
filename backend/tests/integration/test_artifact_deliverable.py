@@ -14,6 +14,7 @@ import uuid
 import pytest
 
 from app.domain.agent import execution
+from app.domain.agent.harness import deployment_harness
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
@@ -61,6 +62,7 @@ def _room(client, project_id: str, title: str = "做一个东西") -> str:
                     "channel": "central",
                     "resource_id": str(room.resource_id or room.id),
                 },
+                harness=deployment_harness(),
             )
             await session.commit()
 

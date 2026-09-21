@@ -1,6 +1,7 @@
 {
   "home": "Home",
   "inbox": "Inbox",
+  "myWork": "My work",
   "newProject": "New {project}",
   "project": {
     "board": "Board",

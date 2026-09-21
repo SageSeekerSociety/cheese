@@ -9,6 +9,7 @@ import questions from './questions.json'
 import spaces from './spaces.json'
 import tasks from './tasks.json'
 import users from './users.json'
+import work from './work.json'
 
 export default {
   global,
@@ -22,4 +23,5 @@ export default {
   spaces,
   tasks,
   notifications,
+  work,
 }

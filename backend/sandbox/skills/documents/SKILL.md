@@ -186,7 +186,7 @@ for s in doc.sections:
 
 ## 做完之后要摆出来，否则界面上看不到
 
-用 `cheese_show` 点名工作区里的那份文件，例如 `path="output/评审简报.docx"`。
+用 `cheese show` 点名工作区里的那份文件，例如 `cheese show output/评审简报.docx`。
 
 工作区里的文件用户在界面上默认是看不见的。摆出来之后它直接显示在界面里：Word 和幻灯片
 按页翻，表格按单元格看，都不用先下载。做完一份就摆一次。

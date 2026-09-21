@@ -193,8 +193,7 @@ def case(folder, options):
                 "Read,Edit,Write,Bash,TaskStop,Skill",
                 "--allowedTools",
                 "Read,Edit,Write,Bash,TaskStop,Skill,mcp__custom__echo,"
-                "mcp__native__chat_send,mcp__native__platform_request,"
-                "mcp__native__cheese_api",
+                "mcp__native__chat_send,mcp__native__platform_request",
                 "--debug-file",
                 str(folder / "claude-debug.log"),
             ],
@@ -261,12 +260,12 @@ def case(folder, options):
                     "content": "Published 'literally'\n$(touch forbidden-publication)"
                 },
             },
+            # 平台那一侧只有 `platform_request` 这一个原始入口了：`cheese_api`
+            # 不在 MCP 表上，它是机器上 `cheese` 的一条子命令（结论 21、22），
+            # 跟文件和命令一起活在那台机器上。这一步问的是「会话直接够得到平台
+            # 吗」，`platform_request` 答的就是它。
             {
                 "name": "mcp__native__platform_request",
-                "input": {"method": "GET", "path": "/platform-fixture"},
-            },
-            {
-                "name": "mcp__native__cheese_api",
                 "input": {"method": "GET", "path": "/platform-fixture"},
             },
             {"name": "Read", "input": {"file_path": str(center / "image.png")}},
@@ -507,7 +506,7 @@ def case(folder, options):
             publications = server.state.get("publications", [])
             assert len(publications) == 1, publications
             assert "PLATFORM_API_READ" in json.dumps(results), results
-            assert json.dumps(results).count("PLATFORM_API_READ") == 2, results
+            assert json.dumps(results).count("PLATFORM_API_READ") == 1, results
             assert (
                 publications[0]["content"]
                 == "Published 'literally'\n$(touch forbidden-publication)"

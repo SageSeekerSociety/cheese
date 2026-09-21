@@ -208,6 +208,13 @@ export default {
           name: 'SpacesDetailAnalyticsParticipants',
           component: () => import('@/views/spaces/detail/analytics/Participants.vue'),
         },
+        {
+          // 学习读的是学生项目里的对话，上面五格读的是赛题与报名表 —— 两套数据，
+          // 所以筛选那一栏里它只认时间，学生与知识点是这一格自己的。
+          path: 'learning',
+          name: 'SpacesDetailAnalyticsLearning',
+          component: () => import('@/views/spaces/detail/analytics/Learning.vue'),
+        },
       ],
     },
     {

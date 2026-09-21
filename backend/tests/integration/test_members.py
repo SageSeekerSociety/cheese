@@ -15,6 +15,16 @@ def _create_project(client, name: str = "Demo") -> str:
     return r.json()["data"]["id"]
 
 
+def _people(client, project_id: str) -> list[dict]:
+    """名册上**人**那些行。
+
+    这一组测的是「谁能被加进项目、改角色、移出去」，那是人的成员表。名册上还有这个
+    项目的 AI 队友（一张名册，队友也在上面），它们不是任何一次写的结果。
+    """
+    rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
+    return [m for m in rows if not m["agent"]]
+
+
 def test_add_and_list_members(client, bearer):
     project_id = _create_project(client)
 
@@ -39,12 +49,9 @@ def test_add_and_list_members(client, bearer):
     assert r.status_code == 200
     assert r.json()["data"]["role"] == "member"
 
-    r = client.get(f"/projects/{project_id}/members")
-    body = r.json()
     # 名册 = 加进来的人 + 项目所有者（他不是成员表里的一行，见
     # test_new_project_roster.py），所有者排在最前面。
-    assert body["data"]["total"] == 3
-    handles = [m["user_handle"] for m in body["data"]["data"]]
+    handles = [m["user_handle"] for m in _people(client, project_id)]
     assert handles == [OWNER, "alice", "bob"]
 
 
@@ -108,9 +115,8 @@ def test_delete_member(client, bearer):
     assert r.status_code == 200
     assert r.json()["data"]["deleted"] is True
 
-    rows = client.get(f"/projects/{project_id}/members").json()["data"]["data"]
     # 移出的是 alice；所有者留在名册上——移出成员碰不到他，他不在那张表里。
-    assert [m["user_handle"] for m in rows] == [OWNER]
+    assert [m["user_handle"] for m in _people(client, project_id)] == [OWNER]
 
 
 def test_delete_missing_member_404(client, bearer):

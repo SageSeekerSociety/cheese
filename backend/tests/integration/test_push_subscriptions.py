@@ -143,11 +143,13 @@ async def test_only_a_notice_that_needs_a_person_is_worth_a_push():
                     "content": "验收卡已提交，待 alice 验收",
                     "topicTitle": "预算复核",
                 },
+                delivery_key="notice-1:alice",
             ),
             NotificationDelivery(
                 recipient_id=1,
                 type=NotificationType.MENTION,
                 payload={"content": "有人提到你"},
+                delivery_key="mention-1:alice",
             ),
         ]
     )

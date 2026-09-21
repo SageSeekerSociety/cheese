@@ -1,8 +1,8 @@
 """Project membership routes (nested under /api/projects).
 
-The three write routes decide who is a member of the project, and project
-membership is what ``authorize_topic_access`` reads to let someone into every
-topic of that project. So the acting identity is resolved at the trust boundary
+The write routes decide who is a member of the project, and project membership
+is what ``authorize_topic_access`` reads to let someone into every topic of that
+project. So the acting identity is resolved at the trust boundary
 (``ActorResolverDep``) and the service authorizes it — unlike most 2.0 routes
 these do NOT honor a handle passed in the body: a claimed handle is exactly the
 forgery this surface must not accept. Reading the roster used to stay open; it
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
     InvitationCreate,
     InvitationOut,
@@ -53,63 +54,37 @@ async def add_member(
 async def list_members(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """The project's roster.
+    """The project's roster — 队友也在上面。
 
-    Names and avatars of real people, so it takes the same 项目成员 door as the
-    topic list — it used to answer in full without any credential, which made a
-    non-member's empty-looking workspace still show everyone's face."""
+    「这个项目里有谁」只有一个读法（``membership.roster.roster``），人和 agent 是它
+    的两个来源。以前这里只读人那一半，于是一个 agent 在项目里列不出另一个 agent。
+
+    读名册要凭据，和话题列表同一道 项目成员 门：以前它不认凭据就全量作答，一个不是
+    成员的人打开空工作区，照样看得见所有人的脸。"""
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    from app.domain.identity.repositories import AgentBindingRepository
-    from app.domain.project.repositories import ProjectRepository
-    from app.domain.user.repositories import UserRepository
-
     members, _ = await MemberService(db).list_for_project(project_id)
-    # Attach display names (User.name) so the UI can resolve @名字 → handle, and
-    # the profile's avatar_id so the chat panel can render the real avatar
-    # instead of a colored initial. Both come off the same roster row; avatar_id
-    # is None (→ initial fallback) both for a handle with no fusion profile
-    # behind it and for anyone still on the global default avatar, i.e. anyone
-    # who never picked one — see ``ProjectRepository.list_members``.
-    profiles = {
-        m["handle"]: m for m in await ProjectRepository(db).list_members(project_id)
-    }
-    # Same is-agent derivation as the topic roster: a member is an agent iff it
-    # carries an AgentBinding — never a handle-string check. The UI badges and
-    # filters on this, and every topic's 分身 acts under its own
-    # ``cheese-<topic hex>`` handle, so matching the bare string would mis-label
-    # any 分身 that ever lands on a project roster.
-    # One query for the whole roster, not one per member: an `await` inside a
-    # dict comprehension reads as a batch and is not one — it was 30 round trips
-    # on a 30-person project, 10.3 ms of a 32.8 ms response. `get_by_handles`
-    # exists for exactly this and says so.
-    users = UserRepository(db)
-    rows = await users.get_by_handles(list(profiles))
-    agent_ids = await AgentBindingRepository(db).agent_user_ids(
-        [u.id for u in rows.values()]
-    )
-    # Walk the roster, not the member rows: the roster is the wider list (it also
-    # carries the owner and the owning team's members, neither of whom holds a
-    # member row — ``ProjectRepository.list_members`` says why), and it is
-    # already in the order the UI should show. A member row, where one exists,
-    # contributes the fields only it has (id, created_at, the stored role).
+    # 走名册，不走成员行：名册更宽（所有者、小队带进来的人、这个项目的队友都没有成员
+    # 行），而且已经是界面该显示的顺序。有成员行的那些，由成员行补上只有它有的字段
+    # （id、created_at、存下来的角色）。
     row_of = {m.user_handle: m for m in members}
     items = []
-    for handle, profile in profiles.items():
-        member = row_of.get(handle)
-        user = rows.get(handle)
-        if member is not None:
-            d = MemberOut.model_validate(member).model_dump(mode="json")
-            d["name"] = profile["name"]
-            d["avatar_id"] = profile["avatar_id"]
+    for member in await roster(db, project_id):
+        row = row_of.get(member.handle)
+        if row is not None:
+            d = MemberOut.model_validate(row).model_dump(mode="json")
+            d["name"] = member.name
+            d["avatar_id"] = member.avatar_id
         else:
             d = {
-                **profile,
+                **member.as_dict(),
                 "id": None,
                 "project_id": str(project_id),
-                "user_handle": handle,
+                "user_handle": member.handle,
             }
-        d["agent"] = user is not None and user.id in agent_ids
+        d["agent"] = member.agent
+        d["active"] = member.active
+        d["project_default"] = member.project_default
         items.append(d)
     return ok(page(items, len(items)))
 
@@ -140,6 +115,23 @@ async def remove_member(
     await MemberService(db).remove(
         project_id=project_id, user_handle=user_handle, actor=who
     )
+    return ok({"deleted": True})
+
+
+@router.delete("/projects/{project_id}/membership")
+async def leave_project(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """退出项目 —— 成员自己走，不是被谁移出。
+
+    路径是 ``/membership`` 而不是 ``/members/me``：``/members/{user_handle}`` 注册在
+    上面，``me`` 到了那里就是一个 handle，会被当成「把 me 这个人移出项目」。身份照
+    旧只从 resolver 来，退的恒是动作人自己 —— 代退没有入口，也不接受任何自称。
+    """
+    who = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await MemberService(db).leave(project_id=project_id, actor=who)
     return ok({"deleted": True})
 
 

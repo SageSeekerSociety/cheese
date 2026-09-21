@@ -136,21 +136,19 @@ def _jobs():
 @pytest.mark.parametrize(
     ("name", "interval_setting"),
     [
-        ("notification finalize", "notification_finalize_interval_s"),
         ("notification email drain", "notification_email_drain_interval_s"),
         ("task deadline sweep", "task_deadline_sweep_interval_s"),
         ("chat progress reminder", "chat_progress_check_interval_s"),
     ],
 )
 def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
-    """These three had no runner in any deployed image, and each absence is
-    invisible: an aggregation window that never closes, an email queue with no
-    consumer, a deadline nobody checks.
+    """These had no runner in any deployed image, and each absence is
+    invisible: an email queue with no consumer, a deadline nobody checks.
 
     Being on the list is half of it. A default interval of 0 would put them
     right back where they were — registered, deployed, and run by nobody — so
     the SHIPPED default is asserted rather than whatever this test process has
-    (the harness turns these three off; see tests/conftest.py)."""
+    (the harness turns some of them off; see tests/conftest.py)."""
     from app.core.config import Settings
 
     assert any(j.name == name for j in _jobs()), (
@@ -161,6 +159,16 @@ def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
         f"{interval_setting} ships as {default!r} — a deployment that changes "
         f"nothing still never runs {name!r}"
     )
+
+
+def test_the_timed_delivery_alarm_is_scheduled():
+    """一个参与者设下的闹钟，到点得有人递（结论 17）。
+
+    这一条的失败样子和这个文件开头那三个一模一样：`timed_deliveries` 写进去了、
+    部署了，而没有任何一个循环去扫它，于是那张表成了一份没人读的愿望清单 —— 没有
+    报错可看，只有缺席。它的间隔写死在列表里，不是一个设置，所以这里只问它在不在。
+    """
+    assert any(job.name == "timed deliveries" for job in _jobs())
 
 
 def test_every_job_is_named_once():
