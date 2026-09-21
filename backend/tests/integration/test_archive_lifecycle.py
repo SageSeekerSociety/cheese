@@ -185,10 +185,11 @@ async def test_a_tidy_nothing_will_ever_close_does_not_hold_the_machine_forever(
     from app.domain.topic.models import Topic
 
     monkeypatch.setattr(settings, "dream_enabled", True)
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    room_id, _cleanup_id = await archived_room(client, monkeypatch)
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
-    monkeypatch.setattr(retire, "_device_action", AsyncMock())
+    action = AsyncMock()
+    monkeypatch.setattr(retire, "_device_action", action)
     monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
 
     turn_id = uuid.uuid4()
@@ -211,12 +212,11 @@ async def test_a_tidy_nothing_will_ever_close_does_not_hold_the_machine_forever(
         )
         await session.commit()
 
-    assert await retire.sweep_retired_storage(client.test_factory) == {
-        "completed": 1,
-        "pending": 0,
-    }
-    async with client.test_factory() as session:
-        assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
+    await retire.sweep_retired_storage(client.test_factory)
+    # 断的是这一等放行了：``prepare`` 真的跑到了。放行之后这台机器被停掉，那条区间
+    # 才有东西去关它（``request_exit`` → Stop，或者屏幕没了以后的孤儿清扫），回收
+    # 下一轮继续走完——所以这里不断言一轮就完，断言的是它没有被扣在这一问上。
+    assert "prepare" in [call.args[3] for call in action.await_args_list]
 
 
 async def test_a_room_that_will_never_be_tidied_is_still_reclaimed(client, monkeypatch):
