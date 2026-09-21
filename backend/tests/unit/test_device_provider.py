@@ -1642,18 +1642,23 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2", "claude-sonnet-5"])
-async def test_the_launch_env_nails_down_no_model_at_all(monkeypatch, tmp_path, model):
+async def test_the_launch_env_pins_no_model_of_its_own(monkeypatch, tmp_path, model):
     """一个控制点（结论 46）：模型在请求经计量代理问准入的那一刻解析。
 
     启动环境里再钉一个型号，就是同一件事的第二份声明 —— 一份在卡的绑定上，随时
     可以改；一份在进程出生时写死，之后谁也够不着。两份不一致的时候，没有任何地方
     说得出谁赢。
+
+    唯一剩下的 `CLAUDE_MODEL` 不是这里钉的，它就是 `claude --model` 本身：走网关
+    池的项目要靠它让 LiteLLM 知道该服务哪个模型，而代理今天不改写请求体里的模型
+    名。这一句和那次改写一起走（结论 46 「要做的两件」）；在此之前这条断言锁住的
+    是「不会再多出第二个」。
     """
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model=model)
     assert "ANTHROPIC_BASE_URL" not in hub.env
     assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
-    assert [key for key in hub.env if key.endswith("_MODEL")] == []
+    assert [key for key in hub.env if key.endswith("_MODEL")] == ["CLAUDE_MODEL"]
 
 
 @pytest.mark.anyio

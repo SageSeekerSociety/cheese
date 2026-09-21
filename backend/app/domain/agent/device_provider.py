@@ -1385,13 +1385,18 @@ class DeviceChannel(Channel):
             # for a model it does not serve. Dropped, not overridden, because
             # subscription_provider only ADDS keys.
             #
-            # And NOTHING puts a model back afterwards. Which model a request
-            # runs on is decided at one control point — admission, when the
-            # request reaches the metering proxy (结论 46) — and it reads the
-            # binding on the card. A model name nailed into the launch env
-            # would be a second declaration of the same thing, made once at
-            # process birth and never revisited, with nothing anywhere saying
-            # which of the two wins.
+            # And nothing here puts one back. Which model a request runs on is
+            # decided at one control point — admission, when the request
+            # reaches the metering proxy (结论 46) — reading the binding on the
+            # card. A model nailed in here would be a second declaration of the
+            # same thing, written once at process birth and never revisited,
+            # with nothing anywhere saying which of the two wins.
+            #
+            # `claude --model` (the harness's own CLAUDE_MODEL, further down
+            # this launch) is not that second declaration: it is what the CLI
+            # puts in the request body, which is how a gateway-pool project
+            # reaches the model it picked. It leaves when the proxy rewrites
+            # that name on the way to LiteLLM.
             merged = {**(env or {})}
             for k in (
                 "ANTHROPIC_BASE_URL",
