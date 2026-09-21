@@ -106,7 +106,7 @@ describe('边缘的错误页不是应用的答复', () => {
   it('POST：502 的页面不重试，抛的是写操作那句', async () => {
     // 写操作不能由客户端重放：送没送达都不知道，再发一次可能就是两次。
     serve([page(502)])
-    await expect(markRead('a1')).rejects.toMatchObject({
+    await expect(markRead(1)).rejects.toMatchObject({
       status: 502,
       message: '服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试（HTTP 502）',
     })
