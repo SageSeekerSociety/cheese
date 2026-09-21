@@ -7,20 +7,28 @@
 
 留着不动的是另一种房间：总览里还坐着别的 agent，那就说不出替身站的是哪一个，和
 `f3a8c5d2e917` 当时的判断一致。
+
+退了役就不许自己回来：房间在 agent 开口前自己迁移共享席位那一步
+（`migrate_shared_agent_seat`），撞见总览上遗留的裸 `cheese` 行时也只是把它删掉，
+不再顺手种一个替身进去。
 """
 
 import importlib.util
 import uuid
 from pathlib import Path
 
-import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.identity.handles import agent_instance_handle, topic_agent_handle
+from app.domain.identity.handles import (
+    CHEESE_HANDLE,
+    agent_instance_handle,
+    topic_agent_handle,
+)
 from app.domain.project.services import ProjectService
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 
@@ -177,49 +185,65 @@ def test_a_room_seating_another_agent_keeps_its_stand_in(db_session, _portal):
     _portal.call(run)
 
 
-def test_a_backfill_that_seeded_nothing_stops_the_deploy(
-    db_session, _portal, monkeypatch
-):
-    """回填一个项目都没补成，迁移不许绿着退出。
+async def _drop_seat(session, topic_id: uuid.UUID, handle: str) -> None:
+    await session.execute(
+        sa.text("DELETE FROM topic_memberships WHERE topic_id=:t AND member_handle=:h"),
+        {"t": topic_id, "h": handle},
+    )
 
-    一个项目都补不成的成因不是「这批项目各自配坏了」——那要一个一个配坏才凑得齐
-    ——而是跑迁移的容器一个模型都读不到。那一遍是整体空转，绿着退出的话部署看到
-    的和「本来就没有项目要补」完全一样，存量项目一行没补也没人知道。
+
+def test_migrating_a_shared_seat_does_not_re_seat_the_stand_in(db_session, _portal):
+    """旧房间自己迁移的那一步，不许把刚退役的替身种回总览。
+
+    回填之前总览上坐着替身，所以那一步里的 `ensure_topic_agent_seat` 是个幂等空
+    操作：删掉裸 `cheese` 行就收工。回填把替身撤掉之后，同一句话会真的插入——
+    名册上于是同时坐着实例席位、裸 `cheese` 和替身，撤掉实例席位后答话的又退回
+    替身，写闸门照样关不上。
     """
-    migration = _migration()
 
     async def run():
+        members = TopicMemberService(db_session)
         project = await ProjectService(db_session).create(
-            name="Starved", forge_kind="github_app"
+            name="Shared seat on the overview", forge_kind="github_app"
         )
         root = project.root_topic_id
-        seeded_seat = agent_instance_handle(project.default_agent_instance_id)
-        connection = await db_session.connection()
-        # 跑迁移的容器一个模型都读不到，在代码里就长这样。
-        monkeypatch.setattr(
-            "app.domain.agent_instance.configuration.model_choices",
-            lambda project_settings: [],
+        own = agent_instance_handle(project.default_agent_instance_id)
+        # 回填没有动过的那一行：总览上的裸 `cheese`，旧代码的名册留下的。
+        await members.ensure_agent_seat(root, CHEESE_HANDLE)
+
+        await members.migrate_shared_agent_seat(root)
+
+        roster = {m.member_handle for m in (await members.list_for_topic(root))[0]}
+        assert CHEESE_HANDLE not in roster
+        assert topic_agent_handle(root) not in roster
+        assert await members.resolve_agent_handle(root) == own
+
+    _portal.call(run)
+
+
+def test_a_room_whose_last_agent_was_the_shared_seat_gets_its_own(db_session, _portal):
+    """裸 `cheese` 是这个房间最后一个 agent 席位时，迁移照旧给它换上分身。"""
+
+    async def run():
+        members = TopicMemberService(db_session)
+        project = await ProjectService(db_session).create(
+            name="Legacy room", forge_kind="github_app"
         )
+        room = await TopicService(db_session).create(
+            project_id=project.id, title="旧房间", created_by="alice"
+        )
+        # 分身出现之前的名册长这样：创建者，加上平台账号那一个共享席位。
+        await _drop_seat(
+            db_session,
+            room.id,
+            agent_instance_handle(project.default_agent_instance_id),
+        )
+        await members.ensure_agent_seat(room.id, CHEESE_HANDLE)
 
-        def check(conn):
-            migration.op = Operations(MigrationContext.configure(conn))
-            _unseed(conn, project_id=project.id, root_id=root, seat=seeded_seat)
-            conn.execute(
-                sa.text("DELETE FROM agent_instances WHERE project_id=:p"),
-                {"p": project.id},
-            )
+        await members.migrate_shared_agent_seat(room.id)
 
-            with pytest.raises(RuntimeError):
-                migration.upgrade()
-
-            assert (
-                conn.execute(
-                    sa.text("SELECT count(*) FROM agent_instances WHERE project_id=:p"),
-                    {"p": project.id},
-                ).scalar_one()
-                == 0
-            )
-
-        await connection.run_sync(check)
+        roster = {m.member_handle for m in (await members.list_for_topic(room.id))[0]}
+        assert CHEESE_HANDLE not in roster
+        assert topic_agent_handle(room.id) in roster
 
     _portal.call(run)

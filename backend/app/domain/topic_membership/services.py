@@ -385,12 +385,22 @@ class TopicMemberService:
         silently undo a revocation, i.e. break the one capability this whole
         change exists to provide. Blocks already authored under the shared handle
         keep it; history is history.
+
+        And the 分身 is seated only where the shared seat was this room's LAST
+        agent. 总览 seats the project's own 芝士 now (`b4d1a70c9e52` retired the
+        stand-in that used to sit there), so seating one here on the way past
+        would put a second 芝士 back on that roster — and with it the hole the
+        retirement closed: revoke the instance's seat and the stand-in goes on
+        answering 「这里有个 agent」, because it carries an execution binding of
+        its own. The question 「这个房间还有别的 agent 吗」 is the right one for
+        every room, not just 总览, and it costs one roster read.
         """
         legacy = await self._repo.get(topic_id=topic_id, member_handle=CHEESE_HANDLE)
         if legacy is None:
             return
-        await self.ensure_topic_agent_seat(topic_id)
         await self._repo.delete(legacy)
+        if not await self.agent_handles(topic_id):
+            await self.ensure_topic_agent_seat(topic_id)
 
     async def resolve_agent_handle(
         self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
