@@ -2163,12 +2163,16 @@ class ChatService:
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> "_HookWorkState | None":
         """Give a turn the session started for itself the context to end like
-        any other: everything its Stop needs.
+        any other: an interval a sweep can find, and everything its Stop needs.
 
-        它**不再开一条平台这边的轮次记录**。那条记录以前挂在一个谁也没写过的作者
-        值上（字面量就是「会话」两个字）；按结论 13，平台不发起一轮，也就没有这样
-        一种「没有发件人的轮次」可记 —— 一个 worker 做完唤醒主线程，那是同 handle
-        之间的一条便条，发件人和收件人都在，不需要第三种作者。
+        Without this, a self-started turn's Stop landed the message and then did
+        nothing at all — no usage row, no conclusion cards settled, no change
+        summary, and no interval to close, because none was ever opened. The
+        room could not even tell you the turn had happened.
+
+        署名是这个房间的席位 handle。退场的是那个谁也没写过的作者值（字面量就是
+        「会话」两个字，结论 13），不是这条记录 —— 一个 worker 做完唤醒主线程，
+        那是同一个 handle 两条线程之间的一条便条，发件人就在这儿。
 
         Read rather than assembled: there is no prompt to build here, so this
         takes only what turn END needs, and takes it in one transaction. Two
@@ -2181,6 +2185,8 @@ class ChatService:
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
+        from app.api.deps import get_work_runner
+
         try:
             async with self._sessions() as session:
                 place = await PlaceResolver(session).resolve(topic_id)
@@ -2196,9 +2202,12 @@ class ChatService:
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
                 private_owner = topic.private_owner
+            await get_work_runner().open_turn_the_session_started(
+                self, topic_id, turn_id, author=acting_agent
+            )
         except Exception:  # noqa: BLE001 — the event matters more than the row
             logger.exception(
-                "could not read the context of a session-started turn "
+                "could not open the turn a session started for itself "
                 "(topic=%s, work=%s)",
                 topic_id,
                 turn_id,
@@ -2492,6 +2501,10 @@ class ChatService:
                     )
                 finally:
                     self._hook_work.pop((topic_id, turn_id), None)
+                    if state.self_started:
+                        # No coroutine owns this one, so there is no `finally`
+                        # anywhere else to drop the marks it left in the runner.
+                        get_work_runner().close_turn_the_session_started(turn_id)
             if event.is_error:
                 frame_out = {
                     "type": "error",
@@ -2714,7 +2727,14 @@ class ChatService:
                 # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
                 # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
                 # 服务端算（I13），所以这里自己认下私聊这一档。
-                "mentioned": topic.is_private,
+                #
+                # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的
+                # 私聊也是 `is_private`，而它没有 agent 可点名 —— 认成「点了名」就
+                # 等于把芝士叫进两个人的私密对话里说话。`private_owner` 恒是人，所
+                # 以只看 peer；它既覆盖存下来的队友席位，也覆盖历史上 room-derived
+                # 的那种席位。
+                "mentioned": topic.is_private
+                and looks_like_agent_handle(topic.private_peer or ""),
             }
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -4642,6 +4662,7 @@ class ChatService:
         post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
+        from app.api.deps import get_work_runner
 
         preparation_started = time.monotonic()
         prepared = await self._assemble_turn(
@@ -4840,6 +4861,7 @@ class ChatService:
             for prior_key, prior in list(self._hook_work.items()):
                 if prior_key[0] == topic_id and prior.self_started:
                     self._hook_work.pop(prior_key, None)
+                    get_work_runner().close_turn_the_session_started(prior_key[1])
             state = self._hook_work.get(key)
             if state is None:
                 self._hook_work[key] = _HookWorkState(

@@ -46,12 +46,18 @@ class SchedulerService:
         self._transient_misses: dict[uuid.UUID, int] = {}
         self._dependency_wakes: set[uuid.UUID] = set()
 
-    async def _agent_seat(self, topic_id: uuid.UUID) -> str:
-        """这个房间的 agent 席位 —— 平台这些事件点的就是它的名。"""
+    async def _agent_seat(self, topic_id: uuid.UUID, *, session=None) -> str | None:
+        """这个房间的 agent 席位 —— 平台这些事件点的就是它的名，没有就是 None。
+
+        调用点手上已经有 session 就把它传进来：整理那一支是在遍历所有待整理房间的
+        循环里问的，每个房间自己再开一条连接，就是在扫描循环里往连接池上加压。
+        """
         from app.domain.topic_membership.services import TopicMemberService
 
-        async with self._sessions() as session:
-            return await TopicMemberService(session).resolve_agent_handle(topic_id)
+        if session is not None:
+            return await TopicMemberService(session).addressable_agent_handle(topic_id)
+        async with self._sessions() as own:
+            return await TopicMemberService(own).addressable_agent_handle(topic_id)
 
     async def tick(self) -> dict:
         """Parked — see docs/agent-principles.md §12.
@@ -223,7 +229,9 @@ class SchedulerService:
                 topic_id,
                 author="system",
                 content=DREAM_PROMPT,
-                addressed=addressed_to_agent(await self._agent_seat(topic_id)),
+                addressed=addressed_to_agent(
+                    await self._agent_seat(topic_id, session=session)
+                ),
             )
             record.turn_id = turn_id
             await session.commit()

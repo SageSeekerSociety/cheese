@@ -43,13 +43,23 @@ def test_starting_a_turn_takes_an_addressing_result_not_a_boolean():
 
 
 def test_there_is_no_author_value_nobody_wrote():
-    """`SELF_STARTED_AUTHOR = "session"` 那种轮次退场：一条便条有发件人。"""
+    """`SELF_STARTED_AUTHOR = "session"` 那种轮次退场：一条便条有发件人。
+
+    退的是那个**作者值**，不是那条记录——会话被自己的 worker 唤醒照样跑一整轮，
+    它的行还得开，否则收尸看不见、算力不入账、房间一直显示「正在思考」（#604）。
+    所以第二条断言查的是：开这一行的时候，发件人是必须给的。
+    """
     offenders = [
         str(path)
         for path, text in _sources(APP, (".py",))
-        if "SELF_STARTED_AUTHOR" in text or "open_self_started_turn" in text
+        if "SELF_STARTED_AUTHOR" in text
     ]
     assert offenders == []
+
+    author = inspect.signature(
+        AgentWorkRunner.open_turn_the_session_started
+    ).parameters["author"]
+    assert author.default is inspect.Parameter.empty, "这一行又能开成没有发件人的了"
 
 
 def test_the_platform_has_no_kickoff_left():
@@ -76,5 +86,10 @@ def test_summon_is_not_an_http_or_ws_input():
     frame = types[start : types.index("}", start)]
     assert "summon" not in frame, f"帧的契约里又有 summon：{frame}"
 
+    # 查的是**发出去的那个对象有哪些键**，不是某一行怎么拼写的：`summon: true`、
+    # 换个变量名、对象展开，都得一样红。发出去的 payload 里没有这一位，是由
+    # ChatPanelComposer.test.ts 真发一条消息断的。
     sends = (FRONTEND / "components" / "ChatPanel.vue").read_text()
-    assert "summon: item.summon" not in sends, "发送时又往帧上放了 summon"
+    start = sends.index("const msg: WsClientChatMessage = {")
+    literal = sends[start : sends.index("}", start)]
+    assert "summon" not in literal, f"发送时又往帧上放了 summon：{literal}"

@@ -39,8 +39,11 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     # It still works as a chat (stub agent answers when summoned). What reaches
     # the room is chat_send's alone, here as in any other room — that contract
     # is pinned in test_chat_publication.py.
+    #
+    # **不打 @**：私聊是两席的房间，对面那一席是 agent，说话就是对着它说的。那一位
+    # 以前是浏览器算好发上来的，现在由服务端自己认（I13）。
     with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "@芝士 设个偏好"})
+        ws.send_json({"type": "message", "content": "设个偏好"})
         frames = []
         while True:
             f = ws.receive_json()
@@ -112,3 +115,33 @@ def test_member_summary(client, bearer):
     assert s["role"] == "member"
     assert any(t["title"] == "我开的话题" for t in s["topics_started"])
     assert any(w["title"] == "等你定" for w in s["waiting_on_you"])
+
+
+def test_a_dm_between_two_people_summons_nobody(client, bearer):
+    """人和人的私聊也是 `is_private`，但它没有一席 agent 可点名。
+
+    「私聊 ⇒ 点了名」这个判据会把芝士叫进两个人的私密对话里说话：那种房间两席都是
+    人，`AgentInstanceService.for_topic` 在里面回落到项目默认 agent，于是每发一条
+    消息都有一个 agent handle 拿到 `mentioned=True`。判据得是「对面那一席是不是
+    agent」，不是「这是不是私聊」。
+    """
+    pid = _project(client)
+    owner_headers = bearer("user-1")
+    client.post(
+        f"/projects/{pid}/members", json={"user_handle": "alice"}, headers=owner_headers
+    )
+    private = client.get(
+        f"/projects/{pid}/private-chat",
+        params={"user_handle": "user-1", "peer_handle": "alice"},
+        headers=owner_headers,
+    ).json()["data"]
+
+    with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "只说给 alice 听"})
+        frames = []
+        while True:
+            f = ws.receive_json()
+            frames.append(f["type"])
+            if f["type"] in ("done", "error"):
+                break
+    assert frames == ["user_block", "done"], f"芝士被叫进了两个人的私聊：{frames}"

@@ -394,6 +394,46 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
 
 
 @pytest.mark.anyio
+async def test_a_refused_platform_delivery_does_not_land_as_someone_talking():
+    """算力耗尽时，平台自己写的那句提示不会被当成一条人发的消息落进房间。
+
+    「有人说过话」才补落那一条消息。平台的几条投递（机器接入、环境修好、记忆整理）
+    作者是 `system`、正文是平台写的一段提示，既不 resume 也不带 nudge —— 当成人话
+    补落，房间里就会出现一条谁也没打过的用户消息。
+    """
+    chat = FakeChat(
+        {
+            "project_id": "proj-5",
+            "max_concurrent_turns": 1,
+            "credits_exhausted": True,
+        }
+    )
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+
+    frames = []
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(
+            chat,
+            topic,
+            author="system",
+            content="Cloud machine is ready; continue the pending input.",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
+        async with asyncio.timeout(2.0):
+            while True:
+                frame = await q.get()
+                frames.append(frame)
+                if frame["type"] == "error":
+                    break
+
+    assert [f["type"] for f in frames] == ["event_block", "error"], frames
+    assert chat.converse_calls == [], "平台的提示词被当成一条人发的消息落进了房间"
+    assert chat.max_running == 0
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
 async def test_unknown_policy_admits_ungated(db_factory):
     chat = FakeChat(None, db_factory)  # topic unknown / unmetered deployment
     runner, _ = _runner()

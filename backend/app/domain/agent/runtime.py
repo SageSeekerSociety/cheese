@@ -817,6 +817,89 @@ class AgentWorkRunner:
             for task in self._tasks
         )
 
+    async def open_turn_the_session_started(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
+    ) -> None:
+        """Register an interval for work the SESSION started on its own.
+
+        A session works without being asked whenever one of its workers finishes:
+        the completion notice wakes it and it runs a whole turn off that. Nothing
+        was fed to it, but it is still a turn — and without a row here it is the
+        one kind this table cannot see, so no sweep can ever find it wedged, the
+        usage it burns has no interval to hang off, and a room it hangs in shows
+        「正在思考」 forever (#604).
+
+        ``author`` is the seat 芝士 holds in this room, and it is required: the
+        wake is a note between two threads of the SAME handle, so the sender is
+        right there. What retired with 结论 13 is the author value nobody ever
+        wrote (the literal 「会话」), not the record.
+
+        Opened DELIVERED, and that is not laziness: `close_for_topic` only closes
+        delivered intervals because 投喂 → Stop is what an interval means for a fed
+        turn, so an undelivered row here would be one nothing could ever close.
+        What delivery guards against — a Stop from the previous conversation
+        closing a turn whose prompt is still in flight — cannot happen to this
+        one: it is opened BY output from the very session whose Stop ends it.
+
+        Registered in `_last_frame_at`/`_live_topics` but NOT in `_live`: no
+        coroutine of ours is running it, and claiming otherwise would have the
+        sweep try to cancel a task that does not exist. The frame stamp is what
+        lets silence be judged at all — see `_wedged_turns`.
+        """
+        self._recent.append(
+            {
+                "turn_id": str(turn_id),
+                "topic_id": str(topic_id),
+                "continuation_id": str(turn_id),
+                "author": author,
+                "summon": False,
+                "is_resume": False,
+                "status": "running",
+                "started_at": time.time(),
+                "first_output_s": None,
+                "tools": 0,
+                "duration_s": None,
+                "detail": None,
+            }
+        )
+        self._last_frame_at[str(turn_id)] = time.monotonic()
+        self._live_topics[str(turn_id)] = topic_id
+        now = _utcnow()
+        await _open_turn(
+            chat_service.session_factory,
+            turn_id=turn_id,
+            topic_id=topic_id,
+            continuation_id=turn_id,
+            author=author,
+            content="",
+            is_resume=False,
+            # Nothing to re-send: there was no prompt. This is what stops the
+            # sweep from ever picking one of these as a re-send candidate.
+            resendable=False,
+            started_at=now,
+            # Stamped in the same write, not after it: a row that exists for even
+            # a moment without it is a row a Stop landing in that moment cannot
+            # close, and nothing would ever come back to close it.
+            delivered_at=now,
+        )
+
+    def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None:
+        """Drop the in-memory marks for such a turn once it has stopped.
+
+        The durable row is closed by the Stop that ends it, like any other; these
+        maps have no `finally` to fall out of, because no coroutine owns one.
+        """
+        self._forget_turn(turn_id)
+        for rec in reversed(self._recent):
+            if rec.get("turn_id") == str(turn_id):
+                rec["status"] = "done"
+                return
+
     def _forget_turn(self, turn_id: uuid.UUID) -> None:
         self._last_frame_at.pop(str(turn_id), None)
         self._live_topics.pop(str(turn_id), None)
@@ -1374,14 +1457,18 @@ class AgentWorkRunner:
         """这个房间的 agent 席位 —— 平台自己那些事件点的就是它的名。
 
         读名册，不写：`address()` 要的是一个 handle，而「谁是这里的芝士」名册上已经
-        答过一次，这里不重答。查不到就返回 None，寻址结果随之为空 —— 一个没有 agent
-        席位的房间，平台点不出收件人来，也就什么都不会起。
+        答过一次，这里不重答。名册上一个 agent 都没有就返回 None，寻址结果随之为空
+        —— 一个没有 agent 席位的房间，平台点不出收件人来，也就什么都不会起。所以问
+        的是 `addressable_agent_handle` 而不是 `resolve_agent_handle`：后者为了给
+        署名一个答案，名册空了会回落到一个不在名册上的 handle。
         """
         from app.domain.topic_membership.services import TopicMemberService
 
         try:
             async with chat_service.session_factory() as session:
-                return await TopicMemberService(session).resolve_agent_handle(topic_id)
+                return await TopicMemberService(session).addressable_agent_handle(
+                    topic_id
+                )
         except Exception:  # noqa: BLE001 — 寻址不到人只是不投递，不该炸掉调用方
             logger.exception("could not resolve the agent seat of topic %s", topic_id)
             return None
@@ -1744,7 +1831,14 @@ class AgentWorkRunner:
                 attachments=attachments,
                 # A human message turn lands its message even when refused;
                 # resume/nudge turns have nothing to land.
-                is_message_turn=(not is_resume and nudge_event is None),
+                #
+                # 判据是**有没有人说过话**，不是「是不是 resume」：平台自己那几条投
+                # 递（机器接入、环境修好、记忆整理）作者是 `system`、正文是平台写的
+                # 一段提示，既不 resume 也没有 nudge —— 当成「一条人发的消息」补落，
+                # 就是把平台的提示词当人话写进时间线。
+                is_message_turn=(
+                    not is_resume and nudge_event is None and names_a_person(author)
+                ),
                 message_landed=landed_user_block_id is not None,
             )
             return
@@ -1854,7 +1948,8 @@ class AgentWorkRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
-        # Pre-built frame stream (kickoff turns). None → run a converse turn.
+        # 已经准备好的帧流（`converse_prepared` 是现在唯一的来源）。None → 这里
+        # 自己跑一轮 converse。
         frames: AsyncIterator[Frame] | None = None,
         lifecycle: dict[str, bool] | None = None,
     ) -> None:

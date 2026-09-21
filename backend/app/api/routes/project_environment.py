@@ -370,7 +370,7 @@ async def repair_environment(
         await db.commit()
         # 环境修好了，下一步回到这个房间的芝士手上 —— 平台把这条事件送过去，那些
         # 一直没送达的用户消息随待读窗口一起被它读到（I12）。
-        seat = await TopicMemberService(db).resolve_agent_handle(topic_id)
+        seat = await TopicMemberService(db).addressable_agent_handle(topic_id)
         get_work_runner().submit(
             chat,
             topic_id,

@@ -11,7 +11,6 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
     thread_relay_prompt,
-    thread_upgraded_prompt,
 )
 from app.domain.block.models import BlockKind
 
@@ -48,8 +47,5 @@ def event_prompts() -> dict[str, str]:
                 author="fixture_user",
                 message="RELAY_FIXTURE",
             )
-        ),
-        "task_upgraded": platform_prompt(
-            thread_upgraded_prompt(task_id=task_id, source_message="BRIEF_FIXTURE")
         ),
     }

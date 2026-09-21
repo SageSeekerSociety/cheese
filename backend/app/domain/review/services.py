@@ -2863,11 +2863,13 @@ class AcceptService:
             ),
         )
 
-    async def _agent_seat(self, topic_id: uuid.UUID) -> str:
-        """这个房间的 agent 席位 —— 卡上的事件点的就是它的名。"""
+    async def _agent_seat(self, topic_id: uuid.UUID) -> str | None:
+        """这个房间的 agent 席位 —— 卡上的事件点的就是它的名，没有就是 None。"""
         from app.domain.topic_membership.services import TopicMemberService
 
-        return await TopicMemberService(self._session).resolve_agent_handle(topic_id)
+        return await TopicMemberService(self._session).addressable_agent_handle(
+            topic_id
+        )
 
     async def _note_merge_blocked(
         self,

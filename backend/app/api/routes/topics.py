@@ -732,7 +732,7 @@ async def say_on_task(
                 message=f"说：{content}",
             ),
             addressed=addressed_to_agent(
-                await members.resolve_agent_handle(place.room_id)
+                await members.addressable_agent_handle(place.room_id)
             ),
             nudge_event=f"{actor.handle} 在一条活上说话了，芝士来转达",
             provision_actor=actor,
@@ -1141,7 +1141,7 @@ async def add_comment(
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
             ),
             addressed=addressed_to_agent(
-                await members.resolve_agent_handle(place.room_id)
+                await members.addressable_agent_handle(place.room_id)
             ),
             nudge_event=f"{author} 在文档上留了评论，芝士来处理",
             provision_actor=actor,
@@ -1619,7 +1619,7 @@ async def summon_agent(
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
     # 待读窗口刚好被别人清空的缝隙里当兜底。
-    seat = await TopicMemberService(db).resolve_agent_handle(place.room_id)
+    seat = await TopicMemberService(db).addressable_agent_handle(place.room_id)
     runner.submit(
         chat,
         place.room_id,
@@ -1682,7 +1682,12 @@ async def answer_options(
     # 选项是回答一个待确认问题，收件人就是问问题的那个席位。**@ 写进正文**，不在
     # 帧上另置一位：时间线上那条消息得自己说明它叫了谁，否则读的人看到的是一条谁
     # 也没叫的消息却起了一轮（这也是浏览器发消息时遵守的同一条规矩）。
-    seat = await TopicMemberService(db).resolve_agent_handle(blk.topic_id)
+    #
+    # 只认名册上真有的席位（`addressable_agent_handle`）：正文里的 @ 是由名册解析
+    # 回来的，塞一个不在名册上的 handle 进去，落在时间线上就是一个谁也对不上的
+    # chip，而这一下点选项什么也不会发生。名册上没有 agent 时就谁也不点，选择照
+    # 样记在卡上。
+    seat = await TopicMemberService(db).addressable_agent_handle(blk.topic_id)
     await get_broker().receive_message(
         chat,
         blk.topic_id,

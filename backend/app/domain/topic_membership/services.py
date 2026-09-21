@@ -441,6 +441,22 @@ class TopicMemberService:
                     return own
         return handles[0]
 
+    async def addressable_agent_handle(
+        self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
+    ) -> str | None:
+        """名册上**真有**的那个 agent 席位，一个都没有就是 None。
+
+        与 :meth:`resolve_agent_handle` 的区别就在这一档，而两者的用途本来就不同：
+        那个答的是「这一轮署谁的名」，一个房间无论如何都得答得出来，所以名册空了它
+        回落到这个地点的 sandbox token 名下的 ``cheese-<hex12>``。点名答的是「这条
+        事件送给谁」，而那个回落出来的 handle 不在名册上 —— 拿它去点名，寻址结果看
+        着有一个收件人，落到正文里的 @ 却谁也对不上，于是事件送出去了、却什么也不会
+        发生。没人可点就是没人可点，如实答 None。
+        """
+        if not await self.agent_handles(room_id or topic_id):
+            return None
+        return await self.resolve_agent_handle(topic_id, room_id=room_id)
+
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
     ) -> TopicMembership:

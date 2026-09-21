@@ -598,6 +598,8 @@ describe('对话栏自己的输入栏', () => {
     expect(JSON.parse(sent[0].payload)).toMatchObject({
       content: '<@cheese-topica> 看看这个',
     })
+    // 这一下以前是在帧上把 summon 置真：它是最后一条能绕开正文的路。
+    expect(JSON.parse(sent[0].payload).summon).toBeUndefined()
   })
 
   // 空输入框上按下这个快捷键，最坏的结果是发出一条光秃秃的 @——它把芝士叫起来，

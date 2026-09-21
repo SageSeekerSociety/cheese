@@ -89,7 +89,7 @@ async def report_failure(
         from app.domain.topic_membership.services import TopicMemberService
 
         async with chat.session_factory() as seats:
-            seat = await TopicMemberService(seats).resolve_agent_handle(root)
+            seat = await TopicMemberService(seats).addressable_agent_handle(root)
         get_work_runner().submit(
             chat,
             root,

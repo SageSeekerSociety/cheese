@@ -343,7 +343,7 @@ async def reject_card(
         else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
     )
     seat = (
-        await TopicMemberService(db).resolve_agent_handle(topic_id)
+        await TopicMemberService(db).addressable_agent_handle(topic_id)
         if actionable
         else None
     )

@@ -153,7 +153,7 @@ def get_cloud_wakeup() -> CloudWakeup:
         from app.domain.topic_membership.services import TopicMemberService
 
         async with async_session_factory() as session:
-            seat = await TopicMemberService(session).resolve_agent_handle(topic_id)
+            seat = await TopicMemberService(session).addressable_agent_handle(topic_id)
         get_work_runner().submit(
             chat,
             topic_id,
