@@ -127,6 +127,16 @@ describe('成员管理', () => {
     // 本地过滤的实现一个请求都不发；逐字发的实现留下三条。
     await vi.waitFor(() => expect(searchAdminCandidates).toHaveBeenCalledTimes(1))
     expect(searchAdminCandidates).toHaveBeenCalledWith('池若彤')
+
+    // 这一条到此为止：**「答案要画出来」那半在这里测不了**。`v-autocomplete` 的候选项
+    // 在菜单里，而 happy-dom 里那个菜单根本不挂载（`fireEvent.update` / `focus` 都试过，
+    // 连同 handle 能命中的 ASCII 查询也取不到候选项），所以任何 `findByText('chiruotong')`
+    // 都必然红、红在环境上而不是代码上。那半的判据在预览里（真浏览器、真交互）：
+    // 按昵称搜得到人这件事，只有真跑一次才算数。
+    //
+    // 这里**少了**这一条，是为什么 `:no-filter="true"` 曾经漏掉：服务端按昵称查、
+    // 组件再拿同一个串去比 `item-title`（= handle），查到的那一行被组件自己筛掉，
+    // 而接口、fixture、上面这几条断言三处各自看都对。
   })
 
   it('移出要先确认，确认之后才发请求', async () => {

@@ -225,7 +225,14 @@ onMounted(load)
 
     <!-- 加人的框照「成员页面邀请」那一套：按钮 → 对话框 → 可搜的多选 + 添加。
          区别只有一个，是数据来源：那边的人选是一次拉回来的项目成员，这里上千个账号，
-         所以搜索走服务端（`/admin/users?q=`）。 -->
+         所以搜索走服务端（`/admin/users?q=`）。
+
+         `:no-filter="true"` 是这件事的**另一半**，不加就等于没做（同 TopicSelector）：
+         `v-autocomplete` 默认还会拿输入串再筛一次自己的 `items`，而筛的是
+         `item-title` —— 这里正是 handle。于是**按昵称搜不出人**：服务端把「彭文博」
+         查成了 `pengwenbo` 并回了一行，组件再拿「彭文博」去比 `pengwenbo`，不匹配，
+         当场筛掉。表现是「输入 handle 搜得到、输入中文名搜不到」，而接口、fixture、
+         服务端用例三处各自看都对。 -->
     <v-dialog v-model="dialogOpen" max-width="520" persistent>
       <v-card rounded="lg">
         <v-card-title class="px-4 pt-4 pb-2">添加管理员</v-card-title>
@@ -240,6 +247,7 @@ onMounted(load)
             density="comfortable"
             :items="candidates"
             :loading="searching"
+            :no-filter="true"
             item-title="handle"
             item-value="handle"
             return-object
