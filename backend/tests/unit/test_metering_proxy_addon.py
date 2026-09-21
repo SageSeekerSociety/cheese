@@ -29,7 +29,24 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ADDON = REPO_ROOT / "deploy" / "metering-proxy" / "billing_addon.py"
+CORE = REPO_ROOT / "deploy" / "metering-proxy" / "cheese_billing_core.py"
 COMPOSE = REPO_ROOT / "deploy" / "metering-proxy" / "compose.yml"
+
+_core_spec = importlib.util.spec_from_file_location("cheese_billing_core", CORE)
+assert _core_spec and _core_spec.loader
+core = importlib.util.module_from_spec(_core_spec)
+_core_spec.loader.exec_module(core)
+
+
+def _verdict(**named):
+    """A REAL `Verdict`, not a SimpleNamespace shaped like one.
+
+    A hand-rolled double stops carrying whatever the backend learned to answer
+    next, and the addon reading that field fails as an AttributeError in a test
+    whose subject is something else entirely.
+    """
+    return core.Verdict(**{"allow": True, "reason": "", **named})
+
 
 _ADDON_LOADS = 0
 
@@ -186,11 +203,9 @@ def test_compose_mounts_secrets_directory_not_single_file():
 # that the two halves cannot drift apart.
 
 
-def _with_admission(mod, monkeypatch, upstream: str | None):
+def _with_admission(mod, monkeypatch, upstream: str | None, **named):
     """Point the addon at a control plane that returns `upstream` for everyone."""
-    verdict = SimpleNamespace(
-        allow=True, reason="", pool="subscription", key=None, upstream=upstream
-    )
+    verdict = _verdict(pool="subscription", upstream=upstream, **named)
     monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
     monkeypatch.setattr(
         mod, "ADMISSION", SimpleNamespace(check=lambda project, topic, bearer: verdict)
@@ -346,41 +361,21 @@ def test_rc_bootstrap_routes_to_cheese_before_credential_injection(
     assert mod.verify_scoped_token(token, "test-secret")["t"] == "t1"
 
 
-def _admission_pool(mod, monkeypatch, pool: str):
-    """A control plane that answers every project with this pool."""
-    monkeypatch.setattr(mod, "ADMISSION_URL", "http://control-plane.invalid/admission")
-    monkeypatch.setattr(
-        mod,
-        "ADMISSION",
-        SimpleNamespace(
-            check=lambda project, topic, bearer: SimpleNamespace(
-                allow=True,
-                reason="",
-                pool=pool,
-                key="project-key",
-                upstream=None,
-                fail_open=False,
-            )
-        ),
-    )
-
-
-def test_a_gateway_sessions_control_endpoints_are_answered_by_cheese(
+def test_the_control_endpoints_are_answered_by_cheese_whatever_the_pool_is(
     monkeypatch, tmp_path
 ):
-    """一个走网关池的 RC 会话，Anthropic 账号这件事它根本没有。
+    """一台机器只有一种启动环境（结论 46），所以身份这一问不取决于任何答复。
 
     让 `/api/oauth/profile` 原样上游，回包里是**平台自己那个订阅账号**的 uuid 和
     email —— 而问它的是一个在跑别人代码的沙箱。答复里换成这条活自己的地点：组织
     是项目，账号是房间。
 
-    判据是准入答出来的池，不是凭据里签着的型号：型号那份声明已经没了（模型绑在活
-    上，每个请求现场解析），而池是同一次准入答复里的东西，本来就要问一次。
+    这里没有配任何准入：判据从前是「准入答出来的池」，而那是把开机放在一个
+    fail-open 的调用后面 —— 答错一次就泄露一次，而泄露出去的身份收不回来。
     """
     mod = _load_addon(
         monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
     )
-    _admission_pool(mod, monkeypatch, "gateway")
     token = _scoped_token("test-secret", rc=True)
     mod.http_connect(_make_connect_flow(_basic(token)))
     for path in (
@@ -413,25 +408,6 @@ def test_a_gateway_sessions_control_endpoints_are_answered_by_cheese(
             )
 
 
-def test_a_subscription_sessions_profile_still_goes_to_its_own_account(
-    monkeypatch, tmp_path
-):
-    """订阅会话问的是它自己那个账号，所以照旧上游。
-
-    让代理对**每一个** RC 会话都本地应答，是结论 46「要做的两件」之一，而那一条
-    自己要求先拿真的 Claude Code 实测（P34），所以不在这里顺手加上。
-    """
-    mod = _load_addon(
-        monkeypatch, tmp_path, inject="provider-secret", scoped_secret="test-secret"
-    )
-    _admission_pool(mod, monkeypatch, "subscription")
-    token = _scoped_token("test-secret", rc=True)
-    flow = _make_flow(path="/api/oauth/profile", caller_bearer=token)
-    asyncio.run(mod.requestheaders(flow))
-    assert flow.response is None
-    assert flow.request.headers["authorization"] == "Bearer provider-secret"
-
-
 def _assert_answered_by_cheese(mod, flow) -> None:
     """这一跳没出去，回的是这条活自己的地点，平台的订阅凭据没挂上去。"""
     asyncio.run(mod.requestheaders(flow))
@@ -448,10 +424,10 @@ def test_an_unconfigured_admission_does_not_echo_the_platform_account(
 ):
     """没设 `CHEESE_ADMISSION_URL` 的盒子上，`/api/oauth/profile` 仍然本地应答。
 
-    准入答不出池的时候，`pool` 那一格是没人填过的默认值，读出来是订阅。拿它去决定
-    「谁有资格回答 `/api/oauth/profile`」，就会在最不知情的那一刻判成订阅会话：
-    请求一路走到底挂上平台自己的订阅凭据，回包里是那个账号的 uuid 和 email，而
-    收件人是一个在跑别人代码的沙箱。判据因此是「**确证**是订阅」，不是「不是网关」。
+    这条路径从前问过准入，而准入答不出池的时候，`pool` 那一格是没人填过的默认值，
+    读出来是订阅 —— 于是在最不知情的那一刻判成订阅会话：请求一路走到底挂上平台
+    自己的订阅凭据，回包里是那个账号的 uuid 和 email，而收件人是一个在跑别人代码
+    的沙箱。现在它不问了，所以这条测试盯的是那个状态下开机仍然成立。
 
     没设过这个变量不是假设 —— 它是 `billing_addon` 里那段注释记着的、烧掉一天的
     那次。这条会话还带着自己的 ccproxy 票：那一支从前会撞上「说不出用谁的身份发」
@@ -469,10 +445,10 @@ def test_an_unconfigured_admission_does_not_echo_the_platform_account(
 def test_an_unreachable_admission_does_not_echo_the_platform_account(
     monkeypatch, tmp_path
 ):
-    """后端不可达时准入 fail-open 放行，而那份放行答复里没有池。
+    """后端不可达时准入 fail-open 放行，而开机不等它。
 
-    放行的是花钱，不是身份：一个连不上的控制面说不出这个项目在哪个池，所以它说
-    不出谁有资格代表一个 Anthropic 账号回话。
+    放行的是花钱，不是身份：一个连不上的控制面什么也说不出，而「谁代表一个
+    Anthropic 账号回话」这一问，答案里本来就不该有它。
     """
 
     def unreachable(url, bearer, timeout_s):
@@ -801,9 +777,9 @@ def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_p
     mod = _load_addon(
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
     )
-    verdict = _with_admission(mod, monkeypatch, None)
-    verdict.allow = False
-    verdict.reason = "budget spent: 10.0000 of 10.0000"
+    _with_admission(
+        mod, monkeypatch, None, allow=False, reason="budget spent: 10.0000 of 10.0000"
+    )
     mod.http_connect(
         _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
     )
@@ -899,9 +875,7 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
     mod.GATEWAY_BASE = "http://gateway:4000"
     mod.ADMISSION_URL = "http://backend/llm/admission"
     mod.ALLOW_HEADER_ATTR = True
-    mod.ADMISSION.check = lambda *args: SimpleNamespace(
-        allow=True, pool="gateway", key="project-key"
-    )
+    mod.ADMISSION.check = lambda *args: _verdict(pool="gateway", key="project-key")
     for content_type in ("application/json", "text/event-stream"):
         flow = _make_flow()
         flow.request.headers["x-cheese-attr"] = "project/topic"
@@ -937,7 +911,7 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
 
     def admit(*args):
         clock[0] = 0.035
-        return SimpleNamespace(allow=True, pool="gateway", key="private-provider-key")
+        return _verdict(pool="gateway", key="private-provider-key")
 
     mod.ADMISSION.check = admit
     flow = _make_flow(caller_bearer="private-caller-token")
@@ -1075,7 +1049,7 @@ def test_admission_timing_separates_executor_queue_from_check(
 
     def admit(*args):
         clock[0] += 0.035
-        return SimpleNamespace(allow=True, pool="gateway", key="private-key")
+        return _verdict(pool="gateway", key="private-key")
 
     async def queued_thread(function, *args, **kwargs):
         clock[0] += 1.8
@@ -1233,9 +1207,9 @@ def _refusals_of_a_message_turn(monkeypatch, tmp_path):
     mod = _load_addon(
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
     )
-    verdict = _with_admission(mod, monkeypatch, None)
-    verdict.allow = False
-    verdict.reason = "budget spent: 10.0000 of 10.0000"
+    _with_admission(
+        mod, monkeypatch, None, allow=False, reason="budget spent: 10.0000 of 10.0000"
+    )
     mod.http_connect(
         _connect_flow_on("c2", _basic(_scoped_token(secret, project="p9")))
     )
@@ -1263,9 +1237,7 @@ def _refusals_of_a_message_turn(monkeypatch, tmp_path):
     mod = _load_addon(
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
     )
-    verdict = _with_admission(mod, monkeypatch, None)
-    verdict.pool = "gateway"
-    verdict.key = None
+    _with_admission(mod, monkeypatch, None, pool="gateway", key=None)
     yield (
         "a gateway project with no route",
         mod,
@@ -1317,9 +1289,7 @@ def _forwards_of_a_message_turn(monkeypatch, tmp_path):
     mod = _load_addon(
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
     )
-    verdict = _with_admission(mod, monkeypatch, None)
-    verdict.pool = "gateway"
-    verdict.key = "sk-virtual-key"
+    _with_admission(mod, monkeypatch, None, pool="gateway", key="sk-virtual-key")
     monkeypatch.setattr(mod, "GATEWAY_BASE", "http://litellm.invalid:4000")
     yield "the gateway path", mod, _make_flow(caller_bearer=_scoped_token(secret))
 
