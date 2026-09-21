@@ -257,6 +257,7 @@ class SpaceService:
         description: str | None = None,
         display_order: int | None = None,
         archived: bool | None = None,
+        teaching: dict | None = None,
     ) -> SpaceCategory:
         await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
@@ -278,6 +279,11 @@ class SpaceService:
             category.display_order = display_order
         if archived is not None:
             category.archived_at = datetime.now(UTC) if archived else None
+        if teaching is not None:
+            # Whole-key replacement, same as the 赛题 override: what a teacher
+            # saved is what is in force. `None` means the caller did not touch
+            # it, so a rename does not silently wipe the 教学安排.
+            category.teaching = teaching
 
         category.updated_at = datetime.now(UTC)
         return await self._category_repo.save(category)
