@@ -200,7 +200,7 @@ def test_self_test_the_backend_guard_lets_through(source: str) -> None:
 
 _FRONTEND_MUST_CATCH = {
     "attribute": "const name = agent.configuration.model\n",
-    "subscript": "const name = cfg['harness']\n",
+    "subscript": "const name = agent.configuration['harness']\n",
     "destructured": "const { model } = agent.configuration\n",
     "destructured-several": "const { body, effort } = draft.value\n",
     "renamed-first": "const cfg = a.configuration\nconst h = cfg.harness\n",
