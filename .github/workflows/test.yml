@@ -288,6 +288,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: backend/app/domain/agent/harness/claude_code/remote_execution/client.py
       - name: Install the pinned Claude Code build
         run: |
           version="$(python3 - <<'PY'

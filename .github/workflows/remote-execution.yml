@@ -55,7 +55,9 @@ jobs:
           node-version: '22'
       # setup-uv otherwise puts the cache in runner temp, which is cleared after each job.
       - name: Use the persistent uv cache
-        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+        run: |
+          echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
+          echo "PRIVATE_BUILDER=cheese-private-slot-${CHEESE_CI_SLOT:-0}" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
           version: '0.12.1'
@@ -72,6 +74,9 @@ jobs:
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
+          # Preserve this slot's builder state; other slots use different builder names.
+          name: ${{ env.PRIVATE_BUILDER }}
+          keep-state: true
           driver-opts: |
             image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
           buildkitd-config-inline: |
@@ -81,6 +86,11 @@ jobs:
               options = ["use-vc"]
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
+            [worker.oci]
+              gc = true
+              reservedSpace = "1GB"
+              maxUsedSpace = "3GB"
+              minFreeSpace = "10GB"
       - name: Build private execution image
         run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
       - name: Keep the private image available during tests
@@ -175,9 +185,11 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           cargo --version
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh tmux redis-tools openssl ripgrep fuse libfuse2
-          mkdir -p tmp/remote-execution/deps
-          (cd tmp/remote-execution/deps && apt-get download redis-server redis-tools)
-          for package in tmp/remote-execution/deps/*.deb; do
+          redis_key="$(apt-cache show --no-all-versions redis-server redis-tools | sha256sum | cut -d' ' -f1)"
+          redis_cache="$HOME/.cache/cheese-ci/redis-debs/$redis_key"
+          mkdir -p "$redis_cache" tmp/remote-execution/deps
+          (cd "$redis_cache" && flock .download.lock apt-get download redis-server redis-tools)
+          for package in "$redis_cache"/*.deb; do
             dpkg-deb -x "$package" tmp/remote-execution/deps
           done
           npm ci --prefix scripts/remote_execution --no-audit --no-fund
