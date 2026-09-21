@@ -34,12 +34,7 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend.yml'
-
+  workflow_call:
 # No step here comments, pushes or reads another workflow's runs — checkout is
 # the only thing that wants the token at all. Without this block the run would
 # inherit the repository default, which can be read/write across every scope.

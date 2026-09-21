@@ -1,0 +1,96 @@
+name: Required CI
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: required-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      e2e: ${{ steps.scope.outputs.e2e }}
+      cli: ${{ steps.scope.outputs.cli }}
+      guards: ${{ steps.scope.outputs.guards }}
+      deploy: ${{ steps.scope.outputs.deploy }}
+      harness: ${{ steps.scope.outputs.harness }}
+      mcp: ${{ steps.scope.outputs.mcp }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Test scope and result handling
+        run: python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
+      - name: Select suites for the complete merge diff
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          python3 .github/scripts/required-ci.py scope "$BASE_SHA"
+
+  backend:
+    needs: scope
+    if: needs.scope.outputs.backend == 'true'
+    uses: ./.github/workflows/test.yml
+
+  frontend:
+    needs: scope
+    if: needs.scope.outputs.frontend == 'true'
+    uses: ./.github/workflows/frontend.yml
+
+  e2e:
+    needs: scope
+    if: needs.scope.outputs.e2e == 'true'
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/e2e.yml
+
+  cli:
+    needs: scope
+    if: needs.scope.outputs.cli == 'true'
+    uses: ./.github/workflows/cli.yml
+
+  guards:
+    needs: scope
+    if: needs.scope.outputs.guards == 'true'
+    uses: ./.github/workflows/repo-guards.yml
+
+  deploy:
+    needs: scope
+    if: needs.scope.outputs.deploy == 'true'
+    uses: ./.github/workflows/deploy-scripts-test.yml
+
+  harness:
+    needs: scope
+    if: needs.scope.outputs.harness == 'true'
+    uses: ./.github/workflows/harness-contract.yml
+
+  mcp:
+    needs: scope
+    if: needs.scope.outputs.mcp == 'true'
+    uses: ./.github/workflows/mcp-contract.yml
+
+  required:
+    name: CI required
+    if: always()
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require every selected suite to succeed
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/required-ci.py check
