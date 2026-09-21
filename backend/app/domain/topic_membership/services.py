@@ -151,9 +151,17 @@ class TopicMemberService:
     ) -> None:
         """Seed a project's ROOT topic (总览/项目本体) roster: EVERY project
         member joins the room, so 总览 mirrors the whole project (fusion-design
-        §3). The project owner is the topic owner; other members join as members;
-        芝士 joins as a member. Idempotent — re-seeding never duplicates a row."""
-        await self._seed_with_members(
+        §3). The project owner is the topic owner; other members join as members.
+        Idempotent — re-seeding never duplicates a row.
+
+        People only. 芝士 is seated where the project's own agent is seeded
+        (`AgentInstanceService.materialize_default`), because that is where
+        「这个项目的芝士是谁」 is decided. Seating a room-derived stand-in here
+        would give 总览 a second agent nobody created.
+        """
+        if owner_handle and not self._is_agent_handle(owner_handle):
+            await self._ensure_member(topic_id, owner_handle, role=TopicRole.owner)
+        await self._ensure_people(
             topic_id, owner_handle=owner_handle, member_handles=member_handles
         )
 
@@ -188,18 +196,18 @@ class TopicMemberService:
         everyone as a plain member is simple and correct enough — the owner can
         promote people afterward if the child needs its own owner/admin split.
         Idempotent, same as seed()."""
-        await self._seed_with_members(
+        await self.seed(topic_id, owner_handle=owner_handle)
+        await self._ensure_people(
             topic_id, owner_handle=owner_handle, member_handles=member_handles
         )
 
-    async def _seed_with_members(
+    async def _ensure_people(
         self,
         topic_id: uuid.UUID,
         *,
         owner_handle: str | None,
         member_handles: list[str],
     ) -> None:
-        await self.seed(topic_id, owner_handle=owner_handle)
         for handle in member_handles:
             if not handle or self._is_agent_handle(handle) or handle == owner_handle:
                 continue
@@ -377,12 +385,22 @@ class TopicMemberService:
         silently undo a revocation, i.e. break the one capability this whole
         change exists to provide. Blocks already authored under the shared handle
         keep it; history is history.
+
+        And the 分身 is seated only where the shared seat was this room's LAST
+        agent. 总览 seats the project's own 芝士 now (`b4d1a70c9e52` retired the
+        stand-in that used to sit there), so seating one here on the way past
+        would put a second 芝士 back on that roster — and with it the hole the
+        retirement closed: revoke the instance's seat and the stand-in goes on
+        answering 「这里有个 agent」, because it carries an execution binding of
+        its own. The question 「这个房间还有别的 agent 吗」 is the right one for
+        every room, not just 总览, and it costs one roster read.
         """
         legacy = await self._repo.get(topic_id=topic_id, member_handle=CHEESE_HANDLE)
         if legacy is None:
             return
-        await self.ensure_topic_agent_seat(topic_id)
         await self._repo.delete(legacy)
+        if not await self.agent_handles(topic_id):
+            await self.ensure_topic_agent_seat(topic_id)
 
     async def resolve_agent_handle(
         self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None

@@ -45,7 +45,7 @@ jobs:
   # Gate on the release commit's build + tests. Only for release events; a manual
   # dispatch trusts the operator's chosen ref.
   wait-for-ci:
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && !startsWith(github.event.release.tag_name, 'forgejo-cli-')
     runs-on: ubuntu-latest
     # Deliberately unbounded: this blocks until the release commit's CI
     # finishes, which is however long the box's queue is that day.
