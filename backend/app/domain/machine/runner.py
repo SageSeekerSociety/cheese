@@ -1,12 +1,10 @@
 """Enrolling provisioned machines.
 
-Deliberately on its own interval rather than a step inside the project
-scheduler. That scheduler drives 定期巡检 — it spends model budget and makes AI
-judgment calls, so deployments keep it off (its interval defaults to 0).
-Enrolling a machine is platform plumbing with no judgment in it, and hanging it
-off that switch would mean a deployment could not have working machines without
-also turning on autonomous patrols. They are separate concerns with separate
-switches — see ``app.core.background.PeriodicRunner`` for the clock.
+Deliberately on its own interval and its own switch. Enrolling a machine is
+platform plumbing with no judgment in it, and a machine that came up while
+nobody was looking must still become a device — so it must not share a switch
+with anything a deployment might want off. See
+``app.core.background.PeriodicRunner`` for the clock.
 """
 
 import logging

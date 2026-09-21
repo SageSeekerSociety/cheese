@@ -2314,28 +2314,31 @@ class ChatService:
             workers.pop(agent_id, None)
 
     async def _work_of_worker(
-        self, topic_id: uuid.UUID, agent_id: str | None
+        self, topic_id: uuid.UUID, thread_label: str | None
     ) -> uuid.UUID | None:
-        """Which piece of work this event belongs to, when a worker produced it.
+        """Which piece of work this event belongs to, read off the event itself.
 
-        Several workers run inside one session and everything they do arrives on
-        the same pipe as the session's own, told apart only by the id riding on
-        each payload — the main thread's hooks carry no such key at all, which is
-        what makes the id usable as the sole discriminator.
+        Several sub-threads run inside one session and everything they do
+        arrives on the same pipe as the session's own, told apart by the label
+        the agent gave each one when it spawned it (结论 43). The platform minted
+        that label when it opened the card, so this is a lookup and not a guess
+        — nobody has to have reported anything for a sub-thread's very first
+        event to reach its card.
 
-        None for two different situations that want the same handling: the room
-        itself did this, or a worker nobody bound did. Both land where they
-        landed before this existed, on the room's own line. Swallowing the
-        unbound one instead would make an unclaimed worker's whole run invisible,
-        which is worse than the attribution being coarse.
+        None for three situations that want the same handling: the room itself
+        did this, a sub-thread the harness started for its own purposes did, or
+        the label names work that is not open in this room. All land on the
+        room's own line, where they landed before any of this existed —
+        swallowing them instead would make a whole run invisible, which is worse
+        than the attribution being coarse.
         """
         from app.domain.room_task.services import TaskService
 
-        if not agent_id:
+        if not thread_label:
             return None
         async with self._sessions() as session:
-            task = await TaskService(session).open_by_subagent(
-                room_id=topic_id, subagent_id=agent_id
+            task = await TaskService(session).open_by_thread_label(
+                room_id=topic_id, thread_label=thread_label
             )
         return task.id if task is not None else None
 
@@ -2455,7 +2458,9 @@ class ChatService:
         task_id = (
             None
             if isinstance(event, AgentResult)
-            else await self._work_of_worker(topic_id, getattr(event, "agent_id", None))
+            else await self._work_of_worker(
+                topic_id, getattr(event, "thread_label", None)
+            )
         )
         # A thread's own channel is what its view subscribes to, and it is the
         # room's when there is no thread. Attributed frames must not go out on
@@ -3633,10 +3638,10 @@ class ChatService:
     ) -> dict | None:
         """A worker started, or handed something back — on ITS thread's line.
 
-        Nothing is written for a worker the platform never bound, and that is
-        not tidiness. Measured twice on 2.1.224: after the session's own Stop, a
-        SubagentStop arrives with an id matching no worker we saw, an empty
-        type, and a fragment of a prompt where the closing message should be —
+        Nothing is written for a sub-thread whose label names no card here, and
+        that is not tidiness. Measured twice on 2.1.224: after the session's own
+        Stop, a SubagentStop arrives with an id matching no worker we saw, an
+        empty label, and a fragment of a prompt where the closing message is —
         something inside Claude Code, not work anybody dispatched. Writing those
         would put a stranger's half-sentence in a room as if 芝士 had said it.
 
@@ -3648,6 +3653,10 @@ class ChatService:
         if task_id is None:
             return None
         if isinstance(event, AgentSubagentStart):
+            # 谁在做这张卡，是平台看见它开工的时候记下来的 —— 这条事件是第一个说
+            # 出这个分身 id 的东西（id 在容器里才诞生，派活的时候没有任何东西能提
+            # 前说出它）。卡上从此有一个分身在做，看板也就能问它还活着没有。
+            await self._note_worker(task_id, event.agent_id)
             # The platform's own sentence about a worker, not anybody's words —
             # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
@@ -3665,13 +3674,13 @@ class ChatService:
                 meta["transcript_path"] = event.transcript_path
             # 结论落在卡上, overwriting the previous stop's — the newest is what
             # the room reads when it decides whether the work is done. Only for
-            # a worker the platform bound (`task_id` is that check, above), so
-            # the fragments Claude Code's own internal agents stop with never
-            # become anybody's conclusion.
+            # a sub-thread whose label names this card (`task_id` is that check,
+            # above), so the fragments Claude Code's own internal agents stop
+            # with never become anybody's conclusion.
             await self._record_conclusion(task_id, event.text.strip())
         meta["agent_id"] = event.agent_id
-        if event.agent_type:
-            meta["agent_type"] = event.agent_type
+        if event.thread_label:
+            meta["thread_label"] = event.thread_label
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
@@ -3686,6 +3695,18 @@ class ChatService:
             # back is the whole reason anybody opens the thread.
             in_room=True,
         )
+
+    async def _note_worker(self, task_id: uuid.UUID, subagent_id: str) -> None:
+        """把做这条活的分身记在卡上。"""
+        from app.domain.room_task.services import TaskService
+
+        async with self._sessions() as session:
+            tasks = TaskService(session)
+            task = await tasks.get(task_id)
+            if task is None:
+                return
+            await tasks.note_worker(task, subagent_id)
+            await session.commit()
 
     async def _record_conclusion(self, task_id: uuid.UUID, text: str) -> None:
         from app.domain.room_task.services import TaskService
@@ -3926,7 +3947,7 @@ class ChatService:
                     backfilled=True,
                     at=message.at,
                     author=message.agent_handle,
-                    task_id=await self._work_of_worker(topic_id, message.agent_id),
+                    task_id=await self._work_of_worker(topic_id, message.thread_label),
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)
@@ -4011,7 +4032,7 @@ class ChatService:
                             topic_id=topic_id,
                             event=event,
                             task_id=await self._work_of_worker(
-                                topic_id, event.agent_id
+                                topic_id, event.thread_label
                             ),
                             turn_id=turn_id,
                             eid=eid,
@@ -4035,7 +4056,7 @@ class ChatService:
                             eid=eid,
                             backfilled=True,
                             task_id=await self._work_of_worker(
-                                topic_id, event.agent_id
+                                topic_id, event.thread_label
                             ),
                         )
                         seen.add(eid)
@@ -4059,7 +4080,9 @@ class ChatService:
                         turn_id=turn_id,
                         eid=eid,
                         backfilled=True,
-                        task_id=await self._work_of_worker(topic_id, event.agent_id),
+                        task_id=await self._work_of_worker(
+                            topic_id, event.thread_label
+                        ),
                     )
                     seen.add(eid)
                     if block_payload is None:

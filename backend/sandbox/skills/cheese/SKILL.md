@@ -165,11 +165,10 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 | `cheese_decision(text)` | 记一条关键决策到决策记录 |
 | `cheese_remember(fact, core?)` | 记入项目记忆(任何话题以后可引用)。默认是**普通记忆**:不会自动出现在你的上下文里,要用 `cheese_recall` 查。`core` 记成**核心记忆**:每轮全量注入——只给「你是谁、长期规则和目标」这种永远成立的东西用,预算很小,写多了会互相挤 |
 | `cheese_recall(query)` | 按需检索记忆(**关键词检索**,不是语义检索:把问题拆成关键词、按覆盖度排序)。**自动注入的只有核心记忆**,其余一条都不会自己出现——注入块会明说池子里还有 N 条,而那 N 条只能从这里拿。开工前、话题拐弯了、需要某条记忆的细节时,先 recall 再回答。**一次没查到不等于没有这条记忆**:换个说法、或只用其中一两个关键词再试一次 |
-| `cheese_split(title, brief?, reviewer?, base_task?)` | 创建任务、独立分支和工作目录，返回任务 id 与目录。简报写目标、约束和验收标准。执行者可以是人、主 agent 或原生后台分身；split 本身不启动执行者。验收人取 `reviewer` 或项目默认值；依赖未合并的任务时用 `base_task`，PR 以父任务分支为目标 |
+| `cheese_split(title, brief?, reviewer?, base_task?)` | 创建任务、独立分支和工作目录，返回任务 id、目录和**线程标识**。交给原生后台分身时，把线程标识原样写进给它的 prompt 里：平台按它把分身干的每件事记进这条活的时间线；**不写的后果是无声的**——活看着没人做，事件全记在房间头上。简报写目标、约束和验收标准。执行者可以是人、主 agent 或原生后台分身；split 本身不启动执行者。验收人取 `reviewer` 或项目默认值；依赖未合并的任务时用 `base_task`，PR 以父任务分支为目标 |
 | `cheese_worktree(task_id)` | 准备或找回该任务的工作目录；进入返回目录后，交付动作自动识别任务 |
 | `cheese_recover(task_id)` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
 | `cheese_sync(task?, all?)` | 同步当前或指定任务；`all` 同步本房间机器上已有的任务目录 |
-| `cheese_bind(task_id, agent_id)` | 起完分身立刻调,告诉平台这条活由哪个分身在做。绑了之后分身的每一次工具调用都记进这条活的时间线;**不绑的后果是无声的**——活看着没人做,事件全记在房间头上。一个分身同时只做一条活 |
 | `cheese_close_task(task_id, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
 | `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
 | `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options` 让人一键拍板 |

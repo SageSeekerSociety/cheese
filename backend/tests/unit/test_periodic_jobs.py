@@ -121,21 +121,13 @@ async def test_stopping_ends_the_loop():
 
 
 def _jobs():
-    from app.domain.scheduler.jobs import periodic_jobs
+    from app.core.background import periodic_jobs
 
     async def _noop(*_args, **_kwargs):
         return None
 
-    scheduler = SimpleNamespace(
-        tick=_noop,
-        poll_open_prs=_noop,
-        open_draft_prs=_noop,
-        sweep_orphan_turns=_noop,
-        remind_silent_turns=_noop,
-        sweep_abandoned_gates=_noop,
-    )
     return periodic_jobs(
-        scheduler=scheduler,
+        chat=SimpleNamespace(remind_silent_turns=_noop, session_factory=lambda: None),
         machines=SimpleNamespace(sweep=_noop),
         sessions=lambda: None,
     )

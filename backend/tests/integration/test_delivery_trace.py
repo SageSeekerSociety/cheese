@@ -69,16 +69,24 @@ def _dispatch(client, room_id: str, title: str) -> str:
     return task_id
 
 
-def _bind(client, room_id: str, task_id: str, agent_id: str) -> None:
-    """认领: the room reports which worker in its session took the work — the id
-    Claude Code minted inside the container, which is the whole of what says
-    WHICH machine did this."""
-    r = client.post(
-        f"/topics/{room_id}/tasks/{task_id}/bind",
-        json={"agent_id": agent_id},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
+def _worker_starts(client, task_id: str, agent_id: str) -> None:
+    """平台看见一个分身在这条活上开工，把它的 id 记在卡上。
+
+    它就是 `Cheese-Task:` 那一行里说出「哪台机器干的」的那个字串。真实路径上写它的是
+    分身的开工事件（`ChatService._note_worker`）；这里的测试不跑轮次，所以直接踩同一
+    个缝。
+    """
+    from app.domain.room_task.services import TaskService
+
+    async def _write() -> None:
+        async with client.test_factory() as session:
+            tasks = TaskService(session)
+            task = await tasks.get(uuid.UUID(task_id))
+            assert task is not None
+            await tasks.note_worker(task, agent_id)
+            await session.commit()
+
+    asyncio.run(_write())
 
 
 def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = None):
@@ -164,8 +172,8 @@ def test_the_landed_commit_names_the_agent_and_every_worker_declared(client):
     room = _room(client, pid)
     mine = _dispatch(client, room, "补 trailer")
     theirs = _dispatch(client, room, "顺手修 flaky 测试")
-    _bind(client, room, mine, "ac2c038d44616a2f2")
-    _bind(client, room, theirs, "9f1b7c22e0d341a80")
+    _worker_starts(client, mine, "ac2c038d44616a2f2")
+    _worker_starts(client, theirs, "9f1b7c22e0d341a80")
     machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
 
     card = _deliver(client, room, "feat: deliver one task", [mine])
@@ -201,8 +209,8 @@ def _two_batches(client) -> tuple[str, str, str, str]:
     room = _room(client, pid)
     earlier = _dispatch(client, room, "上一批写完的活")
     later = _dispatch(client, room, "代码走下一批的活")
-    _bind(client, room, earlier, "aaaa0000aaaa0000a")
-    _bind(client, room, later, "bbbb1111bbbb1111b")
+    _worker_starts(client, earlier, "aaaa0000aaaa0000a")
+    _worker_starts(client, later, "bbbb1111bbbb1111b")
     return pid, room, earlier, later
 
 
@@ -243,7 +251,7 @@ def test_a_placeholder_task_that_wrote_no_code_is_never_signed_on(client):
     room = _room(client, pid)
     placeholder = _dispatch(client, room, "只是个占位")
     real = _dispatch(client, room, "真的写了代码")
-    _bind(client, room, real, "cccc2222cccc2222c")
+    _worker_starts(client, real, "cccc2222cccc2222c")
 
     body = _batch(client, pid, room, "feat: deliver only what was written", [real])
 
@@ -260,8 +268,8 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
     room = _room(client, pid)
     done = _dispatch(client, room, "这批做完的活")
     running = _dispatch(client, room, "还在跑的活")
-    _bind(client, room, done, "dddd3333dddd3333d")
-    _bind(client, room, running, "eeee4444eeee4444e")
+    _worker_starts(client, done, "dddd3333dddd3333d")
+    _worker_starts(client, running, "eeee4444eeee4444e")
 
     now = _batch(client, pid, room, "feat: land only the finished half", [done])
     assert _task_line(pid, room, done, "dddd3333dddd3333d", "这批做完的活") in now
@@ -272,7 +280,7 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
 
 
 def test_work_no_worker_ever_took_still_appears_when_it_is_declared(client):
-    """`subagent_id` is NULL until a worker is bound, and a room can write a
+    """`subagent_id` is NULL until a worker starts, and a room can write a
     change itself. Dropping the row would make the batch in the commit smaller
     than the batch the room said it delivered."""
     pid = _project(client)
@@ -338,7 +346,7 @@ def test_git_itself_parses_the_trailers_on_the_commit_that_landed(client):
     pid = _project(client)
     room = _room(client, pid)
     mine = _dispatch(client, room, "写了这一批")
-    _bind(client, room, mine, "ac2c038d44616a2f2")
+    _worker_starts(client, mine, "ac2c038d44616a2f2")
 
     landed = _batch(client, pid, room, "feat: parse me with real git", [mine])
 

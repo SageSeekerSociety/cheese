@@ -54,7 +54,6 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
     }
     arguments = {
         "cheese_ask": {"question": "Pick", "option": ["a", "b"]},
-        "cheese_bind": {"task_id": "task", "agent_id": "agent"},
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},

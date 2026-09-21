@@ -103,7 +103,7 @@ from app.main import app  # noqa: E402
 # decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
-# platform runs (scheduler/jobs.py). Three of them would act on the test's own
+# platform runs (app/core/background.py). Three of them would act on the test's own
 # data behind its back: the email drain claims whatever a notification test
 # queued and dead-letters it after three tries, the finalizer closes an
 # aggregation window a test may be asserting is still open, and the deadline
@@ -295,6 +295,39 @@ class StubChannel(Channel):
             _eid=eid,
         )
 
+    def spawns(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        thread_label: str,
+        agent_id: str = "worker-1",
+        call: str = "call-1",
+    ) -> None:
+        """房间起一个分身去做某张卡，就是真实那串的头两条钩子。
+
+        标识写在交给分身的 prompt 里——Claude Code 的 payload 上没有第二个地方
+        装得下它（`hook_events.SubThreads` 记了实测到的每一条）——随后
+        `SubagentStart` 第一次说出这个分身的 id。从这里起，这个 id 的每一条钩子
+        都是这张卡的。
+        """
+        self.hook(
+            topic_id,
+            hook_event_name="PreToolUse",
+            tool_name="Agent",
+            tool_use_id=call,
+            tool_input={
+                "description": "去做这条活",
+                "prompt": f"简报见下。线程标识：{thread_label}",
+                "subagent_type": "general-purpose",
+            },
+        )
+        self.hook(
+            topic_id,
+            hook_event_name="SubagentStart",
+            agent_id=agent_id,
+            agent_type="general-purpose",
+        )
+
     def returns(
         self,
         topic_id: uuid.UUID,
@@ -484,9 +517,9 @@ def stub_project_forge(monkeypatch, tmp_path):
         if not await test_repository(project_id, session):
             await remote_author_email(project_id, session, email, **kwargs)
 
-    async def branch_head(project_id, session, branch):
+    async def branch_head(project_id, session, branch, **kwargs):
         if not await test_repository(project_id, session):
-            return await remote_head(project_id, session, branch)
+            return await remote_head(project_id, session, branch, **kwargs)
         repo = git_store.path(project_id)
         if not repo.exists():
             return None

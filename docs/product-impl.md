@@ -106,7 +106,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写主人个人记忆。
 - **记忆注入**：每轮把项目记忆（私聊则个人记忆）+ 实况文档拼进 system prompt。🟡 会话收尾**自动提取**记忆未做；项目话题里加载**成员个人记忆**未做。
-- **巡检（本体心跳）**：`POST /api/projects/{id}/heartbeat` / 定时 `scheduler`（§3.8）。走根话题串行锁、注入今天日期 + 里程碑剩余天数（Batch E）。🟡 巡检暂未注入各话题文档/项目记忆、逾期里程碑未入视野（剩余 backlog）。
+- **巡检（本体心跳）**：已退役。`POST /api/projects/{id}/heartbeat` 2026-08-12 摘掉（`app/api/routes/activities.py` 留成一个空 router，原因写在原地；`tests/contract/test_parked_bypass_turns.py` 守着它别被挂回来），定时 tick 那一侧跟着 scheduler 包一起删掉（§3.8）。它回来的时候是一份 skill，不是一个钟。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写
 
@@ -119,7 +119,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 实现：`TopicService.upgrade_block_to_place / dispatch_task / return_conclusion`、
 `app/domain/topic/relay.py`（留话；为什么不能用 `/comments` 见该模块 docstring）。
-升级出一条活时叫醒的是**房间**（起分身、`cheese bind`、给活起名字），不是那条活——
+升级出一条活时叫醒的是**房间**（起分身、把这条活的线程标识写进它的 prompt、给活起名字），不是那条活——
 活没有自己的会话，朝它开一轮就是给它起一整个容器。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
@@ -151,11 +151,11 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
 - **实现**：`AlertService`（`backend/app/domain/alert/`）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`。前端 `components/NeedsYou.vue`。
 
-### 3.8 里程碑 / 日历 / 调度  ✅ / 🟡
+### 3.8 里程碑 / 日历  ✅ / 🟡
 
 - **行为**：芝士 `cheese milestone` 钉关键节点 → 排进日历、冒泡到机构看板；**逾期里程碑自动转 `missed`**（读时惰性，`MilestoneRepository.mark_overdue`），日历/下个里程碑只显未来项。
-- **调度**：`scheduler`（`backend/app/domain/scheduler/`）定时 `tick` → 各项目 `run_heartbeat`。`projects.last_heartbeat_at` 列已加（迁移批，用于"每项目每天一次"，🟡 tick 逻辑待接）。
-- **实现**：`MilestoneRepository`、接口 `GET /api/projects/{id}/milestones`、`/calendar`、`POST /api/scheduler/tick`、`/api/projects/{id}/heartbeat`。
+- **调度**：没有调度部件（结论 16）。总览房间里的芝士自己决定什么时候看；平台这边留下的只有定时任务那张清单（`backend/app/core/background.py`）。
+- **实现**：`MilestoneRepository`、接口 `GET /api/projects/{id}/milestones`、`/calendar`。
 
 ### 3.9 仪表盘（总览 / 看板 / 个人主页）  ✅ / 🟡
 
@@ -219,7 +219,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ```
 项目   POST /api/projects · GET /api/projects[/{id}] · GET /{id}/{overview,decisions,private-chat,contributions,summary,usage}
 话题   POST /api/topics · GET /api/topics?project_id= · GET /{id}[/blocks|transcript|children|doc|docs|usage]
-       PUT /{id}/doc · POST /{id}/split · POST /{id}/tasks/{task}/{bind,conclude,title} · POST /api/blocks/{id}/upgrade
+       PUT /{id}/doc · POST /{id}/split · POST /{id}/tasks/{task}/{conclude,title} · POST /api/blocks/{id}/upgrade
 对话   WS  /api/topics/{id}/chat?token=<会话 token>（必带；连接即认人，消息里的 author 不作数）
 验收   POST /api/topics/{id}/accept-card · GET 同路径 · POST /api/accept-cards/{id}/{accept,reject,reassign,revoke}
 通知   GET /api/projects/{id}/{notifications,inbox} · POST /api/projects/{id}/notifications
@@ -233,7 +233,6 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 反馈   GET/POST /api/feedback · GET /api/feedback/{meta,counts,mine,{id},{id}/comments} · POST /api/feedback/{read,{id}/comments,{id}/supports}
        管理端 GET/PATCH /api/admin/feedback[/{id}] · POST /api/admin/feedback/{id}/{status,notes}
        提案 GET/POST /api/topics/{id}/feedback-proposals · POST .../{block_id}/{accept,dismiss}
-调度   POST /api/scheduler/tick
 ```
 
 （路径前缀以各 router 为准；部分 router 用空前缀并写全路径，见 `backend/app/api/routes/`。）

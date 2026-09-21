@@ -833,7 +833,7 @@ class MachineService:
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
         """Enroll every machine that is up and wired but not yet a device.
 
-        Runs on the scheduler rather than in a request: it SSHes into a machine,
+        Runs on a clock rather than in a request: it SSHes into a machine,
         which is far too slow to hang a read on, and it must keep happening for a
         machine that became ready while nobody was looking.
         """

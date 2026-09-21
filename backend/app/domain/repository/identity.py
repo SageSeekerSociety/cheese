@@ -39,14 +39,14 @@ class WorkItem:
     A commit's `Co-authored-by` names people; this names MACHINES, which is a
     different question and needs a different answer. `Claude Fable 5` is on every
     commit any Claude Code writes anywhere, so it cannot tell you which worker in
-    which room typed this one. `subagent_id` can: it is the id Claude Code minted
-    for that worker inside the room's session, the same string the room's hook
-    events carry, so a line of `git log` and a thread in the room name the same
-    machine."""
+    which room typed this one. `subagent_id` can: it is the id the harness minted
+    for that worker inside the room's session, which the platform read off that
+    worker's start event, so a line of `git log` and a thread in the room name
+    the same machine."""
 
     task_id: uuid.UUID
-    #: NULL while nobody has claimed the work — a task row exists from the moment
-    #: it is dispatched and the worker is bound a moment later, so a delivered
+    #: NULL while no worker has started on it — a task row exists from the moment
+    #: the card is opened and a worker starts some time after, so a delivered
     #: task can honestly have none.
     subagent_id: str | None
     title: str

@@ -30,9 +30,13 @@ Event mapping:
                                             when the API refused the turn)
 
 One session can have several workers going at once — a subagent's hooks come up
-the same pipe as the session's own, tagged with ``agent_id`` (see ``_agent_id``).
-Every event above carries that tag when the payload had one, so a reader can tell
-whose work it is looking at instead of one interleaved stream from nobody.
+the same pipe as the session's own, told apart by ``agent_id``, Claude Code's
+own name for the worker. Which CARD each of them is on is the contract's
+``thread_label``, and this harness works it out at the spawn (``SubThreads``)
+because none of a subagent's own hooks can carry it: see that class for what
+was measured. The stream stamps the answer onto each payload before it is
+translated, so ``translate_hook`` reads one key and knows nothing about how it
+got there.
 """
 
 import asyncio
@@ -54,7 +58,13 @@ from app.domain.agent.service import (
     AgentToolUse,
     AgentUsage,
 )
+from app.domain.room_task.thread_label import label_in_text
 from app.domain.usage.tokens import input_output_tokens
+
+#: Key the stream stamps this sub-thread's label onto a payload with, the same
+#: way ``_eid`` / ``_agent_handle`` / ``_at`` are stamped: platform-side keys on
+#: a Claude Code payload, never something Claude Code sent.
+THREAD_LABEL_KEY = "_thread_label"
 
 #: Key a caller may stamp on a hook payload to say when the harness actually
 #: recorded it. The live path leaves it off — the hook is being handled as it
@@ -78,23 +88,32 @@ _SUBAGENT_TOOLS = {"Task", "Agent"}
 
 
 def _agent_id(hook: dict) -> str | None:
-    """WHICH worker inside the session produced this hook — a subagent's id, or
-    None for the session's own thread.
+    """Claude Code's own name for the worker that produced this hook, or None
+    for the session's own thread.
 
-    The main thread's payloads do not carry the key at all (verified against
-    2.1.224: a subagent's PreToolUse/PostToolUse carry `agent_id` and
-    `agent_type`, the spawner's carry neither), so absence IS the answer rather
-    than a gap: nothing has to be reconciled to decide an event belongs to the
-    session. A blank value is read as absent for the same reason — an id that
-    identifies nobody cannot attribute anything.
+    It is what tells one worker's hooks from another's, and it is the key
+    `SubThreads` hangs the card's label on. The id is minted inside the
+    container when the worker starts, so nothing the platform said beforehand
+    could name it — which is why the label has to be learned at the spawn and
+    not read off the worker's own payloads.
+
+    The main thread's payloads do not carry the key at all (measured on 2.1.278:
+    a subagent's PreToolUse/PostToolUse carry `agent_id` and `agent_type`, the
+    spawner's carry neither). A blank value is read as absent — an id that
+    identifies nobody names no worker.
     """
     value = hook.get("agent_id")
     return value.strip() or None if isinstance(value, str) else None
 
 
-def _agent_type(hook: dict) -> str | None:
-    """The subagent kind (`general-purpose`, a custom agent's name…), or None."""
-    value = hook.get("agent_type")
+def _thread_label(hook: dict) -> str | None:
+    """This sub-thread's label — the contract's `thread_label`.
+
+    Read off the key the stream stamped (`SubThreads.stamp`), not off anything
+    Claude Code sends: this harness has no field that both rides on a whole
+    sub-thread and takes a string the platform chose.
+    """
+    value = hook.get(THREAD_LABEL_KEY)
     return value.strip() or None if isinstance(value, str) else None
 
 
@@ -102,6 +121,120 @@ def _hook_event_name(hook: dict) -> str:
     """The hook's event name. Claude Code sends `hook_event_name`; accept the
     camelCase alias too so a payload-shape change doesn't silently break us."""
     return str(hook.get("hook_event_name") or hook.get("hookEventName") or "")
+
+
+class SubThreads:
+    """Which card each sub-thread in this session is working on.
+
+    结论 43 asks every harness to carry a label the agent gave the sub-thread on
+    every record of it. Claude Code has no field that can hold one. Measured on
+    2.1.278:
+
+    - `subagent_type` is a choice among the agents defined when the session
+      started, not free text. Spawning with `work-<hex>` fails the whole call
+      (`Agent type 'work-…' not found. Available agents: …`), and a definition
+      written into `.claude/agents/` mid-session is not picked up — the listing
+      is loaded once at startup. Cards are opened mid-session, so no per-card
+      string can ever reach that field.
+    - A sub-thread's own payloads carry `session_id`, `transcript_path`, `cwd`,
+      `prompt_id`, `agent_id` and `agent_type`, and nothing else. `cwd` and
+      `prompt_id` are the session's, shared with the spawner and its siblings;
+      `agent_id` is minted in the container at spawn.
+
+    So the label is learned where the agent does say it — in the prompt it
+    writes for the subagent, which it has to write anyway — and hung on
+    `agent_id`. Everything after that is a lookup: by the time a payload is
+    translated it already carries its label, and nothing outside this package
+    learns that Claude Code needed any of this.
+
+    Three rules, one per thing the trace shows (two subagents spawned in one
+    message, 2.1.278):
+
+    - the spawning call's `PreToolUse` carries the prompt and arrives ~0.04s
+      BEFORE the `SubagentStart` that first names the worker, so the label
+      waits in `_spawning` and the start claims it. Claude Code serialises
+      spawn and start (Pre → Start → Post, then the next Pre), so the wait is
+      one deep;
+    - that call's `PostToolUse` names the worker outright
+      (`tool_response.agentId`) — an exact pair, which settles any sub-thread
+      the rule above left unclaimed and corrects one it claimed wrongly;
+    - a spawn that fails produces a `PreToolUse` and no start at all (the
+      failed type above is exactly that case), so a label still waiting when
+      the session's own turn ends is dropped. Left there, the NEXT sub-thread
+      would claim it and file one card's work under another.
+    """
+
+    #: Sub-threads remembered per session. A stop does not mean dead (a worker
+    #: can hand back and be resumed), so the map is only bounded, never cleared
+    #: at a stop.
+    _CAP = 64
+
+    def __init__(self) -> None:
+        self._of_worker: dict[str, str] = {}
+        self._spawning: dict[str, str] = {}
+
+    def stamp(self, hook: dict) -> dict:
+        """The payload with its `thread_label` on it, or the payload unchanged.
+
+        Unchanged is the answer for the room's own hooks and for a sub-thread
+        this session never saw spawned — Claude Code's internal agents are the
+        common case — and both land on the room's line, where they landed
+        before any of this existed.
+        """
+        event = _hook_event_name(hook)
+        if str(hook.get("tool_name") or "") in _SUBAGENT_TOOLS:
+            self._watch_spawn(event, hook)
+        worker = _agent_id(hook)
+        if worker is None:
+            if event in {"Stop", "StopFailure"}:
+                self._spawning.clear()
+            return hook
+        if event == "SubagentStart" and worker not in self._of_worker:
+            self._claim(worker)
+        label = self._of_worker.get(worker)
+        return {**hook, THREAD_LABEL_KEY: label} if label else hook
+
+    def _watch_spawn(self, event: str, hook: dict) -> None:
+        """Read the spawning call: which card, and which worker it became."""
+        call = hook.get("tool_use_id")
+        tool_input = hook.get("tool_input")
+        label = (
+            label_in_text(tool_input.get("prompt"))
+            if isinstance(tool_input, dict)
+            else None
+        )
+        if not isinstance(call, str) or label is None:
+            return
+        if event == "PreToolUse":
+            self._spawning[call] = label
+            return
+        if event != "PostToolUse":
+            return
+        self._spawning.pop(call, None)
+        response = hook.get("tool_response")
+        worker = response.get("agentId") if isinstance(response, dict) else None
+        if isinstance(worker, str) and worker.strip():
+            self._bind(worker.strip(), label)
+
+    def _claim(self, worker: str) -> None:
+        """Hand a starting worker the one label still waiting to be claimed.
+
+        Only when there IS exactly one. Two at once means two spawns are in
+        flight and the order they start in is not this harness's to promise;
+        guessing would file one card's work on the other, while waiting costs
+        those two sub-threads their start line and nothing else — the rule
+        above pairs them a moment later.
+        """
+        if len(self._spawning) != 1:
+            return
+        call, label = next(iter(self._spawning.items()))
+        del self._spawning[call]
+        self._bind(worker, label)
+
+    def _bind(self, worker: str, label: str) -> None:
+        self._of_worker[worker] = label
+        while len(self._of_worker) > self._CAP:
+            del self._of_worker[next(iter(self._of_worker))]
 
 
 def _usage_from_hook(hook: dict) -> AgentUsage:
@@ -171,7 +304,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         sid = hook.get("session_id")
         return AgentSubagentStart(
             agent_id=agent_id,
-            agent_type=_agent_type(hook) or "",
+            thread_label=_thread_label(hook) or "",
             session_id=str(sid) if sid else None,
         )
 
@@ -184,7 +317,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         return AgentSubagentStop(
             agent_id=agent_id,
             text=str(hook.get("last_assistant_message") or ""),
-            agent_type=_agent_type(hook) or "",
+            thread_label=_thread_label(hook) or "",
             transcript_path=str(path) if path else None,
             session_id=str(sid) if sid else None,
         )
@@ -198,8 +331,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             input=tool_input if isinstance(tool_input, dict) else {},
             eid=eid if isinstance(eid, str) else None,
             call_id=call if isinstance(call, str) else None,
-            agent_id=_agent_id(hook),
-            agent_type=_agent_type(hook),
+            thread_label=_thread_label(hook),
         )
 
     if event == "PostToolUseFailure":
@@ -219,7 +351,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
         return AgentStepFailed(
             call_id=call,
             text=text[-STEP_ERROR_MAX:],
-            agent_id=_agent_id(hook),
+            thread_label=_thread_label(hook),
         )
 
     if event == "PostToolUse":
@@ -243,8 +375,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
                 else ""
             ),
             eid=eid if isinstance(eid, str) else None,
-            agent_id=_agent_id(hook),
-            agent_type=_agent_type(hook),
+            thread_label=_thread_label(hook),
         )
 
     if event == "MessageDisplay":
@@ -258,8 +389,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             return AgentMessage(
                 text=text,
                 eid=eid if isinstance(eid, str) else None,
-                agent_id=_agent_id(hook),
-                agent_type=_agent_type(hook),
+                thread_label=_thread_label(hook),
             )
         return None
 
@@ -308,8 +438,7 @@ def translate_hook(hook: dict) -> AgentEvent | None:
             usage=_usage_from_hook(hook),
             agent_handle=hook.get("_agent_handle"),
             harness=CLAUDE_CODE,
-            agent_id=_agent_id(hook),
-            agent_type=_agent_type(hook),
+            thread_label=_thread_label(hook),
         )
 
     if event == "StopFailure":
@@ -349,13 +478,12 @@ class _PendingMessage:
     deltas: dict[int, str] = field(default_factory=dict)
     eids: dict[int, str | None] = field(default_factory=dict)
     final_index: int | None = None
-    #: Which worker is saying this. Taken from the first flush that names one
-    #: and then left alone: the flushes of ONE message all come from the same
-    #: thread, so a later flush can only repeat it — while a payload that omits
-    #: the key must not erase what an earlier one established, or a message
-    #: assembled out of order would come out belonging to nobody.
-    agent_id: str | None = None
-    agent_type: str | None = None
+    #: Which sub-thread is saying this. Taken from the first flush that names
+    #: one and then left alone: the flushes of ONE message all come from the
+    #: same thread, so a later flush can only repeat it — while a payload that
+    #: omits the key must not erase what an earlier one established, or a
+    #: message assembled out of order would come out belonging to nobody.
+    thread_label: str | None = None
     agent_handle: str | None = None
     #: When the first flush of this message arrived — the moment 芝士 started
     #: saying it, which is where it belongs in the timeline. Assembly finishes
@@ -404,6 +532,9 @@ class MessageAssembler:
         self._pending: dict[str, _PendingMessage] = {}
         self._done: dict[str, None] = {}
         self._last_stop_text: str | None = None
+        # One per stream, for the same reason the pending messages are: a
+        # sub-thread belongs to the session whose hooks it came up with.
+        self._threads = SubThreads()
 
     def add(self, hook: dict) -> AgentMessage | None:
         """Fold one MessageDisplay payload in. Returns the completed message,
@@ -429,8 +560,7 @@ class MessageAssembler:
                 eid=eid,
                 eids=(eid,) if eid else (),
                 at=at,
-                agent_id=_agent_id(hook),
-                agent_type=_agent_type(hook),
+                thread_label=_thread_label(hook),
                 agent_handle=hook.get("_agent_handle"),
             )
         if message_id in self._done:
@@ -456,9 +586,8 @@ class MessageAssembler:
         # prevents is silent: whoever changes that in Claude Code will not come
         # and tell us, and an untagged reply is indistinguishable from one the
         # session said itself.
-        if pending.agent_id is None:
-            pending.agent_id = _agent_id(hook)
-            pending.agent_type = _agent_type(hook)
+        if pending.thread_label is None:
+            pending.thread_label = _thread_label(hook)
         # Earliest wins: flushes can arrive out of order (a retried spool file
         # lands after later ones), and what this records is when the message
         # STARTED, not which flush happened to be handled first.
@@ -477,7 +606,13 @@ class MessageAssembler:
         """Stream-level translation of one hook payload: MessageDisplay folds
         into the assembler (a completed message emerges as ONE event), a Stop
         first drains whatever is still buffered so nothing dies with the
-        buffer, and every other hook passes through ``translate_hook``."""
+        buffer, and every other hook passes through ``translate_hook``.
+
+        Every payload is stamped with its sub-thread's label on the way in:
+        which card an event belongs to follows from the whole stream (see
+        ``SubThreads``), and a translator handed one payload at a time cannot
+        work it out."""
+        hook = self._threads.stamp(hook)
         name = _hook_event_name(hook)
         if name in {"UserPromptSubmit", "PreToolUse"}:
             self._last_stop_text = None
@@ -485,7 +620,7 @@ class MessageAssembler:
             message = self.add(hook)
             if (
                 message is not None
-                and message.agent_id is None
+                and message.thread_label is None
                 and message.text.strip() == self._last_stop_text
             ):
                 # A late display of the reply Stop already delivered must not
@@ -500,7 +635,7 @@ class MessageAssembler:
             messages = self.drain()
             if messages and not event.is_error:
                 last = messages[-1]
-                if last.agent_id is None and event.text.strip().startswith(
+                if last.thread_label is None and event.text.strip().startswith(
                     last.text.strip()
                 ):
                     # Stop carries the whole final reply when its last display
@@ -550,8 +685,7 @@ class MessageAssembler:
             eid=eids[0] if eids else None,
             eids=eids,
             at=pending.started_at,
-            agent_id=pending.agent_id,
-            agent_type=pending.agent_type,
+            thread_label=pending.thread_label,
             agent_handle=pending.agent_handle,
         )
 

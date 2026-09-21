@@ -2,9 +2,7 @@
 
 import uuid
 from functools import lru_cache
-from typing import Annotated
 
-from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -26,12 +24,10 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
 from app.domain.machine.services import MachineService
 from app.domain.machine.wakeup import WAKE_NOTICE, WAKE_PROMPT, CloudWakeup
-from app.domain.scheduler.service import SchedulerService
 
 __all__ = [
     "get_db",
     "get_chat_service",
-    "get_scheduler_service",
     "get_profile_registry",
     "get_broker",
     "get_work_runner",
@@ -222,12 +218,6 @@ def get_cloud_wakeup() -> CloudWakeup:
         is_online=device_hub.is_online,
         announce_failure=announce_failure,
     )
-
-
-def get_scheduler_service(
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> SchedulerService:
-    return SchedulerService(chat_service=chat)
 
 
 @lru_cache

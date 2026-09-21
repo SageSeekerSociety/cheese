@@ -309,3 +309,28 @@ it('keeps a reaction received before its message arrives in history', async () =
   await flushPromises()
   expect(view.container.querySelector('.rx-emoji')?.textContent).toBe('👍')
 })
+
+it('a rejected message stops waiting and only resends when the user retries', async () => {
+  const view = mountPanel(true)
+  await flushPromises()
+  sockets[0].onopen?.()
+  await flushPromises()
+  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
+  textarea.focus()
+  await fireEvent.update(textarea, 'rejected message')
+  await fireEvent.keyDown(textarea, { key: 'Enter' })
+  const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
+  sockets[0].onmessage?.({
+    data: JSON.stringify({ type: 'error', code: 'ForbiddenError', client_id: sent.client_id, message: '房间已关闭' }),
+  })
+  await flushPromises()
+  expect(view.container.textContent).toContain('房间已关闭')
+  expect(view.getByText('重试')).toBeTruthy()
+  sockets[0].onclose?.()
+  await vi.advanceTimersByTimeAsync(1000)
+  sockets[1].onopen?.()
+  expect(sockets[1].send).not.toHaveBeenCalled()
+  await fireEvent.click(view.getByText('重试'))
+  const retry = JSON.parse(String(sockets[1].send.mock.calls[0][0]))
+  expect(retry.client_id).toBe(sent.client_id)
+})

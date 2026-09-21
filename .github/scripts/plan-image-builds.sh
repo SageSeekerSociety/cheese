@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Decide which Docker contexts changed since the last fully successful image
-# build. Output is compatible with GITHUB_OUTPUT and intentionally pure apart
-# from reading git, so the contract test can cover failed-build catch-up.
+# build. Output is compatible with GITHUB_OUTPUT. An explicit BASE_SHA skips
+# the GitHub lookup, including an empty value for the first successful build.
 set -euo pipefail
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
@@ -9,6 +9,17 @@ base_sha="${BASE_SHA:-}"
 current_sha="${CURRENT_SHA:-HEAD}"
 event_name="${EVENT_NAME:-push}"
 ref_type="${REF_TYPE:-branch}"
+
+# A failed lookup leaves the baseline unknown. Stop before scheduling builds;
+# only a successful empty response establishes that a bootstrap is needed.
+if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; then
+  if ! base_sha="$(gh api \
+      "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs?branch=${GITHUB_REF_NAME}&status=success&event=push&per_page=1" \
+      --jq '.workflow_runs[0].head_sha // empty')"; then
+    echo "::error::Could not query the previous successful image build; rerun this job when the API is available" >&2
+    exit 1
+  fi
+fi
 
 backend=false
 sandbox=false
@@ -23,8 +34,8 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   || ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
   # Which of the four it was. A full rebuild of every image is ~20 minutes on
   # a box with one runner slot, so it is worth a line saying why it happened —
-  # the empty-$base_sha case already warns, but a base commit the checkout
-  # cannot resolve looked identical to a deliberate bootstrap and said nothing.
+  # a base commit the checkout cannot resolve needs to be distinguished from
+  # a deliberate bootstrap.
   if [[ "$event_name" != "push" ]]; then
     why="event is $event_name, not a push"
   elif [[ "$ref_type" == "tag" ]]; then
