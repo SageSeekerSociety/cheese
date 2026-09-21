@@ -77,6 +77,17 @@ class Policy:
     allowed_tiers: frozenset[str] | None = None
     over_tier: str = DENY
 
+    @property
+    def lets_everything_through(self) -> bool:
+        """不限档：这份策略对每一次调用的判决都是 `Allowed`。
+
+        调用点据此跳过**把那次调用写出来**那一步——机器那一侧要列一遍项目设备、
+        列一遍 host health、再取一次机主，而不限档时这几条查询的答案不影响判决，
+        它们又落在每一轮都走的那条路上。跳过的只是构造：判决仍然只有 `check` 这
+        一处在做。
+        """
+        return self.allowed_tiers is None
+
 
 def policy_of(project_settings: dict | None) -> Policy:
     """从项目设置读出这两句话。读不懂的值按默认算。

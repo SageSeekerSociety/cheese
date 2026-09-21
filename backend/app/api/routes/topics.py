@@ -1419,13 +1419,9 @@ async def set_topic_compute_profile(
         await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
-    chosen_device = None
     if device_id is not None:
         scoped_devices = await device_service.list_devices_for_project(topic.project_id)
-        chosen_device = next(
-            (device for device in scoped_devices if device.device_id == device_id), None
-        )
-        if chosen_device is None:
+        if device_id not in {device.device_id for device in scoped_devices}:
             raise ValidationError("设备不属于当前项目")
 
     # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
@@ -1438,36 +1434,40 @@ async def set_topic_compute_profile(
     project = await ProjectRepository(db).get(topic.project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    call = await machine_policy_call(db, project=project, topic=topic, choice=choice)
-    verdict = (
-        gate.check(call, gate.policy_of(project.settings), actor.handle)
-        if call is not None
-        else None
-    )
-    if isinstance(verdict, gate.Proposal):
-        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的是一
-        # 条提议，下一步在 approver 手上。
-        await propose(db, verdict, place_id=topic_id)
-        await db.flush()
-        # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
-        # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前的房
-        # 间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力选择」，
-        # 而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说法，先信谁？
-        current = room_choice(topic, project.settings)
-        return ok(
-            {
-                "current": current.profile,
-                "choice": current.model_dump(),
-                "device_id": current.device_id,
-                "locked": False,
-                "inherited": topic.compute_profile is None,
-                "proposal": {
-                    "approver": verdict.approver,
-                    "tier": verdict.call.tier,
-                    "content": verdict.content,
-                },
-            }
+    policy = gate.policy_of(project.settings)
+    # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。
+    if not policy.lets_everything_through:
+        verdict = gate.check(
+            await machine_policy_call(db, project=project, topic=topic, choice=choice),
+            policy,
+            actor.handle,
         )
+        if isinstance(verdict, gate.Proposal):
+            # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+            # 是一条提议，下一步在 approver 手上。
+            await propose(db, verdict, place_id=topic_id)
+            await db.flush()
+            # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
+            # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+            # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
+            # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
+            # 法，先信谁？
+            current = room_choice(topic, project.settings)
+            return ok(
+                {
+                    "current": current.profile,
+                    "choice": current.model_dump(),
+                    "device_id": current.device_id,
+                    "locked": False,
+                    "inherited": topic.compute_profile is None,
+                    "proposal": {
+                        "approver": verdict.approver,
+                        "tier": verdict.call.tier,
+                        "content": verdict.content,
+                    },
+                }
+            )
 
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind

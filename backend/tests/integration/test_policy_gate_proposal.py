@@ -21,22 +21,25 @@ from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
+from tests.conftest import seed_user
 from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
-def _seed_user(client, handle: str) -> int:
-    async def _run() -> int:
+def _user_id(client, handle: str) -> int:
+    """一个真人，外加他的 id —— 机主和收件箱都是按 id 记的。
+
+    建人走共享的那份 get-or-create（`tests/conftest.py` 的 `seed_user`，integration
+    这一层用的就是它），这里只是把刚建好的那个按 handle 取回来。
+    """
+    seed_user(client, handle)
+
+    async def _read() -> int:
         async with client.test_factory() as session:
-            repo = UserRepository(session)
-            user = await repo.get_by_username(handle)
-            if user is None:
-                user = await repo.create_user(
-                    username=handle, email=f"{handle}@example.com"
-                )
-            await session.commit()
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None
             return user.id
 
-    return asyncio.run(_run())
+    return asyncio.run(_read())
 
 
 def _project(client, owner: str = "andyl") -> str:
@@ -107,8 +110,8 @@ def _inbox(client, user_id: int) -> list[Notification]:
 def gated_project(client, monkeypatch):
     """一个只允许 `included` 档自己发生、超档变提议的项目，外加一台别人的机器。"""
     monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    _seed_user(client, "andyl")
-    owner_id = _seed_user(client, "xiaowang")
+    _user_id(client, "andyl")
+    owner_id = _user_id(client, "xiaowang")
     pid = _project(client)
     tid = _topic(client, pid)
     device_id = _device_owned_by(client, pid, owner_id, "小王的工作站")
@@ -174,7 +177,7 @@ def test_a_proposal_does_not_take_the_machine(client, gated_project):
 def test_an_unrestricted_project_still_takes_the_machine(client, monkeypatch):
     """默认不限档 —— 今天的行为一点没变，闸门对它是透明的。"""
     monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    owner_id = _seed_user(client, "xiaowang")
+    owner_id = _user_id(client, "xiaowang")
     pid = _project(client)
     tid = _topic(client, pid)
     device_id = _device_owned_by(client, pid, owner_id, "小王的工作站")
@@ -190,7 +193,7 @@ def test_an_unrestricted_project_still_takes_the_machine(client, monkeypatch):
 
 
 def test_the_policy_a_project_saved_is_the_policy_it_reads_back(client):
-    _seed_user(client, "andyl")
+    _user_id(client, "andyl")
     pid = _project(client)
     default = client.get(
         f"/projects/{pid}/tier-policy", headers=session_auth_headers("andyl")
@@ -218,7 +221,7 @@ def test_the_policy_a_project_saved_is_the_policy_it_reads_back(client):
 
 
 def test_an_unknown_disposition_is_refused(client):
-    _seed_user(client, "andyl")
+    _user_id(client, "andyl")
     pid = _project(client)
     response = client.put(
         f"/projects/{pid}/tier-policy",
@@ -247,6 +250,17 @@ def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") 
     return frames
 
 
+def _errors(frames: list) -> list:
+    """这一轮是不是以一次报错收场。
+
+    propose 和 deny 在轮次这条路上的差别就在这里：`_say` 的循环在 `done` 和
+    `error` 两种帧上都会停，所以只断言「房间里有一条提议」的用例在两种处置下都是
+    绿的。判据②（产物是一条提议）要断言的是**没有** error 帧，判据③（一次看得见
+    的拒绝）要断言的是有。
+    """
+    return [f for f in frames if f["type"] == "error"]
+
+
 def _proposals(client, topic_id: str) -> list[Block]:
     return [
         block
@@ -256,7 +270,7 @@ def _proposals(client, topic_id: str) -> list[Block]:
 
 
 def _gated(client, *, allowed: list[str], over_tier: str) -> tuple[str, str, int]:
-    owner_id = _seed_user(client, "andyl")
+    owner_id = _user_id(client, "andyl")
     pid = _project(client)
     tid = _topic(client, pid)
     saved = client.put(
@@ -276,11 +290,20 @@ def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
     """
     _pid, tid, owner_id = _gated(client, allowed=["included"], over_tier="propose")
 
-    _say(client, tid)
+    frames = _say(client, tid)
 
     proposals = _proposals(client, tid)
     assert len(proposals) == 1
     assert "算力" in proposals[0].content
+    # 产物是一条提议，不是一次报错：这一轮以房间里那条提议加一个 done 收场，发消
+    # 息的人在流里读到的就是它。
+    assert _errors(frames) == []
+    assert frames[-1]["type"] == "done"
+    assert [
+        f
+        for f in frames
+        if f["type"] == "event_block" and "算力" in f["block"]["content"]
+    ]
     # 这一轮没有发生：没有请求发出去，机器也没有被绑走。
     assert stub_hooks.last_prompt is None
     assert _topic_binding(client, tid) is None
@@ -299,8 +322,8 @@ def test_the_owner_of_the_machine_the_platform_would_pick_is_the_one_asked(
     他的电和带宽，也只有他点得了这个头。
     """
     monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    project_owner_id = _seed_user(client, "andyl")
-    machine_owner_id = _seed_user(client, "xiaowang")
+    project_owner_id = _user_id(client, "andyl")
+    machine_owner_id = _user_id(client, "xiaowang")
     pid = _project(client)
     tid = _topic(client, pid)
     _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
@@ -321,12 +344,13 @@ def test_the_owner_of_the_machine_the_platform_would_pick_is_the_one_asked(
     )
     assert gated.status_code == 200, gated.text
 
-    _say(client, tid)
+    frames = _say(client, tid)
 
     proposals = _proposals(client, tid)
     assert len(proposals) == 1
     assert "小王的工作站" in proposals[0].content
     assert "xiaowang" in proposals[0].content
+    assert _errors(frames) == []
     assert _inbox(client, machine_owner_id) != []
     assert _inbox(client, project_owner_id) == []
     # 这次调用没有发生：机器没被绑走，也没有请求发出去。
@@ -345,8 +369,8 @@ def test_the_picker_and_the_turn_ask_for_the_same_machine_once(
     小王只该收到一条通知（结论 15 / I11「一次」）。
     """
     monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    _seed_user(client, "andyl")
-    machine_owner_id = _seed_user(client, "xiaowang")
+    _user_id(client, "andyl")
+    machine_owner_id = _user_id(client, "xiaowang")
     pid = _project(client)
     tid = _topic(client, pid)
     device_id = _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
@@ -374,10 +398,13 @@ def test_the_picker_and_the_turn_ask_for_the_same_machine_once(
     assert picked.status_code == 200, picked.text
     assert picked.json()["data"]["proposal"]["approver"] == "xiaowang"
 
-    _say(client, tid)
+    frames = _say(client, tid)
 
     assert len(_proposals(client, tid)) == 1
     assert len(_inbox(client, machine_owner_id)) == 1
+    # 第二次问同一件事也不是报错：房间里不再多一条，这一轮照样以 done 收场。
+    assert _errors(frames) == []
+    assert frames[-1]["type"] == "done"
     assert stub_hooks.last_prompt is None
 
 
@@ -391,11 +418,13 @@ def test_a_turn_whose_model_is_over_tier_sends_no_request(client, stub_hooks):
         client, allowed=["byo", "premium", "frontier"], over_tier="propose"
     )
 
-    _say(client, tid)
+    frames = _say(client, tid)
 
     proposals = _proposals(client, tid)
     assert len(proposals) == 1
     assert "模型" in proposals[0].content
+    # 判据②与判据③的分界：产物是提议的那一轮里，一个 error 帧也没有。
+    assert _errors(frames) == []
     assert stub_hooks.last_prompt is None
     assert _inbox(client, owner_id) != []
 
@@ -409,7 +438,7 @@ def test_a_refused_model_is_not_quietly_swapped_for_a_cheaper_one(client, stub_h
     frames = _say(client, tid)
 
     # 说得出口：这句话到了发消息的人眼前。
-    refusals = [f for f in frames if f["type"] == "error"]
+    refusals = _errors(frames)
     assert refusals and "档" in refusals[0]["message"]
     # 而且真的没跑：没有换一个档内的模型接着跑完这一轮。
     assert stub_hooks.last_prompt is None
@@ -426,10 +455,13 @@ def test_the_same_proposal_is_made_once_no_matter_how_often_it_is_asked(
     """
     _pid, tid, owner_id = _gated(client, allowed=["included"], over_tier="propose")
 
-    _say(client, tid, "第一句")
-    _say(client, tid, "第二句")
-    _say(client, tid, "第三句")
+    frames = [
+        _say(client, tid, "第一句"),
+        _say(client, tid, "第二句"),
+        _say(client, tid, "第三句"),
+    ]
 
     assert len(_proposals(client, tid)) == 1
+    assert [_errors(turn) for turn in frames] == [[], [], []]
     assert len(_inbox(client, owner_id)) == 1
     assert stub_hooks.last_prompt is None

@@ -277,6 +277,19 @@ class _TurnBail:
     frames: list[dict]
 
 
+@dataclass(frozen=True, slots=True)
+class _Proposed:
+    """闸门把这次调用变成了一条提议：那条提议，和它在房间里刚落下的那条事件。
+
+    `landed` 是 `None` 表示这条提议之前就提过了（`policy/proposals.py` 按身份去
+    重）。两个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话
+    来抛。
+    """
+
+    proposal: gate.Proposal
+    landed: dict | None
+
+
 # How long a message's spooled flushes may sit incomplete (no final flush, no
 # Stop) before the reconcile stops waiting for the missing one and lands what
 # arrived. Long enough for the device drainer's retry loop to fill a gap;
@@ -667,6 +680,19 @@ def _model_policy_call(project) -> gate.Call:
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
     )
+
+
+def _proposal_frames(landed: dict | None) -> list[dict]:
+    """撞上档位策略的那一轮怎么收场：房间里刚落下的那条提议，然后 done。
+
+    没有 error 帧——这一轮没有发生，但也没有出错，下一步在提议收件人手上（结论
+    40）。`landed` 是 `None` 时这条提议之前就提过了，房间里不再多一句一样的话。
+    """
+    frames: list[dict] = []
+    if landed is not None:
+        frames.append({"type": "event_block", "block": landed})
+    frames.append({"type": "done"})
+    return frames
 
 
 def _turn_failure_notice(text: str, code: str | None) -> tuple[str, dict]:
@@ -4016,35 +4042,40 @@ class ChatService:
 
     async def _pass_policy_gate(
         self,
+        session: AsyncSession,
         topic_id: uuid.UUID | None,
         call: gate.Call,
-        project_settings: dict | None,
+        policy: gate.Policy,
         *,
         actor: str,
-    ) -> None:
-        """闸门放行就返回；变提议就把提议交出去，并让这一轮到此为止。
+    ) -> _Proposed | None:
+        """闸门放行就返回 `None`；变提议就把提议落进房间，交回它和刚落下的那条事
+        件，收场由调用点自己写；拒绝照抛。
 
-        提议之后照样抛，抛的是同一个 `OverTier`：这一轮**没有发生**，而调用点分不
-        出、也不需要分出它是被拒了还是变成了提议——两种情形里这一轮都不该再往下
-        走。差别写在给人看的那句话里，不写成第二条控制流。
+        提议**不是报错**（结论 40：产物是一条给人的提议）。所以它不能顺着 `raise`
+        走：轮次那条路上抛出去的东西最后是屏幕上一个红色的 error 帧，而同一个判决
+        在 `PUT /topics/{id}/compute-profile` 上是 200 加一个 `proposal` 字段——一
+        个判决两种形状，人看到的还是「出错了」。拒绝仍然抛：那一档要的就是一次说
+        得出口的拒绝（I27），和「解析不出模型」在调用点是同一种东西。
 
-        没有房间（私聊之外的平台活、项目级的调用）就落不下这条提议：提议是房间里
-        的一条事件。那种情形下超档只剩拒绝这一条路，闸门照抛。
+        交回来的那条事件可能是 `None`：这条提议已经提过了（`propose` 按身份去重）。
+        调用点照样收场，只是房间里不再多一句一样的话。
 
-        提议写在**另一个 session** 上并当场提交，是因为紧接着这一抛会把 `_assemble_
-        turn` 那条读事务整个回滚掉。那条事务在闸门之前只读，回滚掉的什么也不是；而
-        提议要是跟着回滚，结果就是谁也没被问过、下一条消息再问一遍，「等谁点头」永
-        远落不到人手上。`proposals.propose` 要的不变量是「落库之后这次调用必须中
-        止」，下一行的 `raise` 就是那一句。
+        提议写在**调用方这条 session** 上，提交也归调用方——`propose` 欠的不变量是
+        「落库之后这次调用必须中止」，而收场的那一步本来就在调用点。
+
+        没有房间（项目级的调用）就落不下这条提议：提议是房间里的一条事件。那种情
+        形下超档只剩拒绝这一条路，闸门照抛。
         """
-        verdict = gate.check(call, gate.policy_of(project_settings), actor)
+        verdict = gate.check(call, policy, actor)
         if isinstance(verdict, gate.Allowed):
-            return
-        if topic_id is not None:
-            async with self._sessions() as session:
-                await propose(session, verdict, place_id=topic_id)
-                await session.commit()
-        raise gate.OverTier(verdict.content)
+            return None
+        if topic_id is None:
+            raise gate.OverTier(verdict.content)
+        block = await propose(session, verdict, place_id=topic_id)
+        return _Proposed(
+            verdict, _block_payload(BlockOut.model_validate(block)) if block else None
+        )
 
     async def _model_kwargs(
         self,
@@ -4109,12 +4140,19 @@ class ChatService:
         # 一条房间主线在组装那一步就过过闸门了（那里是这一轮占用任何东西之前）；
         # 走到这里还没过的，是平台自己发起的那几轮 —— 活动消化、巡检、项目小结，
         # 它们不经过组装。所以这一处仍然是必要的，而且仍然在任何请求发出去之前。
-        await self._pass_policy_gate(
-            topic_id,
-            _model_policy_call(project),
-            project.settings,
-            actor=acting_agent or agent.handle,
-        )
+        async with self._sessions() as session:
+            proposed = await self._pass_policy_gate(
+                session,
+                topic_id,
+                _model_policy_call(project),
+                gate.policy_of(project.settings),
+                actor=acting_agent or agent.handle,
+            )
+            if proposed is not None:
+                await session.commit()
+                # 这几轮没有一条流在等帧（没人在看），所以这里的收场只能是抛：提
+                # 议已经落进房间，这一轮到此为止，抛出去的是同一句话。
+                raise gate.OverTier(proposed.proposal.content)
         supply = bound.supply
         model = (
             subscription_model_alias(bound.model)
@@ -4627,31 +4665,42 @@ class ChatService:
             # 少数情形，它和这里问的是同一个闸门。
             if project is not None:
                 actor_handle = acting_agent or agent.handle
-                if needs_place:
+                policy = gate.policy_of(project.settings)
+                # 不限档的项目——今天的每一个——在机器这一侧一步也不多走：把「要哪
+                # 台机器」写成一次调用得列一遍项目设备、列一遍 host health、再取一
+                # 次机主，而不限档时判决与这几条查询无关。闸门对现有项目透明，代价
+                # 上也得透明，这是每一轮都走的路。
+                if needs_place and not policy.lets_everything_through:
                     from app.domain.agent.compute_configs import (
                         machine_policy_call,
                         room_choice,
                     )
 
-                    machine_call = await machine_policy_call(
+                    proposed = await self._pass_policy_gate(
                         session,
-                        project=project,
-                        topic=topic,
-                        choice=room_choice(topic, project.settings),
+                        topic_id,
+                        await machine_policy_call(
+                            session,
+                            project=project,
+                            topic=topic,
+                            choice=room_choice(topic, project.settings),
+                        ),
+                        policy,
+                        actor=actor_handle,
                     )
-                    if machine_call is not None:
-                        await self._pass_policy_gate(
-                            topic_id,
-                            machine_call,
-                            project.settings,
-                            actor=actor_handle,
-                        )
-                await self._pass_policy_gate(
+                    if proposed is not None:
+                        await session.commit()
+                        return _TurnBail(_proposal_frames(proposed.landed))
+                proposed = await self._pass_policy_gate(
+                    session,
                     topic_id,
                     _model_policy_call(project),
-                    project.settings,
+                    policy,
                     actor=actor_handle,
                 )
+                if proposed is not None:
+                    await session.commit()
+                    return _TurnBail(_proposal_frames(proposed.landed))
             if needs_place and compute_id == "device" and topic.compute_config is None:
                 from app.domain.agent.compute_configs import (
                     bind_room_device_choice,

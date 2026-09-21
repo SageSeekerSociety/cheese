@@ -69,11 +69,10 @@ async def propose(
     次；调用发生了却还留着一条「等谁点头」，那就是先斩后奏。所以要求的是后者不能
     发生，而不是两者非得在同一个事务里。
 
-    于是两个调用点各自对得上这条不变量，方式不同：`PUT
-    /topics/{id}/compute-profile` 用的就是请求自己的 session，提议和「绑定没写」一
-    起提交；轮次组装（`agent/chat.py` 的 `_pass_policy_gate`）另开一个 session 写完
-    就提交，紧接着抛 `OverTier` 让它那条读事务整个回滚——那条事务在闸门之前只读，
-    回滚掉的什么也不是，而提议必须活下来：跟着回滚就等于谁也没被问过。
+    两个调用点都用手里那条事务：`PUT /topics/{id}/compute-profile` 是请求自己的
+    session，提议和「绑定没写」一起提交；轮次组装（`agent/chat.py` 的
+    `_pass_policy_gate`）写在组装那条事务上，提交完这一轮就以这条提议收场——机器
+    没绑、请求没发，往下那些占用一样也没发生。
     """
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:

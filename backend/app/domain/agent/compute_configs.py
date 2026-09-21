@@ -102,7 +102,7 @@ async def bind_room_device_choice(
 
 async def machine_policy_call(
     session: AsyncSession, *, project, topic, choice: ComputeChoice
-) -> gate.Call | None:
+) -> gate.Call:
     """这个房间要的那台机器，写成闸门认得的那一次调用（结论 40 后半）。
 
     两处问它 —— 轮次组装（`agent/chat.py`，没人碰过选择器的房间走的就是它）和
@@ -119,13 +119,7 @@ async def machine_policy_call(
 
     `label` 取那台机器的名字，取不到才用 `ComputeChoice.name`：进提议那句话的是给
     人看的名字，不是 `"device"` / `"cloud"` 这种池 id。
-
-    目录不认识的池返回 `None`：那样的房间连 provider 都选不出来，下面那一步会把它
-    说出口；闸门不替它报这个错，也不拿一个猜出来的档位去比。
     """
-    tier = COMPUTE_TIERS.get(choice.profile)
-    if tier is None:
-        return None
     device = await _machine_this_room_gets(session, topic, choice)
     approver = project.owner_handle or ""
     if device is not None:
@@ -136,7 +130,8 @@ async def machine_policy_call(
         resource=gate.Resource.machine,
         subject=device.device_id if device is not None else choice.profile,
         label=device.name if device is not None else choice.name,
-        tier=tier,
+        # `ComputeChoice.profile` 只有 `cloud` / `device` 两种，目录里两个都在。
+        tier=COMPUTE_TIERS[choice.profile],
         approver=approver,
     )
 
