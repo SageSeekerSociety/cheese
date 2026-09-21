@@ -1116,20 +1116,20 @@ export function getInbox(projectId: string, targetHandle: string): Promise<ListP
   )
 }
 
-export function markRead(alertId: string): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' })
+export function markRead(alertId: number): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${alertId}/read`, { method: 'POST' })
 }
 
 // 拍板。答复之后这一条不再等人，收件箱里就没有它了。
-export function resolveAlert(alertId: string, chosen: string): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+export function resolveAlert(alertId: number, chosen: string): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${alertId}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ chosen }),
   })
 }
 
-export function sendFeedback(alertId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/feedback`, {
+export function sendFeedback(alertId: number, feedback: 'up' | 'down'): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${alertId}/feedback`, {
     method: 'POST',
     body: JSON.stringify({ feedback }),
   })

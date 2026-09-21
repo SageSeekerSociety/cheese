@@ -45,7 +45,7 @@ beforeAll(() => {
 
 function item(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'n1',
+    id: 1,
     project_id: 'p1',
     topic_id: null,
     level: 'strong',
@@ -54,7 +54,7 @@ function item(overrides: Record<string, unknown> = {}) {
     title: '先做哪一个',
     body: '两条路都通，但只够做一条',
     payload: { options: ['先做导出', '先做搜索'] },
-    read_at: null,
+    read: false,
     resolved_at: null,
     feedback: null,
     created_at: '2026-09-20T10:00:00Z',
@@ -66,8 +66,8 @@ function item(overrides: Record<string, unknown> = {}) {
 function three() {
   return [
     item(),
-    item({ id: 'n2', title: '要不要先冻结接口', body: '冻了就改不动了', payload: { options: ['冻结', '再等等'] } }),
-    item({ id: 'n3', title: '这一版要不要发', body: '快检是绿的', payload: { options: ['发', '不发'] } }),
+    item({ id: 2, title: '要不要先冻结接口', body: '冻了就改不动了', payload: { options: ['冻结', '再等等'] } }),
+    item({ id: 3, title: '这一版要不要发', body: '快检是绿的', payload: { options: ['发', '不发'] } }),
   ]
 }
 
@@ -76,7 +76,7 @@ beforeEach(() => {
   vi.mocked(myHandle).mockReturnValue('alice')
   vi.mocked(getInbox).mockResolvedValue({ data: [item()], total: 1 })
   vi.mocked(resolveAlert).mockResolvedValue(item({ resolved_at: '2026-09-20T11:00:00Z' }))
-  vi.mocked(markRead).mockResolvedValue(item({ read_at: '2026-09-20T11:00:00Z' }))
+  vi.mocked(markRead).mockResolvedValue(item({ read: true }))
   vi.mocked(sendFeedback).mockResolvedValue(item({ feedback: 'up' }))
 })
 
@@ -114,7 +114,7 @@ describe('等你决定', () => {
 
     await fireEvent.click(button(container, '先做搜索')!)
 
-    await waitFor(() => expect(resolveAlert).toHaveBeenCalledWith('n1', '先做搜索'))
+    await waitFor(() => expect(resolveAlert).toHaveBeenCalledWith(1, '先做搜索'))
     // 答过之后收件箱里没有它了，整块跟着消失——空的时候首页不该多一个写着「暂无」的框。
     await waitFor(() => expect(container.querySelector('.asked')).toBeNull())
   })
@@ -126,7 +126,7 @@ describe('等你决定', () => {
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
     await fireEvent.click(button(container, '知道了')!)
 
-    await waitFor(() => expect(markRead).toHaveBeenCalledWith('n1'))
+    await waitFor(() => expect(markRead).toHaveBeenCalledWith(1))
     expect(resolveAlert).not.toHaveBeenCalled()
   })
 
@@ -229,7 +229,7 @@ describe('等你决定：一叠而不是一列', () => {
 
     await fireEvent.click(button(container, '先做导出')!)
 
-    await waitFor(() => expect(resolveAlert).toHaveBeenCalledWith('n1', '先做导出'))
+    await waitFor(() => expect(resolveAlert).toHaveBeenCalledWith(1, '先做导出'))
     await waitFor(() => expect(container.textContent).toContain('要不要先冻结接口'))
     // 少了一条，计数跟着变，而摆出来的仍然是这一叠的第一张。
     expect(container.textContent?.replace(/\s+/g, '')).toContain('1/2')
@@ -247,7 +247,7 @@ describe('等你决定：一叠而不是一列', () => {
     vi.mocked(getInbox).mockResolvedValue({ data: three().slice(0, 2), total: 2 })
     await fireEvent.click(button(container, '发')!)
 
-    await waitFor(() => expect(resolveAlert).toHaveBeenCalledWith('n3', '发'))
+    await waitFor(() => expect(resolveAlert).toHaveBeenCalledWith(3, '发'))
     // 原来停在第 3 条，现在只剩 2 条：回到第一条，而不是指着一个不存在的下标。
     await waitFor(() => expect(container.textContent).toContain('先做哪一个'))
     expect(container.textContent?.replace(/\s+/g, '')).toContain('1/2')
