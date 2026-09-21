@@ -166,8 +166,10 @@ auto-delete on merge). Every PR lands as one squashed commit.
 
 `main` requires the GitHub Actions check `CI required` and the
 [Main CI and merge queue ruleset](https://github.com/SageSeekerSociety/cheese/rules/23778889).
-The ruleset has no bypass actors. `gh pr merge <number>` adds a green PR to the
-queue; the queue tests its changes against the latest main and preceding queued
+The ruleset has no bypass actors. Add a green PR through GitHub's merge queue UI
+or the GraphQL `enqueuePullRequest` mutation. With auto-merge disabled, gh 2.79.0
+attempts `enablePullRequestAutoMerge` and fails even for a green PR.
+The queue tests its changes against the latest main and preceding queued
 changes before merging.
 
 `.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
