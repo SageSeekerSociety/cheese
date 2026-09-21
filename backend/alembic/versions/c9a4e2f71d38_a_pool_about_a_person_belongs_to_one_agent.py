@@ -1,7 +1,7 @@
 """关于一个人的记忆，收进「哪个项目里的哪位芝士」名下
 
 Revision ID: c9a4e2f71d38
-Revises: a7f2c4d86b13
+Revises: 6c3f0a1d92b7
 Create Date: 2026-09-21 12:00:00
 
 ``user`` 池以前是跨项目的：scope_id 就是那个人的 handle，一个池，谁都读同一份。
@@ -11,9 +11,9 @@ Create Date: 2026-09-21 12:00:00
 
 **行上没有记着是谁观察到的**，所以这里要把那个事实补出来。补的依据是当初唯一可能
 的写入路径：``add_memory`` 的 ``scope="user"`` 那一支要 ``_authorize_personal_memory_owner``
-放行，而它只在「这个人自己的私聊」里放行。所以一条关于他的记忆，只可能是他有私聊
-的那个项目里的芝士记下的——按他的私聊把行拆开，落到那个项目的默认芝士名下。一间
-私聊都没有的人，无从归属，按计划落到他所在的每个项目的默认芝士名下。
+放行，而它只在「这个人自己的私聊」里放行。所以一条关于他的记忆，只可能是他某间私聊
+对面那位芝士记下的——按他的私聊把行拆开，落到**对面那一席是谁**的名下。一间私聊都
+没有的人，无从归属，才按计划落到他所在的每个项目的默认芝士名下。
 
 **只复制，一行也不凭空丢**：一个人在两个项目里各有私聊，两个项目就各得一份。记忆
 是人和 agent 显式写进去的、不可再生的（结论 61），而这两份的分歧只能靠它们各自往下
@@ -38,16 +38,30 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c9a4e2f71d38"
-down_revision: str | Sequence[str] | None = "a7f2c4d86b13"
+down_revision: str | Sequence[str] | None = "6c3f0a1d92b7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 #: 每一个人该被拆到哪几个池里。
 #:
-#: 上半：他有私聊的每个项目——那是当初唯一写得进去的地方。
-#: 下半：一间私聊都没有的人，他所在的每个项目。两边都落到项目的默认芝士名下
-#: （结论 4：每个项目自动有一个芝士实例），因为行上没有记着是哪位队友观察到的，而
-#: 默认那位是唯一一个「这个项目一定有」的答案。
+#: 上半：他的每一间私聊——那是当初唯一写得进去的地方，而且**对面坐的不一定是项目
+#: 默认那位**：``TopicService.get_or_create_private(..., agent_handle=...)`` 允许跟
+#: 任意一位已保存的队友开私聊，读写两侧的池键用的都是对面那位的实例 handle。落到
+#: 默认那位名下，就是把 reviewer 在它自己的私聊里记下的判断改记到一个没观察过这件
+#: 事的芝士名下，而真正观察到的那位从此一条都读不到。
+#:
+#: 所以私聊这一支按**席位**反查实例：队友坐在私聊里用的是 ``cheese-<实例 id 前 12
+#: 位十六进制>``（``agent_instance_handle``），和 ``b4d1a70c9e52`` 的 ``SEATS`` 同
+#: 一套推导。反查不到实例的（旧的房间派生席位、人对人私聊）才落到项目默认那位名下
+#: ——默认是兜底，不是规则。
+#:
+#: 一间私聊不止两席时，每一位坐在对面的队友各得一份：这种房间 ``private_seats`` 答
+#: 不出对面是谁，读侧退回项目默认那位，而多给一份的代价只是多一条重复的记忆，少给
+#: 一份是永久读不到（结论 61，记忆不可再生）。
+#:
+#: 下半：一间私聊都没有的人，他所在的每个项目的默认芝士（结论 4：每个项目自动有一
+#: 个芝士实例）——这时候行上确实没有任何线索说是谁观察到的，默认那位是唯一一个
+#: 「这个项目一定有」的答案。
 #:
 #: 「他所在的项目」要两问：``project_members`` **不存建项目的那个人**（谁是所有者
 #: 记在 ``projects.owner_handle`` 上，``list_members`` 读的时候才把那一行补出来），
@@ -55,9 +69,18 @@ depends_on: str | Sequence[str] | None = None
 PERSONAL_MEMORY_TARGETS = """
     CREATE TEMP TABLE cheese_personal_targets AS
     WITH in_a_dm AS (
-        SELECT DISTINCT tm.member_handle AS person, t.project_id
+        SELECT DISTINCT tm.member_handle AS person,
+               t.project_id,
+               seated.id AS agent_instance_id
           FROM topic_memberships tm
           JOIN topics t ON t.id = tm.topic_id AND t.is_private
+          LEFT JOIN topic_memberships seat
+                 ON seat.topic_id = t.id
+                AND seat.member_handle <> tm.member_handle
+          LEFT JOIN agent_instances seated
+                 ON seated.project_id = t.project_id
+                AND seat.member_handle
+                    = 'cheese-' || left(replace(seated.id::text, '-', ''), 12)
     ),
     belongs AS (
         SELECT pm.user_handle AS person, pm.project_id
@@ -71,7 +94,8 @@ PERSONAL_MEMORY_TARGETS = """
            p.id::text || ':' || a.handle || ':' || d.person AS scope_id
       FROM in_a_dm d
       JOIN projects p ON p.id = d.project_id
-      JOIN agent_instances a ON a.id = p.default_agent_instance_id
+      JOIN agent_instances a
+        ON a.id = COALESCE(d.agent_instance_id, p.default_agent_instance_id)
      UNION
     SELECT DISTINCT b.person,
            p.id::text || ':' || a.handle || ':' || b.person

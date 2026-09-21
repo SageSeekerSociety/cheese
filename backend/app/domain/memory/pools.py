@@ -29,17 +29,15 @@ def pools_for_turn(
     跨项目读不到：每个 scope_id 都以这个项目的 id 开头，别的项目的池在这个清单里
     根本拼不出来（结论 8）。
 
-    一个人重复出现（名册和线程名册各算一次）只给一份池：`recall_pools` 会把每个池
-    的 core 层原样接进提示词，同一份接两遍就是同一句话在上下文里出现两遍。
+    名册给什么就照单拼什么：两个调用者（`chat.py` 的召回、`api/routes/projects.py`
+    的 `cheese recall`）传进来的都是 `people_handles` 读的那一份名册，而
+    `topic_memberships` 上有 `(topic_id, member_handle)` 的唯一约束、``member_handle``
+    非空——去重和空 handle 那两道挡在这里挡不到任何东西。
     """
     pools = [
         (MemoryScope.agent_project, agent_project_scope_id(project_id, agent_handle))
     ]
-    seen: set[str] = set()
     for person in people_present:
-        if not person or person in seen:
-            continue
-        seen.add(person)
         pools.append(
             (MemoryScope.user, user_scope_id(project_id, agent_handle, person))
         )

@@ -29,7 +29,11 @@ def _checkout_holding(monkeypatch, *lines: dict) -> None:
             if any(term.lower() in str(line["text"]).lower() for term in terms)
         ]
 
-    monkeypatch.setattr(redundant, "room_checkout_search", lambda db, room_id: search)
+    monkeypatch.setattr(
+        redundant,
+        "agent_checkout_search",
+        lambda db, room, agent_handle, harness: search,
+    )
 
 
 def test_a_fact_the_repo_already_carries_is_refused_and_the_file_is_named(

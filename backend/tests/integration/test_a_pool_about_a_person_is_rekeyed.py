@@ -93,6 +93,53 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
     _portal.call(run)
 
 
+def test_a_dm_with_a_second_teammate_lands_on_that_teammate(
+    db_session: AsyncSession, _portal: "BlockingPortal"
+) -> None:
+    """私聊里那位芝士不一定是项目默认那位，归属跟着对面那一席走。
+
+    ``get_or_create_private(..., agent_handle=...)`` 允许跟任意一位已保存的队友开
+    私聊，读写两侧的池键用的都是对面那位的实例 handle。落到默认那位名下，真正观察
+    到这件事的队友从此一条都读不到，而默认那位凭空得到一条它没观察过的判断。
+    """
+
+    async def run() -> None:
+        store = memory_store(db_session)
+        agents = AgentInstanceService(db_session)
+
+        project = await ProjectService(db_session).create(
+            name="两位队友", owner_handle="andyl", forge_kind="github_app"
+        )
+        reviewer = await agents.create(
+            project_id=project.id,
+            handle="reviewer",
+            type_name=None,
+            display_name="评审",
+        )
+        default_agent = await agents.for_project(project)
+        await TopicService(db_session).get_or_create_private(
+            project_id=project.id, user_handle="andyl", agent_handle=reviewer.handle
+        )
+
+        await store.remember(MemoryScope.user, "andyl", "他改完代码才看评论")
+        await db_session.flush()
+
+        await _rekey(db_session)
+
+        assert await store.recall(
+            MemoryScope.user, user_scope_id(project.id, reviewer.handle, "andyl")
+        ) == ["他改完代码才看评论"]
+        assert (
+            await store.recall(
+                MemoryScope.user,
+                user_scope_id(project.id, default_agent.handle, "andyl"),
+            )
+            == []
+        )
+
+    _portal.call(run)
+
+
 def test_a_person_with_no_private_chat_lands_under_each_projects_cheese(
     db_session: AsyncSession, _portal: "BlockingPortal"
 ) -> None:

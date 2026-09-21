@@ -34,12 +34,6 @@ def test_every_person_present_gets_a_pool_in_roster_order():
     ]
 
 
-def test_the_same_person_twice_is_one_pool():
-    """名册和线程名册各算一次的时候，同一份 core 层不该被接进提示词两遍。"""
-    pools = pools_for_turn(PROJECT, "cheese-abc", ["alice", "alice", ""])
-    assert len(pools) == 2
-
-
 def test_two_projects_never_name_the_same_pool():
     """同一位芝士的 handle、同一个人，两个项目拼出来的键必须不同——跨项目读不到
     这件事，靠的就是「别的项目的键在这里拼不出来」（结论 8）。"""

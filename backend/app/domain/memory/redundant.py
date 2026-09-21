@@ -8,13 +8,13 @@
 
 import asyncio
 import logging
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.memory.keywords import match_content, query_terms
+from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.memory")
 
@@ -35,7 +35,7 @@ ENOUGH_OF_THE_FACT = 0.6
 #: _FACT` 要量的东西。
 #:
 #: 三个：覆盖度要到 0.6，最重的那几个词几乎必然在那一行里；多与一个词只会多漏，
-#: 而漏了就是多记一条重复的，那一侧是便宜的（见 `room_checkout_search`）。
+#: 而漏了就是多记一条重复的，那一侧是便宜的（见 `agent_checkout_search`）。
 _TERMS_OF_THE_FACT = 3
 
 #: 等那台机器多久。`cheese remember` 是一次交互调用，不是一条活。
@@ -89,8 +89,18 @@ async def already_in_repo(text: str, search: CheckoutSearch) -> RepoHit | None:
 _NOTHING_TO_SEARCH = frozenset({"no-checkout", "no-device"})
 
 
-def room_checkout_search(session: AsyncSession, room_id: uuid.UUID) -> CheckoutSearch:
-    """在这间房那台机器的检出目录里检索。
+def agent_checkout_search(
+    session: AsyncSession, room: Topic, agent_handle: str, harness: str
+) -> CheckoutSearch:
+    """在**这位 agent 自己**那台机器的检出目录里检索。
+
+    手是 agent 的，不是房间的（结论 60）：一间房可以坐着不止一条会话，队友各有各
+    的工作树，所以问的是 ``(房间, 这位 agent, 骨架)`` 那一条会话的地点，不是房间
+    里第一条带租约的。拿房间第一条，`cheese remember` 就可能去另一位队友的检出目
+    录里查，命中就是一次凭空拒绝——而按这个模块自己的口径，挡住一条本该记下的事
+    实比多记一条重复的糟得多。
+
+    还要认这一代：房间重开会换代（``resource_id``），旧代的残留租约不是本次的手。
 
     检出在手上，不在平台上（结论 22、60），所以这是一次执行器调用。够不着就还回
     空：没有机器、机器离线、或者那台机器上的执行器还不认得这个方法，都只说明**这
@@ -104,7 +114,12 @@ def room_checkout_search(session: AsyncSession, room_id: uuid.UUID) -> CheckoutS
 
     def nothing_came_back(reason: str) -> list[dict]:
         log = logger.info if reason in _NOTHING_TO_SEARCH else logger.warning
-        log("repo_search did not run for room=%s: %s", room_id, reason)
+        log(
+            "repo_search did not run for room=%s agent=%s: %s",
+            room.id,
+            agent_handle,
+            reason,
+        )
         return []
 
     async def search(terms: list[str]) -> list[dict]:
@@ -112,24 +127,24 @@ def room_checkout_search(session: AsyncSession, room_id: uuid.UUID) -> CheckoutS
         from app.domain.agent_session.services import AgentSessionService
 
         try:
-            target = next(
-                (
-                    place.lease
-                    for place in await AgentSessionService(session).places_in_room(
-                        room_id
-                    )
-                    if (place.lease or {}).get("kind") == "device"
-                ),
-                None,
+            place = await AgentSessionService(session).place(
+                room.id, agent_handle, harness=harness
             )
-            if target is None:
+            if place is None or place.resource_id != str(room.resource_id or room.id):
+                return nothing_came_back("no-device")
+            target = place.lease
+            if not target or target.get("kind") != "device":
                 return nothing_came_back("no-device")
             # 记一条记忆等不起一台慢机器：查不成就存下来，见 docstring。
             async with asyncio.timeout(_SEARCH_TIMEOUT_S):
                 result = await execution.call(target, "repo_search", {"terms": terms})
         except Exception as exc:  # noqa: BLE001 — 查不成是一种答案，不是失败的写入
             logger.warning(
-                "repo_search did not run for room=%s: %s", room_id, exc, exc_info=True
+                "repo_search did not run for room=%s agent=%s: %s",
+                room.id,
+                agent_handle,
+                exc,
+                exc_info=True,
             )
             return []
         if not result.get("searched"):

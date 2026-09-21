@@ -78,7 +78,7 @@
 
 ## 明确没做
 
-- 没改写入侧 scope 路由（`add_memory` / `_agent_memory_scope`）。
+- 没改写入侧 scope 路由（`add_memory` / `_calling_agent`）。
 - 没动 `_recall_agent_memories` 的注入逻辑和 `limit=50`。
 - 没动 `DELETE /api/memory/{entry_id}`。
 - 没改前端（上面第 1 点里那个标签不精确，留作后续）。
