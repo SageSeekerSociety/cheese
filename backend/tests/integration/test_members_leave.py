@@ -69,8 +69,10 @@ def _seat(client, tid: str, handle: str, *, by: str, role: str = "member") -> No
 
 
 def _project_handles(client, pid: str) -> list[str]:
+    """The people on the project roster. The roster also seats the project's own
+    芝士 (one roster, agents included), and these tests are about who leaves."""
     rows = client.get(f"/projects/{pid}/members").json()["data"]["data"]
-    return [m["user_handle"] for m in rows]
+    return [m["user_handle"] for m in rows if not m.get("agent")]
 
 
 def _topic_handles(client, tid: str) -> list[str]:
@@ -88,11 +90,14 @@ def test_a_member_leaves_and_their_topic_seats_go_with_them(client, bearer):
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
     assert "alice" in _topic_handles(client, tid)
+    roster_before = set(_project_handles(client, pid))
+    assert {OWNER, "alice"} <= roster_before
 
     r = _leave(client, pid, "alice")
     assert r.status_code == 200, r.text
 
-    assert _project_handles(client, pid) == [OWNER]
+    # The project agent and every other member must survive Alice's departure.
+    assert set(_project_handles(client, pid)) == roster_before - {"alice"}
     assert "alice" not in _topic_handles(client, tid)
     # 别人不受影响：房间还在，室友和芝士的席位都还在。
     assert "bob" in _topic_handles(client, tid)
@@ -107,13 +112,15 @@ def test_removing_a_member_revokes_their_seats_too(client, bearer):
     assert _add(client, pid, "alice").status_code == 200
     tid = _topic(client, pid, "bob")
     _seat(client, tid, "alice", by="bob")
+    roster_before = set(_project_handles(client, pid))
+    assert {OWNER, "alice"} <= roster_before
 
     r = client.delete(
         f"/projects/{pid}/members/alice", headers=session_auth_headers(OWNER)
     )
     assert r.status_code == 200, r.text
 
-    assert _project_handles(client, pid) == [OWNER]
+    assert set(_project_handles(client, pid)) == roster_before - {"alice"}
     assert "alice" not in _topic_handles(client, tid)
 
 
@@ -308,6 +315,8 @@ def test_a_previous_owner_can_still_leave_and_takes_their_seats(client, bearer):
     pid = _project(client, owner="alice")
     assert _add(client, pid, "bob", by="alice").status_code == 200
     root = client.get(f"/projects/{pid}").json()["data"]["root_topic_id"]
+    roster_before = set(_project_handles(client, pid))
+    assert {"alice", "bob"} <= roster_before
     handed = client.put(
         f"/projects/{pid}/owner",
         json={"owner_handle": "bob"},
@@ -316,7 +325,7 @@ def test_a_previous_owner_can_still_leave_and_takes_their_seats(client, bearer):
     assert handed.status_code == 200, handed.text
 
     # 他不再出现在名册上（总览那一行也不再是他的），但总览里还有他的席位。
-    assert _project_handles(client, pid) == ["bob"]
+    assert set(_project_handles(client, pid)) == roster_before - {"alice"}
     assert "alice" in _topic_handles(client, root)
 
     refused = _leave(client, pid, "alice")
@@ -326,7 +335,7 @@ def test_a_previous_owner_can_still_leave_and_takes_their_seats(client, bearer):
     _seat(client, root, "bob", by="alice", role="owner")
     r = _leave(client, pid, "alice")
     assert r.status_code == 200, r.text
-    assert "alice" not in _project_handles(client, pid)
+    assert set(_project_handles(client, pid)) == roster_before - {"alice"}
     assert "alice" not in _topic_handles(client, root)
 
 
