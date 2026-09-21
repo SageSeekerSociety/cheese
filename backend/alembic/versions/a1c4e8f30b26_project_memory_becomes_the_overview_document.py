@@ -73,7 +73,7 @@ APPEND_PROJECT_MEMORY_TO_OVERVIEW = """
             ON m.scope = 'project'
            AND m.scope_id = t.project_id::text
            AND m.retired_at IS NULL
-          JOIN blocks b ON b.id = t.block_id
+          JOIN blocks b ON b.id = t.id
          WHERE position(m.content in b.content) = 0
          GROUP BY t.id
     )
