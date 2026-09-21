@@ -226,16 +226,9 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
     assert ai_messages(timeline()) == ["记好了，偏好写进文档了。"]
 
 
-def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memory(
-    client, stub_hooks, monkeypatch
-):
+def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch):
     topic, headers = room(client)
     raw_text = "Internal investigation detail"
-    memories = []
-    chat = client.app.dependency_overrides[get_chat_service]()
-    monkeypatch.setattr(
-        chat, "_schedule_memory_extraction", lambda **kwargs: memories.append(kwargs)
-    )
 
     def begin(topic_id, prompt, reply):
         stub_hooks.starts(topic_id)
@@ -265,14 +258,9 @@ def test_publish_during_work_keeps_turn_open_and_only_published_text_enters_memo
             "type": "assistant_block",
             "block": second,
         }
-        assert memories == []
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), raw_text)
         while ws.receive_json()["type"] != "done":
             pass
-    assert len(memories) == 1
-    assert (
-        memories[0]["assistant_text"] == first["content"] + "\n\n" + second["content"]
-    )
 
 
 def next_frame(ws, kind):

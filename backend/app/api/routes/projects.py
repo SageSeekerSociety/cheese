@@ -849,6 +849,7 @@ async def list_project_tasks(
                 card,
                 beats.get(task.id),
                 room_screen_live=live_rooms[task.room_id],
+                worker_live=chat.worker_live(task.room_id, task.subagent_id),
                 awaiting_answer=task.id in asked,
             ),
             now=now,
@@ -1023,9 +1024,8 @@ async def search_memory(
     resolver: ActorResolverDep,
 ) -> dict:
     """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
-    with scope="user"+owner it searches that member's personal memory. On the
-    OpenViking backend this is semantic search returning L0 abstracts; the flat
-    DB backend degrades to keyword matching ranked by query coverage — related,
+    with scope="user"+owner it searches that member's personal memory. This is
+    keyword matching ranked by query coverage, not semantic search — related,
     but not the same thing, which is why the CLI never promises 语义搜索."""
     from app.domain.memory.models import MemoryScope
     from app.domain.memory.store import memory_store

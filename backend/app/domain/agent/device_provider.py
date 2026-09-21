@@ -1357,7 +1357,6 @@ class DeviceChannel(Channel):
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
                 resource_id=str(resource_id),
-                model=launch.model,
                 # WHO acts with it. The launcher has known this all along and
                 # let the minter fall back to a handle derived from the room —
                 # which is the one thing a room cannot answer once it may seat
@@ -1385,6 +1384,28 @@ class DeviceChannel(Channel):
             # surviving flips the CLI into API-key mode or asks the subscription
             # for a model it does not serve. Dropped, not overridden, because
             # subscription_provider only ADDS keys.
+            #
+            # Which model a request runs on is decided at one control point —
+            # admission, when the request reaches the metering proxy (结论 46)
+            # — reading the binding. What the launch env still carries is not a
+            # second declaration of that: it is how the resolved model reaches
+            # the REQUEST BODY, which is the only place LiteLLM reads a model
+            # name from, and the proxy leaves the body alone (`_route_to_gateway`
+            # swaps the host and the credential, nothing else).
+            #
+            # So a gateway-pool project needs the name in the body, and the CLI
+            # writes it from two sources: `claude --model` (CLAUDE_MODEL, set
+            # further down this launch) for the main reply, and the three alias
+            # defaults below for everything the CLI addresses by family instead
+            # — title generation, file suggestions, and every subagent, which
+            # is every piece of work. Drop those three and a gateway project's
+            # subagents ask LiteLLM for `claude-3-5-haiku-*`, which it does not
+            # serve.
+            #
+            # All four say the same thing and leave together, on the day the
+            # proxy rewrites the model name in the body on its way to LiteLLM
+            # (结论 46「要做的两件」, P34). Until then, four keys carrying one
+            # answer beats three deleted and one kept.
             merged = {**(env or {})}
             for k in (
                 "ANTHROPIC_BASE_URL",
@@ -1396,8 +1417,9 @@ class DeviceChannel(Channel):
                 merged.pop(k, None)
             merged.update(sub.env)
             if launch.model and not launch.model.startswith("claude-"):
-                # Native auxiliary calls and subagents must use the selected
-                # gateway model too; LiteLLM does not serve Claude aliases.
+                # A subscription model arrives here as its full Claude name, and
+                # the CLI's own alias defaults already point at Claude models,
+                # so only the gateway case has anything to say.
                 for family in ("HAIKU", "SONNET", "OPUS"):
                     merged[f"ANTHROPIC_DEFAULT_{family}_MODEL"] = launch.model
             merged["CHEESE_REMOTE_CONTROL"] = "1"
