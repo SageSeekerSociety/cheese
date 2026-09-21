@@ -4,6 +4,8 @@ import asyncio
 import io
 import json
 import logging
+import socket
+import ssl
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -32,6 +34,87 @@ class Body(httpx.AsyncByteStream):
 
 
 async def main():
+    # Errors retain their original exception and log only a safe classification.
+    for cause, expected in (
+        (socket.gaierror(-2, "secret DNS address"), "dns"),
+        (ssl.SSLError("secret certificate"), "tls"),
+        (httpx.ConnectTimeout("secret timeout"), "timeout"),
+    ):
+        records = []
+        error = httpx.ConnectError("secret transport")
+        error.__cause__ = cause
+
+        async def fail(*args, **kwargs):
+            raise error
+
+        with patch.object(
+            timing.logger, "info", lambda _, value: records.append(json.loads(value))
+        ):
+            try:
+                await timing.trace_post(fail)(
+                    None, logging_obj=SimpleNamespace(litellm_call_id="failure")
+                )
+            except httpx.ConnectError as caught:
+                assert caught is error
+            else:
+                raise AssertionError("Original error swallowed")
+        assert records[-1]["category"] == expected
+        assert "secret" not in json.dumps(records)
+    for status, code, expected in (
+        (429, "1113", "provider_quota"),
+        (429, None, "rate_limit"),
+        (401, None, "http_auth"),
+        (500, None, "http_error"),
+    ):
+        response = httpx.Response(
+            status,
+            json={"error": {"code": code, "message": "secret body"}},
+            request=httpx.Request("POST", "https://secret.invalid"),
+        )
+        error = httpx.HTTPStatusError(
+            "secret HTTP error", request=response.request, response=response
+        )
+        records = []
+
+        async def fail_http(*args, **kwargs):
+            raise error
+
+        with patch.object(
+            timing.logger, "info", lambda _, value: records.append(json.loads(value))
+        ):
+            try:
+                await timing.trace_post(fail_http)(
+                    None, logging_obj=SimpleNamespace(litellm_call_id="http-failure")
+                )
+            except httpx.HTTPStatusError as caught:
+                assert caught is error
+        assert records[-1]["category"] == expected
+        assert "secret" not in json.dumps(records)
+    unread = httpx.Response(429, stream=Body("complete"))
+    assert timing.failure_fields(response=unread)["category"] == "rate_limit"
+    assert not unread.is_stream_consumed
+    await unread.aclose()
+    records = []
+    unread = httpx.Response(429, stream=Body("complete"))
+
+    async def rejected(*args, **kwargs):
+        return unread
+
+    with patch.object(
+        timing.logger, "info", lambda _, value: records.append(json.loads(value))
+    ):
+        response = await timing.trace_post(rejected)(
+            None, logging_obj=SimpleNamespace(litellm_call_id="unread-429")
+        )
+        assert not response.is_stream_consumed
+        assert (
+            b"".join([chunk async for chunk in response.aiter_bytes()]) == b"firstlast"
+        )
+        await response.aclose()
+    assert records[-1]["outcome"] == "http_error"
+    assert records[-1]["category"] == "rate_limit"
+    assert records[-1]["status"] == 429
+    print("Failure classification preserves exceptions and unread bodies")
     # Distinguish awaiting upstream bytes from time held by the stream consumer.
     for close_early in (False, True):
         clock = [0.0]
