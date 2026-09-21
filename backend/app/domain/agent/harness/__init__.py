@@ -116,16 +116,18 @@ HARNESS_SETTING = "harness"
 
 
 def _known(name: str, source: str) -> str:
-    """名字得是注册表里有的一个，否则这套部署配错了。
+    """名字得是这个仓库有适配层的一个，否则是写错了。
 
     不兜底回默认值：兜底的那一版会让一个配错名字的部署安静地跑另一个骨架，而
-    「跑的是哪个」正是结论 28 要求只有一个答法的那件事。部署级的这一条在装配
-    ``ComputePool`` 时就会解析，所以配错了是起不来，不是跑到一半才炸。
+    「跑的是哪个」正是结论 28 要求只有一个答法的那件事。
+
+    认的是适配层的名字，不是注册表：注册表只列答得出四条硬性要求、这套部署真跑
+    的骨架（结论 43），而一个项目把设置指向一个有适配层、这套部署却没注册的骨架，
+    是一件轮次开始时要**在房间里说出来**的事（``chat.py`` 的「没有部署」那一
+    句），不是一次配置错误。部署级的那一条另有一问（``deployment_harness``）。
     """
-    if name not in HARNESSES:
-        raise ValueError(
-            f"{source} 指定的骨架 {name!r} 这套部署没有；有的是 {sorted(HARNESSES)}"
-        )
+    if name not in (CLAUDE_CODE, CODEX, PI):
+        raise ValueError(f"{source} 指定的骨架 {name!r} 没有适配层")
     return name
 
 
@@ -140,7 +142,16 @@ def deployment_harness() -> str:
     from app.core.config import settings
 
     configured = (settings.agent_harness or "").strip()
-    return _known(configured, "agent_harness") if configured else _UNCONFIGURED
+    if not configured:
+        return _UNCONFIGURED
+    # 部署级的这一条要的不只是有适配层，还得注册了：装配 ``ComputePool`` 时就
+    # 会解析，所以配错了是起不来，不是跑到一半才炸。
+    if _known(configured, "agent_harness") not in HARNESSES:
+        raise ValueError(
+            f"agent_harness 指定的骨架 {configured!r} 这套部署没有；"
+            f"有的是 {sorted(HARNESSES)}"
+        )
+    return configured
 
 
 def harness_for(project_settings: Mapping[str, Any] | None) -> str:
