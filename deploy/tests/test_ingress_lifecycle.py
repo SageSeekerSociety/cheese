@@ -134,10 +134,14 @@ def main():
                 content = (ROOT / f"deploy/llm-tunnel/{name}.conf").read_text()
                 for source, target in replacements.items():
                     content = content.replace(source, target)
-                content = content.replace("http {", "http {\n  access_log off;")
+                temporary_paths = "\n".join(
+                    f"  {kind}_temp_path {root}/{name}-{kind};"
+                    for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi")
+                )
+                content = content.replace("http {", f"http {{\n  access_log off;\n{temporary_paths}")
                 config = root / f"{name}.conf"
                 config.write_text(f"pid {root}/{name}.pid;\nerror_log {root}/{name}.log;\n" + content)
-                command = [*NGINX, "-p", str(root) + "/", "-c", str(config)]
+                command = [*NGINX, "-e", "stderr", "-p", str(root) + "/", "-c", str(config)]
                 subprocess.run([*command, "-t"], check=True)
                 subprocess.run(command, check=True)
                 commands.append(command)
