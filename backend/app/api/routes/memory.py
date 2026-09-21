@@ -54,20 +54,15 @@ async def list_memory(
     project_id: uuid.UUID | None = None,
     user_handle: str | None = None,
     agent_handle: str | None = None,
-    include_agent: bool = True,
 ) -> dict:
     """Memory entries for a project and/or a person, newest first.
 
-    A project's memory includes what its 芝士 remembered: `cheese remember`
-    always carries a topic, so in practice every agent write lands in an
-    ``agent_project`` pool keyed ``{project_id}:{handle}``. Leaving those out
-    made this endpoint blind to the whole live pool, so ``project_id`` sweeps
-    them in by default; ``scope``/``scope_id`` on each entry say where it came
-    from. ``agent_handle`` narrows to one agent's pool, ``include_agent=false``
-    is the escape hatch back to the shared project pool (it wins over
-    ``agent_handle`` if both are given). It closes the agent pools and nothing
-    else: a caller that also asked ``user_handle`` still gets that answer, which
-    is a different question and has its own condition below.
+    Every memory here belongs to one agent instance (结论 8): `cheese remember`
+    lands in an ``agent_project`` pool keyed ``{project_id}:{handle}``, and
+    ``project_id`` lists every such pool in the project; ``scope``/``scope_id``
+    on each entry say which one it came from, and ``agent_handle`` narrows to
+    one agent's. 项目自己没有池（结论 7）—— 全项目共看的那一份状态是总览房间的
+    实况文档，由文档接口提供，不在这个列表里。
 
     ``user_handle`` asks the other question a person has about memory — what
     has been remembered *about me* — and it is answered INSIDE this project:
@@ -78,31 +73,26 @@ async def list_memory(
     """
     conds = []
     if project_id is not None:
-        conds.append(
-            (MemoryEntry.scope == MemoryScope.project)
-            & (MemoryEntry.scope_id == str(project_id))
-        )
-        if include_agent:
-            agent_cond = MemoryEntry.scope == MemoryScope.agent_project
-            if agent_handle:
-                conds.append(
-                    agent_cond
-                    & (
-                        MemoryEntry.scope_id
-                        == agent_project_scope_id(project_id, agent_handle)
-                    )
+        agent_cond = MemoryEntry.scope == MemoryScope.agent_project
+        if agent_handle:
+            conds.append(
+                agent_cond
+                & (
+                    MemoryEntry.scope_id
+                    == agent_project_scope_id(project_id, agent_handle)
                 )
-            else:
-                # Every agent that ever wrote here, including ones no longer on
-                # a roster — a prefix scan is the only listing that can't go
-                # silently blind. `project_id` is a parsed UUID, so it carries
-                # no LIKE wildcards; autoescape guards the general case anyway.
-                conds.append(
-                    agent_cond
-                    & MemoryEntry.scope_id.startswith(
-                        project_scope_prefix(project_id), autoescape=True
-                    )
+            )
+        else:
+            # Every agent that ever wrote here, including ones no longer on
+            # a roster — a prefix scan is the only listing that can't go
+            # silently blind. `project_id` is a parsed UUID, so it carries
+            # no LIKE wildcards; autoescape guards the general case anyway.
+            conds.append(
+                agent_cond
+                & MemoryEntry.scope_id.startswith(
+                    project_scope_prefix(project_id), autoescape=True
                 )
+            )
         if user_handle:
             if agent_handle:
                 about = MemoryEntry.scope_id == user_scope_id(

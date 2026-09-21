@@ -357,7 +357,11 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             else env.get("CHEESE_MEMORY_SCOPE", "project")
         )
         owner = OWNER if environ is None else env.get("CHEESE_OWNER", "")
-        if memory_scope == "personal" and owner:
+        if tool == "cheese_remember" and args.get("everyone"):
+            # 写给所有人看的不是记忆，是项目总览的实况文档。这一路盖过私聊那一路：
+            # 说了「所有人」，就不是只记给这一位看的。
+            body["scope"] = "everyone"
+        elif memory_scope == "personal" and owner:
             body.update(scope="user", owner=owner)
         suffix = "" if tool == "cheese_remember" else "/search"
         return {
@@ -1734,17 +1738,31 @@ def build_parser() -> argparse.ArgumentParser:
         "remember",
         help="记入项目记忆",
         description=(
-            "记一条事实进项目记忆,以后任何话题都能 recall 到。\n"
+            "记一条事实进**你自己**的项目记忆,以后任何话题都能 recall 到。\n"
             "\n"
             "只记「跨话题还成立、且从代码/git 历史里读不出来」的东西。"
             "代码结构、改过什么 bug、本轮的临时状态都不要记。"
             "相对时间要换成绝对日期。\n"
             "\n"
+            "记忆是你自己的观察,只有你读得到。**所有人都该知道的事实用 "
+            "--everyone**,它写进项目总览的实况文档——那是人和所有芝士共同看的"
+            "那一份。\n"
+            "\n"
             "普通记忆**不会自动出现在你的上下文里**,要用 recall 查;"
             "--core 的每轮全量注入。"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     prem.add_argument("fact", help="一条事实,一句话")
+    prem.add_argument(
+        "--everyone",
+        action="store_true",
+        help=(
+            "所有人都该知道:追加到项目总览的实况文档末尾,署你的名。"
+            "人看得到、改得动,别的房间下一轮就读到——记忆做不到这三件事里的任何"
+            "一件。项目的决定、分工、节点用它;你自己踩的坑不用。"
+        ),
+    )
     prem.add_argument(
         "--core",
         action="store_true",
@@ -2309,7 +2327,9 @@ def main() -> None:
         # (同一个项目里的两个芝士各记各的，跟人一样)。
         kind = "核心记忆（每轮都在场）" if a.core else "记忆"
         _planned_call("cheese_remember", a)
-        if MEMORY_SCOPE == "personal" and OWNER:
+        if a.everyone:
+            print("已写进项目总览的实况文档（所有人和所有芝士看的是同一份）。")
+        elif MEMORY_SCOPE == "personal" and OWNER:
             print(f"已记入个人{kind}。")
         else:
             print(f"已记入项目{kind}。")

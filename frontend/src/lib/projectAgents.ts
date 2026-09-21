@@ -9,7 +9,7 @@ import type { AgentType, ProjectAgent } from '../cx_types'
 // 每个队友攒下了多少条记忆，按 handle 归。
 //
 // 记忆存的是一个扁平的 `{项目}:{handle}` 字符串，所以只能把 handle 切回来认领；
-// 认不出来的（项目共享池、个人池）不属于任何一个队友，不计入任何一行。
+// 认不出来的（关于某个人的那些池）不属于任何一个队友，不计入任何一行。
 export function memoryCountsByHandle(entries: MemoryEntryOut[], projectId: string): Record<string, number> {
   const counts: Record<string, number> = {}
   const prefix = `${projectId}:`

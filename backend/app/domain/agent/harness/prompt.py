@@ -24,6 +24,7 @@ def build_system_prompt(
     topics: list[dict] | None = None,
     untitled: bool = False,
     artifacts: list[dict] | None = None,
+    overview_doc: str | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
@@ -140,6 +141,17 @@ def build_system_prompt(
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
             "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
+        )
+    if overview_doc:
+        # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
+        # 有一份总览文档，每间房间都读到同一份，谁改了都留痕。所以「所有人都该
+        # 知道」的事实写这里，而不是记进记忆——记忆是这一个实例自己的观察。
+        parts.append(
+            "## 项目总览的实况文档（全项目共看的那一份，不是本话题的）\n"
+            "这是这个项目所有人和所有芝士共同看的那一份状态：项目在做什么、"
+            "定了什么、谁在负责。**你观察到「所有人都该知道」的事实，写进它**"
+            "（`cheese remember --everyone <事实>`），不要记进只有你自己读得到的"
+            "记忆池。\n" + overview_doc
         )
     if doc:
         parts.append(
