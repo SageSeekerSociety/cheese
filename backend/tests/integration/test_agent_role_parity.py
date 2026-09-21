@@ -439,7 +439,6 @@ def test_review_actions_check_the_credentials_project_and_room(client):
         f"/topics/{room}/tasks/{delivery_task_id(client, room)}/accept-card",
         headers=delivery_headers(client, room),
         json={
-            "new_artifact": "报告",
             "change_subject": "test: scoped review",
             "reviewer_handle": "alice",
             "routing_reason": "Review",

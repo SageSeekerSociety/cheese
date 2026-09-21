@@ -91,7 +91,7 @@ describe('活还在路上的看板', () => {
       ).toBe(3)
     )
     // 板的框架和活无关，所以它没有理由等：列头在这一刻就已经是最终的样子。
-    expect(columnNames(container)).toEqual(['施工中', '交付中', '待处理'])
+    expect(columnNames(container)).toEqual(['施工中', '交付中', '待处理', '做出了什么'])
     expect(container.querySelector('.v-progress-circular'), '板的形状是已知的，不该用转圈').toBeNull()
 
     gate.resolve({ data: [task()], total: 1 })

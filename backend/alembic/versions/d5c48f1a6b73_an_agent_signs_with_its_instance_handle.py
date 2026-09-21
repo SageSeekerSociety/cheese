@@ -37,7 +37,7 @@ from pathlib import Path
 from alembic import op
 
 revision: str = "d5c48f1a6b73"
-down_revision: str | Sequence[str] | None = "e5b31c07af28"
+down_revision: str | Sequence[str] | None = "d7b3f0a9c651"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
