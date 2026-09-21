@@ -1088,9 +1088,9 @@ export interface AgentType {
   // The system prompt this type runs under (角色设定).
   body: string
   skills: string[]
+  mcp_servers: string[]
   // 零读者、零写者：一个类型说的是角色，不说用哪个模型、哪个骨架、想多深。
   // 后端在 P15b 随迁移删掉这三个字段，这里跟着一起走。
-  mcp_servers: string[]
   model?: string | null
   effort?: string | null
   harness?: string | null
