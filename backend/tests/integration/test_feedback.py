@@ -2216,6 +2216,35 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
     assert {card["id"] for card in listed} == {mine["id"]}
 
 
+def test_a_wildcard_in_the_search_box_is_a_character_not_syntax(client):
+    """`%` 和 `_` 是读者打进去的字，不是 `LIKE` 的语法。
+
+    这两个字符在 `LIKE` 里是通配符，而搜索框收到的永远是**字面量**。不转义的
+    后果不会报错、也不会看起来像坏了：`%` 变成「任意长的一串」，于是搜一个百分号
+    得到整个列表；`_` 变成「任意一个字符」，于是搜一个下划线得到一堆根本不含它的
+    行。两种都是**看起来成功了的错误答案**，所以没有人会把它当 bug 报上来——只能
+    在这里钉住。
+
+    反斜杠是转义字符本身，必须第一个换，否则读者打的那个反斜杠会把后面的字符
+    再变成语法一次。
+    """
+    percent = _report(client, REPORTER, title="导入进度停在 99%", problem="一直不动")
+    underscore = _report(client, REPORTER, title="导出_csv_挂了", problem="点了没反应")
+    plain = _report(client, REPORTER, title="深色模式对比度不够", problem="看不太清")
+
+    def ids(**params: str) -> set[str]:
+        return {card["id"] for card in _cards(client, REPORTER, **params)}
+
+    assert ids(q="%") == {percent["id"]}, "搜一个百分号不该把整个列表倒出来"
+    assert ids(q="_") == {underscore["id"]}, "搜一个下划线不该匹配任意字符"
+    assert plain["id"] not in ids(q="_")
+    # 转义之后，带着通配符的正常词照旧搜得到，而且只搜得到真正含它的那条。
+    assert ids(q="99%") == {percent["id"]}
+    assert ids(q="_csv_") == {underscore["id"]}
+    # 反斜杠本身：读者打一个，不该把它后面的字符变成语法。
+    assert ids(q="\\") == set()
+
+
 # --- 成员管理：名单两份来源、加进去的人当场生效、根删不掉 --------------------
 #
 # 这里建的是**真账号**（`seed_user` 直接落库并提交），不是 `session_auth_headers`

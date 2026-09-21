@@ -295,13 +295,25 @@ def matching(q: str) -> Any:
     rows, so they take the same predicate: a second spelling is how "it comes up
     in the admin queue but not on the centre" gets invented, and the person who
     reports that bug is comparing two screens they believe ask the same question.
+
+    What the reader typed is a **literal**, so the three characters `LIKE` reads
+    as syntax are escaped before they become a pattern. Without this, `%` (the
+    reader asked for a per-cent sign, or mistyped one) is "any run of characters"
+    and the search silently answers with every row; `_` is "any single character"
+    and answers with rows that do not contain the character at all. Both are
+    wrong in the direction that looks like it worked — a full list, or a list of
+    near misses — so neither gets reported as a bug.
+
+    Backslash goes first: it is the escape character, so a reader who typed one
+    would otherwise escape whatever follows it and turn a literal into syntax a
+    second way.
     """
-    pattern = f"%{q}%"
+    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     return or_(
-        Feedback.title.ilike(pattern),
-        Feedback.summary.ilike(pattern),
-        Feedback.problem.ilike(pattern),
-        Feedback.author_handle.ilike(pattern),
+        Feedback.title.ilike(pattern, escape="\\"),
+        Feedback.summary.ilike(pattern, escape="\\"),
+        Feedback.problem.ilike(pattern, escape="\\"),
+        Feedback.author_handle.ilike(pattern, escape="\\"),
     )
 
 
