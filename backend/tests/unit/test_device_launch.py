@@ -304,15 +304,22 @@ def test_prepared_topic_is_dead_when_only_its_drainer_survives(tmp_path):
             )
 
 
-def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_path):
+@pytest.mark.parametrize("has_input", [True, False])
+def test_liveness_probe_distinguishes_the_input_session_from_a_child(
+    tmp_path, has_input
+):
     executable = tmp_path / "claude"
     # A symlink keeps Python's libraries reachable under the process name.
     # Renamed Nix sleep and copied macOS system binaries can exit immediately.
     executable.symlink_to(sys.executable)
     topic = str(uuid.uuid4())
+    environment = {**os.environ, "CHEESE_TOPIC": topic}
+    environment.pop("CLAUDE_BG_RENDEZVOUS_SOCK", None)
+    if has_input:
+        environment["CLAUDE_BG_RENDEZVOUS_SOCK"] = str(tmp_path / "input.sock")
     process = subprocess.Popen(
         [str(executable), "-c", "import time; time.sleep(30)"],
-        env={**os.environ, "CHEESE_TOPIC": topic},
+        env=environment,
     )
 
     def probe():
@@ -323,7 +330,7 @@ def test_liveness_probe_distinguishes_a_running_topic_from_an_exited_one(tmp_pat
         ).strip()
 
     try:
-        assert probe() == "alive"
+        assert probe() == ("alive" if has_input else "dead")
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -344,6 +351,7 @@ def test_liveness_probe_requires_an_exact_topic_environment_field(tmp_path, key,
     executable.symlink_to(sys.executable)
     topic = str(uuid.uuid4())
     environment = {**os.environ, key: value.format(topic=topic)}
+    environment["CLAUDE_BG_RENDEZVOUS_SOCK"] = str(tmp_path / "input.sock")
     if key != "CHEESE_TOPIC":
         environment.pop("CHEESE_TOPIC", None)
     process = subprocess.Popen(
@@ -382,7 +390,11 @@ def test_liveness_probe_matches_a_session_by_its_own_executable(tmp_path, relati
     topic = str(uuid.uuid4())
     process = subprocess.Popen(
         [str(executable), "-c", "import time; time.sleep(30)"],
-        env={**os.environ, "CHEESE_TOPIC": topic},
+        env={
+            **os.environ,
+            "CHEESE_TOPIC": topic,
+            "CLAUDE_BG_RENDEZVOUS_SOCK": str(tmp_path / "input.sock"),
+        },
     )
     try:
         assert _alive_probe(topic) == "alive"

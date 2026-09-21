@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -497,7 +498,7 @@ const (
 // A cold screen (image pull, node start, TUI mount) has been measured well over
 // a minute; giving up early is what made the old driver abandon a prompt while
 // the session was merely still starting.
-const rvDialWindow = 120 * time.Second
+var rvDialWindow = 120 * time.Second
 
 const maxScreenFileBytes = 10 << 20
 
@@ -632,7 +633,11 @@ func (h *Host) deliverPrompt(m link.Msg, s *sess) {
 
 	c, delivered, err := h.rendezvousClient(s, text)
 	if err != nil {
-		reply(nil, err.Error())
+		var value any
+		if errors.Is(err, rendezvous.ErrUnavailable) {
+			value = map[string]any{"failure_code": "prompt_socket_unavailable"}
+		}
+		reply(value, err.Error())
 		return
 	}
 	if !delivered {
