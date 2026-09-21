@@ -216,6 +216,10 @@ async def test_the_callers_budget_holds_on_both_transports(monkeypatch):
 
     一个收下参数却只对一条通路生效的入口，比没有这个参数更坏：调用方读到的是它已
     经定好了上限。
+
+    下面那个执行器慢而不是不答，是为了这条断言坏掉的时候能红而不是挂住：没有那层
+    `wait_for`，`place.write` 会等它答完然后正常返回，于是这里是一条「没有抛出」的
+    失败；换成永不答的执行器，同样一个 bug 会让整条套件停在这里。
     """
     machine = Machine()
     home = device_provider.device_home_dir(uuid.uuid4(), uuid.uuid4())
@@ -232,11 +236,12 @@ async def test_the_callers_budget_holds_on_both_transports(monkeypatch):
 
     from app.domain.agent import private_chat
 
-    async def never_answers(target, payload, *, hub=None, trace_id=None):
-        del target, payload, hub, trace_id
-        await asyncio.Event().wait()
+    async def answers_far_too_late(target, payload, *, hub=None, trace_id=None):
+        del target, hub, trace_id
+        await asyncio.sleep(2)
+        return {"path": f"/root/.cheese/{payload['path']}"}
 
-    monkeypatch.setattr(private_chat, "control", never_answers)
+    monkeypatch.setattr(private_chat, "control", answers_far_too_late)
     with pytest.raises(TimeoutError):
         await place.write(
             b"bytes",
