@@ -184,9 +184,17 @@ describe('我的工作页', () => {
     }))
 
     const view = await mount()
-    expect(await findText(view, '我的工作')).toBeTruthy()
-    expect(await findText(view, '我的课程')).toBeTruthy()
-    expect(await findText(view, '我的项目')).toBeTruthy()
+    // 三组一起等**一个**窗口，不是三次各等一个：三个组名都出自同一份渲染，
+    // 而分组是随卡片逐个落定才算出来的。串成三个窗口时，前两个通常瞬间就有、
+    // 第三个正好撞在机器被占满的那一刻（整仓并行跑时它假红过一次）。一个窗口
+    // 把「这一页画到齐了」当成一件事来等，就不会有这种先后之差。
+    await waitFor(
+      () => {
+        const shown = (view.container as HTMLElement).textContent ?? ''
+        for (const title of ['我的工作', '我的课程', '我的项目']) expect(shown).toContain(title)
+      },
+      { timeout: 15000 }
+    )
   })
 
   it('最近动过的在那个壳里排前面', async () => {
