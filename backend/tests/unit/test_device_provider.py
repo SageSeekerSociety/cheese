@@ -768,16 +768,17 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
 
 @pytest.mark.parametrize("api", ["send", "run_turn"])
 @pytest.mark.parametrize(
-    ("failures", "code", "alive", "expected_calls", "success"),
+    ("failures", "code", "alive", "late_hook", "expected_calls", "success"),
     [
-        (1, "prompt_socket_unavailable", False, 2, True),
-        (2, "prompt_socket_unavailable", False, 2, False),
-        (1, None, False, 1, False),
-        (1, "prompt_socket_unavailable", True, 1, False),
+        (1, "prompt_socket_unavailable", False, False, 2, True),
+        (2, "prompt_socket_unavailable", False, False, 2, False),
+        (1, None, False, False, 1, False),
+        (1, "prompt_socket_unavailable", True, False, 1, False),
+        (1, "prompt_socket_unavailable", False, True, 1, False),
     ],
 )
 async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
-    api, failures, code, alive, expected_calls, success
+    api, failures, code, alive, late_hook, expected_calls, success
 ):
     class InputHub(DeadClaudeHub):
         def __init__(self):
@@ -792,6 +793,17 @@ async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
 
         async def await_call(self, device_id, call_id, timeout=30):
             if len(self.prompts) <= failures:
+                if late_hook:
+                    router.push(
+                        str(topic_id),
+                        {
+                            "hook_event_name": "PreToolUse",
+                            "tool_name": "Bash",
+                            "tool_input": {"command": "true"},
+                            "tool_use_id": "late-tool",
+                        },
+                    )
+                    await asyncio.sleep(0.01)
                 raise DeviceCallError("input unavailable", failure_code=code)
             self.accepted.append(self.prompts[-1][0])
             return {"ready": True}
