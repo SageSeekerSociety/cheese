@@ -69,7 +69,13 @@
     "loadTasksFailed": "Couldn't load the tasks",
     "readFileFailed": "Couldn't read the file",
     "missingInTask": "{path} is not in this task",
-    "missingInProject": "{path} is not in the current project code"
+    "missingInProject": "{path} is not in the current project code",
+    "versionLabel": "File version",
+    "liveFile": "Live file on the machine",
+    "committedVersion": "Committed version",
+    "liveNote": "The live file includes changes that have not been committed.",
+    "committedNote": "The committed version is read-only and does not include changes not yet committed on the machine.",
+    "switchToCommitted": "Switch to the committed version"
   },
   "doc": {
     "pickTopic": "Pick a topic to see its document",
@@ -176,6 +182,8 @@
     "where": "Paragraph {paragraph} · {author}",
     "anonymous": "Unnamed",
     "accept": "Accept",
-    "reject": "Reject"
+    "reject": "Reject",
+    "libraryReadOnly": "The original in the library is not edited. To change this document, ask Cheese to make a new one from it.",
+    "readOnlyNote": "This version is read-only, so revisions cannot be handled."
   }
 }

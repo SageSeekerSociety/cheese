@@ -32,7 +32,7 @@ from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationEr
 from app.core.text import markdown_preview
 from app.domain.agent.announce import announce
 from app.domain.agent.compute import ComputePool, ComputeProvider
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, harness_name, runtime_for
 from app.domain.agent.harness.prompt import (
@@ -110,6 +110,8 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     AuthorType,
@@ -131,6 +133,7 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
@@ -141,7 +144,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "chat"]
@@ -172,9 +174,10 @@ class _HookWorkState:
     private_owner: str | None
     acting_agent: str
     # Attribution and memory part ways here, deliberately: `acting_agent` is
-    # this room's 分身 (who did it), while the pool belongs to the agent working
-    # the room (whose memory it is). Resolved at turn start and carried, because
-    # the hook path reaches turn end with no session left open to ask.
+    # the seat of the agent that ran this turn (who did it), while the pool
+    # belongs to that agent across rooms (whose memory it is). Resolved at turn
+    # start and carried, because the hook path reaches turn end with no session
+    # left open to ask.
     agent_pool: tuple[MemoryScope, str] | None
     user_text: str
     started_at: datetime
@@ -258,6 +261,9 @@ class _TurnContext:
     topic_stage: TopicStage | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
+    # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
+    # 去过东西」，None 是「这间房间不交付」（私聊）。
+    artifacts: list[dict] | None
 
     # Which machine, and whether it reports its own liveness (which decides who
     # owns this turn's clock; see the `turn_ceiling` frame).
@@ -994,8 +1000,8 @@ def _block_payload(block_out: BlockOut) -> dict:
     return block_out.model_dump(mode="json")
 
 
-def _pending_human_blocks(history: list[Block]) -> list[Block]:
-    """The human messages/attachments no agent turn has read into a prompt yet.
+def _pending_input_blocks(history: list[Block]) -> list[Block]:
+    """The messages/attachments no turn has read into a prompt yet.
 
     轮次边界按**归属**划，不按位置划：一条在轮次运行中到达的人类消息，created_at
     排在那轮 AI 回复之前，所以"最后一条 AI 消息之后"这个窗口会把它切掉 —— 而且
@@ -1012,12 +1018,12 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
     """
     legacy_watermark = -1
     for i, b in enumerate(history):
-        if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+        if looks_like_agent_handle(b.author) and b.kind == BlockKind.message:
             legacy_watermark = i
     return [
         b
         for i, b in enumerate(history)
-        if _is_human_input(b)
+        if _is_pending_input(b)
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
@@ -1079,9 +1085,15 @@ def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
     )
 
 
-def _is_human_input(b: Block) -> bool:
-    """A block that carries something a person said to 芝士 this turn."""
-    return b.author_type == AuthorType.human and b.kind in (
+def _is_pending_input(b: Block) -> bool:
+    """A block carrying something a participant said into the room.
+
+    「参与者」而不是「人」：一个 AI 队友在房间里说的一句话，对坐在同一个房间里
+    的另一个参与者同样是这一轮要读的输入（结论 1）。挡住「芝士自己这一轮的产
+    出」的不是这里，而是写入端 —— agent 署名**且**落在某一轮里的块根本不盖
+    pending 标记（`BlockRepository.add`）。
+    """
+    return is_participant(b.author_type) and b.kind in (
         BlockKind.message,
         BlockKind.attachment,
     )
@@ -1151,7 +1163,9 @@ class ChatService:
         # 和「有人在等、会话却不读了」（`oldest_unread_at`）——把一轮新对话塞进
         # 去，冷启动那一分多钟就会读成「会话不读了」，而那时根本还没有会话。这一
         # 份只管屏幕上那个记号落在哪条消息上，落完就没了。
-        self._awaiting_seen: dict[uuid.UUID, list[tuple[str, list[uuid.UUID]]]] = {}
+        self._awaiting_seen: dict[
+            uuid.UUID, list[tuple[str, list[uuid.UUID], str | None]]
+        ] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1453,9 +1467,7 @@ class ChatService:
             for image in images
         )
         state = self._hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt(
-            "\n".join(lines), is_private=bool(state and state.is_private)
-        )
+        line = publication_prompt("\n".join(lines))
         # Register BEFORE the write so a fast receipt cannot race the entry
         # (#539 decision A). The receipt is still the consumed boundary — it
         # just no longer gates the delivery verdict: write-accept is delivery,
@@ -1466,7 +1478,12 @@ class ChatService:
         # 同一个回执，两件事：把消息标记成被消费（上面那段说的重放边界），以及在
         # 它身上落下 👀。人说的话才有记号——平台自己塞进去的通知走的是同一条登记，
         # 但它不是谁发的消息，不该被 ack。
-        self.arm_seen_receipt(topic_id, line, list(user_block_ids))
+        self.arm_seen_receipt(
+            topic_id,
+            line,
+            list(user_block_ids),
+            by=state.acting_agent if state else None,
+        )
         entry = (
             line,
             list(user_block_ids),
@@ -1476,17 +1493,22 @@ class ChatService:
         pending.append(entry)
         del pending[:-16]  # a dead session must not grow this forever
         try:
+            # Read the room's status, then deliver with no transaction open: a
+            # row lock held across the device call queues every writer of the
+            # room behind it with a pool connection each (dev outage of
+            # 2026-09-18), and it never held archival off anyway — the archive
+            # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
-                room = await TopicRepository(session).lock(topic_id)
-                if room is None or room.status == TopicStatus.archived:
-                    delivered = False
-                else:
-                    delivered = (
-                        await self._compute.deliver(topic_id, line, images=images)
-                        if images
-                        else await self._compute.deliver(topic_id, line)
-                    )
-                await session.commit()
+                room = await TopicRepository(session).get(topic_id)
+                archived = room is None or room.status == TopicStatus.archived
+            if archived:
+                delivered = False
+            else:
+                delivered = (
+                    await self._compute.deliver(topic_id, line, images=images)
+                    if images
+                    else await self._compute.deliver(topic_id, line)
+                )
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             delivered = False
@@ -1526,7 +1548,6 @@ class ChatService:
             # Background inspections have their own notification policy. Only
             # work answering a person owes a periodic chat update.
             if state.reply_to is not None
-            and not state.is_private
             and (
                 now
                 - max(
@@ -1701,19 +1722,25 @@ class ChatService:
                     )
                 return
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         """Platform tools back for this room; True when they had been gone."""
-        return await self._compute.recover_native_tools(topic_id)
+        return await self._compute.recover_native_tools(topic_id, agent_handle)
 
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
 
-    async def has_unread_human_input(self, topic_id: uuid.UUID) -> bool:
-        """Whether anything a person said is still waiting to reach 芝士.
+    async def has_unread_input(self, topic_id: uuid.UUID) -> bool:
+        """Whether anything said in the room is still waiting to reach 芝士.
+
+        「一个人说的」不再是判据：人和 agent 是同一种参与者（结论 1），一个 AI
+        队友说进房间的一句话同样是没人读过的输入。不算数的是芝士**自己跑出来的
+        产出** —— 那一条在写入端就不带待读标记（`BlockRepository.add`）。
 
         「忘了 @」的补救按钮问的就是这一句，所以它必须和真正组装 prompt 时问的
-        是同一个问题 —— 同一个 `_pending_human_blocks`，不是一份近似的复制品。
+        是同一个问题 —— 同一个 `_pending_input_blocks`，不是一份近似的复制品。
         一份复制品会在窗口语义改动时悄悄和它分叉，而分叉的表现是按钮说「它还没
         看到」、点下去却什么也没有可读，白烧一轮。
         """
@@ -1721,7 +1748,7 @@ class ChatService:
             history = await BlockRepository(session).list_for_topic(
                 topic_id, task_id=None
             )
-            return bool(_pending_human_blocks(history))
+            return bool(_pending_input_blocks(history))
 
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
@@ -2013,6 +2040,15 @@ class ChatService:
                     "session not recovered for topic %s: device offline",
                     session.topic_id,
                 )
+            except DeviceCallError as exc:
+                # The machine is there and said no — its runner's socket is not
+                # up yet (a cold one takes about a minute), or the room's home
+                # is gone. Same standing as the machine being away: the next
+                # connection recovers this session, and the machine's own words
+                # are what somebody reading this would act on.
+                logger.warning(
+                    "session not recovered for topic %s: %s", session.topic_id, exc
+                )
             except Exception:  # noqa: BLE001 — one topic cannot block startup
                 logger.exception(
                     "session recovery failed for topic %s", session.topic_id
@@ -2026,7 +2062,7 @@ class ChatService:
         return {
             (block.content or "").strip()
             for block in blocks
-            if block.author_type == AuthorType.ai
+            if looks_like_agent_handle(block.author)
             and (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
         }
 
@@ -2308,7 +2344,8 @@ class ChatService:
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
                 at=event.at,
-                author=event.agent_handle,
+                author=event.agent_handle
+                or (state.acting_agent if state is not None else None),
                 task_id=task_id,
             )
             if payload is not None:
@@ -2431,8 +2468,9 @@ class ChatService:
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
             elif event.text.strip():
-                # Private chats publish the direct reply; work topics retain
-                # terminal output in activity and publish through Cheese CLI.
+                # Terminal output, the final response included, stays in
+                # activity: a reply reaches the room only through chat_send,
+                # in a private chat exactly as in any other room.
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -2441,22 +2479,18 @@ class ChatService:
                     reply_to=state.reply_to if state is not None else None,
                     roster=state.roster if state is not None else None,
                     topic_refs=state.topic_refs if state is not None else [],
+                    author=event.agent_handle
+                    or (state.acting_agent if state is not None else None),
                     eid=eid,
                     platform_unsolicited=platform_unsolicited,
                     continuation_id=(
                         state.continuation_id if state is not None else None
                     ),
-                    publish=bool(state and state.is_private),
                 )
                 if payload is not None:
                     if state is not None:
                         state.assistant_count += 1
-                    frame = {
-                        "type": "assistant_block"
-                        if payload["kind"] == "message"
-                        else "event_block",
-                        "block": payload,
-                    }
+                    frame = {"type": "event_block", "block": payload}
         if frame is not None:
             await broker.publish(channel, frame)
             if frame["type"] in ("assistant_block", "event_block", "todo"):
@@ -2556,10 +2590,16 @@ class ChatService:
                     state.project_id,
                     usage_to_credits(usage, spend_priced=state.route == "gateway"),
                 )
+            landed = landing(
+                EventAbout.room,
+                project_id=state.project_id,
+                room_id=state.topic_id,
+            )
             for resource in state.actions:
                 block = await blocks.add(
-                    project_id=state.project_id,
-                    topic_id=state.topic_id,
+                    project_id=landed.project_id,
+                    topic_id=landed.topic_id,
+                    task_id=landed.task_id,
                     author=state.acting_agent,
                     author_type=AuthorType.system,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
@@ -2781,7 +2821,7 @@ class ChatService:
                     project_id=topic.project_id,
                     topic_id=place.room_id,
                     author=author,
-                    author_type=AuthorType.human,
+                    author_type=AuthorType.participant,
                     content=content,
                     kind=BlockKind.message,
                     turn_id=turn_id,
@@ -2816,7 +2856,7 @@ class ChatService:
                     project_id=topic.project_id,
                     topic_id=place.room_id,
                     author=author,
-                    author_type=AuthorType.human,
+                    author_type=AuthorType.participant,
                     content=str(att.get("path") or ""),
                     kind=BlockKind.attachment,
                     mime_type=str(att.get("mime") or "") or None,
@@ -2862,9 +2902,15 @@ class ChatService:
     _SEEN_RECEIPT_BACKLOG = 8
 
     def arm_seen_receipt(
-        self, topic_id: uuid.UUID, text: str, block_ids: list[uuid.UUID]
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        block_ids: list[uuid.UUID],
+        by: str | None = None,
     ) -> None:
-        """Say which blocks get 芝士's 👀 when the session says it took ``text``.
+        """Say which blocks get 芝士's 👀 when the session says it took ``text``,
+        and whose 👀 it is — ``by`` is the agent running the turn; None means
+        the room's seat.
 
         Called BEFORE the write, for the same reason the consumed-stamp entry is:
         the receipt can come back before the caller gets its next line in.
@@ -2872,7 +2918,7 @@ class ChatService:
         if not text or not block_ids:
             return
         waiting = self._awaiting_seen.setdefault(topic_id, [])
-        waiting.append((text, list(block_ids)))
+        waiting.append((text, list(block_ids), by))
         # A receipt that never comes (the session died before reading, a harness
         # that does not report one) leaves its entry behind, and this process
         # runs for weeks. The mark is worth nothing once the next messages have
@@ -2891,7 +2937,7 @@ class ChatService:
         if not waiting:
             return
         for entry in list(waiting):
-            text, block_ids = entry
+            text, block_ids, by = entry
             if prompt != text and not (text and prompt.startswith(text)):
                 continue
             waiting.remove(entry)
@@ -2900,7 +2946,7 @@ class ChatService:
             from app.domain.agent.runtime import get_broker
 
             for block_id in block_ids:
-                ack = await self.ack_summon(block_id, topic_id)
+                ack = await self.ack_summon(block_id, topic_id, by=by)
                 if ack is None:
                     continue
                 # 这条不是从 converse 的那个生成器里出去的——回执是会话过一阵子
@@ -2910,16 +2956,19 @@ class ChatService:
             return
 
     async def ack_summon(
-        self, user_block_id: uuid.UUID, topic_id: uuid.UUID
+        self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
     ) -> dict | None:
-        """Add 芝士's 👀 receipt to the summoning user message (idempotent) and
-        return the WS reaction payload. Best-effort: a failed receipt must
-        never kill the turn."""
+        """Add the 👀 receipt of the agent running the turn (``by``, else the
+        room's seat) to the summoning user message (idempotent) and return the
+        WS reaction payload. Best-effort: a failed receipt must never kill the
+        turn."""
         try:
             async with self._sessions() as session:
                 blocks = BlockRepository(session)
                 await blocks.add_reaction_if_absent(
-                    user_block_id, "👀", await self._agent_handle(session, topic_id)
+                    user_block_id,
+                    "👀",
+                    by or await self._agent_handle(session, topic_id),
                 )
                 reactions = await blocks.reactions_for_block(user_block_id)
                 await session.commit()
@@ -2996,6 +3045,23 @@ class ChatService:
         pools.append((MemoryScope.project, str(topic.project_id)))
         return await recall_pools(memory, pools)
 
+    async def _acting_handle(
+        self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
+    ) -> str:
+        """The handle this turn authors under: the seat of the agent that was
+        addressed, when it sits on this room's roster.
+
+        A room seats any number of agents, so the one that answers is the one
+        the message named, and its blocks carry that one's seat. A room from
+        before agents had seats of their own (only its room-derived seat on the
+        roster) and a private 1:1 fall through to the room's seat as before.
+        """
+        if agent.instance_id is not None:
+            seat = agent_instance_handle(agent.instance_id)
+            if seat in await TopicMemberService(session).agent_handles(topic_id):
+                return seat
+        return await self._agent_handle(session, topic_id)
+
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
 
@@ -3031,6 +3097,7 @@ class ChatService:
         publish: bool = False,
         author: str | None = None,
         publication_id: str | None = None,
+        own_output: bool = False,
     ) -> dict | None:
         """Persist output immediately; only explicit publications enter chat.
 
@@ -3043,7 +3110,12 @@ class ChatService:
         Returns None when ``continuation_id`` says this exact message already
         landed in an earlier attempt at the same work (④ 重发): the re-sent
         turn re-narrating "我先看一下 X" must not post a second copy of it. The
-        caller treats None as "nothing to broadcast"."""
+        caller treats None as "nothing to broadcast".
+
+        ``own_output`` 告诉轮次输入账目：这一条是作者自己跑出来的产出，不是谁对
+        房间说的一句待读的话。默认不必填 —— 「署名是 agent 且落在某一轮里」已经
+        答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
+        口的那句话）。"""
         # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
         # 当成助手输出印了出来。拦在这里而不是调用方:活路径、补投、spool 回填
         # 三条路都经过这个方法,拦在门口才不会有一条漏网。
@@ -3142,18 +3214,28 @@ class ChatService:
                 )
             text = _expand_mention_names(text, roster, topic_refs)
             author = author or await self._agent_handle(session, topic_id)
-            block = await blocks.add(
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
+            landed = landing(
+                EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
-                topic_id=topic_id,
+                room_id=topic_id,
                 task_id=task_id,
+            )
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=author,
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 content=text,
                 kind=BlockKind.event if as_progress else BlockKind.message,
                 reply_to=reply_to,
                 turn_id=turn_id,
                 meta=meta,
                 created_at=at,
+                own_output=own_output,
             )
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
@@ -3167,14 +3249,14 @@ class ChatService:
                     block.refs = refs
                 for bad in unresolved:
                     warn = f"⚠️ @了 <@{bad}>，项目成员里没有这个 handle，没能通知到"
+                    # Beside the message it is about, not in the room the
+                    # message did not go to — same landing as the message.
                     await blocks.add(
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        # Beside the message it is about, not in the room the
-                        # message did not go to.
-                        task_id=task_id,
+                        project_id=landed.project_id,
+                        topic_id=landed.topic_id,
+                        task_id=landed.task_id,
                         author=author,
-                        author_type=AuthorType.ai,
+                        author_type=AuthorType.participant,
                         content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
@@ -3284,7 +3366,7 @@ class ChatService:
         backfilled: bool = False,
         platform_unsolicited: bool = False,
         in_room: bool = False,
-        author_type: AuthorType = AuthorType.ai,
+        author_type: AuthorType = AuthorType.participant,
         task_id: uuid.UUID | None = None,
     ) -> dict | None:
         """One event block, committed NOW and deduped by event-id.
@@ -3296,16 +3378,15 @@ class ChatService:
 
         ``in_room`` decides whether the conversation shows it at all, and it
         travels as ``meta.in_room`` — its own field, because visibility is not
-        authorship. It used to ride on ``author_type`` (system = the room, ai =
-        现场 only), which meant an event genuinely written by 芝士 could not be
-        shown in the room without lying about who wrote it, and anything that
-        later wanted to know the author was reading a field answering a
-        different question. Absent means shown: every other writer in the
-        codebase posts to the room.
+        authorship. It used to ride on ``author_type``, which meant an event
+        genuinely written by 芝士 could not be shown in the room without lying
+        about who wrote it, and anything that later wanted to know the author
+        was reading a field answering a different question. Absent means shown:
+        every other writer in the codebase posts to the room.
 
         ``author_type`` is then free to answer its own question, and does: 芝士
-        wrote the tool calls and the subagent conclusions, the platform wrote
-        the change summary."""
+        is a participant and wrote the tool calls and the subagent conclusions,
+        while the change summary is the platform's own line."""
         meta = {**meta, "in_room": in_room}
         if eid:
             meta = {**meta, "eid": eid}
@@ -3317,10 +3398,19 @@ class ChatService:
             blocks = BlockRepository(session)
             if eid and await blocks.has_eid(topic_id, eid):
                 return None
-            block = await blocks.add(
+            # 「关于什么」由 `task_id` 推出，调用方不另声明：调用方说出这条事件
+            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
+            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
+            landed = landing(
+                EventAbout.task if task_id is not None else EventAbout.room,
                 project_id=project_id,
-                topic_id=topic_id,
+                room_id=topic_id,
                 task_id=task_id,
+            )
+            block = await blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=await self._agent_handle(session, topic_id),
                 author_type=author_type,
                 content=content,
@@ -3396,7 +3486,7 @@ class ChatService:
             # reaches the platform exactly once, here — the room's transcript
             # does not contain it and the worker's dies with its container.
             content = event.text.strip() or "分身交回了一次结果（没有留话）"
-            author_type = AuthorType.ai
+            author_type = AuthorType.participant
             meta = {"event_type": "subagent_stop"}
             if event.transcript_path:
                 meta["transcript_path"] = event.transcript_path
@@ -3457,19 +3547,23 @@ class ChatService:
         if commits is None:
             return None
 
-        def _collect() -> _Changeset | None:
+        async def _collect() -> _Changeset | None:
+            from app.domain.workspace.forge_files import ProjectFiles
+
             fresh = [h for h in commits if h not in known_commits]
             if not fresh:
                 return None
             totals: dict[str, dict] = {}
-            for sha in fresh:
-                for entry in _diff_file_stats(ws.git_diff(project_id, ref=sha)):
-                    acc = totals.setdefault(
-                        entry["path"],
-                        {"path": entry["path"], "added": 0, "removed": 0},
-                    )
-                    acc["added"] += entry["added"]
-                    acc["removed"] += entry["removed"]
+            async with self._sessions() as session:
+                files = ProjectFiles(session, project_id, None)
+                for sha in fresh:
+                    for entry in _diff_file_stats(await files.commit_diff(sha)):
+                        acc = totals.setdefault(
+                            entry["path"],
+                            {"path": entry["path"], "added": 0, "removed": 0},
+                        )
+                        acc["added"] += entry["added"]
+                        acc["removed"] += entry["removed"]
             files = sorted(
                 totals.values(), key=lambda f: (-(f["added"] + f["removed"]), f["path"])
             )
@@ -3478,7 +3572,7 @@ class ChatService:
             return _Changeset(commits=fresh, files=files)
 
         try:
-            return await asyncio.to_thread(_collect)
+            return await _collect()
         except Exception:  # noqa: BLE001 — never fail a turn over its summary
             logger.warning("change summary failed for topic %s", topic_id)
             return None
@@ -3491,23 +3585,20 @@ class ChatService:
         _HookWorkState.known_commits)."""
         try:
             from app.domain.room_task.services import TaskService
+            from app.domain.workspace.forge_files import ProjectFiles
 
             async with self._sessions() as session:
                 tasks = await TaskService(session).list_in_room(topic_id)
-                task_ids = []
+                commits = set()
                 for task in tasks:
                     if task.branch_name:
-                        TaskService._bind_workspace(task)
-                        task_ids.append(task.id)
-            return await asyncio.to_thread(
-                lambda: {
-                    row["hash"]
-                    for task_id in task_ids
-                    for row in ws.git_log(
-                        project_id, limit=_CHANGE_COMMIT_WALK, topic_id=task_id
-                    )
-                }
-            )
+                        history = await ProjectFiles(
+                            session, project_id, task.id
+                        ).history()
+                        commits.update(
+                            row["sha"] for row in history[-_CHANGE_COMMIT_WALK:]
+                        )
+                return commits
         except Exception:  # noqa: BLE001 — no baseline just means no summary
             logger.warning("commit baseline unreadable for topic %s", topic_id)
             return None
@@ -3612,7 +3703,7 @@ class ChatService:
             known_texts = {
                 (b.content or "").strip()
                 for b in blocks
-                if b.author_type == AuthorType.ai
+                if looks_like_agent_handle(b.author)
                 and (b.kind == BlockKind.message or (b.meta or {}).get("progress"))
             }
             recovered = 0
@@ -3916,7 +4007,15 @@ class ChatService:
                 + (":native-rc-v1" if supply == SUBSCRIPTION else "")
             ).encode()
         ).hexdigest()
-        kwargs: dict = {"model": model, "env": {"CHEESE_AGENT_CONFIG": config_hash}}
+        kwargs: dict = {
+            "model": model,
+            "env": {"CHEESE_AGENT_CONFIG": config_hash},
+            # Which conversation the turn belongs to, and so which session's
+            # machines it runs on. Separate from `agent_handle` below, which is
+            # the SEAT the turn authors under — the two are different strings
+            # and the place is recorded under this one.
+            "session_agent": agent.handle,
+        }
         if acting_agent is not None:
             kwargs["agent_handle"] = acting_agent
         if environment is not None:
@@ -4147,9 +4246,11 @@ class ChatService:
         """A system event for a turn that ends before it starts, committed with
         the rest of the assembling transaction. A room that shows nothing has no
         way to tell 「没开始」 from 「还在想」."""
+        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
         block = await BlockRepository(session).add(
-            project_id=project_id,
-            topic_id=topic_id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="system",
             author_type=AuthorType.system,
             content=text,
@@ -4207,7 +4308,7 @@ class ChatService:
             # messages actually addressed to it.
             history = await blocks.turn_history(place.room_id)
             phases_ms["history"] = (time.monotonic() - started) * 1000
-            pending = _pending_human_blocks(history)
+            pending = _pending_input_blocks(history)
             # Kept apart from `pending` on purpose: that list answers
             # 「谁说话了」 for the recipient routing, the replay counter and
             # the 「没人在等」 bail, and a platform notice is an answer to
@@ -4261,7 +4362,7 @@ class ChatService:
             is_private = topic.is_private
             # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
             private_owner = topic.private_owner
-            acting_agent = await self._agent_handle(session, topic.id)
+            acting_agent = await self._acting_handle(session, topic.id, agent)
             doc_root = None if is_private else await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
@@ -4296,6 +4397,19 @@ class ChatService:
                     await topics.list_for_project(topic.project_id),
                     exclude_id=topic.id,
                 )
+            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。私聊里不交付，所以
+            # 那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，前者要说话
+            # （第一次交付只能新建），后者一个字都不说，所以这里给的是 None 而不是 []。
+            artifact_refs = (
+                None
+                if is_private
+                else [
+                    {"id": str(a.id), "name": a.name, "version": a.version}
+                    for a in await project_artifacts.list_for_project(
+                        session, topic.project_id
+                    )
+                ]
+            )
             project_id = topic.project_id
             # This agent's conversation here, not just any: a room may host
             # several agents and each resumes its own (agent_session/models.py).
@@ -4408,9 +4522,15 @@ class ChatService:
                         not cloud_events
                         or (cloud_events[-1].meta or {}).get("state") != "waiting"
                     ):
-                        waiting_block = await blocks.add(
+                        landed = landing(
+                            EventAbout.room,
                             project_id=project_id,
-                            topic_id=topic_id,
+                            room_id=topic_id,
+                        )
+                        waiting_block = await blocks.add(
+                            project_id=landed.project_id,
+                            topic_id=landed.topic_id,
+                            task_id=landed.task_id,
                             author="system",
                             author_type=AuthorType.system,
                             content=waiting_text,
@@ -4530,6 +4650,7 @@ class ChatService:
             roster=roster,
             topic_refs=topic_refs,
             topic_refs_for_prompt=topic_refs_for_prompt,
+            artifacts=artifact_refs,
             topic_stage=topic_stage,
             turn_images=turn_images,
             untitled=untitled,
@@ -4596,6 +4717,7 @@ class ChatService:
         roster = prepared.roster
         topic_refs = prepared.topic_refs
         topic_refs_for_prompt = prepared.topic_refs_for_prompt
+        artifact_refs = prepared.artifacts
         topic_stage = prepared.topic_stage
         turn_images = prepared.turn_images
         untitled = prepared.untitled
@@ -4607,7 +4729,14 @@ class ChatService:
         # on what is producing the output, not on the machine underneath it.
         runtime = runtime_for(provider)
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-        skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
+        # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
+        # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
+        # 系统提示词里没有 chat_send 的房间：终端里答完而没有发布，房间是空的。
+        skills = (
+            "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
+            if is_private
+            else self._skills
+        )
         system_prompt = build_system_prompt(
             self._base_prompt,
             skills,
@@ -4617,6 +4746,7 @@ class ChatService:
             roster,
             topic_refs_for_prompt,
             untitled,
+            artifacts=artifact_refs,
             memories_omitted=memories.omitted,
             memories_core_omitted=memories.core_omitted,
             session_opening=_session_opening_lines(
@@ -4631,7 +4761,7 @@ class ChatService:
         )
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
-        prompt_text = publication_prompt(prompt_text, is_private=is_private)
+        prompt_text = publication_prompt(prompt_text)
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
             "elapsed_ms=%.3f unix_ms=%.3f",
@@ -4772,11 +4902,22 @@ class ChatService:
         # 这一轮的提示词写下去之前先登记：会话说「收下了」的时候，记号落在召唤它
         # 的那条人类消息上。登记在 send 之前，因为回执可能比 send 返回还快。
         if user_block_id is not None and not is_resume and not platform_turn:
-            self.arm_seen_receipt(topic_id, prompt_text, [user_block_id])
+            self.arm_seen_receipt(
+                topic_id, prompt_text, [user_block_id], by=acting_agent
+            )
         try:
-            await self._compute.activate(SessionRef(project_id, topic_id), runtime)
+            # The same key `_assemble_turn` read this turn's resume token under
+            # — where this conversation runs is recorded under it too, and a ref
+            # built from anything else resolves somebody else's machine.
+            session_ref = SessionRef(
+                project_id,
+                topic_id,
+                prepared.agent.handle,
+                harness_name(prepared.agent.configuration.get("harness")),
+            )
+            await self._compute.activate(session_ref, runtime)
             ready = await runtime.send(
-                SessionRef(project_id, topic_id),
+                session_ref,
                 prompt_text,
                 Opening(
                     system_prompt=system_prompt,
@@ -4937,11 +5078,13 @@ class ChatService:
                 kind=TopicKind.topic,
                 created_by=author,
             )
+            landed = landing(EventAbout.room, project_id=project_id, room_id=topic.id)
             await blocks.add(
-                project_id=project_id,
-                topic_id=topic.id,
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=author,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content=text,
                 kind=BlockKind.event,
                 # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
@@ -5097,11 +5240,17 @@ class ChatService:
 
         # Decision log → a block in the root topic (审计/施工现场).
         async with self._sessions() as session:
-            await BlockRepository(session).add(
+            landed = landing(
+                EventAbout.project,
                 project_id=project_id,
-                topic_id=root_topic_id,
+                room_id=root_topic_id,
+            )
+            await BlockRepository(session).add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=await self._agent_handle(session, root_topic_id),
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
                 meta={"in_room": False},

@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.core.db import get_db
@@ -24,13 +24,15 @@ from app.core.errors import (
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness.claude_code import REMOTE_CONTROLS
 from app.domain.agent.remote_control import CONTROLS, key, store
 from app.domain.agent.runtime import get_broker
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(tags=["remote-control"])
 # How long the control read waits for the machine's background-task list.
@@ -101,6 +103,13 @@ async def voice_pending(db: AsyncSession, session: dict, chat: ChatService) -> N
             publish=True,
             author=session.get("agent_handle") or topic_agent_handle(topic_id),
             publication_id=f"rc-ask-{request_id}",
+            # 这句是芝士自己问出口的，不是谁交给它去读的一句话：它在等**人**按
+            # 下那个按钮。不说明的话轮次输入账目会把它记成一条待读输入 —— 「忘
+            # 了 @」的补救按钮于是不再答「没有待读的东西」，白开一轮，而那一轮
+            # 的 prompt 里躺着芝士刚问出口的那句话，它对着自己的问题再答一遍。
+            # 轮次号在这里填不出：问话的那一轮跑在机器上，这个进程只是替它把话
+            # 写进房间。
+            own_output=True,
         )
         if payload is not None:
             await get_broker().publish(
@@ -168,14 +177,32 @@ async def rc_create(request: Request, db: DbSession) -> dict:
     place = await TopicService(db).place_or_404(uuid.UUID(claims["t"]))
     if str(place.project_id) != claims["p"]:
         raise ForbiddenError("Place does not belong to this credential")
-    if place.room.session_placement and claims.get("r") != str(
-        place.room.resource_id or place.room.id
-    ):
+    resource = str(place.room.resource_id or place.room.id)
+    # The hands belong to a session, so the room is asked for its sessions and
+    # the current generation picks among them. Which one is not asked: a room's
+    # sessions all lease the same executor today (see `api/routes/execution.py`).
+    leased = [
+        held
+        for held in await AgentSessionService(db).places_in_room(place.room_id)
+        if held.lease
+    ]
+    if leased and claims.get("r") != resource:
         raise ConflictError("RC credential belongs to another execution generation")
+    current = [held for held in leased if held.resource_id == resource]
     data = await body(request)
     # Placement is platform-owned; ignore an execution target supplied by a worker.
-    data["execution"] = place.room.session_placement
-    session = await store().create(claims, data)
+    data["execution"] = (
+        {"resource_id": resource, "execution": current[0].lease} if current else None
+    )
+    # A credential naming the room's stand-in seat acts as the agent seated
+    # there; the session records who that is, so its questions and answers are
+    # attributed to the same identity every other write of that turn carries.
+    acting = claims.get("a")
+    if acting:
+        acting = await ActorResolver(
+            session=db, bearer=None, cheese_token=""
+        ).seated_agent(place.room_id, acting)
+    session = await store().create({**claims, "a": acting}, data)
     await announce(session)
     return {"session": session}
 
@@ -358,7 +385,11 @@ async def control_state(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await controller(topic_id, db, resolver)
-    session = await store().current(str(topic_id))
+    # Which agent's controls the room shows: the one that answers here, the
+    # same one a room-scoped credential acts as.
+    session = await store().current(
+        str(topic_id), await TopicMemberService(db).resolve_agent_handle(topic_id)
+    ) or await store().current(str(topic_id))
     result = (
         await store().snapshot(session) if session else {"connected": False, "id": None}
     )
@@ -381,6 +412,13 @@ async def control_state(
                 )
         except DeviceOffline as exc:
             result["device_offline"] = exc.device_id
+        except DeviceCallError as exc:
+            # The machine answered and its answer was a failure — the runner's
+            # socket not there, the home gone. Same standing as a silence: the
+            # list is unread this poll, and the machine's words go with it so
+            # the reader can see why rather than a 500 painted over the room.
+            result["tasks_unread"] = True
+            result["device_error"] = str(exc)
         except TimeoutError:
             # Not an error the room needs told about: the rest of this response
             # is already correct, and the next poll reads the list again. The
@@ -401,7 +439,13 @@ class ControlIn(BaseModel):
 
 
 async def selected_session(topic_id: uuid.UUID, sid: str) -> dict:
-    session = await store().current(str(topic_id))
+    """The session the caller named, if it is still its own agent's live one.
+
+    Asked per agent: a room may hold one live session per seated agent, and a
+    second agent launching must not make the first one's controls unreachable.
+    """
+    chosen = await store().get(sid)
+    session = await store().current(str(topic_id), chosen.get("agent_handle"))
     if not session or session["id"] != sid or session["status"] != "active":
         raise ConflictError("The active session changed; refresh before controlling it")
     return session

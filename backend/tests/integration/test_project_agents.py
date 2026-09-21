@@ -1,13 +1,16 @@
-"""An agent's memory follows the agent, and a room says which agent works in it.
+"""An agent's memory follows the agent, and a room is where agents sit.
 
 The behaviour these tests pin down is the one the whole change exists for: what
 芝士 learns in one room of a project is available in every other room of that
 project, because the memory belongs to the AGENT rather than to the room it
-happened to be learned in.
+happened to be learned in. A room does not point at an agent: it seats any
+number of them on its roster, the way it seats people, and which one a memory
+belongs to is decided by who was acting when it was written.
 """
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import chat_ws_url
+from app.domain.identity.handles import agent_instance_handle
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _project(client, name: str = "Agents") -> str:
@@ -25,31 +28,55 @@ def _topic(client, project_id: str, title: str = "room", by: str = "u") -> str:
     return r.json()["data"]["id"]
 
 
-def _remember(client, project_id: str, topic_id: str, content: str) -> None:
+def _token(client, project_id: str, topic_id: str, agent: dict | None) -> str:
+    """The token the sandbox calls `cheese remember` with. It names who is
+    acting when the caller picked a teammate; without one it is the room's
+    own turn token, which writes as the room's default."""
+    return mint_scoped_token(
+        project_id=project_id,
+        topic_id=topic_id,
+        agent_handle=agent_instance_handle(agent["id"]) if agent else None,
+    )
+
+
+def _remember(
+    client, project_id: str, topic_id: str, content: str, *, agent: dict | None = None
+) -> None:
     r = client.post(
         f"/projects/{project_id}/memory",
         json={"content": content, "topic": topic_id},
-        headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project_id, topic_id=topic_id
-            )
-        },
+        headers={"X-Cheese-Token": _token(client, project_id, topic_id, agent)},
     )
     assert r.status_code == 200, r.text
 
 
-def _recall(client, project_id: str, topic_id: str, query: str) -> list[dict]:
+def _recall(
+    client, project_id: str, topic_id: str, query: str, *, agent: dict | None = None
+) -> list[dict]:
     r = client.post(
         f"/projects/{project_id}/memory/search",
         json={"query": query, "topic": topic_id},
-        headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project_id, topic_id=topic_id
-            )
-        },
+        headers={"X-Cheese-Token": _token(client, project_id, topic_id, agent)},
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["hits"]
+
+
+def _seat(client, topic_id: str, agent: dict, by: str = "u") -> str:
+    """Invite a saved teammate into a room: a row on the roster, like a person."""
+    r = client.post(
+        f"/topics/{topic_id}/members",
+        json={"handle": agent["seat_handle"], "role": "member", "actor": by},
+        headers=session_auth_headers(by),
+    )
+    assert r.status_code == 200, r.text
+    return agent["seat_handle"]
+
+
+def _agent_rows(client, topic_id: str) -> dict[str, dict]:
+    r = client.get(f"/topics/{topic_id}/members")
+    assert r.status_code == 200, r.text
+    return {m["member_handle"]: m for m in r.json()["data"]["data"] if m["agent"]}
 
 
 def _agents(client, project_id: str) -> list[dict]:
@@ -78,25 +105,24 @@ def test_what_one_room_learns_the_next_room_knows(client):
     assert [h["abstract"] for h in hits] == ["部署脚本在 deploy.sh"]
 
 
-def test_two_agents_in_one_project_do_not_share_a_memory(client):
-    """Separate agents are separate teammates — one's notes are not the other's."""
+def test_two_agents_in_one_room_do_not_share_a_memory(client):
+    """Separate agents are separate teammates — one's notes are not the other's,
+    even when both sit in the same room. What keys the pool is who was acting,
+    not where."""
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
-    default_room = _topic(client, pid, "default")
-    review_room = _topic(client, pid, "review")
+    room = _topic(client, pid, "shared")
+    _seat(client, room, reviewer)
 
-    r = client.put(f"/topics/{review_room}/agent", json={"instance_id": reviewer["id"]})
-    assert r.status_code == 200, r.text
+    _remember(client, pid, room, "默认芝士记的事")
+    _remember(client, pid, room, "评审记的事", agent=reviewer)
 
-    _remember(client, pid, default_room, "默认芝士记的事")
-    _remember(client, pid, review_room, "评审记的事")
-
-    assert [h["abstract"] for h in _recall(client, pid, default_room, "记的事")] == [
+    assert [h["abstract"] for h in _recall(client, pid, room, "记的事")] == [
         "默认芝士记的事"
     ]
-    assert [h["abstract"] for h in _recall(client, pid, review_room, "记的事")] == [
-        "评审记的事"
-    ]
+    assert [
+        h["abstract"] for h in _recall(client, pid, room, "记的事", agent=reviewer)
+    ] == ["评审记的事"]
 
 
 def test_a_rooms_own_pool_stays_readable(client):
@@ -158,33 +184,34 @@ def test_a_new_topic_follows_the_projects_default(client):
     assert r.status_code == 200, r.text
     after = _topic(client, pid, "after")
 
-    # Neither room pinned an agent, so both follow the project — including the
-    # one created before the default changed. A copy taken at creation time
-    # would have frozen the old answer into it.
+    # A room seats the project's default when it is born, and a room from
+    # before the change resolves its seat to the default of today. Neither
+    # room has an agent of its own to point at.
     for topic_id in (before, after):
-        agent = client.get(f"/topics/{topic_id}/agent").json()["data"]
-        assert agent["handle"] == "designer"
-        assert agent["inherited"] is True
+        names = {row["name"] for row in _agent_rows(client, topic_id).values()}
+        assert designer["display_name"] in names, names
 
 
-def test_a_topic_can_be_created_with_its_own_agent(client):
+def test_an_agent_joins_a_room_through_its_roster(client):
+    """Inviting a teammate is adding it to the roster — the same call, the same
+    row shape, as inviting a person. The default stays seated beside it."""
     pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer")
+    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
+    assert reviewer["seat_handle"] == agent_instance_handle(reviewer["id"])
+    room = _topic(client, pid, "review")
 
+    seat = _seat(client, room, reviewer)
+
+    rows = _agent_rows(client, room)
+    assert rows[seat]["name"] == "评审"
+    assert len(rows) == 2, rows
+    # Once is enough: the roster refuses a second row for the same teammate.
     r = client.post(
-        "/topics",
-        json={
-            "project_id": pid,
-            "title": "review",
-            "agent_instance_id": reviewer["id"],
-        },
+        f"/topics/{room}/members",
+        json={"handle": seat, "role": "member", "actor": "u"},
+        headers=session_auth_headers("u"),
     )
-    assert r.status_code == 200, r.text
-    topic_id = r.json()["data"]["id"]
-
-    agent = client.get(f"/topics/{topic_id}/agent").json()["data"]
-    assert agent["handle"] == "reviewer"
-    assert agent["inherited"] is False
+    assert r.status_code == 422, r.text
 
 
 def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
@@ -197,7 +224,7 @@ def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
     room = _topic(client, pid, "review room")
-    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+    _seat(client, room, reviewer)
 
     r = client.post(
         f"/topics/{room}/split",
@@ -206,29 +233,27 @@ def test_work_split_out_of_a_room_learns_into_the_rooms_pool(client):
         ),
     )
     assert r.status_code == 200, r.text
-    # 一张卡问不出 agent 来：它不是地点。
-    assert client.get(f"/topics/{r.json()['data']['id']}/agent").status_code == 404
-
-    _remember(client, pid, room, "分身查出来的事")
-    assert [h["abstract"] for h in _recall(client, pid, room, "查出来")] == [
-        "分身查出来的事"
-    ]
+    # 一张卡不是地点：拆出来的活在房间那一个会话里做，记忆也从房间记。
+    _remember(client, pid, room, "分身查出来的事", agent=reviewer)
+    assert [
+        h["abstract"] for h in _recall(client, pid, room, "查出来", agent=reviewer)
+    ] == ["分身查出来的事"]
 
 
-def test_a_topic_cannot_borrow_another_projects_agent(client):
-    """An instance id is the key to a memory pool, so it may not cross projects."""
+def test_a_room_cannot_seat_another_projects_agent(client):
+    """A seat that can never act is a trap on the roster: nothing addresses it,
+    nothing writes as it. The roster refuses it up front."""
     mine, theirs = _project(client, "mine"), _project(client, "theirs")
     stranger = _add_agent(client, theirs, handle="stranger")
 
-    r = client.post(
-        "/topics",
-        json={"project_id": mine, "title": "t", "agent_instance_id": stranger["id"]},
-    )
-    assert r.status_code == 404
-
     room = _topic(client, mine)
-    r = client.put(f"/topics/{room}/agent", json={"instance_id": stranger["id"]})
-    assert r.status_code == 404
+    r = client.post(
+        f"/topics/{room}/members",
+        json={"handle": stranger["seat_handle"], "role": "member", "actor": "u"},
+        headers=session_auth_headers("u"),
+    )
+    assert r.status_code == 404, r.text
+    assert stranger["seat_handle"] not in _agent_rows(client, room)
 
 
 # --- renaming and retiring an agent ------------------------------------------
@@ -244,17 +269,17 @@ def test_renaming_an_agent_keeps_the_memory_it_had(client):
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
     room = _topic(client, pid, "review")
-    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    _remember(client, pid, room, "评审记的事")
+    _seat(client, room, reviewer)
+    _remember(client, pid, room, "评审记的事", agent=reviewer)
 
     r = _update_agent(client, pid, reviewer["id"], display_name="严格评审")
     assert r.status_code == 200, r.text
     assert r.json()["data"]["display_name"] == "严格评审"
     assert r.json()["data"]["handle"] == "reviewer"
 
-    assert [h["abstract"] for h in _recall(client, pid, room, "记的事")] == [
-        "评审记的事"
-    ]
+    assert [
+        h["abstract"] for h in _recall(client, pid, room, "记的事", agent=reviewer)
+    ] == ["评审记的事"]
 
 
 def test_an_agents_role_can_be_edited_directly(client):
@@ -310,8 +335,8 @@ def test_retiring_an_agent_keeps_it_and_its_memory(client):
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
     room = _topic(client, pid, "review")
-    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    _remember(client, pid, room, "评审记的事")
+    seat = _seat(client, room, reviewer)
+    _remember(client, pid, room, "评审记的事", agent=reviewer)
 
     r = client.delete(f"/projects/{pid}/agents/{reviewer['id']}")
     assert r.status_code == 200, r.text
@@ -321,11 +346,11 @@ def test_retiring_an_agent_keeps_it_and_its_memory(client):
     assert "reviewer" in listed, "管理页要能看到已停用的队友"
     assert listed["reviewer"]["is_active"] is False
 
-    # And the room already working with it carries on, memory and all.
-    assert client.get(f"/topics/{room}/agent").json()["data"]["handle"] == "reviewer"
-    assert [h["abstract"] for h in _recall(client, pid, room, "记的事")] == [
-        "评审记的事"
-    ]
+    # And the room it already sits in carries on, memory and all.
+    assert _agent_rows(client, room)[seat]["name"] == "评审"
+    assert [
+        h["abstract"] for h in _recall(client, pid, room, "记的事", agent=reviewer)
+    ] == ["评审记的事"]
 
 
 def test_a_retired_agent_is_not_offered_for_new_work(client):
@@ -358,23 +383,20 @@ def test_retiring_the_default_falls_back_to_the_implicit_cheese(client):
     assert listed["cheese"]["is_default"] is True
 
     room = _topic(client, pid, "after")
-    agent = client.get(f"/topics/{room}/agent").json()["data"]
-    assert agent["handle"] == "cheese"
-    assert agent["inherited"] is True
+    names = {row["name"] for row in _agent_rows(client, room).values()}
+    assert names == {listed["cheese"]["display_name"]}, names
 
 
-def test_a_room_that_pinned_the_retired_agent_stays_on_it(client):
+def test_a_retired_agent_keeps_its_seat_in_the_rooms_it_is_in(client):
     """It is retired from NEW work, not evicted from the work it is doing."""
     pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer")
+    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
     room = _topic(client, pid, "review")
-    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+    seat = _seat(client, room, reviewer)
 
     client.delete(f"/projects/{pid}/agents/{reviewer['id']}")
 
-    agent = client.get(f"/topics/{room}/agent").json()["data"]
-    assert agent["handle"] == "reviewer"
-    assert agent["inherited"] is False
+    assert _agent_rows(client, room)[seat]["name"] == "评审"
 
 
 def test_retiring_an_agent_that_is_not_there_is_a_404(client):
@@ -475,16 +497,18 @@ def _turn(client, room: str, text: str) -> None:
 
 
 def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
-    """Handing a room to another agent costs nothing and loses nothing.
+    """Two teammates in one room are two conversations.
 
     A conversation belongs to ONE agent — resuming it as somebody else produces
-    an agent confidently remembering things it never said. So the incoming agent
-    starts fresh. But the outgoing agent's thread is its own row, not the room's
-    single column, so handing the room back finds it exactly where it was.
+    an agent confidently remembering things it never said. So the teammate that
+    is addressed next starts fresh. But the other's thread is its own row, not
+    the room's single column, so addressing it again finds it exactly where it
+    was.
     """
     pid = _project(client)
-    room = _topic(client, pid, "handover")
+    room = _topic(client, pid, "two threads")
     reviewer = _add_agent(client, pid, handle="reviewer")
+    seat = _seat(client, room, reviewer)
 
     _turn(client, room, "你好")
     first_session = stub_hooks.last_resume_session_id
@@ -494,46 +518,10 @@ def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
     cheese_session = stub_hooks.last_resume_session_id
     assert first_session is None
 
-    r = client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["handle"] == "reviewer"
-
     # The reviewer starts a fresh conversation rather than inheriting 芝士's.
-    _turn(client, room, "还在吗")
+    _turn(client, room, f"<@{seat}> 还在吗")
     assert stub_hooks.last_resume_session_id is None
 
-    # ...and handing the room back finds 芝士's thread still there.
-    r = client.put(f"/topics/{room}/agent", json={"instance_id": None})
-    assert r.status_code == 200, r.text
+    # ...and 芝士's thread is still there when it is next up.
     _turn(client, room, "我回来了")
     assert stub_hooks.last_resume_session_id == cheese_session
-
-
-def test_switching_back_to_the_project_default_is_a_switch_too(client):
-    pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer")
-    room = _topic(client, pid)
-
-    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    r = client.put(f"/topics/{room}/agent", json={"instance_id": None})
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["handle"] == "cheese"
-    assert r.json()["data"]["inherited"] is True
-
-
-def test_setting_the_same_agent_again_keeps_the_conversation(client, stub_hooks):
-    """An idempotent PUT is not a handover — the thread carries on."""
-    pid = _project(client)
-    reviewer = _add_agent(client, pid, handle="reviewer")
-    room = _topic(client, pid)
-
-    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    _turn(client, room, "开工")
-    _turn(client, room, "继续")
-    resumed = stub_hooks.last_resume_session_id
-    assert resumed is not None
-
-    r = client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
-    assert r.status_code == 200, r.text
-    _turn(client, room, "还在")
-    assert stub_hooks.last_resume_session_id == resumed

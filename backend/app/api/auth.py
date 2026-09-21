@@ -32,7 +32,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
-from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
+from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
@@ -40,6 +40,7 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
 _log = get_logger("cheesex.auth")
@@ -168,6 +169,8 @@ class ActorResolver:
         )
         if credential_project is not None:
             agent_handle = await self._credentials.agent_handle(credential_project)
+        if agent_handle is not None and topic_id is not None:
+            agent_handle = await self.seated_agent(topic_id, agent_handle)
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
@@ -199,15 +202,36 @@ class ActorResolver:
         if self._screen_token:
             screen = resolve_screen_actor(device_hub, self._screen_token)
             if screen is not None:
+                handle, user_id = screen.agent_handle, screen.agent_user_id
+                if topic_id is not None:
+                    seated = await self.seated_agent(topic_id, handle)
+                    if seated != handle:
+                        user = await UserRepository(self._session).get_by_username(
+                            seated
+                        )
+                        handle, user_id = seated, user.id if user else None
                 return Actor(
-                    handle=screen.agent_handle,
-                    user_id=screen.agent_user_id,
-                    is_agent=True,
-                    via="cheese",
+                    handle=handle, user_id=user_id, is_agent=True, via="cheese"
                 )
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    async def seated_agent(self, topic_id: uuid.UUID, handle: str) -> str:
+        """A credential that names a room's stand-in seat acts as the agent
+        seated in that room.
+
+        ``cheese-<room hex>`` is derived from the room, not from any agent: it is
+        what a room-scoped token or a room's compute screen calls itself when
+        nothing told it which teammate it runs for. The teammate that answers
+        such a room is on its roster — the project's default when it is seated,
+        else the first agent there — so that is who the credential acts as. A
+        room that seats no agent keeps the stand-in, which then answers for
+        itself as it always did.
+        """
+        if handle != topic_agent_handle(topic_id):
+            return handle
+        return await TopicMemberService(self._session).resolve_agent_handle(topic_id)
 
     async def resolve_recipient(
         self,

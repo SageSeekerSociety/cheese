@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.oauth.models import UserOAuthConnection
@@ -86,18 +86,35 @@ class OAuthConnectionRepository:
         # rowcount exists on CursorResult returned by execute() for DML at runtime
         return result.rowcount > 0  # type: ignore[attr-defined]
 
-    async def get_for_update(self, connection_id: int) -> UserOAuthConnection | None:
-        """Row-locked read (``SELECT ... FOR UPDATE``) — serializes concurrent
-        token refreshers of the SAME connection so a second caller blocks
-        until the first's refresh transaction commits, then re-reads the
-        (now current) row instead of racing it with a stale refresh_token."""
-        stmt = (
-            select(UserOAuthConnection)
-            .where(UserOAuthConnection.id == connection_id)
-            .with_for_update()
+    async def get(self, connection_id: int) -> UserOAuthConnection | None:
+        return await self._session.get(UserOAuthConnection, connection_id)
+
+    async def replace_tokens_if_unchanged(
+        self,
+        connection_id: int,
+        *,
+        seen_refresh_token: str,
+        access_token: str,
+        refresh_token: str,
+        token_expires: datetime | None,
+    ) -> bool:
+        """Write refreshed tokens only while the stored refresh_token is still
+        the ciphertext the refresher read. False means another refresher
+        already replaced it, and its tokens are the live ones."""
+        result = await self._session.execute(
+            update(UserOAuthConnection)
+            .where(
+                UserOAuthConnection.id == connection_id,
+                UserOAuthConnection.refresh_token == seen_refresh_token,
+            )
+            .values(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_expires=token_expires,
+                updated_at=datetime.now(UTC),
+            )
         )
-        result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.rowcount > 0  # type: ignore[attr-defined]
 
     async def update_tokens(
         self,

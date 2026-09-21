@@ -2,6 +2,10 @@
 set -euo pipefail
 
 scenario="${APP_TIER_SCENARIO:-healthy}"
+if [[ "$*" == *"scripts.forge_event_public_key"* ]]; then
+  printf '{}\n'
+  exit 0
+fi
 tag="${APP_TIER_MAIN_SHA:-testsha}"
 
 if [ "${1:-}" = exec ] && [ -n "${APP_TIER_CLOUD_DEVICES:-}" ]; then
@@ -23,6 +27,16 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
 fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
+fi
+if [[ "$*" == *"scripts.migrate_forge"* ]]; then
+  if [[ "$*" == *" --check"* ]]; then
+    exit "${APP_TIER_FORGE_CHECK:-0}"
+  fi
+  exit "${APP_TIER_FORGE_APPLY:-0}"
+fi
+if [ "${1:-}" = ps ] && [[ "$*" == *"com.docker.compose.service=git"* ]]; then
+  printf 'legacy-git-container\n'
+  exit 0
 fi
 
 # Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
@@ -49,6 +63,12 @@ emit_named_rows() {
 }
 
 emit_contract_rows() {
+  if [ "${FORGE_EVENTS_LOCAL:-false}" = true ]; then
+    printf 'forge-events\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+  fi
+  if [ "$scenario" != forgejo_absent ]; then
+    printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
+  fi
   printf 'backend\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
@@ -75,6 +95,9 @@ if [ "${1:-}" = "compose" ]; then
 
   case "${1:-}" in
     ps)
+      if [ "${2:-}" = -q ] && [ "${3:-}" = forgejo ]; then
+        printf 'forgejo-container\n'
+      fi
       if [ "${2:-}" = -q ] && [ "$scenario" = stable_owner ] && \
         [ "${3:-}" = device-connection ]; then
         printf 'device-connection-container\n'

@@ -2,10 +2,10 @@
 import type {
   BranchProtection,
   BranchProtectionPatch,
-  GithubConnection,
+  ForgeAttribution,
+  ForgeConnection,
   OAuthConnectionInfo,
   ProjectMemberRow,
-  UpstreamSyncResult,
 } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -16,18 +16,21 @@ import {
   connectGithubRepo as apiConnectGithubRepo,
   deleteOAuthConnection,
   getBranchProtection,
+  getForgeAttribution,
+  getForgeConnection,
   getGithubAccountAuthorizeUrl,
-  getGithubConnection,
   getProject,
   getUpstream,
   listOAuthConnections,
   listProjectMembers,
   setBranchProtection,
+  setForgeAttribution,
   setUpstream,
-  syncUpstream,
 } from '../api'
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
+import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
+import CreditsPanel from '../components/settings/CreditsPanel.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
 import {
   explainAccountLinkFailure,
@@ -49,14 +52,41 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
 const upstreamUrl = ref('')
-const upstreamSaved = ref<string | null>(null)
 const savingUpstream = ref(false)
-const syncing = ref(false)
-const syncResult = ref<UpstreamSyncResult | null>(null)
 
 // GitHub App install flow (#192): repo connection is read-only status here —
 // connecting/reconnecting happens on github.com, not in this form.
-const githubConnection = ref<GithubConnection | null>(null)
+const forgeConnection = ref<ForgeConnection | null>(null)
+const attribution = ref<ForgeAttribution | null>(null)
+const attributionSaving = ref(false)
+const attributionError = ref<string | null>(null)
+const attributionChoice = computed(() =>
+  attribution.value?.requester_coauthor == null ? 'default' : attribution.value.requester_coauthor ? 'on' : 'off'
+)
+const attributionItems = computed(() => [
+  {
+    title: t('projects.attribution.followSystem', {
+      state: t(
+        attribution.value?.deployment_default ? 'projects.attribution.optionOn' : 'projects.attribution.optionOff'
+      ),
+    }),
+    value: 'default',
+  },
+  { title: t('projects.attribution.optionOn'), value: 'on' },
+  { title: t('projects.attribution.optionOff'), value: 'off' },
+])
+
+async function saveAttribution(choice: string) {
+  attributionSaving.value = true
+  attributionError.value = null
+  try {
+    attribution.value = await setForgeAttribution(props.projectId, choice === 'default' ? null : choice === 'on')
+  } catch (e) {
+    attributionError.value = e instanceof Error ? e.message : t('projects.attribution.saveFailed')
+  } finally {
+    attributionSaving.value = false
+  }
+}
 const connectingGithubRepo = ref(false)
 const connectingGithubAccount = ref(false)
 // Set from ?github_install=/&github_account= on the redirect back from our
@@ -230,15 +260,16 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, upP, ghP] = await Promise.all([
+    const [proj, upP, forge, credit] = await Promise.all([
       getProject(props.projectId),
       getUpstream(props.projectId),
-      getGithubConnection(props.projectId),
+      getForgeConnection(props.projectId),
+      getForgeAttribution(props.projectId),
     ])
     projectName.value = proj.name
-    upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
-    githubConnection.value = ghP
+    forgeConnection.value = forge
+    attribution.value = credit
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('projects.settings.loadFailed')
   } finally {
@@ -249,29 +280,13 @@ async function load() {
 // Save (or with an empty field, unlink) the upstream repo URL.
 async function saveUpstream() {
   savingUpstream.value = true
-  syncResult.value = null
   try {
     const r = await setUpstream(props.projectId, upstreamUrl.value.trim())
-    upstreamSaved.value = r.url
     upstreamUrl.value = r.url ?? ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('projects.upstream.saveFailed')
   } finally {
     savingUpstream.value = false
-  }
-}
-
-// Pull the upstream's new commits into the project repo (merge; conflicts abort
-// cleanly and show up in the result line).
-async function doSyncUpstream() {
-  syncing.value = true
-  syncResult.value = null
-  try {
-    syncResult.value = await syncUpstream(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('projects.upstream.syncFailed')
-  } finally {
-    syncing.value = false
   }
 }
 
@@ -285,7 +300,7 @@ async function connectGithubRepo() {
     // backend looks for an installation covering the upstream repo itself.
     const res = await apiConnectGithubRepo(props.projectId)
     if (res.connected) {
-      githubConnection.value = { connected: true, repo: res.repo, account: res.account }
+      forgeConnection.value = await getForgeConnection(props.projectId)
       githubRepoNotice.value = { type: 'success', text: t('projects.repo.connected', { repo: res.repo }) }
       connectingGithubRepo.value = false
       return
@@ -391,60 +406,20 @@ watch(
       </v-alert>
 
       <template v-else>
+        <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
+             规则 / 接仓库。原来是六块竖着铺满一页，读的人得自己认哪块是哪块；而
+             没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
+        <h2 class="t-title settings-group">{{ t('projects.settings.groups.teammates') }}</h2>
+        <AgentTeamSettings :project-id="projectId" />
+
+        <h2 class="t-title settings-group">{{ t('projects.settings.groups.runtime') }}</h2>
         <section class="page-section">
           <ProjectComputeSettings :project-id="projectId" />
         </section>
         <ProjectEnvironmentSettings :project-id="projectId" />
+        <CreditsPanel :project-id="projectId" />
 
-        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
-            <span class="page-section-title" data-section="upstream">{{ t('projects.upstream.title') }}</span>
-          </div>
-          <div class="page-section-body">
-            <div class="d-flex align-center" style="gap: 8px">
-              <v-text-field
-                v-model="upstreamUrl"
-                autocomplete="off"
-                density="compact"
-                variant="outlined"
-                hide-details
-                :placeholder="t('projects.upstream.placeholder')"
-                style="flex: 1"
-                @keydown.enter="saveUpstream"
-              />
-              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream">{{
-                t('global.save')
-              }}</v-btn>
-              <v-btn
-                size="small"
-                color="primary"
-                variant="flat"
-                :disabled="!upstreamSaved"
-                :loading="syncing"
-                @click="doSyncUpstream"
-              >
-                {{ t('projects.upstream.sync') }}
-              </v-btn>
-            </div>
-            <p
-              v-if="syncResult"
-              class="t-body mt-2"
-              style="font-size: 0.8rem"
-              :class="syncResult.synced ? 'c-muted' : 'text-error'"
-            >
-              <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
-                {{ t('projects.upstream.syncedCommits', { count: syncResult.commits ?? 0 }) }}
-              </template>
-              <template v-else-if="syncResult.synced">{{ t('projects.upstream.upToDate') }}</template>
-              <template v-else>{{ t('projects.upstream.syncFailed', { reason: syncResult.reason }) }}</template>
-            </p>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              {{ t('projects.upstream.description') }}
-            </p>
-          </div>
-        </section>
+        <h2 class="t-title settings-group">{{ t('projects.settings.groups.delivery') }}</h2>
 
         <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。
              GitHub 自己开了保护时同名规则灰掉（拍板②），说明见 ghEnforced 的注释。 -->
@@ -674,9 +649,66 @@ watch(
           </div>
         </section>
 
+        <h2 class="t-title settings-group">{{ t('projects.settings.groups.repository') }}</h2>
+
+        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
+        <section v-if="forgeConnection?.kind === 'github_app' && !forgeConnection.connected" class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
+            <span class="page-section-title" data-section="upstream">{{ t('projects.upstream.title') }}</span>
+          </div>
+          <div class="page-section-body">
+            <div class="d-flex align-center" style="gap: 8px">
+              <v-text-field
+                v-model="upstreamUrl"
+                autocomplete="off"
+                density="compact"
+                variant="outlined"
+                hide-details
+                :placeholder="t('projects.upstream.placeholder')"
+                style="flex: 1"
+                @keydown.enter="saveUpstream"
+              />
+              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream">{{
+                t('global.save')
+              }}</v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              {{ t('projects.upstream.description') }}
+            </p>
+          </div>
+        </section>
+
+        <section v-if="forgeConnection?.kind === 'forgejo'" class="page-section" data-testid="forge-repository">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
+            <span class="page-section-title">{{ t('projects.forge.title') }}</span>
+          </div>
+          <div class="page-section-body">
+            <div class="d-flex align-center flex-wrap" style="gap: 8px">
+              <v-icon v-if="forgeConnection.connected" size="18" color="success">mdi-check-circle</v-icon>
+              <span class="t-body">{{
+                forgeConnection.connected ? t('projects.forge.hosted') : t('projects.forge.preparing')
+              }}</span>
+              <v-spacer />
+              <v-btn
+                v-if="forgeConnection.url"
+                :href="forgeConnection.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                size="small"
+                variant="tonal"
+              >
+                {{ t('projects.forge.open') }}
+              </v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">{{ t('projects.forge.switchHint') }}</p>
+          </div>
+        </section>
+
         <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
              git 操作走这个 installation 的短时 token -->
-        <section class="page-section">
+        <section v-if="forgeConnection?.kind === 'github_app'" class="page-section" data-testid="github-repository">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-github</v-icon>
             <span class="page-section-title" data-section="repo">{{ t('projects.repo.title') }}</span>
@@ -692,12 +724,12 @@ watch(
             >
               {{ githubRepoNotice.text }}
             </v-alert>
-            <div v-if="githubConnection?.connected" class="d-flex align-center" style="gap: 8px">
+            <div v-if="forgeConnection.connected" class="d-flex align-center" style="gap: 8px">
               <v-icon size="18" color="success">mdi-check-circle</v-icon>
               <span class="t-body">
                 <i18n-t keypath="projects.repo.connected" scope="global" tag="span">
                   <template #repo
-                    ><strong>{{ githubConnection.repo }}</strong></template
+                    ><strong>{{ forgeConnection.repo }}</strong></template
                   >
                 </i18n-t>
               </span>
@@ -721,6 +753,34 @@ watch(
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
               {{ t('projects.repo.description') }}
+            </p>
+          </div>
+        </section>
+
+        <section class="page-section" data-testid="forge-attribution">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-account-edit-outline</v-icon>
+            <span class="page-section-title">{{ t('projects.attribution.title') }}</span>
+          </div>
+          <div class="page-section-body">
+            <v-alert v-if="attributionError" type="error" density="compact" class="mb-3">{{
+              attributionError
+            }}</v-alert>
+            <v-select
+              autocomplete="off"
+              :model-value="attributionChoice"
+              :items="attributionItems"
+              :label="t('projects.attribution.label')"
+              :loading="attributionSaving"
+              :disabled="attributionSaving"
+              hide-details
+              @update:model-value="saveAttribution"
+            />
+            <p class="t-body c-muted mt-2">
+              {{ t(attribution?.effective ? 'projects.attribution.on' : 'projects.attribution.off') }}
+            </p>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              {{ t('projects.attribution.hint') }}
             </p>
           </div>
         </section>
@@ -840,6 +900,15 @@ watch(
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
+}
+/* 组标题：比区块标题重一档，前后留白把这一页切成四段读得出来的东西。第一组不
+   留上边距——它紧接着页头。 */
+.settings-group {
+  margin: 32px 0 12px;
+  color: var(--ink);
+}
+.settings-group:first-of-type {
+  margin-top: 0;
 }
 .page-section-title {
   font-size: 12px;

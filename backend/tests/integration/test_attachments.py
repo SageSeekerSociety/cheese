@@ -1,9 +1,8 @@
 """图片输入 (chat image attachments): upload → attachment block → 芝士 sees it.
 
-The image is a REAL worktree file (所有产出都是 git): POST /attachments writes
-the bytes under uploads/, the WS message references it, the timeline gains an
-attachment block, and the agent prompt points 芝士 at the file (its sandbox
-Read tool is image-capable).
+POST /attachments 把字节收进项目的资料库，并在这个房间的文件区 uploads/ 下留一份。
+消息引用的是后者：时间线上多一个 attachment block，提示词把 芝士 指向那个文件（沙箱
+里的 Read 能看图）。资料库本身见 test_library.py。
 """
 
 from urllib.parse import quote
@@ -58,8 +57,8 @@ def test_upload_then_raw_roundtrip(client):
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
     assert att["mime"] == "image/png"
-    assert att["path"].startswith("uploads/")
-    assert att["path"].endswith(".png")
+    # 挑出来的那一份按它自己的名字进资料库，消息里带的就是那个地址。
+    assert att["path"] == "library/screenshot.png"
 
     raw = client.get(
         f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
@@ -110,8 +109,8 @@ def test_upload_and_download_documents(client, filename, content, mime):
         f"/projects/{project_id}/file/raw",
         params={"path": att["path"], "topic": topic_id, "download": "true"},
     )
-    # Room uploads use the attachment route; task files require a task selection.
-    assert workspace.status_code == 422
+    # Room uploads are not files in the project's committed repository.
+    assert workspace.status_code == 404
 
 
 def test_document_reaches_agent_as_file(client, stub_hooks):
@@ -271,7 +270,7 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     att_block = user_frames[1]
     assert att_block["content"] == att["path"]
     assert att_block["mime_type"] == "image/png"
-    assert att_block["author_type"] == "human"
+    assert not att_block["author"].startswith("cheese")
 
     # The prompt tells 芝士 the image is attached INLINE (images= carries the
     # content to the model) and where the file lives in its workspace.

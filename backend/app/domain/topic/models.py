@@ -91,21 +91,11 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # WHICH agent works here. NULL = the project's default, so a topic nobody
-    # chose an agent for still resolves without carrying a copy of the default
-    # around (and follows the project when the default changes).
-    #
-    # Changing it destroys nothing: a conversation is keyed by (topic, agent) in
-    # `agent_sessions`, so the new agent looks up a key with no row and starts
-    # fresh while the old one's row stays where it is.
-    agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("agent_instances.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
-    # NULL = explicit project default, then the deployment default. Switchable only
-    # until the topic has run — i.e. until it has an `agent_sessions` row — after
+    # Default compute pool for the sessions started in this room. NULL = explicit
+    # project default, then the deployment default. It is a default and not a
+    # placement: where a conversation actually runs is its own session's business
+    # (`agent_sessions.runtime_location` / `.work_lease`). Switchable only until
+    # the room has run — i.e. until a session here has a resume token — after
     # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # A room keeps its script revision when project settings change.
@@ -151,8 +141,14 @@ class Topic(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True, index=True
     )
     resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
-    # Session ownership is independent of the room's execution-device binding.
-    # The resource UUID pins both locations for recovery and delayed controls.
+    # Its two facts moved onto the session that owns them
+    # (`agent_sessions.work_lease` / `.runtime_location`). No code writes it any
+    # more — the one write left is a test fixture standing in for the previous
+    # image — and the one read left is the deploy window's fallback in
+    # `device/owner_reads.py session_places()`, which is the only record of a
+    # room that image placed. P19 backfills once more and drops the column and
+    # that branch in the same commit; until then this is a column to delete,
+    # never one to assume empty.
     session_placement: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
@@ -167,6 +163,11 @@ class RoomCleanup(UuidPk, Timestamps, Base):
     state: Mapped[str] = mapped_column(String(16), default="pending")
     resources: Mapped[list] = mapped_column(JSON, default=list)
     last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Which sweep is working on this cleanup, until when (see retire.py).
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    lease_holder: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class RawTranscript(UuidPk, Timestamps, Base):

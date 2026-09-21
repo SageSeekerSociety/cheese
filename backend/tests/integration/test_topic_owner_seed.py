@@ -23,7 +23,6 @@ import uuid
 from sqlalchemy import delete, select
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
@@ -42,6 +41,12 @@ def _project(client, owner: str | None) -> dict:
 def _roster(client, topic_id: str) -> dict[str, str]:
     rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
     return {m["member_handle"]: m["role"] for m in rows}
+
+
+def _agent_roles(client, topic_id: str) -> list[str]:
+    """The roles of the agents seated in the room."""
+    rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    return [m["role"] for m in rows if m["agent"]]
 
 
 def _create_topic(client, project_id: str, **kw) -> dict:
@@ -150,9 +155,9 @@ def test_topic_created_by_cheese_falls_back_to_project_owner(client):
 
     roster = _roster(client, topic["id"])
     assert roster.get("alice") == "owner"
-    # The room's agent seat is THIS topic's 分身 (``cheese-<topic hex>``), not the
-    # shared platform ``cheese`` account — that account no longer sits in rooms.
-    assert roster.get(topic_agent_handle(uuid.UUID(topic["id"]))) == "member"
+    # The room seats the project's default agent as a member — not the shared
+    # platform ``cheese`` account, which no longer sits in rooms.
+    assert _agent_roles(client, topic["id"]) == ["member"]
 
 
 def test_topic_created_anonymously_still_gets_an_owner(client):
@@ -199,7 +204,7 @@ def test_a_room_with_nobody_to_inherit_from_is_still_created(client):
 
     roster = _roster(client, topic["id"])
     assert "owner" not in roster.values()
-    assert roster.get(topic_agent_handle(uuid.UUID(topic["id"]))) == "member"
+    assert _agent_roles(client, topic["id"]) == ["member"]
 
 
 def test_work_dispatched_in_an_agent_created_room_is_not_ownerless(client):

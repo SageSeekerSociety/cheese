@@ -76,12 +76,6 @@ describe('公开首页', () => {
     expect(view.getByRole('heading', { name: '让实践育人，发生在真实项目里。' })).toBeTruthy()
   })
 
-  it('会话恢复成功后进入用户空间', async () => {
-    const { router } = await mount()
-    AccountService.loggedIn = true
-    await waitFor(() => expect(router.currentRoute.value.name).toBe('HomeSpaces'))
-  })
-
   it('keeps the introduction accessible to signed-in users and links back to work', async () => {
     AccountService.loggedIn = true
     const view = await mount('/about')

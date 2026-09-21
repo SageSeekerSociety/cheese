@@ -279,7 +279,8 @@ describe('讲英文', () => {
     expect(buttonByText(c, 'Save')).toBeUndefined()
 
     // 这一格没有 diff 可看时才有意义——它改过，所以先切到文本那一面。
-    await fireEvent.click(buttonByText(c, 'Edit')!)
+    // 只读的那些文件，这一面的名字是「全文」不是「编辑」：按不动的东西不该叫编辑。
+    await fireEvent.click(buttonByText(c, 'Full text')!)
     await flush()
     expect(text(c.querySelector('.file-blob__title'))).toBe("Binary file — it can't be edited as text")
     expect(text(c.querySelector('.file-blob__note'))).toBe(

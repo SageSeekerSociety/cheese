@@ -11,11 +11,12 @@
 //
 // 预览和改动两格用的是同一个组件：一处修订算一条这件事只能有一个答案，两份实现走散
 // 的表现是读者点了第 2 条、生效的是第 3 条。
-import type { DocumentRevision } from '../../../cx_types'
+import type { DocumentRevision, FileSource } from '../../../cx_types'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { decideDocumentRevisions, documentRevisions } from '../../../api'
+import { isLibraryPath } from '../../../lib/library'
 
 import { t } from '@/i18n'
 
@@ -27,13 +28,19 @@ const props = withDefaults(
     version?: string | null
     /** 从哪个库读：某个任务的工作树，还是房间自己的文件（null）。 */
     task?: string | null
+    source?: FileSource
+    readOnly?: boolean
   }>(),
-  { version: null, task: null }
+  { version: null, task: null, source: 'live', readOnly: false }
 )
 
 // 处理完一条，文件就变了：宿主要重画那一页，而它是按文件版本缓存的——版本这时还没
 // 变（是这里改的，不是芝士改的），所以要明说一句。
 const emit = defineEmits<{ (e: 'decided'): void }>()
+
+// 资料库里的那一份是用户给进来的原件，只读——修订照样列出来（它们是这份文档的一部
+// 分，读者有权看见），但处理不了：接受一处修订会改写所有房间都在引用的那一份。
+const readOnly = computed(() => props.readOnly || props.source === 'committed' || isLibraryPath(props.path ?? ''))
 
 const revisions = ref<DocumentRevision[]>([])
 const error = ref('')
@@ -50,15 +57,18 @@ async function load() {
     listedKey = ''
     return
   }
-  const key = `${tid}:${props.task ?? ''}:${path}:${props.version ?? ''}`
+  const key = `${tid}:${props.task ?? ''}:${props.source}:${path}:${props.version ?? ''}`
   if (key === listedKey) return
   listedKey = key
+  revisions.value = []
   error.value = ''
   try {
-    const read = await documentRevisions(tid, path, props.task)
+    const read = await documentRevisions(tid, path, props.task, props.source)
+    if (listedKey !== key) return
     revisions.value = read.revisions
     listedVersion = read.version
   } catch (e) {
+    if (listedKey !== key) return
     // 读不到修订不该把文档也弄没：文档本身还好好地显示着。
     revisions.value = []
     listedVersion = ''
@@ -69,7 +79,7 @@ async function load() {
 async function decide(decision: { accept?: number[]; reject?: number[] }) {
   const tid = props.topicId
   const path = props.path
-  if (!tid || !path) return
+  if (!tid || !path || readOnly.value) return
   deciding.value += 1
   error.value = ''
   try {
@@ -97,9 +107,13 @@ function reads(row: DocumentRevision): string {
   return t('workspace.revisions.deleted', { removed: row.removed })
 }
 
-watch([() => props.topicId, () => props.path, () => props.version, () => props.task], () => void load(), {
-  immediate: true,
-})
+watch(
+  [() => props.topicId, () => props.path, () => props.version, () => props.task, () => props.source],
+  () => void load(),
+  {
+    immediate: true,
+  }
+)
 
 defineExpose({ reload: load })
 </script>
@@ -116,6 +130,7 @@ defineExpose({ reload: load })
       }}</span>
       <v-spacer />
       <v-btn
+        v-if="!readOnly"
         size="x-small"
         variant="text"
         class="c-muted"
@@ -125,6 +140,7 @@ defineExpose({ reload: load })
         {{ t('workspace.revisions.acceptAll') }}
       </v-btn>
       <v-btn
+        v-if="!readOnly"
         size="x-small"
         variant="text"
         class="c-muted"
@@ -134,6 +150,10 @@ defineExpose({ reload: load })
         {{ t('workspace.revisions.rejectAll') }}
       </v-btn>
     </div>
+
+    <p v-if="readOnly && revisions.length" class="revs__note t-meta">
+      {{ t(isLibraryPath(path ?? '') ? 'workspace.revisions.libraryReadOnly' : 'workspace.revisions.readOnlyNote') }}
+    </p>
 
     <ul v-if="revisions.length" class="revs__list">
       <li v-for="row in revisions" :key="row.number" class="revs__item">
@@ -146,7 +166,7 @@ defineExpose({ reload: load })
             })
           }}
         </div>
-        <div class="revs__acts">
+        <div v-if="!readOnly" class="revs__acts">
           <v-btn size="x-small" variant="text" :disabled="deciding > 0" @click="decide({ accept: [row.number] })">
             {{ t('workspace.revisions.accept') }}
           </v-btn>
@@ -183,6 +203,10 @@ defineExpose({ reload: load })
 }
 .revs__count {
   color: var(--muted);
+}
+.revs__note {
+  margin: 0 0 8px;
+  color: var(--faint);
 }
 .revs__list {
   list-style: none;

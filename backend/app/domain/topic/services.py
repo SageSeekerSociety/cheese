@@ -30,6 +30,7 @@ from app.domain.agent_instance.services import (
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.services import AlertService
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
@@ -38,9 +39,14 @@ from app.domain.block.models import (
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import looks_like_agent_handle, names_a_person
+from app.domain.identity.handles import (
+    CHEESE_NAME,
+    agent_instance_handle,
+    looks_like_agent_handle,
+    names_a_person,
+)
 from app.domain.membership.services import MemberService
-from app.domain.project.models import Project, ProjectRole
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
@@ -170,10 +176,13 @@ def _is_mid_turn_block(block: Block) -> bool:
     this asks what the block IS rather than parsing its text. Nothing healthy
     leaves one as a topic's last word: the turn either keeps working (another
     action, a message) or fails into a system event.
+
+    「是不是芝士的」按署名判：事件行的档位只说得出「参与者还是平台」，而一个房间
+    里的参与者有好几个。
     """
     return (
         block.kind == BlockKind.event
-        and block.author_type == AuthorType.ai
+        and looks_like_agent_handle(block.author)
         and bool((block.meta or {}).get("tool"))
     )
 
@@ -255,40 +264,16 @@ class TopicService:
         return handle if await IdentityService(self._session).is_agent(handle) else None
 
     async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
-        """Which agent works in this room — its own, else the project's."""
+        """The agent a turn here runs as when nobody was addressed.
+
+        A room does not have an agent; a room's fallback is the project's
+        default, and a private 1:1 names its own teammate. Nothing hands a room
+        to an agent any more — an agent is seated on the roster, and addressed.
+        """
         project = await self._projects.get(topic.project_id)
         if project is None:
             return IMPLICIT_DEFAULT
         return await AgentInstanceService(self._session).for_topic(topic, project)
-
-    async def set_agent(
-        self, topic_id: uuid.UUID, instance_id: uuid.UUID | None
-    ) -> tuple[Topic, ResolvedAgent]:
-        """Hand this topic to a different agent.
-
-        Nothing is destroyed. A conversation is keyed by (topic, agent) in
-        ``agent_sessions``, so the incoming agent looks up a key that has no row
-        and starts fresh, the outgoing agent's row stays exactly where it is, and
-        handing the topic back finds it again. It used to be otherwise — one
-        session column per topic meant a switch had to erase the thread, and the
-        caller had to warn about it first.
-
-        Passing ``None`` hands the topic back to the project's default.
-        """
-        topic = await self.get_or_404(topic_id)
-        agents = AgentInstanceService(self._session)
-        instance = (
-            await agents.get_in_project(
-                project_id=topic.project_id, instance_id=instance_id
-            )
-            if instance_id is not None
-            else None
-        )
-        wanted = instance.id if instance is not None else None
-        if topic.agent_instance_id != wanted:
-            topic.agent_instance_id = wanted
-            await self._session.flush()
-        return topic, await self.resolve_agent(topic)
 
     async def create(
         self,
@@ -297,7 +282,6 @@ class TopicService:
         title: str,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
-        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         project = await self._projects.get(project_id)
         if project is None:
@@ -312,20 +296,12 @@ class TopicService:
             if parent is None:
                 raise NotFoundError("Parent topic not found")
             _require_room(parent)
-        # An explicit agent is checked to be this project's; NULL means "the
-        # project's default", which follows the project if that default changes
-        # later — a copy taken now would silently stop following it.
-        if agent_instance_id is not None:
-            await AgentInstanceService(self._session).get_in_project(
-                project_id=project_id, instance_id=agent_instance_id
-            )
         topic = await self._repo.add(
             project_id=project_id,
             title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
-            agent_instance_id=agent_instance_id,
         )
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
@@ -417,55 +393,31 @@ class TopicService:
         """A 1:1 private chat (spec §1).
 
         With ``peer_handle`` → a person-to-person DM between the two humans
-        (shared by both). Without → the member's 1:1 with the AI teammate named
-        by ``agent_handle``, or with the project's default when nobody named
-        one. One room per teammate, and it stays that teammate's afterwards.
+        (shared by both, so the pair is canonicalized). Without → the member's
+        1:1 with the AI teammate named by ``agent_handle``, or with the
+        project's default when nobody named one. A teammate sits in its DM
+        under its seat handle, the way a person sits under theirs, so a DM is
+        two handles either way and stays that teammate's afterwards.
         """
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        agent_instance_id = None
-        agent_display_name = None
-        if peer_handle is None:
-            agent = await AgentInstanceService(self._session).for_handle(
-                project, agent_handle
-            )
-            agent_instance_id = agent.id
-            agent_display_name = agent.display_name
-            if project.default_agent_instance_id == agent.id:
-                # This member may still have the DM from before rooms named a
-                # teammate. It is this agent's conversation — the default is who
-                # has been answering it — so hand it over rather than leaving it
-                # behind and opening an empty second one.
-                await self._repo.pin_unpinned_agent_dms(
-                    project_id, agent.id, user_handle=user_handle
-                )
+        if peer_handle is not None:
+            owner, peer = sorted((user_handle, peer_handle))
+            title = f"私聊 · {owner} · {peer}"
+        else:
+            agents = AgentInstanceService(self._session)
+            agent = await agents.for_handle(project, agent_handle)
+            await agents.ensure_identity(agent)
+            owner, peer = user_handle, agent_instance_handle(agent.id)
+            title = f"与{agent.display_name or CHEESE_NAME}私聊 · {owner}"
         topic = await self._repo.get_or_create_private(
-            project_id=project_id,
-            user_handle=user_handle,
-            peer_handle=peer_handle,
-            agent_instance_id=agent_instance_id,
-            agent_display_name=agent_display_name,
+            project_id=project_id, owner=owner, peer=peer, title=title
         )
         await TopicMemberService(self._session).seed_private(
-            topic.id,
-            owner_handle=topic.private_owner or user_handle,
-            peer_handle=topic.private_peer,
+            topic.id, owner_handle=owner, peer_handle=peer
         )
         return topic
-
-    async def pin_agent_dms_to_current_default(self, project: Project) -> None:
-        """Settle who owns every unpinned 私聊 in this project, before the
-        project's default teammate changes.
-
-        An unpinned DM is answered by the default, so the moment the default
-        moves is the last moment its history can still be attributed correctly.
-        Called from the agent side (choosing a new default, retiring the current
-        one); a no-op once every DM here has been opened at least once.
-        """
-        agents = AgentInstanceService(self._session)
-        current = await agents.materialize_default(project)
-        await self._repo.pin_unpinned_agent_dms(project.id, current.id)
 
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
@@ -685,10 +637,16 @@ class TopicService:
             # Why it stopped has to be readable IN the thread that stopped: the
             # room's own archive note lands on the room, and whoever opens the
             # thread later sees work that simply ended mid-sentence.
-            await self._blocks.add(
+            landed = landing(
+                EventAbout.task,
                 project_id=thread.project_id,
-                topic_id=topic.id,
+                room_id=topic.id,
                 task_id=thread.id,
+            )
+            await self._blocks.add(
+                project_id=landed.project_id,
+                topic_id=landed.topic_id,
+                task_id=landed.task_id,
                 author=by,
                 author_type=AuthorType.system,
                 content=f"随父话题「{topic.title}」一同归档",
@@ -704,6 +662,17 @@ class TopicService:
                 continue
             await self._archive_one(child, by=by, cascaded_from=topic.title)
             await self._archive_children(child, by=by)
+
+    async def _overview_room(self, project_id: uuid.UUID) -> uuid.UUID:
+        """项目总览那个房间（`TopicKind.root`）——项目的事落在这里。
+
+        总览是哪个房间只有项目行知道，`landing()` 读不到它，所以这一句由调用点
+        负责：从 `Project.root_topic_id` 取，不自己挑一个房间。
+        """
+        project = await self._projects.get(project_id)
+        assert project is not None  # 房间的 project_id 是外键，项目行必在。
+        assert project.root_topic_id is not None  # create() 一定播种了总览。
+        return project.root_topic_id
 
     async def _archive_one(
         self, topic: Topic, *, by: str, cascaded_from: str | None = None
@@ -728,21 +697,29 @@ class TopicService:
         # 去向与理由见 review/archive.py 的模块 docstring。
         from app.domain.review.archive import close_cards_for_archived_topic
 
+        overview_room = await self._overview_room(topic.project_id)
         await close_cards_for_archived_topic(
             self._session,
             topic_id=topic.id,
             project_id=topic.project_id,
             topic_title=topic.title,
+            overview_room_id=overview_room,
             by=by,
         )
         note = (
-            f"随父话题「{cascaded_from}」一同归档"
+            f"房间「{topic.title}」随父话题「{cascaded_from}」一同归档"
             if cascaded_from
-            else f"<@{by}> 归档了话题"
+            else f"<@{by}> 归档了房间「{topic.title}」"
+        )
+        # 房间归档是项目的事，不是这个房间的事（结论 14）：房间关掉之后没人再打开
+        # 它的时间线，而「少了一个房间」恰恰是项目总览要记的一行。
+        landed = landing(
+            EventAbout.project, project_id=topic.project_id, room_id=overview_room
         )
         await self._blocks.add(
-            project_id=topic.project_id,
-            topic_id=topic.id,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=by,
             author_type=AuthorType.system,
             content=note,
@@ -771,7 +748,6 @@ class TopicService:
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "complete"}:
                 topic.resource_id = uuid.uuid4()
-                topic.session_placement = None
                 await AgentSessionService(self._session).forget_room(topic.id)
                 from app.domain.machine.services import MachineService
 
@@ -780,12 +756,20 @@ class TopicService:
         topic.archived_at = None
         topic.cleanup_due_at = None
         topic.cleanup_id = None
-        await self._blocks.add(
+        # 归档落总览，取消归档就落在同一条线上：一个房间回到项目里，和它离开项目
+        # 是同一件事的两面，读的人也在同一个地方读。
+        landed = landing(
+            EventAbout.project,
             project_id=topic.project_id,
-            topic_id=topic.id,
+            room_id=await self._overview_room(topic.project_id),
+        )
+        await self._blocks.add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=by,
             author_type=AuthorType.system,
-            content=f"<@{by}> 取消归档，话题恢复活跃",
+            content=f"<@{by}> 取消归档，房间「{topic.title}」恢复活跃",
             kind=BlockKind.event,
             meta={"platform": True},
         )
@@ -892,7 +876,6 @@ class TopicService:
             kind=TopicKind.topic,
             created_by=created_by,
             upgraded_from_block_id=block.id,
-            agent_instance_id=parent.agent_instance_id,
         )
         # Same fallback ladder as create()/dispatch_task — 升级 is usually the
         # 分身's own suggestion, and this route does not resolve an actor at all
@@ -950,13 +933,14 @@ class TopicService:
         reads the live row (`GET /topics/{id}/tasks`) for that, which is also
         where the derived markers get theirs — one answer, not two.
         """
+        # The ROOM's main line: the whole point is that the room sees the work
+        # leave. Filing it on the thread would put it exactly where everyone not
+        # doing the work is not looking.
+        landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
         return await self._blocks.add(
-            project_id=room.project_id,
-            topic_id=room.id,
-            # The ROOM's main line: the whole point is that the room sees the
-            # work leave. Filing it on the thread would put it exactly where
-            # everyone not doing the work is not looking.
-            task_id=None,
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author="system",
             author_type=AuthorType.system,
             content=f"派出一条活：{task.title}",
@@ -1165,7 +1149,7 @@ class TopicService:
         content: str,
         author: str,
         expected_version: int,
-        author_type: AuthorType = AuthorType.human,
+        author_type: AuthorType = AuthorType.participant,
     ) -> tuple[Block, Block | None]:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
@@ -1224,7 +1208,8 @@ class TopicService:
         # product copy: every topic's 分身 authors under its own
         # ``cheese-<topic hex>`` handle, and a raw handle is not what a reader
         # should see — one familiar name, whichever 分身 wrote it.
-        actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
+        by_agent = looks_like_agent_handle(author)
+        actor = "芝士" if by_agent else f"<@{author}>"
         # What the same event says to 芝士, written here because this is the code
         # that moved the document. It locates the change and does NOT carry it:
         # a document pushed into a running turn displaces the work instead of
@@ -1233,7 +1218,7 @@ class TopicService:
         # 芝士's own edit is not news to 芝士 — it wrote the version it is holding.
         for_agent = (
             None
-            if author_type is AuthorType.ai
+            if by_agent
             else (
                 f"实况文档已被 {actor} 更新至第 {doc.doc_version} 版，"
                 f"{summarize_doc_change(previous_content, content)}。"
@@ -1241,9 +1226,15 @@ class TopicService:
                 "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
-        notice = await self._blocks.add(
+        landed = landing(
+            EventAbout.room,
             project_id=topic.project_id,
-            topic_id=place.room_id,
+            room_id=place.room_id,
+        )
+        notice = await self._blocks.add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
             author=author,
             author_type=AuthorType.system,
             content=f"{actor} 编辑了文档",
@@ -1255,7 +1246,6 @@ class TopicService:
                 "platform": True,
                 "action": "doc",
                 "doc_version": doc.doc_version,
-                "editor_type": author_type.value,
                 AGENT_NOTICE_META_KEY: for_agent,
                 "detail_label": "查看本次修改",
                 "detail": "\n".join(
@@ -1330,7 +1320,7 @@ class TopicService:
             topic_id=target.room_id,
             task_id=target.id,
             author=author,
-            author_type=AuthorType.ai,
+            author_type=AuthorType.participant,
             content=f"【{label}｜{sender.title}】\n{text}",
             kind=BlockKind.message,
             refs=[str(sender.room_id)],

@@ -1,21 +1,26 @@
 """Async SQLAlchemy engine, session factory, and declarative base."""
 
 import json
+import logging
 import os
+import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Fusion merge (A6): ONE declarative Base / metadata across the whole app so
 # cross-domain FKs resolve (e.g. cheesex agent_bindings.user_id -> main's user).
@@ -67,6 +72,55 @@ engine = create_async_engine(
     **_engine_kwargs,
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+
+def pool_status(target: AsyncEngine | None = None) -> dict[str, int] | None:
+    """How much of a process's pool is in use right now; None under NullPool."""
+    pool = (target or engine).pool
+    if not isinstance(pool, QueuePool):
+        return None
+    return {
+        "size": pool.size(),
+        "max_overflow": pool._max_overflow,
+        "checked_out": pool.checkedout(),
+        "overflow": max(pool.overflow(), 0),
+    }
+
+
+def warn_when_pool_saturates(target: AsyncEngine, *, every_seconds: float = 60) -> None:
+    """Log once per interval when a checkout takes the pool's last slot.
+
+    That checkout is the moment the next request starts waiting on
+    db_pool_timeout_s, and the log line is the only sign of it short of the
+    TimeoutError the waiter gets. Rate-limited so a saturated pool does not
+    also flood the log.
+    """
+    logged_at = 0.0
+
+    @event.listens_for(target.sync_engine, "checkout")
+    def _on_checkout(dbapi_connection, connection_record, connection_proxy):
+        nonlocal logged_at
+        status = pool_status(target)
+        if status is None:
+            return
+        ceiling = status["size"] + status["max_overflow"]
+        if status["checked_out"] < ceiling:
+            return
+        now = time.monotonic()
+        if now - logged_at < every_seconds:
+            return
+        logged_at = now
+        logger.warning(
+            "database pool saturated: %d/%d connections checked out; the next "
+            "request waits up to %.0fs (raise db_pool_size or find what holds them)",
+            status["checked_out"],
+            ceiling,
+            settings.db_pool_timeout_s,
+        )
+
+
+warn_when_pool_saturates(engine)
+
 
 # What every caller actually does with one: `async with sessions() as session`.
 # Spelled as `Callable[[], AsyncSession]` it type-checks against nothing useful,

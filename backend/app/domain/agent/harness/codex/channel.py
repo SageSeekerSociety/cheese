@@ -3,22 +3,24 @@
 import base64
 import hashlib
 import json
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
-
-from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.codex.launch import script
 from app.domain.agent.harness.codex.runtime import Handle
 from app.domain.agent.harness.launch import ExecutorLaunch
-from app.domain.topic.models import Topic
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.workspace import service as ws
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class CodexChannel:
         )
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
-        precheck = await self.channel.precheck(session.project_id, session.topic_id)
+        precheck = await self.channel.precheck(session)
         agent = precheck[2]
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
@@ -79,8 +81,7 @@ class CodexChannel:
             agent_handle=agent,
         )
         async with self.channel.prepare_session(
-            project_id=session.project_id,
-            topic_id=session.topic_id,
+            session=session,
             token=token,
             env=opening.env,
             launch=Preparation(self.executor),
@@ -156,39 +157,40 @@ class CodexChannel:
         factory = self.channel._session_factory or async_session_factory
         handles = []
         async with factory() as db:
-            rooms = await db.scalars(
-                select(Topic).where(Topic.session_placement.is_not(None))
-            )
-            for room in rooms:
-                placement = room.session_placement
-                assert placement is not None
-                runtime = placement.get("runtime", {})
-                if (
-                    runtime.get("harness") != "codex"
-                    or placement["channel"] != self.name
-                ):
-                    continue
-                center = placement["device_id"]
-                if device_id is not None and center != device_id:
-                    continue
-                if not self.channel._hub.is_online(center):
-                    continue
+            sessions = await AgentSessionService(db).placed_sessions()
+        for project_id, room_id, handle, harness, place in sessions:
+            if harness != "codex" or place.channel != self.name:
+                continue
+            center = place.machine
+            if device_id is not None and center != device_id:
+                continue
+            if not self.channel._hub.is_online(center):
+                continue
+            try:
                 status = await self.channel._hub.call_executor(
-                    center, runtime["state"], "ping", {}
+                    center, place.runtime["state"], "ping", {}, timeout=15
                 )
-                if status["alive"]:
-                    ref = SessionRef(room.project_id, room.id)
-                    agent = runtime["agent_handle"]
-                    handles.append(
-                        Handle(
-                            ref,
-                            center,
-                            runtime["state"],
-                            status["thread_id"],
-                            agent,
-                            self._mirror(ref, str(placement["resource_id"]) + agent),
-                        )
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "Codex discovery failed topic=%s device=%s: %s",
+                    room_id,
+                    center,
+                    exc,
+                )
+                continue
+            if status["alive"]:
+                ref = SessionRef(project_id, room_id, handle, harness)
+                agent = place.runtime["agent_handle"]
+                handles.append(
+                    Handle(
+                        ref,
+                        center,
+                        place.runtime["state"],
+                        status["thread_id"],
+                        agent,
+                        self._mirror(ref, place.resource_id + agent),
                     )
+                )
         return handles
 
     async def images(self, handle: Handle, images: list[dict]) -> list[str]:
@@ -196,7 +198,7 @@ class CodexChannel:
             return []
         urls = []
         for image in images:
-            data = ws.read_room_file(
+            data = ws.read_attachment(
                 handle.session.project_id, handle.session.topic_id, image["path"]
             )
             encoded = base64.b64encode(data).decode()

@@ -7,6 +7,9 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+# 不引用适配层那个常量，是因为 import 它会把整个 codex 包（连着 ORM 和 settings）
+# 拖进一个只需要一个版本字符串的装机脚本。所以这份复制品由
+# tests/unit/test_capability_matrix.py 钉在适配层那个值上。
 VERSION = "0.154.0"
 
 

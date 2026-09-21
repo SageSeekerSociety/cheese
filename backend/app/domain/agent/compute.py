@@ -177,8 +177,11 @@ class ComputePool:
                 return True
         return False
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
-        """Ask the machine that owns this room to put its platform tools back.
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
+        """Ask the machine that owns this room to put this agent's platform
+        tools back; without an agent, the one that answers for the room.
 
         Only a backend that can lose them answers; everything else says no, so
         the caller needs no test for which machine a room is on.
@@ -189,7 +192,7 @@ class ComputePool:
                 continue
             runtime = runtime_for(backend)
             if self._owners.get(topic_id) is runtime or runtime.holds(topic_id):
-                return await recover(topic_id)
+                return await recover(topic_id, agent_handle)
         return False
 
     def bind_events(

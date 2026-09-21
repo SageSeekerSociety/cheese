@@ -1,0 +1,53 @@
+{
+  "why": "The closed vocabulary every scenario in this directory is written in: the six verbs of the harness contract, the events a harness may produce, and the codes a harness may answer with when it cannot produce one. Both readers load this file first and refuse a scenario that steps outside it — which is what stops the set growing a word only one language understands.",
+  "verbs": ["ensure", "send", "backlog", "deliver", "interrupt", "close"],
+  "events": {
+    "message": {
+      "class": "AgentMessage",
+      "required": ["text"],
+      "why": "One whole thing the agent said, at a protocol boundary."
+    },
+    "tool_use": {
+      "class": "AgentToolUse",
+      "required": ["name", "input"],
+      "why": "A step the room shows while it is happening."
+    },
+    "step_failed": {
+      "class": "AgentStepFailed",
+      "required": ["call_id"],
+      "why": "That step came back an error. It marks the step already on the timeline rather than adding one — and it is NOT the event a tool that returned produces, which is the whole of #1096."
+    },
+    "tool_result": {
+      "class": "AgentToolResult",
+      "required": ["name", "text"],
+      "why": "What a tool handed back, carried for the subagent tools alone: every other return is already visible through its effect."
+    },
+    "session_info": {
+      "class": "AgentSessionInfo",
+      "required": ["session_id"],
+      "why": "The harness's own name for this conversation, announced before the turn ends so a turn that dies mid-stream still leaves something to resume."
+    },
+    "result": {
+      "class": "AgentResult",
+      "required": ["text", "session_id"],
+      "why": "This turn is over. The platform's transcript pass is keyed off it, which is what makes 「每轮结束前增量上交」 a property of the turn rather than of a timer."
+    },
+    "subagent_start": {
+      "class": "AgentSubagentStart",
+      "required": ["agent_id"],
+      "why": "A second worker inside one session began."
+    },
+    "subagent_stop": {
+      "class": "AgentSubagentStop",
+      "required": ["agent_id"],
+      "why": "A second worker handed something back. Not 「done」."
+    }
+  },
+  "differences": {
+    "no-tool-failure-signal": "This harness reports nothing when a tool call fails, so a failed step reaches the room looking exactly like one that worked. A cell filled with this is a hole named, not a hole excused.",
+    "no-call-id-on-tool-use": "This harness's tool call reaches the room carrying no id of its own. Its record has one, but that id arrives as the DELIVERY's id and nothing later names the call — this harness reports no failure for a call either (see no-tool-failure-signal) — so a failure here would have no step to mark.",
+    "no-subagent-threads": "This harness runs no second worker inside a session, so nothing can be attributed to one.",
+    "no-subagent-tool-return": "This harness reports that a subagent stopped, but never what it handed back as a tool return.",
+    "no-session-id-of-its-own": "This harness does not announce a conversation id separately from the turn that ends; the platform learns it with the result."
+  }
+}

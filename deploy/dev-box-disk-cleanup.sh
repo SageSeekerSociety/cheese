@@ -61,7 +61,7 @@ TOTAL=0
 plan() { # name, bytes, command...
   local name="$1" bytes="$2"; shift 2
   TOTAL=$((TOTAL + bytes))
-  printf '  %-28s %8s\n' "$name" "$(human "$bytes")"
+  printf '  %-34s %8s\n' "$name" "$(human "$bytes")"
   if [ "$APPLY" -eq 1 ] && [ "$bytes" -gt 0 ]; then
     "$@" >/dev/null 2>&1 || printf '    (failed, skipped)\n'
   fi
@@ -135,7 +135,30 @@ docker_build_cache() { docker_df_reclaimable "Build Cache"; }
 # Deliberately NOT sized with `docker system df -v`, which walks every volume:
 # on the box that needed this (718 volumes) that call alone ran over five
 # minutes, and a cleanup that costs more than it reclaims will not be run.
-docker_unused_volumes() { docker_df_reclaimable "Local Volumes"; }
+#
+# One named volume dominates this row on dev, and it is not reclaimable:
+# `buildx_buildkit_cheese-box-builder0_state`, the layer cache of the builder
+# `.github/workflows/build.yml` creates with `keep-state: true`. The builder
+# only exists while a build job runs; between jobs the volume stands alone, so
+# `docker system df` counts it as unused, `docker volume prune` skips it for
+# being named, and there is no builder for `docker buildx prune` to address.
+# That is by design — build.yml prunes it itself after every job
+# (`--max-used-space 20GB --min-free-space 10GB`), and emptying it here on
+# 2026-09-18 only made the next box-image build refill all 12GB from scratch.
+# So the row reports the aggregate MINUS those volumes: what the prune below
+# can actually free. Sized with `du` on the volume directories rather than
+# `docker system df -v`, which walks every volume and took over five minutes.
+# The names come from docker (the docker group can list them) and the bytes
+# from sudo (`/var/lib/docker/volumes` is root-only, so a glob there is empty).
+docker_unused_volumes() {
+  local total kept=0 name n
+  total="$(docker_df_reclaimable "Local Volumes")"
+  for name in $(docker volume ls -q --filter name=buildx_buildkit_ 2>/dev/null); do
+    n="$(sudo du -sxb "/var/lib/docker/volumes/$name/_data" 2>/dev/null | head -1 | cut -f1)"
+    case "$n" in ''|*[!0-9]*) ;; *) kept=$((kept + n)) ;; esac
+  done
+  [ "$total" -gt "$kept" ] && printf '%s' "$((total - kept))" || printf '0'
+}
 
 self_test() {
   # The one thing worth asserting: size_of must not abort the script on a
@@ -175,9 +198,13 @@ self_test() {
   out="$(docker_build_cache)"
   [ "$out" = 5228000000 ] \
     || { printf 'self-test FAIL: build cache row -> %s, want 5228000000\n' "$out"; exit 1; }
+  # The volumes row is the aggregate minus the buildx state volumes, and on a
+  # box that has one it must come out smaller, never negative: `du` on a
+  # directory that is not there contributes nothing, so here it is the whole row.
   out="$(docker_unused_volumes)"
-  [ "$out" = 15980000000 ] \
-    || { printf 'self-test FAIL: volumes row -> %s, want 15980000000\n' "$out"; exit 1; }
+  case "$out" in ''|*[!0-9]*) printf 'self-test FAIL: volumes row -> %s\n' "$out"; exit 1 ;; esac
+  [ "$out" -le 15980000000 ] \
+    || { printf 'self-test FAIL: volumes row -> %s, above the aggregate\n' "$out"; exit 1; }
   DOCKER_DF=""
   out="$(vscode_servers_reclaimable)"
   case "$out" in ''|*[!0-9]*) printf 'self-test FAIL: non-numeric reclaimable -> %s\n' "$out"; exit 1 ;; esac
@@ -202,7 +229,7 @@ plan "vscode VSIX cache" "$(size_of "$HOME/.vscode-server/data/CachedExtensionVS
   rm -rf "$HOME/.vscode-server/data/CachedExtensionVSIXs"
 plan "vscode old servers" "$(vscode_servers_reclaimable)" prune_vscode_servers
 
-printf '  %-28s %8s\n' "TOTAL" "$(human "$TOTAL")"
+printf '  %-34s %8s\n' "TOTAL" "$(human "$TOTAL")"
 
 if [ "$APPLY" -eq 1 ]; then
   # Journals and the uv cache are pruned rather than deleted: both keep entries

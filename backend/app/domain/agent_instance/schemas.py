@@ -31,6 +31,10 @@ class AgentInstanceOut(BaseModel):
     id: uuid.UUID | None
     project_id: uuid.UUID
     handle: str
+    # The handle this agent sits on room rosters as. Inviting it into a room is
+    # adding this to the roster, the same call that adds a person. None only for
+    # a roster entry that was never saved.
+    seat_handle: str | None = None
     type_name: str | None
     display_name: str
     configuration: AgentConfiguration
@@ -48,7 +52,3 @@ class ProjectDefaultAgentIn(BaseModel):
     """Select the saved agent that new rooms start with."""
 
     instance_id: uuid.UUID
-
-
-class TopicAgentIn(BaseModel):
-    instance_id: uuid.UUID | None = None

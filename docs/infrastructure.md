@@ -79,6 +79,25 @@ calls finish, and is never called by the normal app deployment workflows. It
 reads the same box-local deploy environment and compose overlays as the app
 deployment.
 
+The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
+`DB_MAX_OVERFLOW=5` on `device-connection`) and the backend's in
+`app/core/config.py`; together they are sized so the two backends of a rollout
+plus the owner fit a 100-connection server.
+
+Which side of that arithmetic a deploy actually moves depends on where the
+change is. A change to the compose file's `device-connection` block is picked
+up by the next ordinary deploy, because compose recreates a service whose
+definition changed (observed on dev, 2026-09-19: the owner came up on the new
+pool without anyone releasing it). A change that lives only in the image —
+`app/core/config.py`, or anything else the backend carries — does not reach the
+owner until it is released, because the deploy leaves its container alone. So
+on a box whose server still has the default 100 (prod, etrip), **a release that
+raises the backend pool without also changing the owner's compose block goes
+out owner-first**: until the owner is released it holds the pool its running
+image was built with, and a backend rollout beside it can ask the server for
+more connections than it has — the 2026-09-16 failure. dev's server was raised
+to 200, so the order does not matter there.
+
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
 **Release cloud control** with the full SHA of a commit already merged into
@@ -579,59 +598,17 @@ creating a database without naming the encoding, which is the rule above.
 - **etrip**: SSH target (`ssh etrip`); GitHub Actions reaches it over Tailscale.
 - Self-hosted runners pull outbound, so no public inbound is needed on the boxes.
 
-## The backend runs as uid 1000 — and must keep doing so
+## Persistent volume ownership
 
-The backend process and the agent inside a sandbox container share one git
-store: `ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.git` into
-every sandbox container, read-write — and **both sides commit into it**, since
-the agent's own commit in its worktree is how a topic branch moves. git creates
-object directories 0755 and loose objects 0444, owned by whoever wrote them, so
-if the two sides run as different uids the second one can read every object and
-add none: its commit fails on a directory it does not own, and the backend's
-reads fail on a store it cannot enter (which git reports as `not a git
-repository`, not as a permission error). Both directions have hit production —
-the file panel 422ing for every topic in a project, and an agent whose work
-could not leave the container.
+`backend/Dockerfile` creates the backend user with uid/gid 1000. Existing host
+bind mounts must remain accessible to that user, including files written by
+older images as uid 1001.
 
-`core.sharedRepository` is git's supported way to widen those modes, so this
-constraint is negotiable — but nothing negotiates it today, so the fix is that
-both sides ARE the same uid:
-
-- sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
-  `backend/sandbox/Dockerfile` asserts the uid at build time.
-- backend: `backend/Dockerfile` creates its user with uid/gid **1000** to match.
-- single source of truth: `app.domain.workspace.service.AGENT_UID`, pinned
-  against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
-
-**Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
-`UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — `VIKING_HOST_PATH`, the openviking
-memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
-written by the pre-2026-08 backend as uid 1001.
-`deploy/deploy-docker.sh` hands them over once via
-`deploy/fix-workspace-ownership.sh` before the swap —
-idempotent, marker-guarded, and it runs the chown in a throwaway root container
-(no sudo on the box). If a backend ever boots onto an unmigrated path it logs
-`workspace_ownership` at ERROR naming the offending file; the fix is to run that
-script and restart.
-
-**The handover is the deploy's point of no return, so it runs last.** Every other
-fallible step — image pulls, the runtime-image smoke test, `alembic upgrade head`
-— aborts leaving the box exactly as it was; this one does not. It sits
-immediately before `dc up` with nothing between them that can fail. It was third
-of five until 2026-08-11, when the step after it aborted the deploy and left dev
-holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
-`dubious ownership` and every project 422'd until the next deploy (run
-31466502982). For the same reason a health-check rollback hands the mounts
-*back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
-when that run actually moved them, which the script reports to the caller.
-Rolling images back without rolling ownership back is not a rollback.
-
-These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
-by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue
-behind the box's single runner). Before 2026-08-11 that harness existed but no
-workflow ran it, which is how an untested ordering change reached the box with
-six green checks.
+`deploy/deploy-docker.sh` calls `deploy/fix-workspace-ownership.sh` to transfer
+ownership when needed. The script uses a marker to skip completed migrations
+and reports whether it changed ownership. A health-check rollback restores
+the previous ownership before starting the old image when the deployment
+performed that transfer. The ownership script is covered by `deploy/tests/`.
 
 ## Gotchas — things that look renameable but are NOT
 

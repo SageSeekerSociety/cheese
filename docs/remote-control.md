@@ -138,5 +138,5 @@ no configured backend, the addon refuses the request locally.
 The unit tests cover Redis recovery, duplicate controls, stale epochs and proxy
 routing. HTTP tests use the real identity and room policy. Frontend tests cover
 native errors, rejected backgrounding, pending answers and delayed results.
-Native acceptance covers Claude Code 2.1.261 and 2.1.265 with isolated inference/account
+Native acceptance covers the pinned Claude Code build (2.1.277) with isolated inference/account
 fixtures; production account behavior remains a separate deployment check.

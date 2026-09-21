@@ -46,13 +46,19 @@ class Settings(BaseSettings):
     # that as the rooms mysteriously 401-ing and recovering, several times a day,
     # once per deploy.
     #
-    # So the ceiling is per-process but the budget is shared: 3 x (size +
-    # overflow) has to leave room for the migration the deploy runs and for
-    # anyone holding a psql. 3 x 25 = 75 of the 97 a default PostgreSQL offers
-    # once its superuser reserve is taken out. A box whose server is configured
-    # larger can raise these; a box that adds a fourth pool has to lower them.
-    db_pool_size: int = 15
-    db_max_overflow: int = 10
+    # So the ceiling is per-process but the budget is shared: the two backends
+    # at (size + overflow) each, plus the connection owner's own pool, have to
+    # leave room for the migration the deploy runs and for anyone holding a
+    # psql. The owner registers devices and answers bindings; it never fans out
+    # the way a page load does, so the compose file hands it DB_POOL_SIZE=5 and
+    # DB_MAX_OVERFLOW=5 and the backends take the rest: 2 x 35 + 10 + 10 = 90
+    # of the 97 a default PostgreSQL offers once its superuser reserve is taken
+    # out (tests/unit/test_db_pool_fits_the_server.py holds this arithmetic). A
+    # box whose server is configured larger can raise these; a box that adds a
+    # fourth pool has to lower them. dev's server was raised to 200 on
+    # 2026-09-18 (conf.d/10-connections.conf on cheese-dev-env1-postgresql).
+    db_pool_size: int = 20
+    db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
@@ -145,7 +151,7 @@ class Settings(BaseSettings):
     # Shared central session host; private scratch runs in isolated containers.
     agent_session_device_id: str | None = None
     agent_session_api_base: str | None = None
-    private_chat_executor_image: str = "cheese-private-executor:2.1.265"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.277"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # Model aliases the CLI may resolve internally; map them to the provider.
@@ -213,6 +219,25 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
+    # Handles allowed to read and route the whole feedback queue
+    # (`/admin/feedback`). JSON list in env, e.g. '["alice","bob"]'. A settings
+    # list rather than a role because no production path assigns
+    # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
+    # and lock the surface for everyone.
+    #
+    # REQUIRED on a deployment: an empty list is not "no admins configured yet",
+    # it is a feedback queue that accepts submissions and can never be worked —
+    # and the users who submit cannot tell the difference from "nobody has
+    # picked this up yet". `_require_feedback_admins_on_deployment` fails the
+    # boot instead. Local dev and the test suite keep the empty default.
+    feedback_admin_handles: list[str] = []
+    # How many feedback PROPOSAL cards one topic may see per day. The cap exists
+    # for the agent path (`cheese feedback propose`): a misfiring loop proposes
+    # once per turn, and a number in settings is the difference between a bad
+    # afternoon and a topic nobody can read. Proposal cards are the one kind of
+    # "the next step is on a person" that nobody is waiting on, so unlike a
+    # decision request it is safe to drop — and this is what drops it.
+    feedback_proposals_per_topic_per_day: int = 2
     # Which registered profile is the platform default ("our AI pool"). Normally
     # "default" (the GLM pool). Set to "claude-opus"/"claude-fable" to run the
     # whole platform on the subscription seat — e.g. a demo where the GLM pool is
@@ -541,7 +566,19 @@ class Settings(BaseSettings):
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
     # Overridable per project via project.settings["max_concurrent_turns"].
-    max_concurrent_turns: int = 2
+    #
+    # The number comes from the room side. A room runs up to
+    # `MAX_RESIDENT_TASKS_PER_ROOM` threads and its own line is not one of them,
+    # so a saturated room is five turns, and a project normally has more than
+    # one room working. At 2, a single busy room queued three of its own threads
+    # behind itself while the rest of the project waited on top of that.
+    #
+    # This is the ONLY concurrency gate in the system: nothing limits how many
+    # turns land on ONE machine. So this number also decides what a single
+    # self-hosted laptop can be asked to run at once, which is not what it is
+    # named for and not a limit anybody chose. Raise this and that exposure
+    # rises with it, until a per-machine gate exists.
+    max_concurrent_turns: int = 16
 
     # --- Scheduler (spec §9.1: 确定性调度——定时巡检/生命周期) ---
     # Seconds between automatic 定期巡检 ticks across all projects. 0 = off
@@ -647,8 +684,7 @@ class Settings(BaseSettings):
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key
     # and mints short-lived installation tokens from it. Unset = the
-    # /sandbox/github-token endpoint answers "not configured"; nothing else
-    # changes.
+    # /sandbox/forge-token endpoint cannot issue GitHub credentials.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
     # Which installation to mint a token for is resolved per-project via the
@@ -656,6 +692,21 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+
+    forgejo_url: str = ""
+    forgejo_api_url: str = ""
+    forgejo_admin_token: str = ""
+    forge_attribution_default: bool = True
+    forge_event_relay_url: str = ""
+    forge_event_secret: str = ""
+    # Only the public relay loads the deployment -> shared secret mapping.
+    forge_event_relay_keys: dict[str, str] = {}
+    forge_event_github_secret: str = ""
+    forge_event_github_app_id: int | None = None
+    forge_event_github_public_key: str = ""
+    # GitHub App installation ID -> deployments authorized for that installation.
+    forge_event_github_installations: dict[str, list[str]] = {}
+    forge_webhook_url: str = ""
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -668,16 +719,11 @@ class Settings(BaseSettings):
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
-    accept_pr_poll_interval_s: int = 60
+    accept_pr_poll_interval_s: int = 300
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
     backend_error_flush_interval_s: int = 60
-    # 自动同步上游: how often to pull the upstream's default branch into each
-    # linked project's base. Falling behind is what makes accepts unable to push
-    # (see SchedulerService.sync_upstreams), so this only has to run often
-    # enough that the gap stays small — not on every commit. 0 disables it.
-    upstream_sync_interval_s: int = 1800
     # --- notifications and deadlines ---
     # Three jobs nothing in a request path can do. An aggregation window that
     # never closes is a notification written and never delivered; an undrained
@@ -949,6 +995,80 @@ class Settings(BaseSettings):
             "Booting on the default silently invalidates every session on the "
             "next restart that loads the real secret — every user is logged "
             f"out with no error (#342). Generate one with: {generate}"
+        )
+
+    @model_validator(mode="after")
+    def _require_feedback_admins_on_deployment(self) -> "Settings":
+        """Fail the boot when a deployment has nobody who can work the queue.
+
+        ``feedback_admin_handles`` is the ONLY thing that opens
+        ``/admin/feedback``: there is no role behind it, no default member set,
+        no way to promote yourself from the UI. Empty therefore does not read as
+        "we have not got round to appointing an admin yet" — it reads, from
+        every seat in the product, as *nobody is looking at this*:
+
+        - A submitter writes a report, watches its status stay at 已收录, and has
+          no way to tell that apart from "someone will get to it". The feedback
+          centre looks fully functional while being a write-only table.
+        - The admin page is unreachable for everyone including the operator, who
+          finds this out by opening it and reading "你的账号不在管理员名单里" —
+          a sentence that names the wrong problem.
+        - The agent-side proposal path still spends its daily quota filing
+          proposals that no one can act on.
+
+        Nothing in the running system can detect that state from the inside,
+        which is why it is checked at boot (#338/#439's rule: an unset
+        credential that degrades silently becomes a loud, boot-time event).
+
+        Same two-signal test as the JWT guard above, for the same #342 reason —
+        ``deployed_via_compose`` is authority because it cannot fall back, and
+        ``environment`` covers deployments that do not run through that compose
+        file. Local dev and the test suite trip neither, so they keep the empty
+        default and the suite still runs with no config.
+
+        RuntimeError rather than ValueError, so the message is not wrapped by
+        pydantic's ValidationError repr (which dumps the whole input dict —
+        including every secret in it) — same reason as the guard above.
+        """
+        # An entry that is empty or whitespace is worse than a missing entry:
+        # the list is non-empty, so this guard passes, and the handle it names is
+        # one that no account can ever authenticate as.
+        blank = [h for h in self.feedback_admin_handles if not h.strip()]
+        if blank:
+            raise RuntimeError(
+                "FEEDBACK_ADMIN_HANDLES contains an empty entry. Handles are "
+                "matched against the account's handle exactly, so an empty "
+                "string can never match anyone — this is a list with a typo in "
+                "it, not a list with an admin in it. Set it to a JSON list of "
+                'handles, e.g. FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\'.'
+            )
+
+        if self.feedback_admin_handles:
+            return self
+
+        if not self.deployed_via_compose and self.environment in (
+            "development",
+            "test",
+        ):
+            return self
+
+        raise RuntimeError(
+            "FEEDBACK_ADMIN_HANDLES is empty on a deployment ("
+            f"ENVIRONMENT reads '{self.environment}'"
+            + (
+                ", started by the deploy compose file"
+                if self.deployed_via_compose
+                else ""
+            )
+            + "). This is the only thing that opens /admin/feedback — with it "
+            "empty, nobody can read or route the feedback queue, and neither a "
+            "submitter nor the agent path can tell that apart from 'nobody has "
+            "picked it up yet'. The whole feedback surface looks healthy and is "
+            "write-only. Set it to the handles that should administer feedback, "
+            'as a JSON list: FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\' (see '
+            "deploy/.env.prod.example). If you are sure nobody should administer "
+            "feedback, set it to a handle you control rather than leaving it "
+            "empty."
         )
 
 

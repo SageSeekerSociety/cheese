@@ -16,7 +16,13 @@ const listProjectTasks = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listProjectTasks: (...a: unknown[]) => listProjectTasks(...a) }
+  // 这些用例问的是板，所以清单是空的：那一块自己就不出现（它的行为在
+  // `components/ArtifactManifest.spec.ts` 里）。不给这一条，组件会去真发一次请求。
+  return {
+    ...actual,
+    listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
+    listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+  }
 })
 
 vi.mock('vue-router', () => ({

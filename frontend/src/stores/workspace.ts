@@ -337,15 +337,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // The three ways a topic is born. Each returns the new topic so the caller can
   // navigate to it — creating a topic without opening it is never what was meant.
-  // agentInstanceId 不传 = 跟着项目默认走。选队友必须发生在**创建这一刻**：话题
-  // 一建出来第一条消息就可能进去了，而换队友要丢掉会话 —— 事后再改，改的就是一
-  // 段已经由别人说过话的对话。
-  async function create(title: string, agentInstanceId?: string | null): Promise<Topic | null> {
+  // 房间是个群聊，建出来时坐着项目的默认队友；要请别的队友进来，和请人一样走
+  // 成员名册。
+  async function create(title: string): Promise<Topic | null> {
     const pid = projectId.value
     if (!pid) return null
     try {
       // Untitled by default — the title is derived from the first message.
-      const topic = await createTopic(pid, title.trim() || '新话题', undefined, agentInstanceId)
+      const topic = await createTopic(pid, title.trim() || '新话题')
       topics.value.push(topic)
       return topic
     } catch (e) {

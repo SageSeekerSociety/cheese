@@ -4,10 +4,10 @@
     "connected": "Connected to {login}",
     "connectedAt": "(connected {time})",
     "connectedNotice": "GitHub account connected",
-    "description": "This credits the commits you merge to you, and is what lets the platform open a PR as you when you accept. It is separate from the GitHub authorization used to sign in; it can be the same account, or a different one.",
+    "description": "Used to identify your commit authorship and to create GitHub PRs as you. This is separate from the GitHub authorization used for signing in, and it can be a different account.",
     "disconnect": "Disconnect",
     "disconnectFailed": "Couldn't disconnect the GitHub account",
-    "expired": "Your GitHub authorization has expired: accepting a topic you take part in can no longer open a PR as you and falls back to merging straight into main. Click \"Reconnect\" to refresh it.",
+    "expired": "The GitHub authorization has expired, so a PR cannot be created as you for now. Click Reconnect to refresh it.",
     "loadFailed": "Couldn't load the connection status",
     "loading": "Loading connection status…",
     "none": "No account connected",
@@ -119,17 +119,41 @@
     "eyebrow": "Project settings · {name}",
     "loadFailed": "Couldn't load the settings",
     "market": "Market",
-    "subtitle": "Manage the runtime environment, repository connection and branch protection. To change roles or models, edit the teammate under \"AI teammates\".",
-    "title": "Project settings"
+    "subtitle": "This project's teammates, runtime, delivery rules and repository connection.",
+    "title": "Project settings",
+    "groups": {
+      "teammates": "Teammates",
+      "runtime": "Runtime",
+      "delivery": "Delivery",
+      "repository": "Repository"
+    }
   },
   "upstream": {
-    "description": "Link an existing git repository and pull its history into this project; you can sync new commits at any time. When there are conflicts the sync stops as it is rather than merging only part of it.",
-    "placeholder": "https://… or an absolute path on this machine (empty unlinks)",
+    "description": "Fill in the GitHub repository URL and save it, then click “Connect GitHub repository” below. Once connected, the code and the PRs stay in that repository.",
+    "placeholder": "https://github.com/org-or-user/repo",
     "saveFailed": "Couldn't save the upstream repository",
     "sync": "Sync upstream",
     "syncFailed": "Sync failed: {reason}",
     "syncedCommits": "Merged 1 upstream commit | Merged {count} upstream commits",
-    "title": "Upstream repository",
+    "title": "GitHub repository URL",
     "upToDate": "Already up to date, no new commits"
+  },
+  "forge": {
+    "title": "Code repository",
+    "hosted": "Hosted by Cheese",
+    "preparing": "Preparing the repository",
+    "open": "Open repository",
+    "switchHint": "Once a project is created, its hosting service cannot be switched."
+  },
+  "attribution": {
+    "title": "Commit attribution",
+    "label": "List the task requester as a co-author",
+    "on": "Currently on",
+    "off": "Currently off",
+    "hint": "When on, new commits carry the task requester as a co-author; the commit author stays the AI teammate. This setting does not change existing commits.",
+    "followSystem": "Follow the system default ({state})",
+    "optionOn": "On",
+    "optionOff": "Off",
+    "saveFailed": "Couldn't save. Try again"
   }
 }

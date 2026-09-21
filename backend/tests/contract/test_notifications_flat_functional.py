@@ -71,6 +71,16 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
     resp = await authed_client.get("/notifications/unread-count")
     assert resp.json()["data"]["count"] == 1
 
+    # And back to unread: the single-notification route takes false, unlike the
+    # collective one, so a reader who marked something read by mistake can undo it.
+    resp = await authed_client.patch(f"/notifications/{id1}", json={"read": False})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["notification"]["read"] is False
+    resp = await authed_client.get("/notifications/unread-count")
+    assert resp.json()["data"]["count"] == 2
+    resp = await authed_client.patch(f"/notifications/{id1}", json={"read": True})
+    assert resp.status_code == 200
+
     # Collective mark-all-read clears the remaining one.
     resp = await authed_client.put("/notifications/status", json={"read": True})
     assert resp.json()["data"]["count"] == 1
@@ -84,6 +94,31 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
     assert resp.status_code == 404
     resp = await authed_client.get(f"/notifications/{id2}")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_collective_status_refuses_to_unread_everything(
+    authed_client: AsyncClient,
+) -> None:
+    """``PUT /notifications/status`` marks all read and nothing else.
+
+    The collective route takes a boolean, and the only value it accepts is
+    ``true``: there is no "mark my whole inbox unread" operation, and a client
+    that sends ``false`` must be told so rather than have the request silently
+    do nothing or, worse, turn every read notification back to unread.
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    read_already = await _seed(factory, read=True)
+    await _seed(factory, read=False)
+
+    resp = await authed_client.put("/notifications/status", json={"read": False})
+    assert resp.status_code == 400
+
+    # The inbox is exactly as it was: one unread, and the read one still read.
+    resp = await authed_client.get("/notifications/unread-count")
+    assert resp.json()["data"]["count"] == 1
+    resp = await authed_client.get(f"/notifications/{read_already}")
+    assert resp.json()["data"]["notification"]["read"] is True
 
 
 @pytest.mark.anyio

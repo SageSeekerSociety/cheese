@@ -131,7 +131,13 @@ watch(
 
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
-      <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
+      <TopicMembers
+        v-if="isWorkTopic"
+        :topic-id="topic.id"
+        :project-id="topic.project_id"
+        :project-members="members"
+        :me="me"
+      />
 
       <!-- 用量: was the 资源 drawer. -->
       <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">

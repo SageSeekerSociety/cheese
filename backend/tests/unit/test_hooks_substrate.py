@@ -26,6 +26,30 @@ from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 pytestmark = pytest.mark.anyio
 
 
+async def test_recovery_keeps_other_rooms_when_one_subscription_fails(monkeypatch):
+    from app.domain.agent.device_hub import DeviceCallError
+
+    project, broken, healthy = _uuid.uuid4(), _uuid.uuid4(), _uuid.uuid4()
+    surviving_screen = object()
+
+    class RecoveringChannel(Channel):
+        async def discover(self, device_id=None):
+            return [
+                (project, broken, surviving_screen, None),
+                (project, healthy, None, None),
+            ]
+
+    runtime = ClaudeCodeRuntime(RecoveringChannel(), router=HookRouter())
+
+    async def subscribe(project_id, topic_id, **kwargs):
+        if topic_id == broken:
+            raise DeviceCallError("dial unix: no such file")
+
+    monkeypatch.setattr(runtime, "ensure_subscription", subscribe)
+    assert await runtime.recover() == [SessionRef(project, healthy)]
+    assert runtime.holds(broken)
+
+
 def test_forwarder_spools_then_posts_hook_json_with_scoped_token():
     assert "X-Cheese-Token: $CHEESE_TOKEN" in CHEESE_HOOK_SCRIPT
     assert "X-Cheese-Event-Id: $eid" in CHEESE_HOOK_SCRIPT
@@ -239,6 +263,7 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -265,7 +290,7 @@ async def test_failed_precheck_never_touches_the_router():
     class _NoRun(Channel):
         name = "no-run"
 
-        async def precheck(self, project_id, topic_id):
+        async def precheck(self, session):
             raise ScreenSetupError("挡在门外")
 
     router = HookRouter()
@@ -278,6 +303,7 @@ async def test_failed_precheck_never_touches_the_router():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=_uuid.uuid4(),
             topic_id=topic_id,
             prompt="x",
@@ -529,6 +555,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -587,6 +614,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",
@@ -641,6 +669,7 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -686,6 +715,7 @@ async def test_run_refuses_to_clobber_existing_attribution():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="inspect",
@@ -751,6 +781,7 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -799,6 +830,7 @@ async def test_run_turn_stop_drains_a_partial_message():
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -1003,6 +1035,7 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
         return [
             event
             async for event in provider.run_turn(
+                session_agent="agent",
                 project_id=_uuid.uuid4(),
                 topic_id=topic_id,
                 prompt="第一条",

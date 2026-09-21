@@ -25,7 +25,7 @@ from app.domain.agent.service import (
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import CHEESE_HANDLE, looks_like_agent_handle
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
@@ -182,11 +182,12 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
         block
         for block in rows
         if (block.kind == BlockKind.message or (block.meta or {}).get("progress"))
-        and block.author_type in {AuthorType.human, AuthorType.ai}
+        and block.author_type == AuthorType.participant
     ]
-    assert [block.author_type for block in conversation] == [
-        AuthorType.human,
-        AuthorType.ai,
+    # 一句人说的，一句芝士说的 —— 两条同档，分得开的是署名。
+    assert [looks_like_agent_handle(block.author) for block in conversation] == [
+        False,
+        True,
     ]
     assert {block.turn_id for block in conversation} == {work_id}
     assert len(usage_rows) == 1
@@ -221,7 +222,8 @@ async def test_human_summon_uses_message_id_as_work_attribution(
         answers = [
             block
             for block in await BlockRepository(session).list_for_topic(topic_id)
-            if block.author_type == AuthorType.ai and (block.meta or {}).get("progress")
+            if looks_like_agent_handle(block.author)
+            and (block.meta or {}).get("progress")
         ]
     assert [str(block.turn_id) for block in answers] == [user["id"]]
     async with factory() as session:
@@ -332,7 +334,9 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     await settle_turn(service, topic_id)
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-    answer = next(block.content for block in rows if block.author_type == AuthorType.ai)
+    answer = next(
+        block.content for block in rows if looks_like_agent_handle(block.author)
+    )
     # One answer, covering both messages: the second reached the session that
     # was already working, rather than queueing behind the turn.
     assert "Handle A" in answer
@@ -412,7 +416,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     ai_messages = [
         row
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ]
     assert ai_messages == []
     assert resumes_by == "session-autonomous"
@@ -486,7 +490,7 @@ async def test_an_all_english_message_lands_but_stays_out_of_the_room(
     ai_messages = [
         row
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ]
     assert ai_messages == []
     assert any(row.content == "Now the tests:" for row in rows)
@@ -601,7 +605,7 @@ async def test_a_subagents_boundaries_pass_through_the_room_untouched(
     assert [
         row.content
         for row in rows
-        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+        if row.kind == BlockKind.message and looks_like_agent_handle(row.author)
     ] == []
     assert "分身查完了" not in [row.content for row in rows]
 
@@ -637,6 +641,7 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     events = [
         event
         async for event in provider.run_turn(
+            session_agent="agent",
             project_id=project_id,
             topic_id=topic_id,
             prompt="go",
@@ -802,7 +807,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     assert [
         b.content
         for b in blocks
-        if b.author_type == AuthorType.ai and (b.meta or {}).get("progress")
+        if looks_like_agent_handle(b.author) and (b.meta or {}).get("progress")
     ] == ["跑绿了，收工"]
     # Nothing was announced — from the room's side the deploy did not happen.
     assert [b for b in blocks if b.author_type == AuthorType.system] == []

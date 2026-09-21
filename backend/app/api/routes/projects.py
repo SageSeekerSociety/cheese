@@ -1,28 +1,28 @@
 """Project routes."""
 
-import asyncio
 import logging
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
-    get_work_runner,
     project_device_online,
 )
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
-    GatewayUnavailableError,
     NotFoundError,
     ValidationError,
 )
@@ -33,7 +33,6 @@ from app.domain.agent.compute_configs import (
     validate_choice,
 )
 from app.domain.agent.github_app import (
-    GitHubAppError,
     github_app_read_token_for_project,
 )
 from app.domain.agent.market import (
@@ -42,7 +41,6 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -61,12 +59,14 @@ from app.domain.agent_instance.services import (
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.actor import Actor
+from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
+from app.domain.project import artifacts
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -81,6 +81,7 @@ from app.domain.project.repositories import (
     ProjectRepository,
 )
 from app.domain.project.schemas import (
+    ForgeAttributionUpdate,
     ProjectCreate,
     ProjectOut,
 )
@@ -93,7 +94,6 @@ from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
-from app.domain.workspace import upstream_conflict
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -172,6 +172,7 @@ async def create_project(
         agent_type=body.agent_type,
         team_id=body.team_id,
         external_task_id=body.external_task_id,
+        forge_kind=body.forge_kind,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
@@ -306,6 +307,9 @@ def _agent_out(
         id=agent.instance_id,
         project_id=project_id,
         handle=agent.handle,
+        seat_handle=(
+            agent_instance_handle(agent.instance_id) if agent.instance_id else None
+        ),
         type_name=agent.type_name,
         display_name=agent.display_name,
         configuration=AgentConfiguration.model_validate(agent.configuration),
@@ -451,6 +455,274 @@ async def set_project_default_agent(
     return ok(_agent_out(project_id, agent, is_default=True))
 
 
+@router.get("/{project_id}/library/raw")
+async def library_file_raw(
+    project_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> Response:
+    """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
+    消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `_authorized_place`）。
+    """
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    name = _library_path(path)
+    data = ws.read_library_file(project_id, name)
+    filename = quote(name.rsplit("/", 1)[-1], safe="")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+def _library_path(raw: str) -> str:
+    """资料库里那一份的名字——它就是地址，所以这里只挡不是名字的东西。"""
+    name = (raw or "").strip()
+    if not name or name.startswith("/") or ".." in name.split("/"):
+        raise ValidationError("path 必须是资料库里的相对路径")
+    return name
+
+
+async def _project_reader(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    topic_raw: str,
+) -> None:
+    """谁读得到这个项目的东西：项目成员，或者正在这个项目某个话题里干活的 芝士。"""
+    if topic_raw:
+        await _authorized_place(db, resolver, project_id, topic_raw)
+        return
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+
+
+@router.get("/{project_id}/library")
+async def list_library(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
+) -> dict:
+    """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
+
+    Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
+    room that has never seen that file."""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    files = ws.list_library_files(project_id)
+    return ok(page(files, len(files)))
+
+
+@router.get("/{project_id}/artifacts")
+async def list_artifacts(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
+) -> dict:
+    """产物清单：这个项目交出去的东西，一项一行 (#1085 结论二、三)。
+
+    清单只读，而且没有配套的新建入口：它由交付长出来 —— 递卡时点名的名字不在清单
+    上就当场多一项。所以这里没有 POST，不是还没做。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    rows = await artifacts.list_for_project(db, project_id)
+    items = [
+        {
+            "id": str(a.id),
+            "name": a.name,
+            "version": a.version,
+            "delivered_at": a.delivered_at.isoformat() if a.delivered_at else None,
+        }
+        for a in rows
+    ]
+    return ok(page(items, len(items)))
+
+
+@router.get("/{project_id}/artifacts/{artifact_id}")
+async def read_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> dict:
+    """清单上这一项自己的那一页 (#1085 结论二)：现在是第几版，以及交付过的每一版。
+
+    一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
+    纳，它后面几版的号自己往前挪。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    listed = await artifacts.summary(db, row.id)
+    history = await artifacts.versions(db, row.id)
+    return ok(
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "version": listed.version if listed else 0,
+            "delivered_at": (
+                listed.delivered_at.isoformat()
+                if listed and listed.delivered_at
+                else None
+            ),
+            "versions": [
+                {
+                    "number": v.number,
+                    "card_id": str(v.card_id),
+                    "subject": v.subject,
+                    "delivered_at": (
+                        v.delivered_at.isoformat() if v.delivered_at else None
+                    ),
+                    "decided_by": v.decided_by,
+                    "kind": v.kind,
+                    "filename": v.filename,
+                    "url": v.url,
+                }
+                for v in history
+            ],
+        }
+    )
+
+
+@router.get("/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file")
+async def download_artifact_version(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    card_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> Response:
+    """这一版交出去的那一份字节 (#1085 结论五)。
+
+    取的是当时交出去的那个快照，不是现在从源重建一次的结果：半年之后依赖变了、字
+    体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
+    一份。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    version = next(
+        (v for v in await artifacts.versions(db, artifact_id) if v.card_id == card_id),
+        None,
+    )
+    if version is None:
+        raise NotFoundError("这一项没有这一版")
+    if version.kind != "file" or not version.filename:
+        # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
+        raise NotFoundError("这一版交出去的不是一份文件")
+    data = ws.read_artifact_snapshot(project_id, card_id, version.filename)
+    filename = quote(version.filename, safe="")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+async def _artifact_keeper(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> None:
+    """改清单的只有人。
+
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 改不了、合不了、删不
+    了清单上的东西 —— 它只能在交付时声明，而「这两项是不是同一个东西」「这个名字
+    对不对」正是要人判断的那部分。"""
+    await ProjectService(db).get_or_404(project_id)
+    actor = await resolver.require_verified_caller(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+
+
+@router.patch("/{project_id}/artifacts/{artifact_id}")
+async def rename_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """给清单上这一项换个名字。
+
+    卡指着的是这一行的 id，所以改名之后，之前的每一次交付照样算这一项的版本 ——
+    名字起错了的正解是改名，不是删掉重来。"""
+    await _artifact_keeper(project_id, db, resolver)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    renamed = await artifacts.rename(db, row, name=str(body.get("name") or ""))
+    await db.commit()
+    return ok({"id": str(renamed.id), "name": renamed.name})
+
+
+@router.post("/{project_id}/artifacts/{artifact_id}/merge")
+async def merge_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """这两项其实是同一个东西：把这一项的交付都算到 `into` 那一项上。
+
+    留哪个名字是人的判断，所以方向由调用方给，平台不挑。"""
+    await _artifact_keeper(project_id, db, resolver)
+    source = await artifacts.get_or_404(
+        db, project_id=project_id, artifact_id=artifact_id
+    )
+    target = await artifacts.get_or_404(
+        db, project_id=project_id, artifact_id=_artifact_ref(body.get("into"))
+    )
+    kept = await artifacts.merge(db, source=source, target=target)
+    await db.commit()
+    return ok({"id": str(kept.id), "name": kept.name})
+
+
+@router.delete("/{project_id}/artifacts/{artifact_id}")
+async def delete_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把这一项从清单上去掉 —— 用户说它本来就不该是一项。
+
+    声明过它的那些卡留在原处，只是不再指向任何一项：那些交付确实发生过。"""
+    await _artifact_keeper(project_id, db, resolver)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    await artifacts.delete(db, row)
+    await db.commit()
+    return ok({"deleted": True})
+
+
+def _artifact_ref(raw: object) -> uuid.UUID:
+    """合并的目标 —— 清单上另一项的 id。"""
+    try:
+        return uuid.UUID(str(raw or ""))
+    except ValueError as exc:
+        raise ValidationError("into 必须是清单上另一项的 id") from exc
+
+
+@router.delete("/{project_id}/library")
+async def delete_library_file(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """扔掉一份资料。
+
+    这条路不收 `topic`：读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据
+    过不了 `authorize_project`，所以 芝士 连同它自己正在读的那一份都删不掉。"""
+    await ProjectService(db).get_or_404(project_id)
+    actor = await resolver.require_verified_caller(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    ws.delete_library_file(project_id, _library_path(path))
+    return ok({"deleted": True})
+
+
 @router.get("/{project_id}/decisions")
 async def list_decisions(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -539,17 +811,22 @@ async def list_project_tasks(
     return ok(page(items, len(items)))
 
 
-async def _authorized_memory_topic(
+async def _authorized_place(
     db: DbSession,
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     topic_raw: str,
-) -> Place | None:
-    """Resolve and authorize the body-carried place, when present.
+) -> tuple[Place, Actor] | None:
+    """Resolve and authorize the caller-named place, when present, and say
+    who is calling — the pool a memory goes to is that caller's.
 
     A place, not a room: `cheese remember` is run by whoever is doing the work,
     and that is usually a thread. Resolving only rooms answered 404 for the one
     caller this endpoint exists for.
+
+    This is also how 芝士 reaches a project-level route at all: its credential
+    is minted for one turn in one place, so a bare `authorize_project` refuses
+    it (403) even though the token is valid and the project is right.
     """
     if not topic_raw:
         return None
@@ -564,28 +841,37 @@ async def _authorized_memory_topic(
         fallback_handle=None, topic_id=place.room_id, project_id=project_id
     )
     await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
-    return place
+    return place, actor
 
 
 async def _agent_memory_scope(
-    db: DbSession, project_id: uuid.UUID, place: Place | None
+    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
 ) -> tuple[MemoryScope, str] | None:
-    """Where the agent working in ``place`` writes what it learns.
+    """Where the agent that is calling writes what it learns.
 
-    Keyed by the AGENT, not by the room: the same 芝士 moving between rooms of
-    one project keeps one pool, which is the whole point of an instance owning
-    its memory. Returns ``None`` when no usable place was supplied, so the
+    Keyed by the AGENT, not by the room: a room seats any number of teammates,
+    and the one running `cheese remember` is the one on the token, so its notes
+    go to its own pool wherever it is working — the same 芝士 moving between
+    rooms keeps one pool. A token that names no saved teammate (an older one, a
+    DM's) writes as the place's default: the DM's own teammate, else the
+    project's. Returns ``None`` when no usable place was supplied, so the
     caller falls back to the shared project pool.
     """
-    if place is None:
+    if caller is None:
         return None
+    place, actor = caller
     project = await ProjectService(db).get_or_404(project_id)
-    agent = await AgentInstanceService(db).for_topic(place.room, project)
+    agents = AgentInstanceService(db)
+    agent = await agents.for_seat_handle(
+        project, actor.handle if actor.is_agent else None
+    )
+    if agent is None:
+        agent = await agents.for_topic(place.room, project)
     return memory_pool(project_id, agent)
 
 
 async def _agent_memory_read_scopes(
-    db: DbSession, project_id: uuid.UUID, place: Place | None
+    db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
 ) -> list[tuple[MemoryScope, str]]:
     """Every pool a read on behalf of ``place`` should cover.
 
@@ -598,13 +884,13 @@ async def _agent_memory_read_scopes(
     filled when work was a room of its own, so keying it by the thread would
     look up an id nothing ever wrote under.
     """
-    if place is None:
+    if caller is None:
         return []
-    agent_scope = await _agent_memory_scope(db, project_id, place)
+    agent_scope = await _agent_memory_scope(db, project_id, caller)
     if agent_scope is None:
         return []
     scopes = [agent_scope]
-    legacy = legacy_topic_pool(project_id, place.room_id)
+    legacy = legacy_topic_pool(project_id, caller[0].room_id)
     if legacy != agent_scope:
         scopes.append(legacy)
     return scopes
@@ -639,9 +925,10 @@ async def add_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    place = await _authorized_memory_topic(
+    caller = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
+    place = caller[0] if caller else None
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("content 不能为空")
@@ -656,7 +943,7 @@ async def add_memory(
         _authorize_personal_memory_owner(place, owner)
         await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
         return ok({"remembered": True, "layer": layer.value})
-    agent_scope = await _agent_memory_scope(db, project_id, place)
+    agent_scope = await _agent_memory_scope(db, project_id, caller)
     if agent_scope is not None:
         await memory_store(db).remember(*agent_scope, content, layer=layer)
     else:
@@ -682,9 +969,10 @@ async def search_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    place = await _authorized_memory_topic(
+    caller = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
+    place = caller[0] if caller else None
     query = (body.get("query") or "").strip()
     if not query:
         raise ValidationError("query 不能为空")
@@ -702,7 +990,7 @@ async def search_memory(
     # happens to sit in says nothing about how well it answers the question, and
     # the caller reads top-down.
     hits = []
-    for scope in await _agent_memory_read_scopes(db, project_id, place):
+    for scope in await _agent_memory_read_scopes(db, project_id, caller):
         hits.extend(await store.search(*scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
@@ -738,6 +1026,69 @@ async def get_private_chat(
         agent_handle=agent_handle,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+@router.get("/{project_id}/forge")
+async def get_project_forge(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.project.forge import binding_for_project
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    binding = await binding_for_project(project_id, db)
+    return ok(
+        {
+            "kind": binding.kind
+            if binding
+            else (project.settings or {}).get("forge_kind", "forgejo"),
+            "connected": binding is not None,
+            "repo": binding.repo if binding else None,
+            "url": binding.url.removesuffix(".git") if binding else None,
+        }
+    )
+
+
+@router.get("/{project_id}/forge-attribution")
+async def get_forge_attribution(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.workspace.identity import requester_credit_enabled
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok(
+        {
+            "requester_coauthor": (project.settings or {}).get(
+                "forge_requester_coauthor"
+            ),
+            "effective": requester_credit_enabled(project.settings or {}),
+            "deployment_default": settings.forge_attribution_default,
+        }
+    )
+
+
+@router.put("/{project_id}/forge-attribution")
+async def save_forge_attribution(
+    project_id: uuid.UUID,
+    body: ForgeAttributionUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if body.requester_coauthor is None:
+        values.pop("forge_requester_coauthor", None)
+    else:
+        values["forge_requester_coauthor"] = body.requester_coauthor
+    project.settings = values
+    await db.flush()
+    return await get_forge_attribution(project_id, db, resolver)
 
 
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
@@ -1033,58 +1384,37 @@ async def set_branch_protection(
 
 
 @router.get("/{project_id}/upstream")
-async def get_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's linked upstream repo (关联已有 repo, spec §6.3), if any."""
-    await ProjectService(db).get_or_404(project_id)
-    return ok({"url": ws.get_upstream(project_id)})
+async def get_project_upstream(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The GitHub repository selected for the installation flow."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
 @router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Link the project to an existing git repo (empty url → unlink). The repo's
-    history then flows in via 同步上游, and stays syncable afterwards."""
-    await ProjectService(db).get_or_404(project_id)
-    url = ws.set_upstream(project_id, str(body.get("url") or ""))
+    """Select a GitHub repository before binding its installation."""
+    from app.domain.project.forge import binding_for_project
+    from app.domain.review.github_pr import parse_github_repo
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    if await binding_for_project(project_id, db) is not None:
+        raise ConflictError("项目已连接代码仓库，暂不支持更换")
+    if (project.settings or {}).get("forge_kind") != "github_app":
+        raise ConflictError("这个项目由芝士托管，暂不支持切换到 GitHub")
+    raw = str(body.get("url") or "").strip()
+    parsed = parse_github_repo(raw) if raw else None
+    if raw and parsed is None:
+        raise ValidationError("请输入 GitHub 仓库地址")
+    url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
+    project.settings = {**(project.settings or {}), "github_repository_url": url}
+    await db.flush()
     return ok({"url": url})
-
-
-@router.post("/{project_id}/upstream/sync")
-async def sync_project_upstream(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """同步上游: fetch + merge the upstream default branch into the project base.
-    Conflicts abort cleanly and come back as {"synced": false, "reason": ...} —
-    and, when we know who asked, 芝士 is dispatched at the materialized conflict
-    so that report is a starting point instead of a dead end (spec §6.3, same
-    contract as 采纳冲突 in routes/accept.py)."""
-    await ProjectService(db).get_or_404(project_id)
-    # The App's token for a bound project, nothing for an unbound one: the
-    # fetch runs on the platform's own identity or on none.
-    try:
-        token = await github_app_read_token_for_project(project_id, db)
-    except GitHubAppError as exc:
-        raise GatewayUnavailableError(str(exc)) from exc
-    result = await asyncio.to_thread(ws.sync_upstream, project_id, token=token)
-    if result.get("synced") or not result.get("conflicts"):
-        return ok(result)
-    # Anonymous callers get the old behaviour: with no handle there is no 1:1
-    # room to put the work in, and inventing one would strand it.
-    actor = await resolver.resolve(fallback_handle=None)
-    if not actor.authenticated or not actor.handle:
-        return ok(result)
-    dispatched = await upstream_conflict.dispatch(
-        db,
-        project_id,
-        requested_by=actor.handle,
-        chat=chat,
-        runner=runner,
-    )
-    if dispatched is not None:
-        result = {**result, "dispatched": dispatched}
-    return ok(result)

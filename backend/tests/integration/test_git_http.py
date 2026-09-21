@@ -1,145 +1,22 @@
-"""Serving a project's repo over git's own protocol.
+"""Task metadata remains on the backend; native Git is served by the forge."""
 
-This is the direction that was missing: a machine cheese provisions owns its own
-tree, so without it the agent's work never reached the topic branch — silently.
-"""
-
-import subprocess
 import uuid
-from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_task
-from tests.machine_work import declare_task
 
 
 def _project(client) -> str:
     return client.post("/projects", json={"name": "git 项目"}).json()["data"]["id"]
 
 
-def test_a_project_token_advertises_that_projects_refs(client):
+def test_backend_git_protocol_endpoint_is_retired(client):
     pid = _project(client)
-    token = mint_scoped_token(project_id=pid)
-    r = client.get(
-        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": token},
-    )
-    assert r.status_code == 200
-    # git's advertisement always opens with the service pkt-line.
-    assert b"# service=git-upload-pack" in r.content
-
-
-def test_no_token_gets_nothing(client):
-    pid = _project(client)
-    r = client.get(f"/projects/{pid}/git/info/refs?service=git-upload-pack")
-    assert r.status_code == 401, "this endpoint hands out a whole repository"
-
-
-def test_another_projects_token_is_not_a_key_to_this_one(client):
-    mine = _project(client)
-    other = _project(client)
-    r = client.get(
-        f"/projects/{mine}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=other)},
-    )
-    assert r.status_code == 401
-
-
-def test_pushing_is_enabled_on_the_repo(client):
-    """git-http-backend refuses receive-pack unless the repo opts in, so a push
-    would 403 with everything else correct."""
-    from app.domain.workspace import service as ws
-
-    pid = _project(client)
-    client.get(
+    response = client.get(
         f"/projects/{pid}/git/info/refs?service=git-upload-pack",
         headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
     )
-    repo: Path = ws.ensure_repo(uuid.UUID(pid))
-    value = subprocess.run(
-        ["git", "config", "--get", "http.receivepack"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    assert value == "true"
-
-
-def test_a_push_reaches_the_files_the_panel_reads(client):
-    """A machine's push has to land in the topic's checkout, not just on the ref.
-
-    The file panel, the diff and the sandbox all read files out of that
-    checkout, so a ref that moved while the checkout stayed put shows the topic
-    exactly as if the push had never happened — which is the failure this whole
-    endpoint exists to prevent, and it cannot report itself (`cheese-sync` is a
-    Stop hook; raising takes the turn down).
-    """
-    from app.domain.workspace import service as ws
-    from tests.machine_work import machine_commits
-
-    pid = _project(client)
-    topic = uuid.uuid4()
-    project = uuid.UUID(pid)
-    declare_task(project, topic)
-    worktree = ws.topic_worktree(project, topic)  # the topic is open
-    # Reach the repo the way a machine does, so it is configured as one.
-    client.get(
-        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
-    )
-
-    machine_commits(project, topic, {"from_machine.txt": "what the machine wrote\n"})
-
-    assert (worktree / "from_machine.txt").exists()
-    assert "from_machine.txt" in [
-        f["path"] for f in ws.list_files(project, topic_id=topic)
-    ]
-
-
-def test_a_push_still_lands_after_the_worktree_directory_is_deleted(client):
-    """Disk cleanup must not quietly stop a machine from delivering.
-
-    A topic's branch is checked out in a worktree, so git resolves a push
-    against that directory. Delete it out of band — an operator reclaiming
-    space, a wiped volume — and the branch is still registered to a directory
-    that is not there: git fails trying to enter it and rejects every later
-    push. The machine cannot report that (`cheese-sync` is a Stop hook), so the
-    agent would go on working and delivering nothing at all.
-    """
-    import shutil
-
-    from app.domain.workspace import service as ws
-    from tests.machine_work import machine_commits
-
-    pid = _project(client)
-    project, topic = uuid.UUID(pid), uuid.uuid4()
-    declare_task(project, topic)
-    worktree = ws.topic_worktree(project, topic)
-    shutil.rmtree(worktree)
-
-    client.get(
-        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
-    )
-    machine_commits(project, topic, {"delivered.txt": "the work\n"})
-
-    listed = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(ws.ensure_repo(project)),
-            "ls-tree",
-            "--name-only",
-            ws.branch_for_task(topic),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout
-    assert "delivered.txt" in listed
-
-
-# --- 「这批活现在写哪条分支」---------------------------------------------
+    assert response.status_code == 404
 
 
 def test_task_manifest_names_only_that_tasks_branch_and_target(client):
@@ -178,3 +55,84 @@ def test_room_branch_negotiation_endpoint_is_retired(client):
         headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
     )
     assert response.status_code == 404
+
+
+def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_default(
+    client,
+):
+    from app.domain.project.models import Project
+    from app.domain.review.pr_text import pr_trailers
+    from app.domain.topic.models import Topic
+    from app.domain.workspace import identity
+    from tests.integration.conftest import session_auth_headers
+
+    project = client.post(
+        "/projects", json={"name": "Task authors", "owner_handle": "alice"}
+    ).json()["data"]
+    pid, room = project["id"], project["root_topic_id"]
+    task = delivery_task(client, room, commit=False)
+    assert task.created_by == "alice"
+    agents = []
+    for handle in ("writer", "reviewer"):
+        response = client.post(f"/projects/{pid}/agents", json={"handle": handle})
+        assert response.status_code == 200, response.text
+        agent = response.json()["data"]
+        added = client.post(
+            f"/topics/{room}/members",
+            json={"handle": agent["seat_handle"], "role": "member", "actor": "alice"},
+            headers=session_auth_headers("alice"),
+        )
+        assert added.status_code == 200, added.text
+        agents.append(agent)
+    writer, reviewer = agents
+    route = f"/projects/{pid}/git/tasks/{task.id}"
+
+    def headers(agent):
+        return {
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=room, agent_handle=agent["seat_handle"]
+            )
+        }
+
+    assert client.get(route, headers=headers(reviewer)).json()["data"]["author"] is None
+    opened = client.post(route, headers=headers(writer))
+    assert opened.status_code == 200, opened.text
+    expected = str(identity.agent_identity(writer["seat_handle"]))
+    assert opened.json()["data"]["author"] == expected
+
+    async def change_default():
+        async with client.test_factory() as session:
+            current = await session.get(Project, uuid.UUID(pid))
+            current.default_agent_instance_id = uuid.UUID(reviewer["id"])
+            await session.commit()
+
+    client.portal.call(change_default)
+    reopened = client.post(route, headers=headers(reviewer))
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["data"]["author"] == expected
+
+    async def trailers():
+        async with client.test_factory() as session:
+            topic = await session.get(Topic, uuid.UUID(room))
+            who = await identity.attribution(session, topic, task_id=task.id)
+            return pr_trailers(topic, "alice", who)
+
+    assert f"Cheese-Agent: {writer['seat_handle']}" in client.portal.call(trailers)
+
+
+def test_historical_task_does_not_invent_an_agent_author(client):
+    from app.domain.review.pr_text import pr_trailers
+    from app.domain.topic.models import Topic
+    from app.domain.workspace import identity
+
+    project = client.post("/projects", json={"name": "Old task"}).json()["data"]
+    task = delivery_task(client, project["root_topic_id"], commit=False)
+
+    async def read():
+        async with client.test_factory() as session:
+            room = await session.get(Topic, task.room_id)
+            who = await identity.attribution(session, room, task_id=task.id)
+            assert who.author is None
+            return pr_trailers(room, "alice", who)
+
+    assert "Cheese-Agent:" not in client.portal.call(read)

@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   shell-tests:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -68,6 +68,11 @@ jobs:
 
       - name: Cloud control connection lifecycle
         run: python3 deploy/tests/test_cloud_control.py
+
+      - name: Forge deployment configuration
+        run: |
+          python3 deploy/tests/test_forge_config.py
+          python3 deploy/tests/test_forge_workspace_writers.py
 
       - name: Workspace ownership handover
         run: bash deploy/tests/test-workspace-ownership.sh

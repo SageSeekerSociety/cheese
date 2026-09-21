@@ -86,7 +86,17 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals: [],
     approvals_required: 1,
     pr_number: null,
-    has_external_checks: false,
+    // 平台 lane：托管方不说话，采纳是验收人自己的判断（forge.kind 见 cx_types）。
+    forge: {
+      kind: 'forgejo',
+      reports_checks: false,
+      hosts_proposals: false,
+      can_write_remote: false,
+      has_external_remote: false,
+      pushes_to_external_remote: false,
+      identity: 'platform',
+      declaration: '',
+    },
     pr_url: null,
     merge_state: mergeState({ state: 'clean' }),
     auto_merge: { allowed: false, armed_by: null, armed_at: null },
@@ -100,8 +110,19 @@ function richCard(over: Partial<AcceptCard> = {}): AcceptCard {
   return card({
     reviewer_handle: 'alice',
     routing_reason: 'Knows this best',
-    has_external_checks: true,
     pr_number: 12,
+    // GitHub lane：有 PR、有外部检查。declaration 是后端给的整句数据，这里给一句
+    // 不带汉字的，英文那条用例断言的是「画面上一个汉字都不剩」。
+    forge: {
+      kind: 'github_app',
+      reports_checks: true,
+      hosts_proposals: true,
+      can_write_remote: true,
+      has_external_remote: true,
+      pushes_to_external_remote: false,
+      identity: 'user',
+      declaration: 'CI runs on the pull request. Once the merge is done, you can take the branch.',
+    },
     pr_url: 'https://github.com/o/r/pull/12',
     approvals: ['bob'],
     approvals_required: 2,

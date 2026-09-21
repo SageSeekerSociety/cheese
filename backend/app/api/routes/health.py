@@ -46,6 +46,7 @@ async def detailed_health_check() -> dict[str, Any]:
     checks["database"] = await _check_database()
     checks["redis"] = await _check_redis()
     checks["memory"] = await _check_memory()
+    checks["event_loop"] = _check_event_loop()
 
     overall = (
         "healthy"
@@ -55,11 +56,30 @@ async def detailed_health_check() -> dict[str, Any]:
     return {"status": overall, "checks": checks}
 
 
+def _check_event_loop() -> dict[str, Any]:
+    """How late this process's event loop is running.
+
+    Reported, never required: a stalling loop is something to chase, not a
+    reason to take the process out of rotation. `redis` above goes down for a
+    stall of a few seconds — the read times out — which is how the cause used
+    to be read as Redis being unwell.
+    """
+    from app.core.loop_lag import STALL_S, lag_status
+
+    lag = lag_status()
+    return {
+        "status": "up" if lag["recent_ms"] < STALL_S * 1000 else "stalling",
+        **lag,
+    }
+
+
 async def _check_database() -> dict[str, Any]:
+    from app.core.db import pool_status
+
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
-        return {"status": "up"}
+        return {"status": "up", "pool": pool_status()}
     except Exception as e:
         logger.warning("Database health check failed: %s", e)
         return {"status": "down", "error": str(e)}

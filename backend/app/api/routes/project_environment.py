@@ -76,11 +76,27 @@ async def room(
         Topic.is_private.is_(False),
     )
     if lock:
-        statement = statement.with_for_update()
+        # The session keeps objects across commit, so a locked re-read must
+        # load the row again rather than hand back the unlocked read's copy.
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
     topic = await db.scalar(statement)
     if topic is None:
         raise NotFoundError("Room not found")
     return topic
+
+
+async def require_idle(db: AsyncSession, topic: Topic) -> None:
+    if topic.archived_at is not None:
+        raise ValidationError("请先取消归档，再修改房间环境")
+    active = await db.scalar(
+        select(AgentTurn.id)
+        .where(AgentTurn.topic_id == topic.id, AgentTurn.stopped_at.is_(None))
+        .limit(1)
+    )
+    if active is not None:
+        raise ValidationError("房间仍有未结束的工作，不能修改正在使用的环境")
 
 
 @router.get("")
@@ -183,30 +199,30 @@ class ApplyEnvironment(BaseModel):
 
 
 async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uuid.UUID):
-    topic = await room(db, project_id, topic_id, lock=True)
-    if topic.archived_at is not None:
-        raise ValidationError("请先取消归档，再修改房间环境")
-    active = await db.scalar(
-        select(AgentTurn.id)
-        .where(AgentTurn.topic_id == topic_id, AgentTurn.stopped_at.is_(None))
-        .limit(1)
-    )
-    if active is not None:
-        raise ValidationError("房间仍有未结束的工作，不能修改正在使用的环境")
+    """Stop the room's old environment on its machine.
+
+    The device calls run with no transaction open. They take up to 10 s, plus
+    30 s a screen, and a room row locked across them queues every other
+    writer of the room behind them with a pool connection each (dev outage of
+    2026-09-18). New prompts in this process are already held off by the
+    caller's `chat.edit_environment`; the caller locks the row again after
+    this returns and checks the room is still idle before writing.
+    """
+    topic = await room(db, project_id, topic_id)
+    await require_idle(db, topic)
     binding = await sql_device_service(db).topic_binding(topic_id)
-    if binding is not None:
-        if not device_hub.is_online(binding.device_id):
-            raise ValidationError("机器离线，无法确认旧会话已停止，请连接后重试")
-        await environment_status(
-            device_hub,
-            binding.device_id,
-            project_id,
-            topic.resource_id or topic_id,
-            action="reset",
-        )
-        # Closing each screen also releases its runtime subscription.
-        for screen in device_hub.screens_for_topic(topic_id):
-            await device_hub.close_screen(screen.device_id, screen.sid)
+    resource_id = topic.resource_id or topic_id
+    await db.commit()
+    if binding is None:
+        return
+    if not device_hub.is_online(binding.device_id):
+        raise ValidationError("机器离线，无法确认旧会话已停止，请连接后重试")
+    await environment_status(
+        device_hub, binding.device_id, project_id, resource_id, action="reset"
+    )
+    # Closing each screen also releases its runtime subscription.
+    for screen in device_hub.screens_for_topic(topic_id):
+        await device_hub.close_screen(screen.device_id, screen.sid)
 
 
 @router.post("/rooms/{topic_id}/apply")
@@ -220,10 +236,12 @@ async def apply_environment(
 ) -> dict:
     project, _ = await access(db, project_id, user, write=True)
     async with chat.edit_environment(topic_id):
-        topic = await room(db, project_id, topic_id, lock=True)
+        topic = await room(db, project_id, topic_id)
         if topic.kind == TopicKind.root:
             raise ValidationError("总览使用基础运行环境，不应用项目脚本")
         await reset_idle_room(db, topic_id, project_id)
+        topic = await room(db, project_id, topic_id, lock=True)
+        await require_idle(db, topic)
         await close_recovery(db, topic_id)
         if body.latest or topic.environment is None:
             topic.environment = project_environment(project.settings)
@@ -280,6 +298,22 @@ class RepairEnvironment(BaseModel):
     reason: str = ""
 
 
+async def repairable_incident(db: AsyncSession, topic: Topic, body: RepairEnvironment):
+    """The incident this repair answers, as the database holds it right now."""
+    incident = await latest_recovery(db, topic.id)
+    if incident is not None:
+        await db.refresh(incident)
+    if (
+        topic.kind == TopicKind.root
+        or incident is None
+        or incident.id != body.incident_id
+        or (incident.meta or {}).get("state") != "requested"
+        or (topic.environment or {}).get("revision") != body.expected_revision
+    ):
+        raise ValidationError("环境已变化或自动重试已使用，请重新查看状态")
+    return incident
+
+
 @router.post("/recovery/rooms/{topic_id}")
 async def repair_environment(
     project_id: uuid.UUID,
@@ -293,19 +327,13 @@ async def repair_environment(
 
     await overview_access(request, db, project_id)
     async with chat.edit_environment(topic_id):
-        topic = await room(db, project_id, topic_id, lock=True)
-        incident = await latest_recovery(db, topic_id)
-        if (
-            topic.kind == TopicKind.root
-            or incident is None
-            or incident.id != body.incident_id
-            or (incident.meta or {}).get("state") != "requested"
-            or (topic.environment or {}).get("revision") != body.expected_revision
-        ):
-            raise ValidationError("环境已变化或自动重试已使用，请重新查看状态")
+        topic = await room(db, project_id, topic_id)
+        incident = await repairable_incident(db, topic, body)
         if body.config is None:
             if not body.reason.strip():
                 raise ValidationError("请说明需要什么协助")
+            topic = await room(db, project_id, topic_id, lock=True)
+            incident = await repairable_incident(db, topic, body)
             incident.meta = {
                 **incident.meta,
                 "state": "needs_help",
@@ -316,14 +344,19 @@ async def repair_environment(
         binding = await sql_device_service(db).topic_binding(topic_id)
         if binding is None or not device_hub.is_online(binding.device_id):
             raise ValidationError("机器离线，暂时无法修复")
+        attempt = incident.meta.get("attempt")
+        resource_id = topic.resource_id or topic_id
+        # Same as reset_idle_room: the device answers with no transaction open.
+        await db.commit()
         state = await environment_status(
-            device_hub, binding.device_id, project_id, topic.resource_id or topic_id
+            device_hub, binding.device_id, project_id, resource_id
         )
-        if state.get("state") != "failed" or state.get("attempt") != incident.meta.get(
-            "attempt"
-        ):
+        if state.get("state") != "failed" or state.get("attempt") != attempt:
             raise ValidationError("房间已不处于本次失败状态，请重新查看状态")
         await reset_idle_room(db, topic_id, project_id)
+        topic = await room(db, project_id, topic_id, lock=True)
+        await require_idle(db, topic)
+        incident = await repairable_incident(db, topic, body)
         topic.environment = body.config.snapshot()
         turn_id = uuid.uuid4()
         incident.meta = {

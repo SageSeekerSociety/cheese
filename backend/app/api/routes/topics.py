@@ -8,10 +8,10 @@ import shutil
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,8 +50,6 @@ from app.domain.agent.market import (
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent_instance.schemas import TopicAgentIn
-from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind, agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -86,6 +84,7 @@ from app.domain.preview.office import (
     is_renderable,
     render_to_pdf,
 )
+from app.domain.project import room_files
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -156,66 +155,12 @@ async def create_topic(
         title=body.title,
         parent_id=body.parent_id,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
-        agent_instance_id=body.agent_instance_id,
     )
     response = ok(TopicOut.model_validate(topic).model_dump(mode="json"))
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
     await db.commit()
     return response
-
-
-@router.get("/{topic_id}/agent")
-async def get_topic_agent(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Which agent works in this topic, and whether that was chosen here.
-
-    ``inherited`` is what a settings screen needs to render honestly: a topic
-    that never picked one is not "using 芝士", it is *following the project*, and
-    changing the project's default will move it.
-
-    """
-    service = TopicService(db)
-    place = await service.place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    agent = await service.resolve_agent(place.room)
-    return ok(_topic_agent_payload(place.room, agent))
-
-
-@router.put("/{topic_id}/agent")
-async def set_topic_agent(
-    topic_id: uuid.UUID, body: TopicAgentIn, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Hand this topic to a different agent (``instance_id: null`` = back to the
-    project's default).
-
-    Costs nothing and warns about nothing: each agent's conversation here is its
-    own row, so the incoming one starts fresh and the outgoing one's thread is
-    still there if the topic is handed back.
-    """
-    service = TopicService(db)
-    topic = await service.get_or_404(topic_id)
-    actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    topic, agent = await service.set_agent(topic_id, body.instance_id)
-    await db.commit()
-    return ok(_topic_agent_payload(topic, agent))
-
-
-def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
-    return {
-        "topic_id": str(topic.id),
-        "instance_id": str(agent.instance_id) if agent.instance_id else None,
-        "handle": agent.handle,
-        "type_name": agent.type_name,
-        "display_name": agent.display_name,
-        "inherited": topic.agent_instance_id is None,
-    }
 
 
 def _viewer(actor: Actor) -> str | None:
@@ -468,6 +413,106 @@ async def list_topic_blocks(
     )
 
 
+async def _history_block(
+    repo: BlockRepository, room_id: uuid.UUID, block_id: uuid.UUID
+) -> Block:
+    block = await repo.get(block_id)
+    if block is None or block.topic_id != room_id:
+        raise NotFoundError("Message not found in this room")
+    return block
+
+
+@router.get("/{topic_id}/history")
+async def read_chat_history(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    before: uuid.UUID | None = None,
+    after: uuid.UUID | None = None,
+    task_id: uuid.UUID | None = None,
+    reply_to: uuid.UUID | None = None,
+    q: Annotated[str | None, Query(min_length=1, max_length=1000)] = None,
+    kind: BlockKind | None = None,
+    author: str | None = None,
+) -> dict:
+    """Read stored chat, including structured events and reactions.
+
+    Replies are direct children; follow their IDs for nested replies. A reply
+    query inherits its parent's task scope. Search is literal, case-insensitive
+    substring matching over content, metadata and quoted document text.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    if before is not None and after is not None:
+        raise ValidationError("Use before or after, not both")
+    repo = BlockRepository(db)
+    parent = None
+    if reply_to is not None:
+        parent = await _history_block(repo, place.room_id, reply_to)
+        if task_id is not None and parent.task_id != task_id:
+            raise NotFoundError("Message not found in this task")
+        task_id = parent.task_id
+    if task_id is not None:
+        task = await TaskRepository(db).get(task_id)
+        if task is None or task.room_id != place.room_id:
+            raise NotFoundError("Task not found in this room")
+    cursor = None
+    if cursor_id := before or after:
+        cursor = await _history_block(repo, place.room_id, cursor_id)
+        if cursor.task_id != task_id:
+            raise NotFoundError("Cursor not found in this conversation")
+    result = await repo.page_for_topic(
+        place.room_id,
+        task_id=task_id,
+        limit=limit,
+        before=cursor if before else None,
+        after=cursor if after else None,
+        query=q,
+        reply_to=reply_to,
+        author=author,
+        # Document nodes have their own tree. Comments and preview pointers
+        # remain discoverable here; --kind doc_node reads the nodes explicitly.
+        kinds=[kind] if kind else [k for k in BlockKind if k != BlockKind.doc_node],
+    )
+    included = [*result.items, *([parent] if parent else [])]
+    reactions = await repo.reactions_for_blocks([b.id for b in included])
+    serialized = {
+        b.id: {
+            **BlockOut.model_validate(b).model_dump(mode="json"),
+            "reactions": reactions.get(b.id, []),
+        }
+        for b in included
+    }
+    return ok(
+        {
+            "data": [serialized[b.id] for b in result.items],
+            "has_more": result.has_more,
+            "oldest_id": str(result.items[0].id) if result.items else None,
+            "newest_id": str(result.items[-1].id) if result.items else None,
+            "direction": "after" if after else "before",
+            "reply_to": serialized[parent.id] if parent else None,
+        }
+    )
+
+
+@router.get("/{topic_id}/history/{block_id}")
+async def read_chat_message(
+    topic_id: uuid.UUID,
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Read one block of any kind, including a task-card comment or doc node."""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    repo = BlockRepository(db)
+    block = await _history_block(repo, place.room_id, block_id)
+    item = BlockOut.model_validate(block).model_dump(mode="json")
+    item["reactions"] = await repo.reactions_for_block(block_id)
+    return ok(item)
+
+
 @router.get("/{topic_id}/tasks")
 async def list_room_tasks(
     topic_id: uuid.UUID,
@@ -654,7 +699,7 @@ async def say_on_task(
         topic_id=place.room_id,
         task_id=task.id,
         author=actor.handle,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=content,
         kind=BlockKind.message,
     )
@@ -898,7 +943,7 @@ def _card_snapshot(card: AcceptCard) -> dict:
         ),
         "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
         # PR-based accept (#188 §5.1): the agent checks its PR's CI itself
-        # (`cheese gh-token` + gh api) — the snapshot carries the pointer.
+        # (`gh api`) — the snapshot carries the pointer.
         "pr_number": card.pr_number,
         "pr_url": card.pr_url,
         "created_at": card.created_at.isoformat(),
@@ -1062,7 +1107,7 @@ async def add_comment(
         # would post a thread's comment onto the room for everyone to read.
         topic_id=topic_id,
         author=author,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
@@ -1177,7 +1222,7 @@ async def edit_topic_doc(
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
-        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
+        author_type=AuthorType.participant,
     )
     # Publish only committed edits: connected teammates can immediately read
     # the new document and the same persisted contribution record.
@@ -1467,26 +1512,31 @@ async def ask_options(
         raise ValidationError("question is required")
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
+    # 署名是 agent 的那一支，这道题是芝士自己问出口的：它在等**人**按下那个按钮，
+    # 不是在等自己把它读一遍。轮次号在这条路上填不出——`cheese ask` 只在 CHEESE_TURN
+    # 非空时才带 X-Cheese-Turn，而没有一处产品代码写那个环境变量，于是 `add` 的兜底
+    # 拿到的永远是 None，「署名是 agent 且落在某一轮里」在这里答不出来。所以由写入端
+    # 直接说明（`own_output`）：不说明的话这道题会盖上待读标记，「忘了 @」的补救按钮
+    # 不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝士刚问出口的这道
+    # 题，它对着自己的问题再答一遍。人在房间里问出的那种照旧是一条待读输入。
+    if actor.authenticated:
+        author, asked_by_agent = actor.handle, actor.is_agent
+    else:
+        author = await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        )
+        asked_by_agent = True
     blk = await BlockRepository(db).add(
         project_id=place.project_id,
         # The place id: `add` splits it, so a thread's question is asked in the
         # thread rather than shouted into the room around it.
         topic_id=topic_id,
-        author=(
-            actor.handle
-            if actor.authenticated
-            else await TopicMemberService(db).resolve_agent_handle(
-                topic_id, room_id=place.room_id
-            )
-        ),
-        author_type=(
-            AuthorType.human
-            if actor.authenticated and not actor.is_agent
-            else AuthorType.ai
-        ),
+        author=author,
+        author_type=AuthorType.participant,
         content=question,
         kind=BlockKind.message,
         meta={"options": options},
+        own_output=asked_by_agent,
     )
     # 发起这一轮的人 —— 芝士是代他执行这件事的，这个问题也只有他能回答。平台发起
     # 的轮次（resume、各类提醒）作者是 system，那种提问指不到具体的人。
@@ -1540,7 +1590,7 @@ async def summon_agent(
     )
     if chat.has_running_turn(place.room_id):
         return ok({"started": False, "reason": "working"})
-    if not await chat.has_unread_human_input(place.room_id):
+    if not await chat.has_unread_input(place.room_id):
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
@@ -1667,11 +1717,7 @@ async def record_decision(
                 topic_id, room_id=place.room_id
             )
         ),
-        author_type=(
-            AuthorType.human
-            if actor.authenticated and not actor.is_agent
-            else AuthorType.ai
-        ),
+        author_type=AuthorType.participant,
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
@@ -2137,23 +2183,33 @@ async def _bind_source_task(
     work = await TaskRepository(db).get(task)
     if work is None or work.room_id != room_id or work.branch_name is None:
         raise NotFoundError("Task not found")
-    TaskService._bind_workspace(work)
 
 
-def _source_bytes(
-    project_id: uuid.UUID, room_id: uuid.UUID, path: str, task: uuid.UUID | None
+async def _source_bytes(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    task: uuid.UUID | None,
+    source: Literal["live", "committed"] = "live",
 ) -> bytes:
     """One of this room's files, from whichever store holds it.
 
     A room keeps what it delivered outside git; a card keeps what it is still
-    writing, on its own branch. Both are 「这个房间的文件」 to a reader, so the
-    viewers take the source as a parameter instead of each being wired to one
-    store — that wiring is why a document on a branch had no view but a raw
-    binary diff.
+    writing, on its own branch; the project's 资料库 keeps what someone gave it,
+    and `library/<名字>` says so in the path itself. All three are 「这个房间的
+    文件」 to a reader, so the viewers take the source as a parameter instead of
+    each being wired to one store — that wiring is why a document on a branch
+    had no view but a raw binary diff.
     """
-    if task is not None:
-        return ws.read_file_bytes(project_id, path, topic_id=task)
-    return ws.read_room_file(project_id, room_id, path)
+    if task is not None or source == "committed":
+        if ws.library_name(path) is not None:
+            raise ValidationError("资料库里的文件不属于某个任务分支")
+        from app.domain.workspace.forge_files import ProjectFiles
+
+        data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
+        return data
+    return ws.read_attachment(project_id, room_id, path)
 
 
 async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
@@ -2169,7 +2225,7 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese_artifact 点名一个文件——网页、图片，"
+            "要给人看结果也可以用 cheese_show 点名一个文件——网页、图片，"
             "或报告、表格这类文档。"
         )
     if not await preview_hub.probe(topic_id):
@@ -2179,15 +2235,17 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
-@router.post("/{topic_id}/artifact")
-async def set_artifact(
+@router.post("/{topic_id}/shown")
+async def show_in_room(
     topic_id: uuid.UUID,
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
-    `cheese artifact`. With no anchor it becomes this place's current preview."""
+    """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
+
+    摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
+    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     declared = (body.get("as") or "").strip().lower()
@@ -2233,13 +2291,63 @@ async def set_artifact(
         author=await TopicMemberService(db).resolve_agent_handle(
             topic_id, room_id=place.room_id
         ),
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content=path,
         kind=BlockKind.artifact,
         mime_type=mime,
         refs=[path],
     )
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/shown")
+async def list_shown(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """这个房间里摆出来过的东西 (#1085 结论四)。
+
+    一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    shown = await BlockRepository(db).shown_in_room(place.room_id)
+    items = [
+        {
+            "path": block.content,
+            "mime": block.mime_type,
+            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
+            "shown_at": block.created_at.isoformat(),
+        }
+        for block in shown
+    ]
+    return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/shown/save")
+async def save_shown_to_library(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
+
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
+    它：这份东西以后还用不用得上，是人的判断。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.require_verified_caller(project_id=place.project_id)
+    await resolver.authorize_project(actor, project_id=place.project_id)
+    name = await room_files.save_to_library(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=_clean_artifact_path(str(body.get("path") or "")),
+        by=actor.handle,
+    )
+    await db.commit()
+    return ok({"name": name})
 
 
 @router.post("/{topic_id}/documents/recalc")
@@ -2319,6 +2427,7 @@ async def list_document_revisions(
     db: DbSession,
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> dict:
     """The tracked changes in a `.docx`, one row per decision a reader makes.
 
@@ -2337,7 +2446,7 @@ async def list_document_revisions(
     clean = _clean_artifact_path(path)
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
@@ -2380,6 +2489,11 @@ async def decide_document_revisions(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     clean = _clean_artifact_path(body.get("path") or "")
+    if ws.library_name(clean) is not None:
+        # 资料库那一份是用户给进来的原件，只读：这里写回去就是在他没要求的时候改了
+        # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
+        # 栏照常列），能做的只是不动它。
+        raise ValidationError("资料库里的原件不改——让芝士基于它做一份新的")
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")
@@ -2389,7 +2503,7 @@ async def decide_document_revisions(
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task)
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
@@ -2403,7 +2517,11 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
     if task is not None:
-        ws.write_file_bytes(topic.project_id, clean, made, topic_id=task)
+        from app.domain.workspace.forge_files import ProjectFiles
+
+        await ProjectFiles(db, topic.project_id, task).write_bytes(
+            clean, made, expected
+        )
     else:
         ws.write_room_file(topic.project_id, topic_id, clean, made)
     return ok(
@@ -2516,13 +2634,14 @@ async def preview_file(
     A `<&path>` chip in a message names a file without saying which store holds
     it, and a room's own files are here rather than on a branch. Reading one by
     path is how a reader gets from that chip to the file, instead of to a
-    listing that does not contain it.
+    listing that does not contain it — including a `library/…` chip, which is
+    what 芝士 writes once it has read something the project was given.
     """
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     if path:
         return ok(
-            ws.read_room_text_file(
+            ws.read_attachment_text(
                 place.project_id, topic_id, _clean_artifact_path(path)
             )
         )
@@ -2533,9 +2652,13 @@ async def preview_file(
 
 
 # ---- Chat attachments -----------------------------------------------------
-# An attachment is a REAL file in the topic's worktree (所有产出都是 git): the
-# upload writes bytes under uploads/, the message references it as an
-# attachment block, and 芝士 sees it by Read-ing the file in its sandbox.
+# 用户挑出来或拖进来的文件落进项目的资料库 (`ws.write_library_file`)，按原名寻址，
+# 所有房间都能引用。消息里带的就是它自己那个地址 `library/<名字>`——**不拷贝**：
+# 一份资料在这个项目里只有一份字节，芝士 在工作目录的 library/ 下 Read 它。
+#
+# 剪贴板里贴进来的那张图**不进资料库**：资料库的前提是「名字就是身份」，而剪贴板里
+# 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
+# 区一个独占的目录下。
 
 # Only these image types may render inline; other files require download.
 _IMAGE_MIME_EXT = {
@@ -2556,10 +2679,22 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 @router.post("/{topic_id}/attachments")
 async def upload_attachment(
-    topic_id: uuid.UUID, file: UploadFile, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    file: UploadFile | None = File(None),
+    library_path: str | None = Form(None),
+    origin: str | None = Form(None),
 ) -> dict:
-    """Upload a file into the topic's worktree (uploads/…). Returns the
-    {path, mime} the client then references when sending the message."""
+    """Attach a file to a message being written in this room.
+
+    Either a new upload (`file`) or one the 资料库 already holds
+    (`library_path`). Both end the same way: a copy in this room's files, and
+    the {path, mime} the client references when it sends the message.
+
+    `origin="clipboard"` says the bytes came off the clipboard — they stay in
+    this room, because a pasted screenshot has no name of its own to be filed
+    under."""
     topic = await TopicService(db).get_or_404(topic_id)
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
@@ -2570,26 +2705,43 @@ async def upload_attachment(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    mime = (
-        (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
-    )
-    ext = _IMAGE_MIME_EXT.get(mime)
-    if mime.startswith("image/") and ext is None:
-        mime = "application/octet-stream"
-    data = await file.read(MAX_ATTACHMENT_BYTES + 1)
-    if not data:
-        raise ValidationError("空文件")
-    if len(data) > MAX_ATTACHMENT_BYTES:
-        raise ValidationError("文件太大（上限 10MB）")
-    # Preserve the basename; a unique directory prevents overwrites.
-    name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
-    name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
-    name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
-    if ext and not name.lower().endswith(ext):
-        name += ext
-    path = f"uploads/{uuid.uuid4().hex}/{name}"
-    ws.write_room_file(topic.project_id, topic_id, path, data)
-    return ok({"path": path, "mime": mime, "bytes": len(data)})
+    if (file is None) == (library_path is None):
+        raise ValidationError("要么上传一个文件，要么选资料库里的一份")
+    if library_path is not None:
+        name = _clean_artifact_path(library_path)
+        # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
+        data = ws.read_library_file(topic.project_id, name)
+        suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
+        return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
+    else:
+        assert file is not None
+        mime = (
+            (file.content_type or "application/octet-stream")
+            .split(";")[0]
+            .strip()
+            .lower()
+        )
+        ext = _IMAGE_MIME_EXT.get(mime)
+        if mime.startswith("image/") and ext is None:
+            mime = "application/octet-stream"
+        data = await file.read(MAX_ATTACHMENT_BYTES + 1)
+        if not data:
+            raise ValidationError("空文件")
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise ValidationError("文件太大（上限 10MB）")
+        name = (file.filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
+        name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
+        name = name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
+        if ext and not name.lower().endswith(ext):
+            name += ext
+        if origin == "clipboard":
+            path = f"uploads/{uuid.uuid4().hex}/{name}"
+            ws.write_room_file(topic.project_id, topic_id, path, data)
+            return ok({"path": path, "mime": mime, "bytes": len(data)})
+        # 名字就是身份，所以撞名不覆盖：拿下一个 `(n)`。
+        name = ws.write_library_file(topic.project_id, name, data)
+    return ok({"path": ws.library_ref(name), "mime": mime, "bytes": len(data)})
 
 
 @router.get("/{topic_id}/attachments/raw")
@@ -2600,6 +2752,7 @@ async def attachment_raw(
     resolver: ActorResolverDep,
     download: bool = False,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
@@ -2621,7 +2774,7 @@ async def attachment_raw(
         raise ValidationError("只能读取图片附件")
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -2632,7 +2785,9 @@ async def attachment_raw(
             ),
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": (
+                "no-store" if task or source == "committed" else "private, max-age=3600"
+            ),
         },
     )
 
@@ -2644,6 +2799,7 @@ async def attachment_as_pdf(
     db: DbSession,
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """A Word or PowerPoint deliverable, converted so a browser can show it.
 
@@ -2666,7 +2822,7 @@ async def attachment_as_pdf(
         raise ValidationError("这个格式不能转换为预览")
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
@@ -2688,7 +2844,9 @@ async def attachment_as_pdf(
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": (
+                "no-store" if task or source == "committed" else "private, max-age=3600"
+            ),
         },
     )
 

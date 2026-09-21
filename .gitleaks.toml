@@ -1,0 +1,14 @@
+# gitleaks configuration for this repository.
+#
+# The repository is public. `.pnpm-store/` was tracked for five days in
+# 2026-08 (removed in #203) and the npm packages inside it carry their own test
+# fixtures: sample private keys, sample JWTs, fake API keys. They are not our
+# secrets and they cannot be removed without rewriting history under 100+ open
+# PRs, so they are allowlisted here instead. Everything else is scanned.
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+  ^.pnpm-store/,
+]

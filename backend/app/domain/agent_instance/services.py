@@ -20,6 +20,7 @@ from app.domain.identity.handles import (
     CHEESE_HANDLE,
     CHEESE_NAME,
     UNRESOLVED_AGENT_HANDLE,
+    agent_instance_handle,
     topic_agent_handle,
 )
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
@@ -93,26 +94,78 @@ class AgentInstanceService:
         return self.resolved(instance or await self.materialize_default(project))
 
     async def for_topic(self, topic: Topic, project: Project) -> ResolvedAgent:
-        """The agent acting in *topic* — its own, else the project's default."""
-        if topic.agent_instance_id is not None:
-            instance = await self._repo.get(topic.agent_instance_id)
-            if instance is not None:
-                return self.resolved(instance)
+        """The agent a turn in *topic* runs as, when nobody was addressed.
+
+        A room does not have an agent: it seats members, and which of its agents
+        answers is decided by who a message addresses. What a room falls back to
+        is the project's default. A private 1:1 with a teammate is the one place
+        the topic itself names its other party — its `private_peer` is that
+        teammate's seat, the way a DM with a person names the person.
+        """
+        peer = await self._dm_teammate(topic, project)
+        if peer is not None:
+            return peer
         return await self.for_project(project)
 
     async def recipient_for_topic(
         self, topic: Topic, project: Project
     ) -> ResolvedAgent:
-        """Read the message recipient without creating or activating an agent."""
-        for instance_id in (topic.agent_instance_id, project.default_agent_instance_id):
-            if instance_id is not None:
-                instance = await self._repo.get(instance_id)
-                if instance is not None:
-                    return self.resolved(instance)
+        """Read the default recipient without creating or activating an agent.
+
+        Same shape as `for_topic`: a DM's own teammate, else the project's
+        default. Who a room message reaches is decided by addressing, not here.
+        """
+        peer = await self._dm_teammate(topic, project)
+        if peer is not None:
+            return peer
+        if project.default_agent_instance_id is not None:
+            instance = await self._repo.get(project.default_agent_instance_id)
+            if instance is not None:
+                return self.resolved(instance)
         instance = await self._repo.get_by_handle(
             project_id=project.id, handle=IMPLICIT_DEFAULT.handle
         )
         return self.resolved(instance) if instance is not None else IMPLICIT_DEFAULT
+
+    async def _dm_teammate(
+        self, topic: Topic, project: Project
+    ) -> ResolvedAgent | None:
+        """The teammate a private 1:1 is with, when it is with a saved one.
+
+        A DM whose peer is a room-derived seat (opened before teammates had
+        seats of their own, in a project that had no saved default to name)
+        returns None and is answered by the project's default, as it always was.
+        """
+        if not topic.is_private:
+            return None
+        return await self.for_seat_handle(project, topic.private_peer)
+
+    async def for_seat_handle(
+        self, project: Project, handle: str | None
+    ) -> ResolvedAgent | None:
+        """The saved teammate that sits on rosters as ``handle``, or None.
+
+        A seat handle is derived from the instance id, so this is the reverse
+        lookup: given who is acting (the ``a`` claim of a scoped token, the
+        author of a block), which agent that is. None for a person, for the
+        shared ``cheese`` seat and for a room-derived seat — none of those is
+        one saved teammate.
+        """
+        if not handle:
+            return None
+        for instance in await self.list_for_project(project.id):
+            if agent_instance_handle(instance.id) == handle:
+                return self.resolved(instance)
+        return None
+
+    async def project_of_seat(self, handle: str) -> uuid.UUID | None:
+        """Which project's teammate sits on rosters as ``handle``, or None when
+        the handle is not a saved teammate's seat at all (a person, the shared
+        ``cheese`` seat, a room-derived seat, a device's agent)."""
+        for instance in await self._repo.list_all():
+            if agent_instance_handle(instance.id) == handle:
+                return instance.project_id
+        return None
 
     async def for_handle(self, project: Project, handle: str | None) -> AgentInstance:
         """The saved teammate a caller named by handle, else the project default.
@@ -283,7 +336,6 @@ class AgentInstanceService:
             raise ValidationError("请先创建另一个队友，再停用这个队友")
         instance.is_active = False
         if project.default_agent_instance_id == instance.id:
-            await self._pin_private_chats(project)
             project.default_agent_instance_id = active[0].id
         await self._session.flush()
 
@@ -292,24 +344,9 @@ class AgentInstanceService:
     ) -> ResolvedAgent:
         if instance is not None and not instance.is_active:
             raise ValidationError("这个队友已停用，不能设为默认")
-        await self._pin_private_chats(project)
         project.default_agent_instance_id = instance.id if instance else None
         await self._session.flush()
         return await self.for_project(project)
-
-    async def _pin_private_chats(self, project: Project) -> None:
-        """Settle the 私聊 that name no teammate, before this project's default
-        stops being the one answering them.
-
-        A DM keyed to nobody is answered by the default, so moving the default
-        would silently move the conversation too — the thing 一人一间 exists to
-        prevent. Imported here rather than at module scope: the topic side reads
-        this service to resolve a room's agent, and the two would import each
-        other.
-        """
-        from app.domain.topic.services import TopicService
-
-        await TopicService(self._session).pin_agent_dms_to_current_default(project)
 
     async def materialize_default(self, project: Project) -> AgentInstance:
         """The project's default as a real row, creating it if it was implicit.
@@ -331,6 +368,10 @@ class AgentInstanceService:
             display_name=IMPLICIT_DEFAULT.display_name,
             configuration=(await self.initial_configuration(project)).model_dump(),
         )
+        # An agent gets its identity when it comes into being, and the implicit
+        # 芝士 comes into being here rather than in create(). Without it the first
+        # room of a project could not seat it under its own seat.
+        await self.ensure_identity(instance)
         # Configuring the project's 芝士 is choosing it, so a retired row under
         # that handle comes back rather than becoming a default nobody may pick.
         # Same pool either way — the handle never moved.

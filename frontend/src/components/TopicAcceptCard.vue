@@ -103,16 +103,18 @@ const mergeBadge = computed(() => {
 const mergeReasons = computed(() => {
   const card = pendingCard.value
   if (!card) return []
-  return card.has_external_checks && card.pr_number === null
+  return card.forge.reports_checks && card.pr_number === null
     ? card.merge_state.reasons
     : visibleReasons(card.merge_state)
 })
-// Projects without external checks leave acceptance to the reviewer.
+// 读不到检查结论的托管方，采纳就是验收人自己的判断。
 const platformLane = computed(() => {
   const card = pendingCard.value
-  return !!card && !card.has_external_checks
+  return !!card && !card.forge.reports_checks
 })
-const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendingCard.value.pr_number === null)
+// 这个托管方在人点之前就说明了自己是谁（I23）；GitHub 那一档不说话，卡上有链接。
+const forgeDeclaration = computed(() => pendingCard.value?.forge.declaration || '')
+const needsPr = computed(() => !!pendingCard.value?.forge.hosts_proposals && pendingCard.value.pr_number === null)
 // 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
 // services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
 // `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
@@ -123,7 +125,12 @@ const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendi
 const MERGEABLE_STATES = ['clean', 'unstable']
 const acceptBlockedTitle = computed<string | null>(() => {
   const card = pendingCard.value
-  if (!card || platformLane.value || needsPr.value) return null
+  if (!card) return null
+  // 托管方读不出来的那一档（forge.kind === 'unknown'）：能力位一位都不敢说是，所以
+  // 它看起来像平台 lane，但它不是 —— 后端这会儿真去采纳会按同一个失败 422 拒掉。
+  // 闸门和采纳是同一条线，那就灰在这里，理由用卡上已经写着的那一句。
+  if (card.forge.kind === 'unknown') return card.forge.declaration
+  if (platformLane.value || needsPr.value) return null
   if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
   return [t('acceptCard.pending.blockedTitle'), ...why].join(t('acceptCard.pending.reasonSeparator'))
@@ -459,6 +466,11 @@ defineExpose({ reload: loadAcceptCard })
           <span>{{ r.detail }}</span>
           <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
         </div>
+        <!-- 托管方自己的一句话，在人点采纳之前就在卡上（I23）：这次采纳会落到
+             哪里、有没有外部检查。不是采纳之后补写的一条 note。 -->
+        <div v-if="forgeDeclaration" class="text-caption text-medium-emphasis mb-2">
+          {{ forgeDeclaration }}
+        </div>
         <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
         <div
           v-if="pendingNote"
@@ -665,7 +677,10 @@ defineExpose({ reload: loadAcceptCard })
           红着合有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
           没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
         -->
-        <div v-if="pendingCard.pr_number && acceptBlockedTitle" class="mt-2">
+        <div
+          v-if="pendingCard.pr_number && acceptBlockedTitle && !mergeReasons.some((r) => r.kind === 'dependency')"
+          class="mt-2"
+        >
           <v-btn
             v-if="!showForceMergeInput"
             size="small"

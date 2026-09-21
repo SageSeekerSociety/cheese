@@ -48,6 +48,11 @@ func mockserverPut(t *testing.T, base, path, body string) {
 	}
 }
 
+// The image the mock API runs from. CI pulls it ahead of the suite (through the
+// registry mirror, with retries) and tags it under this name, so the run here
+// never reaches Docker Hub itself.
+const mockImage = "mockserver/mockserver:mockserver-7.5.0"
+
 // startMockAPI runs MockServer in docker on a random loopback port and scripts
 // the model: any /v1/messages that offers a Bash tool gets a streamed tool
 // call that writes markFile; everything else (the title request) ends the turn.
@@ -55,8 +60,15 @@ func startMockAPI(t *testing.T, markFile, mark string) string {
 	t.Helper()
 	name := fmt.Sprintf("cheese-e2e-mock-%d", time.Now().UnixNano())
 	out, err := exec.Command("docker", "run", "-d", "--name", name,
-		"-p", "127.0.0.1::1080", "mockserver/mockserver:mockserver-7.5.0").CombinedOutput()
+		"-p", "127.0.0.1::1080", mockImage).CombinedOutput()
 	if err != nil {
+		// On a laptop without docker the suite steps aside. In CI it must not:
+		// the canary ran two nights (2026-09-17, -18) with seven of eight tests
+		// skipped because the image pull failed, and reported green — a
+		// canary that skips is the silent one claude-canary.yml warns about.
+		if os.Getenv("CHEESE_E2E_REQUIRE_DOCKER") != "" {
+			t.Fatalf("docker unavailable for the mock API: %v: %s", err, out)
+		}
 		t.Skipf("docker unavailable for the mock API: %v: %s", err, out)
 	}
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })

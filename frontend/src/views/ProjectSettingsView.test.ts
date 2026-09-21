@@ -26,6 +26,12 @@ beforeEach(() => {
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })
+  vi.mocked(api.getForgeConnection).mockResolvedValue({ kind: 'github_app', connected: false, repo: null, url: null })
+  vi.mocked(api.getForgeAttribution).mockResolvedValue({
+    requester_coauthor: null,
+    effective: true,
+    deployment_default: true,
+  })
 })
 
 async function openSettings() {
@@ -35,11 +41,32 @@ async function openSettings() {
   // 页面文案现在从词表来；默认语言是 zh-CN，所以下面那些中文断言仍然成立。
   app.use(i18n)
   app.mount(element)
-  await vi.waitFor(() => expect(element.textContent).toContain('运行环境'))
+  await vi.waitFor(() => expect(element.querySelector('.t-eyebrow')?.textContent).toContain('Example'))
   return { element, unmount: () => app.unmount() }
 }
 
 describe('project settings', () => {
+  it('shows the hosted repository without offering a GitHub repository connection', async () => {
+    vi.mocked(api.getForgeConnection).mockResolvedValue({
+      kind: 'forgejo',
+      connected: true,
+      repo: 'project/code',
+      url: 'https://forge.example/project/code',
+    })
+    const wrapper = await openSettings()
+    try {
+      expect(wrapper.element.querySelector('[data-testid="forge-repository"]')?.textContent).toContain('由芝士托管')
+      expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
+      expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')?.getAttribute('href')).toBe(
+        'https://forge.example/project/code'
+      )
+      expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')?.textContent).toContain('当前已开启')
+      expect(api.setForgeAttribution).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it.each([true, false])('reflects GitHub protection in the rendered controls (enforced=%s)', async (enforced) => {
     vi.mocked(api.getBranchProtection).mockResolvedValue({
       required_checks: [],

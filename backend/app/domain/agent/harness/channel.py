@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from typing import Protocol
 
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
 from app.domain.agent.platform_failures import TURN_TIMEOUT_MESSAGE
 
@@ -157,7 +158,7 @@ class Channel:
         """Drop whatever this channel remembers about a topic being torn down."""
         del topic_id
 
-    async def precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
+    async def precheck(self, session: SessionRef) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the
         hook queue is claimed — a turn that cannot run at all must never touch
         the router. Raise ``ScreenSetupError`` to end the turn with a clean
@@ -169,8 +170,7 @@ class Channel:
     async def ensure_ready(
         self,
         *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         token: str,
         env: dict[str, str] | None,
         memory_scope: str | None,

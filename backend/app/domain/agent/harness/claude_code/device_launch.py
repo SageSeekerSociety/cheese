@@ -19,6 +19,7 @@ launch; ``machine_launcher`` owns the other half and joins the two.
 import json
 import shlex
 from pathlib import Path
+from uuid import uuid4
 
 # Perception wiring (settings.json + the cheese-hook forwarder) is the SHARED
 # substrate — identical for the local (tmux) and remote (device) backends so it
@@ -27,9 +28,6 @@ from pathlib import Path
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import startup_cache
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.remote_execution import (
-    client as execution_client,
-)
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
@@ -61,8 +59,25 @@ _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 #
 # Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
 # new build first, because "it launched" is not evidence the frames still work.
-CLAUDE_PINNED_VERSION = "2.1.261"
-CLAUDE_MIN_VERSION = "2.1.261"
+#
+# 这是这个骨架**唯一**的 pin：行为声明（``behaviour.py``）引用它，
+# ``scripts/test_harness_contracts.py`` 装二进制时问的也是它。另外这几处写着同一
+# 个版本号，每一处都 import 不到这里，所以它们是复制品而不是第二个答案——升级要
+# 改的就是这张单子，守卫在测试里，改漏一处就红：
+#   * ``remote_execution/client.py`` 的 ``PINNED_VERSION``、
+#     ``remote_execution/bootstrap.py`` 的 ``VERSION``（机器上单独跑的两个脚本）
+#   * ``sandbox/Dockerfile.private`` 里装的那个 claude，以及镜像 tag 的三处写法：
+#     ``remote_execution/private.py`` 的 ``IMAGE``、``core/config.py`` 的
+#     ``private_chat_executor_image`` 默认值、
+#     ``.github/workflows/remote-execution.yml`` build 时打的 tag
+#     —— 以上都由 ``tests/unit/test_capability_matrix.py`` 钉住
+#   * ``.github/workflows/cli.yml`` 装的那个 claude 与 ``sandbox/Dockerfile`` 的
+#     ``ARG CLAUDE_CODE_VERSION``，由 ``tests/unit/test_device_rendezvous.py`` 钉住
+# ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
+# 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
+# 红得见。
+CLAUDE_PINNED_VERSION = "2.1.277"
+CLAUDE_MIN_VERSION = "2.1.277"
 
 # CLAUDE_BASE_CMD starts with the bare word `claude`; the launcher resolves a
 # specific binary (pin, then ~/.local/bin, then PATH) and needs only the flags.
@@ -75,15 +90,16 @@ ENV_RV_SOCK = "CHEESE_RV_SOCK"
 ENV_RV_TOKEN_FILE = "CHEESE_RV_TOKEN_FILE"
 
 
-def rendezvous_paths(topic_id: str) -> tuple[str, str]:
-    """``(socket, token_file)`` for a topic, short enough to be bindable.
+def rendezvous_paths() -> tuple[str, str]:
+    """Allocate a socket and token file for one model launch.
 
     A unix socket path is capped near 104 bytes and an isolated home already
     spends ~105 (`~/.cheese/home/<project-uuid>/<topic-uuid>/.claude/`), so the
-    socket cannot live beside the session it belongs to. `/tmp` plus 12 hex of
-    the topic id keeps it at ~32 bytes and still unique per topic."""
-    short = topic_id.replace("-", "")[:12]
-    return f"/tmp/cheese-rv-{short}.sock", f"/tmp/cheese-rv-{short}.token"
+    socket cannot live beside the session it belongs to. Separate launches of
+    the same topic must not bind or authenticate through each other's files.
+    """
+    identity = uuid4().hex
+    return f"/tmp/cheese-rv-{identity}.sock", f"/tmp/cheese-rv-{identity}.token"
 
 
 # Reports what a turn cost. Claude Code writes a usage block per assistant
@@ -91,50 +107,6 @@ def rendezvous_paths(topic_id: str) -> tuple[str, str]:
 # and the transcript dies with the machine — which is why a week of spend could
 # not be attributed to a project, a topic, or even a prompt.
 #
-# Kept OUT of the launcher f-string on purpose: it is dense with braces, and
-# escaping them inside an f-string is a silent-corruption risk for no benefit.
-#
-# python3 rather than shell: the transcript is JSONL, there is no jq on a
-# machine, and a grep/sed parser works right up until a field moves.
-CHEESE_USAGE_READER = """import json, sys
-try:
-    hook = json.loads(sys.stdin.read())
-except Exception:
-    sys.exit(0)
-path = hook.get("transcript_path")
-if not path:
-    sys.exit(0)
-tot = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
-model = ""
-try:
-    with open(path, errors="ignore") as fh:
-        for line in fh:
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            m = d.get("message") or {}
-            u = m.get("usage") or {}
-            if not u:
-                continue
-            model = m.get("model") or model
-            tot["input"] += u.get("input_tokens") or 0
-            tot["output"] += u.get("output_tokens") or 0
-            tot["cache_read"] += u.get("cache_read_input_tokens") or 0
-            tot["cache_write"] += u.get("cache_creation_input_tokens") or 0
-except OSError:
-    sys.exit(0)
-if any(tot.values()):
-    print(json.dumps({"hook_event_name": "CheeseUsage", "model": model, **tot}))
-"""
-
-# The reader has to be a FILE, not a heredoc: `python3 - <<PY` hands python the
-# heredoc as its stdin, so the hook payload we actually need to read would never
-# arrive. Verified by running it both ways.
-CHEESE_USAGE_SCRIPT = """#!/bin/sh
-python3 "$HOME/.claude/cheese-usage.py" | cheese-hook >/dev/null 2>&1 || true
-"""
-
 # READ-ONLY against the machine owner's files, by contract (#5). History, so
 # nobody reintroduces the write: the 2026-08-02 measurement showed the login
 # user's ~/.claude/settings.json env block wins over the process environment,
@@ -388,8 +360,6 @@ def launch_holes(
 {ca_pem}CHEESECA
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
-    usage_script = CHEESE_USAGE_SCRIPT
-    usage_reader = CHEESE_USAGE_READER
     sync_script = CHEESE_SYNC_SCRIPT
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
     startup_cache_source = Path(startup_cache.__file__).read_text()
@@ -402,7 +372,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     )
     settings_json = json.dumps(
         hooks_settings(
-            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"],
+            ["cheese-sync"] if sync_on_stop else [],
             remote_control=remote_control,
         ),
         ensure_ascii=False,
@@ -413,10 +383,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
         else CLAUDE_BASE_ARGS
     )
     execution_setup = ""
-    pinned_version = (
-        execution_client.PINNED_VERSION if remote_execution else CLAUDE_PINNED_VERSION
-    )
-    minimum_version = pinned_version if remote_execution else CLAUDE_MIN_VERSION
+    pinned_version = CLAUDE_PINNED_VERSION
+    minimum_version = CLAUDE_PINNED_VERSION if remote_execution else CLAUDE_MIN_VERSION
     if remote_execution:
         helper_sources = release.sources()
         execution_setup = 'mkdir -p "$HOME/.cheese/remote-execution"\n'
@@ -460,9 +428,9 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
     if topic_id:
         # Where this screen's prompts arrive. The launcher turns these two into
         # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
-        # reads the same two to dial. Keyed on the topic so an adopted screen
-        # and a fresh one agree on the path.
-        sock, token_file = rendezvous_paths(topic_id)
+        # reads the same two to dial. An adopted screen retains its saved launch
+        # environment, including the paths its running model already uses.
+        sock, token_file = rendezvous_paths()
         env[ENV_RV_SOCK] = sock
         env[ENV_RV_TOKEN_FILE] = token_file
     # The settings.json / cheese-hook heredocs are quoted ('JSON'/'SH') so the shell
@@ -515,9 +483,9 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # Ours to create now that the platform keeps its own files in $HOME/.cheese:
 # this directory is this harness's, and everything below writes into it.
 mkdir -p "$CLAUDE_CONFIG_DIR"
-# cheese-sync and cheese-usage are Stop hooks, and settings.json names them
-# by NAME — so this directory has to be on PATH too. The platform puts its
-# own there later; the two never hold the same name.
+# cheese-sync is a Stop hook, and settings.json names it by NAME — so this
+# directory has to be on PATH too. The platform puts its own there later; the
+# two never hold the same name.
 export PATH="$CLAUDE_CONFIG_DIR:$PATH"
 export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
@@ -554,11 +522,6 @@ cat > "$HOME/.claude/cheese-system-prompt.md" <<'SYSPROMPT'
 cat > "$HOME/.claude/cheese-sync" <<'SYNC'
 {sync_script}SYNC
 chmod +x "$HOME/.claude/cheese-sync"
-cat > "$HOME/.claude/cheese-usage.py" <<'USAGEPY'
-{usage_reader}USAGEPY
-cat > "$HOME/.claude/cheese-usage" <<'USAGE'
-{usage_script}USAGE
-chmod +x "$HOME/.claude/cheese-usage"
 """,
         credentials=f"""\
 # Extract the machine's own ccproxy ticket, READING the owner's files only —
@@ -670,7 +633,7 @@ if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{minimum_version}" "$CLAUDE_V
 delivery needs the rendezvous socket of a newer claude." >&2
   exit 1
 fi
-# One token per topic, on disk rather than in the env: an ADOPTED claude keeps
+# One token per launch, on disk rather than in the env: an ADOPTED claude keeps
 # the token it booted with, so a freshly generated value would never match. The
 # file is the single copy the connector and this launcher both read.
 if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
@@ -806,8 +769,8 @@ def on_machine(
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
 
-    ``place`` states facts; what they mean is decided here. A room with a git
-    remote syncs at turn end (a Stop hook), one with an execution target ships
+    ``place`` states facts; what they mean is decided here. A project room
+    syncs at turn end (a Stop hook), one with an execution target ships
     the executor client and hands ``claude`` to it, one whose operator may drive
     it directly runs without the permission prompt, and a CA to trust is a file
     only the script can name an absolute path for.
@@ -815,7 +778,7 @@ def on_machine(
     return launch_holes(
         # A room whose work is done on an executor has nothing of its own to
         # hand back; the executor owns the checkout.
-        sync_on_stop=bool(place.git_remote) and place.execution_target is None,
+        sync_on_stop=bool(place.project_id) and place.execution_target is None,
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         remote_control=place.remote_control,

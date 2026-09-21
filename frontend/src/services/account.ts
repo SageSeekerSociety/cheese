@@ -80,6 +80,11 @@ export class AccountService {
   _loggedIn = ref(false)
   _user = ref<User | null>(null)
   _accessToken: string | null = null
+  // 冷打开时的「登没登录」答案。`init` 一发起就把它换成那次恢复的 promise：
+  // 手里的访问令牌过期时，恢复要先去换一个（一次网络往返），在那之前 `loggedIn`
+  // 是 false 而不是「还不知道」——根路径的守卫要是当场读，就会把回访用户当成
+  // 生人送进推广页。要靠登录态做路由决定的地方先 await 这一个。
+  sessionRestored: Promise<void> = Promise.resolve()
 
   public get loggedIn() {
     return this._loggedIn.value
@@ -124,7 +129,12 @@ export class AccountService {
     }
   }
 
-  public async init() {
+  public init(): Promise<void> {
+    this.sessionRestored = this.restoreSession()
+    return this.sessionRestored
+  }
+
+  private async restoreSession() {
     const accessToken = localStorage.getItem('accessToken')
     const user = localStorage.getItem('user')
     if (!accessToken || !user) return

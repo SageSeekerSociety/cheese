@@ -33,6 +33,13 @@ OTHER_PROJECT = uuid.uuid4()
 def _resolver(monkeypatch, *, cheese_token: str):
     monkeypatch.setattr(
         auth_mod,
+        "TopicMemberService",
+        lambda _session: SimpleNamespace(
+            resolve_agent_handle=AsyncMock(side_effect=lambda t: f"cheese-{t.hex[:12]}")
+        ),
+    )
+    monkeypatch.setattr(
+        auth_mod,
         "IdentityService",
         lambda _session: SimpleNamespace(is_agent=AsyncMock(return_value=True)),
     )

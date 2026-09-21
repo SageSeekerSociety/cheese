@@ -47,6 +47,49 @@ class DeviceOffline(RuntimeError):
         self.device_id = device_id
 
 
+class DeviceCallError(RuntimeError):
+    """The machine answered a call with a failure of its own.
+
+    「dial unix …sock: no such file」 is the connector saying the runner's
+    socket is not there yet; 「lstat …/.cheese/executor: no such file」 that the
+    home it was asked about is gone. Those are answers, and the message is the
+    whole of what the person in the room can act on. Raised as a bare
+    RuntimeError they were the owner's unhandled 500, the backend's unhandled
+    500 on top of it, and two alerts describing this server for every one the
+    machine sent — 17 alerts folding 29 more repeats on 2026-09-18 alone, with
+    the machine's words cut out of the ones that reached the room.
+
+    A subclass, so every ``except RuntimeError`` that already waits one of
+    these out keeps doing so.
+    """
+
+
+class DeviceNotReady(DeviceCallError):
+    """The link is up, but this machine cannot serve calls yet.
+
+    A connector that has just dialled in finishes updating itself before it can
+    run anything, and a call that arrives in that window has nothing to reach.
+    It is the same standing as the machine being away — the caller's next poll,
+    a second or two later, finds it ready — but as a bare RuntimeError it was an
+    unhandled 500 and one alert per release: 「Device connector must finish
+    updating before execution」 arrived that way at 01:47 UTC on 2026-09-20,
+    seconds after the owner was replaced and the fleet re-attached.
+    """
+
+
+def _read_a_failure_nobody_awaited(future: asyncio.Future[Any]) -> None:
+    """A call registers its future and then writes to the link; when the write
+    itself finds the link dead, ``drop_transport`` fails that very future and
+    the write raises ``DeviceOffline`` — so the caller leaves through the send
+    and never awaits the future it registered. asyncio reports that at garbage
+    collection as 「Future exception was never retrieved」, an ERROR with no
+    route and a traceback into the collector, for a device the caller already
+    reported offline. Reading the exception here is what makes that untrue;
+    a future the caller did await answers the same thing twice for free."""
+    if future.done() and not future.cancelled():
+        future.exception()
+
+
 def configure_subscription_cleanup(remote_hub: Any) -> None:
     """Wire business subscription cleanup without coupling the RPC transport."""
     from app.domain.agent.harness.claude_code import (
@@ -439,6 +482,7 @@ class DeviceHub:
             return await asyncio.wait_for(future, timeout)
         finally:
             device.session_pending.pop(request_id, None)
+            _read_a_failure_nobody_awaited(future)
 
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await self.session_request(device_id, {"t": "session.list"})
@@ -564,7 +608,10 @@ class DeviceHub:
             raise DeviceOffline(device_id)
         identifier = trace_id or "execution-" + uuid.uuid4().hex
         if not device.executor:
-            raise RuntimeError("Device connector must finish updating before execution")
+            raise DeviceNotReady(
+                f"device {device_id} is still updating its connector; "
+                "execution is available once it reports ready"
+            )
         future = asyncio.get_running_loop().create_future()
         device.executor_pending[identifier] = (future, bytearray())
         # The stage lines are DEBUG, and `device_error` below is not. They carry
@@ -581,13 +628,13 @@ class DeviceHub:
                 time.monotonic_ns(),
             )
             await device.send(
-                {
-                    "t": "execution.call",
-                    "id": identifier,
-                    "path": state,
-                    "stdin": json.dumps({"method": method, "params": params}),
-                    "timeout": int(timeout),
-                }
+                device_link.execution_call(
+                    call_id=identifier,
+                    state=state,
+                    method=method,
+                    params=params,
+                    timeout=int(timeout),
+                )
             )
             logger.debug(
                 "execution_timing stage=device_sent trace=%s mono_ns=%d",
@@ -600,6 +647,7 @@ class DeviceHub:
             raise
         finally:
             device.executor_pending.pop(identifier, None)
+            _read_a_failure_nobody_awaited(future)
 
     # -- viewers (browser <-> device screen) -------------------------------
 
@@ -707,7 +755,7 @@ class DeviceHub:
                         msg.id,
                         time.monotonic_ns(),
                     )
-                    raise RuntimeError(msg.error)
+                    raise DeviceCallError(msg.error)
                 else:
                     logger.debug(
                         "execution_timing stage=device_complete trace=%s mono_ns=%d",
@@ -716,7 +764,7 @@ class DeviceHub:
                     )
                     response = json.loads(data)
                     if "error" in response:
-                        raise RuntimeError(response["error"])
+                        raise DeviceCallError(response["error"])
                     future.set_result(response["result"])
             except (ValueError, KeyError, RuntimeError) as exc:
                 future.set_exception(exc)
@@ -728,7 +776,7 @@ class DeviceHub:
             fut = device.call_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(RuntimeError(msg.error))
+                    fut.set_exception(DeviceCallError(msg.error))
                 else:
                     fut.set_result(msg.value)
             return
@@ -741,7 +789,7 @@ class DeviceHub:
             fut = pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(RuntimeError(msg.error))
+                    fut.set_exception(DeviceCallError(msg.error))
                 else:
                     fut.set_result(msg.value)
             return

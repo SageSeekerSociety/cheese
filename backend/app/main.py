@@ -9,6 +9,7 @@ a top-level ``router`` is included. This lets domains be added without editing
 this file.
 """
 
+import asyncio
 import importlib
 import logging
 import pkgutil
@@ -96,18 +97,25 @@ async def lifespan(_: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
-    # The backend and the in-container agent share one git store and must run as
-    # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
-    # panel just 422s for every topic in the project. Say it out loud at boot.
+    # Every project agent is a collaborator with an identity of its own — a user
+    # row under `agent_instance_handle(id)`, which is what its roster seats name.
+    # `ensure_identity` runs on create, so this only reaches agents created before
+    # it existed; and the migration that seated each room's former agent wrote
+    # the seat's handle without the user row behind it, which this supplies.
+    # Idempotent, and never blocks boot for the same reason as the seed above.
     try:
-        from app.domain.workspace import service as _ws
+        from app.domain.agent_instance.repositories import AgentInstanceRepository
+        from app.domain.agent_instance.services import AgentInstanceService
 
-        for problem in _ws.audit_workspace_ownership():
-            get_logger("cheesex.runtime").error(
-                "workspace_ownership", problem=problem, uid=_ws.AGENT_UID
-            )
-    except Exception:  # noqa: BLE001 — a diagnostic must never block boot
-        get_logger("cheesex.runtime").exception("workspace ownership audit failed")
+        async with async_session_factory() as session:
+            service = AgentInstanceService(session)
+            for instance in await AgentInstanceRepository(session).list_all():
+                await service.ensure_identity(instance)
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "agent identity backfill skipped", reason=str(exc)[:120]
+        )
 
     # The `cheese` CLI is now staged into each topic's session dir from THIS
     # build (ws.session_dir) instead of an operator-maintained host checkout. A
@@ -201,9 +209,18 @@ async def lifespan(_: FastAPI):
     for job in jobs:
         job.start()
     from app.core.background import spawn
+    from app.core.loop_lag import watch_loop_lag
     from app.domain.topic.retire import sweep_retired_storage
 
     spawn(sweep_retired_storage(async_session_factory), name="cleanup startup recovery")
+    spawn(watch_loop_lag(), name="event loop lag")
+    forge_events = None
+    if settings.forge_event_relay_url:
+        from app.domain.review.events import listen
+
+        forge_events = asyncio.create_task(
+            listen(scheduler, async_session_factory), name="forge events"
+        )
 
     # The openviking backend's whole failure mode is silence: a rejected key
     # leaves extraction writing nothing, recall answering empty, and no other
@@ -223,6 +240,9 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            if forge_events is not None:
+                forge_events.cancel()
+                await asyncio.gather(forge_events, return_exceptions=True)
             for job in reversed(jobs):
                 await job.stop()
             if hasattr(hub_runtime, "close"):

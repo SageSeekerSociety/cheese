@@ -63,7 +63,7 @@ defaults:
 
 jobs:
   check:
-    runs-on: [self-hosted, cheese-ci-any]
+    runs-on: ubuntu-latest
     # Measured locally: install ~40s, eslint ~90s, vitest ~56s. The margin
     # covers a cold pnpm store without letting a wedged run bill for an hour.
     timeout-minutes: 15

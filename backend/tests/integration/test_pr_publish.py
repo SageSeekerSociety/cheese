@@ -7,8 +7,15 @@ card; any failure leaves the card PR-less (the accept path then falls back).
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock
 
+import pytest
+
+from app.domain.review.github_pr import OpenedPR
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.test_accept_pr import app_world as app_world
+
+pytestmark = pytest.mark.usefixtures("app_world")
 
 
 def _make_project(client) -> str:
@@ -28,6 +35,7 @@ def _make_card(client, topic_id: str, **extra) -> str:
         f"/topics/{topic_id}/tasks/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
+            "new_artifact": "报告",
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -69,21 +77,19 @@ class _FakeClient:
         base: str,
         title: str,
         body: str,
-        as_user_token: str | None = None,
         draft: bool = False,
-    ) -> dict:
+    ) -> OpenedPR:
         record = {
             "head": head,
             "base": base,
             "title": title,
             "body": body,
-            "as_user_token": as_user_token,
             "draft": draft,
         }
         type(self).opened.append(record)
         if head in type(self).existing:
             # GitHub's "a pull request already exists" → the caller adopts it.
-            return type(self).existing[head]
+            return OpenedPR(type(self).existing[head])
         pr = {
             "number": 42,
             "html_url": "https://github.com/acme/widgets/pull/42",
@@ -93,7 +99,7 @@ class _FakeClient:
             "node_id": f"PR_node_{head}",
         }
         type(self).existing[head] = pr
-        return pr
+        return OpenedPR(pr)
 
     async def update_pr(self, number: int, *, title: str, body: str) -> dict:
         type(self).patched.append({"number": number, "title": title, "body": body})
@@ -112,30 +118,18 @@ class _FakeClient:
 
 def _github_world(monkeypatch) -> None:
     from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
 
     _FakeClient.opened = []
     _FakeClient.patched = []
     _FakeClient.readied = []
     _FakeClient.existing = {}
 
-    # #192: the installation is resolved per-project, not from a global.
-    async def _fake_tokens_for_project(_project_id, _session):
-        return _FakeTokens()
-
-    # pr_publish binds these names at module import — patch them there.
     monkeypatch.setattr(
-        pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project
+        pr_publish,
+        "proposal_client",
+        AsyncMock(return_value=_FakeClient("acme", "widgets", _FakeTokens())),
     )
-    monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
-    monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
-    )
-    monkeypatch.setattr(
-        ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
-    )
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
+    monkeypatch.setattr(pr_publish, "branch_head", AsyncMock(return_value="a" * 40))
 
 
 def test_publication_records_the_pr_on_the_card(client, monkeypatch):
@@ -178,12 +172,12 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
     clears the failure note along with recording the PR."""
     _github_world(monkeypatch)
     from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
 
-    def _boom(pid, tid, token):
-        raise RuntimeError("push refused")
-
-    monkeypatch.setattr(ws, "push_topic_branch", _boom)
+    monkeypatch.setattr(
+        pr_publish,
+        "branch_head",
+        AsyncMock(side_effect=RuntimeError("forge unavailable")),
+    )
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -204,12 +198,10 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
     assert card["status"] == "pending"
     assert card["note_level"] == "error"
     assert card["note"].startswith("开 PR 失败")
-    assert "push refused" in card["note"]
+    assert "forge unavailable" in card["note"]
 
     # The push works again → a re-publish records the PR and clears the note.
-    monkeypatch.setattr(
-        ws, "push_topic_branch", lambda pid_, tid_, token: f"topic/{tid_.hex[:8]}"
-    )
+    monkeypatch.setattr(pr_publish, "branch_head", AsyncMock(return_value="a" * 40))
     asyncio.run(
         pr_publish._run(
             client.test_factory,
@@ -223,12 +215,11 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
     assert card["note"] == ""
 
 
-def test_non_github_upstream_is_not_applicable(client, monkeypatch):
+def test_project_without_a_forge_client_cannot_publish(client, monkeypatch):
     _github_world(monkeypatch)
     from app.domain.review import pr_publish
-    from app.domain.workspace import service as ws
 
-    monkeypatch.setattr(ws, "get_upstream", lambda pid: "/home/repos/widgets")
+    monkeypatch.setattr(pr_publish, "proposal_client", AsyncMock(return_value=None))
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)

@@ -4,10 +4,10 @@
     "connected": "已连接 {login}",
     "connectedAt": "（{time}连接）",
     "connectedNotice": "已连接 GitHub 账号",
-    "description": "用于把你合并的提交正确归到你名下，也是采纳时能代表你的身份开 PR 的前提。这与登录用的 GitHub 授权是两回事，可以是同一个账号，也可以不是。",
+    "description": "用于识别你的提交署名，并以你的身份创建 GitHub PR。这与登录用的 GitHub 授权相互独立，可以连接不同的账号。",
     "disconnect": "断开",
     "disconnectFailed": "断开 GitHub 账号失败",
-    "expired": "GitHub 授权已过期：采纳你参与的话题时将无法用你的身份自动开 PR，会退回为直接合并到 main。请点击「重新连接」刷新授权。",
+    "expired": "GitHub 授权已过期，暂时无法以你的身份创建 PR。请点击「重新连接」刷新授权。",
     "loadFailed": "加载连接状态失败",
     "loading": "正在加载连接状态…",
     "none": "暂无关联账号",
@@ -119,17 +119,41 @@
     "eyebrow": "项目设置 · {name}",
     "loadFailed": "加载设置失败",
     "market": "市场",
-    "subtitle": "管理运行环境、仓库连接和分支保护。角色设定和模型请到“AI 队友”中修改对应的队友。",
-    "title": "项目设置"
+    "subtitle": "这个项目的队友、运行环境、交付规则和仓库连接",
+    "title": "项目设置",
+    "groups": {
+      "teammates": "队友",
+      "runtime": "运行环境",
+      "delivery": "交付",
+      "repository": "仓库"
+    }
   },
   "upstream": {
-    "description": "关联一个已有的 git 仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。",
-    "placeholder": "https://… 或本机绝对路径（留空 = 取消关联）",
+    "description": "填写要连接的 GitHub 仓库地址并保存，再点击下方「连接 GitHub 仓库」。连接后，代码与 PR 都保留在该仓库。",
+    "placeholder": "https://github.com/组织或用户名/仓库名",
     "saveFailed": "保存上游仓库失败",
     "sync": "同步上游",
     "syncFailed": "同步失败：{reason}",
     "syncedCommits": "已合入上游 1 个提交 | 已合入上游 {count} 个提交",
-    "title": "上游仓库",
+    "title": "GitHub 仓库地址",
     "upToDate": "已是最新，没有新提交"
+  },
+  "forge": {
+    "title": "代码仓库",
+    "hosted": "由芝士托管",
+    "preparing": "仓库正在准备中",
+    "open": "打开仓库",
+    "switchHint": "项目创建后，暂不支持切换托管服务。"
+  },
+  "attribution": {
+    "title": "提交署名",
+    "label": "将任务请求者列为共同作者",
+    "on": "当前已开启",
+    "off": "当前已关闭",
+    "hint": "开启后，新提交会附上任务请求者的共同作者署名，提交作者仍为 AI 队友。这项设置不会修改已有提交。",
+    "followSystem": "跟随系统默认（{state}）",
+    "optionOn": "开启",
+    "optionOff": "关闭",
+    "saveFailed": "保存失败，请重试"
   }
 }

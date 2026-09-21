@@ -35,11 +35,13 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import machine_launcher, provider_env
 from app.domain.agent.device_hub import (
+    DeviceCallError,
     DeviceHub,
     DeviceOffline,
     HubScreen,
     device_hub,
 )
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Channel, ScreenSetupError
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
@@ -49,6 +51,7 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.harness.launch import MachinePlace, MachinePlan
 from app.domain.agent.hook_forwarder import CHEESE_HOOK_SCRIPT
+from app.domain.agent.place import footprint_root, session_platform_dirs
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -61,6 +64,7 @@ from app.domain.device.supply import (
     has_runnable_transport,
 )
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -288,7 +292,7 @@ def _launch_identity(
                 "agent": agent_configuration,
                 "harness": harness_contract,
                 "target": execution_target,
-                "root": machine_launcher.PLATFORM_DIR,
+                "root": footprint_root(),
             },
             sort_keys=True,
         ).encode()
@@ -388,12 +392,14 @@ def _credential_expiry(token: str) -> int:
     return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
-# Where a place's isolated claude home lives on the device, relative to the
-# device's own `$HOME` (expanded by its shell, never by us). The path is spelled
-# in one place because two sides depend on it agreeing: the launcher that
-# creates it and the retirement that removes it (topic/retire.py).
-DEVICE_HOME_ROOT = "$HOME/.cheese/home"
-DEVICE_WORK_ROOT = "$HOME/.cheese/work"
+# The platform's footprint on the device, and a place's isolated claude home
+# inside it, relative to the device's own `$HOME` (expanded by its shell, never
+# by us). Everything below hangs off `DEVICE_ROOT` so that the launcher that
+# creates these, the retirement that removes them (topic/retire.py) and the
+# connector's `uninstall` are all naming one directory.
+DEVICE_ROOT = f"$HOME/{footprint_root()}"
+DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
+DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/work"
 # Where a PROJECT's rooms share the packages they install, on the machine they
 # share. Per project rather than per room because every room of a project
 # installs the same lockfile, while a room's home is its own — and uv and pnpm
@@ -417,7 +423,7 @@ DEVICE_WORK_ROOT = "$HOME/.cheese/work"
 # this store into an isolated room read-only would give that room the isolation
 # and take the dedup straight back. The two levers are not the same lever, and
 # a design that assumes they are will re-discover 236GB.
-DEVICE_STORE_ROOT = "$HOME/.cheese/store"
+DEVICE_STORE_ROOT = f"{DEVICE_ROOT}/store"
 
 
 def device_home_dir(project_id: uuid.UUID, place_id: uuid.UUID) -> str:
@@ -432,6 +438,11 @@ def device_store_dir(project_id: uuid.UUID) -> str:
     return f"{DEVICE_STORE_ROOT}/{project_id}"
 
 
+def launcher_path(topic_id: uuid.UUID) -> str:
+    """The launcher file a screen runs, where `_ship_launcher` writes it."""
+    return f"{DEVICE_ROOT}/launch/{topic_id}.sh"
+
+
 # Where a place's environment runner may have been left, relative to that
 # place's home, in precedence order. Every root the platform has ever installed
 # into belongs here, because a place prepared under an earlier one keeps the
@@ -440,11 +451,12 @@ def device_store_dir(project_id: uuid.UUID) -> str:
 # of them keep their state in the same `$HOME/.cheese-environment/status.json`,
 # so whichever one we find answers for the place. Probing only the current root
 # is what made a place prepared by another launcher read as `pending` forever:
-# the ready status was on disk, one directory over. Every place that WRITES the
-# runner has to appear in this list — see test_environment_status_probe.py.
-ENVIRONMENT_RUNNER_PATHS = (
-    "$HOME/.cheese/cheese-environment.py",
-    "$HOME/.claude/cheese-environment.py",
+# the ready status was on disk, one directory over. Which directories those are
+# is `place.session_platform_dirs()`, so one the platform adds or drops reaches
+# the probe by itself — see test_environment_status_probe.py. The `$HOME` below
+# is the place's own: the command that reads these exports it first.
+ENVIRONMENT_RUNNER_PATHS = tuple(
+    f"$HOME/{directory}/cheese-environment.py" for directory in session_platform_dirs()
 )
 
 
@@ -458,8 +470,15 @@ async def environment_status(
     wait_ready: bool = False,
 ) -> dict:
     home = device_home_dir(project_id, topic_id)
+    # Inside the place's home, like everything else in this command: it runs
+    # after the `export HOME` below, so `$HOME` here is `home` and not the
+    # machine's own. Spelling it `DEVICE_ROOT` would read as the machine root
+    # and land in the same place anyway, which is the kind of agreement that
+    # survives until someone believes it.
+    place_root = session_platform_dirs()[0]
     reset_marker = (
-        'mkdir -p "$HOME/.cheese"; touch "$HOME/.cheese/environment-restart"; '
+        f'mkdir -p "$HOME/{place_root}"; '
+        f'touch "$HOME/{place_root}/environment-restart"; '
         if action == "reset"
         else ""
     )
@@ -487,7 +506,7 @@ async def environment_status(
 
 def _launcher_command(topic_id: uuid.UUID) -> list[str]:
     """What a screen runs: the launcher file `_ship_launcher` wrote for this topic."""
-    return ["bash", "-lc", f'exec bash "$HOME/.cheese/launch/{topic_id}.sh"']
+    return ["bash", "-lc", f'exec bash "{launcher_path(topic_id)}"']
 
 
 class DeviceChannel(Channel):
@@ -590,10 +609,15 @@ class DeviceChannel(Channel):
         self, scopes: list[tuple[uuid.UUID, uuid.UUID, str]]
     ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Rebuild screen identities for the rooms this channel owns in the DB."""
-        inventories = {
-            device_id: await self._hub.list_screens(device_id)
-            for device_id in {scope[2] for scope in scopes}
-        }
+        inventories = {}
+        for device_id in {scope[2] for scope in scopes}:
+            try:
+                inventories[device_id] = await self._hub.list_screens(device_id)
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "Screen recovery failed for device %s: %s", device_id, exc
+                )
+                inventories[device_id] = []
         if not any(inventories.values()):
             return [(project, topic, None, None) for project, topic, _ in scopes]
         factory = self._session_factory
@@ -602,48 +626,81 @@ class DeviceChannel(Channel):
 
             factory = async_session_factory
         restored = []
+        # What the database knows, gathered first and committed, so that the
+        # adoptions below — a call to the connection owner each when it runs as
+        # its own service — run with no transaction open. One transaction across
+        # every room of a reconnecting device kept a pool connection for as long
+        # as the whole device took (dev, 2026-09-19).
+        rooms: list[
+            tuple[uuid.UUID, uuid.UUID, str, uuid.UUID | None, list, tuple]
+        ] = []
         async with factory() as session:
             for project_id, topic_id, device_id in scopes:
-                screen = None
                 room = await TopicService(session).get(topic_id)
                 current_resource = (room.resource_id or topic_id) if room else None
-                for entry in inventories[device_id]:
-                    env = entry.get("env", {})
-                    if (env.get("CHEESE_PROJECT"), env.get("CHEESE_TOPIC")) != (
-                        str(project_id),
-                        str(topic_id),
-                    ):
-                        continue
+                entries = [
+                    entry
+                    for entry in inventories[device_id]
+                    if (
+                        entry.get("env", {}).get("CHEESE_PROJECT"),
+                        entry.get("env", {}).get("CHEESE_TOPIC"),
+                    )
+                    == (str(project_id), str(topic_id))
+                ]
+                identity: tuple = ()
+                if entries:
                     agent = await IdentityService(session).ensure_topic_agent_user(
                         topic_id
                     )
-                    expiry = env.get("CHEESE_TOKEN_EXPIRES")
-                    target = env.get("CHEESE_EXECUTION_TARGET")
-                    recovered = self._hub.adopt_screen(
+                    identity = (agent.id, agent.username)
+                rooms.append(
+                    (
+                        project_id,
+                        topic_id,
                         device_id,
-                        entry["sid"],
-                        token=entry["screen"],
-                        agent_user_id=agent.id,
-                        agent_handle=agent.username,
-                        project_id=project_id,
-                        topic_id=topic_id,
-                        resource_id=uuid.UUID(
-                            env.get("CHEESE_RESOURCE_ID") or str(topic_id)
-                        ),
-                        command=entry["command"],
-                        hook_key=str(topic_id),
-                        credential_expires=int(expiry) if expiry else None,
-                        execution_target=json.loads(target) if target else None,
-                        agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                        current_resource,
+                        entries,
+                        identity,
                     )
-                    if inspect.isawaitable(recovered):
-                        recovered = await recovered
-                    # Retired generations remain registered for durable cleanup;
-                    # only the room's current generation can resume its turn.
-                    if recovered.resource_id == current_resource:
-                        screen = recovered
-                restored.append((project_id, topic_id, screen, None))
+                )
             await session.commit()
+        for (
+            project_id,
+            topic_id,
+            device_id,
+            current_resource,
+            entries,
+            identity,
+        ) in rooms:
+            screen = None
+            for entry in entries:
+                env = entry.get("env", {})
+                expiry = env.get("CHEESE_TOKEN_EXPIRES")
+                target = env.get("CHEESE_EXECUTION_TARGET")
+                recovered = self._hub.adopt_screen(
+                    device_id,
+                    entry["sid"],
+                    token=entry["screen"],
+                    agent_user_id=identity[0],
+                    agent_handle=identity[1],
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    resource_id=uuid.UUID(
+                        env.get("CHEESE_RESOURCE_ID") or str(topic_id)
+                    ),
+                    command=entry["command"],
+                    hook_key=str(topic_id),
+                    credential_expires=int(expiry) if expiry else None,
+                    execution_target=json.loads(target) if target else None,
+                    agent_configuration=env.get("CHEESE_AGENT_CONFIG", ""),
+                )
+                if inspect.isawaitable(recovered):
+                    recovered = await recovered
+                # Retired generations remain registered for durable cleanup;
+                # only the room's current generation can resume its turn.
+                if recovered.resource_id == current_resource:
+                    screen = recovered
+            restored.append((project_id, topic_id, screen, None))
         return restored
 
     def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
@@ -692,13 +749,16 @@ class DeviceChannel(Channel):
             place = await TopicService(session).place_or_404(topic_id)
             if place.room.is_private:
                 from app.domain.agent.private_chat import execution_target
+                from app.domain.agent_session.services import AgentSessionService
                 from app.domain.device.supply import Visibility
 
-                placement = place.room.session_placement
+                # A private chat seats one agent, so its room has at most one
+                # placed session; whichever it is, its machine is this chat's.
+                placed = await AgentSessionService(session).places_in_room(topic_id)
                 device_id = execution_target(
                     project_id,
                     topic_id,
-                    device_id=placement["device_id"] if placement else None,
+                    device_id=placed[0].machine if placed else None,
                 )["device_id"]
                 if not self._hub.is_online(device_id):
                     raise ScreenSetupError("私聊中心执行机未连接，本轮没有启动")
@@ -850,11 +910,11 @@ class DeviceChannel(Channel):
         instead, since it never runs its launcher again."""
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
-        path = f"$HOME/.cheese/launch/{topic_id}.sh"
+        path = launcher_path(topic_id)
         transfer, exec_env = self._screen_file_refresh(
             home_dir, release_state=release_state, execution_token=execution_token
         )
-        transfer = f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}" && ' + transfer
+        transfer = f'mkdir -p "{DEVICE_ROOT}/launch" && cat > "{path}" && ' + transfer
         started = time.monotonic()
         try:
             result = await self._hub.exec(
@@ -905,7 +965,7 @@ class DeviceChannel(Channel):
         token (rotated every turn), and a read of the release marker when the
         caller tracks one. Shared by the launcher ship and the live-screen
         refresh, so both paths write the same files the same way."""
-        hook_dir = f"{home_dir}/.cheese"
+        hook_dir = f"{home_dir}/{session_platform_dirs()[0]}"
         transfer = (
             f'mkdir -p "{hook_dir}"'
             f" && printf %s {shlex.quote(CHEESE_HOOK_SCRIPT)}"
@@ -977,8 +1037,22 @@ class DeviceChannel(Channel):
             return False
         from app.domain.agent.remote_control import store
 
+        agent_handle = screen.agent_handle
+        if screen.topic_id is not None and agent_handle == topic_agent_handle(
+            screen.topic_id
+        ):
+            # RC launch credentials resolve a room stand-in to its seated agent.
+            # A surviving screen still records the stand-in it was born with.
+            from app.core.db import async_session_factory
+            from app.domain.topic_membership.services import TopicMemberService
+
+            factory = self._session_factory or async_session_factory
+            async with factory() as db:
+                agent_handle = await TopicMemberService(db).resolve_agent_handle(
+                    screen.topic_id
+                )
         control = store()
-        session = await control.current(str(screen.topic_id))
+        session = await control.current(str(screen.topic_id), agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
@@ -1071,7 +1145,9 @@ class DeviceChannel(Channel):
                 raise ScreenSetupError("Released native MCP did not connect")
             await asyncio.sleep(0.1)
 
-    async def recover_native_tools(self, topic_id: uuid.UUID) -> bool:
+    async def recover_native_tools(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         """Put this room's platform tools back, and say whether they were gone.
 
         A turn that publishes nothing is the symptom: 芝士 answered in its
@@ -1087,7 +1163,22 @@ class DeviceChannel(Channel):
         """
         from app.domain.agent.remote_control import store
 
-        session = await store().current(str(topic_id))
+        if agent_handle is None:
+            # Whose tools: the agent that answers for this room — the same one
+            # a room-scoped credential acts as. Asked here rather than of the
+            # caller, which reaches this after a turn has already ended.
+            factory = self._session_factory
+            if factory is None:
+                from app.core.db import async_session_factory
+
+                factory = async_session_factory
+            async with factory() as db:
+                from app.domain.topic_membership.services import TopicMemberService
+
+                agent_handle = await TopicMemberService(db).resolve_agent_handle(
+                    topic_id
+                )
+        session = await store().current(str(topic_id), agent_handle)
         if not session or session["status"] != "active":
             return False
         request = self._native_control(session)
@@ -1405,8 +1496,6 @@ class DeviceChannel(Channel):
             project_id=str(project_id),
             topic_id=str(topic_id),
             agent_handle=agent_handle,
-            # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{api_base}/projects/{project_id}/git",
             execution_target=execution_target,
             remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
             ca_pem=ca_pem,
@@ -1422,7 +1511,6 @@ class DeviceChannel(Channel):
         if execution_target is not None:
             # The assigned executor already owns the checkout and its environment.
             for name in (
-                "CHEESE_GIT_REMOTE",
                 "CHEESE_GIT_BRANCH",
                 "CHEESE_BRANCH_URL",
                 "CHEESE_ENVIRONMENT",
@@ -1563,14 +1651,14 @@ class DeviceChannel(Channel):
 
     # --- turn --------------------------------------------------------------
 
-    async def precheck(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str]:
+    async def precheck(self, session: SessionRef) -> tuple[str, int, str]:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
         The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
         Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
-        resolved = await self._resolve_device_agent(project_id, topic_id)
+        resolved = await self._resolve_device_agent(
+            session.project_id, session.topic_id
+        )
         if resolved is None:
             raise ScreenSetupError(
                 "没有在线的绑定设备可运行本轮（self-hosted 设备未连接）"
@@ -1580,8 +1668,7 @@ class DeviceChannel(Channel):
     async def ensure_ready(
         self,
         *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         token: str,
         env: dict[str, str] | None,
         memory_scope: str | None,
@@ -1599,6 +1686,7 @@ class DeviceChannel(Channel):
         This channel says where — the home, the workdir, the state directory the
         connector will resolve — and merges the two environments."""
         assert isinstance(precheck, tuple)  # from our precheck
+        project_id, topic_id = session.project_id, session.topic_id
         device_id, agent_user_id, agent_handle = precheck
         if memory_scope == "personal":
             env = dict(
@@ -1614,30 +1702,36 @@ class DeviceChannel(Channel):
             from app.core.db import async_session_factory
 
             factory = self._session_factory or async_session_factory
+            # Read which generation of the room this is, then let the connection
+            # go: nothing below writes, and every path into `ensure_ready` runs
+            # under ChatService's per-topic lock (`_prompt_lock`), so the row
+            # lock serialized nothing this process was not serializing already.
+            # Held across the device work it cost a pool connection, and the
+            # room's own row, for as long as starting an agent on a remote
+            # machine takes — which queued every writer of that row (a title, an
+            # archive, a read mark) behind it, each holding a connection of its
+            # own until the start finished.
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-                before = (
-                    await environment_status(
-                        self._hub, device_id, project_id, resource_id
-                    )
-                    if prepares_environment
-                    else {}
-                )
-                prior_screen = self._existing_screen(device_id, topic_id, resource_id)
-                screen = await self._ensure_screen(
-                    device_id=device_id,
-                    agent_user_id=agent_user_id,
-                    agent_handle=agent_handle,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    env=env,
-                    launch=launch,
-                    environment_before=before,
-                )
-                await room_session.commit()
+            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+            before = (
+                await environment_status(self._hub, device_id, project_id, resource_id)
+                if prepares_environment
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+            screen = await self._ensure_screen(
+                device_id=device_id,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                env=env,
+                launch=launch,
+                environment_before=before,
+            )
             self._subscription_devices[topic_id] = device_id
             if prepares_environment:
                 # A process started before this feature keeps its environment
@@ -1741,7 +1835,7 @@ class DeviceChannel(Channel):
         for image in images:
             path = str(image.get("path") or "")
             try:
-                data = ws.read_room_file(screen.project_id, screen.topic_id, path)
+                data = ws.read_attachment(screen.project_id, screen.topic_id, path)
                 await self._hub.put_file(
                     screen.device_id,
                     screen.sid,

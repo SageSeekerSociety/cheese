@@ -13,7 +13,12 @@
 
 import uuid
 
+import pytest
+
 from tests.delivery import delivery_headers, delivery_task_id
+from tests.integration.test_accept_pr import app_world as app_world
+
+pytestmark = pytest.mark.usefixtures("app_world")
 
 _SUBJECT = "chore(test): file an accept card"
 
@@ -43,6 +48,7 @@ def _file_card(client, place_id: str, reviewer: str = "alice"):
         f"/topics/{place_id}/tasks/{delivery_task_id(client, place_id)}/accept-card",
         headers=delivery_headers(client, place_id),
         json={
+            "new_artifact": "报告",
             "change_subject": _SUBJECT,
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",

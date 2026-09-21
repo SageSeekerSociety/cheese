@@ -40,17 +40,29 @@ def periodic_jobs(
     sessions: SessionFactory,
 ) -> list[PeriodicRunner]:
     from app.domain import backend_log
+    from app.domain.agent.forgejo_tokens import purge_expired_tokens
     from app.domain.machine.warm import sweep_warm_pool
     from app.domain.notification.maintenance import (
         drain_email_queue,
         finalize_expired_aggregations,
     )
     from app.domain.notification.push_delivery import drain_push_queue
+    from app.domain.project.forge import reconcile_repository_webhooks
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
     from app.domain.usage.subscription_ingest import ingest_once
 
     usage_log = settings.subscription_usage_log.strip()
     return [
+        PeriodicRunner(
+            "forge event subscriptions",
+            300,
+            lambda: reconcile_repository_webhooks(sessions),
+        ),
+        PeriodicRunner(
+            "forge credential cache cleanup",
+            3600,
+            lambda: purge_expired_tokens(sessions),
+        ),
         PeriodicRunner(
             "scheduler tick", settings.scheduler_interval_seconds, scheduler.tick
         ),
@@ -76,14 +88,6 @@ def periodic_jobs(
             "draft pr sweep",
             settings.accept_pr_poll_interval_s,
             scheduler.open_draft_prs,
-        ),
-        # 自动同步上游: keeps each linked project's base current so accepting can
-        # actually push. Conflicts hand off to 芝士 the same way the manual button
-        # does, and an open resolution task is reused rather than duplicated.
-        PeriodicRunner(
-            "upstream sync",
-            settings.upstream_sync_interval_s,
-            scheduler.sync_upstreams,
         ),
         # The startup sweep in `lifespan` only fires when the PROCESS restarts; a
         # turn can be killed without that (container recreate, OOM, sandbox

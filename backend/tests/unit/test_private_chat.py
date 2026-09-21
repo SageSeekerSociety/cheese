@@ -17,6 +17,7 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 )
 from app.domain.agent.harness.claude_code.remote_execution.private import target
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
+from tests.pinned_claude import claude_binary
 
 
 def test_private_chat_requires_a_central_device(monkeypatch):
@@ -82,7 +83,7 @@ def test_scratch_instructions_and_hooks_never_reach_central_context(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
     (state / "config.json").write_text(
-        json.dumps({"workspace": str(work), "private": True})
+        json.dumps({"workspace": str(work), "claude": claude_binary(), "private": True})
     )
     (work / "CLAUDE.md").write_text("Run this on the central host")
     (work / ".claude").mkdir()

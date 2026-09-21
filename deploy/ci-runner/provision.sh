@@ -73,6 +73,10 @@ if [ "$SLOT" != 0 ] || [ -d "$HOME/actions-runner-1" ]; then
     echo "CHEESE_CI_TEST_WORKERS=$(( cores / 2 > 0 ? cores / 2 : 1 ))" >> .env
 fi
 
+# Docker Hub is not reliably reachable from the pool, and the images a job pulls
+# are not all ours to rewrite. Idempotent, and a reload rather than a restart.
+bash "$BUNDLE/registry-mirror.sh"
+
 # The machine's own Postgres and Valkey, shared by its slots. Idempotent, so this
 # is both the first-time setup and the repair after a prune took them away.
 bash "$BUNDLE/resident-services.sh"

@@ -6,6 +6,7 @@ from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 
 def delivery_task(client, room_id, *, new=False, commit=True):
@@ -37,6 +38,13 @@ def delivery_task(client, room_id, *, new=False, commit=True):
     if task is None:
         return None
     cache[room_id] = task
+    # This fixture's local repository represents the executor/remote Git store.
+    git_store.bind_task(
+        task.id,
+        branch=task.branch_name,
+        directory=task.workspace_name,
+        base=task.base_branch,
+    )
     if commit:
         machine_commits(
             task.project_id, task.id, {f"deliveries/{task.id}.txt": "Test delivery\n"}
@@ -48,6 +56,23 @@ def delivery_task_id(client, room_id, *, commit=True):
     task = delivery_task(client, room_id, commit=commit)
     # An unknown room stays unknown to endpoint tests; do not manufacture it.
     return task.id if task else uuid.UUID(int=0)
+
+
+def delivery_artifact(client, room_id, name="报告"):
+    """递卡时声明的那一项产物 (#1085 结论三)。
+
+    清单上已经有这个名字就按 id 沿用它，没有就用名字声明一项新的 —— 和真正的调用
+    方做的是同一个判断（它读系统提示里那份清单，那里名字和 id 都有）。一个项目里递
+    第二张卡的测试因此不需要知道第一张卡把它建出来了。
+    """
+    room_id = uuid.UUID(str(room_id))
+    room = client.get(f"/topics/{room_id}").json()["data"]
+    listed = client.get(f"/projects/{room['project_id']}/artifacts")
+    rows = listed.json()["data"]["data"] if listed.status_code == 200 else []
+    found = next((row for row in rows if row["name"] == name), None)
+    if found is not None:
+        return {"artifact": found["id"]}
+    return {"new_artifact": name}
 
 
 def delivery_headers(client, room_id):

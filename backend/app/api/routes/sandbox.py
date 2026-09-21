@@ -187,8 +187,18 @@ async def receive_hook(
     said out loud, because a non-200 is what keeps the event where it still
     exists.
 
-    Responds fast (the container's hook call blocks on this): an empty 200 body =
-    "no decision", so a PreToolUse hook proceeds normally."""
+    Nothing on the other end is waiting for this response, and nothing can act
+    on it. `cheese-hook` sends the body to /dev/null and exits 0 whatever comes
+    back, and on a device it does not even POST: `CHEESE_HOOK_SPOOL_ONLY=1`
+    makes it spool and return, with `cheese-drain` posting afterwards on its own
+    loop. So this endpoint is one-way, and the shape of the reply is free.
+
+    Worth stating because the reverse is a natural thing to assume, and
+    assuming it is how "we could decide at the tool boundary" gets planned on
+    top of a channel that has no way to answer. Claude Code does support
+    deciding there, via a PreToolUse hook's exit code or a
+    `permissionDecision` on its stdout. Reaching it would need a hook script
+    that waits for a verdict and acts on it, which is not this one."""
     if not is_valid_cheese_token(x_cheese_token, topic_id=topic_id):
         # Say so. A rejected hook used to vanish here with no trace at all, and
         # that silence is the whole reason a deaf sandbox took days to find: the

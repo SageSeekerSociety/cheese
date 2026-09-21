@@ -1,10 +1,10 @@
-// 「AI 队友」页面上那两个数字 —— 记忆条数和「几个话题在用」—— 的算法。
+// 「AI 队友」页面上那个数字 —— 记忆条数 —— 的算法。
 //
-// 它们不是随页面一起长出来的展示逻辑，是这一页存在的理由：光看名字和类型，
-// 分不出哪个队友真的在干活、哪个是建完就没人用的空壳。所以这里单独成文件，
+// 它不是随页面一起长出来的展示逻辑，是这一页存在的理由：光看名字和类型，
+// 分不出哪个队友真的在学、哪个是建完就没人用的空壳。所以这里单独成文件，
 // 由测试直接盯着，而不是埋在组件里靠渲染结果间接验证。
 import type { AgentFieldChoice, MemoryEntryOut } from '../api'
-import type { AgentType, ProjectAgent, Topic } from '../cx_types'
+import type { AgentType, ProjectAgent } from '../cx_types'
 
 // 一个队友在列表里的稳定键。项目从没配过队友时那条隐式的「芝士」没有 id
 // （configured: false），拿 id 当 key 会让它和后来真建出来的第一个队友撞在一起，
@@ -29,27 +29,6 @@ export function memoryCountsByHandle(entries: MemoryEntryOut[], projectId: strin
   }
   return counts
 }
-
-// 每个队友当前被几个话题在用，按 agentKey 归。
-//
-// 两条判断决定了这个数字诚不诚实：
-//   1. 话题没自己选队友（agent_instance_id 为 null）算在**默认队友**头上 ——
-//      它不是「没人管」，是跟着项目默认走，换了默认它就跟着换。
-//   2. 已归档的话题不算 —— 问的是「现在」谁在用，不是历史上谁用过。
-export function topicCountsByAgent(topics: Topic[], agents: ProjectAgent[]): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const a of agents) counts[agentKey(a)] = 0
-  const byId = new Map(agents.filter((a) => a.id).map((a) => [a.id as string, a]))
-  const fallback = agents.find((a) => a.is_default)
-  for (const t of topics) {
-    if (t.archived_at) continue
-    const owner = t.agent_instance_id ? byId.get(t.agent_instance_id) : fallback
-    if (!owner) continue
-    counts[agentKey(owner)] += 1
-  }
-  return counts
-}
-
 // 一个队友用的是哪个类型。类型可能已经被删掉，或者目录本身没读到 —— 那时
 // 只有名字可用，不该因此让整行显示成「通用」，那是另一件事。
 export function findType(types: AgentType[], name: string | null | undefined): AgentType | null {

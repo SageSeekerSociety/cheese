@@ -27,7 +27,7 @@ class ProjectMachineRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID | None = None,
-        machine_id: int,
+        machine_id: int | None,
         customer_id: int,
         account_id: int,
         offering_id: int,
@@ -174,7 +174,10 @@ class ProjectMachineRepository:
         ai_mode: str | None = None,
         ai_status: AiStatus | None = None,
         seen_at: datetime | None = None,
+        machine_id: int | None = None,
     ) -> ProjectMachine:
+        if machine_id is not None:
+            machine.machine_id = machine_id
         machine.status = status
         if ai_mode is not None:
             machine.ai_mode = ai_mode
@@ -202,6 +205,20 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+
+    async def list_reservations_older_than(
+        self, cutoff: datetime
+    ) -> list[ProjectMachine]:
+        """Rows still waiting for a provider id past the point a create can take."""
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.machine_id.is_(None),
+                ProjectMachine.warm_claim_pending.is_(False),
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.created_at < cutoff,
+            )
+        )
+        return list(result.scalars())
 
     async def mark_released(
         self, machine: ProjectMachine, *, when: datetime
@@ -321,16 +338,33 @@ class ProjectMachineRepository:
         A placed room never borrows its executor's model identity. An empty
         central identity selects the platform credential. Unmigrated sessions
         still finish on their original pinned device.
-        """
-        from app.domain.topic.models import Topic
 
-        placement = await self._session.scalar(
-            select(Topic.session_placement).where(Topic.id == place_id)
+        A room can seat several sessions and they can sit on different session
+        machines, so this asks for the room and gets back rows, not a row. The
+        one taken is the room's most recently placed session — the same session
+        `harness_in_room` calls the room's, so the identity and the pane agree
+        about which conversation the room is showing. It is the right answer
+        only while a room's sessions share a ccproxy identity: the credential
+        that arrives here names a place and a seat, and the seat is not the
+        session key, so nothing in it can pick out one of two conversations.
+        Making it exact means the credential naming its session, which is the
+        same thing `api/routes/execution.py` says it will need.
+        """
+        from app.domain.agent_session.models import AgentSession
+
+        located = await self._session.scalar(
+            select(AgentSession.runtime_location)
+            .where(
+                AgentSession.topic_id == place_id,
+                AgentSession.task_id.is_(None),
+                AgentSession.runtime_location.is_not(None),
+            )
+            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
-        if placement:
+        if located:
             return await self._session.scalar(
                 select(DeviceRow.ccproxy_upstream).where(
-                    DeviceRow.device_id == placement["device_id"]
+                    DeviceRow.device_id == located["device_id"]
                 )
             )
         return await self._upstream_of_pinned_device(place_id)
@@ -368,6 +402,7 @@ class ProjectMachineRepository:
         result = await self._session.execute(
             select(ProjectMachine)
             .where(
+                ProjectMachine.machine_id.is_not(None),
                 ProjectMachine.status == MachineStatus.running,
                 ProjectMachine.ai_status == AiStatus.ready,
                 ProjectMachine.ai_mode != desired,

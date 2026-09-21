@@ -1,8 +1,8 @@
-// 这一页上的两个数字是它存在的理由（见 projectAgents.ts 的开头），所以它们
-// 单独被盯着：算错了不会渲染失败，只会安静地骗人 —— 一个建完没人用的空壳显示
-// 成「3 个话题在用」，或者一个攒了 25 条记忆的队友显示成 0。
+// 这一页上的那个数字是它存在的理由（见 projectAgents.ts 的开头），所以它
+// 单独被盯着：算错了不会渲染失败，只会安静地骗人 —— 一个攒了 25 条记忆的队友
+// 显示成 0。
 import type { MemoryEntryOut } from '../api'
-import type { ProjectAgent, Topic } from '../cx_types'
+import type { ProjectAgent } from '../cx_types'
 
 import { describe, expect, it } from 'vitest'
 
@@ -13,7 +13,6 @@ import {
   fieldIsChoosable,
   handleError,
   memoryCountsByHandle,
-  topicCountsByAgent,
   typeLabel,
 } from './projectAgents'
 
@@ -35,19 +34,6 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     is_default: true,
     configured: true,
     is_active: true,
-    ...overrides,
-  }
-}
-
-function topic(overrides: Partial<Topic> = {}): Topic {
-  return {
-    id: 't1',
-    project_id: PROJECT,
-    parent_id: null,
-    title: '话题',
-    kind: 'root',
-    status: 'active',
-    created_at: '',
     ...overrides,
   }
 }
@@ -76,30 +62,6 @@ describe('记忆条数', () => {
   it('别的项目的池不算进来', () => {
     const counts = memoryCountsByHandle([memory('agent_project', `${OTHER_PROJECT}:cheese`)], PROJECT)
     expect(counts).toEqual({})
-  })
-})
-
-describe('几个话题在用', () => {
-  it('没自己选队友的话题算在默认那一个头上', () => {
-    const agents = [agent({ id: 'a1', is_default: true }), agent({ id: 'a2', handle: 'reviewer', is_default: false })]
-    const counts = topicCountsByAgent([topic({ id: 't1' }), topic({ id: 't2', agent_instance_id: 'a2' })], agents)
-    expect(counts).toEqual({ a1: 1, a2: 1 })
-  })
-
-  it('已归档的话题不算 —— 问的是现在谁在用', () => {
-    const agents = [agent({ id: 'a1', is_default: true })]
-    const counts = topicCountsByAgent([topic({ id: 't1' }), topic({ id: 't2', archived_at: '2026-08-01' })], agents)
-    expect(counts).toEqual({ a1: 1 })
-  })
-
-  it('一个队友都没被用到时是 0，不是缺项', () => {
-    const agents = [agent({ id: 'a1', is_default: false })]
-    expect(topicCountsByAgent([], agents)).toEqual({ a1: 0 })
-  })
-
-  it('话题指向一个已经不在名册上的队友时，不记到任何人头上', () => {
-    const agents = [agent({ id: 'a1', is_default: false })]
-    expect(topicCountsByAgent([topic({ agent_instance_id: 'gone' })], agents)).toEqual({ a1: 0 })
   })
 })
 

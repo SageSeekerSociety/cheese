@@ -2,7 +2,8 @@
 // 源码结构（哪一行绑了谁的 disabled），它们看不见「用户屏幕上有没有汉字」——那是渲染
 // 出来的东西，只能挂起来看。这里补的就是这一层：整页英文下不许出现汉字。
 //
-// 子组件（运行环境、算力）各自有自己的翻译账，这里换成桩，免得把它们的欠账算到本页头上。
+// 子组件（运行环境、算力、队友、额度）各自有自己的翻译账，这里换成桩，免得把它们的欠账
+// 算到本页头上。
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +19,12 @@ vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
 }))
 vi.mock('../components/ProjectComputeSettings.vue', () => ({
   default: { template: '<section>COMPUTE</section>' },
+}))
+vi.mock('../components/settings/AgentTeamSettings.vue', () => ({
+  default: { template: '<section>AGENTS</section>' },
+}))
+vi.mock('../components/settings/CreditsPanel.vue', () => ({
+  default: { template: '<section>CREDITS</section>' },
 }))
 vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => 7 }))
 vi.mock('vue-router', () => ({
@@ -47,7 +54,18 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.mocked(api.getProject).mockResolvedValue({ name: 'Example' } as Awaited<ReturnType<typeof api.getProject>>)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
-  vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })
+  // 仓库那一组现在是按 forge 连接的种类渲染的：github_app 才看得到仓库地址和连接按钮。
+  vi.mocked(api.getForgeConnection).mockResolvedValue({
+    kind: 'github_app',
+    connected: false,
+    repo: null,
+    url: null,
+  })
+  vi.mocked(api.getForgeAttribution).mockResolvedValue({
+    requester_coauthor: null,
+    effective: false,
+    deployment_default: false,
+  })
   vi.mocked(api.getBranchProtection).mockResolvedValue({ ...protections })
   vi.mocked(api.listProjectMembers).mockResolvedValue({
     data: [{ user_handle: 'alice', name: 'Alice', agent: false }],
@@ -88,7 +106,7 @@ describe('project settings in Chinese', () => {
     const page = await mountSettings('项目设置 · Example', '暂无关联账号', '合并前必须通过的检查')
     try {
       expect(page.text).toContain('项目设置')
-      expect(page.text).toContain('上游仓库')
+      expect(page.text).toContain('GitHub 仓库地址')
       expect(page.text).toContain('分支保护')
       expect(page.text).toContain('任务默认 reviewer')
       expect(page.text).toContain('连接 GitHub 仓库')
@@ -122,7 +140,7 @@ describe('project settings in English', () => {
     try {
       for (const line of [
         'Project settings',
-        'Upstream repository',
+        'GitHub repository URL',
         'Branch protection',
         'Checks required before merging',
         'Default task reviewer',

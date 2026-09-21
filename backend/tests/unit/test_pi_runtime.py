@@ -9,11 +9,12 @@ import json
 import logging
 import uuid
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import AgentRuntime, Opening, SessionRef
 from app.domain.agent.harness.pi.runtime import Handle, PiRuntime
 from app.domain.agent.service import AgentResult, AgentSessionInfo, AgentToolUse
@@ -29,6 +30,7 @@ class Runner:
 
     def __init__(self):
         self.produced: list[dict] = []
+        self.reads = 0
         self.inputs: list[dict] = []
         self.steers: list[dict] = []
         self.working = False
@@ -40,6 +42,7 @@ class Runner:
         if self.offline:
             raise DeviceOffline("device")
         if method == "entries":
+            self.reads += 1
             since = params.get("since")
             if since is None:
                 return {"entries": list(self.produced)}
@@ -155,6 +158,37 @@ async def test_a_session_that_outlived_the_backend_is_read_not_restarted(tmp_pat
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("failure", [DeviceCallError, DeviceOffline, TimeoutError])
+async def test_recovery_continues_when_a_discovered_runner_disappears(
+    tmp_path, failure
+):
+    session, runtime, runner = wire(tmp_path)
+    channel = cast(AsyncMock, runtime.channel)
+    retained = channel.discover.return_value[0]
+    dead = Handle(
+        SessionRef(session.project_id, uuid.uuid4()),
+        "device",
+        "/dead",
+        "dead",
+        "other",
+        tmp_path / "dead" / "entries.sqlite",
+    )
+    channel.discover.return_value = [dead, retained]
+
+    async def call(handle, method, params):
+        if handle == dead:
+            raise failure("device")
+        return await runner.call(handle, method, params)
+
+    channel.call.side_effect = call
+    assert await runtime.recover("device") == [session]
+    assert runtime.holds(session.topic_id)
+    assert not runtime.holds(dead.session.topic_id)
+    assert runner.inputs == []
+    await runtime.close(session)
+
+
+@pytest.mark.anyio
 async def test_a_person_talking_mid_turn_steers_rather_than_starting_a_turn(tmp_path):
     session, runtime, runner = wire(tmp_path)
     runtime.bind_events(AsyncMock())
@@ -191,6 +225,46 @@ async def test_interrupt_takes_the_work_without_taking_the_session(tmp_path):
     assert runtime.holds(session.topic_id)
     await runtime.close(session)
     assert not runtime.holds(session.topic_id)
+
+
+@pytest.mark.anyio
+async def test_a_quiet_room_reads_slower_and_a_new_turn_is_read_at_once(tmp_path):
+    """Reading an entry log is a call to the room's device, and a room nobody
+    is talking to answers it with an empty page. At a fixed 100ms that is ten
+    calls a second per room for nothing, so a quiet log has to cost less — and
+    the room still has to answer the moment someone sends into it.
+    """
+    session, runtime, runner = wire(tmp_path)
+    consumer = AsyncMock()
+    runtime.bind_events(consumer)
+    runtime.bind_activity(AsyncMock())
+    runtime.bind_receipts(AsyncMock())
+
+    await runtime.recover("device")
+    await runtime.replay(session, known_texts=set())
+
+    await asyncio.sleep(2.5)
+    quiet = runner.reads
+    assert quiet <= 10, f"a quiet room was read {quiet} times in 2.5s"
+
+    consumer.reset_mock()
+    work = uuid.uuid4()
+    assert await runtime.send(
+        session, "开始", Opening("system"), work_id=work, on_mark=lambda _: None
+    )
+    # The room was reading at its slowest when the message arrived; the entries
+    # it produces must not wait that interval out. The deadline is well under
+    # the slowest read, and generous enough that a slow drain is not read as a
+    # wait nobody cut short.
+    landed: list = []
+    for _ in range(12):
+        await asyncio.sleep(0.05)
+        landed = [call.args[3] for call in consumer.await_args_list]
+        if any(isinstance(event, AgentToolUse) for event in landed):
+            break
+    assert any(isinstance(event, AgentToolUse) for event in landed), landed
+
+    await runtime.close(session)
 
 
 @pytest.mark.anyio

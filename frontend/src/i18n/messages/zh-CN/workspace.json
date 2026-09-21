@@ -69,7 +69,13 @@
     "loadTasksFailed": "任务加载失败",
     "readFileFailed": "读取文件失败",
     "missingInTask": "{path} 不在这个任务里",
-    "missingInProject": "{path} 不在项目当前代码里"
+    "missingInProject": "{path} 不在项目当前代码里",
+    "versionLabel": "文件版本",
+    "liveFile": "机器实时文件",
+    "committedVersion": "已提交版本",
+    "liveNote": "机器实时文件包含尚未提交的修改。",
+    "committedNote": "已提交版本只读，不包含机器上尚未提交的修改。",
+    "switchToCommitted": "切换到已提交版本"
   },
   "doc": {
     "pickTopic": "选择一个话题查看文档",
@@ -176,6 +182,8 @@
     "where": "第 {paragraph} 段 · {author}",
     "anonymous": "未署名",
     "accept": "接受",
-    "reject": "拒绝"
+    "reject": "拒绝",
+    "libraryReadOnly": "资料库里的原件不改。要改这份文档，让芝士基于它做一份新的",
+    "readOnlyNote": "这个版本只读，不能处理修订。"
   }
 }

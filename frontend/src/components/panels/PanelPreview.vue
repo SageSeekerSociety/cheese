@@ -21,6 +21,7 @@ import { postPreviewSession } from '../../lib/previewSession'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
+import RoomOutputs from './preview/RoomOutputs.vue'
 
 // `t` 从模块里来，不是 `useI18n()`。理由同 WorkPanel.vue / PanelChanges.vue：
 // 这块面板会被不装 i18n 插件的用例挂起来，`useI18n()` 在没有插件的树上当场抛。
@@ -612,6 +613,10 @@ watch(
       <div>{{ t('workspace.preview.empty') }}</div>
       <div class="text-caption mt-1">{{ t('workspace.preview.emptyHint') }}</div>
     </div>
+
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs :topic-id="topicId" />
   </div>
 </template>
 

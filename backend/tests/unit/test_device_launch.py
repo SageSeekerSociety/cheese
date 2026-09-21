@@ -82,7 +82,7 @@ def test_warm_adoption_waits_for_room_configuration(
     )
     binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
     binary.chmod(0o700)
     tmux = tmp_path / "tmux"
     tmux.write_text('#!/bin/sh\ntouch "$HOME/attached"\n')
@@ -139,7 +139,7 @@ def test_unavailable_spare_prepares_room_without_a_shared_checkout(
     )
     binary = owner / ".cheese/claude/versions" / device_launch.CLAUDE_PINNED_VERSION
     binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\necho '2.1.261 (fixture)'\n")
+    binary.write_text("#!/bin/sh\necho '2.1.277 (fixture)'\n")
     binary.chmod(0o700)
     work = tmp_path / "work"
     script = tmp_path / "launch.sh"
@@ -446,7 +446,6 @@ def _screen_launch(
     resume_session_id=None,
     extra_env=None,
     topic_id="",
-    git_remote=None,
     execution_target=None,
     remote_control=False,
     ca_pem="",
@@ -466,7 +465,6 @@ def _screen_launch(
         project_id="P",
         topic_id=topic_id,
         agent_handle="ops",
-        git_remote=git_remote,
         execution_target=execution_target,
         remote_control=remote_control,
         ca_pem=ca_pem,
@@ -523,7 +521,6 @@ def test_agent_authors_real_commit_and_platform_commits_it(tmp_path):
         home_dir=str(tmp_path),
         work_dir=str(tmp_path),
         model="test",
-        git_remote="http://h/projects/P/git",
     )
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(
@@ -914,7 +911,7 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     claude = home / ".local/bin/claude"
     claude.parent.mkdir(parents=True)
     claude.write_text(
-        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.261 (Claude Code)"; '
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
         'else printf "%s" "$BUN_OPTIONS" > "$HOME/bun-options"; fi\n'
     )
     claude.chmod(0o755)
@@ -989,7 +986,7 @@ def test_hosted_launch_preserves_owner_and_project_while_installing_skills(tmp_p
         '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\n'
         'if [ "$1" = "-o" ]; then shift; dest="$1"; fi\nshift\ndone\n'
         "cat > \"$dest\" <<'AGENT'\n#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo "2.1.261 (Claude Code)"; '
+        'if [ "$1" = "--version" ]; then echo "2.1.277 (Claude Code)"; '
         'else printf "%s\\n" "$@" "$CLAUDE_CONFIG_DIR" > "$HOME/agent.args"; '
         "fi\nAGENT\n"
     )
