@@ -27,10 +27,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.1"
           enable-cache: true
+          cache-python: true
           cache-dependency-glob: backend/uv.lock
           # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
           prune-cache: false
