@@ -9,6 +9,11 @@
 这里喂进来的 `Hand` 是测试自己给的，所以这张表只管这个函数本身。真实的那一档从哪
 来（看板那一列 / 通知契约的 `who` 码），以及一条平台在处理的提示点了名也发不出去，
 在 `tests/integration/test_card_filed_notice.py` 里走完整条通路。
+
+末尾两条按 PR 号收着族 4 里被结论 14、15 根除的那两个方向（#1128 / #1105）。族里另
+外五个（#1081 / #1055 / #1058 / #1063 / #1132）问的不是「该通知谁」，是一条日志或
+告警有没有人读得到、读不读得懂 —— 它们活在 `app/core/{obs,alerting}.py`、前端的
+`ErrorHandler.ts` 和 CI 的探针里，这个函数够不着。
 """
 
 import pytest
@@ -114,21 +119,54 @@ def test_reason_for_answers_only_about_the_people_it_named():
 # —— 看板那一列说的就是下一步在谁手上 ——————————————————————————
 
 
-@pytest.mark.parametrize(
-    "column,hand",
-    [
-        (Column.building, Hand.platform),
-        (Column.delivering, Hand.platform),
-        (Column.needs_you, Hand.participant),
-        (Column.done, Hand.platform),
-        (Column.archived, Hand.platform),
-    ],
-)
+#: 逐列写死的期望。看板多一列，这里就得多一行 —— 由下面那条完整性断言逼出来。
+COLUMN_HANDS = [
+    (Column.building, Hand.platform),
+    (Column.delivering, Hand.platform),
+    (Column.needs_you, Hand.participant),
+    (Column.done, Hand.platform),
+    (Column.archived, Hand.platform),
+]
+
+
+@pytest.mark.parametrize("column,hand", COLUMN_HANDS)
 def test_the_board_column_and_the_next_hand_are_one_answer(column, hand):
     assert hand_of(column) is hand
 
 
-def test_every_column_is_in_the_table():
-    """封闭表：看板多一列而这里没跟上，必须当场缺一行，不能悄悄落进「不通知」。"""
-    for column in Column:
-        assert hand_of(column) in (Hand.platform, Hand.participant)
+def test_the_expected_hands_cover_every_column():
+    """看板多一列，上面那张表必须跟着多一行。
+
+    少了这一条，新的一列只会在没人写进上表时悄悄不被断言 —— 而它在生产里落的是
+    「不通知任何人」那一档。这里不断言 `hand_of` 的返回值属于 `Hand`（那永远为
+    真），断言的是这张期望表本身没有落下哪一列。
+    """
+    assert {column for column, _ in COLUMN_HANDS} == set(Column)
+
+
+# —— 族 4 里被结论 14、15 根除的那两个方向 ——————————————————————
+
+
+def test_a_machine_the_platform_is_waiting_on_tells_nobody_however_often_it_asks():
+    """#1128：平台自己在等一台机器开机，却每两秒告诉所有人。
+
+    守的是这个方向，不是它当年的现场 —— 那每分钟五条落在 `app/core/alerting.py`
+    的告警通道上，不经过投递。到了这里，「平台在等」这一档问多少遍都拿不出收件
+    人，所以重复本身不可能再变成打扰。
+    """
+    still_booting = Event(reviewers=("alice",), reporter="bob")
+    assert [address(still_booting, Hand.platform) for _ in range(5)] == [NOBODY] * 5
+
+
+def test_a_failure_whose_next_step_is_a_persons_tells_him_once():
+    """#1105：后台任务崩了，下一步在人手上，而通知数是 0。
+
+    同上，守的是方向：当年那 83 个被拒的连接落在 `app/core/obs.py`。这一档保证的
+    是「平台还在自己重试」与「下一步回到了他手上」是两个不同的答案，而后者不会以
+    零个收件人收场。
+    """
+    crashed = Event(reporter="bob")
+    assert address(crashed, Hand.platform) == NOBODY
+    assert address(crashed, Hand.participant).recipients == (
+        Recipient("bob", REASON_REPORTER),
+    )
