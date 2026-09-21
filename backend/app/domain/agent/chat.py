@@ -2165,9 +2165,9 @@ class ChatService:
         """Give a turn the session started for itself the context to end like
         any other: everything its Stop needs.
 
-        它**不再开一条平台这边的轮次记录**。那条记录以前挂在一个谁也没写过的作者值
-        `SELF_STARTED_AUTHOR = "session"` 上；按结论 13，平台不发起一轮，也就没有这
-        样一种「没有发件人的轮次」可记 —— 一个 worker 做完唤醒主线程，那是同 handle
+        它**不再开一条平台这边的轮次记录**。那条记录以前挂在一个谁也没写过的作者
+        值上（字面量就是「会话」两个字）；按结论 13，平台不发起一轮，也就没有这样
+        一种「没有发件人的轮次」可记 —— 一个 worker 做完唤醒主线程，那是同 handle
         之间的一条便条，发件人和收件人都在，不需要第三种作者。
 
         Read rather than assembled: there is no prompt to build here, so this

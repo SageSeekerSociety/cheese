@@ -90,7 +90,7 @@ class FakeChat:
             )
         return payloads, ids[0], ids, False
 
-    async def merge_into_running_turn(self, *args):
+    async def merge_into_running_turn(self, *args, **kwargs):
         return None
 
     async def converse(self, **kwargs):
@@ -118,7 +118,7 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
             self.unblock = asyncio.Event()
             self.delivered = []
 
-        async def merge_into_running_turn(self, topic, ids, content, *args):
+        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
             if content == "first":
                 self.entered.set()
                 await self.unblock.wait()
@@ -151,7 +151,7 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
 @pytest.mark.anyio
 async def test_failed_agent_delivery_does_not_stop_next_message():
     class FailedDelivery(FakeChat):
-        async def merge_into_running_turn(self, topic, ids, content, *args):
+        async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):
             if content == "first":
                 raise RuntimeError("executor unavailable")
             self.converse_calls.append({"delivered": content})
@@ -531,7 +531,7 @@ async def test_live_delivery_fallback_reports_error_then_runs_normally(
         def has_running_turn(self, topic_id: uuid.UUID) -> bool:
             return True
 
-        async def merge_into_running_turn(self, *args):
+        async def merge_into_running_turn(self, *args, **kwargs):
             return delivery_result
 
         async def converse_prepared(self, **kwargs):
@@ -572,7 +572,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
         async def work_policy(self, topic_id):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
-        async def merge_into_running_turn(self, *args):
+        async def merge_into_running_turn(self, *args, **kwargs):
             self.merged = args
             return True
 
@@ -623,7 +623,7 @@ async def test_image_only_message_can_merge_into_live_session():
         async def work_policy(self, topic_id):
             raise AssertionError("a delivered image needs no new work item")
 
-        async def merge_into_running_turn(self, *args):
+        async def merge_into_running_turn(self, *args, **kwargs):
             self.merged = args
             return True
 

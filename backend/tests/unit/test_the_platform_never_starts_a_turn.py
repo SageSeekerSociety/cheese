@@ -63,12 +63,18 @@ def test_the_platform_has_no_kickoff_left():
 
 
 def test_summon_is_not_an_http_or_ws_input():
-    """浏览器算出来的那一位不存在了：点名由服务端从正文解析（I13）。"""
+    """浏览器算出来的那一位不存在了：点名由服务端从正文解析（I13）。
+
+    只查**发到线上的那个帧**：前端内部叫什么随它（组合框自己要知道按钮亮不亮），
+    进了 `WsClientChatMessage` 就是入参。
+    """
     ws = inspect.getsource(chat_route)
     assert 'payload.get("summon"' not in ws
-    offenders = [
-        str(path)
-        for path, text in _sources(FRONTEND, (".ts", ".vue"))
-        if "summon: boolean" in text or "summon: item.summon" in text
-    ]
-    assert offenders == [], f"前端又往帧上放了 summon：{offenders}"
+
+    types = (FRONTEND / "cx_types.ts").read_text()
+    start = types.index("export interface WsClientChatMessage {")
+    frame = types[start : types.index("}", start)]
+    assert "summon" not in frame, f"帧的契约里又有 summon：{frame}"
+
+    sends = (FRONTEND / "components" / "ChatPanel.vue").read_text()
+    assert "summon: item.summon" not in sends, "发送时又往帧上放了 summon"
