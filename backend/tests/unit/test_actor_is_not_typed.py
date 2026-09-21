@@ -26,8 +26,7 @@
 
 这条判据**只管 ``backend/app/api``**，域里那些命中不在它的范围内，也不该在：P8（#1309）
 把「这条是不是芝士说的」从事件行的档位改成了**按署名 handle 解析**，``agent/chat.py`` 与
-``block/repositories.py`` 里的那几处就是它落下来的形状。那半边在 P11 才动 ——
-``looks_like_agent_handle`` 的第二个分句是 ``TOPIC_AGENT_PREFIX``，而 P11 删的就是它。
+``block/repositories.py`` 里的那几处就是它落下来的形状。
 """
 
 import ast

@@ -96,7 +96,6 @@ from app.domain.agent.tool_preview import (
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    legacy_topic_pool,
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
@@ -3085,11 +3084,13 @@ class ChatService:
     ) -> RecallResult:
         """What this 芝士 carries into every turn inside this project.
 
-        Its own pool first, then two read-only tails: what this ROOM learned
-        while memory was keyed by topic, and the shared ``project`` pool from
+        Its own pool, plus one read-only tail: the shared ``project`` pool from
         before memory was split per agent at all. Writes only ever go to the
-        first, so neither tail grows — but dropping them would make the day this
-        shipped look, from inside a room, exactly like amnesia.
+        first, so the tail does not grow — but dropping it would make the day
+        this shipped look, from inside a room, exactly like amnesia. What the
+        rooms learned while memory was keyed by the room is not a tail: it was
+        rekeyed onto the agent itself by `d5c48f1a6b73`, and is in the first
+        pool.
 
         Only the core layer comes back; everything else is counted, not
         carried, and reached with `recall`. A pool nobody is told is bigger
@@ -3100,9 +3101,7 @@ class ChatService:
             if agent is not None
             else await self._agent_memory_pool(session, topic)
         )
-        legacy = legacy_topic_pool(topic.project_id, topic.id)
-        pools = [own] + ([legacy] if legacy != own else [])
-        pools.append((MemoryScope.project, str(topic.project_id)))
+        pools = [own, (MemoryScope.project, str(topic.project_id))]
         return await recall_pools(memory, pools)
 
     async def _acting_handle(
