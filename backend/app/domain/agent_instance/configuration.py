@@ -29,21 +29,13 @@ from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 class AgentConfiguration(BaseModel):
     """一个 agent 存着的角色：人设、技能、外部工具。
 
-    ``model``/``harness``/``effort`` 还留在这张 schema 上，但**读不出、也写不
-    出**：``exclude=True`` 让它们不再进 ``model_dump()``，所以没有一处代码再把
-    这三个键写回库里，也没有一处再从这张 schema 上读它们。
-
-    为什么不干脆删掉：字段本身和那条把三个键从库里清干净的迁移在 P15b 一起
-    走，而那条迁移跑完到换完容器之间，在跑的是**这一版**镜像——它读到一行没有
-    这三个键的 ``configuration`` 必须照常构造得出来。可选就是这件事。
+    就这三样。「用哪个模型」写在一条活的绑定上，「跑哪个骨架」写在部署设置里，
+    两处都不在这里——一个字段加回来，那个问题就又有了两个答得出来的地方。
     """
 
     body: str = ""
     skills: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
-    model: str | None = Field(default=None, exclude=True)
-    harness: str | None = Field(default=None, exclude=True)
-    effort: str | None = Field(default=None, exclude=True)
 
 
 def model_choices(project_settings: dict | None) -> list[dict]:
