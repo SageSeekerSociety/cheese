@@ -50,7 +50,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
 
     frames: list[dict] = []
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "递一张卡", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 递一张卡"})
         while True:
             frame = ws.receive_json()
             frames.append(frame)

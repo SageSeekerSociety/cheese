@@ -101,8 +101,10 @@ async def _detail(
     return view.model_dump(mode="json")
 
 
-def _is_admin(service: feedback_services.FeedbackService, handle: str | None) -> bool:
-    return service.is_admin(handle)
+async def _is_admin(
+    service: feedback_services.FeedbackService, handle: str | None
+) -> bool:
+    return await service.is_admin(handle)
 
 
 @router.get("/meta")
@@ -125,7 +127,7 @@ async def get_feedback_meta(
         tabs=list(feedback_services.PUBLIC_TABS),
         admin_tabs=list(feedback_services.ADMIN_TABS),
         hot_supports=feedback_services.repo.HOT_SUPPORTS,
-        is_admin=_is_admin(service, who.handle if who.authenticated else None),
+        is_admin=await _is_admin(service, who.handle if who.authenticated else None),
     )
     return ok(meta.model_dump(mode="json"))
 
@@ -249,7 +251,7 @@ async def create_feedback(
     )
     return ok(
         await _detail(
-            service, row, handle=who.handle, is_admin=service.is_admin(who.handle)
+            service, row, handle=who.handle, is_admin=await service.is_admin(who.handle)
         )
     )
 
@@ -264,10 +266,12 @@ async def get_feedback(
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
     row = await service.visible_row(
-        feedback_id, handle=handle, is_admin=service.is_admin(handle)
+        feedback_id, handle=handle, is_admin=await service.is_admin(handle)
     )
     return ok(
-        await _detail(service, row, handle=handle, is_admin=service.is_admin(handle))
+        await _detail(
+            service, row, handle=handle, is_admin=await service.is_admin(handle)
+        )
     )
 
 
@@ -302,7 +306,7 @@ async def list_feedback_comments(
     """
     who = await resolver.resolve(fallback_handle=None)
     handle = who.handle if who.authenticated else None
-    is_admin = service.is_admin(handle)
+    is_admin = await service.is_admin(handle)
     row = await service.visible_row(feedback_id, handle=handle, is_admin=is_admin)
     try:
         if parent_id is not None:
@@ -343,7 +347,7 @@ async def create_feedback_comment(
     who = await resolver.resolve(fallback_handle=None)
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
-    is_admin = service.is_admin(who.handle)
+    is_admin = await service.is_admin(who.handle)
     comment, _ = await service.comment(
         feedback_id,
         body.body,
@@ -379,7 +383,7 @@ async def delete_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=service.is_admin(who.handle),
+        is_admin=await service.is_admin(who.handle),
     )
     return ok({"deleted": True})
 
@@ -404,7 +408,7 @@ async def like_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=service.is_admin(who.handle),
+        is_admin=await service.is_admin(who.handle),
     )
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
@@ -423,7 +427,7 @@ async def unlike_feedback_comment(
         feedback_id,
         comment_id,
         handle=who.handle,
-        is_admin=service.is_admin(who.handle),
+        is_admin=await service.is_admin(who.handle),
     )
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
@@ -442,7 +446,7 @@ async def support_feedback(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     count, supported = await service.support(
-        feedback_id, handle=who.handle, is_admin=service.is_admin(who.handle)
+        feedback_id, handle=who.handle, is_admin=await service.is_admin(who.handle)
     )
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))
 
@@ -457,6 +461,6 @@ async def unsupport_feedback(
     if not who.authenticated or not who.handle:
         raise AuthenticationRequiredError("需要登录")
     count, supported = await service.unsupport(
-        feedback_id, handle=who.handle, is_admin=service.is_admin(who.handle)
+        feedback_id, handle=who.handle, is_admin=await service.is_admin(who.handle)
     )
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))

@@ -25,7 +25,7 @@ def _post(ws, content: str) -> None:
     # human-only post (summon False): the @all notifications fire on the human
     # block persist, before any agent turn. The sender is the socket's token,
     # not a body field.
-    ws.send_json({"type": "message", "content": content, "summon": False})
+    ws.send_json({"type": "message", "content": content})
     while True:
         f = ws.receive_json()
         if f["type"] in ("done", "error"):

@@ -4,7 +4,6 @@ import uuid
 from types import SimpleNamespace
 
 from app.domain.agent.harness.prompt import (
-    KICKOFF_PROMPT,
     PLATFORM_NOTICE,
     build_system_prompt,
     platform_prompt,
@@ -12,7 +11,6 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
     thread_relay_prompt,
-    thread_upgraded_prompt,
 )
 from app.domain.block.models import BlockKind
 
@@ -50,8 +48,4 @@ def event_prompts() -> dict[str, str]:
                 message="RELAY_FIXTURE",
             )
         ),
-        "task_upgraded": platform_prompt(
-            thread_upgraded_prompt(task_id=task_id, source_message="BRIEF_FIXTURE")
-        ),
-        "kickoff": publication_prompt(platform_prompt(KICKOFF_PROMPT)),
     }

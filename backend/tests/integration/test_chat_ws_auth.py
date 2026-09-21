@@ -48,7 +48,7 @@ def test_expired_token_is_refused_not_downgraded(client):
         assert frame["type"] == "error"
         assert frame["code"] == "auth_expired"
         with pytest.raises(Exception):  # noqa: B017 - any close/receive failure
-            ws.send_json({"type": "message", "content": "偷偷发一条", "summon": False})
+            ws.send_json({"type": "message", "content": "偷偷发一条"})
             ws.receive_json()
 
     assert _blocks(client, tid) == []

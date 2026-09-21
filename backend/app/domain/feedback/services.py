@@ -12,10 +12,14 @@ Everything a route must not be trusted to remember lives here:
 Three product decisions the user had not ruled on are taken here as defaults,
 each in one place, each revertible without touching a route:
 
-1. **Who is an admin** — `settings.feedback_admin_handles`, same shape as
-   `dogfood_owner_handles`. No new role system: there is no production path that
-   assigns `SystemRole.SUPER_ADMIN` today, so a role check would read as
-   "nobody" and lock the surface for everyone.
+1. **Who is an admin** — **not decided here.** The judge is
+   `AdminService.is_admin` in `app/domain/admin/services.py`: 根 ∪ 页面上加的,
+   i.e. `settings.platform_admin_handles` (deploy-required, not removable from
+   the page) and the `platform_admins` table (`/admin/admins`, the 成员管理
+   screen). This module only *asks* — `FeedbackService.admins` and the three thin
+   delegates below exist so a feedback route does not have to know where the
+   answer lives, not because the answer is feedback's. It never was: the same
+   list is what opens every other admin screen.
 2. **`security` is a subtype of `private`, not a second axis.** A security report
    is invisible to non-admins exactly as a private one is; the flag only routes
    it into the admin's security tab. So `security=True` narrows visibility, and
@@ -37,13 +41,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
     NotFoundError,
     PreconditionFailedError,
 )
+from app.domain.admin.services import AdminService
 from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
@@ -81,25 +85,35 @@ STATUS_LADDER: tuple[FeedbackStatus, ...] = (
 )
 
 
-def admin_handles() -> frozenset[str]:
-    """The platform-admin set, frozen once per call.
-
-    Frozen rather than a module constant so a settings change takes effect
-    without a restart in tests, matching how `profiles.py` consumes
-    `dogfood_owner_handles`.
-    """
-    return frozenset(settings.feedback_admin_handles)
-
-
 class FeedbackService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = repo.FeedbackRepository(session)
+        #: 平台管理员那份名单与判据 —— 一个请求一个实例，两边共用同一个 memo。
+        self._admins = AdminService(session)
 
     # --- 权限 ---------------------------------------------------------------
+    #
+    # 「谁算平台管理员」不在这个域里：它是平台级的事实（`app/domain/admin/`），
+    # 反馈只是**用**它 —— 私密条目谁能看见、评论能不能删，问的都是同一个答案。
+    # 这里留一层薄委托，是因为反馈自己的可见性判断（`may_see` / `visible_row` /
+    # `detail`）每一步都要问它，而让每个调用点各自去构造一个 `AdminService` 等于
+    # 把同一个请求拆成几份各读一遍库。
 
-    def is_admin(self, handle: str | None) -> bool:
-        return bool(handle) and handle in admin_handles()
+    @property
+    def admins(self) -> AdminService:
+        """平台管理员那一半（名单、判据、页面上加删）—— 路由过的是它那道门。"""
+        return self._admins
+
+    async def admin_handles(self) -> frozenset[str]:
+        """谁算平台管理员：**根 ∪ 页面上加的**。见 `AdminService.admin_handles`。"""
+        return await self._admins.admin_handles()
+
+    async def is_admin(self, handle: str | None) -> bool:
+        return await self._admins.is_admin(handle)
+
+    async def require_admin(self, handle: str | None) -> str:
+        return await self._admins.require_admin(handle)
 
     def may_see(self, row: Feedback, *, handle: str | None, is_admin: bool) -> bool:
         """The visibility union, in one line — 公开 + 私密 + 是我提的.
@@ -135,15 +149,6 @@ class FeedbackService:
         if row is None or not self.may_see(row, handle=handle, is_admin=is_admin):
             raise NotFoundError("反馈不存在")
         return row
-
-    async def require_admin(self, handle: str | None) -> str:
-        if not handle:
-            raise ForbiddenError("需要登录")
-        if not self.is_admin(handle):
-            # 403 here and not 404: /admin/feedback is documented as existing, so
-            # its existence is not a secret — only its contents are.
-            raise ForbiddenError("需要平台管理员")
-        return handle
 
     def may_delete_comment(
         self, row: FeedbackComment, *, handle: str | None, is_admin: bool
@@ -192,7 +197,7 @@ class FeedbackService:
     ) -> tuple[list[Feedback], int]:
         return await self._repo.list_related_to(
             handle,
-            is_admin=self.is_admin(handle),
+            is_admin=await self.is_admin(handle),
             limit=limit,
             offset=offset,
         )
