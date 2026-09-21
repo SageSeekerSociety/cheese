@@ -71,12 +71,9 @@ function onSubmitted(id: string) {
       <LoadingSkeleton v-if="store.mineLoading" variant="feedback" :rows="4" />
 
       <div v-else class="fb-list">
-        <FeedbackCard
-          v-for="item in store.mineItems"
-          :key="item.id"
-          :item="item"
-          @open="router.push(`/feedback/${item.id}`)"
-        />
+        <!-- 打开详情那条链接在卡片自己身上（`router-link`），这里不再接一个
+             `@open` 去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
+        <FeedbackCard v-for="item in store.mineItems" :key="item.id" :item="item" />
         <!-- 空列表有两种，说的话不一样：「还没有」和「没拉到」。写成同一句
              「暂无反馈」的话，拉挂的那一次看起来就像「平台把你的反馈弄丢了」。 -->
         <div v-if="!store.mineItems.length" class="fb-empty">
