@@ -309,8 +309,8 @@ const buildOutline = async () => {
 .section-toolbar__title {
   margin: 0;
   font-size: 15px;
-  line-height: var(--lh-15);
   font-weight: 600;
+  line-height: var(--lh-15);
   color: var(--ink);
 }
 
@@ -323,8 +323,8 @@ const buildOutline = async () => {
 
 .toolbar-card {
   padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .toolbar-grid {
@@ -351,8 +351,8 @@ const buildOutline = async () => {
 .block-head__title {
   margin: 0;
   font-size: 15px;
-  line-height: var(--lh-15);
   font-weight: 600;
+  line-height: var(--lh-15);
   color: var(--ink);
 }
 
@@ -365,14 +365,14 @@ const buildOutline = async () => {
 
 .queue-card {
   padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .queue-card__title {
   font-size: 14px;
-  line-height: var(--lh-14);
   font-weight: 600;
+  line-height: var(--lh-14);
   color: var(--text);
 }
 
@@ -399,19 +399,19 @@ const buildOutline = async () => {
 
 .quote-card {
   padding: 4px 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .outline-actions {
   display: flex;
+  padding: 16px;
+  margin-top: 24px;
+  background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   gap: 16px;
   justify-content: space-between;
   align-items: center;
-  margin-top: 24px;
-  padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  background-color: rgba(var(--v-theme-surface), 1);
 }
 
 .outline-actions__count {

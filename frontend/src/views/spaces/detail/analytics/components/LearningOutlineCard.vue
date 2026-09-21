@@ -30,8 +30,8 @@ defineProps<{
 <style scoped lang="scss">
 .outline-card {
   padding: 8px 16px 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .outline-session {
@@ -48,16 +48,16 @@ defineProps<{
 
 .outline-session__session {
   font-size: 12px;
-  line-height: var(--lh-12);
   font-weight: 600;
+  line-height: var(--lh-12);
   letter-spacing: 0.04em;
   color: var(--faint);
 }
 
 .outline-session__point {
   font-size: 15px;
-  line-height: var(--lh-15);
   font-weight: 600;
+  line-height: var(--lh-15);
   color: var(--ink);
   overflow-wrap: anywhere;
 }

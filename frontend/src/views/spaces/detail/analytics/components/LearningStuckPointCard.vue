@@ -48,8 +48,8 @@ const counts = computed(
 <style scoped lang="scss">
 .stuck-card {
   padding: 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   background-color: rgba(var(--v-theme-surface), 1);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .stuck-card__head {
@@ -70,8 +70,8 @@ const counts = computed(
 
 .stuck-card__title {
   font-size: 15px;
-  line-height: var(--lh-15);
   font-weight: 600;
+  line-height: var(--lh-15);
   color: var(--ink);
   overflow-wrap: anywhere;
 }
