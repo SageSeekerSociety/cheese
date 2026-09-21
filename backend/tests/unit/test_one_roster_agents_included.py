@@ -14,6 +14,9 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parents[2]
 REPO = BACKEND.parent
 APP = BACKEND / "app"
+#: 脚本也要守：它们和 ``app/`` 跑的是同一个领域层，而一个读错名册的脚本没有界面
+#: 会在上面报错——只有跑它的人会看见一个 ``AttributeError``。
+SCRIPTS = BACKEND / "scripts"
 FRONTEND = REPO / "frontend" / "src"
 
 #: 人那一半（``people``）的合法读者：定义它的两个文件，加上把它和队友合成一张名册
@@ -42,7 +45,7 @@ def _sources(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
 def test_people_is_read_only_where_the_roster_is_composed():
     offenders = [
         str(path.relative_to(BACKEND))
-        for path in _sources(APP, (".py",))
+        for path in _sources(APP, (".py",)) + _sources(SCRIPTS, (".py",))
         if _PEOPLE_CALL.search(path.read_text(encoding="utf-8"))
         and str(path.relative_to(BACKEND)) not in _PEOPLE_READERS
     ]
@@ -54,7 +57,11 @@ def test_people_is_read_only_where_the_roster_is_composed():
 
 def test_nobody_stitches_a_roster_out_of_people_and_agents():
     offenders = []
-    for path in _sources(APP, (".py",)) + _sources(FRONTEND, (".ts", ".vue")):
+    for path in (
+        _sources(APP, (".py",))
+        + _sources(SCRIPTS, (".py",))
+        + _sources(FRONTEND, (".ts", ".vue"))
+    ):
         for number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):

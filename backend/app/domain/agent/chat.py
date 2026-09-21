@@ -4975,7 +4975,11 @@ class ChatService:
             doc_text,
             memories.facts,
             role,
-            roster,
+            # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前
+            # 加 @」，而一个停用了的实例没有人在驱动它——@ 它等于把活扔进一个没人
+            # 接的地方。@ 解析和通知那几路照旧走全量的 `roster`：老房间里已经在的
+            # 它仍要 @ 得到，停用挡的是新的活，不是已经接手的。
+            [m for m in roster if m["active"]],
             topic_refs_for_prompt,
             untitled,
             artifacts=artifact_refs,

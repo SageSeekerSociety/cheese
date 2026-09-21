@@ -277,6 +277,11 @@ async function onApproveCard() {
   }
 }
 
+// 能改派给谁：只有人。验收是人的动作——采纳一次交付要一个人点头，AI 队友给不
+// 出这个点头，改派给它的卡片看起来「已正确路由」，实际上在等一个永远不会来的采
+// 纳。名册上现在每个项目都带着自己的队友，所以这道滤不再可有可无。
+const reviewerChoices = computed(() => store.members.filter((m) => !m.agent))
+
 async function onReassignCard(handle: string) {
   const card = pendingCard.value
   if (!card || handle === card.reviewer_handle) return
@@ -515,7 +520,7 @@ defineExpose({ reload: loadAcceptCard })
             <v-list density="compact">
               <v-list-subheader>改派验收人</v-list-subheader>
               <v-list-item
-                v-for="mbr in store.members"
+                v-for="mbr in reviewerChoices"
                 :key="mbr.user_handle"
                 :active="mbr.user_handle === pendingCard.reviewer_handle"
                 @click="onReassignCard(mbr.user_handle)"
@@ -525,7 +530,7 @@ defineExpose({ reload: loadAcceptCard })
                   {{ mbr.role }}
                 </v-list-item-subtitle>
               </v-list-item>
-              <v-list-item v-if="store.members.length === 0">
+              <v-list-item v-if="reviewerChoices.length === 0">
                 <v-list-item-title class="text-caption text-medium-emphasis"> 暂无可选成员 </v-list-item-title>
               </v-list-item>
             </v-list>

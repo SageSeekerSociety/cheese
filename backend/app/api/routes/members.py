@@ -81,6 +81,7 @@ async def list_members(
             }
         d["agent"] = member.agent
         d["active"] = member.active
+        d["project_default"] = member.project_default
         items.append(d)
     return ok(page(items, len(items)))
 

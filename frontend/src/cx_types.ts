@@ -409,6 +409,10 @@ export interface ProjectMemberRow {
   // 只有队友会是 false：已停用的队友还在名册上（它在已经接手的房间里照常工作），
   // 只是派新活、请进新房间的地方不该再列出来。
   active?: boolean
+  // 这个项目的**默认**队友，也就是一间没有 AI 席位的老房间会落到谁身上。名册上
+  // 第一个带 `agent` 的不是这个答案（那是建得最早的那一位），所以要问「这个房间
+  // 归谁」的地方只能读这一位。
+  project_default?: boolean
   [key: string]: unknown
 }
 

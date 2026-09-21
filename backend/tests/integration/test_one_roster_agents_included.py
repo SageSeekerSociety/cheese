@@ -11,12 +11,13 @@
 
 名册这张单子发给谁：人从 ``GET /projects/{id}/members`` 拿（那道门认人——一轮里铸出
 来的凭据过不了 ``authorize_project``，见 ``projects.py`` 的 ``_artifact_keeper``），
-队友的那一份由平台在组这一轮时直接递给它。所以下面第一条断言这张单子上有谁，第二条
-断言队友手上那份确实到了：它照着名字喊出来的那个队友，真的被点到、被通知到。
+队友的那一份由平台在组这一轮时直接递给它。所以下面前两条断言这张单子上有谁，以及队
+友手上那份确实到了——它照着名字喊出来的那个队友，真的被点到、被通知到；后两条断言这
+张单子还说得出「一间没有 AI 席位的房间归谁」，以及派新活的地方不列停用的队友。
 """
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 OWNER = "alice"
 
@@ -34,6 +35,12 @@ def _teammate(client, project_id: str, handle: str, name: str) -> dict:
     )
     assert made.status_code == 200, made.text
     return made.json()["data"]
+
+
+def _agents(client, project_id: str) -> list[dict]:
+    rows = client.get(f"/projects/{project_id}/agents")
+    assert rows.status_code == 200, rows.text
+    return rows.json()["data"]["data"]
 
 
 def _retire(client, project_id: str, instance_id: str) -> None:
@@ -144,3 +151,58 @@ def test_an_agent_can_chat_the_teammate_it_could_not_see(client):
     titles = [row["title"] for row in alerts.json()["data"]["data"]]
     assert len(titles) == 1, titles
     assert "房间" in titles[0]
+
+
+def test_the_roster_says_which_teammate_a_room_without_an_ai_seat_falls_to(client):
+    """验收③：名册说得出这个项目的**默认**队友是哪一位。
+
+    一间没有 AI 席位的老房间，后端解析出来的就是它，所以界面要写出「这个房间交给
+    谁」只能读这一位。「名册上第一个带 AI 标的」答不了：那是建得最早的那一位，而停
+    用默认队友会把默认改判给另一位，于是刚退下去的那位仍排在最前——照它写名字，答
+    话的是别人。
+    """
+    project = _project(client)
+    project_id = project["id"]
+    successor = _teammate(client, project_id, "successor", "接班")
+    seeded = next(row for row in _agents(client, project_id) if row["is_default"])
+
+    roster = _roster(client, project_id)
+    assert roster[seeded["seat_handle"]]["project_default"] is True
+    assert roster[successor["seat_handle"]]["project_default"] is False
+    assert roster[OWNER]["project_default"] is False
+
+    _retire(client, project_id, seeded["id"])
+
+    moved = _roster(client, project_id)
+    assert moved[successor["seat_handle"]]["project_default"] is True
+    # 退下去的那位还在名册上，只是既不是默认、也不启用了。
+    assert moved[seeded["seat_handle"]]["project_default"] is False
+    assert moved[seeded["seat_handle"]]["active"] is False
+
+
+def test_a_retired_teammate_is_not_offered_as_someone_to_hand_work_to(
+    client, stub_hooks
+):
+    """验收④：喂给队友的那份「怎么点名」名单里没有停用的队友。
+
+    那一段教的是「要让某人去做事，在他名字前加 @」，而一个停用了的实例没有人在驱动
+    它——把它列在那里，就是每一轮都在教队友把活 @ 给一个没人接的地方。名册上照样有
+    它（上面那条断言过），@ 解析也照旧认它：停用挡的是新的活，不是已经接手的。
+    """
+    project = _project(client)
+    project_id = project["id"]
+    _teammate(client, project_id, "reviewer", "评审")
+    retired = _teammate(client, project_id, "old-hand", "退休")
+    _retire(client, project_id, retired["id"])
+    room = _room(client, project_id)
+
+    with client.websocket_connect(chat_ws_url(room, OWNER)) as ws:
+        ws.send_json({"type": "message", "content": "开始吧", "summon": True})
+        while True:
+            frame = ws.receive_json()
+            if frame["type"] in {"done", "error"}:
+                break
+
+    prompt = stub_hooks.last_system_prompt or ""
+    assert "评审" in prompt, prompt
+    assert "退休" not in prompt, prompt

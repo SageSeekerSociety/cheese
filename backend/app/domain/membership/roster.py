@@ -42,6 +42,12 @@ class Member:
     # False = 已停用的队友：名册上还有它（它在已经接手的房间里照常工作），只是派新
     # 活的地方不该再列出来。人恒为 True。
     active: bool = True
+    # 这一行是不是这个项目的**默认**队友，也就是一间没有 AI 席位的老房间会落到谁
+    # 身上（``topic_membership/services.py._project_agent_seat`` 读的就是它）。名册
+    # 上「第一个带 AI 标的」不是这个答案：那是建得最早的那一位，而停用默认队友时
+    # 默认会改判给另一位，于是两者必然不同——界面照前者写名字，答话的是后者。人恒
+    # 为 False。
+    project_default: bool = False
     # 这一行背后没有授权行时，说明它是怎么进名册的：小队带进来的、项目的所有者、
     # 或者它是这个项目的队友。有 source 的行改不了角色也移不走。
     source: str | None = None
@@ -61,6 +67,7 @@ class Member:
             "agent": self.agent,
             "avatar_id": self.avatar_id,
             "active": self.active,
+            "project_default": self.project_default,
         }
         if self.source is not None:
             row["source"] = self.source
@@ -78,7 +85,15 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     友这一半来自这个项目的 agent 实例。一个队友也可能有自己的授权行（``MemberService
     .add`` 是平台给它放座位的原语），那也仍然只是一行：授权行给出角色，实例给出名字
     和启用与否。
+
+    队友那几行还带着「是不是这个项目的默认队友」：一间没有 AI 席位的老房间落到谁身
+    上由它决定，而这张表是界面唯一能知道那是谁的地方。
     """
+    projects = ProjectService(session)
+    project = await projects.get(project_id)
+    default_instance_id = (
+        project.default_agent_instance_id if project is not None else None
+    )
     rows = [
         Member(
             handle=person["handle"],
@@ -89,7 +104,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             team_id=person.get("team_id"),
             created_at=person.get("created_at"),
         )
-        for person in await ProjectService(session).people(project_id)
+        for person in await projects.people(project_id)
     ]
     at = {row.handle: index for index, row in enumerate(rows)}
     for instance in await AgentInstanceService(session).list_for_project(project_id):
@@ -104,6 +119,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
                     role=ProjectRole.member.value,
                     agent=True,
                     active=instance.is_active,
+                    project_default=instance.id == default_instance_id,
                     source="agent",
                 )
             )
@@ -119,6 +135,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             agent=True,
             avatar_id=held.avatar_id,
             active=instance.is_active,
+            project_default=instance.id == default_instance_id,
             source=held.source,
             team_id=held.team_id,
             created_at=held.created_at,
