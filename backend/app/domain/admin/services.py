@@ -13,8 +13,11 @@ from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
 from app.domain.admin import repositories as repo
 from app.domain.identity.services import IdentityService
-from app.domain.user.repositories import UserRepository
-from app.domain.user.services import chosen_avatars_by_handle, user_by_handle
+from app.domain.user.services import (
+    chosen_avatars_by_handle,
+    search_accounts,
+    user_by_handle,
+)
 
 
 def root_admin_handles() -> frozenset[str]:
@@ -101,7 +104,7 @@ class AdminService:
         已选中的样子，而不是「搜不到这个人」—— 搜不到说的是另一件事（这个平台上
         根本没有这个账号），两件事在界面上长得像，人就会以为名单已经变了。
         """
-        rows = await UserRepository(self._session).search_accounts(q, limit)
+        rows = await search_accounts(self._session, q, limit)
         avatars = await chosen_avatars_by_handle(self._session, [h for h, _ in rows])
         admins = await self.admin_handles()
         return [
