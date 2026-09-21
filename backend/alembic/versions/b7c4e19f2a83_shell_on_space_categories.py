@@ -18,7 +18,7 @@ interface, screen for screen — is in force, so no row needs backfilling and
 every existing 项目集 keeps behaving exactly as it does now.
 
 Revision ID: b7c4e19f2a83
-Revises: b9e4c17d0a52
+Revises: c5e7d2a91f30
 """
 
 from collections.abc import Sequence
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b7c4e19f2a83"
-down_revision: str | Sequence[str] | None = "2895c4967ca4"
+down_revision: str | Sequence[str] | None = "c5e7d2a91f30"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

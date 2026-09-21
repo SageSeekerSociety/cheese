@@ -78,6 +78,8 @@ from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -89,7 +91,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task import presentation
+from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
@@ -558,6 +560,13 @@ async def list_room_tasks(
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
     asked = await BlockRepository(db).tasks_awaiting_an_answer(thread_ids)
+    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
+    # `tasks` 上没有一列存它。
+    spent = await UsageRepository(db).last_model_by_task(thread_ids)
+    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
+    # 构造几百遍。
+    project = await ProjectRepository(db).get(topic.project_id)
+    choices = binding.catalog(project.settings if project else None)
     # One answer for the whole room: every thread's worker lives in this room's
     # one session, so the screen is alive for all of them or for none.
     screen_live = chat.has_live_screen(topic_id)
@@ -568,6 +577,10 @@ async def list_room_tasks(
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
+                "model": presentation.card_model(
+                    task, spent=spent.get(task.id), choices=choices
+                ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
                     presentation.facts_for_task(
@@ -575,6 +588,8 @@ async def list_room_tasks(
                         card,
                         beats.get(task.id),
                         room_screen_live=screen_live,
+                        # 同一个房间一次问一个分身，逐条问：每条活的分身是它自己的。
+                        worker_live=chat.worker_live(task.room_id, task.subagent_id),
                         awaiting_answer=task.id in asked,
                     ),
                     now=now,
@@ -634,12 +649,22 @@ async def get_room_task(
             # 做这条活的分身住在房间的会话里 —— 屏幕没了它就没了，而它不会来说
             # 一声。这一位是内存里的当下事实，不是库里的一列。
             room_screen_live=chat.has_live_screen(place.room_id),
+            # 屏幕还在，再问那个正在跑轮次的进程：这条活的分身它看得见。
+            worker_live=chat.worker_live(task.room_id, task.subagent_id),
             awaiting_answer=bool(
                 await BlockRepository(db).tasks_awaiting_an_answer([task.id])
             ),
         ),
         now=datetime.now(UTC),
     ).as_dict()
+    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
+    # 就是它绑的那个。和列表里显示的是同一个函数算的。
+    project = await ProjectRepository(db).get(place.project_id)
+    out["model"] = presentation.card_model(
+        task,
+        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
+        choices=binding.catalog(project.settings if project else None),
+    )
     card = cards.get(task.id)
     out["card"] = (
         None
@@ -1341,6 +1366,8 @@ async def set_topic_compute_profile(
 
     from app.domain.agent.compute_configs import (
         ComputeChoice,
+        machine_policy_call,
+        room_choice,
         standard_choice,
         validate_choice,
     )
@@ -1397,6 +1424,51 @@ async def set_topic_compute_profile(
         if device_id not in {device.device_id for device in scoped_devices}:
             raise ValidationError("设备不属于当前项目")
 
+    # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
+    # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
+    # 人的提议——自托管那台机器的提议收件人就是**机主本人**（结论 40「要那台机器
+    # 的主人点头」），Cloud 花的是项目的钱，收件人是项目的主人。
+    #
+    # 放在这里而不是更早：前面几步在答「这个选择本身成不成立」（池接没接入、设备
+    # 属不属于这个项目），闸门答的是「这个成立的选择可不可以自己发生」。
+    project = await ProjectRepository(db).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    policy = gate.policy_of(project.settings)
+    # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。
+    if not policy.lets_everything_through:
+        verdict = gate.check(
+            await machine_policy_call(db, project=project, topic=topic, choice=choice),
+            policy,
+            actor.handle,
+        )
+        if isinstance(verdict, gate.Proposal):
+            # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+            # 是一条提议，下一步在 approver 手上。
+            await propose(db, verdict, place_id=topic_id)
+            await db.flush()
+            # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
+            # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+            # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
+            # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
+            # 法，先信谁？
+            current = room_choice(topic, project.settings)
+            return ok(
+                {
+                    "current": current.profile,
+                    "choice": current.model_dump(),
+                    "device_id": current.device_id,
+                    "locked": False,
+                    "inherited": topic.compute_profile is None,
+                    "proposal": {
+                        "approver": verdict.approver,
+                        "tier": verdict.call.tier,
+                        "content": verdict.content,
+                    },
+                }
+            )
+
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind
     # itself never overwrites, while an explicit user change before the lock removes
@@ -1427,6 +1499,7 @@ async def set_topic_compute_profile(
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "locked": False,
             "inherited": False,
+            "proposal": None,
         }
     )
 

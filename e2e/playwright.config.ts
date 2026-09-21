@@ -50,7 +50,7 @@ export default defineConfig({
     },
     {
       command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}`,
-      // Exercise model selection without configuring a live inference provider.
+      // A model catalogue without a live inference provider.
       //
       // FEEDBACK_ADMIN_HANDLES: the feedback admin surface (feedback-flows.spec.ts
       // 的「管理员」那条) is gated on a platform-level handle allowlist that no
@@ -59,14 +59,11 @@ export default defineConfig({
       // JSON list — pydantic-settings parses it, commas make the app refuse to
       // boot (the "Comma-separated in env" comment in core/config.py is wrong).
       env: {
-        AGENT_HARNESS_MODELS: '{"codex": ["codex-ci-fixture"]}',
         FEEDBACK_ADMIN_HANDLES: '["alice"]',
         // Which models the platform pool offers is the gateway's answer, so a
-        // run without one can only pick AGENT_MODEL — too few to check that
-        // choosing narrows, and all of them labelled with their own id, which
-        // is what would let the picker send a label back as a model name
-        // unnoticed. stub-gateway.mjs answers that one question and nothing
-        // else; it is not an inference provider.
+        // run without one can only pick AGENT_MODEL — and a deployment with no
+        // model at all cannot start a turn. stub-gateway.mjs answers that one
+        // question and nothing else; it is not an inference provider.
         LLM_GATEWAY_ADMIN_BASE: STUB_GATEWAY_URL,
         LLM_GATEWAY_ADMIN_KEY: 'stub-gateway-key',
       },

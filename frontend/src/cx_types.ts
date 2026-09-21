@@ -730,6 +730,13 @@ export interface AcceptCard {
   pr_repo: string | null
   pr_head_sha: string | null
   pr_merged_at: string | null
+  // 这次交付更新的是哪一项产物，以及这张卡自己是它的第几版 (#1085 结论三/五)。
+  // 版本号是后端按卡的状态算好的（还没采纳的那一张算的是它采纳之后的号），前端
+  // 一个都不推。落地之前递的那些卡没有这一项，所以是 null。
+  artifact: { id: string; name: string; version: number } | null
+  // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
+  // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
+  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
@@ -1097,9 +1104,6 @@ export interface AgentType {
   body: string
   skills: string[]
   mcp_servers: string[]
-  model: string | null
-  effort: string | null
-  harness: string | null
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1108,13 +1112,12 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+// 一个 agent 存着的**角色**。模型绑在活上（卡是用户接触模型的唯一地方），
+// 运行方式是部署的开发者选项 —— 两样都不在这里。
 export interface AgentConfiguration {
   body: string
-  model: string
-  harness: string
   skills: string[]
   mcp_servers: string[]
-  effort: string | null
 }
 
 export interface ProjectAgent {

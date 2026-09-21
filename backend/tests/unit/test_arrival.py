@@ -12,14 +12,14 @@ from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     UNRESOLVED_AGENT_HANDLE,
-    topic_agent_handle,
+    agent_instance_handle,
 )
 
 
 @pytest.mark.parametrize(
     "handle",
-    [CHEESE_HANDLE, UNRESOLVED_AGENT_HANDLE, topic_agent_handle(uuid.uuid4())],
-    ids=["平台那一行芝士", "认不出是哪个分身", "某个房间的分身"],
+    [CHEESE_HANDLE, UNRESOLVED_AGENT_HANDLE, agent_instance_handle(uuid.uuid4())],
+    ids=["平台那一行芝士", "认不出是哪个 agent", "某个项目里的芝士"],
 )
 def test_an_agent_reads_it_in_the_room(handle):
     """往 agent 的收件箱里塞一行，写的是一条谁都不会打开的记录。"""

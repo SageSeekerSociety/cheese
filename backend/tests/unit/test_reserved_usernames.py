@@ -17,7 +17,7 @@
 
 import pytest
 
-from app.domain.identity.handles import is_reserved_username, topic_agent_handle
+from app.domain.identity.handles import agent_instance_handle, is_reserved_username
 
 
 @pytest.mark.parametrize(
@@ -55,11 +55,11 @@ def test_ordinary_names_that_merely_look_similar_stay_available(name: str):
     assert is_reserved_username(name) is False
 
 
-def test_a_real_topic_agent_handle_is_reserved():
-    """不写死形状：直接问生成器要一个真的分身 handle。"""
+def test_a_real_agent_handle_is_reserved():
+    """不写死形状：直接问生成器要一个真的 agent handle。"""
     import uuid
 
-    assert is_reserved_username(topic_agent_handle(uuid.uuid4())) is True
+    assert is_reserved_username(agent_instance_handle(uuid.uuid4())) is True
 
 
 # 「这个检查会不会把芝士自己挡在门外」是这个改动最危险的地方，但那要真的建一行

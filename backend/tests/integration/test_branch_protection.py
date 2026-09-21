@@ -18,8 +18,7 @@ import uuid
 
 import pytest
 
-from app.domain.identity.handles import topic_agent_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_agent_seat, session_auth_headers
 
 _DEFAULTS = {
     "required_checks": [],
@@ -217,7 +216,7 @@ def test_an_agent_steward_changes_merge_policy_like_any_other_steward(client, ro
     """
     pid = _make_project(client)
     project = client.get(f"/projects/{pid}").json()["data"]
-    handle = topic_agent_handle(uuid.UUID(project["root_topic_id"]))
+    handle = room_agent_seat(client, project["root_topic_id"])
     response = client.post(
         f"/projects/{pid}/members",
         json={"user_handle": handle, "role": "lead"},
@@ -236,7 +235,7 @@ def test_an_agent_who_is_not_a_steward_still_cannot(client):
     """The role is the whole of it: seated as an ordinary member, refused."""
     pid = _make_project(client)
     project = client.get(f"/projects/{pid}").json()["data"]
-    handle = topic_agent_handle(uuid.UUID(project["root_topic_id"]))
+    handle = room_agent_seat(client, project["root_topic_id"])
     assert (
         client.post(
             f"/projects/{pid}/members",
