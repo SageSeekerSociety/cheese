@@ -275,6 +275,36 @@ check_platform_cli_in_claude_md() {
     "$hits"
 }
 
+# Rule 8 — 退役的档位名字不能以字符串形式写进 `author_type`。这一列只有两档：
+# `participant` 和 `platform`，`human`、`ai`、`system` 都已经离场。
+#
+# 写成 `AuthorType.system` 不需要守卫：成员不在了，一取就是 AttributeError。写成
+# 字符串需要。这一列的类型是 `Enum(AuthorType, native_enum=False, length=16)`，没传
+# `validate_strings`（默认 False），于是 SQLAlchemy 把它不认识的字符串原样绑进
+# INSERT（`sqlalchemy/sql/sqltypes.py` 的 `_db_value_for_elem`），列上也没有 CHECK
+# 约束接着。写的那一刻什么都不响，LookupError 要等下一次 select 取到这行才抛，那时
+# 整条时间线打不开，正是 `2895c4967ca4` 这次发布要终结的故障。
+#
+# 写错的形状就长在眼前：平台自己的事件署名 `author="system"`（那是 handle，
+# `backend/app` 里十几处，都对），在它旁边再写一个 `author_type="system"` 是顺手的事。
+#
+# 别处接不住：`tests/unit/test_author_type_two_values.py` 的 AST 扫描追的是**读**
+# （`author_type.value`，以及拿这一列和非成员比），关键字实参是写点，不匹配。
+#
+# 只看 `backend/app`：`tests/` 里要造存量行（迁移测试就得写 'system'），
+# `alembic/versions/` 里的历史迁移是写死的过去。整行注释跳过：注释一行都写不进库。
+check_retired_author_type_as_string() {
+  local hits
+  hits="$(grep -rnE --include='*.py' \
+    'author_type *= *["'"'"'](human|ai|system)["'"'"']' \
+    "$ROOT/backend/app" 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  [ -z "$hits" ] && return 0
+  echo "FAIL: 退役的档位名字以字符串形式写进了 author_type"
+  report "a retired author_type name written as a string — SQLAlchemy binds it as-is" \
+    "use AuthorType.participant or AuthorType.platform; the string goes in unchecked and raises on the next read" \
+    "$hits"
+}
+
 run_all() {
   check_naive_datetime
   check_raw_http_exception
@@ -282,6 +312,7 @@ run_all() {
   check_supply_reverse_lookup
   check_fixed_palette
   check_platform_cli_in_claude_md
+  check_retired_author_type_as_string
 }
 
 # --- palette baseline update ------------------------------------------------
@@ -466,7 +497,32 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "naming the product in a rule must pass"
   rm -rf "$tmp/backend/sandbox" "$tmp/.claude"
 
-  echo "PASS: check-repo-rules self-test (6 rules, scoping and the palette ratchet verified)"
+  # Rule 8. The fixture is the half that can actually reach the database: the
+  # string form, which binds unchecked.
+  mkdir -p "$tmp/backend/app/domain/review"
+  printf 'await blocks.add(author="system", author_type="system")\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the string form must fail"
+  printf 'await blocks.add(author="cheese", author_type="ai")\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the other two retired names must fail too"
+  printf 'await blocks.add(author="cheese", author_type=AuthorType.platform)\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "AuthorType.platform must pass"
+  # The handle is another column and keeps the word — that is what a live
+  # platform write looks like, and firing on it would make the guard unusable.
+  printf 'await blocks.add(author="system", author_type=AuthorType.platform)\n' \
+    > "$tmp/backend/app/domain/review/bad_sig.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the author handle must pass"
+  rm "$tmp/backend/app/domain/review/bad_sig.py"
+  # Scoped to app/: a migration test has to build a row under the old name.
+  mkdir -p "$tmp/backend/tests"
+  printf 'await blocks.add(author="system", author_type="system")\n' \
+    > "$tmp/backend/tests/test_rewrite.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "tests naming the old value must pass"
+  rm -rf "$tmp/backend/tests"
+
+  echo "PASS: check-repo-rules self-test (7 rules, scoping and the palette ratchet verified)"
   exit 0
 fi
 
@@ -476,4 +532,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, retired author_type name as a string)"
