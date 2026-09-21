@@ -145,11 +145,14 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
         ),
     )
 
+    provider._session_agent = AsyncMock(
+        return_value=SimpleNamespace(id=8, username="ada-seat")
+    )
     resolved = await provider.precheck(
         SessionRef(project_id, topic_id, "ada", "claude-code"), needs_place=True
     )
 
-    assert resolved == ("own-cloud", 7, "cheese-room", True)
+    assert resolved == ("own-cloud", 8, "ada-seat", True)
     devices.bind_topic_device.assert_awaited_once()
 
 
