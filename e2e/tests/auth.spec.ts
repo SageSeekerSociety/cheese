@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import { DEMO_USERNAME, DEMO_PASSWORD, login } from './helpers';
 
@@ -11,14 +12,10 @@ test.describe('Login', () => {
   });
 
   test('wrong credentials are rejected and the user stays on the sign-in page', async ({ page }) => {
-    // A made-up username, not the shared demo account: the backend's login
-    // rate limiter locks out by username after 5 failed attempts (see
-    // backend/app/api/routes/users.py user_login), and that Redis state
-    // outlives a single test run against a persistent (non-CI) dev DB. Failing
-    // against a throwaway name keeps this test from ever locking out `alice`,
-    // who the other specs depend on being able to log in.
+    // CI runners retain Redis login lockouts between jobs. Use a unique fake
+    // username per attempt so this test exercises invalid credentials.
     await page.goto('/account/signin');
-    await page.getByLabel('用户名').fill('no-such-user-e2e');
+    await page.getByLabel('用户名').fill(`no-such-user-e2e-${randomUUID()}`);
     // exact: true — see helpers.ts::login for why (Vuetify's password-visibility
     // toggle button's auto aria-label contains "密码" as a substring).
     await page.getByLabel('密码', { exact: true }).fill('wrong-password');
