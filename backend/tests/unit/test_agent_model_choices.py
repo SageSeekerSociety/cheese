@@ -68,7 +68,7 @@ def test_unknown_model_is_not_a_default(chosen):
 @pytest.mark.parametrize(
     ("supply", "expected"),
     [
-        (None, "sonnet"),
+        (None, "gateway-model"),
         ("gateway", "gateway-model"),
         ("subscription", "sonnet"),
     ],

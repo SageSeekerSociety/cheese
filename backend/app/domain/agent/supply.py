@@ -20,8 +20,8 @@ from dataclasses import dataclass
 SUBSCRIPTION = "subscription"
 GATEWAY = "gateway"
 
-# project.settings key. Absent = the subscription, which is the shape every
-# machine is launched in.
+# An unset project uses the configured gateway model. Launch credentials do
+# not choose the inference provider; admission routes the selected model.
 SUPPLY_KEY = "supply"
 
 _VALID = frozenset({SUBSCRIPTION, GATEWAY})
@@ -46,15 +46,13 @@ def resolve_pool(settings: dict | None) -> str:
     """The pool a project runs on.
 
     An explicit ``settings["supply"]`` wins; anything unrecognised falls back to
-    the subscription rather than failing the turn — a typo in a settings blob
+    the gateway rather than failing the turn — a typo in a settings blob
     must not take a project offline.
 
-    The default is not a deployment switch. Every machine is launched in the
-    subscription shape and every request is routed at admission (结论 46), so
-    "which pool does this deployment have" is not a question any more: it has
-    both, and the answer per request comes from the model.
+    Both pools remain available. The subscription-shaped launch credentials
+    bootstrap the client; they must not override the configured default model.
     """
     chosen = (settings or {}).get(SUPPLY_KEY)
     if isinstance(chosen, str) and chosen in _VALID:
         return chosen
-    return SUBSCRIPTION
+    return GATEWAY
