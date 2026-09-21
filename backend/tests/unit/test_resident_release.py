@@ -3,6 +3,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -336,9 +337,15 @@ async def test_release_acknowledgement_requires_connection(
     )
 
     commands = []
+    topic_id = uuid.uuid4()
 
     class Control:
-        async def current(self, topic):
+        async def current(self, topic, agent_handle=None):
+            assert topic == str(topic_id)
+            # A screen is launched as one named agent and records it, so this is
+            # the control session to look for — no room is asked, and nothing
+            # re-resolves it behind the screen's back.
+            assert agent_handle == "agent"
             return {"id": "session", "status": "active"}
 
         async def enqueue(self, sid, payload, actor):
@@ -395,7 +402,15 @@ async def test_release_acknowledgement_requires_connection(
     channel = object.__new__(DeviceChannel)
     channel._hub = Hub()
     monkeypatch.setattr(channel, "send_prompt", reload)
-    screen = HubScreen("screen", "device", [], "token", 1, "agent")
+    screen = HubScreen(
+        "screen",
+        "device",
+        [],
+        "token",
+        1,
+        "agent",
+        topic_id=topic_id,
+    )
     if connected:
         assert await channel._refresh_resident(screen, str(tmp_path), {}) is True
         assert (

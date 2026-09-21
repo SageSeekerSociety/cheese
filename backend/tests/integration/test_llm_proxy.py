@@ -487,15 +487,16 @@ async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
 
 
 @pytest.mark.parametrize("central_upstream", ["central:ticket", None])
-@pytest.mark.parametrize("model", ["claude-sonnet-5", "deepseek-flash", "glm-5.2"])
+@pytest.mark.parametrize("supply", ["subscription", "gateway"])
 async def test_placed_room_uses_session_identity_not_executor(
-    client, monkeypatch, central_upstream, model, _project_key
+    client, monkeypatch, central_upstream, supply, _project_key
 ):
     from datetime import UTC, datetime
 
     from app.core.config import settings as app_settings
+    from app.domain.agent_session.services import AgentSessionService
     from app.domain.device.models import DeviceRow
-    from app.domain.topic.models import Topic
+    from app.domain.project.repositories import ProjectRepository
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     pid = _make_project(client)
@@ -510,6 +511,8 @@ async def test_placed_room_uses_session_identity_not_executor(
         upstream="executor:ticket",
     )
     async with client.test_factory() as session:
+        project = await ProjectRepository(session).get(uuid.UUID(pid))
+        project.settings = {**(project.settings or {}), "supply": supply}
         executor = await session.get(DeviceRow, "executor")
         session.add(
             DeviceRow(
@@ -521,33 +524,35 @@ async def test_placed_room_uses_session_identity_not_executor(
                 ccproxy_upstream=central_upstream,
             )
         )
-        room = await session.get(Topic, uuid.UUID(room_id))
-        room.session_placement = {
-            "device_id": "central",
-            "resource_id": room_id,
-            "channel": "device",
-            "execution": {"kind": "device", "device_id": "executor"},
-        }
+        await AgentSessionService(session).remember_place(
+            topic_id=uuid.UUID(room_id),
+            agent_handle="agent",
+            work_lease={"kind": "device", "device_id": "executor"},
+            runtime_location={
+                "device_id": "central",
+                "resource_id": room_id,
+                "channel": "device",
+            },
+        )
         await session.commit()
 
     response = client.post(
         "/llm/admission",
         headers={
             "Authorization": "Bearer "
-            + mint_scoped_token(project_id=pid, topic_id=room_id, model=model)
+            + mint_scoped_token(project_id=pid, topic_id=room_id)
         },
     )
     assert response.status_code == 200
-    supply = response.json()["data"]["supply"]
-    assert supply["pool"] == (
-        "subscription" if model.startswith("claude-") else "gateway"
-    )
-    if supply["pool"] == "gateway":
-        assert supply["key"].startswith("sk-virtual-for-")
+    answer = response.json()["data"]["supply"]
+    # 送哪个池，是这一刻从项目的模型绑定解析出来的 —— 不是启动时签进凭据里的。
+    assert answer["pool"] == supply
+    if supply == "gateway":
+        assert answer["key"].startswith("sk-virtual-for-")
     if central_upstream is None:
-        assert "upstream" not in supply
+        assert "upstream" not in answer
     else:
-        assert supply["upstream"] == central_upstream
+        assert answer["upstream"] == central_upstream
 
 
 async def _room_with_a_thread(client, project_id: str) -> tuple[str, str]:

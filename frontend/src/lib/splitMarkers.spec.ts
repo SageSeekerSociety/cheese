@@ -23,7 +23,7 @@ function block(id: string, createdAt: string, author = '张衡'): Block {
     id,
     topic_id: ROOM,
     kind: 'message',
-    author_type: 'human',
+    author_type: 'participant',
     author,
     content: id,
     created_at: createdAt,

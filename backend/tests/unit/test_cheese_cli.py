@@ -58,7 +58,6 @@ def test_direct_mcp_request_plans_cover_only_http_operations():
         "cheese_close_task": {"task_id": "task", "conclusion": "done"},
         "cheese_decision": {"text": "chosen"},
         "cheese_fetch": {"url": "https://example.test", "prompt": None},
-        "cheese_gh_token": {},
         "cheese_members": {},
         "cheese_milestone": {"title": "ship", "due": "2026-09-14"},
         "cheese_notify": {"title": "notice"},
@@ -89,7 +88,7 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     monkeypatch.chdir(folder)
     monkeypatch.setenv("CHEESE_WORKTREE_ROOT", str(tmp_path))
     monkeypatch.setattr(cli, "TOPIC", "room")
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "artifact", "report.html"])
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "show", "report.html"])
     calls = []
     monkeypatch.setattr(cli, "_call", lambda *args: calls.append(args))
 
@@ -98,7 +97,7 @@ def test_artifact_publishes_the_local_file_from_a_subdirectory(monkeypatch, tmp_
     assert calls == [
         (
             "POST",
-            "/topics/room/artifact",
+            "/topics/room/shown",
             {
                 "path": "site/report.html",
                 "as": "html",
@@ -120,7 +119,7 @@ def test_serve_declares_only_the_port_and_registers_the_app(monkeypatch):
     cli.main()
     assert calls == [["sh", "/preview-up", "5173"]]
     assert api_calls == [
-        ("POST", "/topics/room/artifact", {"path": "Vue dev server", "as": "app"})
+        ("POST", "/topics/room/shown", {"path": "Vue dev server", "as": "app"})
     ]
 
 
@@ -343,6 +342,8 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
             "最懂",
             "--subject",
             "fix(accept): require a commit subject",
+            "--artifact",
+            "结题报告",
         ],
     )
 
@@ -352,6 +353,8 @@ def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
     assert call["p"] == "/topics/t-1/tasks/task-1/accept-card"
     assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
     assert call["d"]["reviewer_handle"] == "alice"
+    # 交付说明本次更新的是哪一项产物 (#1085 结论三)。
+    assert call["d"]["artifact"] == "结题报告"
 
 
 def test_ready_never_syncs_creates_a_card_or_merges(monkeypatch):
@@ -394,7 +397,7 @@ def test_accept_request_without_a_reviewer_lets_the_backend_pick_the_default(
     monkeypatch.setattr(
         cli.sys,
         "argv",
-        ["cheese", "accept-request", "--subject", "fix(x): y"],
+        ["cheese", "accept-request", "--subject", "fix(x): y", "--artifact", "报告"],
     )
 
     cli.main()
@@ -470,78 +473,10 @@ class _FakeHTTPResponse:
         return False
 
 
-def _run_gh_token(cli, monkeypatch, permissions: str) -> None:
-    monkeypatch.setattr(
-        cli.urllib.request,
-        "urlopen",
-        lambda _req, timeout=None: _FakeHTTPResponse(
-            {
-                "data": {
-                    "token": "ghs_x",
-                    "repo": "acme/widgets",
-                    "expires_at": "2026-08-12T10:00:00Z",
-                    "permissions": permissions,
-                }
-            }
-        ),
-    )
-    monkeypatch.setattr(cli.sys, "argv", ["cheese", "gh-token"])
-    cli.main()
-
-
-def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsys):
-    """The whole point of widening the token: the agent has to LEARN it can
-    read an issue, or it goes on asking a human to paste the body in."""
-    cli = _load()
-    _run_gh_token(
-        cli,
-        monkeypatch,
-        "actions: read, checks: read, contents: read, issues: read, "
-        "metadata: read, pull_requests: read",
-    )
-
-    out, err = capsys.readouterr()
-    assert out.strip() == "ghs_x"  # stdout stays token-only for $(...)
-    assert "repos/acme/widgets/issues/<n>" in err
-    assert "repos/acme/widgets/pulls/<n>" in err
-    assert "repos/acme/widgets/contents/<path>" in err
-
-
-def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, capsys):
-    """Same lesson one step further along. Reading what it may do is only half
-    the job — an agent that can push and open its own PR but was never shown
-    the two commands hands the last step back to a human, which is exactly the
-    stall the read-only token used to cause."""
-    cli = _load()
-    _run_gh_token(
-        cli,
-        monkeypatch,
-        "actions: read, checks: read, contents: write, metadata: read, "
-        "pull_requests: write, workflows: write",
-    )
-
-    _out, err = capsys.readouterr()
-    assert "cheese sync" in err
-    assert "cheese push-fix" in err
-    assert "x-access-token:" not in err
-    assert "gh api repos/acme/widgets/pulls -f head=" not in err
-
-
-def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
-    """An advertised recipe that 403s is worse than no recipe — it burns a turn
-    and teaches the agent the wrong lesson about what it may do. A read-level
-    grant is one of those: `contents: read` must not produce a push recipe."""
-    cli = _load()
-    _run_gh_token(
-        cli, monkeypatch, "actions: read, checks: read, contents: read, metadata: read"
-    )
-
-    _out, err = capsys.readouterr()
-    assert "issues/<n>" not in err
-    assert "pulls/<n>" not in err
-    assert "git push" not in err
-    assert "check-runs" in err  # what it CAN do is still spelled out
-    assert "contents: read" in err
+def test_token_export_command_is_not_exposed():
+    with pytest.raises(SystemExit) as error:
+        _load().build_parser().parse_args(["gh-token"])
+    assert error.value.code == 2
 
 
 def _is_subparsers(action):
@@ -655,3 +590,36 @@ def test_a_won_set_remembers_the_version_it_produced(monkeypatch, tmp_path, caps
     cli.main()
 
     assert [c[2]["expected_version"] for c in calls if c[0] == "PUT"] == [7, 8]
+
+
+def test_feedback_propose_refuses_locally_when_there_is_no_topic():
+    """`cheese feedback propose` posts to `/topics/{topic}/feedback-proposals`.
+
+    With nothing in `CHEESE_TOPIC` that path is `/topics//feedback-proposals`,
+    which the server answers 404 — and the CLI then reports *the command* as
+    having failed, exit code 1, with the server's 「话题不存在」 as the reason
+    (`_call` exits on any non-2xx). The refusal belongs where the missing thing
+    is known: here, before the request, naming the variable that is empty.
+
+    Both halves asserted: the refusal, and the path it guards. A guard that also
+    broke the working case would otherwise read as a passing test.
+    """
+    cli = _load()
+    args = {
+        "title": "沙箱里 make 装不上依赖",
+        "kind": "bug",
+        "visibility": "public",
+        "user_said": "用户没有就这个问题说过话",
+    }
+
+    with pytest.raises(ValueError, match="Missing CHEESE_TOPIC"):
+        cli.request_plan("cheese_feedback_propose", args, {"CHEESE_PROJECT": "p"})
+
+    plan = cli.request_plan(
+        "cheese_feedback_propose",
+        args,
+        {"CHEESE_TOPIC": "room", "CHEESE_PROJECT": "p"},
+    )
+    assert plan["method"] == "POST"
+    assert plan["path"] == "/topics/room/feedback-proposals"
+    assert plan["body"]["title"] == "沙箱里 make 装不上依赖"

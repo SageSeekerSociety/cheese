@@ -90,6 +90,28 @@
             :disabled="creatingProject || loadingTeams"
           />
           <div class="t-meta mt-2">项目归所选团队，成员可以一起协作</div>
+          <v-select
+            v-model="newProjectForgeKind"
+            autocomplete="off"
+            :items="[
+              { title: '由芝士托管（默认）', value: 'forgejo' },
+              { title: '连接 GitHub', value: 'github_app' },
+            ]"
+            label="代码仓库"
+            variant="outlined"
+            color="primary"
+            class="mt-3"
+            hide-details
+            :disabled="creatingProject"
+          />
+          <div class="t-meta mt-2">
+            {{
+              newProjectForgeKind === 'forgejo'
+                ? '创建项目时自动准备代码仓库。'
+                : '创建后前往项目设置连接 GitHub，连接完成后即可开始代码任务。'
+            }}
+            项目创建后，暂不支持切换托管服务。
+          </div>
           <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
             {{ teamLoadError }}
             <v-btn variant="text" size="small" :loading="loadingTeams" @click="loadProjectTeams">重试</v-btn>
@@ -149,6 +171,7 @@ import MyApp from './components/common/MyApp.vue'
 import BottomAppBar from './components/common/Navigation/BottomAppBar.vue'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
+import { DEFAULT_SHELL, shellFor } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { createProject, listProjects } from '@/api'
@@ -207,7 +230,7 @@ router.isReady().then(async () => {
 // 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
 // useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
 // 面看到的是一屏永远不再刷新的旧数据。
-const keptAlivePages = ['OverviewView', 'ProjectDocsView', 'MemberView', 'CalendarView', 'ProjectAgentsView']
+const keptAlivePages = ['ProjectDocsView', 'MemberView', 'CalendarView']
 
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
@@ -302,7 +325,16 @@ const navSources = computed<NavSources>(() => ({
   createProject: createNewProject,
 }))
 
-const rail = computed(() => railItems(navSources.value))
+// 壳 (shell)：**地址里那个项目**的壳决定这份导航怎么画。不在项目里（首页、空间、
+// 设置、某个 赛题 页）时是 default——那里没有项目行可读，而 default 就是今天的
+// 样子，所以项目外的一点都没变。按地址取而不是按「上次开过的项目」取：壳是**你
+// 现在待的地方**的长相，走出项目还挂着上一个项目的样子会让人以为走岔了。
+const openProjectId = computed<string | null>(() =>
+  typeof currentRoute.params.projectId === 'string' ? currentRoute.params.projectId : null
+)
+const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
+
+const rail = computed(() => railItems(navSources.value, navShell.value))
 
 // rail 的悬停浮层一直在说 ⌘N 能切过去；这里是它真正被绑上的地方。
 //
@@ -321,13 +353,14 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   void router.push(to)
 })
-const tabs = computed(() => tabItems(navSources.value))
+const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
 const { open: newProjectDialog, presetTeamId, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 const newProjectName = ref('')
+const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
 const creatingProject = ref(false)
 const newProjectError = ref<string | null>(null)
 // 所属小队: which team the project belongs to decides who can see it. Without
@@ -366,6 +399,7 @@ async function loadProjectTeams() {
 watch(newProjectDialog, (opened) => {
   if (!opened) return
   newProjectName.value = sourceTask.value?.name ?? ''
+  newProjectForgeKind.value = 'forgejo'
   newProjectError.value = null
   void loadProjectTeams()
 })
@@ -377,9 +411,19 @@ async function confirmNewProject() {
   creatingProject.value = true
   newProjectError.value = null
   try {
-    const project = await createProject(name, myHandle(), newProjectTeamId.value, sourceTask.value?.id)
+    const project = await createProject(
+      name,
+      myHandle(),
+      newProjectTeamId.value,
+      sourceTask.value?.id,
+      newProjectForgeKind.value
+    )
     await loadCxProjects()
     newProjectDialog.value = false
+    if (newProjectForgeKind.value === 'github_app') {
+      router.push(`/projects/${project.id}/settings`)
+      return
+    }
     // 直接落到大本营，而不是项目地址。一个刚建出来的项目没有任何活，而 /projects
     // 的落点是看板——它此刻是四列空格子，答的是「什么在跑」，对一个还没开始的项目
     // 只有一个答案：没有。人第一眼该看到的是能说话的地方。这里知道它是新的，所以

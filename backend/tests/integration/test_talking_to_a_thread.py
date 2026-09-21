@@ -11,6 +11,7 @@
 起屏幕就是起一整个容器——正是「一条活 = 房间会话里的一个分身」拆掉的东西。
 """
 
+from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
@@ -41,7 +42,7 @@ def _record_screens(stub_hooks) -> list[str]:
     original = stub_hooks.ensure_ready
 
     async def _spy(**kw):
-        seen.append(str(kw.get("topic_id")))
+        seen.append(str(kw["session"].topic_id))
         return await original(**kw)
 
     stub_hooks.ensure_ready = _spy
@@ -113,7 +114,7 @@ def test_a_card_has_no_chat_socket_of_its_own(client, stub_hooks):
     _wait_work_idle()
 
     with client.websocket_connect(chat_ws_url(thread["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "进度怎么样", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 进度怎么样"})
         frames = _drain_until_done(ws)
 
     assert frames[-1]["type"] == "error", frames
@@ -126,10 +127,10 @@ def test_a_room_still_answers_on_its_own_line(client, stub_hooks):
 
     screens = _record_screens(stub_hooks)
     with client.websocket_connect(chat_ws_url(room["id"], "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "在吗", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 在吗"})
         _drain_until_done(ws)
     _wait_work_idle()
 
     assert screens == [room["id"]]
-    kinds = [b["author_type"] for b in _blocks(client, room["id"])]
-    assert "ai" in kinds, "房间没答话"
+    authors = [b["author"] for b in _blocks(client, room["id"])]
+    assert any(looks_like_agent_handle(a) for a in authors), "房间没答话"

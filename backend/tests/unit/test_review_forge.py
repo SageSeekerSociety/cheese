@@ -8,6 +8,8 @@ predicate, so every lane and the failure mode are three lines each.
 """
 
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -19,37 +21,57 @@ def _pid() -> uuid.UUID:
     return uuid.uuid4()
 
 
-async def _bound(_: uuid.UUID) -> bool:
-    return True
+@pytest.fixture(autouse=True)
+def credentials(monkeypatch):
+    from app.domain.project import forge
+
+    monkeypatch.setattr(forge, "tokens_for_project", AsyncMock(return_value=object()))
 
 
-async def _unbound(_: uuid.UUID) -> bool:
-    return False
-
-
-async def _explodes(_: uuid.UUID) -> bool:
-    raise RuntimeError("upstream lookup died")
+def _session(kind="github_app", host="github.com"):
+    session = AsyncMock()
+    session.scalar.return_value = SimpleNamespace(
+        kind=kind, url=f"https://{host}/acme/widgets.git"
+    )
+    return session
 
 
 @pytest.mark.anyio
 async def test_a_bound_project_is_the_app_forge() -> None:
-    got = await forge_mod.resolve(project_id=_pid(), is_github_bound=_bound)
+    got = await forge_mod.resolve(project_id=_pid(), session=_session())
 
     assert got.kind is forge_mod.ForgeKind.github_app
-    assert got.has_external_checks is True
-    assert got.note == ""
+    assert got.capabilities.reports_checks is True
+    assert got.declaration == ""
 
 
 @pytest.mark.anyio
-async def test_an_unbound_project_is_the_platform_forge() -> None:
-    got = await forge_mod.resolve(project_id=_pid(), is_github_bound=_unbound)
+async def test_forgejo_binding_uses_proposals_and_external_checks() -> None:
+    got = await forge_mod.resolve(
+        project_id=_pid(), session=_session("forgejo", "forge.invalid")
+    )
+    assert got.kind is forge_mod.ForgeKind.forgejo
+    assert got.capabilities.reports_checks is True
 
-    assert got.kind is forge_mod.ForgeKind.platform
-    # And it is a repo with no CI configured — which #363 calls legitimate, so
-    # the delivery surface must be able to say "no checks here" rather than
-    # showing a check step that never runs.
-    assert got.has_external_checks is False
-    assert "未接 GitHub" in got.note
+
+@pytest.mark.anyio
+async def test_unbound_project_cannot_merge_locally() -> None:
+    session = _session()
+    session.scalar.return_value = None
+    with pytest.raises(ValidationError, match="没有代码仓库"):
+        await forge_mod.resolve(project_id=_pid(), session=session)
+
+
+@pytest.mark.anyio
+async def test_missing_credentials_do_not_change_the_provider(monkeypatch):
+    from app.domain.project import forge
+
+    monkeypatch.setattr(forge, "tokens_for_project", AsyncMock(return_value=None))
+    got = await forge_mod.resolve(project_id=_pid(), session=_session())
+    assert got.kind is forge_mod.ForgeKind.github_app
+    assert got.capabilities.hosts_proposals is True
+    assert got.capabilities.can_write_remote is False
+    assert got.capabilities.pushes_to_external_remote is False
 
 
 @pytest.mark.anyio
@@ -59,30 +81,29 @@ async def test_an_undeterminable_binding_stops_the_accept() -> None:
     Answering "unbound" on a database hiccup would send a GitHub-bound project
     down the local merge — exactly #362, arrived at by a different route.
     """
-    with pytest.raises(ValidationError) as caught:
-        await forge_mod.resolve(project_id=_pid(), is_github_bound=_explodes)
+    session = _session()
+    session.scalar.side_effect = RuntimeError("database unavailable")
+    with pytest.raises(ValidationError, match="无法读取"):
+        await forge_mod.resolve(project_id=_pid(), session=session)
 
-    assert "无法判定" in str(caught.value)
 
-
-def test_every_kind_answers_every_question() -> None:
+@pytest.mark.anyio
+async def test_every_kind_answers_every_question() -> None:
     """A new forge cannot be added half-way.
 
     Every registered provider declares checks and implements the operations.
     """
     for kind in forge_mod.ForgeKind:
-        got = forge_mod.FORGES[kind]
-        assert isinstance(got.has_external_checks, bool)
-        assert isinstance(got.note, str)
+        got = await forge_mod.resolve(project_id=_pid(), session=_session(kind))
+        assert isinstance(got.capabilities.reports_checks, bool)
+        assert isinstance(got.declaration, str)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("binding", [_unbound, _explodes])
-async def test_existing_proposal_keeps_its_forge_without_project_credentials(binding):
-    got = await forge_mod.resolve(
-        project_id=_pid(),
-        is_github_bound=binding,
-        proposal_url="https://github.com/acme/widgets/pull/42",
-    )
-    assert got.kind == forge_mod.ForgeKind.github_app
-    assert got.has_external_checks is True
+async def test_proposal_cannot_cross_to_a_different_forge():
+    with pytest.raises(ValidationError, match="不一致"):
+        await forge_mod.resolve(
+            project_id=_pid(),
+            session=_session("forgejo", "forge.invalid"),
+            proposal_url="https://github.com/acme/widgets/pull/42",
+        )

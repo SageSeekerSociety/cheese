@@ -21,8 +21,8 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
+from app.domain.repository import service as ws
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 from tests.turn_log import open_turn, open_turn_ids
@@ -225,7 +225,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     verdicts = [
         b
         for b in rows
-        if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
+        if b.author_type == AuthorType.platform and "部署中断" in (b.content or "")
     ]
     assert verdicts == []
     assert await open_turn_ids(factory) == set()
@@ -254,7 +254,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
             project_id=_pid,
             topic_id=tid,
             author="u",
-            author_type=AuthorType.human,
+            author_type=AuthorType.participant,
             content="修一下登录页",
             kind=BlockKind.message,
         )
@@ -344,7 +344,7 @@ def test_completed_live_turn_settles_before_another_prompt(
 
     monkeypatch.setattr(stub_hooks, "emit_turn", emit_turn)
     with client.websocket_connect(chat_ws_url(str(tid), "u")) as socket:
-        socket.send_json({"type": "message", "content": "hello", "summon": True})
+        socket.send_json({"type": "message", "content": "@芝士 hello"})
         while True:
             frame = socket.receive_json()
             assert frame["type"] != "error", frame

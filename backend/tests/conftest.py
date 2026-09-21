@@ -20,7 +20,7 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -89,6 +89,7 @@ from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness import SessionRef  # noqa: E402
 from app.domain.agent.harness.channel import Channel  # noqa: E402
 from app.domain.agent.harness.claude_code import (  # noqa: E402
     ClaudeCodeRuntime,
@@ -97,13 +98,9 @@ from app.domain.agent.harness.claude_code import (  # noqa: E402
 from app.domain.agent.harness.launch import LaunchPlan  # noqa: E402
 from app.main import app  # noqa: E402
 
-# Tests always run on the DB memory backend: the openviking backend holds an
-# exclusive data-dir lock (owned by the dev server when it's running), and
-# tests must not depend on — or corrupt — the live memory store.
-settings.memory_backend = "db"
 # Tests exercise the real authz enforcement regardless of the dev .env (which
-# ships it OFF for the conservative dogfood rollout). Same leak class as the
-# memory backend above: the .env value must not decide test behavior.
+# ships it OFF for the conservative dogfood rollout): the .env value must not
+# decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
 # platform runs (scheduler/jobs.py). Three of them would act on the test's own
@@ -230,13 +227,13 @@ class StubChannel(Channel):
     async def ensure_ready(  # type: ignore[override]
         self,
         *,
-        topic_id: uuid.UUID,
+        session: SessionRef,
         launch: LaunchPlan,
         **_: object,
     ) -> uuid.UUID:
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
-        return topic_id
+        return session.topic_id
 
     async def send_prompt(  # type: ignore[override]
         self, screen: uuid.UUID, prompt: str
@@ -431,7 +428,214 @@ def _redis_client_per_loop() -> Iterator[None]:
 
 
 @pytest.fixture
-def client(_pg_schema, stub_hooks: StubChannel, tmp_path) -> Iterator[TestClient]:
+def stub_project_forge(monkeypatch, tmp_path):
+    """Supply project creation's external forge in API lifecycle tests.
+
+    The test Git store stands in for committed remote branches. Proposal and
+    merge tests supply their own PR state; tests/forgejo exercises the real API.
+    """
+    from app.domain.project import forge
+    from app.domain.project.models import Project, ProjectForge
+    from app.domain.repository import forge_files
+    from tests.support import git_store
+
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
+
+    provision = forge.provision_repository
+    default_branch = forge.default_branch
+    remote_head = forge_files.branch_head
+    remote_data = forge_files.repository_data
+    remote_tokens = forge_files.tokens_for_project
+    remote_status = forge_files.status_client
+    remote_author_email = forge.ensure_author_email
+
+    async def provision_repository(project_id, session, **kwargs):
+        existing = await forge.binding_for_project(project_id, session)
+        project = await session.get(Project, project_id)
+        if (
+            existing is not None
+            or (project.settings or {}).get("forge_kind") == "github_app"
+        ):
+            return await provision(project_id, session, **kwargs)
+        binding = ProjectForge(
+            project_id=project_id,
+            kind="forgejo",
+            repo=f"project-{project_id.hex}/code",
+            url=f"https://forge.test/project-{project_id.hex}/code.git",
+            api_url="https://forge.test/api/v1",
+            default_branch="main",
+        )
+        session.add(binding)
+        await session.flush()
+        git_store.ensure_repo(project_id)
+        return binding
+
+    async def read_default_branch(project_id, session):
+        binding = await forge.binding_for_project(project_id, session)
+        if binding is None:
+            return await default_branch(project_id, session)
+        return binding.default_branch
+
+    async def test_repository(project_id, session):
+        binding = await forge.binding_for_project(project_id, session)
+        return binding is not None and binding.api_url == "https://forge.test/api/v1"
+
+    async def ensure_author_email(project_id, session, email, **kwargs):
+        if not await test_repository(project_id, session):
+            await remote_author_email(project_id, session, email, **kwargs)
+
+    async def branch_head(project_id, session, branch):
+        if not await test_repository(project_id, session):
+            return await remote_head(project_id, session, branch)
+        repo = git_store.path(project_id)
+        if not repo.exists():
+            return None
+        result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    async def tokens_for_project(project_id, session):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        if not await test_repository(project_id, session):
+            return await remote_tokens(project_id, session)
+        return SimpleNamespace(
+            installation_token=AsyncMock(return_value=("test-token", ""))
+        )
+
+    async def status_client(project_id, session):
+        from types import SimpleNamespace
+
+        if not await test_repository(project_id, session):
+            return await remote_status(project_id, session)
+
+        async def compare_status(*, base, head, **kwargs):
+            repo = git_store.path(project_id)
+            revisions = [
+                git_store.git(repo, "rev-parse", revision).strip()
+                for revision in (base, head)
+            ]
+            if revisions[0] == revisions[1]:
+                return "identical"
+            result = git_store.run(
+                ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
+            )
+            return "ahead" if result.returncode == 0 else "diverged"
+
+        return SimpleNamespace(compare_status=compare_status)
+
+    async def repository_data(project_id, session, path="", **kwargs):
+        import base64
+        import subprocess
+        from urllib.parse import parse_qs, unquote, urlsplit
+
+        if not await test_repository(project_id, session):
+            return await remote_data(project_id, session, path, **kwargs)
+        repo = git_store.path(project_id)
+        route = unquote(urlsplit(path).path)
+        if route.startswith("/git/commits/") and route.endswith(".diff"):
+            revision = route.removeprefix("/git/commits/").removesuffix(".diff")
+            return git_store.git(repo, "show", "--format=", revision)
+
+        def commits(revision):
+            return [
+                {
+                    "sha": sha,
+                    "commit": {
+                        "author": {
+                            "name": git_store.git(
+                                repo, "show", "-s", "--format=%an", sha
+                            ).strip()
+                        },
+                        "message": git_store.git(
+                            repo, "show", "-s", "--format=%B", sha
+                        ).strip(),
+                    },
+                }
+                for sha in git_store.git(
+                    repo, "rev-list", "--max-count=50", revision
+                ).splitlines()
+            ]
+
+        if route == "/commits":
+            return commits(parse_qs(urlsplit(path).query)["sha"][0])
+        if route.startswith("/pulls/") and route.endswith(".diff"):
+            from sqlalchemy import select
+
+            from app.domain.room_task.models import Task
+
+            number = int(route.removeprefix("/pulls/").removesuffix(".diff"))
+            task = await session.scalar(
+                select(Task).where(
+                    Task.project_id == project_id, Task.pr_number == number
+                )
+            )
+            assert task is not None
+            return git_store.git(
+                repo, "diff", f"{task.base_branch}...{task.branch_name}"
+            )
+        if route.startswith("/git/trees/"):
+            revision = route.removeprefix("/git/trees/")
+            tree = []
+            for row in git_store.git(repo, "ls-tree", "-zl", revision).split("\0"):
+                if not row:
+                    continue
+                metadata, name = row.split("\t", 1)
+                mode, kind, oid, size = metadata.split()
+                tree.append(
+                    {
+                        "path": name,
+                        "mode": mode,
+                        "type": kind,
+                        "sha": oid,
+                        "size": int(size) if size != "-" else 0,
+                    }
+                )
+            return {"tree": tree, "truncated": False}
+        if route.startswith("/git/blobs/"):
+            oid = route.removeprefix("/git/blobs/")
+            data = subprocess.check_output(
+                ["git", "-C", str(repo), "cat-file", "blob", oid]
+            )
+            return {"encoding": "base64", "content": base64.b64encode(data).decode()}
+        if not route.startswith("/compare/"):
+            return await remote_data(project_id, session, path, **kwargs)
+        base, head = route.removeprefix("/compare/").split("...")
+        statuses = {"A": "added", "D": "removed", "M": "modified"}
+        return {
+            "commits": commits(f"{base}..{head}"),
+            "total_commits": int(
+                git_store.git(repo, "rev-list", "--count", f"{base}..{head}")
+            ),
+            "files": [
+                {"filename": name, "status": statuses[status]}
+                for status, name in (
+                    row.split("\t", 1)
+                    for row in git_store.git(
+                        repo,
+                        "diff",
+                        "--no-renames",
+                        "--name-status",
+                        f"{base}...{head}",
+                    ).splitlines()
+                )
+            ],
+        }
+
+    monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
+    monkeypatch.setattr(forge, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge_files, "branch_head", branch_head)
+    monkeypatch.setattr(forge_files, "repository_data", repository_data)
+    monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
+    monkeypatch.setattr(forge_files, "status_client", status_client)
+
+
+@pytest.fixture
+def client(
+    _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge
+) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -729,25 +933,99 @@ _TEMPLATE_READY = False
 # tests/unit/ is the only tree allowed to run without a Postgres; everything
 # else is DB-backed by construction. Trailing sep so a sibling like
 # "tests/unittools/" can't match by prefix.
-_UNIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "unit") + os.sep
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+_UNIT_DIR = os.path.join(_TESTS_DIR, "unit") + os.sep
+_CONTRACT_DIR = os.path.join(_TESTS_DIR, "contract") + os.sep
 
 
-def _needs_db(request: pytest.FixtureRequest) -> bool:
-    """Whether this test requires the Postgres schema to be provisioned.
+def _reaches_for_db(path: str, fixturenames: Iterable[str]) -> bool:
+    """Whether a test at ``path`` with this fixture closure needs Postgres.
 
     Two independent reasons, because fixture names alone aren't enough: the
     integration harness binds ``settings.database_url`` directly (module import
     time), so a test there can touch the DB without naming a DB fixture. Hence
     anything outside ``tests/unit/`` is assumed DB-backed. Inside ``tests/unit/``
-    we go by the fixture closure — ``request.fixturenames`` is transitive, and
-    every DB-bound fixture (``client``, ``python_client``, integration's
+    we go by the fixture closure — a closure is transitive, and every DB-bound
+    fixture (``client``, ``python_client``, integration's
     ``db_connection``/``db_session``…) chains to ``_pg_schema``, so requesting any
     of them shows up here.
+
+    One function because the answer has two readers who must agree: the gate
+    below, which provisions a database for the tests that need one, and
+    ``_layer_of``, which sends the tests that don't into a CI step that has none.
+    Written twice they would drift, and the drift lands as a test asking a
+    database that was never built for it.
     """
-    return (
-        not str(request.path).startswith(_UNIT_DIR)
-        or "_pg_schema" in request.fixturenames
-    )
+    return not path.startswith(_UNIT_DIR) or "_pg_schema" in fixturenames
+
+
+def _needs_db(request: pytest.FixtureRequest) -> bool:
+    """Whether this test requires the Postgres schema to be provisioned."""
+    return _reaches_for_db(str(request.path), request.fixturenames)
+
+
+# The three layers the suite runs as. CI runs one pytest per layer, in series,
+# each with its own ceiling, so a wedge or a slowdown names the layer it is in
+# instead of arriving as one number for 6800 tests.
+_LAYERS = frozenset({"pure", "contract", "integration"})
+
+
+def _layer_of(item: pytest.Item) -> str:
+    """Which layer ``item`` runs in.
+
+    ``pure`` is the layer that runs on a machine with no Postgres, so what
+    decides it is ``_reaches_for_db`` — the same question the gate asks before
+    building a database, asked of the same fixture closure. A file under
+    ``tests/unit/`` that does reach for one — the turn log lives in Postgres, so
+    the runner's tests do — is a database test wherever it sits, and runs in the
+    integration step with a database under it.
+    """
+    path = os.fspath(item.path) if item.path is not None else ""
+    if path.startswith(_CONTRACT_DIR):
+        return "contract"
+    # getattr: only a Function has a fixture closure, and a collected node that
+    # has none has not asked for a database either.
+    closure = getattr(item, "fixturenames", ())
+    # One call decides both halves of "pure": outside ``tests/unit/`` this is
+    # true whatever the closure holds, so the tree is checked by the same
+    # predicate that checks the fixtures.
+    if not _reaches_for_db(path, closure):
+        return "pure"
+    return "integration"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give every collected test exactly one layer marker.
+
+    The three CI steps are the whole suite only if every test carries one and
+    only one of the three markers: a test carrying none runs in no step and is
+    reported nowhere — green CI over code nothing checked — and one carrying two
+    is counted, and timed, twice. Neither can be seen in a passing run.
+
+    So a test that declares a layer of its own aborts the collection here
+    rather than being warned about, and a test that declares none has one
+    added. There is no third branch: ``_layer_of`` is total — contract, pure,
+    or integration as the fallback — so "nothing to add" cannot arise.
+
+    Derived here rather than written on each test: a marker on the test is a
+    second declaration of what its fixture list already says, and the two drift
+    the moment a test grows a database and nobody moves its marker.
+    """
+    misfiled = []
+    for item in items:
+        declared = {m.name for m in item.iter_markers()} & _LAYERS
+        if declared:
+            misfiled.append(
+                f"  {item.nodeid}\n"
+                f"    carries {sorted(declared)} already — the layer is derived"
+                f" from the fixture closure, so remove the marker"
+            )
+            continue
+        item.add_marker(_layer_of(item))
+    if misfiled:
+        raise pytest.UsageError(
+            "These tests declare their own layer:\n" + "\n".join(misfiled)
+        )
 
 
 async def _terminate_open_transactions(db_name: str) -> list[dict]:
@@ -800,6 +1078,16 @@ def pytest_runtest_teardown(item: pytest.Item):
     """
     yield
     names = getattr(item, "fixturenames", ())
+    # A pure test has no database behind it, so it cannot have leaked a
+    # transaction on one — and the name check below cannot tell that on its own:
+    # three files define their own local ``client``, a fake HTTP client or a
+    # four-route FastAPI app, which shadows the fixture this hook is named after
+    # and matches here all the same. That cost every one of them a connection to
+    # the maintenance database per test, and in the pure CI step, which runs with
+    # no database reachable at all, it was an error at teardown on a test that
+    # had passed.
+    if item.get_closest_marker("pure") is not None:
+        return
     if not ({"client", "python_client", "db_factory"} & set(names)):
         return
     leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
@@ -1043,6 +1331,7 @@ def seed_task_with_protocol(
     conditions: list[dict] | None = None,
     resource_pack: dict | None = None,
     default_role: str | None = None,
+    shell: str | None = None,
     override: dict | None = None,
     space_id: int | None = None,
 ) -> int:
@@ -1051,7 +1340,8 @@ def seed_task_with_protocol(
     Seeded through the DB because the 知是 publish flow needs an authenticated
     space admin and a filled form, and none of that is what the protocol tests
     are about. `override` populates the 赛题's own `protocol_override` (#370
-    option (c)).
+    option (c)). `shell` and `override` carry the 壳 layer the same way, so a
+    项目集-level 壳 and a 赛题-level one are set up in one call.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -1086,6 +1376,7 @@ def seed_task_with_protocol(
                 resource_pack=resource_pack or {},
                 conditions=conditions or [],
                 default_role=default_role,
+                shell=shell,
                 created_at=now,
                 updated_at=now,
             )

@@ -5,9 +5,48 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.identity.handles import topic_agent_handle
+from app.domain.repository import identity
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.workspace import identity
+
+
+@pytest.fixture(autouse=True)
+def attribution_policy(monkeypatch):
+    from app.domain.project.repositories import ProjectRepository
+
+    # Existing contribution-role cases explicitly opt out of automatic credit.
+    project = SimpleNamespace(settings={"forge_requester_coauthor": False})
+
+    async def get(_self, _project_id):
+        return project
+
+    monkeypatch.setattr(ProjectRepository, "get", get)
+    return project
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "default,override,credited",
+    [
+        (True, None, True),
+        (False, None, False),
+        (True, False, False),
+        (False, True, True),
+    ],
+)
+async def test_requester_credit_obeys_project_override_and_deployment_default(
+    monkeypatch, attribution_policy, default, override, credited
+):
+    monkeypatch.setattr(identity.settings, "forge_attribution_default", default)
+    attribution_policy.settings = {"forge_requester_coauthor": override}
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("42", "alice")})
+    who = await identity.attribution(None, _topic("alice"))
+    assert bool(who.coauthors) is credited
+    if credited:
+        assert who.coauthors == (
+            identity.GitIdentity("alice", "42+alice@users.noreply.github.com"),
+        )
+    assert who.author.name != "alice"
 
 
 def _ids() -> tuple[uuid.UUID, uuid.UUID]:
@@ -65,7 +104,12 @@ def _topic(
         project_id=uuid.uuid4(),
         created_by=created_by,
         parent_id=parent_id,
+        title="Test room",
     )
+
+
+# 房间里坐着的那个 agent，署名署的就是它自己的 handle——不是从房间派生的名字。
+_SEATED_AGENT = "cheese-a7a0268b96ff"
 
 
 def _roster_owner(monkeypatch, answer):
@@ -82,7 +126,7 @@ def _roster_owner(monkeypatch, answer):
     monkeypatch.setattr(TopicMemberService, "owner_of", _owner_of)
 
     async def _agent_of(_self, topic_id):
-        return topic_agent_handle(topic_id)
+        return _SEATED_AGENT
 
     monkeypatch.setattr(TopicMemberService, "resolve_agent_handle", _agent_of)
 
@@ -167,7 +211,7 @@ async def test_the_parent_rooms_owner_is_credited_when_the_child_is_someone_else
     assert who.requester == identity.GitIdentity(
         "bob", "42+bob@users.noreply.github.com"
     )
-    assert who.author == identity.agent_identity(topic_agent_handle(child.id))
+    assert who.author == identity.agent_identity(_SEATED_AGENT)
     assert who.coauthors == ()
 
 
@@ -386,7 +430,7 @@ async def test_unreadable_work_costs_the_trailers_and_nothing_else(monkeypatch):
 def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):
     """The identity file sits beside the hook spool; two definitions of "this
     topic's session dir" is how they drift apart."""
-    from app.domain.workspace import service as ws
+    from app.domain.repository import service as ws
 
     monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
     pid, tid = _ids()
@@ -421,4 +465,4 @@ async def test_declared_reporter_and_code_contributor_have_distinct_git_trailers
     assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in parsed
     assert "Co-authored-by: coder <42+coder@users.noreply.github.com>" in parsed
     assert "Co-authored-by: requester" not in parsed
-    assert who.author == identity.agent_identity(topic_agent_handle(topic.id))
+    assert who.author == identity.agent_identity(_SEATED_AGENT)

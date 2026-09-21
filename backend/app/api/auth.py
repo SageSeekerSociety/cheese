@@ -33,13 +33,13 @@ from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
-from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
 _log = get_logger("cheesex.auth")
@@ -88,7 +88,6 @@ class ActorResolver:
         # screen's token (``X-Cheese-Screen``). It makes the call act as the screen's
         # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
         self._screen_token = screen_token
-        self._identity = IdentityService(session)
         self._credentials = ProjectAgentCredentialService(session)
 
     async def resolve(
@@ -149,7 +148,14 @@ class ActorResolver:
                     self._cheese_token, project_id=credential_project
                 )
             claims = scoped_token_claims(self._cheese_token)
-            if not token_agent_handle(self._cheese_token):
+            # A project-wide capability (git-http, the LLM proxies) is not a
+            # participant speaking: it names no agent and has no room whose
+            # roster could say which one is. A per-turn token scoped to a room
+            # does have one, so it authenticates whether or not it pinned a
+            # teammate — `acting_agent` below reads who from the seat.
+            if not token_agent_handle(self._cheese_token) and not (
+                claims and claims.get("t")
+            ):
                 return False
             return verify_scoped_token(
                 self._cheese_token,
@@ -162,24 +168,27 @@ class ActorResolver:
             )
 
         # The credential names a fixed participant. A project credential uses
-        # the project's root agent, never the agent of the destination room.
+        # the project's own 芝士, never the agent of the destination room.
         agent_handle = (
             token_agent_handle(self._cheese_token) if self._cheese_token else None
         )
         if credential_project is not None:
             agent_handle = await self._credentials.agent_handle(credential_project)
+        elif (
+            topic_id is not None
+            and self._cheese_token
+            and not is_global_sandbox_token(self._cheese_token)
+        ):
+            agent_handle = await self.acting_agent(topic_id, agent_handle)
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
-            is_agent=self._identity.is_agent,
             cheese_handle=agent_handle or UNRESOLVED_AGENT_HANDLE,
             fallback_handle=fallback_handle,
         )
         if actor is None:
-            actor = Actor(
-                handle="anonymous", user_id=None, is_agent=False, via="handle"
-            )
+            actor = Actor(handle="anonymous", user_id=None, via="handle")
         if (
             self._cheese_token
             and not is_global_sandbox_token(self._cheese_token)
@@ -187,7 +196,13 @@ class ActorResolver:
         ):
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
         actor = await self._recover_numeric_handle(actor)
-        if actor.authenticated and actor.user_id is None and actor.is_agent:
+        # An authenticated actor whose credential carried no int PK: look the
+        # row up by handle, because int-keyed rows (device.owner_user_id) cannot
+        # be bound without it. Asked of every such actor rather than only of the
+        # agents — the caller's KIND was never what made the id missing (a
+        # legacy cheesex token puts the handle in ``sub`` and carries no id
+        # either), so branching on it just left those callers unbound.
+        if actor.authenticated and actor.user_id is None:
             user = await UserRepository(self._session).get_by_username(actor.handle)
             if user is not None:
                 actor = replace(actor, user_id=user.id)
@@ -202,12 +217,26 @@ class ActorResolver:
                 return Actor(
                     handle=screen.agent_handle,
                     user_id=screen.agent_user_id,
-                    is_agent=True,
                     via="cheese",
                 )
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor
+
+    async def acting_agent(self, topic_id: uuid.UUID, handle: str | None) -> str:
+        """Who a per-turn credential in this room acts as.
+
+        A credential that names an agent acts as that one: a handle belongs to
+        the agent it was minted from, and no room may rename it. A credential
+        that names nobody is a turn in this room without a teammate pinned, and
+        the room's ROSTER says who answers it — the project's default when it is
+        seated, else the first agent there. The room's id never says: a room may
+        seat several agents, so deriving a name from it would give two of them
+        the same one and the same agent two names in two rooms.
+        """
+        if handle:
+            return handle
+        return await TopicMemberService(self._session).resolve_agent_handle(topic_id)
 
     async def resolve_recipient(
         self,

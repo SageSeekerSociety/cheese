@@ -378,8 +378,9 @@ def configure_logging() -> None:
             # health gate could not even recreate the container — and each
             # timed-out request raised again and re-armed it.
             #
-            # rich reaches the image transitively (openviking → typer → rich), so
-            # this cannot be left to whether it happens to be installed.
+            # rich is not a declared dependency, but it reaches images through
+            # transitive ones and has before, so this cannot be left to whether
+            # it happens to be installed.
             structlog.dev.ConsoleRenderer(
                 colors=False, exception_formatter=structlog.dev.plain_traceback
             ),

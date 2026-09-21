@@ -135,7 +135,7 @@
 
 ## 7. 同源共识（两边一致，无需融合）
 
-OpenViking 记忆（viking:// L0/L1/L2）、万物皆块（reply_to 对话树 + struct_parent 文档树 +
+记忆、万物皆块（reply_to 对话树 + struct_parent 文档树 +
 block_ref）、改文档=下指令、人验收才算数——同源 spec。
 
 ## 8. 分期建议

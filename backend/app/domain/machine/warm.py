@@ -1,5 +1,6 @@
 """Prepare unused machines and hand each to one room, with durable claim intent."""
 
+import asyncio
 import logging
 import time
 import uuid
@@ -29,6 +30,9 @@ from app.domain.project.services import ProjectService
 
 logger = logging.getLogger("cheese.machine.warm")
 POOL_LOCK = 728104913
+# One provider claim per reservation per process; a second claimer waits here,
+# holding no database lock. One lock per machine ever claimed, so this stays small.
+_claim_locks: dict[uuid.UUID, asyncio.Lock] = {}
 
 
 async def sweep_warm_pool(sessions: SessionFactory) -> None:
@@ -118,20 +122,50 @@ class WarmPoolService:
         logger.info("warm pool miss topic=%s", topic_id)
         return None
 
-    async def finish_claim(self, machine: ProjectMachine) -> bool:
-        if machine.topic_id is None or not machine.warm_claim_pending:
-            return False
-        await ProjectMachineRepository(self.session).lock_topic(machine.topic_id)
-        await self.session.refresh(machine)
-        warm = await self.session.scalar(
+    async def _claimable(self, machine: ProjectMachine) -> WarmMachine | None:
+        """The reservation this machine still has to finish, locked."""
+        return await self.session.scalar(
             select(WarmMachine)
             .where(
                 WarmMachine.claimed_machine_id == machine.id,
                 WarmMachine.state.in_(["reserved", "claim_failed"]),
             )
             .with_for_update()
+            # The session keeps objects across commit; a locked read must
+            # load the row again rather than hand back an earlier copy.
+            .execution_options(populate_existing=True)
         )
+
+    async def finish_claim(self, machine: ProjectMachine) -> bool:
+        """Claim the reserved machine at the provider and bind it to the room.
+
+        The reservation row is the durable intent, so the provider call runs
+        with no transaction open: this commits the session before the call and
+        locks the rows again to record the answer. A lock held across the call
+        would queue every other admission of this room behind it with a pool
+        connection each (dev outage of 2026-09-18). Callers that held locks
+        take them again after this returns. A second claimer of the same
+        machine in this process waits for the first; the provider's claim is
+        idempotent by claimKey, so one in another process gets the same answer
+        and the locked re-read records it once.
+        """
+        if machine.topic_id is None or not machine.warm_claim_pending:
+            return False
+        # Let go of the caller's locks before waiting for another claimer: it
+        # will need the same topic lock to record its result, and a claimer
+        # that waits here while holding it would deadlock with it.
+        await self.session.commit()
+        async with _claim_locks.setdefault(machine.id, asyncio.Lock()):
+            return await self._finish_claim(machine)
+
+    async def _finish_claim(self, machine: ProjectMachine) -> bool:
+        repo = ProjectMachineRepository(self.session)
+        assert machine.topic_id is not None
+        await repo.lock_topic(machine.topic_id)
+        await self.session.refresh(machine)
+        warm = await self._claimable(machine)
         if warm is None:
+            await self.session.commit()
             return False
         assert warm.machine_id is not None
         owner_user_id = machine.owner_user_id
@@ -147,21 +181,27 @@ class WarmPoolService:
         if warm.state == "claim_failed":
             warm.state = "reserved"
             warm.attempts = 0
+        warm_machine_id = warm.machine_id
+        claim = {
+            "claimKey": str(machine.topic_id),
+            "customerId": machine.customer_id,
+            "accountId": machine.account_id,
+            "newapiAccountId": machine.account_id,
+            "ccproxyAccountId": machine.account_id,
+        }
+        await self.session.commit()
         started = time.monotonic()
         # The room lease already counts against quota. Keep it reserved on timeout, and
         # retry this exact recipient; allocating a second machine would leak the first.
         try:
-            upstream = await self.client.claim_warm_machine(
-                warm.machine_id,
-                {
-                    "claimKey": str(machine.topic_id),
-                    "customerId": machine.customer_id,
-                    "accountId": machine.account_id,
-                    "newapiAccountId": machine.account_id,
-                    "ccproxyAccountId": machine.account_id,
-                },
-            )
+            upstream = await self.client.claim_warm_machine(warm_machine_id, claim)
         except MicroCloudError as exc:
+            await repo.lock_topic(machine.topic_id)
+            await self.session.refresh(machine)
+            warm = await self._claimable(machine)
+            if warm is None:
+                await self.session.commit()
+                return False
             warm.attempts += 1
             warm.error = f"claim HTTP {exc.status}" if exc.status else "claim timeout"
             if warm.attempts >= 5 or exc.status in {400, 401, 403, 404}:
@@ -174,6 +214,23 @@ class WarmPoolService:
             logger.warning(
                 "warm claim pending topic=%s status=%s", machine.topic_id, exc.status
             )
+            return False
+        await repo.lock_topic(machine.topic_id)
+        await self.session.refresh(machine)
+        warm = await self._claimable(machine)
+        if warm is None:
+            # Recorded by another claimer, or retired meanwhile.
+            await self.session.commit()
+            return False
+        if machine.released_at is not None or machine.status in {
+            MachineStatus.deleted,
+            MachineStatus.deleting,
+        }:
+            # Released during the call: the provider now bills the room's
+            # account for it, and the sweep deletes it like any other.
+            warm.state = "deleting"
+            warm.attempts = 0
+            await self.session.commit()
             return False
         device = await self.session.get(DeviceRow, warm.device_id)
         if device is None or device.supply != Supply.cloud:

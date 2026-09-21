@@ -57,10 +57,8 @@ ARG UV_VERSION=0.12.1
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages "uv==${UV_VERSION}" && uv --version
 
-# GitHub CLI — so 芝士 can inspect CI/CD (`gh run view --log-failed`) with the
-# read-only token `cheese gh-token` mints (#188/#193). curl works too, but gh
-# is far less error-prone for reading Actions. Direct from releases (musl-free
-# deb): reliable through the proxy, unlike ghcr/apt-key.
+# Native GitHub CLI; the room launcher supplies credentials per invocation.
+# Direct release archives also work through the deployment's download proxy.
 ARG GH_VERSION=2.62.0
 RUN ARCH="$(dpkg --print-architecture)" \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
@@ -105,7 +103,7 @@ RUN ARCH="$(dpkg --print-architecture)" \
 # to enrolled devices — an unpinned install means a rebuild for any unrelated
 # reason can change the agent runtime under a topic, and that a container and a
 # device running "the same" turn are not running the same thing.
-ARG CLAUDE_CODE_VERSION=2.1.261
+ARG CLAUDE_CODE_VERSION=2.1.277
 RUN --mount=type=cache,target=/root/.npm \
     npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && claude --version
 

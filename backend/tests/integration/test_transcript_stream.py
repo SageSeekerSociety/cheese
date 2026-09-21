@@ -1,15 +1,69 @@
 """Raw transcript delivery survives retries and refuses gaps or changed bytes."""
 
+import asyncio
 import hashlib
 import uuid
 
 import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.storage import LocalStorageBackend
 from app.domain.topic import transcript_stream as stream
+from app.domain.topic.models import RawTranscript
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_a_blocked_upload_times_out_and_can_retry(client, tmp_path):
+    args = dict(
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        file_id=uuid.uuid4(),
+        source=".claude/projects/p/session.jsonl",
+        storage=LocalStorageBackend(str(tmp_path), "/unused"),
+    )
+    async with client.test_factory() as writer, client.test_factory() as blocker:
+        await stream.append(writer, **args, offset=0, content=b"a")
+        await blocker.scalar(
+            select(RawTranscript)
+            .where(RawTranscript.id == args["file_id"])
+            .with_for_update()
+        )
+        with pytest.raises(DBAPIError, match="lock timeout"):
+            await asyncio.wait_for(
+                stream.append(writer, **args, offset=1, content=b"b"), timeout=8
+            )
+        await writer.rollback()
+        await blocker.rollback()
+        await stream.append(writer, **args, offset=1, content=b"b")
+        assert (
+            await writer.scalar(text("SHOW idle_in_transaction_session_timeout")) == "0"
+        )
+        assert await writer.scalar(text("SHOW statement_timeout")) == "0"
+
+
+async def test_confirmation_releases_database_before_reading_storage(client, tmp_path):
+    async with client.test_factory() as db:
+
+        class CheckingStorage(LocalStorageBackend):
+            async def download(self, key):
+                assert not db.in_transaction()
+                return await super().download(key)
+
+        storage = CheckingStorage(str(tmp_path), "/unused")
+        args = dict(
+            project_id=uuid.uuid4(),
+            topic_id=uuid.uuid4(),
+            file_id=uuid.uuid4(),
+            source=".claude/projects/p/session.jsonl",
+            storage=storage,
+        )
+        await stream.append(db, **args, offset=0, content=b"abc")
+        await stream.confirm(
+            db, **args, size=3, sha256=hashlib.sha256(b"abc").hexdigest()
+        )
 
 
 async def test_raw_files_reassemble_exactly_and_retries_do_not_duplicate(
@@ -174,3 +228,63 @@ async def test_http_ingress_and_readable_download_enforce_room_scope(
         ).status_code
         == 404
     )
+
+
+async def test_a_stalled_upload_holds_no_row_lock(client, tmp_path):
+    """The dev outage of 2026-09-18: one upload that never returned held the
+    file's row lock, and every later upload of that file queued behind it
+    with a pool connection each. Now a second delivery of the same bytes
+    completes while the first is still stuck in storage, and the stuck one
+    lands as the same single chunk once it returns."""
+    release = asyncio.Event()
+
+    class StalledStorage(LocalStorageBackend):
+        async def upload(self, file, key, content_type):
+            await release.wait()
+            return await super().upload(file, key, content_type)
+
+    args = dict(
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        file_id=uuid.uuid4(),
+        source=".claude/projects/p/s.jsonl",
+        offset=0,
+        content=b"abc\n",
+    )
+    async with client.test_factory() as stuck, client.test_factory() as db:
+        first = asyncio.create_task(
+            stream.append(stuck, **args, storage=StalledStorage(str(tmp_path), "/u"))
+        )
+        await asyncio.sleep(0.2)
+        assert not first.done()
+        receipt = await asyncio.wait_for(
+            stream.append(db, **args, storage=LocalStorageBackend(str(tmp_path), "/u")),
+            timeout=5,
+        )
+        release.set()
+        assert await asyncio.wait_for(first, timeout=5) == receipt
+        assert await stream.files(db, args["project_id"], args["topic_id"]) == [
+            {"id": str(args["file_id"]), "source": args["source"], "size": 4}
+        ]
+
+
+async def test_a_transfer_that_never_returns_fails_in_bounded_time(
+    client, monkeypatch, tmp_path
+):
+    class HangingStorage(LocalStorageBackend):
+        async def upload(self, file, key, content_type):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(stream, "TRANSFER_SECONDS", 0.2)
+    async with client.test_factory() as db:
+        with pytest.raises(TimeoutError):
+            await stream.append(
+                db,
+                project_id=uuid.uuid4(),
+                topic_id=uuid.uuid4(),
+                file_id=uuid.uuid4(),
+                source=".claude/projects/p/s.jsonl",
+                offset=0,
+                content=b"abc\n",
+                storage=HangingStorage(str(tmp_path), "/u"),
+            )

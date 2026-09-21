@@ -1,7 +1,10 @@
 """改验收人 — reassign a pending accept card (spec §4.4)."""
 
-from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept import _make_card
+from tests.integration.test_accept import remote_delivery as remote_delivery
+from tests.integration.test_accept_pr import _rendered_head
+from tests.integration.test_accept_pr import app_world as app_world
 
 
 def _topic_and_card(client) -> str:
@@ -9,15 +12,7 @@ def _topic_and_card(client) -> str:
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
-    card = client.post(
-        f"/topics/{t['id']}/tasks/{delivery_task_id(client, t['id'])}/accept-card",
-        headers=delivery_headers(client, t["id"]),
-        json={
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": "user-1",
-        },
-    ).json()["data"]
-    return card["id"]
+    return _make_card(client, t["id"], "user-1")
 
 
 def test_reassign_changes_reviewer(client):
@@ -34,11 +29,12 @@ def test_reassign_changes_reviewer(client):
 
 def test_cannot_reassign_decided_card(client):
     card_id = _topic_and_card(client)
-    client.post(
+    accepted = client.post(
         f"/accept-cards/{card_id}/accept",
-        json={"decided_by": "user-1"},
+        json={"decided_by": "user-1", "head_sha": _rendered_head(client, card_id)},
         headers=session_auth_headers("user-1"),
     )
+    assert accepted.status_code == 200, accepted.text
     r = client.post(
         f"/accept-cards/{card_id}/reassign",
         json={"reviewer_handle": "user-2"},

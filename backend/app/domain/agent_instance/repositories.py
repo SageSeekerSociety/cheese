@@ -46,6 +46,10 @@ class AgentInstanceRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_all(self) -> list[AgentInstance]:
+        """Every agent in every project. For the boot-time identity backfill."""
+        return list((await self._session.scalars(select(AgentInstance))).all())
+
     async def list_for_project(self, project_id: uuid.UUID) -> list[AgentInstance]:
         result = await self._session.execute(
             select(AgentInstance)
@@ -53,7 +57,3 @@ class AgentInstanceRepository:
             .order_by(AgentInstance.created_at)
         )
         return list(result.scalars())
-
-    async def delete(self, instance: AgentInstance) -> None:
-        await self._session.delete(instance)
-        await self._session.flush()

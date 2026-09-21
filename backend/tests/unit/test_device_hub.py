@@ -10,6 +10,7 @@ import pytest
 
 from app.domain.agent import connector_build
 from app.domain.agent.device_hub import DeviceHub, DeviceOffline
+from tests.support import wire
 
 
 class FakeDeviceTransport:
@@ -18,6 +19,48 @@ class FakeDeviceTransport:
 
     async def send_json(self, msg: dict) -> None:
         self.sent.append(msg)
+
+
+@pytest.mark.parametrize("code", [None, "prompt_socket_unavailable"])
+async def test_prompt_failure_classification_survives_owner_http_boundary(code):
+    import httpx
+    from fastapi import FastAPI
+
+    from app.core.errors import register_exception_handlers
+    from app.domain.agent.device_hub import DeviceCallError
+    from app.domain.agent.device_hub_rpc import _device_call_failure
+
+    hub = DeviceHub()
+    await hub.attach_device("dev", FakeDeviceTransport())
+    call = asyncio.create_task(hub.await_call("dev", "prompt-1"))
+    await asyncio.sleep(0)
+    await hub.on_device_message(
+        "dev",
+        {
+            "t": "rpc.result",
+            "id": "prompt-1",
+            "error": "socket unavailable",
+            "value": {"failure_code": code} if code else None,
+        },
+    )
+    with pytest.raises(DeviceCallError) as failure:
+        await call
+    assert failure.value.failure_code == code
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/failure")
+    async def owner_failure():
+        raise failure.value
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://owner"
+    ) as client:
+        response = await client.get("/failure")
+    restored = _device_call_failure(response)
+    assert isinstance(restored, DeviceCallError)
+    assert restored.failure_code == code
+    assert str(restored) == "socket unavailable"
 
 
 class FakeViewer:
@@ -146,12 +189,11 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     app = FastAPI()
     app.include_router(connector.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
-    service = SimpleNamespace(
-        verify_token=AsyncMock(
-            return_value=SimpleNamespace(device_id="dev", name="fixture")
-        )
+    monkeypatch.setattr(
+        connector.owner_reads,
+        "device_for_token",
+        AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )
-    app.dependency_overrides[connector.get_device_service] = lambda: service
     with (
         TestClient(app) as client,
         client.websocket_connect("/connector/agent?token=fixture") as ws,
@@ -186,12 +228,11 @@ def test_connection_owner_attaches_without_running_business_recovery(monkeypatch
     app = FastAPI()
     app.include_router(connector.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
-    service = SimpleNamespace(
-        verify_token=AsyncMock(
-            return_value=SimpleNamespace(device_id="dev", name="fixture")
-        )
+    monkeypatch.setattr(
+        connector.owner_reads,
+        "device_for_token",
+        AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )
-    app.dependency_overrides[connector.get_device_service] = lambda: service
 
     with (
         TestClient(app) as client,
@@ -242,16 +283,9 @@ async def test_executor_result_waits_for_complete_response(caplog):
     hub, transport, task, identifier = await _executor_call()
     data = json.dumps({"result": {"text": "中文"}}, ensure_ascii=False).encode()
     for chunk in (data[:23], data[23:]):
-        await hub.on_device_message(
-            "dev1",
-            {
-                "t": "execution.data",
-                "id": identifier,
-                "data": base64.b64encode(chunk).decode(),
-            },
-        )
+        await hub.on_device_message("dev1", wire.execution_data(identifier, chunk))
     assert not task.done()
-    await hub.on_device_message("dev1", {"t": "execution.result", "id": identifier})
+    await hub.on_device_message("dev1", wire.execution_result(identifier))
     assert await task == {"text": "中文"}
     messages = [r.message for r in caplog.records if "execution_timing" in r.message]
     assert [m.split("stage=", 1)[1].split()[0] for m in messages] == [
@@ -283,12 +317,7 @@ async def test_executor_cancellation_reaches_connector():
 async def test_executor_interrupted_response_is_not_returned_as_success():
     hub, _, task, identifier = await _executor_call()
     await hub.on_device_message(
-        "dev1",
-        {
-            "t": "execution.result",
-            "id": identifier,
-            "error": "executor disconnected",
-        },
+        "dev1", wire.execution_result(identifier, "executor disconnected")
     )
     with pytest.raises(RuntimeError, match="disconnected"):
         await task
@@ -692,3 +721,56 @@ async def test_a_failed_send_takes_the_device_offline_and_leaks_nothing():
     pending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await pending
+
+
+async def test_a_call_whose_own_write_finds_the_link_dead_leaves_no_unread_failure():
+    """The call registers its future, then writes; the write is what discovers
+    the peer gone, and ``drop_transport`` fails the future the writer never
+    gets to await. asyncio reports such a future at collection as 「Future
+    exception was never retrieved」 — an ERROR with no route, for a device the
+    caller has already been told is offline. Several a day on 2026-09-18."""
+    import gc
+
+    hub = DeviceHub()
+    transport = DyingTransport()
+    await hub.attach_device("dev", transport)
+    await hub.on_device_message("dev", {"t": "hello", "executor": True})
+    transport.alive = False
+    unread: list[dict] = []
+    loop = asyncio.get_running_loop()
+    loop.set_exception_handler(lambda _loop, context: unread.append(context))
+    try:
+        with pytest.raises(DeviceOffline):
+            await hub.call_executor("dev", "/state", "ping", {})
+        with pytest.raises(DeviceOffline):
+            await hub.list_screens("dev")
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+    assert unread == []
+
+
+async def test_the_machines_own_failure_arrives_as_a_device_call_error():
+    """The words are the machine's, and the type says so — a caller can tell
+    「the runner's socket is not there」 from a fault of this process."""
+    from app.domain.agent.device_hub import DeviceCallError
+
+    hub, _, task, identifier = await _executor_call()
+    await hub.on_device_message(
+        "dev1",
+        wire.execution_result(
+            identifier,
+            "dial unix /tmp/cheese-execution-1000-0c5e.sock: connect: "
+            "no such file or directory",
+        ),
+    )
+    with pytest.raises(DeviceCallError, match="no such file"):
+        await task
+    # And the runner's own refusal, which comes back inside the JSON it wrote.
+    hub, _, task, identifier = await _executor_call()
+    data = json.dumps({"error": "Request ID already belongs to different input"})
+    await hub.on_device_message("dev1", wire.execution_data(identifier, data.encode()))
+    await hub.on_device_message("dev1", wire.execution_result(identifier))
+    with pytest.raises(DeviceCallError, match="Request ID"):
+        await task

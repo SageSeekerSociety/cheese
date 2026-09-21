@@ -1,5 +1,7 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { Shell } from '@/lib/shell'
+
 export interface Project {
   id: string
   name: string
@@ -18,6 +20,12 @@ export interface Project {
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
+  /**
+   * 这个项目生效的壳，服务端已经解析好（项目级设置 → 赛题 整键覆盖 → 项目集 →
+   * default）。**是解析后的声明，不是那个名字**——前端按它画，不自己维护一份
+   * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
+   */
+  shell?: Shell
 }
 
 export interface ProjectSite {
@@ -70,9 +78,6 @@ export interface Topic {
   // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
-  // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
-  // 所以换了项目默认，这个话题也跟着换。
-  agent_instance_id?: string | null
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
@@ -82,7 +87,9 @@ export interface Topic {
   presentation?: Presentation
 }
 
-export type AuthorType = 'human' | 'ai' | 'system'
+// 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
+// ——见 `lib/authorship.ts`。
+export type AuthorType = 'participant' | 'platform'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
 // e.g. {emoji: '👀', count: 2, authors: ['cheese', 'alice']}.
@@ -350,8 +357,9 @@ export interface ChatAttachment {
   mime: string
 }
 
-// WebSocket client -> server frame. `summon` = @芝士: true asks the AI to
-// reply, false (default) just posts the message (spec §7.1 默认不 @).
+// WebSocket client -> server frame. 帧上没有「叫不叫芝士」这一位：这条消息点了谁
+// 的名，由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要
+// 叫它，就把 @ 写进正文 —— 时间线上那条消息必须自己说明它叫了谁。
 export type WsClientMessage = WsClientChatMessage | { type: 'ping' }
 
 export interface WsClientChatMessage {
@@ -360,7 +368,6 @@ export interface WsClientChatMessage {
   // No `author`: the backend takes it from the socket's ?token=. Sending one
   // was never authoritative — it was the forgeable field that let an expired
   // session post as 匿名者 — so the client no longer names itself at all.
-  summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
   // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
@@ -440,37 +447,25 @@ export interface TopicMemberRow {
   created_at: string
 }
 
-// GET /api/projects/{id}/overview
-export interface ProjectOverview {
-  project_id: string
-  name: string
-  // 一页纸总结. The overview extends the project card, so it may carry summary.
-  summary?: string
-  topic_count: number
-  // status -> count, e.g. {active: 3, archived: 1, draft: 0}
-  topics_by_status: Record<string, number>
-  // handle -> the items waiting on that person.
-  waiting_on_you: Record<string, TopicRef[]>
-  next_milestone: Milestone | null
-  upcoming_milestones: Milestone[]
-  members: ProjectMember[]
-  [key: string]: unknown
-}
-
 // GET /api/projects/{id}/inbox?target_handle=
-// A notification / decision request addressed to a handle.
+// 等你决定的那几条：还没拍板的决策请求，加上点名给你的验收卡。
+// 字段照抄后端的 AlertOut —— 写成 `read` / `source_handle` 这类界面上顺口的名字，
+// 收到的就永远是 undefined，而界面会把它读成「一条都没读过」。
 export interface InboxItem {
   id: string
+  project_id: string
+  topic_id: string | null
+  level: string
   kind: string
+  target_handle: string | null
   title: string
   body: string
-  target_handle: string
-  source_handle: string | null
-  read: boolean
+  // 决策请求的选项放在 payload.options 里：有选项才答得了。
+  payload: { options?: unknown; [key: string]: unknown }
+  read_at: string | null
+  resolved_at: string | null
   feedback: 'up' | 'down' | null
   created_at: string
-  topic_id: string | null
-  [key: string]: unknown
 }
 
 // ---- 机构看板 / Space 看板 (eval F3) ----
@@ -566,6 +561,8 @@ export interface WorkspaceFile {
 }
 
 // GET /projects/{id}/file?path=
+export type FileSource = 'live' | 'committed'
+
 export interface FileContent {
   path: string
   // null when the file must not be edited as text: `binary` (a text editor would
@@ -577,6 +574,8 @@ export interface FileContent {
   bytes: number
   binary: boolean
   too_large: boolean
+  source?: FileSource
+  editable?: boolean
 }
 
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
@@ -675,6 +674,21 @@ export interface AutoMergeInfo {
   armed_at: string | null
 }
 
+// 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
+// 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
+// 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
+export interface ForgeInfo {
+  // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
+  // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
+  kind: 'github_app' | 'forgejo' | 'unknown'
+  reports_checks: boolean
+  hosts_proposals: boolean
+  can_write_remote: boolean
+  pushes_to_external_remote: boolean
+  identity: 'user' | 'platform'
+  declaration: string
+}
+
 export interface AcceptCard {
   id: string
   task_id?: string | null
@@ -707,13 +721,22 @@ export interface AcceptCard {
   // 合并态 (#718): what stands between this card and the trunk, and whose move
   // it is. Always present — a platform-lane card carries who="human".
   merge_state: MergeStateInfo
-  has_external_checks: boolean
+  // 托管方是谁、它能做什么 —— 卡生成的那一刻就带着（后端 domain/review/forge.py）。
+  // 这是卡上唯一的一份：别从别的字段推「这个项目接没接 GitHub」。
+  forge: ForgeInfo
   auto_merge: AutoMergeInfo
   // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
   // being queried against.
   pr_repo: string | null
   pr_head_sha: string | null
   pr_merged_at: string | null
+  // 这次交付更新的是哪一项产物，以及这张卡自己是它的第几版 (#1085 结论三/五)。
+  // 版本号是后端按卡的状态算好的（还没采纳的那一张算的是它采纳之后的号），前端
+  // 一个都不推。落地之前递的那些卡没有这一项，所以是 null。
+  artifact: { id: string; name: string; version: number } | null
+  // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
+  // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
+  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
@@ -758,14 +781,6 @@ export interface MilestoneFull {
   source_topic_id: string | null
   auto_pinned: boolean
   created_at: string
-}
-
-// ---- 贡献图 (§10.1) ----
-
-// GET /projects/{id}/contributions
-export interface Contributions {
-  by_author_type: { human: number; ai: number; system: number }
-  by_author: Record<string, number>
 }
 
 // ---- 资源池市场 (design v3: AI 池 + 算力池) ----
@@ -860,7 +875,7 @@ export type ProjectMachineAiStatus = 'disabled' | 'provisioning' | 'ready' | 'er
 export interface ProjectMachine {
   id: string
   project_id: string
-  machine_id: number
+  machine_id: number | null
   hostname: string
   login_user: string
   cores: number
@@ -969,11 +984,6 @@ export interface ProjectComputeConfigs {
 export interface UpstreamInfo {
   url: string | null
 }
-export interface UpstreamSyncResult {
-  synced: boolean
-  commits?: number
-  reason?: string
-}
 
 // GitHub App install flow (#192): a project connects to one repo via
 // cheesex-app, replacing the classic 上游仓库 URL entry for repos it manages.
@@ -981,6 +991,19 @@ export interface GithubConnection {
   connected: boolean
   repo?: string
   account?: string
+}
+
+export interface ForgeConnection {
+  kind: 'forgejo' | 'github_app'
+  connected: boolean
+  repo: string | null
+  url: string | null
+}
+
+export interface ForgeAttribution {
+  requester_coauthor: boolean | null
+  effective: boolean
+  deployment_default: boolean
 }
 
 // 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。
@@ -1081,9 +1104,6 @@ export interface AgentType {
   body: string
   skills: string[]
   mcp_servers: string[]
-  model: string | null
-  effort: string | null
-  harness: string | null
   // Ships with the platform → read-only.
   builtin: boolean
   space_id?: number | null
@@ -1092,30 +1112,250 @@ export interface AgentType {
 }
 
 // GET /projects/{id}/agents — one agent working in this project.
+// 一个 agent 存着的**角色**。模型绑在活上（卡是用户接触模型的唯一地方），
+// 运行方式是部署的开发者选项 —— 两样都不在这里。
 export interface AgentConfiguration {
   body: string
-  model: string
-  harness: string
   skills: string[]
   mcp_servers: string[]
-  effort: string | null
 }
 
 export interface ProjectAgent {
   configuration: AgentConfiguration
-  // Current project rosters always return saved IDs; nullable for older clients.
-  id: string | null
+  id: string
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
+  // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
+  seat_handle: string
   type_name: string | null
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // Retained for older clients; current project roster entries are always saved.
-  configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
   created_at?: string | null
+}
+
+// ---- 反馈 (feedback) ----
+//
+// 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
+// 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
+// 变成每次读前端代码都要回去查一遍的事。
+//
+// 三处**故意**不叫原型里的名字：
+//   * `supports` 是计数、`comments` 也是计数（原型里 `comments` 是数组），
+//     详情页的评论在 `FeedbackDetail.thread`。
+//   * 作者是 `author_handle`、时间是 `created_at`：蛇形是这一层的约定。
+//   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
+//     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
+//     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
+export type FeedbackKind = 'bug' | 'suggestion' | 'other'
+/** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
+export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed'
+export type FeedbackVisibility = 'public' | 'private'
+export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
+
+/** 列表里的一行。计数由后端一并算好（见 `schemas.FeedbackCard`）。 */
+export interface FeedbackCard {
+  id: string
+  /** 「FB-1042」。人念的和粘贴的是这个，`id` 是 uuid，只用来发请求。 */
+  display_id: string
+  kind: FeedbackKind
+  title: string
+  summary: string
+  status: FeedbackStatus
+  priority: FeedbackPriority
+  visibility: FeedbackVisibility
+  /** 安全问题：管理员标的标记，比 private 更窄（见 services.may_see）。 */
+  security: boolean
+  author_handle: string
+  author_is_agent: boolean
+  /** 作者**自己挑过**的头像素材 id，前端用 `getAvatarUrl` 拼成 `/avatars/{id}`。
+   *  没挑过是 null —— 后端已经判掉了全局默认头像那一种（`chosen_avatar_ids`），
+   *  所以 null 的含义就是「画彩色首字母」，**不要**退回 `/avatars/default`：
+   *  那会让所有没挑过头像的人共用同一张脸。 */
+  author_avatar_id: number | null
+  /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
+  submitted_by_handle: string | null
+  assignee_handle: string | null
+  tags: string[]
+  supports: number
+  comments: number
+  supported: boolean
+  last_activity_at: string | null
+  created_at: string
+}
+
+export interface FeedbackTimelineEntry {
+  status: FeedbackStatus
+  /** 谁推的。人推是 handle，agent 发现的那条是 null。 */
+  by_handle: string | null
+  at: string
+}
+
+/** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以
+ *  层级恒为两层，前端不需要自己判断「这算第几层」。 */
+export interface FeedbackComment {
+  id: string
+  parent_id: string | null
+  author_handle: string
+  author_is_agent: boolean
+  /** 同 `FeedbackCard.author_avatar_id`。 */
+  author_avatar_id: number | null
+  body: string
+  /** 这条在回答谁。**只在被回复的那条本身也是回复时才有值**，因为折到顶层这个动作
+   *  把指向弄丢了 —— 楼中楼里唯一猜不出来的信息。值为 null 有两种情形（顶层评论、
+   *  回楼主的回复），两者渲染方式相同，所以客户端不需要区分它们。
+   *  恒为 handle 而不是 id：要回答的问题只有一个「在回谁」，答案是个名字。 */
+  reply_to_handle: string | null
+  /** 点赞总数。 */
+  likes: number
+  /** **按读者**算：当前登录的人点过没有。 */
+  liked: boolean
+  /** **按读者**算：服务端说这条删得掉吗。按钮画不画由它决定，不由前端猜 ——
+   *  猜的结果是「按钮画得出来、点下去 403」。 */
+  can_delete: boolean
+  /** **服务端数得出来的**这一条（顶层评论才有意义）下面一共几条回复 —— 不是这一页
+   *  带回来几条。评论是分页取的，所以这两件事不一样，而「展开更多」该摊开手上已经
+   *  有的、还是去取下一页，全靠这个数和手上条数的比较。回复恒为 0。
+   *  少了它，客户端只能把「已经取回来的」当成全部：一栋 60 条回复的楼，界面上永远
+   *  只有前 50 条，而「展开更多」会当场消失。 */
+  reply_count: number
+  /** 这一栋楼**楼内**的下一页游标，null = 楼里的回复已经取完了。回复自己恒为 null。
+   *  不透明的字符串，和 `thread_next_cursor` 同一套：原样送回
+   *  `GET /feedback/{id}/comments?parent_id=…&after=…`，不解析、不自己拼。 */
+  replies_next_cursor: string | null
+  created_at: string
+}
+
+/** 管理员之间的内部备注。**只增不改**，所以是行不是列。 */
+export interface FeedbackNote {
+  id: string
+  author_handle: string
+  /** 同 `FeedbackCard.author_avatar_id`。 */
+  author_avatar_id: number | null
+  body: string
+  created_at: string
+}
+
+export interface FeedbackDetail extends FeedbackCard {
+  problem: string
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  /** 这条反馈是从哪个话题来的。没有话题（harness 在沙箱里撞的墙）时为 null。 */
+  topic_id: string | null
+  project_id: string | null
+  timeline: FeedbackTimelineEntry[]
+  /** 顶层评论的**第一页**，每栋楼跟着它的前若干条回复走（见 `FeedbackComment`）。 */
+  thread: FeedbackComment[]
+  /** 顶层评论的下一页游标，null = 底层这一层已经取完了。和列表接口的 `page_start`
+   *  不同：这是**值承载**的不透明游标，锚点那一行在这中间被删掉也照样能接着往下走。 */
+  thread_next_cursor: string | null
+  /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
+  notes: FeedbackNote[]
+}
+
+export interface FeedbackCounts {
+  all: number
+  hot: number
+  active: number
+  resolved: number
+  /** 「我的反馈」里未读的条数。 */
+  unread: number
+  /** 管理端才有：还没指派给任何人的条数。 */
+  unassigned?: number
+}
+
+export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
+  counts: FeedbackCounts
+}
+
+/** `GET /feedback/meta` —— 词表。
+ *
+ *  **颜色不在这里**（那是前端的视觉决定，见 lib/feedbackMeta.ts），这里回答的是
+ *  「有哪些取值、按什么顺序流动」。加一个状态是后端改一处的事，前端靠这一份跟上，
+ *  不需要发版。`is_admin` 同理：它由服务端算，前端不猜。 */
+export interface FeedbackMeta {
+  kinds: FeedbackKind[]
+  statuses: FeedbackStatus[]
+  priorities: FeedbackPriority[]
+  visibilities: FeedbackVisibility[]
+  /** 状态梯子：时间线把还没到的步骤也画出来，靠的就是它。 */
+  status_ladder: FeedbackStatus[]
+  tabs: string[]
+  admin_tabs: string[]
+  /** 「热门」的门槛，前端不写死 5。 */
+  hot_supports: number
+  is_admin: boolean
+}
+
+export interface FeedbackSupportResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  supported: boolean
+}
+
+/** 评论点赞的返回，`FeedbackSupportResult` 往下一层。字段叫 `liked` 不叫
+ *  `supported`：两件事在界面上是两种表态，共用一个词的话下一个读代码的人会以为
+ *  它们是同一条记录。 */
+export interface FeedbackCommentLikeResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  liked: boolean
+}
+
+/** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
+export interface FeedbackCreateBody {
+  kind: FeedbackKind
+  title: string
+  summary?: string
+  problem?: string
+  visibility: FeedbackVisibility
+  priority?: FeedbackPriority
+  why?: string | null
+  expectation?: string | null
+  what_happened?: string | null
+  repro?: string | null
+  evidence?: string | null
+  logs?: string | null
+  session_id?: string | null
+  environment?: string | null
+  tags?: string[]
+}
+
+/** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */
+export interface FeedbackProposalPayload {
+  kind: FeedbackKind
+  title: string
+  summary: string
+  problem: string
+  visibility: FeedbackVisibility
+  why: string | null
+  expectation: string | null
+  what_happened: string | null
+  repro: string | null
+  evidence: string | null
+  logs: string | null
+  session_id: string | null
+  environment: string | null
+  tags: string[]
+  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
+  user_said: string
+  /** 服务端算的指纹，「不用」和去重都认它。 */
+  fingerprint: string
+}
+
+export interface FeedbackProposal {
+  block_id: string
+  author_handle: string
+  authored_at: string
+  payload: FeedbackProposalPayload
 }

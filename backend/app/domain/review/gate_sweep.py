@@ -39,7 +39,7 @@
 """
 
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -50,6 +50,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import archive, notes
@@ -126,11 +127,20 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
     topic = await TopicRepository(session).get(card.topic_id)
     if topic is None:  # pragma: no cover — FK cascade makes this unreachable
         return
-    await BlockRepository(session).add(
+    # 「检查红了」是这张卡的事（结论 14）：判死的是卡，要读到它的是这张卡的
+    # 验收人。房间主线那一档只留给为房间本身递的卡（`task_id` 空）。
+    landed = landing(
+        EventAbout.task if card.task_id is not None else EventAbout.room,
         project_id=topic.project_id,
-        topic_id=card.topic_id,
+        room_id=card.topic_id,
+        task_id=card.task_id,
+    )
+    await BlockRepository(session).add(
+        project_id=landed.project_id,
+        topic_id=landed.topic_id,
+        task_id=landed.task_id,
         author="cheese",
-        author_type=AuthorType.system,
+        author_type=AuthorType.platform,
         content="检查没跑完，这张验收卡已判死",
         kind=BlockKind.event,
         meta={
@@ -154,7 +164,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
 async def sweep(
     session_factory: async_sessionmaker,
     *,
-    nudge: Callable[[uuid.UUID, str, str, dict], None] | None = None,
+    nudge: Callable[[uuid.UUID, str, str, dict], Awaitable[None]] | None = None,
     skip_card_ids: Iterable[uuid.UUID] | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -194,7 +204,7 @@ async def sweep(
                 continue
         condemned.append(card_id)
         if nudge is not None:
-            nudge(
+            await nudge(
                 topic_id,
                 _ABANDONED_NUDGE,
                 _ABANDONED_EVENT,

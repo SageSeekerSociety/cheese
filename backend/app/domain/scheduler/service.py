@@ -6,25 +6,21 @@ This is the platform half: a background loop that periodically fires 定期巡�
 heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in ChatService.
 """
 
-import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import github_app_read_token_for_project
-from app.domain.block.models import AuthorType, Block
-from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
-from app.domain.project.repositories import ProjectRepository
-from app.domain.workspace import service as ws
+from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_CHEESE, notice
+from app.domain.agent.runtime import addressed_to_agent
+from app.domain.block.models import Block
+from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.scheduler")
-
-IDLE_MEMORY_HOURS = 8
 
 # A poller against a network misses sometimes: a DNS blip, the connection owner
 # restarting mid-release, a TLS handshake that never finished. The first miss is
@@ -45,6 +41,7 @@ class SchedulerService:
         # Consecutive ticks each card has lost to the network, so that a blip
         # and an outage do not read the same. One instance drives every tick.
         self._transient_misses: dict[uuid.UUID, int] = {}
+        self._dependency_wakes: set[uuid.UUID] = set()
 
     async def tick(self) -> dict:
         """Parked — see docs/agent-principles.md §12.
@@ -110,227 +107,6 @@ class SchedulerService:
             )
         return out
 
-    async def consolidate_idle_device_screens(
-        self, idle_hours: float = IDLE_MEMORY_HOURS
-    ) -> int:
-        """Organize memory in quiet open rooms without releasing their agents.
-
-        Archival cleanup owns resource deletion. Memory consolidation keeps its
-        own activity and once-per-work-period checks, and remains opt-in.
-        """
-        from app.domain.agent.device_hub import device_hub
-        from app.domain.topic.models import TopicStatus
-        from app.domain.topic.services import TopicService
-
-        pairs = {
-            (s.project_id, s.topic_id)
-            for s in device_hub.all_online_screens()
-            if s.project_id is not None and s.topic_id is not None
-        }
-        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
-        dreams_started = 0
-        async with self._sessions() as session:
-            for project_id, topic_id in pairs:
-                topic = await TopicService(session).get(topic_id)
-                if topic is None or topic.status == TopicStatus.archived:
-                    continue
-                dream = await latest_dream(session, topic_id)
-                last = await self._last_activity(session, topic_id, dream)
-                if last is not None and last >= cutoff:
-                    continue
-                if dreams_started < settings.dream_max_per_sweep and (
-                    await self._start_dream_if_worthwhile(
-                        session, topic_id=topic_id, project_id=project_id, dream=dream
-                    )
-                ):
-                    dreams_started += 1
-        if dreams_started:
-            logger.info("idle memory consolidation: started %d passes", dreams_started)
-        return dreams_started
-
-    async def _last_activity(
-        self, session, topic_id: uuid.UUID, dream
-    ) -> datetime | None:
-        """When this topic last did something that was NOT its own housekeeping.
-
-        A 记忆整理 pass writes blocks, and blocks are what idleness is measured on
-        — so counting them would have the screen renew its own lease off the very
-        turn that was supposed to be its last, forever. The pass's turn id is on
-        the dream row precisely so those blocks can be subtracted here; anything
-        else in the topic, from anyone, still counts and still keeps the screen.
-
-        Scope is the one topic, not the topic and its children. A screen is
-        per-topic (so is the tree it works in, `~/.cheese/work/<project>/<topic>`),
-        so a room and each of its 支线 hold separate screens with separate
-        lifetimes and releasing one costs the others nothing."""
-        stmt = select(func.max(Block.created_at)).where(Block.topic_id == topic_id)
-        if dream is not None and dream.turn_id is not None:
-            stmt = stmt.where(
-                or_(Block.turn_id.is_(None), Block.turn_id != dream.turn_id)
-            )
-        last = (await session.execute(stmt)).scalar()
-        if last is not None and last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
-        return last
-
-    async def _start_dream_if_worthwhile(
-        self,
-        session,
-        *,
-        topic_id: uuid.UUID,
-        project_id: uuid.UUID,
-        dream,
-    ) -> bool:
-        """Give one quiet screen a turn to organize its memory. Return whether
-        a pass was started; the screen remains allocated either way.
-
-        Everything here is a reason NOT to spend a turn, because the default has
-        to be not spending one — the thing this repo already parked once was a
-        clock that woke 芝士 with nothing to say."""
-        if not settings.dream_enabled:
-            return False
-        if dream is not None and not await self._returned_to_life_since(
-            session, topic_id, dream
-        ):
-            # Already organized (or already tried and failed). Re-running is how
-            # a background trigger turns into an infinite loop, and "it failed,
-            # so try again" is the same loop with a nicer story.
-            return False
-        blocks = (
-            await session.execute(
-                select(func.count())
-                .select_from(Block)
-                .where(Block.topic_id == topic_id)
-            )
-        ).scalar() or 0
-        if blocks < settings.dream_min_blocks:
-            return False  # nothing in here a later read of the transcript misses
-        try:
-            from app.api.deps import get_work_runner
-
-            record = await open_dream(session, topic_id=topic_id, project_id=project_id)
-            turn_id = get_work_runner().submit_kickoff(
-                self._chat, topic_id, prompt=DREAM_PROMPT
-            )
-            record.turn_id = turn_id
-            await session.commit()
-        except Exception:  # noqa: BLE001 — 整理 must never hold up cleanup
-            await session.rollback()
-            logger.exception("记忆整理 failed to start for topic %s", topic_id)
-            return False
-        return True
-
-    async def _returned_to_life_since(self, session, topic_id, dream) -> bool:
-        """Did a PERSON come back to this topic after it was organized?
-
-        Deliberately narrower than `_last_activity`: that one decides whether to
-        release a screen (cheap and recoverable), this one decides whether to
-        spend another model turn, and the two failure modes are not symmetric. A
-        human block cannot be produced by a pass under any circumstance, so this
-        answer cannot depend on the turn-id bookkeeping being perfect — which is
-        what makes "organize a topic at most once" a guarantee rather than a
-        hope."""
-        found = (
-            await session.execute(
-                select(Block.id)
-                .where(
-                    Block.topic_id == topic_id,
-                    Block.author_type == AuthorType.human,
-                    Block.created_at > dream.created_at,
-                )
-                .limit(1)
-            )
-        ).scalar()
-        return found is not None
-
-    async def sync_upstreams(self) -> dict:
-        """Keep every linked project's base current with its upstream, unattended.
-
-        同步上游 has only ever been a button someone presses. Nobody presses it,
-        the platform's base falls behind the upstream's default branch, and then
-        accepting stops being able to push: GitHub rejects any branch whose
-        `.github/workflows/` differs from the default branch unless the
-        credential carries `workflows` (see `push_topic_branch_for_github_pr`,
-        whose comment reads "Nearly every card hit this"). The card then
-        degrades to a local merge and the work never leaves the platform.
-
-        Measured on 2026-08-11: three accepts in a row degraded that way; one
-        manual 同步上游 later, the next four opened PRs normally. Falling behind
-        is the whole cause, and staying current is something a loop can do — so
-        this is that loop.
-
-        Conflicts hand off exactly as the manual button does. `dispatch()`
-        reuses an already-open resolution task, so repeating this on an interval
-        cannot pile up duplicates, and a project with no owner is skipped rather
-        than dispatched into nowhere."""
-        from app.api.deps import get_work_runner
-        from app.domain.workspace import upstream_conflict
-
-        runner = get_work_runner()
-        synced = 0
-        dispatched = 0
-        failed: list[str] = []
-        undispatched: list[str] = []
-        errors: list[str] = []
-        async with self._sessions() as session:
-            projects = await ProjectRepository(session).list_all()
-        for project in projects:
-            try:
-                if await asyncio.to_thread(ws.get_upstream, project.id) is None:
-                    continue  # no upstream linked — nothing to keep current
-                # A bound project fetches as the App; an unbound one fetches
-                # with no credential, so a private upstream it is not bound to
-                # fails here and is logged — never read on somebody else's key.
-                async with self._sessions() as session:
-                    token = await github_app_read_token_for_project(project.id, session)
-                result = await asyncio.to_thread(
-                    ws.sync_upstream, project.id, token=token
-                )
-            except Exception as exc:  # noqa: BLE001 — one project must not stop the rest
-                errors.append(f"{project.id}: {exc}")
-                logger.exception("upstream sync failed for project %s", project.id)
-                continue
-            if result.get("synced"):
-                synced += 1
-                continue
-            if not result.get("conflicts"):
-                # A failure that is not a conflict. `sync_upstream` reports those
-                # as {"synced": False, "reason": ...} with NO "conflicts" key —
-                # an expired App token, a 403, a fetch that blew its timeout, or
-                # the fast-forward losing its compare-and-set race. The test
-                # `not result.get("conflicts")` read every one of them as a
-                # success, so the job's own line said it had brought N projects
-                # current while some of them had not fetched a byte, and the
-                # reason was dropped. A base that is quietly behind is what makes
-                # an accept degrade to a local merge, which is the failure this
-                # whole job exists to prevent.
-                failed.append(f"{project.id}: {result.get('reason') or 'unknown'}")
-                continue
-            if not project.owner_handle:
-                # A conflict with nobody to hand it to. Skipping is right — there
-                # is no owner to ask — but this project stays behind until
-                # somebody notices, so say which one rather than dropping it.
-                undispatched.append(str(project.id))
-                continue
-            async with self._sessions() as session:
-                handoff = await upstream_conflict.dispatch(
-                    session,
-                    project.id,
-                    requested_by=project.owner_handle,
-                    chat=self._chat,
-                    runner=runner,
-                )
-                await session.commit()
-            if handoff is not None:
-                dispatched += 1
-        return {
-            "synced": synced,
-            "dispatched": dispatched,
-            "failed": failed,
-            "undispatched": undispatched,
-            "errors": errors,
-        }
-
     async def open_draft_prs(self) -> dict:
         """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
         without waiting for anyone to file a card.
@@ -340,9 +116,95 @@ class SchedulerService:
         """
         from app.domain.review import pr_publish
 
-        return dict(await pr_publish.sweep_draft_prs(self._sessions))
+        result = dict(await pr_publish.sweep_draft_prs(self._sessions))
+        await self.deliver_dependency_notices()
+        return result
 
-    async def poll_open_prs(self) -> dict:
+    async def deliver_dependency_notices(self) -> None:
+        """Retry durable notices until the executor acknowledges their blocks."""
+        from app.api.deps import get_work_runner
+        from app.domain.agent.platform_notices import (
+            EVENT_DEPENDENCY_CLOSED,
+            EVENT_DEPENDENCY_REJECTED,
+        )
+        from app.domain.block.models import (
+            AGENT_NOTICE_META_KEY,
+            CONSUMED_TURN_META_KEY,
+            Block,
+        )
+        from app.domain.topic.models import Topic, TopicStatus
+
+        async with self._sessions() as session:
+            blocks = list(
+                await session.scalars(
+                    select(Block)
+                    .join(Topic, Block.topic_id == Topic.id)
+                    .where(
+                        Topic.status != TopicStatus.archived,
+                        Block.meta["event_type"]
+                        .as_string()
+                        .in_((EVENT_DEPENDENCY_CLOSED, EVENT_DEPENDENCY_REJECTED)),
+                        Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+                        Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
+                    )
+                    .order_by(Block.created_at, Block.id)
+                )
+            )
+        rooms: dict[uuid.UUID, list] = {}
+        for block in blocks:
+            rooms.setdefault(block.topic_id, []).append(block)
+        runner = get_work_runner()
+        for room_id, pending in rooms.items():
+            if room_id in self._dependency_wakes:
+                continue
+            if self._chat.has_running_turn(room_id):
+                await self._chat.notify_running_turn(
+                    room_id,
+                    "\n".join(b.meta[AGENT_NOTICE_META_KEY] for b in pending),
+                    blocks=[b.id for b in pending],
+                )
+                continue
+            self._dependency_wakes.add(room_id)
+            seat = await addressable_seat(self._sessions, room_id)
+            try:
+                # The prompt reads the durable blocks and stamps their receipts.
+                runner.submit(
+                    self._chat,
+                    room_id,
+                    author="system",
+                    content="",
+                    addressed=addressed_to_agent(seat),
+                    nudge_event="正在检查任务依赖",
+                    nudge_meta=notice(
+                        EVENT_DEPENDENCY_CLOSED,
+                        severity=SEVERITY_INFO,
+                        who=WHO_CHEESE,
+                    ),
+                    on_done=lambda room=room_id: self._dependency_wakes.discard(room),
+                )
+            except Exception:
+                self._dependency_wakes.discard(room_id)
+                raise
+
+    async def forge_repository_changed(
+        self, kind: str, repo: str, project_id: str | None = None
+    ) -> None:
+        from app.domain.project.models import ProjectForge
+        from app.domain.review.pr_publish import sweep_draft_prs
+
+        query = select(ProjectForge.project_id).where(
+            ProjectForge.kind == kind, ProjectForge.repo == repo
+        )
+        if project_id is not None:
+            query = query.where(ProjectForge.project_id == uuid.UUID(project_id))
+        async with self._sessions() as session:
+            projects = list(await session.scalars(query))
+        for changed_project_id in projects:
+            await self.poll_open_prs(changed_project_id)
+            await sweep_draft_prs(self._sessions, changed_project_id)
+        await self.deliver_dependency_notices()
+
+    async def poll_open_prs(self, project_id: uuid.UUID | None = None) -> dict:
         """Reconcile returned batches and advance pending PR cards (#718) one
         step — mirror its merge state, send the events the 「谁的活」 table
         names, and merge an armed auto-merge card whose rules are satisfied
@@ -359,7 +221,7 @@ class SchedulerService:
             # NOT in this list — driving them means using the approver's GitHub
             # token on work nobody tracks any more. 那条判据留在 review 领域里
             # （open_pr_card_ids），调度器只管拿 id。
-            card_ids = await AcceptService(session).open_pr_card_ids()
+            card_ids = await AcceptService(session).open_pr_card_ids(project_id)
         for card_id in card_ids:
             async with self._sessions() as session:
                 try:
@@ -436,13 +298,16 @@ class SchedulerService:
 
         runner = get_work_runner()
 
-        def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
+        async def nudge(
+            topic_id: uuid.UUID, content: str, event: str, meta: dict
+        ) -> None:
+            seat = await addressable_seat(self._sessions, topic_id)
             runner.submit(
                 self._chat,
                 topic_id,
                 author="system",
                 content=content,
-                summon=True,
+                addressed=addressed_to_agent(seat),
                 nudge_event=event,
                 nudge_meta=meta,
             )

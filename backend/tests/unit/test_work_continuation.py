@@ -15,7 +15,11 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    InProcessBroker,
+    addressed_to_agent,
+)
 from tests.turn_log import a_topic, open_turn
 
 
@@ -74,7 +78,11 @@ async def test_a_fresh_turn_starts_its_own_continuation(db_factory):
     topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         turn_id = runner.submit(
-            _wired(_Quiet(), db_factory), topic, author="u", content="hi", summon=True
+            _wired(_Quiet(), db_factory),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
         )
         await asyncio.wait_for(q.get(), 2)
     rec = runner.topic_work(topic)
@@ -111,7 +119,11 @@ async def test_continuation_for_is_none_outside_a_running_turn(db_factory):
     assert runner.continuation_for(topic) is None
     async with broker.subscribe(str(topic)) as q:
         runner.submit(
-            _wired(_Quiet(), db_factory), topic, author="u", content="hi", summon=True
+            _wired(_Quiet(), db_factory),
+            topic,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
         )
         await _until_finished(q)
     # The turn finished; its record is still in the ring buffer but no longer
@@ -149,7 +161,13 @@ async def _while_running(runner, broker, topic, author: str, factory):
     """Start a turn for `author`, read both answers mid-flight, then let it end."""
     turn = _wired(_Blocks(), factory)
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(turn, topic, author=author, content="hi", summon=True)
+        runner.submit(
+            turn,
+            topic,
+            author=author,
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
         await asyncio.wait_for(turn.started.wait(), 2)
         answer = runner.turn_author_for(topic)
         continuation = runner.continuation_for(topic)
@@ -205,7 +223,11 @@ async def test_no_driver_outside_a_running_turn(db_factory):
     assert runner.turn_author_for(topic) is None
     async with broker.subscribe(str(topic)) as q:
         runner.submit(
-            _wired(_Quiet(), db_factory), topic, author="bob", content="hi", summon=True
+            _wired(_Quiet(), db_factory),
+            topic,
+            author="bob",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
         )
         await _until_finished(q)
     assert runner.turn_author_for(topic) is None

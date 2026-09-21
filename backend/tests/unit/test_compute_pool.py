@@ -270,6 +270,65 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     assert backend.provisions_machine is True
 
 
+def test_pi_is_wired_onto_the_places_whose_hands_are_the_session_machine():
+    """pi 挂在哪几条通道上，由地点的能力位说。
+
+    pi 的进程和它的工作区在同一台机器上——没有第二台机器要指派，也没有执行器要把
+    工具转过去。所以断言的是真实构造下的那一份池：两条进得了池的通道手都在会话机
+    上，两条都挂 pi；而每一条被 ``CentralChannel`` 包出来的 backend 手在执行机上，
+    一条 pi 都没有。
+
+    这一条只看今天这份池的内容；判据换没换形状由下一条钉。
+    """
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent.cloud_provider import CloudChannel
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.harness import CLAUDE_CODE, PI
+
+    cloud = CloudChannel(
+        configured=True,
+        ensure_topic_cloud=AsyncMock(),
+        read_topic_cloud=AsyncMock(),
+    )
+    pool = build_compute_pool(cloud_channel=cloud)
+
+    assert pool.select(provider_id="device", harness=PI) is not None
+    assert pool.select(provider_id="cloud", harness=PI) is not None
+    # 包出来的那两个 backend 手在执行机上，所以它们身上挂的是要转一程的骨架。
+    for provider in ("device", "cloud"):
+        wrapped = pool.select(provider_id=provider, harness=CLAUDE_CODE)
+        assert wrapped is not None
+        assert wrapped.channel.capabilities() == frozenset()
+
+
+def test_a_place_whose_hands_are_elsewhere_gets_no_pi():
+    """负向对照：把判据换回 ``isinstance(c, DeviceChannel)``，这一条红。
+
+    ``hands_here = False`` 的通道进这个池，说的是「会话进程在一台机器上，工具要再
+    跳一程到另一台」——pi 把进程和工作区放在同一台机器上，挂不住。能力位看的是这
+    个事实，所以它不挂；``isinstance`` 看的是类，而这条通道照样是 ``DeviceChannel``
+    （今天进得了这个池的都是），所以它会挂上一个跑不起来的 backend。
+
+    今天池里恰好没有这样一条通道，这正是为什么它要在这里被造出来：判据换没换形
+    状，是可以脱开「今天池里装了什么」单独钉住的。
+    """
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.device_provider import DeviceChannel
+    from app.domain.agent.harness import CLAUDE_CODE, PI
+
+    class Elsewhere(DeviceChannel):
+        name = "elsewhere"
+        hands_here = False
+
+    pool = build_compute_pool(cloud_channel=Elsewhere())
+
+    assert pool.select(provider_id="elsewhere", harness=CLAUDE_CODE) is not None
+    assert pool.select(provider_id="elsewhere", harness=PI) is None
+    # 而手在会话机上的那一条照旧挂着 pi——排除的是这一条通道，不是 pi 这个骨架。
+    assert pool.select(provider_id="device", harness=PI) is not None
+
+
 def test_resolve_compute_id_uses_room_then_explicit_project_default():
     from app.domain.agent.chat import _resolve_compute_id
     from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs

@@ -11,7 +11,12 @@ repository 模块，且那道守卫是对的：值类型不该住在数据访问
 
 import enum
 
-__all__ = ["Supply", "Visibility", "has_runnable_transport"]
+__all__ = [
+    "Supply",
+    "Visibility",
+    "binding_visibility",
+    "has_runnable_transport",
+]
 
 
 class Supply(enum.StrEnum):
@@ -80,3 +85,24 @@ def default_visibility() -> Visibility:
         if has_runnable_transport(visibility):
             return visibility
     raise RuntimeError("no visibility has a runnable transport")
+
+
+def binding_visibility(supply: Supply) -> Visibility:
+    """一条新绑定拿到的可见性档——**四个绑定点共用的那一个答案**。
+
+    以前四个绑定点各写一个字面量 `host`，于是「这个档默认是什么」在代码里有四份声
+    明，而 `default_visibility()` 只被市场目录和自动挑机那两处读到。人在选择器上看
+    到的和绑定时写下的因此可以不一样，而且没有任何东西会说出来。
+
+    档由供给决定，不由调用点决定：
+
+    * 平台开的机器，一个房间一台、开完就为这个房间存在，它**本身就是那个盒子**
+      ——「看得见整台机器」在那上面不多给任何能力，这根轴在这一档塌掉了，所以是
+      `host`，不是连接器那个 `isolated` 默认值（#358 那道拒绝 `isolated` 的闸门也
+      因此永远不该对 Cloud 开火）。
+    * 人接入的机器上，答案是 `default_visibility()`：从「哪个档今天真有传输层」推
+      出来。#358 第二步给 `isolated` 接上传输层的那天，它和市场目录一起移动。
+    """
+    if supply is Supply.cloud:
+        return Visibility.host
+    return default_visibility()

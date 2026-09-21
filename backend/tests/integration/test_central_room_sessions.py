@@ -1,9 +1,10 @@
 """Session placement survives storage while execution stays on the room machine."""
 
 import asyncio
-import base64
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import threading
 import uuid
@@ -14,37 +15,96 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 from app import device_connection_app
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
     client as execution_client,
 )
 from app.domain.agent.harness.claude_code.remote_execution import (
     runtime as executor_runtime,
 )
+from app.domain.agent.harness.claude_code.remote_execution.launch import file_sources
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
+from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import session_auth_headers
+from tests.support import wire
+
+AGENT = "agent"
 
 
-class _OwnerExecutorTransport:
-    def __init__(self) -> None:
-        self.sent: asyncio.Queue[dict] = asyncio.Queue()
+def ref(project, topic, agent=AGENT):
+    """A session key, which is what a place is recorded under."""
+    return SessionRef(project, topic, agent, "claude-code")
 
-    async def send_json(self, msg: dict[str, Any]) -> None:
-        await self.sent.put(msg)
+
+async def place_session(db, topic, resource, target, *, agent=AGENT, machine="center"):
+    """Put one session of this room on a machine, hands and process both."""
+    await AgentSessionService(db).remember_place(
+        topic_id=topic,
+        agent_handle=agent,
+        work_lease=target,
+        runtime_location={
+            "device_id": machine,
+            "resource_id": str(resource),
+            "channel": "device",
+        },
+    )
+
+
+async def session_place(factory, topic, agent=AGENT, harness="claude-code"):
+    async with factory() as db:
+        return await AgentSessionService(db).place(topic, agent, harness=harness)
+
+
+@pytest.mark.anyio
+async def test_execution_survives_an_unrelated_room_column_rename(
+    client, room, monkeypatch
+):
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        await place_session(
+            db, topic, resource, {"kind": "device", "device_id": "executor"}
+        )
+        await db.commit()
+        await db.execute(
+            text("ALTER TABLE topics RENAME COLUMN title TO retired_title")
+        )
+        await db.commit()
+        try:
+            call = AsyncMock(return_value={"content": "still running"})
+            monkeypatch.setattr(execution, "call", call)
+            token = mint_scoped_token(
+                project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+            )
+            response = client.post(
+                f"/topics/{topic}/execution/{resource}",
+                headers={"X-Cheese-Token": token},
+                json={"method": "ping"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json() == {"content": "still running"}
+        finally:
+            await db.execute(
+                text("ALTER TABLE topics RENAME COLUMN retired_title TO title")
+            )
+            await db.commit()
 
 
 @pytest.fixture
@@ -72,7 +132,9 @@ def channel(client, monkeypatch):
         ),
     )
     executor = DeviceChannel(hub=hub, session_factory=client.test_factory)
-    executor.precheck = AsyncMock(return_value=("executor", 1, "agent"))
+    executor.precheck = AsyncMock(
+        return_value=Placement("executor", 1, "agent", rented=True)
+    )
     executor._device_api_base = AsyncMock(return_value="http://execution-api")
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
@@ -97,12 +159,11 @@ async def test_a_harness_without_an_executor_is_refused_by_name(
     central = channel(client, monkeypatch)
     with pytest.raises(ScreenSetupError, match="pi"):
         await central.ensure_ready(
-            project_id=project,
-            topic_id=topic,
+            session=ref(project, topic),
             token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
             env={},
             launch=PiLaunch(system_prompt="System", model="glm-5.2"),
-            precheck=await central.precheck(project, topic),
+            precheck=await central.precheck(ref(project, topic), needs_place=True),
         )
 
 
@@ -118,6 +179,97 @@ INSTALLED = {
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("central_execution", [True, False])
+async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
+    client, room, monkeypatch, tmp_path, central_execution
+):
+    from app.domain.agent.harness.claude_code.remote_execution import launch
+    from app.domain.identity.services import IdentityService
+
+    project, topic = room
+    async with client.test_factory() as db:
+        actor = await IdentityService(db).ensure_agent_user(handle="other-teammate")
+        actor_id = actor.id
+        await db.commit()
+    central = channel(client, monkeypatch)
+    captured = {}
+    central._hub.all_online_screens = lambda: []
+
+    def bootstrap(project, resource, env):
+        captured.update(env)
+        return "fixture-bootstrap"
+
+    monkeypatch.setattr(launch, "script", bootstrap)
+    selected = central if central_execution else central.executor
+    selected._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center")
+    )
+    await selected.ensure_ready(
+        session=ref(project, topic),
+        token=mint_scoped_token(
+            project_id=str(project), topic_id=str(topic), agent_handle="other-teammate"
+        ),
+        env={},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=ClaudeLaunch("System"),
+        precheck=Placement("executor", 1, "room-stand-in", rented=True),
+    )
+    screen = selected._ensure_screen.await_args.kwargs
+    assert screen["agent_handle"] == "other-teammate"
+    assert screen["agent_user_id"] == actor_id
+    if not central_execution:
+        captured = machine_launcher.screen_env(
+            MachinePlace(
+                home=str(tmp_path),
+                workdir=str(tmp_path),
+                store="",
+                state="",
+                api_base="http://fixture",
+                project_id=str(project),
+                topic_id=str(topic),
+                agent_handle=screen["agent_handle"],
+            ),
+            hook_url="http://fixture/hooks",
+            token=screen["token"],
+        )
+    assert captured["CHEESE_AUTHOR"] == "other-teammate"
+    env = {
+        **os.environ,
+        **captured,
+        "GIT_COMMITTER_NAME": "fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.test",
+    }
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Fixture",
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    result = subprocess.run(
+        ["git", "-C", str(tmp_path), "show", "-s", "--format=%an <%ae>"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "other-teammate <other-teammate@agent.cheese.local>"
+
+
+@pytest.mark.anyio
 async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch):
     project, topic = room
     central = channel(client, monkeypatch)
@@ -126,19 +278,19 @@ async def test_codex_placement_recovers_only_as_codex(client, room, monkeypatch)
         {"exit": 0, "stdout": json.dumps({"thread_id": "codex-thread", "alive": True})},
     ]
     codex = CodexChannel(central, ClaudeLaunch("system").execution)
-    ref = SessionRef(project, topic)
+    session = SessionRef(project, topic, AGENT, "codex")
     handle = await codex.ensure(
-        ref, Opening("shared system", model="fixture", agent_handle="agent")
+        session, Opening("shared system", model="fixture", agent_handle="agent")
     )
     assert handle.thread_id == "codex-thread"
-    async with client.test_factory() as db:
-        stored = await db.get(Topic, topic)
-        assert stored.session_placement["runtime"] == {
-            "harness": "codex",
-            "agent_handle": "agent",
-            "state": handle.state,
-        }
-        assert stored.session_placement["execution"]["device_id"] == "executor"
+    place = await session_place(client.test_factory, topic, AGENT, "codex")
+    assert place is not None
+    assert place.runtime == {
+        "harness": "codex",
+        "agent_handle": "agent",
+        "state": handle.state,
+    }
+    assert place.lease["device_id"] == "executor"
     central._hub.call_executor.return_value = {
         "thread_id": "codex-thread",
         "alive": True,
@@ -172,12 +324,11 @@ async def test_center_uses_the_selected_harness_for_bootstrap_and_history(
         ),
     )
     kwargs = dict(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=launch,
-        precheck=await central.precheck(project, topic),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     assert central._hub.exec.await_args.kwargs["stdin"] == "FIXTURE_EXECUTOR_BOOTSTRAP"
@@ -204,12 +355,11 @@ async def test_stopped_previous_executor_http_failure_takes_installation_path(
     project, topic = room
     central = channel(client, monkeypatch)
     kwargs = dict(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(project, topic),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -230,39 +380,115 @@ async def test_stopped_previous_executor_http_failure_takes_installation_path(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("digest", [None, "previous-release"])
+@pytest.mark.parametrize("upgrade_pending", [False, True])
 async def test_old_executor_process_takes_release_bootstrap(
-    client, room, monkeypatch, digest
+    client, room, monkeypatch, digest, upgrade_pending
 ):
     project, topic = room
     central = channel(client, monkeypatch)
     kwargs = dict(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(project, topic),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
+    central._hub.exec.return_value["stdout"] = json.dumps(
+        {
+            **INSTALLED,
+            "release": "previous-release" if upgrade_pending else "new-release",
+            "desired_release": "new-release" if upgrade_pending else None,
+            "upgrade_pending": upgrade_pending,
+        }
+    )
     central._hub.call_executor.return_value = {
         "pid": 123,
         "capabilities": ["prepare"],
         "runtime_sha256": digest,
     }
-    async with client.test_factory() as admitted:
-        await execution.lock_release(admitted, topic, shared=True)
-        update = asyncio.create_task(central.ensure_ready(**kwargs))
-        try:
-            await asyncio.sleep(0.2)
-            central._hub.exec.assert_not_awaited()
-        finally:
-            await admitted.rollback()
-            await asyncio.wait_for(update, 10)
+    await central.ensure_ready(**kwargs)
     central._hub.exec.assert_awaited_once()
+    place = await session_place(client.test_factory, topic)
+    assert place is not None
+    target = place.lease
+    assert target["upgrade_pending"] is upgrade_pending
+    assert target["release"] == (
+        "previous-release" if upgrade_pending else "new-release"
+    )
+    assert target["desired_release"] == ("new-release" if upgrade_pending else None)
     assert [
         call.args[2] for call in central._hub.call_executor.await_args_list[-2:]
     ] == ["ping", "context_fs"]
+
+
+@pytest.mark.anyio
+async def test_a_room_stays_writable_while_its_agent_is_starting(
+    client, room, monkeypatch
+):
+    """Starting an agent holds nothing on the room's row.
+
+    Installing the executor and opening the screen are remote work measured in
+    minutes. While they run, people are renaming the room, archiving it, marking
+    it read — and every one of those writers used to queue behind the setup's
+    row lock, each holding a database connection of its own for as long as it
+    waited. That is how one slow room start became every request in the process
+    waiting for a connection that never came back.
+
+    `FOR UPDATE NOWAIT` from a second connection is the whole question: it
+    raises if anything holds the row, and returns if nothing does.
+    """
+    project, topic = room
+    central = channel(client, monkeypatch)
+
+    async def free_while(gate: asyncio.Event) -> None:
+        await asyncio.wait_for(gate.wait(), 5)
+        async with client.test_factory() as writer:
+            held = await writer.execute(
+                text("SELECT id FROM topics WHERE id = :id FOR UPDATE NOWAIT"),
+                {"id": topic},
+            )
+            assert held.scalar_one() == topic
+            await writer.rollback()
+
+    installing = asyncio.Event()
+    installed = asyncio.Event()
+    opening = asyncio.Event()
+    opened = asyncio.Event()
+
+    async def slow_install(*args, **kwargs):
+        installing.set()
+        await installed.wait()
+        return {"exit": 0, "stdout": json.dumps(INSTALLED)}
+
+    async def slow_screen(*args, **kwargs):
+        opening.set()
+        await opened.wait()
+        return SimpleNamespace(device_id="center")
+
+    central._hub.exec = AsyncMock(side_effect=slow_install)
+    central._ensure_screen = AsyncMock(side_effect=slow_screen)
+
+    setup = asyncio.create_task(
+        central.ensure_ready(
+            session=ref(project, topic),
+            token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+            env={},
+            launch=ClaudeLaunch("System"),
+            precheck=await central.precheck(ref(project, topic), needs_place=True),
+        )
+    )
+    try:
+        await free_while(installing)
+        installed.set()
+        await free_while(opening)
+        opened.set()
+        await asyncio.wait_for(setup, 10)
+    finally:
+        installed.set()
+        opened.set()
+        setup.cancel()
 
 
 @pytest.mark.anyio
@@ -273,12 +499,11 @@ async def test_running_executor_prepares_without_python_launch(
     project, topic = room
     central = channel(client, monkeypatch)
     kwargs = dict(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(project, topic),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -289,6 +514,11 @@ async def test_running_executor_prepares_without_python_launch(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "protocol_version": executor_runtime.PROTOCOL_VERSION,
+            "files": {
+                name: hashlib.sha256(content.encode()).hexdigest()
+                for name, content in file_sources().items()
+            },
         },
         {
             **INSTALLED,
@@ -304,7 +534,7 @@ async def test_running_executor_prepares_without_python_launch(
     payload = calls[1].args[3]
     assert payload["env"]["CHEESE_TOKEN"]
     assert payload["environment"] == {"revision": "one"}
-    assert "cheese-hook" in payload["files"]
+    assert payload["files"] == {}
     if environment_state == "ready":
         central._wait_executor.assert_not_awaited()
     else:
@@ -318,12 +548,11 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
     project, topic = room
     central = channel(client, monkeypatch)
     kwargs = dict(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System"),
-        precheck=await central.precheck(project, topic),
+        precheck=await central.precheck(ref(project, topic), needs_place=True),
     )
     await central.ensure_ready(**kwargs)
     central._hub.exec.reset_mock()
@@ -332,6 +561,11 @@ async def test_running_executor_prepare_failure_is_not_retried_as_install(
             "pid": 123,
             "capabilities": ["prepare"],
             "runtime_sha256": executor_runtime.SOURCE_SHA256,
+            "protocol_version": executor_runtime.PROTOCOL_VERSION,
+            "files": {
+                name: hashlib.sha256(content.encode()).hexdigest()
+                for name, content in file_sources().items()
+            },
         },
         RuntimeError("Executor configuration changed"),
     ]
@@ -346,10 +580,9 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
 ):
     project, topic = room
     central = channel(client, monkeypatch)
-    precheck = await central.precheck(project, topic)
+    precheck = await central.precheck(ref(project, topic), needs_place=True)
     screen = await central.ensure_ready(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
         launch=ClaudeLaunch("System"),
@@ -364,43 +597,47 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     assert target["device_id"] == "executor"
     assert target["context_tree"] == {"generation": "fixture", "entries": {}}
     assert target["url"].startswith("http://central-api/")
-    async with client.test_factory() as db:
-        stored = await db.get(Topic, topic)
-        assert stored.session_placement["device_id"] == "center"
-        assert stored.session_placement["execution"] == target
+    place = await session_place(client.test_factory, topic)
+    assert place is not None
+    assert place.machine == "center"
+    assert place.lease == target
     monkeypatch.setattr(settings, "agent_session_device_id", "another-host")
-    assert await central.precheck(project, topic) == precheck
+    assert await central.precheck(ref(project, topic), needs_place=True) == precheck
     central._hub.is_online = lambda device: device == "executor"
     with pytest.raises(ScreenSetupError, match="未连接"):
-        await central.precheck(project, topic)
+        await central.precheck(ref(project, topic), needs_place=True)
 
 
 @pytest.mark.anyio
-async def test_execution_drift_fails_before_touching_either_machine(
+async def test_a_lease_on_another_executor_is_rented_again_not_refused(
     client, room, monkeypatch
 ):
+    """一条记着别台执行机的租约 = 没有租约，这一轮重新租。
+
+    The refusal it replaces read the ROOM's one placement and compared it with
+    this turn's executor, so the second agent in a room could not start at all.
+    With the lease on the session, a mismatch can only mean this session's own
+    hands moved, and the answer to that is to rent again.
+    """
     project, topic = room
     central = channel(client, monkeypatch)
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
-        stored.session_placement = {
-            "device_id": "center",
-            "resource_id": str(stored.resource_id or topic),
-            "channel": "device",
-            "execution": {"device_id": "original"},
-        }
-        await db.commit()
-    with pytest.raises(ScreenSetupError, match="不一致"):
-        await central.ensure_ready(
-            project_id=project,
-            topic_id=topic,
-            token="scoped",
-            env={},
-            launch=ClaudeLaunch("System"),
-            precheck=("executor", 1, "agent"),
+        await place_session(
+            db, topic, stored.resource_id or topic, {"device_id": "original"}
         )
-    central._hub.exec.assert_not_called()
-    central._ensure_screen.assert_not_called()
+        await db.commit()
+    await central.ensure_ready(
+        session=ref(project, topic),
+        token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
+        env={},
+        launch=ClaudeLaunch("System"),
+        precheck=Placement("executor", 1, "agent", rented=True),
+    )
+    central._hub.exec.assert_awaited_once()
+    place = await session_place(client.test_factory, topic)
+    assert place is not None
+    assert place.lease["device_id"] == "executor"
 
 
 @pytest.mark.anyio
@@ -428,12 +665,11 @@ async def test_executor_readiness_reuses_bootstrap_reply(
     monkeypatch.setattr("app.domain.agent.execution.call", call)
     monkeypatch.setattr("app.domain.agent.central_provider.environment_status", status)
     await central.ensure_ready(
-        project_id=project,
-        topic_id=topic,
+        session=ref(project, topic),
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'} if has_environment else {},
         launch=ClaudeLaunch("System"),
-        precheck=("executor", 1, "agent"),
+        precheck=Placement("executor", 1, "agent", rented=True),
     )
     assert [item.args[1] for item in call.await_args_list] == (
         ["context_fs"] if running else ["ping", "context_fs"]
@@ -458,12 +694,11 @@ async def test_running_executor_does_not_hide_failed_environment(
     monkeypatch.setattr("app.domain.agent.execution.call", ping)
     with pytest.raises(EnvironmentPreparationError):
         await central.ensure_ready(
-            project_id=project,
-            topic_id=topic,
+            session=ref(project, topic),
             token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
             env={"CHEESE_ENVIRONMENT": '{"revision":"one"}'},
             launch=ClaudeLaunch("System"),
-            precheck=("executor", 1, "agent"),
+            precheck=Placement("executor", 1, "agent", rented=True),
         )
     status.assert_awaited_once()
     ping.assert_not_awaited()
@@ -471,48 +706,50 @@ async def test_running_executor_does_not_hide_failed_environment(
 
 
 @pytest.mark.anyio
-async def test_executor_release_excludes_new_tool_admission(client, room, monkeypatch):
+async def test_scoped_execution_does_not_hold_admission_connection_during_remote_call(
+    client, room, monkeypatch
+):
+    """A long tool call must not pin the request's database connection.
+
+    Admission is enforced by the device connection owner while the remote call
+    is in flight.  The business route only needs the database for the initial
+    scope check; retaining a transaction-scoped advisory lock here consumes one
+    pool slot for every active tool and makes ordinary page requests time out.
+    """
     project, topic = room
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
-        stored.session_placement = {
-            "device_id": "center",
-            "resource_id": str(resource),
-            "channel": "device",
-            "execution": {"kind": "device", "device_id": "executor"},
-        }
+        await place_session(
+            db, topic, resource, {"kind": "device", "device_id": "executor"}
+        )
         await db.commit()
-    entered = threading.Event()
+
+    entered = asyncio.Event()
+    finish = asyncio.Event()
 
     async def invoke(*args, **kwargs):
         entered.set()
+        await finish.wait()
         return {"value": "kept"}
 
     monkeypatch.setattr(execution, "call", invoke)
     token = mint_scoped_token(
         project_id=str(project), topic_id=str(topic), resource_id=str(resource)
     )
-    async with client.test_factory() as release:
-        await execution.lock_release(release, resource)
-        request = asyncio.create_task(
-            asyncio.to_thread(
-                client.post,
-                f"/topics/{topic}/execution/{resource}",
-                headers={"X-Cheese-Token": token},
-                json={
-                    "method": "invoke",
-                    "params": {"tool": "Read", "args": {"file_path": "draft.md"}},
-                },
-            )
+    request = asyncio.create_task(
+        asyncio.to_thread(
+            client.post,
+            f"/topics/{topic}/execution/{resource}",
+            headers={"X-Cheese-Token": token},
+            json={"method": "invoke", "params": {}},
         )
-        try:
-            assert not await asyncio.to_thread(entered.wait, 0.2)
-        finally:
-            await release.rollback()
-            response = await asyncio.wait_for(request, 5)
+    )
+    await asyncio.wait_for(entered.wait(), 5)
+    finish.set()
+    response = await asyncio.wait_for(request, 5)
+
     assert response.status_code == 200, response.text
-    assert entered.is_set()
     assert response.json() == {"value": "kept"}
 
 
@@ -544,17 +781,17 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
-        stored.session_placement = {
-            "device_id": "center",
-            "resource_id": str(resource),
-            "channel": "device",
-            "execution": {
+        await place_session(
+            db,
+            topic,
+            resource,
+            {
                 "kind": "device",
                 "device_id": "executor",
                 "home": "/room",
                 **recorded,
             },
-        }
+        )
         await db.commit()
 
     async def owner_db():
@@ -565,7 +802,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     device_hub._devices.clear()
     device_connection_app._release_draining = False
     device_connection_app._active_rpc_calls = 0
-    connector = _OwnerExecutorTransport()
+    connector = wire.RecordingDevice()
     await device_hub.attach_device("executor", connector)
     await connector.sent.get()
     await device_hub.on_device_message(
@@ -585,21 +822,14 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             waiter = asyncio.create_task(
                 owner.post(endpoint, headers={"X-Cheese-Token": token}, json=payload)
             )
-            outbound = await asyncio.wait_for(connector.sent.get(), 1)
-            assert outbound["t"] == "execution.call"
-            assert outbound["path"] == dialled
+            call = await connector.next_call()
+            assert call.path == dialled
             encoded = json.dumps({"result": {"content": "executor file"}}).encode()
             await device_hub.on_device_message(
-                "executor",
-                {
-                    "t": "execution.data",
-                    "id": outbound["id"],
-                    "data": base64.b64encode(encoded).decode(),
-                },
+                "executor", wire.execution_data(call.id, encoded)
             )
             await device_hub.on_device_message(
-                "executor",
-                {"t": "execution.result", "id": outbound["id"], "error": ""},
+                "executor", wire.execution_result(call.id)
             )
             response = await asyncio.wait_for(waiter, 2)
             assert response.status_code == 200, response.text
@@ -638,12 +868,9 @@ async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
         resource = stored.resource_id or topic
-        stored.session_placement = {
-            "device_id": "center",
-            "resource_id": str(resource),
-            "channel": "device",
-            "execution": {"kind": "device", "device_id": "executor"},
-        }
+        await place_session(
+            db, topic, resource, {"kind": "device", "device_id": "executor"}
+        )
         await db.commit()
 
     async def never_answers(*_args, **_kwargs):
@@ -663,6 +890,56 @@ async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
 
 
 @pytest.mark.anyio
+async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
+    client, room, monkeypatch
+):
+    """手就在会话机上的那条会话没有租约，它不该把执行路由拖成 500。
+
+    pi 每一轮都把 `work_lease` 写成「没有」。只要「没租到手」落库时成了 JSON 的
+    `null` 而不是 SQL NULL，`work_lease IS NOT NULL` 这条谓词就在说谎：那一行被
+    选进候选，读的人拿到 None，一个本该干净的 409 变成 500。一个房间里同时坐着
+    pi 和 claude-code 两条会话时——换骨架，或者两个队友各跑各的骨架——就会撞上。
+    """
+    project, topic = room
+    async with client.test_factory() as db:
+        stored = await db.get(Topic, topic)
+        resource = stored.resource_id or topic
+        await AgentSessionService(db).remember_place(
+            topic_id=topic,
+            agent_handle="pi-teammate",
+            harness="pi",
+            work_lease=None,
+            runtime_location={
+                "device_id": "center",
+                "resource_id": str(resource),
+                "channel": "device",
+            },
+        )
+        await db.commit()
+    token = mint_scoped_token(
+        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    )
+    endpoint = f"/topics/{topic}/execution/{resource}"
+    payload = {"method": "invoke", "params": {"tool": "Read"}}
+    headers = {"X-Cheese-Token": token}
+
+    # 房间里只有那条没有租约的会话：这一代没有手可借。
+    assert client.post(endpoint, headers=headers, json=payload).status_code == 409
+
+    # 旁边坐下一个真租了手的队友，借的就是它那一份。
+    target = {"kind": "device", "device_id": "executor", "resource_id": str(resource)}
+    async with client.test_factory() as db:
+        await place_session(db, topic, resource, target)
+        await db.commit()
+    call = AsyncMock(return_value={"content": "executor file"})
+    monkeypatch.setattr("app.domain.agent.execution.call", call)
+
+    response = client.post(endpoint, headers=headers, json=payload)
+    assert response.status_code == 200, response.text
+    assert call.await_args.args[0] == target
+
+
+@pytest.mark.anyio
 async def test_scoped_execution_and_rc_use_platform_owned_target(
     client, room, monkeypatch
 ):
@@ -675,13 +952,7 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
             "device_id": "executor",
             "resource_id": str(resource),
         }
-        placement = {
-            "device_id": "center",
-            "resource_id": str(resource),
-            "channel": "device",
-            "execution": target,
-        }
-        stored.session_placement = placement
+        await place_session(db, topic, resource, target)
         await db.commit()
     call = AsyncMock(return_value={"content": "executor file"})
     monkeypatch.setattr("app.domain.agent.execution.call", call)
@@ -733,7 +1004,7 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     )
     assert created.status_code == 200, created.text
     rc = created.json()["session"]
-    assert rc["execution"] == placement
+    assert rc["execution"] == {"resource_id": str(resource), "execution": target}
     result = client.post(
         f"/topics/{topic}/agent/control",
         headers=session_auth_headers("alice"),
@@ -764,7 +1035,7 @@ async def test_scoped_execution_and_rc_use_platform_owned_target(
     async with client.test_factory() as db:
         stored = await db.get(Topic, topic)
         new_resource = stored.resource_id
-        stored.session_placement = {**placement, "resource_id": str(new_resource)}
+        await place_session(db, topic, new_resource, target)
         await db.commit()
     # Changing the URL must not let the old credential reach the replacement.
     new_endpoint = f"/topics/{topic}/execution/{new_resource}"
@@ -782,12 +1053,7 @@ async def test_scoped_execution_forwards_cli_tool_catalog(client, room, monkeypa
             "device_id": "executor",
             "resource_id": str(resource),
         }
-        stored.session_placement = {
-            "device_id": "center",
-            "resource_id": str(resource),
-            "channel": "device",
-            "execution": target,
-        }
+        await place_session(db, topic, resource, target)
         await db.commit()
     catalog = {
         "tools": [
@@ -829,12 +1095,7 @@ async def test_native_tool_catalog_crosses_scoped_execution_route(
             "device_id": "executor",
             "resource_id": str(resource),
         }
-        stored.session_placement = {
-            "device_id": "center",
-            "resource_id": str(resource),
-            "channel": "device",
-            "execution": target,
-        }
+        await place_session(db, topic, resource, target)
         await db.commit()
     token = mint_scoped_token(
         project_id=str(project), topic_id=str(topic), resource_id=str(resource)

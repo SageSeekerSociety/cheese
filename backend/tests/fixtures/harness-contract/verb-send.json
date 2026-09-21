@@ -1,0 +1,12 @@
+{
+  "verb": "send",
+  "why": "An ack, not an answer. What comes back from send is whether the transport took the message; what the agent does about it arrives through the backlog, possibly to a different process. A send that returned the events would hand the turn to whoever holds the return value, which is the shape this contract replaced.",
+  "readers": ["python"],
+  "drive": [
+    { "call": "ensure", "opened": true },
+    { "call": "send", "message": "把测试跑一遍", "returns": true },
+    { "call": "backlog.unread", "returns": 1 },
+    { "call": "send", "message": "再跑一遍", "returns": true },
+    { "call": "backlog.unread", "returns": 2 }
+  ]
+}

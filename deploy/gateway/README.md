@@ -25,32 +25,57 @@ A stack of its own, on purpose: `deploy-docker.sh` takes one compose file and
 brings up exactly `backend frontend`, and that file is shared with prod. App
 deploys never touch the gateway, and restarting the gateway never restarts the app.
 
-```sh
-cd deploy/compose
-cat > .env <<EOF
-LITELLM_MASTER_KEY=sk-...        # also the backend's LLM_GATEWAY_ADMIN_KEY
-LITELLM_DB_PASSWORD=...
-ZHIPU_API_KEY=...                # the same upstream keys already in use
-DEEPSEEK_API_KEY=...
-EOF
-chmod 600 .env
-docker compose -f docker-compose.gateway.yml -p cheese-gateway up -d --build
-```
+The existing image build pipeline builds `gateway` when `deploy/gateway/`
+changes. Otherwise, it reuses the previous gateway image and publishes it under
+the current commit tag. The Docker build runs
+the adapter and timing tests without provider requests.
 
-Then, in the box's `backend/.env`:
+For the existing dev gateway, use the **Release gateway** workflow on `main`.
+Supply the full SHA of a commit on `main` whose image build succeeded and explicitly
+acknowledge stream interruption. Replacing the gateway can interrupt active model streams; it does
+not restart the application or gateway database. This workflow does not target
+production.
+
+The release reads credentials from `$HOME/gateway/compose/.env`, pulls the
+CI-built image, saves the running image ID and configuration under
+`$HOME/gateway/releases/`, and tests image preservation before changing the service.
+It uses the configuration bundled in the image. If the new container fails its
+health check, the release restores the saved image and configuration and reports
+failure. Both the old and new configurations remain in the release directory.
+
+The box's `backend/.env` must contain:
 
 ```
 LLM_GATEWAY_ADMIN_BASE=http://litellm:4000
-LLM_GATEWAY_ADMIN_KEY=<the master key above>
+LLM_GATEWAY_ADMIN_KEY=<LITELLM_MASTER_KEY from $HOME/gateway/compose/.env>
 ```
 
-and recreate the backend — `docker restart` will not do, since environment is
-fixed when a container is created, not when its process starts.
+Changes to these settings take effect through the application deployment pipeline.
 
 The `deepseek-flash` entry declares its thinking and effort capabilities. Without
 them, the pinned gateway removes the thinking settings sent by Claude Code.
-Agent settings offer DeepSeek V4.1 Flash and GLM-5.2 alongside enabled Claude
-models. Saving a different model refreshes the native session at the next task
+
+## Putting a model in front of people
+
+Add it to `config.yaml` with its route and its price, and mark it
+`cheese_selectable: true` under `model_info`. That is the whole change: cheese
+reads this file back through `/model/info` and keeps no list of its own, so
+nothing in the backend has to be edited or shipped for the model to appear in
+agent settings. The marker is opt-in because the gateway also routes models that
+are not menu items — `glm-4.5` is where the subagent alias points.
+
+Adding a model through the gateway's admin API instead (`STORE_MODEL_IN_DB` is
+on) routes it, but does not offer it to anyone: that path skips config.yaml and
+with it the review of the price. Opening it is a deliberate decision, and one
+clause in `LlmGateway.models` — not something to discover by accident.
+
+A selectable model with no price is not offered at all. Its tokens would meter
+at zero, the project's `max_budget` would never trip, and the first sign of
+trouble would be the invoice; a model missing from the picker gets noticed, a
+brake that quietly stopped working does not. `check_config.py` asserts this for
+every selectable entry, so run it after editing the list.
+
+Saving a different model refreshes the native session at the next task
 boundary; the scoped session credential carries the selected model's route.
 Auxiliary and subagent model aliases follow the selected API model. API-backed
 Remote Control sessions receive Cheese project identity and control policy from
@@ -93,15 +118,6 @@ host binding is either loopback, which containers cannot reach (the app sits on
 its own bridge), or a bridge address, which puts the upstream keys and the admin
 API on the box's LAN. Joining the network removes the choice.
 
-**Pulling the image.** The box is logged into ghcr for its own private images,
-and docker offers that credential for every ghcr pull — including public ones,
-where it is rejected rather than falling back to anonymous. Pull with an empty
-credential store:
-
-```sh
-D=$(mktemp -d); DOCKER_CONFIG=$D docker pull ghcr.io/berriai/litellm@sha256:...; rm -rf $D
-```
-
-The image is pinned by digest because berriai publishes no tag for the version
-this repo pins as a library (checked against the registry), and `main-latest`
-moves.
+**Image versions.** CI builds from an upstream digest and publishes a commit tag.
+The release workflow verifies main ancestry and a successful build before pulling
+that tag. It does not build or retag an image on the deployment host.

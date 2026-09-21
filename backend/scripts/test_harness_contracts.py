@@ -1,13 +1,19 @@
 """Install isolated harness binaries and retain the provider contract evidence."""
 
-import ast
 import json
 import os
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from pathlib import Path
+
+from app.domain.agent.capability.matrix import declarations
+from app.domain.agent.harness import CLAUDE_CODE, CODEX
+from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
+
+# Every case in the list below is expected to run: this job installs the pinned
+# claude and codex binaries itself, so nothing here has an environment excuse.
+EXPECTED_CASES = 36
 
 
 def main() -> int:
@@ -18,17 +24,25 @@ def main() -> int:
     )
     run.mkdir(parents=True)
     tools = root / "tmp/harness-contract-tools"
-    source = backend / "app/domain/agent/harness/claude_code/remote_execution/client.py"
-    claude_version = next(
-        ast.literal_eval(node.value)
-        for node in ast.parse(source.read_text()).body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "PINNED_VERSION"
-            for target in node.targets
-        )
-    )
-    packages = [f"@anthropic-ai/claude-code@{claude_version}", "@openai/codex@0.154.0"]
+    # Each harness's pin, from its behaviour declaration — which reads the ONE
+    # constant its adapter holds. This job used to `ast`-parse one file for
+    # Claude Code's pin and carry Codex's as a literal of its own, so upgrading
+    # Codex meant remembering that a second copy lived in a CI script.
+    pinned = {name: d.pinned_version for name, d in declarations().items()}
+    # The two harnesses whose pin IS an npm package. pi is not one: it is a
+    # per-platform tarball off the vendor's GitHub releases, served to machines
+    # by the platform itself (app/domain/machine/pi_dist.py), and its npm
+    # install path was retired. So pi's share of the harness contract is held
+    # where it needs no binary at all — the fixture set under
+    # tests/fixtures/harness-contract/, which this job does NOT run: its
+    # Python reader (tests/contract/test_harness_contract.py) goes with the
+    # contract layer of test.yml's `test` job, and its TypeScript reader with
+    # the `extension` job there. Adding it to the list below would buy a
+    # second run of tests whose whole point is that they need neither binary.
+    packages = [
+        f"@anthropic-ai/claude-code@{pinned[CLAUDE_CODE]}",
+        f"@openai/codex@{pinned[CODEX]}",
+    ]
     (run / "inputs.json").write_text(json.dumps({"packages": packages}, indent=2))
     print(f"Contract evidence: {run}", flush=True)
     with (run / "install.log").open("w") as log:
@@ -68,7 +82,6 @@ def main() -> int:
         str(run / "results.xml"),
         "--basetemp",
         str(run / "pytest"),
-        "tests/unit/test_harness_prompt_contract.py",
         "tests/unit/test_codex_app_server.py",
         "tests/unit/test_codex_session.py",
         "tests/unit/test_codex_runner.py",
@@ -87,9 +100,12 @@ def main() -> int:
             command, cwd=backend, env=env, stdout=log, stderr=subprocess.STDOUT
         )
     print((run / "pytest.log").read_text(), end="")
-    if result.returncode == 0 and ET.parse(run / "results.xml").findall(".//skipped"):
-        print("Required harness contracts were skipped; acceptance is incomplete.")
+    try:
+        ran = assert_suite_ran(run / "results.xml", at_least=EXPECTED_CASES)
+    except SuiteDidNotRun as exc:
+        print(f"Acceptance is incomplete: {exc}")
         return 1
+    print(f"{ran} harness contract case(s) ran.")
     return result.returncode
 
 

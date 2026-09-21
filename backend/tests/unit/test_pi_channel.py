@@ -13,11 +13,13 @@ import httpx
 import pytest
 
 from app.domain.agent import machine_launcher
-from app.domain.agent.device_hub import HubScreen
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, HubScreen
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.pi.channel import PiChannel
+from app.domain.agent_session.models import SessionPlace
+from app.domain.agent_session.services import AgentSessionService
 
 PROJECT, TOPIC = uuid.uuid4(), uuid.uuid4()
 
@@ -103,16 +105,33 @@ class Hub:
         return {}
 
 
-class Rooms:
-    """A topic table, without a database. Rows survive across sessions."""
+def _pi_place(resource, state, agent):
+    return SessionPlace(
+        machine="dev1",
+        channel=DeviceChannel.name,
+        resource_id=str(resource),
+        runtime={"harness": "pi", "state": state, "agent_handle": agent},
+        lease=None,
+    )
 
-    def __init__(self, placement=None):
+
+class Rooms:
+    """A topics table and an agent_sessions table, without a database.
+
+    Rows survive across sessions, which is the whole point: pi's session
+    outlives the backend that opened it, so what a restarted one can find is
+    exactly what the last one wrote down.
+    """
+
+    def __init__(self, placed=()):
+        self.active = False
+        # (project_id, room_id, agent_handle, harness) -> SessionPlace
+        self.placed: dict[tuple, SessionPlace] = dict(placed)
         self.room = SimpleNamespace(
             id=TOPIC,
             project_id=PROJECT,
             resource_id=TOPIC,
             is_private=False,
-            session_placement=placement,
         )
 
     def factory(self):
@@ -120,16 +139,15 @@ class Rooms:
 
         class Session:
             async def __aenter__(self):
+                rooms.active = True
                 return self
 
             async def __aexit__(self, *exc):
+                rooms.active = False
                 return False
 
             async def get(self, _model, key):
                 return rooms.room if key == TOPIC else None
-
-            async def scalars(self, _statement):
-                return [rooms.room] if rooms.room.session_placement else []
 
             async def commit(self):
                 return None
@@ -139,11 +157,40 @@ class Rooms:
 
         return Session
 
+    def install(self, monkeypatch):
+        """Point the session service at this fake table."""
+        rooms = self
+
+        async def remember_place(
+            _self,
+            *,
+            topic_id,
+            agent_handle,
+            harness="claude-code",
+            work_lease,
+            runtime_location,
+        ):
+            rooms.placed[(PROJECT, topic_id, agent_handle, harness)] = SessionPlace(
+                machine=runtime_location["device_id"],
+                channel=runtime_location["channel"],
+                resource_id=runtime_location["resource_id"],
+                runtime=runtime_location.get("runtime") or {},
+                lease=work_lease,
+            )
+
+        async def placed_sessions(_self):
+            return [(*key, place) for key, place in rooms.placed.items()]
+
+        monkeypatch.setattr(AgentSessionService, "remember_place", remember_place)
+        monkeypatch.setattr(AgentSessionService, "placed_sessions", placed_sessions)
+
 
 @pytest.fixture
 def channel(monkeypatch):
     def build(rooms: Rooms, hub: Hub) -> PiChannel:
         from app.domain.topic.services import TopicService
+
+        rooms.install(monkeypatch)
 
         async def locked(_self, topic_id):
             return rooms.room
@@ -157,7 +204,7 @@ def channel(monkeypatch):
             DeviceChannel(
                 hub=hub,  # type: ignore[arg-type]
                 device_resolver=resolver,
-                session_factory=rooms.factory(),
+                session_factory=rooms.factory(),  # type: ignore[arg-type]
                 public_base="http://cheese.test",
             )
         )
@@ -169,7 +216,8 @@ def channel(monkeypatch):
 async def test_a_pi_session_starts_on_the_machine_that_holds_the_workspace(channel):
     rooms, hub = Rooms(), Hub()
     handle = await channel(rooms, hub).ensure(
-        SessionRef(PROJECT, TOPIC), Opening(system_prompt="房间的提示词")
+        SessionRef(PROJECT, TOPIC, "agent-x", "pi"),
+        Opening(system_prompt="房间的提示词"),
     )
 
     # The screen runs pi's launcher, not the other harness's.
@@ -212,7 +260,7 @@ async def test_a_first_turn_waits_for_the_runner_to_bind(channel, impatient):
     hub.dial_failures = 3
 
     handle = await channel(rooms, hub).ensure(
-        SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+        SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
     )
 
     assert handle.session_id == hub.session_id
@@ -236,7 +284,7 @@ async def test_a_runner_that_never_bound_reports_its_own_last_words(channel, imp
 
     with pytest.raises(ScreenSetupError) as refused:
         await channel(rooms, hub).ensure(
-            SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+            SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
         )
     assert "pi 没有握上手" in str(refused.value)
 
@@ -254,7 +302,7 @@ async def test_a_machine_that_kept_no_reason_still_reports_the_refusal(
 
     with pytest.raises(ScreenSetupError) as refused:
         await channel(rooms, hub).ensure(
-            SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+            SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
         )
     assert "no such file or directory" in str(refused.value)
 
@@ -264,7 +312,7 @@ async def test_a_restarted_backend_finds_the_session_it_did_not_start(channel):
     """pi 的会话活得比开它的那个后端长，所以位置得写下来。"""
     rooms, hub = Rooms(), Hub()
     started = await channel(rooms, hub).ensure(
-        SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+        SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
     )
 
     # A second channel with no memory of the first, reading only the row.
@@ -274,13 +322,43 @@ async def test_a_restarted_backend_finds_the_session_it_did_not_start(channel):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("failure", [DeviceCallError, DeviceOffline, TimeoutError])
+async def test_discovery_releases_database_and_continues_past_a_dead_runner(
+    channel, failure, monkeypatch
+):
+    other = uuid.uuid4()
+    rooms = Rooms(
+        placed={
+            (PROJECT, TOPIC, "a", "pi"): _pi_place(TOPIC, "/dead", "a"),
+            (PROJECT, other, "b", "pi"): _pi_place(other, "/alive", "b"),
+        }
+    )
+    hub = Hub()
+
+    async def ping(device, state, method, params, **kwargs):
+        assert not rooms.active, "device probes must not retain a database session"
+        assert kwargs["timeout"] == 15
+        if state == "/dead":
+            raise failure("dev1")
+        return {"alive": True, "session_id": "retained"}
+
+    monkeypatch.setattr(hub, "call_executor", ping)
+    found = await channel(rooms, hub).discover("dev1")
+    assert [handle.session.topic_id for handle in found] == [other]
+    assert found[0].session_id == "retained"
+
+
+@pytest.mark.anyio
 async def test_a_room_running_the_other_harness_is_not_ours_to_recover(channel):
     rooms = Rooms(
-        placement={
-            "device_id": "dev1",
-            "resource_id": str(TOPIC),
-            "channel": DeviceChannel.name,
-            "runtime": {"harness": "codex", "state": "$HOME/x", "agent_handle": "a"},
+        placed={
+            (PROJECT, TOPIC, "a", "codex"): SessionPlace(
+                machine="dev1",
+                channel=DeviceChannel.name,
+                resource_id=str(TOPIC),
+                runtime={"harness": "codex", "state": "$HOME/x", "agent_handle": "a"},
+                lease=None,
+            )
         }
     )
     hub = Hub()
@@ -294,5 +372,5 @@ async def test_a_session_whose_runner_never_answered_is_an_error_not_a_handle(ch
     hub.alive = False
     with pytest.raises(ScreenSetupError):
         await channel(rooms, hub).ensure(
-            SessionRef(PROJECT, TOPIC), Opening(system_prompt="x")
+            SessionRef(PROJECT, TOPIC, "agent-x", "pi"), Opening(system_prompt="x")
         )

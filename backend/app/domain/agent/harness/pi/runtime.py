@@ -21,7 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from app.domain.agent.device_hub import DeviceOffline
+import httpx
+
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import (
     ActivityConsumer,
     EventConsumer,
@@ -37,6 +39,12 @@ from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 logger = logging.getLogger(__name__)
 
 PI = "pi"
+
+# Every read of a room's entry log is a call to its device, and an idle room
+# answers it with nothing. Read at the floor while there is anything to read;
+# let the wait grow towards the ceiling once the log has gone quiet.
+READ_FLOOR_S = 0.1
+READ_CEILING_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +87,7 @@ class PiRuntime:
         self.tasks: dict[uuid.UUID, asyncio.Task] = {}
         self.work: dict[uuid.UUID, uuid.UUID] = {}
         self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
+        self.woken: dict[uuid.UUID, asyncio.Event] = {}
         self.consumer: EventConsumer | None = None
         self.activity: ActivityConsumer | None = None
         self.receipts: ReceiptConsumer | None = None
@@ -157,15 +166,29 @@ class PiRuntime:
                 self._poll(topic), name=f"pi entries {topic}"
             )
 
+    def _wake(self, topic: uuid.UUID) -> None:
+        """Cut short the wait of a room that has just been given something."""
+        if event := self.woken.get(topic):
+            event.set()
+
+    async def _wait(self, topic: uuid.UUID, delay: float) -> None:
+        event = self.woken.setdefault(topic, asyncio.Event())
+        try:
+            await asyncio.wait_for(event.wait(), delay)
+        except TimeoutError:
+            return
+        event.clear()
+
     async def _poll(self, topic: uuid.UUID) -> None:
         checked_at = 0.0
         # Waiting for a device to come back is this loop's job, not a failure of
         # it, so the wait is said once and the return is said once. Per-task
         # state: one of these runs per topic.
         waiting = False
+        delay = READ_FLOOR_S
         while topic in self.subscriptions:
             try:
-                await self.subscriptions[topic].drain()
+                delivered = await self.subscriptions[topic].drain()
                 if topic in self.work and time.monotonic() - checked_at >= 1:
                     handle = self.live[topic]
                     status = await self.channel.call(handle, "ping", {})
@@ -186,6 +209,31 @@ class PiRuntime:
                     waiting = True
                     logger.warning("pi entries waiting for the device topic=%s", topic)
                 await asyncio.sleep(2)
+            except DeviceCallError as exc:
+                # The machine is there and said no — the runner's socket is not
+                # up yet (a cold pi takes about a minute) or its home is gone.
+                # Either way the next read is what tells, and the machine's
+                # own words are the fact worth writing down, once.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "pi entries waiting for the runner topic=%s: %s", topic, exc
+                    )
+                await asyncio.sleep(2)
+            except httpx.TransportError as exc:
+                # The connection owner is being replaced, or the socket to it
+                # went while this read was in flight. Retrying is what this loop
+                # is for, and the owner is back within seconds — but at ERROR
+                # every release of it wrote 「pi entries read failed」 into the alert
+                # channel, as it did at 01:47 UTC on 2026-09-20.
+                if not waiting:
+                    waiting = True
+                    logger.warning(
+                        "pi entries waiting for the connection owner topic=%s: %s",
+                        topic,
+                        exc,
+                    )
+                await asyncio.sleep(2)
             except Exception:
                 # The runner outlives a backend or connector outage. Re-reading
                 # is safe because the landing cursor only moves after the
@@ -196,7 +244,17 @@ class PiRuntime:
                 if waiting:
                     waiting = False
                     logger.info("pi entries resumed topic=%s", topic)
-                await asyncio.sleep(0.1)
+                # A room being worked reads at the floor, and so does one whose
+                # log just gave us something — the next entry of a stream is due
+                # immediately. A room nobody is talking to costs a call every
+                # 100ms for an empty page, and the cost is per room: eleven of
+                # them idling held a core between them. Sending wakes the wait,
+                # so nothing a person does is served at the backed-off rate.
+                if delivered or topic in self.work:
+                    delay = READ_FLOOR_S
+                else:
+                    delay = min(delay * 2, READ_CEILING_S)
+                await self._wait(topic, delay)
 
     async def _died(self, handle: Handle) -> None:
         """The process is gone with a turn open. Say so where the turn is, or
@@ -259,6 +317,7 @@ class PiRuntime:
             False,
         )
         self.work[session.topic_id] = work_id
+        self._wake(session.topic_id)
         try:
             await self.channel.call(
                 handle,
@@ -329,6 +388,7 @@ class PiRuntime:
         self.subscriptions.pop(topic, None)
         self.live.pop(topic, None)
         self.work.pop(topic, None)
+        self.woken.pop(topic, None)
 
     async def close(self, session: SessionRef) -> None:
         if subscription := self.subscriptions.get(session.topic_id):
@@ -337,12 +397,24 @@ class PiRuntime:
 
     async def recover(self, device_id=None) -> list[SessionRef]:
         handles = await self.channel.discover(device_id)
+        recovered = []
         for handle in handles:
+            try:
+                async with asyncio.timeout(15):
+                    status = await self.channel.call(handle, "ping", {})
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "pi recovery failed topic=%s device=%s: %s",
+                    handle.session.topic_id,
+                    handle.device_id,
+                    exc,
+                )
+                continue
             await self._attach(handle)
-            status = await self.channel.call(handle, "ping", {})
             if status.get("working") and status.get("work_id"):
                 self.work[handle.session.topic_id] = uuid.UUID(status["work_id"])
-        return [handle.session for handle in handles]
+            recovered.append(handle.session)
+        return recovered
 
     async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
         if subscription := self.subscriptions.get(session.topic_id):
@@ -364,6 +436,7 @@ class PiRuntime:
         turn_id=None,
         images=None,
         agent_handle=None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
@@ -375,7 +448,7 @@ class PiRuntime:
         self.queues[work] = queue
         try:
             await self.send(
-                SessionRef(project_id, topic_id),
+                SessionRef(project_id, topic_id, session_agent, self.harness),
                 prompt,
                 Opening(
                     system_prompt,
@@ -385,6 +458,10 @@ class PiRuntime:
                     memory_scope,
                     owner,
                     agent_handle,
+                    # 平台自己起的那几轮走这条入口，今天照旧租手：它们跑在项目工
+                    # 作机的根话题沙箱里。写出来是为了让这条老路看得见，改不改是
+                    # 另一件事 (P21 只动房间里的那一轮)。
+                    needs_place=True,
                 ),
                 work_id=work,
                 on_mark=lambda _: None,

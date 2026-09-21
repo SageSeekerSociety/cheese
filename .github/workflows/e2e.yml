@@ -109,6 +109,10 @@ jobs:
 
   e2e:
     needs: scope
+    env:
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      DOCKER_CONTEXT: default
     # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
     # it answers "did this exact commit already pass CI on its PR, so can the
     # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
@@ -157,11 +161,16 @@ jobs:
         run: |
           slot="${CHEESE_CI_SLOT:-0}"
           echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
-          # Playwright starts a backend and a frontend on fixed ports; two runs
-          # on one machine would take the same two.
+          # Playwright starts a backend, a frontend and the stub gateway on fixed
+          # ports; two runs on one machine would take the same ones.
           echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
           echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
+          echo "E2E_STUB_GATEWAY_PORT=$((4010 + slot))" >> "$GITHUB_ENV"
           echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_PORT=$((33100 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_S3_PORT=$((33200 + slot))" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_PROJECT=cheese-e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "FORGEJO_TEST_TOKEN_FILE=$RUNNER_TEMP/e2e-forge-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-token" >> "$GITHUB_ENV"
           root="postgresql+asyncpg://postgres:postgres@localhost:5442"
           echo "DATABASE_URL=$root/cheese_e2e_$slot" >> "$GITHUB_ENV"
           # Redis keys are scoped by user id, and user ids restart from 1 in each
@@ -235,6 +244,9 @@ jobs:
         working-directory: backend
         run: uv run alembic upgrade head
 
+      - name: Start the isolated project forge
+        run: bash backend/tests/forgejo/start.sh
+
       # alice (seeded by the migration above) owns no project until this runs;
       # the app-shell / topic / chat specs need her to land on a real project
       # rail tile. This is the same fusion demo the dev box is seeded with.
@@ -275,13 +287,20 @@ jobs:
         # exactly that — E2E, acceptance and harness contracts all red with every
         # test passing and only the upload step failing.
         continue-on-error: true
-        if: always()
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
+        # Only a red run's report is ever opened, and the green ones were the
+        # largest tenant of the org's 500MB artifact quota: 454MB of the 945MB
+        # live on 2026-09-18, 78 uploads in a week.
+        if: failure()
         with:
           name: playwright-report
           path: |
             e2e/playwright-report/
             e2e/test-results/
-          retention-days: 7
+          retention-days: 3
 
       # Same reclaim test.yml does, and for the same reason: every run's
       # postgres service container leaves an anonymous volume behind. This job
@@ -298,3 +317,7 @@ jobs:
         run: |
           docker volume prune -f >/dev/null 2>&1 || true
           df -h / | tail -1
+
+      - name: Remove the isolated project forge
+        if: always()
+        run: docker compose -p "$FORGEJO_TEST_PROJECT" -f backend/tests/forgejo/compose.yml down --volumes

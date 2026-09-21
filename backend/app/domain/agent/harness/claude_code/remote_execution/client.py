@@ -31,7 +31,7 @@ else:
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     from executor_transport import RemoteClient
 
-PINNED_VERSION = "2.1.265"
+PINNED_VERSION = "2.1.277"
 NATIVE_TOOLS = (
     "Read",
     "Edit",
@@ -40,7 +40,6 @@ NATIVE_TOOLS = (
     "Glob",
     "Grep",
     "NotebookEdit",
-    "TaskOutput",
     "TaskStop",
 )
 REMOTE_CONTROLS = {
@@ -54,7 +53,7 @@ PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
     "Save finished documents through cheese doc set and publish artifacts "
-    "through cheese artifact. Scratch files can disappear when execution "
+    "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
 
@@ -979,7 +978,25 @@ def transport(config, target_path):
                             ),
                         )
                         outcome = {"result": receipt["value"]}
-                value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
+                image = outcome.get("result", {})
+                if isinstance(image, dict) and image.get("type") == "image":
+                    # Base64 in text hits Claude Code's MCP text-output limit.
+                    # Keep native Read metadata in text and pixels in an image block.
+                    file = image["file"]
+                    metadata = {k: v for k, v in file.items() if k != "base64"}
+                    outcome = {"result": {**image, "file": metadata}}
+                    value = {
+                        "content": [
+                            {"type": "text", "text": json.dumps(outcome)},
+                            {
+                                "type": "image",
+                                "data": file["base64"],
+                                "mimeType": file["type"],
+                            },
+                        ]
+                    }
+                else:
+                    value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
             elif method == "ping":
                 value = {}
             else:

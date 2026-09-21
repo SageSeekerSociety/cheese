@@ -2,10 +2,10 @@
 import type {
   BranchProtection,
   BranchProtectionPatch,
-  GithubConnection,
+  ForgeAttribution,
+  ForgeConnection,
   OAuthConnectionInfo,
   ProjectMemberRow,
-  UpstreamSyncResult,
 } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -15,18 +15,22 @@ import {
   connectGithubRepo as apiConnectGithubRepo,
   deleteOAuthConnection,
   getBranchProtection,
+  getForgeAttribution,
+  getForgeConnection,
   getGithubAccountAuthorizeUrl,
-  getGithubConnection,
   getProject,
   getUpstream,
   listOAuthConnections,
   listProjectMembers,
   setBranchProtection,
+  setForgeAttribution,
   setUpstream,
-  syncUpstream,
 } from '../api'
 import ProjectComputeSettings from '../components/ProjectComputeSettings.vue'
+import ProjectDefaultModelSettings from '../components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '../components/ProjectEnvironmentSettings.vue'
+import AgentTeamSettings from '../components/settings/AgentTeamSettings.vue'
+import CreditsPanel from '../components/settings/CreditsPanel.vue'
 import { parseApprovalsInput, parseCheckPaths } from '../lib/branchProtection'
 import {
   explainAccountLinkFailure,
@@ -47,14 +51,34 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 // 上游仓库: the linked repo URL as edited, plus save/sync state and last result.
 const upstreamUrl = ref('')
-const upstreamSaved = ref<string | null>(null)
 const savingUpstream = ref(false)
-const syncing = ref(false)
-const syncResult = ref<UpstreamSyncResult | null>(null)
 
 // GitHub App install flow (#192): repo connection is read-only status here —
 // connecting/reconnecting happens on github.com, not in this form.
-const githubConnection = ref<GithubConnection | null>(null)
+const forgeConnection = ref<ForgeConnection | null>(null)
+const attribution = ref<ForgeAttribution | null>(null)
+const attributionSaving = ref(false)
+const attributionError = ref<string | null>(null)
+const attributionChoice = computed(() =>
+  attribution.value?.requester_coauthor == null ? 'default' : attribution.value.requester_coauthor ? 'on' : 'off'
+)
+const attributionItems = computed(() => [
+  { title: `跟随系统默认（${attribution.value?.deployment_default ? '开启' : '关闭'}）`, value: 'default' },
+  { title: '开启', value: 'on' },
+  { title: '关闭', value: 'off' },
+])
+
+async function saveAttribution(choice: string) {
+  attributionSaving.value = true
+  attributionError.value = null
+  try {
+    attribution.value = await setForgeAttribution(props.projectId, choice === 'default' ? null : choice === 'on')
+  } catch (e) {
+    attributionError.value = e instanceof Error ? e.message : '保存失败，请重试'
+  } finally {
+    attributionSaving.value = false
+  }
+}
 const connectingGithubRepo = ref(false)
 const connectingGithubAccount = ref(false)
 // Set from ?github_install=/&github_account= on the redirect back from our
@@ -223,15 +247,16 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, upP, ghP] = await Promise.all([
+    const [proj, upP, forge, credit] = await Promise.all([
       getProject(props.projectId),
       getUpstream(props.projectId),
-      getGithubConnection(props.projectId),
+      getForgeConnection(props.projectId),
+      getForgeAttribution(props.projectId),
     ])
     projectName.value = proj.name
-    upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
-    githubConnection.value = ghP
+    forgeConnection.value = forge
+    attribution.value = credit
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
   } finally {
@@ -242,29 +267,13 @@ async function load() {
 // Save (or with an empty field, unlink) the upstream repo URL.
 async function saveUpstream() {
   savingUpstream.value = true
-  syncResult.value = null
   try {
     const r = await setUpstream(props.projectId, upstreamUrl.value.trim())
-    upstreamSaved.value = r.url
     upstreamUrl.value = r.url ?? ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : '保存上游仓库失败'
   } finally {
     savingUpstream.value = false
-  }
-}
-
-// Pull the upstream's new commits into the project repo (merge; conflicts abort
-// cleanly and show up in the result line).
-async function doSyncUpstream() {
-  syncing.value = true
-  syncResult.value = null
-  try {
-    syncResult.value = await syncUpstream(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : '同步上游失败'
-  } finally {
-    syncing.value = false
   }
 }
 
@@ -278,7 +287,7 @@ async function connectGithubRepo() {
     // backend looks for an installation covering the upstream repo itself.
     const res = await apiConnectGithubRepo(props.projectId)
     if (res.connected) {
-      githubConnection.value = { connected: true, repo: res.repo, account: res.account }
+      forgeConnection.value = await getForgeConnection(props.projectId)
       githubRepoNotice.value = { type: 'success', text: `已连接 ${res.repo}` }
       connectingGithubRepo.value = false
       return
@@ -371,9 +380,7 @@ watch(
       <div class="mb-6">
         <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
         <h1 class="t-page-title">项目设置</h1>
-        <p class="t-body c-muted mt-1" style="max-width: 640px">
-          管理运行环境、仓库连接和分支保护。角色设定和模型请到“AI 队友”中修改对应的队友。
-        </p>
+        <p class="t-body c-muted mt-1" style="max-width: 640px">这个项目的队友、运行环境、交付规则和仓库连接</p>
       </div>
 
       <div v-if="loading" class="d-flex justify-center py-10">
@@ -384,59 +391,30 @@ watch(
       </v-alert>
 
       <template v-else>
+        <!-- 分四组，因为这一页的读者一次只为一件事来：换队友 / 调机器 / 定交付
+             规则 / 接仓库。原来是六块竖着铺满一页，读的人得自己认哪块是哪块；而
+             没绑仓库的项目从头到尾只看得到跟仓库有关的东西，于是整页像是坏的。 -->
+        <h2 class="t-title settings-group">队友</h2>
+        <AgentTeamSettings :project-id="projectId" />
+
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+            <span class="page-section-title">默认模型</span>
+          </div>
+          <div class="page-section-body">
+            <ProjectDefaultModelSettings :project-id="projectId" />
+          </div>
+        </section>
+
+        <h2 class="t-title settings-group">运行环境</h2>
         <section class="page-section">
           <ProjectComputeSettings :project-id="projectId" />
         </section>
         <ProjectEnvironmentSettings :project-id="projectId" />
+        <CreditsPanel :project-id="projectId" />
 
-        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
-        <section class="page-section">
-          <div class="page-section-head">
-            <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
-            <span class="page-section-title">上游仓库</span>
-          </div>
-          <div class="page-section-body">
-            <div class="d-flex align-center" style="gap: 8px">
-              <v-text-field
-                v-model="upstreamUrl"
-                autocomplete="off"
-                density="compact"
-                variant="outlined"
-                hide-details
-                placeholder="https://… 或本机绝对路径（留空 = 取消关联）"
-                style="flex: 1"
-                @keydown.enter="saveUpstream"
-              />
-              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
-              <v-btn
-                size="small"
-                color="primary"
-                variant="flat"
-                :disabled="!upstreamSaved"
-                :loading="syncing"
-                @click="doSyncUpstream"
-              >
-                同步上游
-              </v-btn>
-            </div>
-            <p
-              v-if="syncResult"
-              class="t-body mt-2"
-              style="font-size: 0.8rem"
-              :class="syncResult.synced ? 'c-muted' : 'text-error'"
-            >
-              <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
-                已合入上游 {{ syncResult.commits }} 个提交
-              </template>
-              <template v-else-if="syncResult.synced">已是最新，没有新提交</template>
-              <template v-else>同步失败：{{ syncResult.reason }}</template>
-            </p>
-            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              关联一个已有的 git
-              仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。
-            </p>
-          </div>
-        </section>
+        <h2 class="t-title settings-group">交付</h2>
 
         <!-- 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页的顺序。
              GitHub 自己开了保护时同名规则灰掉（拍板②），说明见 ghEnforced 的注释。 -->
@@ -662,9 +640,62 @@ watch(
           </div>
         </section>
 
+        <h2 class="t-title settings-group">仓库</h2>
+
+        <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
+        <section v-if="forgeConnection?.kind === 'github_app' && !forgeConnection.connected" class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
+            <span class="page-section-title">GitHub 仓库地址</span>
+          </div>
+          <div class="page-section-body">
+            <div class="d-flex align-center" style="gap: 8px">
+              <v-text-field
+                v-model="upstreamUrl"
+                autocomplete="off"
+                density="compact"
+                variant="outlined"
+                hide-details
+                placeholder="https://github.com/组织或用户名/仓库名"
+                style="flex: 1"
+                @keydown.enter="saveUpstream"
+              />
+              <v-btn size="small" variant="tonal" :loading="savingUpstream" @click="saveUpstream"> 保存 </v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              填写要连接的 GitHub 仓库地址并保存，再点击下方“连接 GitHub 仓库”。连接后，代码与 PR 都保留在该仓库。
+            </p>
+          </div>
+        </section>
+
+        <section v-if="forgeConnection?.kind === 'forgejo'" class="page-section" data-testid="forge-repository">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-repository</v-icon>
+            <span class="page-section-title">代码仓库</span>
+          </div>
+          <div class="page-section-body">
+            <div class="d-flex align-center flex-wrap" style="gap: 8px">
+              <v-icon v-if="forgeConnection.connected" size="18" color="success">mdi-check-circle</v-icon>
+              <span class="t-body">{{ forgeConnection.connected ? '由芝士托管' : '仓库正在准备中' }}</span>
+              <v-spacer />
+              <v-btn
+                v-if="forgeConnection.url"
+                :href="forgeConnection.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                size="small"
+                variant="tonal"
+              >
+                打开仓库
+              </v-btn>
+            </div>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">项目创建后，暂不支持切换托管服务。</p>
+          </div>
+        </section>
+
         <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
              git 操作走这个 installation 的短时 token -->
-        <section class="page-section">
+        <section v-if="forgeConnection?.kind === 'github_app'" class="page-section" data-testid="github-repository">
           <div class="page-section-head">
             <v-icon size="14" class="c-faint">mdi-github</v-icon>
             <span class="page-section-title">连接 GitHub 仓库</span>
@@ -680,10 +711,10 @@ watch(
             >
               {{ githubRepoNotice.text }}
             </v-alert>
-            <div v-if="githubConnection?.connected" class="d-flex align-center" style="gap: 8px">
+            <div v-if="forgeConnection.connected" class="d-flex align-center" style="gap: 8px">
               <v-icon size="18" color="success">mdi-check-circle</v-icon>
               <span class="t-body">
-                已连接 <strong>{{ githubConnection.repo }}</strong>
+                已连接 <strong>{{ forgeConnection.repo }}</strong>
               </span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubRepo" @click="connectGithubRepo">
@@ -706,6 +737,32 @@ watch(
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
               通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
               会按这个连接自动签发，不用再手工配置。
+            </p>
+          </div>
+        </section>
+
+        <section class="page-section" data-testid="forge-attribution">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-account-edit-outline</v-icon>
+            <span class="page-section-title">提交署名</span>
+          </div>
+          <div class="page-section-body">
+            <v-alert v-if="attributionError" type="error" density="compact" class="mb-3">{{
+              attributionError
+            }}</v-alert>
+            <v-select
+              autocomplete="off"
+              :model-value="attributionChoice"
+              :items="attributionItems"
+              label="将任务请求者列为共同作者"
+              :loading="attributionSaving"
+              :disabled="attributionSaving"
+              hide-details
+              @update:model-value="saveAttribution"
+            />
+            <p class="t-body c-muted mt-2">{{ attribution?.effective ? '当前已开启' : '当前已关闭' }}</p>
+            <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
+              开启后，新提交会附上任务请求者的共同作者署名，提交作者仍为 AI 队友。这项设置不会修改已有提交。
             </p>
           </div>
         </section>
@@ -776,8 +833,7 @@ watch(
                 variant="tonal"
                 class="mt-2"
               >
-                GitHub 授权已过期：采纳你参与的话题时将无法用你的身份自动开 PR，会退回为直接合并到
-                main。请点击「重新连接」刷新授权。
+                GitHub 授权已过期，暂时无法以你的身份创建 PR。请点击“重新连接”刷新授权。
               </v-alert>
             </template>
 
@@ -791,8 +847,7 @@ watch(
             </div>
 
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              用于把你合并的提交正确归到你名下，也是采纳时能代表你的身份开 PR 的前提。这与登录用的 GitHub
-              授权是两回事，可以是同一个账号，也可以不是。
+              用于识别你的提交署名，并以你的身份创建 GitHub PR。这与登录用的 GitHub 授权相互独立，可以连接不同的账号。
             </p>
           </div>
         </section>
@@ -823,6 +878,15 @@ watch(
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
+}
+/* 组标题：比区块标题重一档，前后留白把这一页切成四段读得出来的东西。第一组不
+   留上边距——它紧接着页头。 */
+.settings-group {
+  margin: 32px 0 12px;
+  color: var(--ink);
+}
+.settings-group:first-of-type {
+  margin-top: 0;
 }
 .page-section-title {
   font-size: 12px;

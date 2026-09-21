@@ -158,9 +158,8 @@ title / created_by / brief），所以「一件活被派出去」在房间时间
 所以「agent 之间的关系」这个问题没有答案——它们之间没有任何关系。
 
 **这条建议落地了**：身份从话题解绑，拆成「类型（出厂设置，跨项目共享）＋ 实例（项目内，带记忆池）」
-两层（§1.3）。一个话题可以指定用哪个实例（`topics.agent_instance_id`），
-留 NULL 表示「跟着项目的默认走」——**故意不在建话题时把默认拷贝一份**，
-拷贝一份就等于以后项目换了默认它也不跟了，而且不会有任何报错。
+两层（§1.3）。话题不指向实例：实例作为成员坐在话题名册上（和人同一张名册），
+新话题建出来时坐着项目当时的默认实例，再请别的实例进来是往名册上加一行。
 
 论证仍然值得留着：这正是 buzz 的选择，也是 places-and-actors 说「我们缺 actor 这一半」的具体所指——
 在 buzz 里 `agents: Vec<Option<OwnedAgent>>` 是**进程槽**，派活时找不到亲和的槽就用任何空闲槽，
@@ -304,8 +303,9 @@ workflow run）。这一条**不矛盾**——#206 说的是「平台不去判�
 父话题那一轮结束时**默认采信**（另有 30 分钟绝对超时），
 父话题可以 `need-evidence` 打回一次或 `escalate` 转人。这套一直是完整的。
 
-**母 → 子**：当初是断的——评论端点里 summon 的条件是 `if not actor.is_agent`（只有人类评论
-才唤醒对方），而且更上面还有一道 403（per-turn token 带着自己的话题 claim，指向别的话题直接拒）。
+**母 → 子**：当初是断的——评论端点里 summon 的条件是「这个 handle 在这个房间有没有
+agent 席位」（坐着席位的不唤醒对方），而且更上面还有一道 403（per-turn token 带着自己的
+话题 claim，指向别的话题直接拒）。
 现在有了一条**显式的、只开父子这一条边**的通道：`cheese tell` → `POST /topics/{id}/tell`
 （<&backend/app/api/routes/topics.py>、<&backend/app/domain/topic/relay.py>），写 block **并唤醒**对方。
 
@@ -558,9 +558,8 @@ Built-in presets in `agent_type/library.py` initialize new agents. The saved `ty
 当时的核实结论是：agent handle 是 `cheese-<话题 id 前 12 位 hex>`，**纯函数派生、每个话题
 自动生一个**，于是记忆池的真实粒度是**话题**而不是芝士。
 「从池里选一个 agent」这个动作，正是把身份从话题解绑 —— 产品侧和代码侧想到的是同一件事。
-现在两张表都在（§12.2），话题上有 `agent_instance_id` 指向选的那一个，
-roster 本来就支持多个 agent 座位（`agent_handles()` 返回列表，
-注释写着 "a room may host more than one 芝士"）。
+现在两张表都在（§12.2），选的那一个坐在话题名册上——roster 本来就支持多个
+agent 座位（`agent_handles()` 返回列表），话题自己不指向任何一个。
 
 **③ 前半句对（每个话题一个独立 session），后半句必须改：记忆要跟 agent 走，不能跟 session 走。**
 
@@ -648,8 +647,8 @@ Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的
 
 #### 两件小事的落点
 
-1. **项目默认 agent**：话题上的 `agent_instance_id` 留 NULL 就表示「跟着项目的默认走」——
-   **故意不在建话题时拷贝一份**，拷了以后项目换默认它就不跟了，而且不会有任何报错。
+1. **项目默认 agent**：新话题建出来时把项目当时的默认实例坐进名册；没人被 @ 到时
+   房间回落到项目当下的默认，而不是话题自己记住的某一个。
 2. **存量 `cheese-<topic hex>` 池**：一个项目的隐式默认 agent 用 `cheese` 这个 handle、
    在 `agent_instances` 里**根本不建行**，所以一个从没配置过任何东西的项目
    继续写、也继续读它本来就有的那个池。
@@ -788,7 +787,8 @@ docstring 明确把它和 split 对立着写：*"clone instead forks the source'
 
 - **子 → 母**：`cheese conclude` 开结论卡，房间可采信 / 补证据 / 升级（`ConclusionCardService`）。
 - **母 → 子**：当初有两处独立的拦截——per-turn token 的 topic claim 直接 403，
-  以及评论端点里 summon 的条件是 `if not actor.is_agent`（只有人类评论才唤醒）。
+  以及评论端点里 summon 的条件是「这个 handle 在这个房间有没有 agent 席位」
+  （坐着席位的不唤醒）。
   现在走 `cheese tell` → `POST /topics/{id}/tell`，写 block **并**唤醒对方，只开父子这一条边。
 - 结论卡「补证据」打回也会叫醒了，而且叫醒的是**支线**不是房间。
 
@@ -804,7 +804,7 @@ docstring 明确把它和 split 对立着写：*"clone instead forks the source'
 
 **当初点名的三个风险，两个已经在代码里处理了：**
 - **冲突提前了**。多条支线并行改同一批文件，冲突从「两个 PR 之间」提前到「房间分支上」。
-  这不是坏事（早发现），但要有预警 —— 正好是 @并行话题冲突预警设计 那件活。
+  相关的冲突预警讨论见[历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/topics/并行话题冲突预警设计.md)。
   折不动时**会在房间里说一句，不会默默算了**。
 - **房间自己在编辑时会卡住合并**。`_catch_up_with_branch` 只在工作区**没有 pending 改动**时快进，
   「人的未提交编辑绝不能被机器的推送扫掉」是它写死的原则；它的返回值现在有人接，

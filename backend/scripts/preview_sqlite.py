@@ -4,7 +4,7 @@ For sandbox preview of the frontend. Creates the schema with create_all (the
 sqlite file is fresh, so seed_demo's Postgres-only TRUNCATE is patched to a
 no-op), runs the standard demo seed, then adds what the 「文件跳转自动展开路径」
 change needs to be seen:
-- deeply nested files in the demo topic's worktree;
+- deeply nested attachments in the demo room;
 - a chat message + doc section containing <&path> file chips to click.
 
 Run: cd backend && DATABASE_URL=sqlite+aiosqlite:////work/backend/preview.db \
@@ -18,8 +18,8 @@ from sqlalchemy import select
 import scripts.seed_demo as seed_demo
 from app.core.db import Base, async_session_factory, engine
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.library import service as library
 from app.domain.topic.models import Topic
-from app.domain.workspace import service as ws
 
 
 async def _reset_noop(_session) -> None:  # fresh sqlite file — nothing to reset
@@ -56,13 +56,13 @@ async def main() -> None:
         ).scalar_one()
         pid, tid = topic.project_id, topic.id
         for path, content in _FILES.items():
-            ws.write_file(pid, path, content, tid)
+            library.write_room_file(pid, tid, path, content.encode())
         s.add(
             Block(
                 project_id=pid,
                 topic_id=tid,
                 kind=BlockKind.message,
-                author_type=AuthorType.ai,
+                author_type=AuthorType.participant,
                 author="cheese",
                 content=(
                     "算法骨架写好了：核心相似度在 <&backend/app/domain/recommend/cf_model.py>，"  # noqa: E501

@@ -89,7 +89,17 @@ class _WebSocketPreviewTransport:
         self._websocket = websocket
 
     async def send_bytes(self, data: bytes) -> None:
-        await self._websocket.send_bytes(data)
+        try:
+            await self._websocket.send_bytes(data)
+        except (WebSocketDisconnect, RuntimeError) as exc:
+            # The same translation the device link makes (connector.py): a peer
+            # that dropped mid-write raises a disconnect, a socket Starlette
+            # already closed a RuntimeError, and the hub handles neither — it
+            # answers a lost transport, which is what both are. Left as they
+            # were, a page asking for `/src/foo.ts` through a tunnel whose
+            # helper had just gone was a 500 and an alert (2026-09-18), for a
+            # preview that is simply not there.
+            raise ConnectionError(str(exc)) from exc
 
     async def hang_up(self) -> None:
         try:
@@ -211,7 +221,7 @@ async def relay_ws(websocket: WebSocket, topic_id: uuid.UUID) -> None:
         subprotocol = str(meta.get("subprotocol") or "") or None
         await websocket.accept(subprotocol=subprotocol)
         await _pump(websocket, stream)
-    except (TimeoutError, ValueError, RuntimeError, WebSocketDisconnect):
+    except (TimeoutError, ValueError, OSError, RuntimeError, WebSocketDisconnect):
         pass
     finally:
         stream.close()
@@ -239,7 +249,7 @@ async def _pump(browser: WebSocket, stream: PreviewStream) -> None:
                     await stream.send(
                         wire.OP_WS_MSG, bytes([wire.WS_TEXT]) + text.encode()
                     )
-        except (WebSocketDisconnect, RuntimeError):
+        except (WebSocketDisconnect, OSError, RuntimeError):
             return
 
     async def app_to_browser() -> None:

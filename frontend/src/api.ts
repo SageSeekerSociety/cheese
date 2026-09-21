@@ -13,11 +13,27 @@ import type {
   BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
-  Contributions,
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
+  FeedbackCard,
+  FeedbackComment,
+  FeedbackCommentLikeResult,
+  FeedbackCounts,
+  FeedbackCreateBody,
+  FeedbackDetail,
+  FeedbackListPayload,
+  FeedbackMeta,
+  FeedbackNote,
+  FeedbackPriority,
+  FeedbackProposal,
+  FeedbackStatus,
+  FeedbackSupportResult,
+  FeedbackVisibility,
   FileContent,
+  FileSource,
+  ForgeAttribution,
+  ForgeConnection,
   GitCommit,
   GithubConnection,
   InboxItem,
@@ -35,7 +51,6 @@ import type {
   ProjectEnvironmentInfo,
   ProjectInvitation,
   ProjectMemberRow,
-  ProjectOverview,
   ProjectSite,
   ProjectSiteInfo,
   ReactionAgg,
@@ -46,7 +61,6 @@ import type {
   TopicProgress,
   TopicWorkSummary,
   UpstreamInfo,
-  UpstreamSyncResult,
   UsageStats,
   UserProfile,
   WaitingItem,
@@ -223,8 +237,23 @@ export async function refreshNow(): Promise<void> {
   await refreshInFlight
 }
 
+// Room chrome, chat and the work panel request the same roster/task summary
+// on mount. Share only pending reads; the next refresh always goes to the server.
+const pendingRoomReads = new Map<string, Promise<unknown>>()
+function roomRead<T>(path: string): Promise<T> {
+  const key = `${authToken()}:${path}`
+  const pending = pendingRoomReads.get(key)
+  if (pending) return pending as Promise<T>
+  const started = request<T>(path).finally(() => {
+    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
+  })
+  pendingRoomReads.set(key, started)
+  return started
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -293,6 +322,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
+    if (method !== 'GET') pendingRoomReads.clear()
     return envelope.data
   }
 }
@@ -492,7 +522,8 @@ export function createProject(
   name: string,
   ownerHandle?: string,
   teamId?: number,
-  externalTaskId?: number
+  externalTaskId?: number,
+  forgeKind?: 'forgejo' | 'github_app'
 ): Promise<Project> {
   return request<Project>('/projects', {
     method: 'POST',
@@ -503,6 +534,7 @@ export function createProject(
       // Set when the project is created FROM a 赛题, so the 赛题 can find it
       // again. Absent for a project made from the rail.
       external_task_id: externalTaskId,
+      forge_kind: forgeKind,
     }),
   })
 }
@@ -606,40 +638,16 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(
-  projectId: string,
-  title: string,
-  parentId?: string,
-  // 谁在这个话题里干活。不传 = 跟着项目的默认走，而且**继续跟着**它变 —— 这和
-  // 「把当前默认抄一份存下来」不是一回事，后者会在换默认时留下一批不动的旧话题。
-  agentInstanceId?: string | null
-): Promise<Topic> {
+export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
   if (parentId) body.parent_id = parentId
-  if (agentInstanceId) body.agent_instance_id = agentInstanceId
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
   })
-}
-
-// ---- 话题用哪个 AI 队友 ----
-
-export interface TopicAgent {
-  topic_id: string
-  instance_id: string | null
-  handle: string
-  type_name: string | null
-  display_name: string
-  /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
-  inherited: boolean
-}
-
-export function getTopicAgent(topicId: string): Promise<TopicAgent> {
-  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`)
 }
 
 // ---- 话题级未读 (Feishu-style badges) ----
@@ -818,10 +826,19 @@ export function saveProjectComputeConfigs(
   })
 }
 
+// 撞上项目档位策略时这次选择没有发生，换来的是一条给人的提议 —— 接口照样 200，
+// 所以「有没有 proposal」是调用方唯一能看出区别的地方（backend
+// `domain/policy/gate.py`）。丢掉它就等于告诉点了按钮的人什么也没发生。
+export interface ComputeProposal {
+  approver: string
+  tier: string
+  content: string
+}
+
 export function setTopicComputeChoice(
   topicId: string,
   choice: import('./cx_types').ComputeChoice
-): Promise<{ choice: import('./cx_types').ComputeChoice }> {
+): Promise<{ choice: import('./cx_types').ComputeChoice; proposal: ComputeProposal | null }> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
     body: JSON.stringify({ choice }),
@@ -850,32 +867,36 @@ export function setTopicComputeProfile(
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
-// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
-// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
 export interface AgentFieldChoice {
   id: string
   label: string
   description: string
   default: boolean
-  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
-   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
-   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
-  models?: string[]
 }
 
-export interface AgentFieldOptions {
-  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
-  state: 'choosable' | 'unavailable'
+// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
+// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
+export interface ProjectDefaultModel {
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
   choices: AgentFieldChoice[]
-  reason: string
-  note: string
+  can_manage: boolean
 }
 
-export type AgentTypeOptions = Record<string, AgentFieldOptions>
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
 
-export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
 }
 
 // Built-in starting configurations, copied only when creating an agent.
@@ -957,11 +978,6 @@ export function setUpstream(projectId: string, url: string): Promise<UpstreamInf
     body: JSON.stringify({ url }),
   })
 }
-export function syncUpstream(projectId: string): Promise<UpstreamSyncResult> {
-  return request(`/projects/${encodeURIComponent(projectId)}/upstream/sync`, {
-    method: 'POST',
-  })
-}
 
 // 分支保护 (#718): 平台侧的合并规则。GET 附带只读的 merge_method 和
 // github_protection；PUT 是 partial-update，body 里出现哪个键就改哪个。
@@ -972,6 +988,21 @@ export function setBranchProtection(projectId: string, patch: BranchProtectionPa
   return request(`/projects/${encodeURIComponent(projectId)}/branch-protection`, {
     method: 'PUT',
     body: JSON.stringify(patch),
+  })
+}
+
+export function getForgeConnection(projectId: string): Promise<ForgeConnection> {
+  return request(`/projects/${encodeURIComponent(projectId)}/forge`)
+}
+
+export function getForgeAttribution(projectId: string): Promise<ForgeAttribution> {
+  return request(`/projects/${encodeURIComponent(projectId)}/forge-attribution`)
+}
+
+export function setForgeAttribution(projectId: string, requesterCoauthor: boolean | null): Promise<ForgeAttribution> {
+  return request(`/projects/${encodeURIComponent(projectId)}/forge-attribution`, {
+    method: 'PUT',
+    body: JSON.stringify({ requester_coauthor: requesterCoauthor }),
   })
 }
 
@@ -1007,11 +1038,6 @@ export function deleteOAuthConnection(userId: string, connectionId: number): Pro
   })
 }
 
-// 项目总览 / 收件箱 (eval G2/G3).
-export function getOverview(projectId: string): Promise<ProjectOverview> {
-  return request<ProjectOverview>(`/projects/${encodeURIComponent(projectId)}/overview`)
-}
-
 // The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
 // project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
 export function getProjectForTeam(teamId: number): Promise<Project | null> {
@@ -1026,6 +1052,14 @@ export function getInbox(projectId: string, targetHandle: string): Promise<ListP
 
 export function markRead(alertId: string): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' })
+}
+
+// 拍板。答复之后这一条不再等人，收件箱里就没有它了。
+export function resolveAlert(alertId: string, chosen: string): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ chosen }),
+  })
 }
 
 export function sendFeedback(alertId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
@@ -1069,13 +1103,218 @@ export function toggleReaction(
   )
 }
 
+// ---- 资料库 ----
+
+// 用户给这个项目的文件，按原名。项目一级，所以一个房间引用得到另一个房间上传的
+// 那一份——「上周那份预算表」这句话正是在这种地方说的。
+export interface LibraryFile {
+  path: string
+  bytes: number
+  /** Unix seconds; the list comes back newest first. */
+  modified: number
+}
+
+export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
+  return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
+}
+
+/** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的
+ *  `download=true` 在这里没有对应的参数，后端不看它。 */
+export function libraryFileRawUrl(projectId: string, path: string): string {
+  return `${BASE}/projects/${encodeURIComponent(projectId)}/library/raw?path=${encodeURIComponent(path)}`
+}
+
+export function deleteLibraryFile(projectId: string, path: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/library?path=${encodeURIComponent(path)}`,
+    { method: 'DELETE' }
+  )
+}
+
+// ---- 产物清单 ----
+
+// 这个项目交出去的东西，一项一行。清单由交付长出来，所以这里没有「新建」——
+// 能做的三件事都是人的判断：改名、合并、删除。
+export interface ProjectArtifact {
+  id: string
+  name: string
+  /** 一句话：这是什么东西、给谁的。交付时写下，没人写过时是空串。 */
+  about: string
+  /** 交付过几次。0 = 有一张卡正在交付它，但还没有哪一次落地。 */
+  version: number
+  /** 最近一次交付被采纳的时刻（ISO），一次都还没有时为 null。 */
+  delivered_at: string | null
+}
+
+export function listProjectArtifacts(projectId: string): Promise<ListPayload<ProjectArtifact>> {
+  return request<ListPayload<ProjectArtifact>>(`/projects/${encodeURIComponent(projectId)}/artifacts`)
+}
+
+/** 交出去的是什么形态：一份文件、一个地址、一次合并。null = 这一版是交付物落地
+ *  之前递的卡，当时没有记，而那份构建产物已经不在了。 */
+export type DeliverableKind = 'file' | 'link' | 'merge'
+
+/** 这一项的第 N 版 —— 就是第 N 张采纳了的卡。 */
+export interface ArtifactVersion {
+  number: number
+  card_id: string
+  /** 这次交付改了什么（卡上那句 Conventional Commit 标题）。 */
+  subject: string | null
+  delivered_at: string | null
+  decided_by: string | null
+  kind: DeliverableKind | null
+  filename: string | null
+  url: string | null
+}
+
+export interface ProjectArtifactDetail extends ProjectArtifact {
+  versions: ArtifactVersion[]
+}
+
+export interface ArtifactComparison {
+  kind: 'file' | 'merge' | 'link' | 'unavailable'
+  identical: boolean | null
+  note: string | null
+  files: {
+    path: string
+    diff: string | null
+    note: string | null
+    before_mode?: string | null
+    after_mode?: string | null
+    status?: string
+  }[]
+}
+
+export function compareArtifactVersions(
+  projectId: string,
+  artifactId: string,
+  before: string,
+  after: string
+): Promise<ArtifactComparison> {
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`
+  )
+}
+
+export async function artifactVersionBytes(
+  projectId: string,
+  artifactId: string,
+  cardId: string,
+  asPdf = false
+): Promise<ArrayBuffer> {
+  const response = await fetch(
+    artifactVersionFileUrl(projectId, artifactId, cardId) + (asPdf ? '?preview_pdf=true' : ''),
+    { headers: authHeaders() }
+  )
+  if (response.ok) return response.arrayBuffer()
+  let message = ''
+  try {
+    message = String((await response.json())?.message || '')
+  } catch {
+    /* Keep the HTTP error when the server sent no JSON. */
+  }
+  throw new Error(message || `未能读取这一版（HTTP ${response.status}）`)
+}
+
+export function getProjectArtifact(projectId: string, artifactId: string): Promise<ProjectArtifactDetail> {
+  return request<ProjectArtifactDetail>(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`
+  )
+}
+
+/** 这一版当时交出去的那一份字节。取的是快照，不是现在重建一次的结果。 */
+export function artifactVersionFileUrl(projectId: string, artifactId: string, cardId: string): string {
+  return (
+    `${BASE}/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}` +
+    `/versions/${encodeURIComponent(cardId)}/file`
+  )
+}
+
+/** 换个名字。卡指着的是这一项的 id，所以之前的交付照样算它的版本。 */
+export function renameProjectArtifact(
+  projectId: string,
+  artifactId: string,
+  name: string
+): Promise<{ id: string; name: string }> {
+  return request<{ id: string; name: string }>(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { method: 'PATCH', body: JSON.stringify({ name }) }
+  )
+}
+
+/** 这两项其实是同一个东西：把 `artifactId` 的交付都算到 `into` 上，它自己没了。 */
+export function mergeProjectArtifacts(
+  projectId: string,
+  artifactId: string,
+  into: string
+): Promise<{ id: string; name: string }> {
+  return request<{ id: string; name: string }>(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}/merge`,
+    { method: 'POST', body: JSON.stringify({ into }) }
+  )
+}
+
+export function deleteProjectArtifact(projectId: string, artifactId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+// ---- 这个房间里摆出来的东西 (#1085 结论四) ----
+
+// 摆出来的东西属于这个房间：用户看完拿走就完了。要把它留下来以后还用，由人按
+// 「保存到资料库」——留着要用的东西是资料；交出去的东西走交付，那才上产物清单。
+export interface RoomOutput {
+  path: string
+  mime: string
+  kind: 'file' | 'app'
+  shown_at: string
+}
+
+export function listRoomOutputs(topicId: string): Promise<ListPayload<RoomOutput>> {
+  return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown`)
+}
+
+/** 把房间里的这一份留进资料库：按原名，撞名加 `(2)`，所有房间都引用得到。 */
+export function saveRoomOutputToLibrary(topicId: string, path: string): Promise<{ name: string }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/shown/save`, {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  })
+}
+
 // ---- Chat attachments ----
 
-// Upload a file into the topic's worktree. NOTE: raw fetch, not
-// request() — multipart needs the browser to set the boundary header itself.
-export async function uploadAttachment(topicId: string, file: File): Promise<ChatAttachment> {
+/** 把资料库里已有的一份文件附在这条消息上。返回的形状和一次上传相同。 */
+export async function attachLibraryFile(topicId: string, libraryPath: string): Promise<ChatAttachment> {
+  const form = new FormData()
+  form.append('library_path', libraryPath)
+  const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
+    method: 'POST',
+    body: form,
+    headers: authHeaders(),
+  })
+  const envelope = (await res.json().catch(() => null)) as ApiEnvelope<ChatAttachment> | null
+  if (!res.ok || !envelope || envelope.code !== 200) {
+    throw new Error(envelope?.message || `添加失败（HTTP ${res.status}）`)
+  }
+  return envelope.data
+}
+
+// Upload a file into the project's 资料库, with a copy in this room. NOTE: raw
+// fetch, not request() — multipart needs the browser to set the boundary itself.
+//
+// `origin: 'clipboard'` 的那一份只留在这个房间：贴进来的截图没有名字（`image.png`
+// 是浏览器编的），而资料库是按名字寻址的。
+export async function uploadAttachment(
+  topicId: string,
+  file: File,
+  origin: 'file' | 'clipboard' = 'file'
+): Promise<ChatAttachment> {
   const form = new FormData()
   form.append('file', file)
+  form.append('origin', origin)
   const res = await fetch(`${BASE}/topics/${encodeURIComponent(topicId)}/attachments`, {
     method: 'POST',
     body: form,
@@ -1095,9 +1334,14 @@ export async function uploadAttachment(topicId: string, file: File): Promise<Cha
 // 读者看到的是一张裂图。要显示图片用下面的 attachmentImageUrl。
 /** `task` 说的是从哪个库读：某个任务工作树上的那一份，还是房间自己的文件（不传）。
  *  同一个路径在两个库里可以是两份不同的文件，所以看谁的文件必须说出来。 */
-export function attachmentRawUrl(topicId: string, path: string, task?: string | null): string {
+export function attachmentRawUrl(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): string {
   const from = task ? `&task=${encodeURIComponent(task)}` : ''
-  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}${from}`
+  return `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/raw?path=${encodeURIComponent(path)}${from}&source=${source}`
 }
 
 /** 图片附件的字节，取回来做成 <img> 能用的 object URL。
@@ -1113,10 +1357,15 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
-export async function previewFileBytes(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+export async function previewFileBytes(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): Promise<ArrayBuffer> {
   // `download=true` is what makes the raw endpoint serve a non-image at all; it
   // only changes the Content-Disposition, which nothing here reads.
-  const res = await fetch(`${attachmentRawUrl(topicId, path, task)}&download=true`, {
+  const res = await fetch(`${attachmentRawUrl(topicId, path, task, source)}&download=true`, {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`读取文件失败（HTTP ${res.status}）`)
@@ -1131,9 +1380,10 @@ export async function previewFileBytes(topicId: string, path: string, task?: str
 export function documentRevisions(
   topicId: string,
   path: string,
-  task?: string | null
+  task?: string | null,
+  source: FileSource = 'live'
 ): Promise<{ path: string; version: string; revisions: DocumentRevision[] }> {
-  const query = `?path=${encodeURIComponent(path)}` + (task ? `&task=${encodeURIComponent(task)}` : '')
+  const query = `?path=${encodeURIComponent(path)}&source=${source}` + (task ? `&task=${encodeURIComponent(task)}` : '')
   return request<{ path: string; version: string; revisions: DocumentRevision[] }>(
     `/topics/${encodeURIComponent(topicId)}/documents/revisions${query}`
   )
@@ -1165,10 +1415,15 @@ export function decideDocumentRevisions(
 export class PreviewRendererUnavailable extends Error {}
 
 /** A Word or PowerPoint file converted to PDF, so a browser can draw it. */
-export async function previewDocumentPdf(topicId: string, path: string, task?: string | null): Promise<ArrayBuffer> {
+export async function previewDocumentPdf(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): Promise<ArrayBuffer> {
   const url =
     `${BASE}/topics/${encodeURIComponent(topicId)}/attachments/pdf` +
-    `?path=${encodeURIComponent(path)}` +
+    `?path=${encodeURIComponent(path)}&source=${source}` +
     (task ? `&task=${encodeURIComponent(task)}` : '')
   const res = await fetch(url, { headers: authHeaders() })
   if (res.ok) return res.arrayBuffer()
@@ -1186,7 +1441,7 @@ export async function previewDocumentPdf(topicId: string, path: string, task?: s
 
 // Downloads carry the same credentials as API requests, including token-only sessions.
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
-  const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })
+  const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
   const url = URL.createObjectURL(await res.blob())
   const link = document.createElement('a')
@@ -1386,9 +1641,10 @@ export function getGitLog(
 export function getGitDiff(
   projectId: string,
   topicId?: string | null,
-  taskId?: string | null
+  taskId?: string | null,
+  source: FileSource = 'committed'
 ): Promise<{ diff: string }> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+  const t = `?${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
@@ -1404,16 +1660,25 @@ export function getTopicWorkSummary(projectId: string, topicId: string): Promise
 export function listFiles(
   projectId: string,
   topicId?: string | null,
-  taskId?: string | null
-): Promise<ListPayload<WorkspaceFile>> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<WorkspaceFile>>(`/projects/${encodeURIComponent(projectId)}/files${t}`)
+  taskId?: string | null,
+  source: FileSource = 'live'
+): Promise<ListPayload<WorkspaceFile> & { source: FileSource }> {
+  const t = `?${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+  return request<ListPayload<WorkspaceFile> & { source: FileSource }>(
+    `/projects/${encodeURIComponent(projectId)}/files${t}`
+  )
 }
 
 // <img src=…> URL for a workspace file (binary raw endpoint) — the 文件 panel
 // shows images as images instead of Monaco-mangled bytes.
-export function workspaceFileRawUrl(projectId: string, path: string, topicId?: string, taskId?: string | null): string {
-  const t = `&${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+export function workspaceFileRawUrl(
+  projectId: string,
+  path: string,
+  topicId?: string,
+  taskId?: string | null,
+  source: FileSource = 'live'
+): string {
+  const t = `&${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return `${BASE}/projects/${encodeURIComponent(projectId)}/file/raw?path=${encodeURIComponent(path)}${t}`
 }
 
@@ -1421,9 +1686,10 @@ export function readFile(
   projectId: string,
   path: string,
   topicId?: string | null,
-  taskId?: string | null
+  taskId?: string | null,
+  source: FileSource = 'live'
 ): Promise<FileContent> {
-  const t = `&${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
+  const t = `&${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request<FileContent>(`/projects/${encodeURIComponent(projectId)}/file?path=${encodeURIComponent(path)}${t}`)
 }
 
@@ -1499,6 +1765,12 @@ export function getPrChecks(topicId: string, taskId?: string | null): Promise<Pr
   return request<PrChecks>(
     `/topics/${encodeURIComponent(topicId)}/pr-checks${taskId ? `?task=${encodeURIComponent(taskId)}` : ''}`
   )
+}
+
+/** 这张卡交出去的那一份字节。快照在递卡那一刻就落下来了，所以人点采纳之前就取得
+ *  到——他要审的正是这一份。 */
+export function cardDeliverableUrl(cardId: string): string {
+  return `${BASE}/accept-cards/${encodeURIComponent(cardId)}/deliverable`
 }
 
 // 合的是人看到的那个 commit：会触发合并的三个入口（采纳 / 人工放行 / 布防）都
@@ -1653,7 +1925,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 export function addTopicMember(topicId: string, handle: string, role: string, actor: string): Promise<TopicMemberRow> {
@@ -1723,10 +1995,238 @@ export function listMilestones(projectId: string): Promise<ListPayload<Milestone
   return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
 }
 
-// ---- 贡献图 (§10.1) ----
+// ---- 反馈 (feedback) ----
+//
+// 平台级的收件箱，前缀是 `/feedback`，**不在任何项目或话题下面**（理由见
+// `backend/app/api/routes/feedback.py`）。只有提案卡那三个函数挂在话题上 ——
+// 提案是一句在某话题里说的话，配额和鉴权都挂在那一边。
+//
+// 路由按「新模块」写：`/feedback/meta`、`/feedback/counts`、`/feedback/mine` 这类
+// 固定段在 `/{feedback_id}` 之前注册，所以不会被当成一个 uuid 吃掉。
 
-export function getContributions(projectId: string): Promise<Contributions> {
-  return request<Contributions>(`/projects/${encodeURIComponent(projectId)}/contributions`)
+/** 查询串拼装。空值一律不出现 —— 发 `?q=` 和发 `?q` 对 FastAPI 的 `str | None`
+ *  是两件事（后者才是「没给」）。 */
+function feedbackQuery(params: Record<string, string | number | null | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') continue
+    search.set(key, String(value))
+  }
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
+/** 词表：有哪些状态、按什么顺序流动、我是不是管理员。 */
+export function getFeedbackMeta(): Promise<FeedbackMeta> {
+  return request<FeedbackMeta>('/feedback/meta')
+}
+
+/** 铃铛和 Tab 上的数字。列表接口也带一份，但铃铛不该为了一个整数拉一整页。 */
+export function getFeedbackCounts(): Promise<FeedbackCounts> {
+  return request<FeedbackCounts>('/feedback/counts')
+}
+
+/** 把未读游标推到此刻。 */
+export function markFeedbackRead(): Promise<{ last_read_at: string }> {
+  return request<{ last_read_at: string }>('/feedback/read', { method: 'POST' })
+}
+
+export interface FeedbackListQuery {
+  tab?: string
+  q?: string
+  sort?: string
+  pageStart?: number
+  pageSize?: number
+}
+
+/** 公开列表。`tab` 不认识时后端回 400 而不是悄悄退回 `all` —— 猜错栏位会让人
+ *  以为「这条反馈不见了」。所以调用方传的 tab 必须来自 `getFeedbackMeta().tabs`。 */
+export function listFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+  return request<FeedbackListPayload>(
+    `/feedback${feedbackQuery({
+      tab: query.tab,
+      q: query.q,
+      sort: query.sort,
+      page_start: query.pageStart,
+      page_size: query.pageSize,
+    })}`
+  )
+}
+
+/** 「我的反馈」：我提的 + 我替谁提的 + 指派给我的。访客拿空列表，不是 401。 */
+export function listMyFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+  return request<FeedbackListPayload>(
+    `/feedback/mine${feedbackQuery({ page_start: query.pageStart, page_size: query.pageSize })}`
+  )
+}
+
+export function getFeedback(feedbackId: string): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/feedback/${encodeURIComponent(feedbackId)}`)
+}
+
+/** 一页评论。不给 `parentId` 是顶层评论那一页（一页若干栋楼，每栋跟着它的前若干条
+ *  回复走），给了就是**那一栋楼里**从 `after` 往后的一段回复。
+ *
+ *  两个取法共用一条路由、一套游标，客户端不记第二种形状。`after` 是服务端发出来的
+ *  **不透明**串，原样带回来 —— 自己拼一个（「最后一条的时间戳 + id」）拼得出来，
+ *  但那是把服务端的排序规则抄了第二份，改排序的那天两边会漂开，症状是翻页漏行。
+ *
+ *  `next_cursor` 为 null 表示这一层取完了（顶层评论取完了 / 这栋楼取完了）。 */
+export function listFeedbackComments(
+  feedbackId: string,
+  opts: { after?: string | null; parentId?: string | null } = {}
+): Promise<{ items: FeedbackComment[]; next_cursor: string | null }> {
+  const params = new URLSearchParams()
+  if (opts.after) params.set('after', opts.after)
+  if (opts.parentId) params.set('parent_id', opts.parentId)
+  const query = params.toString()
+  return request<{ items: FeedbackComment[]; next_cursor: string | null }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments${query ? `?${query}` : ''}`
+  )
+}
+
+/** 提一条反馈。**agent 不能走这条路** —— 服务端会 403；agent 的入口是提案卡。
+ *  作者不是参数：它是验证过的会话身份，客户端说了不算。 */
+export function createFeedback(body: FeedbackCreateBody): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>('/feedback', { method: 'POST', body: JSON.stringify(body) })
+}
+
+/** 支持。重复点是幂等的，回的是**写完之后**的计数，不是增量 —— 增量会让两个
+ *  同时点的人各自渲染出一个从来没存在过的数字。 */
+export function supportFeedback(feedbackId: string): Promise<FeedbackSupportResult> {
+  return request<FeedbackSupportResult>(`/feedback/${encodeURIComponent(feedbackId)}/supports`, {
+    method: 'POST',
+  })
+}
+
+export function unsupportFeedback(feedbackId: string): Promise<FeedbackSupportResult> {
+  return request<FeedbackSupportResult>(`/feedback/${encodeURIComponent(feedbackId)}/supports`, {
+    method: 'DELETE',
+  })
+}
+
+/** 发一条评论。`parentId` 指向**任意**一条评论：回复的回复由服务端折到顶层，
+ *  层级恒为两层，这个判断不放在客户端（放这里就会有第二份实现对不上）。 */
+export function createFeedbackComment(
+  feedbackId: string,
+  body: string,
+  parentId?: string | null
+): Promise<FeedbackComment> {
+  return request<FeedbackComment>(`/feedback/${encodeURIComponent(feedbackId)}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body, parent_id: parentId ?? null }),
+  })
+}
+
+/** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
+ *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
+ *  遍历，多算一次就会和服务端的答案漂开。 */
+export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+const commentLikeUrl = (feedbackId: string, commentId: string) =>
+  `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}/likes`
+
+/** 点赞一条评论。和 `supportFeedback` 同一个形状：回的是**写完之后的计数**，
+ *  不是增量。重复点是幂等的，所以「双击」这件事不需要客户端去防。 */
+export function likeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'POST' })
+}
+
+export function unlikeFeedbackComment(feedbackId: string, commentId: string): Promise<FeedbackCommentLikeResult> {
+  return request<FeedbackCommentLikeResult>(commentLikeUrl(feedbackId, commentId), { method: 'DELETE' })
+}
+
+/* ---- 管理端 (`/admin/feedback`) ---- */
+
+export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string } = {}): Promise<FeedbackListPayload> {
+  return request<FeedbackListPayload>(
+    `/admin/feedback${feedbackQuery({
+      tab: query.tab,
+      assignee: query.assignee,
+      q: query.q,
+      page_start: query.pageStart,
+      page_size: query.pageSize,
+    })}`
+  )
+}
+
+export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`)
+}
+
+/** 改了哪几项就传哪几项，`undefined` 表示「别动它」。**没有 visibility**：
+ *  公开与否是提交者一次性的选择，管理员能改它就等于那个决定是假的。 */
+export interface FeedbackAdminPatch {
+  priority?: FeedbackPriority
+  assignee_handle?: string | null
+  security?: boolean
+}
+
+export function patchAdminFeedback(feedbackId: string, patch: FeedbackAdminPatch): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+/** 推一个状态。状态和它那条时间线在后端同一个事务里落库，所以这个动作没有
+ *  「只改状态不写历史」的版本。 */
+export function setAdminFeedbackStatus(feedbackId: string, status: FeedbackStatus): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  })
+}
+
+/** 内部备注。**只增不改**：一个字符串列会在两个管理员之间互相覆盖，而「上一版
+ *  写了什么」正是分诊时最需要知道的。 */
+export function createAdminFeedbackNote(feedbackId: string, body: string): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}/notes`, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  })
+}
+
+export type { FeedbackNote }
+
+/* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */
+
+/** 这个话题里**还活着**的提案卡，最新的一张在前。
+ *
+ *  「还活着」由服务端的指纹决定，不由组件状态决定：已经「不用」过的不会回来 ——
+ *  原型的「不用」只活在内存里，刷新就回来。 */
+export function listFeedbackProposals(topicId: string): Promise<FeedbackProposal[]> {
+  return request<FeedbackProposal[]>(`/topics/${encodeURIComponent(topicId)}/feedback-proposals`)
+}
+
+/** 「不用」。落一行；那张卡本身留在话题历史里（「问过」要记得，「以后别再问」
+ *  也要记得）。 */
+export function dismissFeedbackProposal(topicId: string, blockId: string): Promise<{ dismissed: boolean }> {
+  return request<{ dismissed: boolean }>(
+    `/topics/${encodeURIComponent(topicId)}/feedback-proposals/${encodeURIComponent(blockId)}/dismiss`,
+    { method: 'POST' }
+  )
+}
+
+/** 发送：把卡变成一条正式反馈。
+ *
+ *  正文走请求体而不是卡上的原文 —— 抽屉是预填的，人可以改完再发，而按下发送的
+ *  人为自己发出去的东西负责。作者从卡上取（提案的 agent），提交者取验证过的
+ *  调用者，两个字段都不是客户端能填的。 */
+export function acceptFeedbackProposal(
+  topicId: string,
+  blockId: string,
+  body: FeedbackCreateBody
+): Promise<FeedbackDetail> {
+  return request<FeedbackDetail>(
+    `/topics/${encodeURIComponent(topicId)}/feedback-proposals/${encodeURIComponent(blockId)}/accept`,
+    { method: 'POST', body: JSON.stringify(body) }
+  )
 }
 
 // Build the absolute WebSocket URL for a topic's chat channel, honoring the

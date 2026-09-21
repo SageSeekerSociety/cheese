@@ -93,19 +93,40 @@ ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
 
+# The harnesses this deployment can run, by name. Declared here rather than
+# beside ``HARNESSES`` below because ``SessionRef`` defaults to one of them, and
+# a default spelled as a literal is the same fact written down twice. What each
+# of them can be pointed at is further down, under 「which harness」.
+CLAUDE_CODE = "claude-code"
+CODEX = "codex"
+PI = "pi"
+
 
 @dataclass(frozen=True, slots=True)
 class SessionRef:
     """Which conversation this is, to the harness holding it.
 
-    One per topic today, which is why a topic id names it. When a room can host
-    two agents working at once, the pair that identifies a session grows a
-    second half and this is the type that grows it — every caller already goes
-    through here rather than passing a topic id around.
+    A room hosts as many conversations as it seats agents, so a topic id does
+    not name one — ``(topic, agent_handle, harness)`` does, and it is the same
+    key ``agent_sessions`` is written under. Everything that resolves where a
+    session runs starts from this, which is why the machines are recorded per
+    session and never per room (结论 60).
+
+    ``agent_handle`` is :attr:`ResolvedAgent.handle`, the agent's key inside its
+    project — not the seat it authors under. The two differ, and reading under
+    one while writing under the other hands back None rather than failing.
+
+    The two halves are left unset by the calls that address a PLACE rather than
+    a conversation: a room's event spool and the screen it is watched in are one
+    per room, so reading them names no agent. Anything that resolves where a
+    session runs must fill them in — that resolution is per session and there is
+    nothing on the room left to fall back to.
     """
 
     project_id: uuid.UUID
     topic_id: uuid.UUID
+    agent_handle: str = ""
+    harness: str = CLAUDE_CODE
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +173,13 @@ class Opening:
     memory_scope: str | None = None
     owner: str | None = None
     agent_handle: str | None = None
+    # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：先解析被点名的参与者、
+    # 取到会话，再问这一问题，需要了才去租。False 的一轮只有对话、记忆和平台工具
+    # ——仓库文件和项目命令都不在它桌上，所以它在所有执行机离线时也必须答得出来。
+    #
+    # 它是这一轮的属性，不是这条会话的：同一条会话可以这一轮只聊天、下一轮动文件。
+    # 所以它随 ``Opening`` 每次送进来，而不落在 ``SessionRef`` 上。
+    needs_place: bool = True
 
 
 @runtime_checkable
@@ -268,8 +296,14 @@ class AgentRuntime(Protocol):
         turn_id: uuid.UUID | None = None,
         images: list[dict] | None = None,
         agent_handle: str | None = None,
+        session_agent: str,
     ) -> AsyncIterator[AgentEvent]:
         """One turn, start to finish, as the events it produced.
+
+        ``session_agent`` is the conversation's key — :attr:`ResolvedAgent.handle`
+        — which is what the machines this turn runs on are recorded under. It is
+        required rather than optional because a turn with no key resolves no
+        place, and the errand would silently rent a second machine every time.
 
         ``ensure`` + ``send`` + read, for a caller that has nothing to recover
         to: the platform's OWN errands — the activity digest, the heartbeat
@@ -398,15 +432,9 @@ def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
 
 # --- which harness ----------------------------------------------------------
 #
-# ``AgentType.harness`` has existed as a column for a while with nobody reading
-# it. This is the reader. A type that names a harness this deployment does not
-# have must be refused when it is WRITTEN rather than quietly running Claude
-# Code — a stored value nothing honours is how the column got here in the first
-# place.
-
-CLAUDE_CODE = "claude-code"
-CODEX = "codex"
-PI = "pi"
+# The names themselves are declared at the top of this module, because
+# ``SessionRef`` defaults to one and a default written as a literal is a second
+# declaration of the same fact.
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,9 +449,8 @@ class Harness:
     present it. A model has no opinion about any of that.
 
     Written the wrong way round, adding a harness meant editing the model
-    catalogue, an editor had to infer the harness from the model the person
-    picked, and refusing a combination produced an error about the model — the
-    half the person had actually chosen on purpose.
+    catalogue, and refusing a combination produced an error about the model —
+    the half the person had actually chosen on purpose.
     """
 
     name: str
@@ -461,17 +488,11 @@ HARNESSES: dict[str, Harness] = {
     PI: Harness(PI, "pi", draws_on_its_screen=False),
 }
 
-# What a type that declines to choose runs on. A type is 出厂设置, not a
-# deployment decision — most of them have no opinion about the harness, and the
-# null they store means "whatever this platform runs", not "none".
+# 这套部署跑的骨架（结论 28）。骨架不是产品概念，不在类型上也不在实例上，所以
+# 没有第二处可以答「跑的是哪个」；P16 把这一行换成真的部署设置。
 DEFAULT_HARNESS = CLAUDE_CODE
 
 
-def harness_name(declared: str | None) -> str:
-    """The harness a type declared, or the default when it declared none."""
-    return declared or DEFAULT_HARNESS
-
-
-def known_harness(declared: str | None) -> bool:
-    """Is this a harness we can actually run? None (undeclared) always is."""
-    return declared is None or declared in HARNESSES
+def harness_name(name: str | None) -> str:
+    """调用方给的 harness 名，没给就是这套部署跑的那个。"""
+    return name or DEFAULT_HARNESS

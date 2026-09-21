@@ -47,6 +47,66 @@ class DeviceOffline(RuntimeError):
         self.device_id = device_id
 
 
+class DeviceUnreachable(DeviceOffline):
+    """链路根本不在，所以这一帧一个字节都没有写出去。
+
+    和 ``DeviceOffline`` 本身的差别只有一个，而那一个决定平台事后敢不敢重做这件事：
+    这一档是**发出之前**就失败的，那台机器没见过这次调用。一次已经写进 socket 的调用
+    在等结果的时候链路断了，也是 ``DeviceOffline``（``drop_transport`` 把在飞的
+    future 全置成它）—— 那一档里那件事做没做过，这一侧不知道。
+
+    所以只有这一档能被记成 ``failed``「确定没发生」（``agent/dispatch_log.py``）。
+    一个子类，因为除此之外它和链路不在是同一件事：所有 ``except DeviceOffline`` 照旧。
+    """
+
+
+class DeviceCallError(RuntimeError):
+    """The machine answered a call with a failure of its own.
+
+    「dial unix …sock: no such file」 is the connector saying the runner's
+    socket is not there yet; 「lstat …/.cheese/executor: no such file」 that the
+    home it was asked about is gone. Those are answers, and the message is the
+    whole of what the person in the room can act on. Raised as a bare
+    RuntimeError they were the owner's unhandled 500, the backend's unhandled
+    500 on top of it, and two alerts describing this server for every one the
+    machine sent — 17 alerts folding 29 more repeats on 2026-09-18 alone, with
+    the machine's words cut out of the ones that reached the room.
+
+    A subclass, so every ``except RuntimeError`` that already waits one of
+    these out keeps doing so.
+    """
+
+    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
+
+
+class DeviceNotReady(DeviceCallError):
+    """The link is up, but this machine cannot serve calls yet.
+
+    A connector that has just dialled in finishes updating itself before it can
+    run anything, and a call that arrives in that window has nothing to reach.
+    It is the same standing as the machine being away — the caller's next poll,
+    a second or two later, finds it ready — but as a bare RuntimeError it was an
+    unhandled 500 and one alert per release: 「Device connector must finish
+    updating before execution」 arrived that way at 01:47 UTC on 2026-09-20,
+    seconds after the owner was replaced and the fleet re-attached.
+    """
+
+
+def _read_a_failure_nobody_awaited(future: asyncio.Future[Any]) -> None:
+    """A call registers its future and then writes to the link; when the write
+    itself finds the link dead, ``drop_transport`` fails that very future and
+    the write raises ``DeviceOffline`` — so the caller leaves through the send
+    and never awaits the future it registered. asyncio reports that at garbage
+    collection as 「Future exception was never retrieved」, an ERROR with no
+    route and a traceback into the collector, for a device the caller already
+    reported offline. Reading the exception here is what makes that untrue;
+    a future the caller did await answers the same thing twice for free."""
+    if future.done() and not future.cancelled():
+        future.exception()
+
+
 def configure_subscription_cleanup(remote_hub: Any) -> None:
     """Wire business subscription cleanup without coupling the RPC transport."""
     from app.domain.agent.harness.claude_code import (
@@ -439,6 +499,7 @@ class DeviceHub:
             return await asyncio.wait_for(future, timeout)
         finally:
             device.session_pending.pop(request_id, None)
+            _read_a_failure_nobody_awaited(future)
 
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await self.session_request(device_id, {"t": "session.list"})
@@ -496,7 +557,10 @@ class DeviceHub:
         *,
         timeout: float = 30,
     ) -> Any:
-        """Atomically stage one file under the screen's workspace and await ack."""
+        """Atomically write one server-sent file under the machine's footprint
+        root and await the ack, which carries the absolute path the machine
+        resolved it to. Not the screen's work directory: that is the hosted
+        checkout, which the platform never writes into (结论 49)."""
         device = self._device(device_id)
         device.file_seq += 1
         file_id = f"f{device.file_seq}"
@@ -561,10 +625,14 @@ class DeviceHub:
     ) -> dict:
         device = self._device(device_id)
         if device.transport is None:
-            raise DeviceOffline(device_id)
+            # 发出之前。往下每一步都可能是「已经出去了」，所以这条分界只在这里。
+            raise DeviceUnreachable(device_id)
         identifier = trace_id or "execution-" + uuid.uuid4().hex
         if not device.executor:
-            raise RuntimeError("Device connector must finish updating before execution")
+            raise DeviceNotReady(
+                f"device {device_id} is still updating its connector; "
+                "execution is available once it reports ready"
+            )
         future = asyncio.get_running_loop().create_future()
         device.executor_pending[identifier] = (future, bytearray())
         # The stage lines are DEBUG, and `device_error` below is not. They carry
@@ -581,13 +649,13 @@ class DeviceHub:
                 time.monotonic_ns(),
             )
             await device.send(
-                {
-                    "t": "execution.call",
-                    "id": identifier,
-                    "path": state,
-                    "stdin": json.dumps({"method": method, "params": params}),
-                    "timeout": int(timeout),
-                }
+                device_link.execution_call(
+                    call_id=identifier,
+                    state=state,
+                    method=method,
+                    params=params,
+                    timeout=int(timeout),
+                )
             )
             logger.debug(
                 "execution_timing stage=device_sent trace=%s mono_ns=%d",
@@ -600,6 +668,7 @@ class DeviceHub:
             raise
         finally:
             device.executor_pending.pop(identifier, None)
+            _read_a_failure_nobody_awaited(future)
 
     # -- viewers (browser <-> device screen) -------------------------------
 
@@ -707,7 +776,7 @@ class DeviceHub:
                         msg.id,
                         time.monotonic_ns(),
                     )
-                    raise RuntimeError(msg.error)
+                    raise DeviceCallError(msg.error)
                 else:
                     logger.debug(
                         "execution_timing stage=device_complete trace=%s mono_ns=%d",
@@ -716,7 +785,7 @@ class DeviceHub:
                     )
                     response = json.loads(data)
                     if "error" in response:
-                        raise RuntimeError(response["error"])
+                        raise DeviceCallError(response["error"])
                     future.set_result(response["result"])
             except (ValueError, KeyError, RuntimeError) as exc:
                 future.set_exception(exc)
@@ -728,7 +797,12 @@ class DeviceHub:
             fut = device.call_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(RuntimeError(msg.error))
+                    code = (
+                        msg.value.get("failure_code")
+                        if isinstance(msg.value, dict)
+                        else None
+                    )
+                    fut.set_exception(DeviceCallError(msg.error, failure_code=code))
                 else:
                     fut.set_result(msg.value)
             return
@@ -741,7 +815,7 @@ class DeviceHub:
             fut = pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
-                    fut.set_exception(RuntimeError(msg.error))
+                    fut.set_exception(DeviceCallError(msg.error))
                 else:
                     fut.set_result(msg.value)
             return

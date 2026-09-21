@@ -30,6 +30,8 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import {
   acceptCard,
   approveCard,
+  cardDeliverableUrl,
+  downloadFile,
   getAcceptCards,
   getPrChecks,
   mergeCardAnyway,
@@ -102,16 +104,18 @@ const mergeBadge = computed(() => {
 const mergeReasons = computed(() => {
   const card = pendingCard.value
   if (!card) return []
-  return card.has_external_checks && card.pr_number === null
+  return card.forge.reports_checks && card.pr_number === null
     ? card.merge_state.reasons
     : visibleReasons(card.merge_state)
 })
-// Projects without external checks leave acceptance to the reviewer.
+// 读不到检查结论的托管方，采纳就是验收人自己的判断。
 const platformLane = computed(() => {
   const card = pendingCard.value
-  return !!card && !card.has_external_checks
+  return !!card && !card.forge.reports_checks
 })
-const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendingCard.value.pr_number === null)
+// 这个托管方在人点之前就说明了自己是谁（I23）；GitHub 那一档不说话，卡上有链接。
+const forgeDeclaration = computed(() => pendingCard.value?.forge.declaration || '')
+const needsPr = computed(() => !!pendingCard.value?.forge.hosts_proposals && pendingCard.value.pr_number === null)
 // 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
 // services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
 // `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。
@@ -122,7 +126,12 @@ const needsPr = computed(() => !!pendingCard.value?.has_external_checks && pendi
 const MERGEABLE_STATES = ['clean', 'unstable']
 const acceptBlockedTitle = computed<string | null>(() => {
   const card = pendingCard.value
-  if (!card || platformLane.value || needsPr.value) return null
+  if (!card) return null
+  // 托管方读不出来的那一档（forge.kind === 'unknown'）：能力位一位都不敢说是，所以
+  // 它看起来像平台 lane，但它不是 —— 后端这会儿真去采纳会按同一个失败 422 拒掉。
+  // 闸门和采纳是同一条线，那就灰在这里，理由用卡上已经写着的那一句。
+  if (card.forge.kind === 'unknown') return card.forge.declaration
+  if (platformLane.value || needsPr.value) return null
   if (MERGEABLE_STATES.includes(card.merge_state.state)) return null
   const why = mergeReasons.value.map((r) => r.detail).filter(Boolean)
   return ['现在采纳不会合并', ...why].join('：')
@@ -232,6 +241,26 @@ watch(
 onUnmounted(() => {
   if (prPollTimer !== null) window.clearInterval(prPollTimer)
 })
+
+// 这一版交出去的那一份，在人点采纳之前拿到手 (#1085 结论五)。走下载而不是预览：
+// 给的是递卡那一刻落下的快照，要审的就是这些字节本身。
+const deliverableBusy = ref(false)
+const deliverableError = ref('')
+
+async function onDownloadDeliverable() {
+  const card = pendingCard.value
+  const filename = card?.deliverable?.filename
+  if (!card || !filename || deliverableBusy.value) return
+  deliverableBusy.value = true
+  deliverableError.value = ''
+  try {
+    await downloadFile(cardDeliverableUrl(card.id), filename)
+  } catch (e) {
+    deliverableError.value = e instanceof Error ? e.message : '未能下载这一份'
+  } finally {
+    deliverableBusy.value = false
+  }
+}
 
 // 主分支保护 (spec §4.4): my vote toward the pending card's accept.
 async function onApproveCard() {
@@ -451,6 +480,11 @@ defineExpose({ reload: loadAcceptCard })
           <span>{{ r.detail }}</span>
           <code v-for="chk in r.checks" :key="chk" class="text-caption">{{ chk }}</code>
         </div>
+        <!-- 托管方自己的一句话，在人点采纳之前就在卡上（I23）：这次采纳会落到
+             哪里、有没有外部检查。不是采纳之后补写的一条 note。 -->
+        <div v-if="forgeDeclaration" class="text-caption text-medium-emphasis mb-2">
+          {{ forgeDeclaration }}
+        </div>
         <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
         <div
           v-if="pendingNote"
@@ -499,6 +533,49 @@ defineExpose({ reload: loadAcceptCard })
         </div>
         <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
           推荐理由：{{ pendingCard.routing_reason }}
+        </div>
+        <!--
+          这次交付定的是哪一项产物的哪一版，以及交出去的那一份东西 (#1085 结论
+          三/五)。它在提交标题上面，因为点采纳定的首先是这件事：这一版要不要成为
+          《报告》的当前版本、交出去的是不是这一份文件。提交标题是它被记进历史时
+          的写法，不是它本身。
+          三种交法各有各的落点：文件能当场拿走（快照在递卡那一刻就落好了），地址
+          能当场打开，而一次合并没有可拿的东西——那时候只写产物和版本，不补一句
+          「交出去的是这次合并」凑格式。
+          版本号是后端按卡的状态算的，这里一个都不推。落地之前递的那些卡两样都没
+          有，整块就不出现。
+        -->
+        <div v-if="pendingCard.artifact || pendingCard.deliverable" class="mb-3">
+          <div class="text-caption text-medium-emphasis">这次交付</div>
+          <div class="d-flex align-center flex-wrap ga-2">
+            <span v-if="pendingCard.artifact" class="text-body-2">
+              《{{ pendingCard.artifact.name }}》第 {{ pendingCard.artifact.version }} 版
+            </span>
+            <template v-if="pendingCard.deliverable?.kind === 'file' && pendingCard.deliverable.filename">
+              <span class="text-medium-emphasis">·</span>
+              <code class="text-caption">{{ pendingCard.deliverable.filename }}</code>
+              <v-btn
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                class="text-medium-emphasis"
+                prepend-icon="mdi-tray-arrow-down"
+                :loading="deliverableBusy"
+                @click="onDownloadDeliverable"
+              >
+                下载
+              </v-btn>
+            </template>
+            <template v-else-if="pendingCard.deliverable?.kind === 'link' && pendingCard.deliverable.url">
+              <span class="text-medium-emphasis">·</span>
+              <a class="text-caption" :href="pendingCard.deliverable.url" target="_blank" rel="noopener">
+                {{ pendingCard.deliverable.url }}
+              </a>
+            </template>
+          </div>
+          <div v-if="deliverableError" role="alert" class="text-caption text-error mt-1">
+            {{ deliverableError }}
+          </div>
         </div>
         <!--
           提交与 PR 规范: 采纳会把整个分支压成一个提交，标题就是这一行。
@@ -645,7 +722,10 @@ defineExpose({ reload: loadAcceptCard })
           红着合有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
           没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
         -->
-        <div v-if="pendingCard.pr_number && acceptBlockedTitle" class="mt-2">
+        <div
+          v-if="pendingCard.pr_number && acceptBlockedTitle && !mergeReasons.some((r) => r.kind === 'dependency')"
+          class="mt-2"
+        >
           <v-btn
             v-if="!showForceMergeInput"
             size="small"

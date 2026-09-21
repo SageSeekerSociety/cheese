@@ -57,6 +57,10 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.api.routes.remote_control": ("REMOTE_CONTROLS",),
     # --- 边缘：适配器对外的那条边 ---
     "app.api.routes.sandbox": ("hook_router",),
+    # 行为声明的汇总侧：三个骨架的门口各取一份 declaration()，拼成功能矩阵。
+    # 它只拿这一个名字，而且拿的是「这个 harness 自己说自己是什么」——不是
+    # 适配器的内部零件。
+    "app.domain.agent.capability.matrix": ("declaration",),
     # Enrollment prepares the native cache and idle process before advertising capacity.
     "app.domain.machine.enrollment": (
         "CLAUDE_MIN_VERSION",

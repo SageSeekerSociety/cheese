@@ -90,7 +90,8 @@ describe('chat recovery after history errors', () => {
     await flushPromises()
     await vi.advanceTimersByTimeAsync(30000)
     expect(listBlocks).toHaveBeenCalledTimes(1)
-    expect(sockets).toHaveLength(0)
+    expect(sockets).toHaveLength(1)
+    expect(sockets[0].close).toHaveBeenCalledOnce()
   })
 
   it('does not restart recovery when a pending fetch fails after unmount', async () => {
@@ -101,12 +102,14 @@ describe('chat recovery after history errors', () => {
       })
     )
     const view = mountPanel()
+    await flushPromises()
     view.unmount()
     reject(new ApiError(502, 'Bad Gateway'))
     await flushPromises()
     await vi.advanceTimersByTimeAsync(30000)
     expect(listBlocks).toHaveBeenCalledTimes(1)
-    expect(sockets).toHaveLength(0)
+    expect(sockets).toHaveLength(1)
+    expect(sockets[0].close).toHaveBeenCalledOnce()
   })
 
   it('reconciles a lost echo from history before opening a replacement socket', async () => {
@@ -126,7 +129,7 @@ describe('chat recovery after history errors', () => {
           project_id: 'p',
           topic_id: 't',
           kind: 'message',
-          author_type: 'human',
+          author_type: 'participant',
           author: 'u',
           content: sent.content,
           meta: { client_id: sent.client_id },
@@ -200,4 +203,109 @@ describe('chat recovery after history errors', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(sockets[0].close).not.toHaveBeenCalled()
   })
+})
+
+it('can send while initial history is pending and preserves live messages when it arrives', async () => {
+  let resolve!: (value: Awaited<ReturnType<typeof listBlocks>>) => void
+  vi.mocked(listBlocks).mockReturnValueOnce(
+    new Promise((yes) => {
+      resolve = yes
+    })
+  )
+  const view = mountPanel(true)
+  await flushPromises()
+  expect(sockets).toHaveLength(1)
+  sockets[0].onopen?.()
+  await flushPromises()
+  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
+  expect(textarea.disabled).toBe(false)
+  textarea.focus()
+  await fireEvent.update(textarea, 'hello before history')
+  await fireEvent.keyDown(textarea, { key: 'Enter' })
+  const sent = JSON.parse(String(sockets[0].send.mock.calls[0][0]))
+  const block = {
+    id: 'live',
+    topic_id: 'room',
+    kind: 'message',
+    author_type: 'participant',
+    author: 'alice',
+    content: sent.content,
+    meta: { client_id: sent.client_id },
+    created_at: new Date().toISOString(),
+  } as Block
+  sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
+  resolve({ data: [], has_more: false, total: 0, oldest_id: null })
+  await flushPromises()
+  expect(view.container.textContent).toContain('hello before history')
+  expect(view.container.querySelector('.im-row--pending')).toBeNull()
+  expect(sockets).toHaveLength(1)
+})
+
+it('a delayed history snapshot cannot restore a retracted live block', async () => {
+  let resolve!: (value: Awaited<ReturnType<typeof listBlocks>>) => void
+  vi.mocked(listBlocks).mockReturnValueOnce(
+    new Promise((yes) => {
+      resolve = yes
+    })
+  )
+  const view = mountPanel()
+  await flushPromises()
+  sockets[0].onopen?.()
+  sockets[0].onmessage?.({ data: JSON.stringify({ type: 'retract_block', block_id: 'removed' }) })
+  resolve({
+    data: [
+      {
+        id: 'removed',
+        kind: 'message',
+        author: 'alice',
+        content: 'stale removed message',
+        meta: {},
+        created_at: new Date().toISOString(),
+      } as Block,
+    ],
+    has_more: false,
+    total: 1,
+    oldest_id: null,
+  })
+  await flushPromises()
+  expect(view.container.textContent).not.toContain('stale removed message')
+})
+
+it('keeps a reaction received before its message arrives in history', async () => {
+  let resolve!: (value: Awaited<ReturnType<typeof listBlocks>>) => void
+  vi.mocked(listBlocks).mockReturnValueOnce(
+    new Promise((yes) => {
+      resolve = yes
+    })
+  )
+  const view = mountPanel()
+  await flushPromises()
+  sockets[0].onopen?.()
+  sockets[0].onmessage?.({
+    data: JSON.stringify({
+      type: 'reaction',
+      block_id: 'old',
+      reactions: [{ emoji: '👍', count: 1, authors: ['alice'] }],
+    }),
+  })
+  resolve({
+    data: [
+      {
+        id: 'old',
+        topic_id: 'room',
+        kind: 'message',
+        author: 'alice',
+        author_type: 'participant',
+        content: 'history message',
+        reactions: [],
+        meta: {},
+        created_at: new Date().toISOString(),
+      } as Block,
+    ],
+    has_more: false,
+    total: 1,
+    oldest_id: null,
+  })
+  await flushPromises()
+  expect(view.container.querySelector('.rx-emoji')?.textContent).toBe('👍')
 })

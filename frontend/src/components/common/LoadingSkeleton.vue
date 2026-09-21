@@ -31,9 +31,11 @@ withDefaults(
      * - `site`   现场的一条动作（`PanelSite` 的 `.site-act`，8px 圆点 + 动作 + 参数）
      * - `brief`  一条活打开后的头（`PanelCard`：标题 + 一行元信息 + 简报那一段）
      * - `doc`    实况文档的正文（`DocEditor` 的 `.doc-prose`：小标题 + 几段 28.8px 的行）
+     * - `feedback` 反馈中心的一条（`FeedbackCard` 的 `.fb-card`：左边支持按钮 + 标题 + 两行摘要 + 元信息一行）
+     * - `detail` 反馈详情页整页（`FeedbackDetailPage` 的 `.fb-layout`：标题 + 芯片 + 正文几段 + 右边一栏两格）
      * - `text`   一段正文
      */
-    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'brief' | 'doc' | 'text'
+    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'brief' | 'doc' | 'feedback' | 'detail' | 'text'
     /** 画几行。默认值按各自最常见的一屏给，调用点通常不用传。 */
     rows?: number
   }>(),
@@ -50,6 +52,8 @@ const DEFAULT_ROWS: Record<string, number> = {
   site: 5,
   brief: 1,
   doc: 3,
+  feedback: 6,
+  detail: 3,
   text: 3,
 }
 
@@ -164,6 +168,77 @@ function width(i: number): string {
       <div v-for="i in rows || DEFAULT_ROWS.doc" :key="i" class="skel__dsec" :style="{ '--skel-i': i }">
         <div class="skel__bone skel__bone--h2" :style="{ width: i % 2 ? '38%' : '30%' }" />
         <div v-for="j in i % 2 ? 3 : 2" :key="j" class="skel__bone skel__bone--p" :style="{ width: width(i + j) }" />
+      </div>
+    </template>
+
+    <!-- 反馈中心的一条：左边是支持（32px 的正圆按钮 + 计数），右边是标题 + 状态芯片、
+         两行摘要、元信息一行。它和 `card` 不是一回事：看板的卡没有左边那一列，也没有
+         两行摘要；共用一种形态就会有一边对不上。 -->
+    <template v-else-if="variant === 'feedback'">
+      <div v-for="i in rows || DEFAULT_ROWS.feedback" :key="i" class="skel__fb" :style="{ '--skel-i': i }">
+        <div class="skel__fb-vote">
+          <div class="skel__bone skel__bone--vote" />
+          <div class="skel__bone skel__bone--votecount" />
+        </div>
+        <div class="skel__fb-main">
+          <div class="skel__fb-titlerow">
+            <div class="skel__bone skel__bone--fbtitle" />
+            <div class="skel__bone skel__bone--fbchip" />
+          </div>
+          <div class="skel__bone skel__bone--fbsum" :style="{ width: width(i) }" />
+          <!-- 第二行：-webkit-line-clamp 的第二行本来就是半行，所以它固定短一截。 -->
+          <div class="skel__bone skel__bone--fbsum skel__bone--fbsum-last" />
+          <div class="skel__fb-meta">
+            <div class="skel__bone skel__bone--meta skel__bone--fbauthor" />
+            <div class="skel__bone skel__bone--fbtag" />
+            <div class="skel__bone skel__bone--fbtag" />
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 反馈详情页整页。它是这一份里唯一一个**带栏**的形态，而且非带不可：那一页
+         真实的样子是「左边正文 + 右边 280px 一栏两格」，只画左边的话，右栏会在内容
+         到达那一刻凭空插进来，正文整块被挤窄一次 —— 那正是骨架想避免的事情。
+         画到哪一格：标题、芯片行、元信息、两颗动作按钮、正文若干段，右栏两格。
+         正文里那几段不画成标题 + 段落（`doc` 那样）：这一页的小标题（「问题描述」
+         「现场」）是可选的，多数反馈只有一两段，画上等于承诺一个多半不存在的结构。 -->
+    <template v-else-if="variant === 'detail'">
+      <div class="skel__dt">
+        <div class="skel__dt-main">
+          <div class="skel__bone skel__bone--dttitle" />
+          <div class="skel__dt-chips">
+            <div class="skel__bone skel__bone--dtchip" />
+            <div class="skel__bone skel__bone--dtchip" />
+            <div class="skel__bone skel__bone--dtchip skel__bone--dtchip-narrow" />
+          </div>
+          <div class="skel__bone skel__bone--meta skel__bone--dtmeta" />
+          <div class="skel__dt-actions">
+            <div class="skel__bone skel__bone--dtbtn" />
+            <div class="skel__bone skel__bone--dtbtn skel__bone--dtbtn-narrow" />
+          </div>
+          <div v-for="i in rows || DEFAULT_ROWS.detail" :key="i" class="skel__dt-sec" :style="{ '--skel-i': i }">
+            <div class="skel__bone skel__bone--meta skel__bone--dtsechead" :style="{ width: i % 2 ? '18%' : '14%' }" />
+            <div
+              v-for="j in i % 2 ? 3 : 2"
+              :key="j"
+              class="skel__bone skel__bone--line"
+              :style="{ width: width(i + j) }"
+            />
+          </div>
+        </div>
+        <div class="skel__dt-aside">
+          <!-- 右栏那两格：第一格是状态时间线（五档，所以四条线），第二格是两行数字。
+               两格的形状不一样，所以不写成同一个 v-for。 -->
+          <div class="skel__dt-card">
+            <div class="skel__bone skel__bone--meta skel__bone--dtcardhead" />
+            <div v-for="j in 4" :key="j" class="skel__bone skel__bone--line" :style="{ width: width(j) }" />
+          </div>
+          <div class="skel__dt-card">
+            <div class="skel__bone skel__bone--meta skel__bone--dtcardhead" />
+            <div v-for="j in 2" :key="j" class="skel__bone skel__bone--line" :style="{ width: width(j + 2) }" />
+          </div>
+        </div>
       </div>
     </template>
 
@@ -521,6 +596,189 @@ function width(i: number): string {
 /* 一段的最后一行还要补上段落自己的 12px 下边距。 */
 .skel__dsec .skel__bone--p:last-child {
   margin-bottom: 21px;
+}
+
+/* FeedbackCard 的 .fb-card：padding 16px、gap 12px、1px 描边，外面那层 .fb-list
+   是 8px 的列间距；底色是 --surface（v-card 的默认），不是 --canvas。
+   圆角写 --radius-lg：真卡是 24px（VCard 的 rounded="xl" 默认值，FeedbackCard.vue
+   里有那段说明），而 24px 不在 stylelint 的白名单里，骨架也不该为了观感去动全仓的
+   v-card 默认值。圆角不参与布局，这一处对不上不会让内容挪位。 */
+.skel__fb {
+  display: flex;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+.skel__fb-vote {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 2px;
+}
+/* 支持按钮：v-btn icon size=small —— 32px 的正圆（.v-btn--icon 是 border-radius 50%）。 */
+.skel__bone--vote {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+/* 它下面那一行计数：12px 等宽字，行盒 18px。 */
+.skel__bone--votecount {
+  width: 20px;
+  height: 10px;
+  margin: 4px 0;
+}
+.skel__fb-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+/* 标题那一行：15px × 1.4 = 21px 的行盒，右边跟一枚状态芯片（19px）。 */
+.skel__fb-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.skel__bone--fbtitle {
+  width: 46%;
+  height: 13px;
+  margin: 4px 0;
+}
+/* 状态芯片是胶囊（.fb-chip），高 19px。 */
+.skel__bone--fbchip {
+  width: 56px;
+  height: 19px;
+  flex: none;
+  border-radius: var(--radius-pill);
+}
+/* 摘要两行：13px × 1.6 = 20.8px 的行盒。第一行占满（真文字就是这样），第二行短一截。
+   合计 20.8 × 2 + 卡片自己那 8px 下边距 = 49.6px。 */
+.skel__bone--fbsum {
+  height: 12px;
+  margin: 4px 0 5px;
+}
+.skel__bone--fbsum-last {
+  width: 48%;
+  margin-bottom: 13px;
+}
+/* 元信息一行：作者 · 时间、评论数、来源或标签的芯片。 */
+.skel__fb-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.skel__bone--fbauthor {
+  width: 88px;
+}
+/* 中性 chip：--fill 底、6px 圆角、高 19px。 */
+.skel__bone--fbtag {
+  width: 48px;
+  height: 19px;
+  border-radius: var(--radius-sm);
+}
+
+/* 反馈详情页整页。栏宽和间距抄 .fb-layout（minmax(0,1fr) 280px / gap 32px），
+   因为骨架的全部价值就是和真东西同一个形状。 */
+.skel__dt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  align-items: start;
+  gap: 32px;
+}
+/* 窄屏（Vuetify mdAndUp 的门槛是 960px）真页面是单栏，右栏掉到正文下面。
+   断点必须跟着改，否则骨架是两栏、内容是一栏。 */
+@media (max-width: 959px) {
+  .skel__dt {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.skel__dt-main {
+  min-width: 0;
+}
+/* 标题是 .t-page-title（20px × 1.35 = 27px 的行盒）。 */
+.skel__bone--dttitle {
+  width: 58%;
+  height: 18px;
+  margin: 4px 0;
+}
+.skel__dt-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+/* 状态/类型芯片是 .chip-neutral，高 19px、6px 圆角。 */
+.skel__bone--dtchip {
+  width: 58px;
+  height: 19px;
+  border-radius: var(--radius-sm);
+}
+.skel__bone--dtchip-narrow {
+  width: 40px;
+}
+.skel__bone--dtmeta {
+  width: 34%;
+  margin: 3px 0 4px;
+}
+/* 支持 + 分享两颗 outlined 按钮：v-btn 默认高 36px、胶囊圆角。 */
+.skel__dt-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 24px;
+}
+.skel__bone--dtbtn {
+  width: 132px;
+  height: 36px;
+  border-radius: var(--radius-pill);
+}
+.skel__bone--dtbtn-narrow {
+  width: 84px;
+}
+/* 正文的段：.t-eyebrow 那一行 + 若干 14px 的字行，段与段之间是 24px + 一条线。
+   最后一段不画那段留白，理由和 `.skel__fb` 的第二行一样 —— 真内容那里是页面
+   的下边距。 */
+.skel__dt-sec {
+  display: flex;
+  flex-direction: column;
+}
+.skel__dt-sec + .skel__dt-sec {
+  padding-top: 24px;
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.skel__bone--dtsechead {
+  height: 10px;
+}
+.skel__dt-sec .skel__bone--line {
+  margin: 5px 0 6px;
+}
+/* 右栏那两格：1px 边框 + 16px 内边距的圆角卡，格与格之间 16px。 */
+.skel__dt-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.skel__dt-card {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.skel__bone--dtcardhead {
+  width: 46%;
+  margin-bottom: 4px;
+}
+.skel__dt-card .skel__bone--line {
+  margin: 5px 0 6px;
 }
 
 /* 侧栏的 .topic-row：min-height 36px、margin-block 2px；标题从左边 40px 处起

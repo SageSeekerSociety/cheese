@@ -8,7 +8,7 @@ from app.domain.agent.platform_failures import (
     classify_platform_failure,
     is_storage_exhausted,
 )
-from app.domain.workspace.service import WorkspacePermissionError
+from app.domain.repository.service import WorkspacePermissionError
 
 
 def test_storage_exhaustion_matches_errno_and_provider_text():

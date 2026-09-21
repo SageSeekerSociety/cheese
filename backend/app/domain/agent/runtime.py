@@ -17,13 +17,14 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import lru_cache
 
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
+from app.domain.agent import dispatch_log
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
@@ -32,6 +33,7 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_DEPLOY_INTERRUPTED,
+    EVENT_DISPATCH_UNKNOWN,
     EVENT_TOOLS_RECOVERED,
     EVENT_TURN_FAILED,
     EVENT_TURN_QUEUED,
@@ -45,10 +47,34 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
+from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import names_a_person
+from app.domain.identity.arrival import Arrival, how_it_arrives
+from app.domain.identity.handles import agent_instance_handle, names_a_person
+from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
+
+
+def _a_turn_was_addressed(addressed: Addressed) -> bool:
+    """这条事件点到的人里，有没有谁是**靠一轮**收到它的。
+
+    这是「这一轮跑不跑」现在唯一的答案（不变量 I13）。以前它是每个调用点自己传进来
+    的一个布尔：浏览器算一个 `summon` 发上来，平台自己的那些路径干脆写死 `True`。
+    两者都是「点名的人同时替被点名的人决定他要动」，而点名和到达是两件事 ——
+    `address()` 说谁被点到，`how_it_arrives()` 说他怎么收到，一轮只是 agent 那一档
+    的物理形态。平台因此发不起一轮：它可以点谁的名，点到人就是一条站内信。
+    """
+    return any(how_it_arrives(r.handle) is Arrival.turn for r in addressed.recipients)
+
+
+def addressed_to_agent(handle: str | None) -> Addressed:
+    """这个房间的 agent 席位被点名了 —— 调用点最常要的那一条寻址。
+
+    `asked` 而不是别的关系：房间里有人说了话、有人按了「叫它看一下」、一条活的
+    检查红了，共同点都是「芝士停在这里，接下来只有它能往下走」。
+    """
+    return address(Event(asked=handle), Hand.participant) if handle else NOBODY
 
 
 def _fire_on_done(callback: Callable[[], None]) -> None:
@@ -151,17 +177,21 @@ class InProcessBroker:
         *,
         author: str,
         content: str,
-        summon: bool,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         provision_actor: Actor | None = None,
         client_id: str | None = None,
     ) -> uuid.UUID:
-        """Persist one human message now, then schedule AI work if requested.
+        """Persist one human message now, then deliver it to whoever it named.
 
         Receiving a message is free collaboration state; running a model turn is
         metered work. Keeping those as two operations makes the ordering real:
         the project queue and credit gate can delay/refuse only the latter.
+
+        **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
+        `summon: bool` 入参，从浏览器的帧上一路传到这里，和服务端解析出来的 @ 做或
+        运算 —— 也就是说一条谁也没 @ 的消息，只要客户端把那个布尔置真，照样起一轮。
+        现在只认落库那一刻解析出来的 `agent_recipient`：@ 了谁，就是点了谁的名。
         """
         received_at = time.monotonic()
         channel = str(topic_id)
@@ -186,18 +216,34 @@ class InProcessBroker:
             client_id=client_id,
         )
         turn_id = user_block_id
-        recipient_handle = next(
+        recipient = next(
             (
-                (payload.get("meta") or {}).get("agent_recipient", {}).get("handle")
+                (payload.get("meta") or {}).get("agent_recipient")
                 for payload in payloads
                 if (payload.get("meta") or {}).get("agent_recipient")
             ),
             None,
         )
-        summon = summon or any(
+        recipient_handle = (recipient or {}).get("handle")
+        mentioned = any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
             for payload in payloads
         )
+        # 点到的是**席位**，不是这个队友自己的名字。`agent_recipient.handle` 是项目
+        # 给它起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意小写
+        # 串），而一条投递怎么到达是按席位的命名规矩判出来的
+        # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去问，一个没叫
+        # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
+        # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
+        #
+        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
+        # / `wait_for_recipient` 问的是「哪个实例在跑」，那边认的就是实例名。
+        seat = (
+            agent_instance_handle(uuid.UUID(str(recipient["instance_id"])))
+            if recipient and recipient.get("instance_id")
+            else recipient_handle
+        )
+        addressed = addressed_to_agent(seat if mentioned else None)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self.publish(channel, {"type": "user_block", "block": payload})
@@ -215,7 +261,7 @@ class InProcessBroker:
                 chat_service,
                 topic_id,
                 turn_id,
-                summon=summon,
+                addressed=addressed,
                 continuation_id=turn_id,
                 author=author,
                 content=next(
@@ -631,7 +677,7 @@ class AgentWorkRunner:
         *,
         author: str,
         content: str,
-        summon: bool,
+        addressed: Addressed,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         is_resume: bool = False,
@@ -640,11 +686,17 @@ class AgentWorkRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        turn_id: uuid.UUID | None = None,
         on_done: Callable[[], None] | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
         submit queues behind the first).
+
+        ``addressed`` 是这条事件点到了谁（`delivery/addressing.py`）。**没有一个入参
+        说「跑一轮」**：一轮是 agent 那一档收件人的到达形态，所以调用点能做的只有点
+        名，跑不跑由 `_a_turn_was_addressed` 从寻址结果读出来。一个人都没点到，或者
+        点到的全是人，这里就什么也不起 —— 平台因此没有一条起轮次的路径（I12）。
 
         ``nudge_event`` is the ONE LINE the room sees for a platform-initiated
         turn; ``nudge_meta`` is that event's structured payload (see
@@ -663,8 +715,12 @@ class AgentWorkRunner:
         `domain.topic.relay`) and therefore need the moment the topic is free
         again; it is not an error channel and never sees the result. It runs on
         the event loop as a done-callback, so it must not block and must not
-        raise — an exception there would only reach the loop's handler."""
-        turn_id = uuid.uuid4()
+        raise — an exception there would only reach the loop's handler.
+
+        ``turn_id`` 可以由调用点先分配：有些调用点要在这一轮还没开始之前，就把它的
+        id 写进自己那条记录里（环境修复把它写进事故 meta，之后靠 `turn_pending` 判断
+        这一轮是不是还在排队）。不传就当场分配一个。"""
+        turn_id = turn_id or uuid.uuid4()
         task = asyncio.create_task(
             self._run(
                 chat_service,
@@ -672,7 +728,7 @@ class AgentWorkRunner:
                 turn_id,
                 author=author,
                 content=content,
-                summon=summon,
+                addressed=addressed,
                 reply_to=reply_to,
                 attachments=attachments,
                 is_resume=is_resume,
@@ -681,7 +737,8 @@ class AgentWorkRunner:
                 nudge_meta=nudge_meta,
                 continuation_id=continuation_id or turn_id,
                 provision_actor=provision_actor,
-            )
+            ),
+            name=f"turn:{turn_id}",
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -724,7 +781,7 @@ class AgentWorkRunner:
                     (time.monotonic() - admission_started) * 1000,
                     time.time() * 1000,
                 )
-                if not message["summon"]:
+                if not _a_turn_was_addressed(message["addressed"]):
                     if message["content"] or message["attachments"]:
                         await chat_service.merge_into_running_turn(
                             topic_id,
@@ -767,69 +824,34 @@ class AgentWorkRunner:
                 },
             )
 
-    def submit_kickoff(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        *,
-        prompt: str | None = None,
-        turn_id: uuid.UUID | None = None,
-    ) -> uuid.UUID:
-        """A platform-event turn (spec §8.4): 分身自动开工 after a split/upgrade
-        (default prompt), or the parent digesting a returned conclusion (custom
-        prompt). No human message is posted — the agent speaks for itself; the
-        pre-built kickoff frame stream rides the same _run pipeline (telemetry,
-        timeout, failure events) via the `frames` override."""
-        # Imported here, not at module scope: chat imports this module back.
-        from app.domain.agent.harness.prompt import KICKOFF_PROMPT
-
-        turn_id = turn_id or uuid.uuid4()
-        frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id, prompt=prompt)
-        task = asyncio.create_task(
-            self._run(
-                chat_service,
-                topic_id,
-                turn_id,
-                author="system",
-                # The RESOLVED prompt, not the argument: `kickoff` substitutes
-                # KICKOFF_PROMPT for None, and this text is the only copy the
-                # orphan sweep has if a deploy kills the turn before the session
-                # hears it. Recording "" would make a 分身's first turn the one
-                # kind of work the platform cannot re-deliver.
-                content=prompt or KICKOFF_PROMPT,
-                summon=True,
-                frames=frames,
-            ),
-            name=f"kickoff:{turn_id}",
-        )
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-        return turn_id
-
-    def kickoff_pending(self, turn_id: uuid.UUID) -> bool:
+    def turn_pending(self, turn_id: uuid.UUID) -> bool:
         """Include admission queueing before the durable turn interval opens."""
         return any(
-            not task.done() and task.get_name() == f"kickoff:{turn_id}"
+            not task.done() and task.get_name() == f"turn:{turn_id}"
             for task in self._tasks
         )
 
-    #: The author on an interval the SESSION opened for itself. Deliberately not
-    #: "system": a platform-event turn is one the platform asked for and could
-    #: ask for again, and this is neither — nobody wrote its prompt, so there is
-    #: nothing to re-send. `names_a_person` already reads it as not-a-person, so
-    #: `turn_author_for` keeps answering None the way it does for 平台 turns.
-    SELF_STARTED_AUTHOR = "session"
-
-    async def open_self_started_turn(
-        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
+    async def open_turn_the_session_started(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
     ) -> None:
         """Register an interval for work the SESSION started on its own.
 
         A session works without being asked whenever one of its workers finishes:
-        the completion notice wakes it and it runs a whole turn off that. The
-        platform fed it nothing, so until now no interval was ever opened — which
-        made such a turn the one kind this table cannot see, and therefore the one
-        kind no sweep can ever find wedged.
+        the completion notice wakes it and it runs a whole turn off that. Nothing
+        was fed to it, but it is still a turn — and without a row here it is the
+        one kind this table cannot see, so no sweep can ever find it wedged, the
+        usage it burns has no interval to hang off, and a room it hangs in shows
+        「正在思考」 forever (#604).
+
+        ``author`` is the seat 芝士 holds in this room, and it is required: the
+        wake is a note between two threads of the SAME handle, so the sender is
+        right there. What retired with 结论 13 is the author value nobody ever
+        wrote (the literal 「会话」), not the record.
 
         Opened DELIVERED, and that is not laziness: `close_for_topic` only closes
         delivered intervals because 投喂 → Stop is what an interval means for a fed
@@ -848,7 +870,7 @@ class AgentWorkRunner:
                 "turn_id": str(turn_id),
                 "topic_id": str(topic_id),
                 "continuation_id": str(turn_id),
-                "author": self.SELF_STARTED_AUTHOR,
+                "author": author,
                 "summon": False,
                 "is_resume": False,
                 "status": "running",
@@ -867,7 +889,7 @@ class AgentWorkRunner:
             turn_id=turn_id,
             topic_id=topic_id,
             continuation_id=turn_id,
-            author=self.SELF_STARTED_AUTHOR,
+            author=author,
             content="",
             is_resume=False,
             # Nothing to re-send: there was no prompt. This is what stops the
@@ -880,8 +902,8 @@ class AgentWorkRunner:
             delivered_at=now,
         )
 
-    def close_self_started_turn(self, turn_id: uuid.UUID) -> None:
-        """Drop the in-memory marks for a self-started turn that has stopped.
+    def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None:
+        """Drop the in-memory marks for such a turn once it has stopped.
 
         The durable row is closed by the Stop that ends it, like any other; these
         maps have no `finally` to fall out of, because no coroutine owns one.
@@ -1190,17 +1212,34 @@ class AgentWorkRunner:
         # --- what is left after adoption: no screen answers for this topic, or
         # one does and never heard the prompt. Decide per TOPIC, because a
         # remedy is a prompt into a room and one room takes one.
+        # 每一个孤儿话题都要走一趟下面那个函数，**卡死的那些也要** —— 它是读平台侧
+        # 执行记录的地方，而机器整台死掉正是那份记录存在的旗舰场景（6.5「突然损
+        # 坏」）：那一轮会在 `SILENT_TURN_S` 之后被判卡死，如果卡死的话题就此不再往下
+        # 走，悬着的调用既不会被说出来也不会被结清，房间里只剩一条「平台不会自动重
+        # 试……@ 芝士，它会从断点接着做」，一个字没提有一次写可能已经落地一半。
+        # 卡死的轮次自己不进 `entries`：它们已经在上面各自了结过，这里给的是一个话题
+        # 里**还没了结**的那些，可以是空的。
+        #
+        # `since` 划出这次要收拾的那段时间：一个话题里最早的那个孤儿轮次什么时候开
+        # 的。执行记录按房间存，而这一趟问的是「**这几轮**里有什么悬着」——上一轮留
+        # 下的空行不该顶掉这一轮一次合法的重发（见 `dispatch_log.unsettled`）。卡死的
+        # 轮次也算进来：机器死在它手上，它正是那些悬着的调用的来源。
         by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
+        since: dict[uuid.UUID, datetime] = {}
         for turn_id, record in orphans.items():
-            if turn_id in wedged:
-                continue
-            by_topic.setdefault(record.topic_id, []).append(record)
+            entries = by_topic.setdefault(record.topic_id, [])
+            if turn_id not in wedged:
+                entries.append(record)
+            earliest = since.get(record.topic_id)
+            if earliest is None or record.started_at < earliest:
+                since[record.topic_id] = record.started_at
         for topic_id, entries in by_topic.items():
             remedied += await self._settle_restart_orphans(
                 chat_service,
                 topic_id,
                 entries,
                 now,
+                since=since[topic_id],
                 # A topic the wedged branch already remedied gets no second
                 # action — its restart orphans are folded in, loudly.
                 allow_actions=topic_id not in wedged_topics,
@@ -1214,6 +1253,7 @@ class AgentWorkRunner:
         entries: list[TurnRecord],
         now: datetime,
         *,
+        since: datetime,
         allow_actions: bool = True,
     ) -> int:
         """One topic's remedy for turns that reached nobody.
@@ -1222,6 +1262,10 @@ class AgentWorkRunner:
         that got through has already been excluded upstream by `_adopted` — what
         arrives here is a topic whose screen is gone, or whose screen never
         heard the prompt.
+
+        `entries` 可以是空的：一个话题里的孤儿轮次全都卡死、上面已经各自了结过时，
+        这个话题照样要来一趟，因为平台侧执行记录是在这里读的（见下）。那一趟
+        `allow_actions` 是假的，除了那份记录之外什么也不做。
 
         A re-send is for the newest re-sendable turn (see `_execute` for what
         that means): the pending-message mechanism re-hands its ORIGINAL text
@@ -1238,7 +1282,24 @@ class AgentWorkRunner:
         own work — a 分身's kickoff, 验收卡被驳回, CI 红了 — strands it just as
         permanently as a person's message, and the room shows nothing either
         way. Re-sending it is what keeps the platform working rather than merely
-        quiet."""
+        quiet.
+
+        重派之前先读平台侧的执行记录（结论 57，6.5），而且是在这个函数做任何别的事
+        情之前 —— 这条顺序由 `tests/unit/test_retry_reads_the_dispatch_record.py`
+        守着。悬着的那些调用说的是「发出去了，而结果永远不会回来了」：把它们重发
+        一遍，是把一次可能已经落地的写操作再做一次，比什么都不做更坏。这类事情的
+        下一步在人手上。
+
+        「悬着」在这里不带年龄条件，而这个判断的整个重量压在**送到这个函数的话题是
+        哪一种**上：屏幕没了，或者那条消息根本没送到屏幕，而且那几轮已经被上面的
+        `_close_turns` 关掉了。所以一次还没写回来的调用，结果再也到不了 agent 面前，
+        无论那台机器此刻怎么样（`dispatch_log` 开头第二节）。这里也没有「先放着、
+        下一次扫底再说」这个选项：轮次的区间已经关了，下一次扫底不会再看见这个话题。
+
+        `since` 是这个话题里最早那个孤儿轮次的开始时刻，读只读那之后派出去的
+        （`dispatch_log.unsettled`）。"""
+        async with chat_service.session_factory() as ledger:
+            unknown = await dispatch_log.unsettled(ledger, topic_id, since=since)
         delivered = {record.turn_id for record in entries if record.delivered}
         probe_ok = False
         try:
@@ -1251,7 +1312,7 @@ class AgentWorkRunner:
         attach = bool(delivered) or not probe_ok
 
         resend: TurnRecord | None = None
-        if allow_actions and probe_ok:
+        if allow_actions and probe_ok and not unknown:
             candidates = [
                 record
                 for record in entries
@@ -1285,7 +1346,43 @@ class AgentWorkRunner:
         #   次部署。这时自动重发多半已经不是他要的了，得他自己决定还发不发。
         # - 这轮本身是一次重发（`resendable` 为假）。重发只把原始消息递一次，
         #   打断了就不连着再递，平台不会自动跑第二次。
-        stranded = allow_actions and probe_ok and not attach and resend is None
+        if unknown:
+            # 5.2「通知他一次」：说清悬着的是哪几次调用，然后把这几行结清成
+            # `unknown` —— 平台不再等它们了，问题在人手上。不写这一笔，同一个人会在
+            # 这个房间此后每一次扫底里被问同一件事。
+            #
+            # 不受 `allow_actions` 管：那道门挡的是「平台还要不要替他做点什么」，而
+            # 这条恰恰是平台做不了了才发的。关着门的那一档正是话题里有轮次卡死 ——
+            # 机器死在手上，最需要说这句话的那一档。
+            waiting = "、".join(
+                f"{dispatch.tool}（{dispatch.key}）" for dispatch in unknown
+            )
+            await self._post_orphan_event(
+                chat_service,
+                topic_id,
+                f"有 {len(unknown)} 次工具调用发出去了而结果没回来，平台不会替它重试",
+                notice(
+                    EVENT_DISPATCH_UNKNOWN,
+                    severity=SEVERITY_WARN,
+                    # 平台到头了：做没做过只有那台机器知道，而它已经不说话了。
+                    who=WHO_HUMAN,
+                    detail=(
+                        "平台记下了这些调用发出去过，机器没能把结果送回来，所以它们"
+                        f"做没做过只有那台机器知道：{waiting}。自动重发可能把一次已经"
+                        "落地的改动再做一遍——有人确认过之后 @ 芝士，它会从那里接着做。"
+                    ),
+                    detail_label="详细说明",
+                ),
+            )
+            async with chat_service.session_factory() as ledger:
+                for dispatch in unknown:
+                    await dispatch_log.settle(
+                        ledger, dispatch.id, dispatch_log.Outcome.unknown
+                    )
+                await ledger.commit()
+        stranded = (
+            allow_actions and probe_ok and not attach and resend is None and not unknown
+        )
         if stranded and entries:
             newest = max(entries, key=lambda record: record.started_at)
             age_s = newest.age_s(now)
@@ -1400,12 +1497,16 @@ class AgentWorkRunner:
             "平台的工具通道断了，刚才那条消息芝士没能回进房间；已经接回来，正在重发",
             self._TOOLS_RECOVERED_META,
         )
+        # 重新投递，不是新起一轮：收件人还是上一条消息点的那个席位，平台只是把没送
+        # 到的那一次送完（I12）。席位没了就没有收件人，这一次也就不再重发。
         self.submit(
             chat_service,
             topic_id,
             author="system",
             content=content,
-            summon=True,
+            addressed=addressed_to_agent(
+                await addressable_seat(chat_service.session_factory, topic_id)
+            ),
             is_resume=True,
             resume_reason=self.TOOLS_REASON,
             continuation_id=continuation_id,
@@ -1438,7 +1539,9 @@ class AgentWorkRunner:
                 topic_id,
                 author="system",
                 content=content,
-                summon=True,
+                addressed=addressed_to_agent(
+                    await addressable_seat(chat_service.session_factory, topic_id)
+                ),
                 is_resume=True,
                 resume_reason=self.RESEND_REASON,
                 continuation_id=continuation_id,
@@ -1676,7 +1779,7 @@ class AgentWorkRunner:
         *,
         author: str,
         content: str,
-        summon: bool,
+        addressed: Addressed,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         is_resume: bool = False,
@@ -1689,10 +1792,12 @@ class AgentWorkRunner:
         # still pending admission and may instead merge into a live turn.
         landed_user_block_id: uuid.UUID | None = None,
         recipient_handle: str | None = None,
-        # Pre-built frame stream (kickoff turns). None → run a converse turn.
-        frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
+        # 一轮只有一种开法：converse。以前还有第二种 —— kickoff 把一条预制的帧流从
+        # 外面递进来，平台用它起「没有人写过提示词」的那种轮次。那条路整条退场
+        # （I12），所以这里没有外来的帧流可接，只剩下面自己准备的那一份。
+        frames: AsyncIterator[Frame] | None = None
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing
@@ -1709,8 +1814,6 @@ class AgentWorkRunner:
             time.time() * 1000,
         )
         if verdict == "reject":
-            if isinstance(frames, AsyncGenerator):
-                await frames.aclose()  # never-started kickoff stream: close it
             await self._refuse_exhausted(
                 chat_service,
                 topic_id,
@@ -1720,9 +1823,14 @@ class AgentWorkRunner:
                 reply_to=reply_to,
                 attachments=attachments,
                 # A human message turn lands its message even when refused;
-                # resume/nudge/kickoff turns have nothing to land.
+                # resume/nudge turns have nothing to land.
+                #
+                # 判据是**有没有人说过话**，不是「是不是 resume」：平台自己那几条投
+                # 递（机器接入、环境修好、记忆整理）作者是 `system`、正文是平台写的
+                # 一段提示，既不 resume 也没有 nudge —— 当成「一条人发的消息」补落，
+                # 就是把平台的提示词当人话写进时间线。
                 is_message_turn=(
-                    frames is None and not is_resume and nudge_event is None
+                    not is_resume and nudge_event is None and names_a_person(author)
                 ),
                 message_landed=landed_user_block_id is not None,
             )
@@ -1750,7 +1858,7 @@ class AgentWorkRunner:
                 turn_id,
                 author=author,
                 content=content,
-                summon=summon,
+                addressed=addressed,
                 reply_to=reply_to,
                 attachments=attachments,
                 is_resume=is_resume,
@@ -1824,7 +1932,7 @@ class AgentWorkRunner:
         *,
         author: str,
         content: str,
-        summon: bool,
+        addressed: Addressed,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         is_resume: bool = False,
@@ -1833,11 +1941,13 @@ class AgentWorkRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
-        # Pre-built frame stream (kickoff turns). None → run a converse turn.
+        # 已经准备好的帧流（`converse_prepared` 是现在唯一的来源）。None → 这里
+        # 自己跑一轮 converse。
         frames: AsyncIterator[Frame] | None = None,
         lifecycle: dict[str, bool] | None = None,
     ) -> None:
         channel = str(topic_id)
+        summon = _a_turn_was_addressed(addressed)
         lifecycle = (
             lifecycle
             if lifecycle is not None

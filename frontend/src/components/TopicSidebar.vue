@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import type { Project, ProjectAgent, Topic } from '../cx_types'
+import type { Project, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { listProjectAgents } from '../api'
 import { columnDotStyle } from '../lib/board'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
+import { DEFAULT_SHELL, projectPagePlan, shellFor, termParams } from '../lib/shell'
+import { loadRevealedPages, withRevealedPage } from '../lib/shellPrefs'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -19,10 +20,13 @@ import {
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
+import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+
+import { t } from '@/i18n'
 
 const props = defineProps<{
   projects: Project[]
@@ -30,6 +34,7 @@ const props = defineProps<{
   topics: Topic[]
   selectedTopicId: string | null
   loadingTopics: boolean
+  creatingTopic?: boolean
   // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'|
   // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
   // any of them, because which document is open is the page's business now.
@@ -52,7 +57,7 @@ const emit = defineEmits<{
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
   (e: 'leave-topic'): void
-  (e: 'create-topic', title: string, agentInstanceId?: string | null): void
+  (e: 'create-topic', title: string): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
@@ -81,23 +86,65 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 项目级页面（总览/日历）住在话题列表最上面的置顶行里，和话题行同一种视觉
+// 项目级页面（总览/看板/日历/…）住在话题列表最上面的置顶行里，和话题行同一种视觉
 // 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
 // 一年点两次的东西，收进项目头的 ⋯ 菜单。
 const router = useRouter()
 const route = useRoute()
 
-const projectPages = [
-  { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
-  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
-  { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
-  { key: 'project-delivery', label: '导出与发布', icon: 'mdi-export-variant' },
-  { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
-  // 成员紧挨着 AI 队友：这两行答的是同一个问题的两半——这个项目里都有谁。
-  { key: 'project-members', label: '成员', icon: 'mdi-account-group-outline' },
-] as const
+// 这张表是**这一版前端认得**的项目页：key → 它长什么样。露出哪几格、什么顺序、谁
+// 开局收着，全部由这个项目的壳说（catalog.py）。default 壳说的是「今天」的样子：
+// 侧栏上只摆资料库，其余收进项目名旁边那个 ⋯ 菜单——#1330 把这条竖线收窄过一轮，
+// 壳的 default 声明跟着一起收窄，否则这一版会把别人刚挪走的几格又摆回来。
+//
+// 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
+// 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
+const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
+  // 看板就是首页（项目名那一行点下去就到），但它仍然是一页：壳想把它摆回侧栏也行。
+  'workspace-running': { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+  calendar: { label: 'navigation.project.calendar', icon: 'mdi-calendar-outline' },
+  // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
+  'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+  'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
+}
+const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
+
+// 这个项目生效的壳。壳跟着项目行走（服务端解析好随 ProjectOut 下来），侧栏手上
+// 就有那份清单，所以不额外问一次。
+const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
+const terms = computed(() => termParams(shell.value))
+
+// 「个人级压过壳」：他手动打开过一次的收起页，之后就在他自己的侧栏里。按 handle
+// 存——这是**这个人**对某一个壳的选择，和 projectOrder 同一个理由。
+const revealed = ref<ReadonlySet<string>>(new Set<string>())
+watch(
+  () => myHandle(),
+  (handle) => {
+    revealed.value = loadRevealedPages(handle)
+  },
+  { immediate: true }
+)
+
+const plan = computed(() => projectPagePlan(shell.value, KNOWN_PROJECT_PAGES, revealed.value))
+
+// 表里没有的 key 落空：壳比前端新时菜单里会多出一格这一版还不认识的页，那也不该
+// 让侧栏白屏。
+function pageOf(key: string): { label: string; icon: string } {
+  return PROJECT_PAGES[key] ?? { label: key, icon: 'mdi-dots-horizontal' }
+}
+
+// 「一年点几次」的那几页住在项目名旁边那个 ⋯ 菜单里（#1330）：仍然一次点击可达，
+// 只是不再占着每天都要扫一遍的那条竖线。谁在菜单里由壳说——**侧栏上没摆出来的
+// 全部**都在这里，包括壳写错了 key、或这一版前端还不认识的页，所以它们不会凭空
+// 消失。文案和侧栏同一条来源，理由也一样：壳能换词。
+const menuPages = computed(() => plan.value.more.map((key) => ({ key, ...pageOf(key) })))
+
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
+  // 打开一个默认收起的页 = 这一页对他有用。记住它，下次它在外面。
+  if (plan.value.more.includes(name)) {
+    revealed.value = withRevealedPage(revealed.value, name, myHandle())
+  }
   router.push({ name, params: { projectId: props.selectedProjectId } })
 }
 // 谁负责 push，谁负责预热：指针停住的时候把这个页面的代码先下下来，等真按下去时
@@ -117,34 +164,11 @@ function openProject(projectId: string) {
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
 //
-// 队友是另一回事，必须在这一刻选：换队友会丢掉话题的会话，所以事后再改改的是一
-// 段已经有人说过话的对话。菜单第一项就是默认那个，常用路径仍然是「点开、点第一
-// 项」两下，而且点之前就看得见这个房间要交给谁。
-function newTopic(agentInstanceId?: string | null) {
-  emit('create-topic', '', agentInstanceId)
+// 房间是个群聊，不「交给」谁：建出来时坐着项目的默认队友，别的队友和人一样从
+// 成员名册请进来。
+function newTopic() {
+  emit('create-topic', '')
 }
-
-// 这个项目有哪些队友，供上面那个菜单用。拿不到就退化成不带队友创建（跟项目默认
-// 走）—— 一个还没上线 agent 接口的环境不该连新建话题都点不动。
-const projectAgents = ref<ProjectAgent[]>([])
-async function loadProjectAgents(pid: string | null | undefined) {
-  if (!pid) {
-    projectAgents.value = []
-    return
-  }
-  try {
-    projectAgents.value = (await listProjectAgents(pid)).data
-  } catch {
-    projectAgents.value = []
-  }
-}
-watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
-
-// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。已停用的
-// 不列：这个菜单是在给一个还没建的话题挑队友，正是停用要挡住的那件事。
-const newTopicAgents = computed(() =>
-  projectAgents.value.filter((a) => a.is_active !== false).sort((a, b) => Number(b.is_default) - Number(a.is_default))
-)
 
 // ----- Topic tree -----
 // A flattened tree node: a topic plus its nesting depth, so the template can
@@ -471,60 +495,85 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
     <div class="d-flex flex-column fill-height">
       <!-- 项目头 = 标识 + 菜单，整块可点。48px 基线 (.sidebar-header) 和首页
            侧栏头、内容区 PageHeader 共用，三条标题线才落在同一水平上。
-           activator 用 <button> 而不是 <div>（SpaceSidebar 那个先例是裸 div）：
-           整块可点就得整块可聚焦、能用回车/空格打开，否则键盘用户够不着项目
-           设置。右边的 chevron 只是"这里能展开"的指示，不再是唯一的靶子——所以
-           它是 v-icon 不是 v-btn，按钮套按钮既非法也抢焦点。 -->
+           名字和 chevron 是**两个**按钮：名字回项目首页（「做出了什么」+ 看板，
+           进项目看的第一屏就是它），chevron 展开那些一年点几次的页面。整块可点
+           的时候，点名字这件最常做的事只能开一个菜单，而首页要绕一道。两个按钮
+           各自可聚焦，键盘用户两样都够得着。 -->
       <!-- 整页形态（手机上的话题列表）下这一行不长在页面上，而是填进顶栏那一格：
            手机上只有一条顶栏，页面自己再画一条就是两条横条一上一下写同类的东西。 -->
       <Teleport to="#app-bar-slot" :disabled="!page">
-        <v-menu location="bottom end">
-          <template #activator="{ isActive, props: menuProps }">
-            <button
-              v-bind="menuProps"
-              type="button"
-              class="sidebar-header sidebar-header-menu rail-header"
-              :class="{ 'sidebar-header-menu-active': isActive, 'rail-header--bar': page }"
-              title="项目菜单"
-            >
-              <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
-              <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
-              <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
-            </button>
-          </template>
-          <v-list density="compact" nav max-height="60vh">
-            <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
+        <div class="sidebar-header rail-header" :class="{ 'rail-header--bar': page }">
+          <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
+          <button
+            type="button"
+            class="rail-header__home"
+            :title="currentProjectName"
+            :disabled="!selectedProjectId"
+            @click="openProjectPage('workspace-running')"
+          >
+            <span class="rail-header__name">{{ currentProjectName }}</span>
+          </button>
+          <!-- 有人找你：私聊的未读原来挂在「成员」那一行上，而那一行进了菜单。
+               它是主导航上唯一会亮的「有人在等你回话」，所以跟着菜单入口走。 -->
+          <span v-if="privateUnreadTotal > 0" class="unread-badge me-1">{{ countLabel(privateUnreadTotal) }}</span>
+          <v-menu location="bottom end">
+            <template #activator="{ isActive, props: menuProps }">
+              <button
+                v-bind="menuProps"
+                type="button"
+                class="rail-header__more"
+                :class="{ 'rail-header__more--active': isActive }"
+                title="项目菜单"
+                aria-label="项目菜单"
+              >
+                <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+              </button>
+            </template>
+            <v-list density="compact" nav max-height="60vh">
+              <!-- 整页形态下这个菜单是**唯一**能换项目的地方：一个项目一格的那条
                  竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目，于是
                  手机上进了一个项目就再也走不到别的项目去。桌面不列——rail 已经
                  是那个入口，同一件事有两个入口只会让人猜哪个才算数。 -->
-            <template v-if="page && projects.length > 1">
-              <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
+              <template v-if="page && projects.length > 1">
+                <v-list-subheader class="t-eyebrow">切换项目</v-list-subheader>
+                <v-list-item
+                  v-for="p in projects"
+                  :key="p.id"
+                  :active="p.id === selectedProjectId"
+                  rounded="lg"
+                  @click="openProject(p.id)"
+                >
+                  <template #prepend>
+                    <span class="private-avatar-slot me-3">
+                      <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
+                        avatarInitial(p.name)
+                      }}</span>
+                    </span>
+                  </template>
+                  <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
+                </v-list-item>
+                <v-divider class="my-1" />
+              </template>
               <v-list-item
-                v-for="p in projects"
-                :key="p.id"
-                :active="p.id === selectedProjectId"
-                rounded="lg"
-                @click="openProject(p.id)"
-              >
-                <template #prepend>
-                  <span class="private-avatar-slot me-3">
-                    <span class="dm-avatar project-avatar" :style="{ backgroundColor: avatarColor(p.name) }">{{
-                      avatarInitial(p.name)
-                    }}</span>
-                  </span>
-                </template>
-                <v-list-item-title class="t-body">{{ p.name }}</v-list-item-title>
-              </v-list-item>
+                v-for="p in menuPages"
+                :key="p.key"
+                :prepend-icon="p.icon"
+                :title="t(p.label, terms)"
+                :active="route.name === p.key"
+                :disabled="!selectedProjectId"
+                @click="openProjectPage(p.key)"
+              />
               <v-divider class="my-1" />
-            </template>
-            <v-list-item
-              prepend-icon="mdi-cog-outline"
-              title="项目设置"
-              :disabled="!selectedProjectId"
-              @click="openProjectPage('project-settings')"
-            />
-          </v-list>
-        </v-menu>
+              <v-list-item
+                prepend-icon="mdi-cog-outline"
+                title="项目设置"
+                :active="route.name === 'project-settings'"
+                :disabled="!selectedProjectId"
+                @click="openProjectPage('project-settings')"
+              />
+            </v-list>
+          </v-menu>
+        </div>
       </Teleport>
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
@@ -567,27 +616,27 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
             </v-list-item>
 
             <v-list-item
-              v-for="p in projectPages"
-              :key="p.key"
-              :active="route.name === p.key"
+              v-for="key in plan.visible"
+              :key="key"
+              :active="route.name === key"
               rounded="lg"
               class="nav-row pinned-row"
-              :class="{ 'is-active': route.name === p.key }"
+              :class="{ 'is-active': route.name === key }"
               :style="ROW_INDENT"
-              @click="openProjectPage(p.key)"
-              @mouseenter="hoverProjectPage(p.key)"
+              @click="openProjectPage(key)"
+              @mouseenter="hoverProjectPage(key)"
               @mouseleave="cancelPrefetch()"
             >
               <template #prepend>
                 <span class="row-slot">
-                  <v-icon size="16" class="row-glyph" :icon="p.icon" />
+                  <v-icon size="16" class="row-glyph" :icon="pageOf(key).icon" />
                 </span>
               </template>
-              <v-list-item-title>{{ p.label }}</v-list-item-title>
+              <v-list-item-title>{{ t(pageOf(key).label, terms) }}</v-list-item-title>
               <!-- 私聊的未读挂在「成员」这一行上。私聊那一栏撤掉之后，这是
                    「有人找你」在主导航上唯一会亮的地方，所以它必须在这里；进了
                    成员页才精确到是谁（每个人的私聊按钮上各带各的）。 -->
-              <template v-if="p.key === 'project-members' && privateUnreadTotal > 0" #append>
+              <template v-if="key === 'project-members' && privateUnreadTotal > 0" #append>
                 <span class="unread-badge">{{ countLabel(privateUnreadTotal) }}</span>
               </template>
             </v-list-item>
@@ -597,32 +646,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <!-- 建话题时就把房间交给谁定下来。队友列表拿不到时（旧环境）退回
-                 一键直建，不让侧栏的主要动作被一个可选接口卡住。 -->
-            <v-menu v-if="projectAgents.length" location="bottom end">
-              <template #activator="{ props: menu }">
-                <v-btn v-bind="menu" icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" />
-              </template>
-              <v-list density="compact" min-width="220">
-                <v-list-subheader>交给哪个 AI 队友</v-list-subheader>
-                <v-list-item v-for="a in newTopicAgents" :key="a.id ?? a.handle" @click="newTopic(a.id)">
-                  <template #prepend>
-                    <v-icon size="small" icon="mdi-robot-outline" />
-                  </template>
-                  <v-list-item-title>{{ a.display_name }}</v-list-item-title>
-                  <template v-if="a.is_default" #append>
-                    <span class="t-meta c-muted">默认</span>
-                  </template>
-                </v-list-item>
-              </v-list>
-            </v-menu>
             <v-btn
-              v-else
               icon="mdi-plus"
               size="x-small"
               variant="tonal"
               color="primary"
-              title="新建话题"
+              :title="creatingTopic ? '正在创建话题' : '新建话题'"
+              :loading="creatingTopic"
+              :disabled="creatingTopic"
               @click="newTopic()"
             />
           </div>
@@ -966,7 +997,36 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   border-block-end: 0;
   padding-inline: 0;
 }
-.rail-header:focus-visible {
+/* 这一条里现在有两个按钮，所以描边长在按钮上，不长在整条上。 */
+.rail-header__home,
+.rail-header__more {
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.rail-header__home {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: start;
+  padding: 4px 6px;
+  margin-inline-start: -6px;
+}
+.rail-header__more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+}
+.rail-header__home:hover,
+.rail-header__more:hover,
+.rail-header__more--active {
+  background: var(--fill);
+}
+.rail-header__home:focus-visible,
+.rail-header__more:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

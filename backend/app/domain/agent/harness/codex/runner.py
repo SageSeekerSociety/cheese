@@ -185,8 +185,6 @@ class Runner:
                 raise RuntimeError("Finish the active turn before changing its model")
             self.session.model = params.get("model")
             return {"configured": True}
-        if method == "stage_file":
-            return await self.on_tool("cheese/stage_file", params)
         if method == "events":
             return {"events": self.journal.read(int(params.get("after", 0)))}
         if method == "send":

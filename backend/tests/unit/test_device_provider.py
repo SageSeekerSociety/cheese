@@ -3,6 +3,7 @@
 import asyncio
 import os
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,15 +11,16 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import machine_launcher
-from app.domain.agent.device_hub import HubScreen
+from app.domain.agent import device_provider, place
+from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
     device_home_dir,
     device_store_dir,
     tunnel_port_for_topic,
 )
-from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
@@ -125,7 +127,10 @@ class FakeHub:
 
     async def put_file(self, device_id, sid, path, data, timeout=30):
         self.files.append((sid, path, data))
-        return {"ok": True}
+        # A real machine answers with where the file actually landed, because
+        # only it can expand its own `$HOME`. The mention the agent gets is
+        # that answer, so a fake that withholds it tests a prompt nobody sends.
+        return {"ok": True, "path": "/home/owner/" + path.removeprefix("$HOME/")}
 
     async def viewer_input(self, device_id, sid, data: bytes) -> None:
         self.keys.append((sid, data))
@@ -148,6 +153,7 @@ def _provider(
 
 
 async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
+    kw.setdefault("session_agent", "agent")
     events: list = []
 
     async def consume():
@@ -155,6 +161,25 @@ async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
             events.append(ev)
 
     return events, asyncio.create_task(consume())
+
+
+async def _reached(check, *, timeout: float = 5.0) -> bool:
+    """Wait until the turn's background task got where this test needs it.
+
+    These waits used to be a flat `sleep(0.05)` covering the whole
+    resolve-device → open-screen → stage-files → send-prompt sequence. On a
+    loaded runner that is not enough — building the launcher alone measured
+    65 ms in CI — so the assertion (or the hook event pushed right after) landed
+    before the turn had got there and the test failed on machine speed instead
+    of on behaviour. Waiting on the condition costs nothing when it is already
+    true.
+    """
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.005)
+    return True
 
 
 async def test_turn_streams_hook_events_until_stop():
@@ -173,7 +198,7 @@ async def test_turn_streams_hook_events_until_stop():
         resume_session_id=None,
     )
     # Let it resolve the device, open the screen, send the prompt, reach the drain.
-    await asyncio.sleep(0.05)
+    assert await _reached(lambda: bool(hub.prompts))
     assert hub.prompts == [["1+1?"]]  # prompt delivered over the socket
     assert hub.opened[0].topic_id == topic_id
     assert hub.opened[0].agent_user_id == agent_id
@@ -204,7 +229,7 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
     monkeypatch.setattr(
-        "app.domain.agent.device_provider.ws.read_room_file",
+        "app.domain.agent.device_provider.library.read_room_file",
         lambda project, room, path: b"exact-image-bytes",
     )
 
@@ -217,10 +242,19 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
         resume_session_id=None,
         images=[{"path": path, "media_type": mime}],
     )
-    await asyncio.sleep(0.05)
+    # 文件先上去、提示词后发（hooks_substrate 里 `_stage` 在 `send_prompt` 之前），
+    # 所以等到提示词就意味着两件都做完了。
+    assert await _reached(lambda: bool(hub.prompts))
 
-    assert hub.files == [("s1", path, b"exact-image-bytes")]
-    assert hub.prompts == [[f"[u] sent an image\n\n@{path}"]]
+    # 落在会话 home 里，不在检出目录里（结论 49，不变量 I21b）：从前它落在屏幕的
+    # 工作目录下，于是每张图都在别人的仓库里留下一个未跟踪文件。
+    home = device_provider.device_home_dir(project_id, topic_id)
+    staged = f"{home}/attachments/{path}"
+    assert hub.files == [("s1", staged, b"exact-image-bytes")]
+    assert f"/{place.CHECKOUT_DIR}/" not in staged.removeprefix("$HOME/")
+    # @ 的是机器答回来的那个绝对路径，不是后端猜的。
+    landed = "/home/owner/" + staged.removeprefix("$HOME/")
+    assert hub.prompts == [[f"[u] sent an image\n\n@{landed}"]]
     router.push(
         str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
     )
@@ -282,26 +316,58 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
 
 
+async def test_screen_inventory_failure_does_not_skip_the_next_device():
+    from app.domain.agent.device_hub import DeviceCallError
+
+    visited = set()
+
+    class Hub(FakeHub):
+        async def list_screens(self, device_id):
+            visited.add(device_id)
+            if device_id == "broken":
+                raise DeviceCallError("dial unix: no such file")
+            return []
+
+    project, first, second = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    channel = DeviceChannel(hub=Hub())
+    restored = await channel.restore_screens(
+        [
+            (project, first, "broken"),
+            (project, second, "healthy"),
+        ]
+    )
+    assert visited == {"broken", "healthy"}
+    assert restored == [(project, first, None, None), (project, second, None, None)]
+
+
 async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     monkeypatch,
 ):
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, patch
 
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_hub import DeviceHub
+    from app.domain.agent_session.models import SessionPlace
+    from app.domain.agent_session.services import AgentSessionService
     from app.domain.identity.services import IdentityService
 
     project_id, topic_id, resource_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    room = SimpleNamespace(
-        id=topic_id,
-        project_id=project_id,
-        resource_id=resource_id,
-        session_placement={
-            "device_id": "center",
-            "channel": "device",
-            "resource_id": str(resource_id),
-        },
-    )
+    room = SimpleNamespace(id=topic_id, project_id=project_id, resource_id=resource_id)
+    placed = [
+        (
+            project_id,
+            topic_id,
+            "agent",
+            "claude-code",
+            SessionPlace(
+                machine="center",
+                channel="device",
+                resource_id=str(resource_id),
+                runtime={},
+                lease=None,
+            ),
+        )
+    ]
     metadata = {
         "sid": "survivor",
         "screen": "birth-token",
@@ -355,7 +421,7 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     async def agent(self, topic):
         return SimpleNamespace(id=1, username="agent")
 
-    monkeypatch.setattr(IdentityService, "ensure_topic_agent_user", agent)
+    monkeypatch.setattr(IdentityService, "ensure_room_agent_user", agent)
     monkeypatch.setattr(
         "app.domain.topic.services.TopicService.get", AsyncMock(return_value=room)
     )
@@ -363,7 +429,8 @@ async def test_central_recovery_restores_actual_screen_and_close_reaches_device(
     executor = DeviceChannel(hub=hub, session_factory=Session)
     executor.discover = AsyncMock(return_value=[])
     central = CentralChannel(executor)
-    result = await central.discover("center")
+    with patch.object(AgentSessionService, "placed_sessions", return_value=placed):
+        result = await central.discover("center")
     screen = hub.screen("survivor")
     assert result == [(project_id, topic_id, screen, None)]
     assert screen.resource_id == resource_id
@@ -476,7 +543,7 @@ async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda sent=turn: len(hub.prompts) > sent)
         router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
         await asyncio.wait_for(task, timeout=5)
 
@@ -689,7 +756,7 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda sent=turn: len(hub.prompts) > sent)
         router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
         await asyncio.wait_for(task, timeout=5)
 
@@ -697,6 +764,97 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
     assert hub.closed == ["s1"]  # … the stale screen was dropped …
     assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
     assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+
+
+@pytest.mark.parametrize("api", ["send", "run_turn"])
+@pytest.mark.parametrize(
+    ("failures", "code", "alive", "late_hook", "expected_calls", "success"),
+    [
+        (1, "prompt_socket_unavailable", False, False, 2, True),
+        (2, "prompt_socket_unavailable", False, False, 2, False),
+        (1, None, False, False, 1, False),
+        (1, "prompt_socket_unavailable", True, False, 1, False),
+        (1, "prompt_socket_unavailable", False, True, 1, False),
+    ],
+)
+async def test_dead_input_recovers_once_without_resubmitting_uncertain_delivery(
+    api, failures, code, alive, late_hook, expected_calls, success
+):
+    class InputHub(DeadClaudeHub):
+        def __init__(self):
+            super().__init__()
+            self.accepted = []
+
+        async def exec(self, device_id, argv, **kwargs):
+            result = await super().exec(device_id, argv, **kwargs)
+            if alive and (kwargs.get("env") or {}).get("CHEESE_ALIVE_TOPIC"):
+                result["stdout"] = "alive"
+            return result
+
+        async def await_call(self, device_id, call_id, timeout=30):
+            if len(self.prompts) <= failures:
+                if late_hook:
+                    router.push(
+                        str(topic_id),
+                        {
+                            "hook_event_name": "PreToolUse",
+                            "tool_name": "Bash",
+                            "tool_input": {"command": "true"},
+                            "tool_use_id": "late-tool",
+                        },
+                    )
+                    await asyncio.sleep(0.01)
+                raise DeviceCallError("input unavailable", failure_code=code)
+            self.accepted.append(self.prompts[-1][0])
+            return {"ready": True}
+
+    hub = InputHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    session = SessionRef(project_id, topic_id)
+    try:
+        if api == "send":
+            call = provider.send(
+                session,
+                "finish the work",
+                Opening(system_prompt="", resume_token="existing-conversation"),
+                work_id=uuid.uuid4(),
+                on_mark=lambda _: None,
+            )
+            if success:
+                assert await call is True
+            else:
+                with pytest.raises(ScreenSetupError, match="input unavailable"):
+                    await call
+        else:
+            events, task = await _run(
+                provider,
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt="finish the work",
+                system_prompt="",
+                resume_session_id="existing-conversation",
+            )
+            if success:
+                await _reached(lambda: bool(hub.accepted))
+                router.push(
+                    str(topic_id),
+                    {"hook_event_name": "Stop", "last_assistant_message": "done"},
+                )
+            await asyncio.wait_for(task, timeout=5)
+            assert (
+                any(
+                    isinstance(event, AgentResult) and event.is_error
+                    for event in events
+                )
+                is not success
+            )
+        assert len(hub.prompts) == expected_calls
+        assert hub.accepted == (["finish the work"] if success else [])
+        assert hub.closed == (["s1"] if expected_calls == 2 else [])
+    finally:
+        await provider.close(session)
 
 
 class DeadTunnelHub(DeadClaudeHub):
@@ -727,7 +885,7 @@ class DeadTunnelHub(DeadClaudeHub):
         return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
 
-async def _two_turns(provider, router, project_id, topic_id):
+async def _two_turns(provider, router, project_id, topic_id, hub):
     router_key = str(topic_id)
     for turn in range(2):
         _events, task = await _run(
@@ -738,7 +896,7 @@ async def _two_turns(provider, router, project_id, topic_id):
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda sent=turn: len(hub.prompts) > sent)
         router.push(
             router_key, {"hook_event_name": "Stop", "last_assistant_message": "ok"}
         )
@@ -757,7 +915,7 @@ async def test_a_retired_screen_says_which_gate_decided(caplog):
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
     with caplog.at_level("INFO"):
-        await _two_turns(provider, router, project_id, topic_id)
+        await _two_turns(provider, router, project_id, topic_id, hub)
 
     retired = [
         record.getMessage()
@@ -790,7 +948,7 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatc
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
-    await _two_turns(provider, router, project_id, topic_id)
+    await _two_turns(provider, router, project_id, topic_id, hub)
 
     assert hub.reasserted == []  # never reasserted onto the dead helper …
     assert hub.closed == ["s1"]  # … the screen was retired …
@@ -819,7 +977,7 @@ async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
-    await _two_turns(provider, router, project_id, topic_id)
+    await _two_turns(provider, router, project_id, topic_id, hub)
 
     assert hub.closed == []  # the screen survived …
     assert hub.reasserted == ["s1"]  # … and the second turn reused it
@@ -835,7 +993,7 @@ async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
     provider = _provider(hub, router, uuid.uuid4())
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
-    await _two_turns(provider, router, project_id, topic_id)
+    await _two_turns(provider, router, project_id, topic_id, hub)
 
     assert hub.probed_ports == []  # never asked
     assert hub.closed == []  # and nothing retired on a verdict it never got
@@ -899,7 +1057,7 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
         system_prompt="x" * 100_000,  # a system prompt far past tmux's limit
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)
+    await _reached(lambda: bool(hub.prompts))
     router.push(
         str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
     )
@@ -972,6 +1130,7 @@ async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=uuid.uuid4(),
             prompt="hi",
@@ -995,6 +1154,7 @@ async def test_no_topic_is_a_clean_error():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=None,
             prompt="hi",
@@ -1023,6 +1183,7 @@ async def test_no_online_device_is_a_clean_error():
     events = [
         e
         async for e in provider.run_turn(
+            session_agent="agent",
             project_id=uuid.uuid4(),
             topic_id=uuid.uuid4(),
             prompt="hi",
@@ -1081,6 +1242,7 @@ async def test_concurrent_topics_never_share_a_device_home():
     topic_a, topic_b = uuid.uuid4(), uuid.uuid4()
 
     for topic_id in (topic_a, topic_b):
+        sent = len(hub.prompts)
         _events, task = await _run(
             provider,
             project_id=project_id,
@@ -1089,7 +1251,7 @@ async def test_concurrent_topics_never_share_a_device_home():
             system_prompt="",
             resume_session_id=None,
         )
-        await asyncio.sleep(0.05)
+        await _reached(lambda seen=sent: len(hub.prompts) > seen)
         router.push(
             str(topic_id),
             {"hook_event_name": "Stop", "last_assistant_message": "ok"},
@@ -1185,26 +1347,20 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
         launch=ClaudeLaunch(system_prompt=""),
     )
 
-    for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
+    for key in ("CHEESE_API", "CHEESE_HOOK_URL"):
         url = hub.env[key]
         assert url.startswith(base), f"{key}={url} does not extend {base}"
         remainder = url[len(base) :]
         if not remainder:  # CHEESE_API is the base itself
             continue
-        # The git remote is a PREFIX — git appends the dumb/smart-HTTP paths
-        # itself — so ask about the one it fetches first.
-        if key == "CHEESE_GIT_REMOTE":
-            remainder += "/info/refs"
         assert served(remainder), (
             f"{key}={url} leaves {remainder!r}, which this app does not serve"
         )
 
 
 @pytest.mark.anyio
-async def test_every_device_is_told_where_to_clone_from():
-    """The launcher's clone/push block is inert without these two env vars, so the
-    wiring is the thing that has to be tested — the block itself can be perfect
-    and the machine still starts in an empty dir."""
+async def test_every_device_gets_the_context_for_task_repository_lookup():
+    """The CLI resolves the forge remote from authenticated task metadata."""
 
     class RecordingHub(FakeHub):
         def __init__(self) -> None:
@@ -1229,7 +1385,10 @@ async def test_every_device_is_told_where_to_clone_from():
         launch=ClaudeLaunch(system_prompt=""),
     )
 
-    assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
+    assert hub.env["CHEESE_API"] == "http://cheese.test"
+    assert hub.env["CHEESE_PROJECT"] == str(project)
+    assert hub.env["CHEESE_TOKEN"] == "tok"
+    assert "CHEESE_GIT_REMOTE" not in hub.env
     assert "CHEESE_GIT_BRANCH" not in hub.env
     assert hub.env["CHEESE_TOPIC"] == str(topic)
 
@@ -1481,17 +1640,59 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     assert env["SOME_OTHER"] == "kept"
 
 
+# CLI 把模型名写进请求体的全部通道：主回复走 `claude --model`，标题 / 文件建议 /
+# 每一个子 agent 走 family 别名。
+_BODY_MODEL_KEYS = [
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "CLAUDE_MODEL",
+]
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("model", ["deepseek-flash", "glm-5.2"])
-async def test_gateway_selection_pins_native_auxiliary_models(
-    monkeypatch, tmp_path, model
+@pytest.mark.parametrize(
+    ("model", "keys"),
+    [
+        # 走网关池：四个键说的是同一件事，所以要么都在，要么都不在。
+        ("deepseek-flash", _BODY_MODEL_KEYS),
+        ("glm-5.2", _BODY_MODEL_KEYS),
+        # 订阅模型到这里已经是 Claude 的全名，CLI 自带的别名默认本来就指着 Claude
+        # 的型号，没有要说的。
+        ("claude-sonnet-5", ["CLAUDE_MODEL"]),
+    ],
+)
+async def test_the_launch_env_says_the_model_once_and_only_into_the_body(
+    monkeypatch, tmp_path, model, keys
 ):
+    """一个控制点（结论 46）：走哪个池、用哪个模型，在请求到计量代理问准入的那
+    一刻解析。启动环境里这几个键不是第二份声明，它们是**把解析出来的那个名字送
+    进请求体**的唯一通道 —— LiteLLM 只从请求体读模型名，而代理今天不改写请求体
+    （`_route_to_gateway` 只换 host 和凭据）。
+
+    这条断言锁的是「一共就这几个，一个不多」。它们一起消失在代理改写请求体模型名
+    的那一天（结论 46「要做的两件」，P34）。
+    """
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen(model=model)
     assert "ANTHROPIC_BASE_URL" not in hub.env
     assert hub.env["CLAUDE_CODE_OAUTH_TOKEN"]
-    for family in ("HAIKU", "SONNET", "OPUS"):
-        assert hub.env[f"ANTHROPIC_DEFAULT_{family}_MODEL"] == model
+    assert sorted(key for key in hub.env if key.endswith("_MODEL")) == keys
+    assert all(hub.env[key] == model for key in keys)
+
+
+@pytest.mark.anyio
+async def test_the_session_credential_carries_no_model_either(monkeypatch, tmp_path):
+    """凭据里签一个型号，等于把启动那一刻的选择带到每一次准入 —— 同样是第二份
+    声明，而且是准入唯一读得到的那一份，它会压过卡上的绑定。"""
+    from app.core.sandbox_auth import scoped_token_claims
+
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(model="glm-5.2")
+    claims = scoped_token_claims(hub.env["CLAUDE_CODE_OAUTH_TOKEN"])
+    assert claims is not None
+    assert "m" not in claims
+    assert "glm-5.2" not in repr(claims)
 
 
 @pytest.mark.anyio
@@ -1760,7 +1961,7 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
         system_prompt="",
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)
+    await _reached(lambda: bool(hub.prompts))
     router.push(str(tid), {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
     await asyncio.wait_for(task, timeout=3)  # ends via the probe, NOT the 100s ceiling
 
@@ -1799,7 +2000,7 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
         system_prompt="",
         resume_session_id=None,
     )
-    await asyncio.sleep(0.05)
+    await _reached(lambda: bool(hub.prompts))
     router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
     await asyncio.wait_for(task, timeout=5)
 
@@ -2045,7 +2246,7 @@ async def test_a_screen_installed_under_another_root_is_not_reused(monkeypatch):
         )
 
     first = await ensure()
-    monkeypatch.setattr(machine_launcher, "PLATFORM_DIR", ".somewhere-else")
+    monkeypatch.setattr(device_provider, "footprint_root", lambda: ".somewhere-else")
 
     assert (await ensure()).sid != first.sid
     assert hub.closed == [first.sid]
@@ -2193,7 +2394,7 @@ class _Control:
         self._session = {"id": "sess", "status": session_status}
         self.asked: list[str] = []
 
-    async def current(self, _topic_id):
+    async def current(self, _topic_id, _agent_handle=None):
         return self._session
 
     async def enqueue(self, _session_id, payload, _source):
@@ -2214,7 +2415,10 @@ async def test_tools_that_are_still_connected_are_left_alone(monkeypatch):
     control = _Control(["connected"])
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is False
+    )
     assert control.asked == ["mcp_status"]
 
 
@@ -2222,7 +2426,10 @@ async def test_disconnected_tools_are_reconnected_and_reported(monkeypatch):
     control = _Control(["failed", "pending", "connected"])
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is True
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is True
+    )
     assert control.asked == ["mcp_status", "mcp_reconnect", "mcp_status", "mcp_status"]
 
 
@@ -2232,5 +2439,8 @@ async def test_a_room_with_no_live_control_session_is_not_resent(monkeypatch):
     control = _Control([], session_status="closed")
     monkeypatch.setattr("app.domain.agent.remote_control.store", lambda: control)
     provider = DeviceChannel(hub=FakeHub())
-    assert await provider.recover_native_tools(uuid.uuid4()) is False
+    assert (
+        await provider.recover_native_tools(uuid.uuid4(), agent_handle="agent-x")
+        is False
+    )
     assert control.asked == []

@@ -6,8 +6,16 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import Block
-from app.domain.block.services import record_system_event
+from app.domain.agent.platform_notices import (
+    EVENT_ENVIRONMENT_RECOVERY_REQUEST,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    notice,
+)
+from app.domain.agent.runtime import addressed_to_agent
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.repositories import BlockRepository
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 
@@ -45,10 +53,14 @@ async def report_failure(
         root = project.root_topic_id
         available = root is not None and root != topic_id
         dispatch_turn = uuid.uuid4()
-        event = await record_system_event(
-            db,
-            project_id=project_id,
-            topic_id=topic_id,
+        landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
+        event = await BlockRepository(db).add(
+            project_id=landed.project_id,
+            topic_id=landed.topic_id,
+            task_id=landed.task_id,
+            author="system",
+            author_type=AuthorType.platform,
+            kind=BlockKind.event,
             content=(
                 "环境准备失败，已交给总览芝士检查。"
                 if available
@@ -70,19 +82,29 @@ async def report_failure(
             return
         # Logs stay in the affected room; overview fetches them through scoped APIs.
         path = f"/projects/{project_id}/environment/recovery/rooms/{topic_id}"
-        await chat.post_system_event(
-            root,
-            "房间环境准备失败，已交给总览芝士检查",
-            meta={
-                "event_type": "environment_recovery_request",
-                "room_id": str(topic_id),
-            },
-        )
-        get_work_runner().submit_kickoff(
+        # 收件人是总览房间的芝士席位：房间的环境倒了，下一步在它手上。平台只是把
+        # 这条事件送到那个席位，不替它起一轮（I12）。总览房间里看见的就是下面这一
+        # 行 —— 它是这一轮的开场白，一件事只落一条记录；`content` 那一大段是提示
+        # 词，只给 agent 看，不作为聊天消息进时间线。
+        from app.domain.topic_membership.services import addressable_seat
+
+        seat = await addressable_seat(chat.session_factory, root)
+        get_work_runner().submit(
             chat,
             root,
+            author="system",
+            addressed=addressed_to_agent(seat),
+            nudge_event="房间环境准备失败，已交给总览芝士检查",
+            nudge_meta={
+                **notice(
+                    EVENT_ENVIRONMENT_RECOVERY_REQUEST,
+                    severity=SEVERITY_WARN,
+                    who=WHO_CHEESE,
+                ),
+                "room_id": str(topic_id),
+            },
             turn_id=dispatch_turn,
-            prompt=(
+            content=(
                 f"房间 {topic_id} 的环境准备失败，任务消息尚未送达。"
                 f"修复记录：{event.id}。使用 cheese api GET {path} 读取失败步骤、"
                 "日志和房间配置。诊断原因后，如能修复，使用 cheese api POST "
@@ -119,7 +141,7 @@ async def reconcile_recovery(db, topic_id):
         return event
     meta = event.meta or {}
     turn_id = uuid.UUID(meta["dispatch_turn"])
-    if get_work_runner().kickoff_pending(turn_id):
+    if get_work_runner().turn_pending(turn_id):
         return event
     turn = await db.get(AgentTurn, turn_id)
     if turn is not None and turn.stopped_at is None:

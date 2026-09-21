@@ -39,6 +39,19 @@ class TaskStatus(enum.StrEnum):
     closed = "closed"
 
 
+class TaskSnapshot(UuidPk, Timestamps, Base):
+    """An immutable backup of uncommitted work, separate from the review branch."""
+
+    __tablename__ = "task_snapshots"
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
+    )
+    head_sha: Mapped[str] = mapped_column(String(64))
+    snapshot_sha: Mapped[str] = mapped_column(String(64))
+    digest: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(1024))
+
+
 class LockKind(enum.StrEnum):
     heavy = "heavy"
 
@@ -121,6 +134,9 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Recorded when an authenticated agent opens the task's worktree. Dispatch
+    # and room membership do not establish who performs the work.
+    author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Historical tasks have no branch of their own. Their original shared
     # delivery is retained as a task, with the original branch and PR.
     branch_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -158,6 +174,23 @@ class Task(UuidPk, Timestamps, Base):
     # dispatched, and the worker is bound a moment later, once the room has
     # actually spawned one.
     subagent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # 这条活占用的模型资源（结论 3）。NULL = 没有自己的绑定，跟项目默认走 ——
+    # 见 `room_task/binding.py`，那里是唯一读这两列的地方。
+    #
+    # **今天只有卡片渲染读它，而且没有任何接口写它。** 写侧（一个人在卡上改绑）
+    # 与执行侧（派这条活的那一刻按绑定解析模型）都要等平台有「派活」这条路径，
+    # 那是 P33 的事：一条活是房间会话里的一个子 agent，今天由 agent 自己起，
+    # 平台插不进去。
+    #
+    # 两个标量列而不是一个 JSONB：今天要存的就是这两个已知的量，JSONB 换来的只是
+    # 没有 schema 校验、也写不出「这条活绑了什么」的守卫。
+    #
+    # 卡上**显示**哪个模型不在这里，也永远不会在这里：它从 `usage` 里这条活最后
+    # 一行的 `model` 算出来，算的地方是 `presentation.card_model`。一列存「显示
+    # 什么」就是第二份声明，它和真的花出去的那个迟早对不上。
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     # 最后一次有人确认这条活还活着。Stamped when a worker is bound; the board
     # reads it together with the thread's last block, and takes the later of the

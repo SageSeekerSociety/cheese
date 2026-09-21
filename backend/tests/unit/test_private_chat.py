@@ -17,28 +17,23 @@ from app.domain.agent.harness.claude_code.remote_execution.client import (
 )
 from app.domain.agent.harness.claude_code.remote_execution.private import target
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
+from tests.pinned_claude import claude_binary
 
 
-def test_private_chat_requires_a_central_device(monkeypatch):
-    monkeypatch.setattr(settings, "agent_session_device_id", None)
-    with pytest.raises(RuntimeError, match="尚未配置"):
-        private_chat.execution_target(uuid.uuid4(), uuid.uuid4())
-
-
-def test_private_execution_does_not_select_a_project_machine(monkeypatch):
-    monkeypatch.setattr(settings, "agent_session_device_id", "central")
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    config = private_chat.execution_target(project, topic)
-    assert config["device_id"] == "central"
+def test_the_scratch_area_sits_on_the_machine_it_is_handed(monkeypatch):
+    """草稿区不自己挑机器 (结论 19)：交进来哪台就是哪台，部署默认那台不参与。"""
+    monkeypatch.setattr(settings, "agent_session_device_id", "deployment-default")
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    config = private_chat.scratch_target(project, resource, device_id="this-session")
+    assert config["device_id"] == "this-session"
     assert config["workspace"] == "/work"
     assert config["mcp_servers"] == []
 
 
-def test_reopened_chat_uses_a_new_container_and_control_home(monkeypatch):
-    monkeypatch.setattr(settings, "agent_session_device_id", "central")
+def test_reopened_chat_uses_a_new_container_and_control_home():
     project, topic, resource = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    before = private_chat.execution_target(project, topic)
-    after = private_chat.execution_target(project, topic, resource)
+    before = private_chat.scratch_target(project, topic, device_id="central")
+    after = private_chat.scratch_target(project, resource, device_id="central")
     assert before["command"] != after["command"]
     assert before["home"] != after["home"]
     assert after["topic"] == str(resource)
@@ -54,7 +49,9 @@ async def test_private_control_uses_central_device_transport(monkeypatch):
             calls.append((device, command, json.loads(kwargs["stdin"])))
             return {"exit": 0, "stdout": '{"content":"draft"}'}
 
-    config = private_chat.execution_target(uuid.uuid4(), uuid.uuid4())
+    config = private_chat.scratch_target(
+        uuid.uuid4(), uuid.uuid4(), device_id="central"
+    )
     request = {"subtype": "read_file", "path": "/work/draft.md"}
     assert await private_chat.control(config, request, hub=Hub()) == {
         "content": "draft"
@@ -71,7 +68,9 @@ async def test_private_control_does_not_fall_back_on_transport_failure(monkeypat
         async def exec(self, *args, **kwargs):
             return {"exit": 1, "stderr": "executor unavailable"}
 
-    config = private_chat.execution_target(uuid.uuid4(), uuid.uuid4())
+    config = private_chat.scratch_target(
+        uuid.uuid4(), uuid.uuid4(), device_id="central"
+    )
     with pytest.raises(RuntimeError, match="executor unavailable"):
         await private_chat.control(config, {"subtype": "read_file"}, hub=Hub())
 
@@ -82,7 +81,7 @@ def test_scratch_instructions_and_hooks_never_reach_central_context(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
     (state / "config.json").write_text(
-        json.dumps({"workspace": str(work), "private": True})
+        json.dumps({"workspace": str(work), "claude": claude_binary(), "private": True})
     )
     (work / "CLAUDE.md").write_text("Run this on the central host")
     (work / ".claude").mkdir()

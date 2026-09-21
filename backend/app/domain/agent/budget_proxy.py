@@ -1,9 +1,9 @@
 """The decision half of usage control: refuse a turn that cannot be afforded.
 
-Reading a transcript afterwards (see ``CHEESE_USAGE_READER``) tells you what a
-turn cost once it is over. That is enough to answer "where did the money go",
-which is what was missing, but it cannot stop the turn that empties the account
-— by the time the number exists, it has been spent.
+Counting a turn's tokens afterwards tells you what it cost once it is over.
+That is enough to answer "where did the money go", which is what was missing,
+but it cannot stop the turn that empties the account: by the time the number
+exists, it has been spent.
 
 Enforcement therefore has to sit in the request path. What sits there differs by
 provider, and the difference is not cosmetic:

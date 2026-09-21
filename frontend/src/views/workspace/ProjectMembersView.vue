@@ -472,7 +472,7 @@ async function submitInvite() {
             <v-btn
               variant="text"
               size="small"
-              @click="router.push({ name: 'project-agents', params: { projectId: props.projectId } })"
+              @click="router.push({ name: 'project-settings', params: { projectId: props.projectId } })"
             >
               设置
             </v-btn>

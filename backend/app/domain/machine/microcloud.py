@@ -153,6 +153,18 @@ class MicroCloudClient:
         side: aiStatus drops back to provisioning and settles on its own."""
         return await self._call("POST", f"/machine/{machine_id}/ai/{mode}")
 
+    async def find_machine(
+        self, customer_id: int, hostname: str
+    ) -> dict[str, Any] | None:
+        """The customer's machine with this hostname, if the provider has one."""
+        data = await self._call(
+            "GET", f"/machine?customerId={customer_id}&page_size=100"
+        )
+        for item in (data or {}).get("items", []):
+            if item.get("hostname") == hostname:
+                return item
+        return None
+
     async def get_machine(self, machine_id: int) -> dict[str, Any] | None:
         """None when MicroCloud no longer knows the machine — a deleted machine
         404s, which is a normal terminal outcome, not an error."""

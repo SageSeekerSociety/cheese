@@ -79,6 +79,25 @@ calls finish, and is never called by the normal app deployment workflows. It
 reads the same box-local deploy environment and compose overlays as the app
 deployment.
 
+The owner's database pool is set in the compose file (`DB_POOL_SIZE=5`,
+`DB_MAX_OVERFLOW=5` on `device-connection`) and the backend's in
+`app/core/config.py`; together they are sized so the two backends of a rollout
+plus the owner fit a 100-connection server.
+
+Which side of that arithmetic a deploy actually moves depends on where the
+change is. A change to the compose file's `device-connection` block is picked
+up by the next ordinary deploy, because compose recreates a service whose
+definition changed (observed on dev, 2026-09-19: the owner came up on the new
+pool without anyone releasing it). A change that lives only in the image —
+`app/core/config.py`, or anything else the backend carries — does not reach the
+owner until it is released, because the deploy leaves its container alone. So
+on a box whose server still has the default 100 (prod, etrip), **a release that
+raises the backend pool without also changing the owner's compose block goes
+out owner-first**: until the owner is released it holds the pool its running
+image was built with, and a backend rollout beside it can ask the server for
+more connections than it has — the 2026-09-16 failure. dev's server was raised
+to 200, so the order does not matter there.
+
 Cloud-machine SSH forwards share this stable connection boundary. Normal app
 deployments leave `cheese-cloud-control` running. To update it, dispatch
 **Release cloud control** with the full SHA of a commit already merged into
@@ -389,120 +408,6 @@ Related: never hand-install files INTO a running container (they evaporate on
 the next recreate); the gateway's own env keys follow the same
 recreate-not-restart rule (`deploy/gateway/README.md`).
 
-### Turning on the openviking memory backend (#187)
-
-Everything except the key is already in place: `deploy-docker.sh` creates
-`VIKING_HOST_PATH` (default `/home/nictheboy/cheese-viking`), hands it to uid
-1000 with the other mounts, and compose bind-mounts it at `/data/viking` with
-`OPENVIKING_DATA_DIR` pointed there. On the default `MEMORY_BACKEND=db` the
-directory simply stays empty.
-
-To switch a box over, add to its `backend/.env` and redeploy the running sha
-(step 2 above — `docker restart` will not do):
-
-```
-MEMORY_BACKEND=openviking
-OPENVIKING_LLM_API_KEY=<zhipu key>
-OPENVIKING_EMBEDDING_API_KEY=<zhipu key>
-```
-
-Then import the facts the db backend already holds. The rows are kept as the
-audit trail, so this is additive; imported ids are checkpointed on the volume,
-so a re-run resumes instead of duplicating:
-
-```bash
-docker exec -w /app cheese-backend-1 \
-  python scripts/migrate_memory_to_openviking.py --dry-run   # then without it
-```
-
-Two things to know before flipping it:
-
-- **That directory IS the database.** Not Postgres, not the image. The PG backup
-  job does not cover it; it has a backup line of its own
-  (`cheese-viking-backup.timer`, every 6h, off-site to R2 — see
-  `deploy/README-backup.md`). Installing that timer is part of the same manual
-  runbook as the DB backup, so confirm it is actually running on this box before
-  you flip the switch, not after.
-- **The key buys extraction, not just vectors.** Every remembered fact costs a
-  chat call (OpenViking's extractor) plus embedding calls. A key that only
-  works on the embedding endpoint gets you a backend that stores nothing.
-
-#### Checking that it actually came up
-
-A wrong key does not raise anything. Extraction runs in a background task
-inside OpenViking and the read path returns empty on error, so a rejected key
-looks *exactly* like the db backend: no memories, no complaint. So the backend
-calls both endpoints itself at boot and reports what happened. Two places to
-look, in this order:
-
-1. **The container log, right after the redeploy.** On success:
-
-   ```
-   memory: openviking model endpoints answered — embedding at …, chat at …
-   ```
-
-   On failure it is an `ERROR` line naming the endpoint, the HTTP status, the
-   vendor's own message, and — the part that usually is the answer — *which
-   setting the key came from*. `key from anthropic_auth_token` means the
-   openviking keys were never set and it fell back to the agent gateway's
-   token, which these endpoints will always reject.
-
-2. **`/health/detailed`, any time after.** `checks.memory` carries the same
-   verdict, per endpoint, with a `checked_at`; it is re-probed in the
-   background every 5 minutes, so a key that expires later shows up here too.
-
-   ```bash
-   docker exec cheese-backend-1 curl -s localhost:8081/health/detailed \
-     | jq .checks.memory
-   ```
-
-A failing memory check makes `/health/detailed` report `degraded`, and that is
-all it does: it does **not** 503 `/readyz` and does **not** touch `/healthz`,
-which is the container health check and therefore the deploy's rollback gate.
-Turning "the model vendor is having a bad afternoon" into a rolled-back release
-would cost more than the silence this check exists to break.
-
-One more thing the probe catches that a key test would not: it compares the
-width of the vector it gets back against `OPENVIKING_EMBEDDING_DIMENSION`.
-OpenViking does not ask the endpoint for a specific width, so a model whose
-native width differs from the configured one gives you a working key and a
-broken index.
-
-`backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
-whole path against a local stand-in endpoint, so the wiring is verifiable
-without a key — but it says nothing about extraction quality, which is exactly
-what the real key is for. The self-check has its own key-less coverage in
-`backend/tests/integration/test_memory_endpoint_probe.py`.
-
-### Turning on 记忆整理 / dreaming (#187)
-
-Independent of the openviking switch above, and much cheaper to try: dreaming
-reads the **db** backend's existing rows (`memory_entries`, `memory_dreams`), so
-it needs no vendor key and does not care what `MEMORY_BACKEND` is set to. One
-line, then the same redeploy as any other env change:
-
-```
-DREAM_ENABLED=true
-```
-
-Memory consolidation runs independently of resource cleanup:
-
-- `SANDBOX_REAP_INTERVAL_SECONDS` remains the compatibility name for its interval
-  (one hour by default); it no longer releases idle rooms.
-- `SANDBOX_IDLE_HOURS` sets the required inactivity (eight hours by default).
-  Existing idle time counts immediately; enabling dreams does not start a new wait.
-- Each pass consolidates memory for at most `DREAM_MAX_PER_SWEEP` rooms (one by
-  default). `DREAM_MIN_BLOCKS` defaults to twenty. Rooms keep their sessions.
-
-To inspect the running job:
-
-```bash
-docker logs cheese-backend-1 --since 1h 2>&1 | grep 'shipped to device'
-```
-
-It **spends model budget** on a background trigger — about one agent turn per
-organized topic. That is the whole reason it is off by default.
-
 ## Backups
 
 Every box runs the same scripts (only the R2 prefix and host differ); details and
@@ -511,10 +416,6 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
-- **Memory** (`VIKING_HOST_PATH`, the openviking tree): 6-hourly full tar →
-  verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
-  the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
-  tree is empty and the run is skipped, not failed.
 - **Transcripts**: live collection writes immutable original byte ranges and source
   identity records directly to the private `TRANSCRIPT_S3_BUCKET`, alongside a
   PostgreSQL index. Existing tar archives remain in `TRANSCRIPTS_HOST_PATH`
@@ -579,59 +480,17 @@ creating a database without naming the encoding, which is the rule above.
 - **etrip**: SSH target (`ssh etrip`); GitHub Actions reaches it over Tailscale.
 - Self-hosted runners pull outbound, so no public inbound is needed on the boxes.
 
-## The backend runs as uid 1000 — and must keep doing so
+## Persistent volume ownership
 
-The backend process and the agent inside a sandbox container share one git
-store: `ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.git` into
-every sandbox container, read-write — and **both sides commit into it**, since
-the agent's own commit in its worktree is how a topic branch moves. git creates
-object directories 0755 and loose objects 0444, owned by whoever wrote them, so
-if the two sides run as different uids the second one can read every object and
-add none: its commit fails on a directory it does not own, and the backend's
-reads fail on a store it cannot enter (which git reports as `not a git
-repository`, not as a permission error). Both directions have hit production —
-the file panel 422ing for every topic in a project, and an agent whose work
-could not leave the container.
+`backend/Dockerfile` creates the backend user with uid/gid 1000. Existing host
+bind mounts must remain accessible to that user, including files written by
+older images as uid 1001.
 
-`core.sharedRepository` is git's supported way to widen those modes, so this
-constraint is negotiable — but nothing negotiates it today, so the fix is that
-both sides ARE the same uid:
-
-- sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
-  `backend/sandbox/Dockerfile` asserts the uid at build time.
-- backend: `backend/Dockerfile` creates its user with uid/gid **1000** to match.
-- single source of truth: `app.domain.workspace.service.AGENT_UID`, pinned
-  against both Dockerfiles by `tests/unit/test_workspace_uid_alignment.py`.
-
-**Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
-`UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — `VIKING_HOST_PATH`, the openviking
-memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
-written by the pre-2026-08 backend as uid 1001.
-`deploy/deploy-docker.sh` hands them over once via
-`deploy/fix-workspace-ownership.sh` before the swap —
-idempotent, marker-guarded, and it runs the chown in a throwaway root container
-(no sudo on the box). If a backend ever boots onto an unmigrated path it logs
-`workspace_ownership` at ERROR naming the offending file; the fix is to run that
-script and restart.
-
-**The handover is the deploy's point of no return, so it runs last.** Every other
-fallible step — image pulls, the runtime-image smoke test, `alembic upgrade head`
-— aborts leaving the box exactly as it was; this one does not. It sits
-immediately before `dc up` with nothing between them that can fail. It was third
-of five until 2026-08-11, when the step after it aborted the deploy and left dev
-holding a 1001 backend on a 1000 tree: `git` refused the workspaces as
-`dubious ownership` and every project 422'd until the next deploy (run
-31466502982). For the same reason a health-check rollback hands the mounts
-*back* to `PREVIOUS_AGENT_UID` (1001) before starting the old image — but only
-when that run actually moved them, which the script reports to the caller.
-Rolling images back without rolling ownership back is not a rollback.
-
-These scripts are exercised by `deploy/tests/` against a fake docker, gated in CI
-by `.github/workflows/deploy-scripts-test.yml` (hosted, ~1m — it must not queue
-behind the box's single runner). Before 2026-08-11 that harness existed but no
-workflow ran it, which is how an untested ordering change reached the box with
-six green checks.
+`deploy/deploy-docker.sh` calls `deploy/fix-workspace-ownership.sh` to transfer
+ownership when needed. The script uses a marker to skip completed migrations
+and reports whether it changed ownership. A health-check rollback restores
+the previous ownership before starting the old image when the deployment
+performed that transfer. The ownership script is covered by `deploy/tests/`.
 
 ## Gotchas — things that look renameable but are NOT
 

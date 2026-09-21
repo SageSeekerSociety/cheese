@@ -22,26 +22,27 @@ names, so the existing channel carries it unchanged.
 import asyncio
 import base64
 import hashlib
+import logging
 import time
 import uuid
 from pathlib import Path
-
-from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import machine_launcher
-from app.domain.agent.device_hub import DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import Opening, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent.harness.pi.runtime import PI, Handle
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.library import service as library
 from app.domain.topic.models import Topic
-from app.domain.workspace import service as ws
 
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
+logger = logging.getLogger(__name__)
 
 # How long a room's first call waits for the runner to bind its socket, and how
 # often it asks. Generous because the cost of being wrong is asymmetric: waiting
@@ -77,9 +78,9 @@ class PiChannel:
         )
 
     async def ensure(self, session: SessionRef, opening: Opening) -> Handle:
-        precheck = await self.channel.precheck(session.project_id, session.topic_id)
-        assert isinstance(precheck, tuple)
-        device_id, _agent_user_id, agent = precheck
+        precheck = await self.channel.precheck(session, needs_place=opening.needs_place)
+        assert isinstance(precheck, Placement)
+        device_id, agent = precheck.machine, precheck.agent_handle
         if opening.agent_handle and opening.agent_handle != agent:
             raise ScreenSetupError("The room teammate changed before session startup")
         token = mint_scoped_token(
@@ -90,8 +91,7 @@ class PiChannel:
             agent_handle=agent,
         )
         screen = await self.channel.ensure_ready(
-            project_id=session.project_id,
-            topic_id=session.topic_id,
+            session=session,
             token=token,
             env=opening.env,
             memory_scope=opening.memory_scope,
@@ -198,15 +198,22 @@ class PiChannel:
         """
         factory = self.channel._session_factory or async_session_factory
         async with factory() as db:
-            room = await db.get(Topic, session.topic_id)
-            if room is None:
+            if await db.get(Topic, session.topic_id) is None:
                 return
-            room.session_placement = {
-                "device_id": device_id,
-                "resource_id": str(resource_id),
-                "channel": self.name,
-                "runtime": {"harness": PI, "state": state, "agent_handle": agent},
-            }
+            await AgentSessionService(db).remember_place(
+                topic_id=session.topic_id,
+                agent_handle=session.agent_handle,
+                harness=session.harness,
+                # pi works where its process already is, so there is no second
+                # machine to lease — the hands and the process are one.
+                work_lease=None,
+                runtime_location={
+                    "device_id": device_id,
+                    "resource_id": str(resource_id),
+                    "channel": self.name,
+                    "runtime": {"harness": PI, "state": state, "agent_handle": agent},
+                },
+            )
             await db.commit()
 
     async def call(self, handle: Handle, method: str, params: dict) -> dict:
@@ -218,37 +225,38 @@ class PiChannel:
         factory = self.channel._session_factory or async_session_factory
         handles: list[Handle] = []
         async with factory() as db:
-            rooms = await db.scalars(
-                select(Topic).where(Topic.session_placement.is_not(None))
-            )
-            for room in rooms:
-                placement = room.session_placement
-                assert placement is not None
-                runtime = placement.get("runtime", {})
-                if runtime.get("harness") != PI or placement["channel"] != self.name:
-                    continue
-                machine = placement["device_id"]
-                if device_id is not None and machine != device_id:
-                    continue
-                if not self.channel._hub.is_online(machine):
-                    continue
+            sessions = await AgentSessionService(db).placed_sessions()
+        for project_id, room_id, handle, harness, place in sessions:
+            if harness != PI or place.channel != self.name:
+                continue
+            machine = place.machine
+            if device_id is not None and machine != device_id:
+                continue
+            if not self.channel._hub.is_online(machine):
+                continue
+            try:
                 status = await self.channel._hub.call_executor(
-                    machine, runtime["state"], "ping", {}
+                    machine, place.runtime["state"], "ping", {}, timeout=15
                 )
-                if not status.get("alive"):
-                    continue
-                ref = SessionRef(room.project_id, room.id)
-                agent = runtime["agent_handle"]
-                handles.append(
-                    Handle(
-                        ref,
-                        machine,
-                        runtime["state"],
-                        status["session_id"],
-                        agent,
-                        self._mirror(ref, str(placement["resource_id"]) + agent),
-                    )
+            except (DeviceOffline, DeviceCallError, TimeoutError) as exc:
+                logger.warning(
+                    "pi discovery failed topic=%s device=%s: %s", room_id, machine, exc
                 )
+                continue
+            if not status.get("alive"):
+                continue
+            ref = SessionRef(project_id, room_id, handle, harness)
+            agent = place.runtime["agent_handle"]
+            handles.append(
+                Handle(
+                    ref,
+                    machine,
+                    place.runtime["state"],
+                    status["session_id"],
+                    agent,
+                    self._mirror(ref, place.resource_id + agent),
+                )
+            )
         return handles
 
     async def images(self, handle: Handle, images: list[dict]) -> list[dict]:
@@ -261,7 +269,7 @@ class PiChannel:
         return [
             {
                 "data": base64.b64encode(
-                    ws.read_room_file(
+                    library.read_attachment(
                         handle.session.project_id,
                         handle.session.topic_id,
                         image["path"],

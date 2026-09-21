@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import secrets
 from abc import ABC, abstractmethod
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 # Refresh an expiring GitHub user-to-server token this long before it
 # actually expires, so a token handed to a caller has headroom to be used.
 _GITHUB_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
+# One GitHub refresh per connection per process: the second racer waits here,
+# holding no database connection, and reuses the first one's result. This dict
+# only ever holds one lock per connection that has refreshed, so it stays small.
+_refresh_locks: dict[int, asyncio.Lock] = {}
 
 # Machine-readable reasons `get_github_user_token_with_reason` /
 # `get_github_user_token_for_handle_with_reason` report alongside a None
@@ -518,43 +523,35 @@ class OAuthService:
         self, connection_id: int, provider_id: str
     ) -> str | None:
         """Refresh an expiring GitHub token and commit the result in its OWN
-        transaction, on a fresh session — deliberately NOT reusing whatever
+        transaction, on fresh sessions — deliberately NOT reusing whatever
         session/transaction the caller (e.g. AcceptService.accept()) happens
-        to be mid-way through. Closes a risk 决策 0556ac50 explicitly accepted
-        without fixing:
+        to be mid-way through, so a later rollback there cannot lose a token
+        GitHub has already rotated (决策 0556ac50).
 
-        - Rollback loses the token: refresh succeeds and GitHub invalidates
-          the OLD refresh_token, then a LATER, unrelated step in the caller's
-          transaction raises and the whole session rolls back — without an
-          independent commit here, the DB keeps the now-dead old value until
-          the user manually reconnects.
-        - Concurrent accepts: two callers racing to refresh the same
-          about-to-expire token would both read the same refresh_token, one
-          GitHub call wins, and the loser's write either clobbers the
-          winner's or wastes a refresh_token GitHub already invalidated.
-          ``SELECT ... FOR UPDATE`` on the connection row serializes
-          refreshers instead: the loser blocks on the lock, then (double-
-          checked below) sees the winner's fresh, not-actually-expiring
-          token and reuses it rather than calling GitHub a second time.
+        GitHub App refresh tokens are one-shot, so two refreshers of the same
+        connection must not both spend the stored one, and the loser must not
+        clobber the winner's write. No database lock is held while GitHub is
+        called: a row lock held across a network call queues every later
+        caller behind it with a pool connection each, which is how dev went
+        down on 2026-09-18. Instead:
 
-        The new session is opened on the SAME engine as this service's own
+        - refreshers of one connection in this process take an asyncio lock,
+          so the second one waits (holding nothing) and then reads the fresh
+          token the first one committed;
+        - the write is conditional on the stored refresh_token still being the
+          ciphertext this refresher read, so a refresher in another process
+          that lands first keeps its result and this one reads it back.
+
+        The new sessions are opened on the SAME engine as this service's own
         (``self._repo.session``), not a hardcoded module-level factory: the
         caller's session is the source of truth for which database is live
         (the test harness in particular binds the app's default session
-        factory and a given request's session to different databases; an
-        independent-but-same-engine session stays correct in both).
+        factory and a given request's session to different databases).
 
-        A single-row, short transaction — the only unavoidably slow part is
-        the GitHub HTTP call itself, held under the row lock so a second
-        racer can't sneak a read in between "check expiry" and "write the
-        refreshed token"; that's an accepted trade; it blocks at most one
-        other refresher of this SAME connection (never a wider table lock)
-        and is bounded by the HTTP client's own timeout.
-
-        The provider lookup is deliberately done FIRST, before opening the
-        row-locked session: it depends only on ``provider_id`` (static,
-        known up front), so failing fast here avoids taking a DB lock for a
-        refresh that can never succeed on this deployment.
+        The provider lookup is deliberately done FIRST: it depends only on
+        ``provider_id`` (static, known up front), so failing fast here avoids
+        the lock and the reads for a refresh that can never succeed on this
+        deployment.
         """
         try:
             provider = self.get_provider(provider_id)
@@ -573,38 +570,43 @@ class OAuthService:
             return None
 
         bind = self._repo.session.bind
-        async with AsyncSession(bind=bind, expire_on_commit=False) as session:
-            repo = OAuthConnectionRepository(session)
-            conn = await repo.get_for_update(connection_id)
-            if conn is None:
-                return None
-
-            if (
-                conn.token_expires is not None
-                and conn.token_expires - datetime.now(UTC)
-                > _GITHUB_TOKEN_REFRESH_MARGIN
-            ):
-                # Someone else refreshed it while we waited for the lock.
-                return (
-                    self._decrypt_stored_token(conn.access_token, user_id=conn.user_id)
-                    if conn.access_token
-                    else None
-                )
-
+        lock = _refresh_locks.setdefault(connection_id, asyncio.Lock())
+        async with lock:
+            async with AsyncSession(bind=bind, expire_on_commit=False) as session:
+                conn = await OAuthConnectionRepository(session).get(connection_id)
+                if conn is None:
+                    return None
+                if (
+                    conn.token_expires is not None
+                    and conn.token_expires - datetime.now(UTC)
+                    > _GITHUB_TOKEN_REFRESH_MARGIN
+                ):
+                    # Someone else refreshed it while we waited for the lock.
+                    return (
+                        self._decrypt_stored_token(
+                            conn.access_token, user_id=conn.user_id
+                        )
+                        if conn.access_token
+                        else None
+                    )
+                seen_refresh = conn.refresh_token
+                user_id = conn.user_id
             stored_refresh = (
-                self._decrypt_stored_token(conn.refresh_token, user_id=conn.user_id)
-                if conn.refresh_token
+                self._decrypt_stored_token(seen_refresh, user_id=user_id)
+                if seen_refresh
                 else None
             )
-            if not stored_refresh:
+            if not seen_refresh or not stored_refresh:
                 return None
 
             try:
                 token_data = await provider.refresh_access_token(stored_refresh)
                 new_access_token = token_data["access_token"]
             except Exception:
+                # A refresher elsewhere may have spent this refresh token first;
+                # then its result is the live one.
                 logger.exception("github account link: token refresh failed")
-                return None
+                return await self._current_token_if_fresh(bind, connection_id)
 
             expires_in = token_data.get("expires_in")
             new_expires = (
@@ -613,14 +615,33 @@ class OAuthService:
                 else None
             )
             new_refresh_token = token_data.get("refresh_token")
-            await repo.update_tokens(
-                conn.id,
-                encrypt_text(new_access_token),
-                encrypt_text(new_refresh_token or stored_refresh),
-                new_expires,
-            )
-            await session.commit()
-            return new_access_token
+            async with AsyncSession(bind=bind, expire_on_commit=False) as session:
+                replaced = await OAuthConnectionRepository(
+                    session
+                ).replace_tokens_if_unchanged(
+                    connection_id,
+                    seen_refresh_token=seen_refresh,
+                    access_token=encrypt_text(new_access_token),
+                    refresh_token=encrypt_text(new_refresh_token or stored_refresh),
+                    token_expires=new_expires,
+                )
+                await session.commit()
+            if replaced:
+                return new_access_token
+            return await self._current_token_if_fresh(bind, connection_id)
+
+    async def _current_token_if_fresh(self, bind, connection_id: int) -> str | None:
+        """The stored access token, if another refresher has just renewed it."""
+        async with AsyncSession(bind=bind, expire_on_commit=False) as session:
+            conn = await OAuthConnectionRepository(session).get(connection_id)
+        if (
+            conn is None
+            or not conn.access_token
+            or conn.token_expires is None
+            or conn.token_expires - datetime.now(UTC) <= _GITHUB_TOKEN_REFRESH_MARGIN
+        ):
+            return None
+        return self._decrypt_stored_token(conn.access_token, user_id=conn.user_id)
 
     async def list_user_connections(self, user_id: int) -> list[dict]:
         conns = await self._repo.list_by_user(user_id)

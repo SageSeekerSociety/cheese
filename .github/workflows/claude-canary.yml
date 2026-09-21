@@ -73,10 +73,31 @@ jobs:
           echo "version=$pin" >> "$GITHUB_OUTPUT"
           echo "production pin is $pin"
 
+      # The mock API's image, fetched before the suite so a registry hiccup is
+      # this step's failure and not a skipped test. Through mirror.gcr.io, as
+      # every other pull on the pool: Docker Hub's anonymous token endpoint is
+      # what refused the canary on 2026-09-17 and -18. Tagged under the name
+      # the harness runs, which then resolves locally.
+      - name: Pull the mock API image
+        run: |
+          image=mockserver/mockserver:mockserver-7.5.0
+          for attempt in 1 2 3 4 5; do
+            if docker pull -q "mirror.gcr.io/$image"; then
+              docker tag "mirror.gcr.io/$image" "$image"
+              exit 0
+            fi
+            echo "pull attempt $attempt failed; retrying in $((attempt * 15))s" >&2
+            sleep $((attempt * 15))
+          done
+          echo "could not pull $image through the mirror" >&2
+          exit 1
+
       - name: Rendezvous e2e against the newest Claude Code
         id: e2e
         working-directory: cli
         continue-on-error: true
+        env:
+          CHEESE_E2E_REQUIRE_DOCKER: "1"
         run: |
           export PATH="$GITHUB_WORKSPACE/.npm-canary/bin:$PATH"
           go test -tags claudee2e -v -timeout 40m -run 'TestRendezvous' ./e2e/ 2>&1 | tee /tmp/canary.log

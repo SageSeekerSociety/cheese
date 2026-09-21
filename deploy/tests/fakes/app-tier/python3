@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == */check-forge-workspace-writers.py ]]; then
+  echo workspace-writers-checked >> "${APP_TIER_DOCKER_LOG:?}"
+  exit "${APP_TIER_WORKSPACE_WRITERS:-0}"
+fi
+# Real-server provisioning is covered by test-forgejo-bootstrap.sh.
+if [[ "${1:-}" == */bootstrap-forgejo.py ]] && [[ "$*" != *" --prepare"* ]] && [[ "$*" != *" --configure-events"* ]] && [[ "$*" != *" --configure-github-events"* ]]; then
+  if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
+    echo bootstrap >> "$APP_TIER_DOCKER_LOG"
+  fi
+  exit 0
+fi
+exec "${APP_TIER_REAL_PYTHON:?}" "$@"

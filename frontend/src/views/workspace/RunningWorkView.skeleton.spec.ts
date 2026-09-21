@@ -16,7 +16,13 @@ const listProjectTasks = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listProjectTasks: (...a: unknown[]) => listProjectTasks(...a) }
+  // 这些用例问的是板，所以清单是空的：那一块自己就不出现（它的行为在
+  // `components/ArtifactManifest.spec.ts` 里）。不给这一条，组件会去真发一次请求。
+  return {
+    ...actual,
+    listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
+    listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+  }
 })
 
 vi.mock('vue-router', () => ({
@@ -85,7 +91,7 @@ describe('活还在路上的看板', () => {
       ).toBe(3)
     )
     // 板的框架和活无关，所以它没有理由等：列头在这一刻就已经是最终的样子。
-    expect(columnNames(container)).toEqual(['施工中', '交付中', '待处理'])
+    expect(columnNames(container)).toEqual(['施工中', '交付中', '待处理', '做出了什么'])
     expect(container.querySelector('.v-progress-circular'), '板的形状是已知的，不该用转圈').toBeNull()
 
     gate.resolve({ data: [task()], total: 1 })

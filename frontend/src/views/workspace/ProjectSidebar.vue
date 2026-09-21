@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -45,9 +45,19 @@ function onHoverTopic(topicId: string) {
   })
 }
 
-async function onCreateTopic(title: string, agentInstanceId?: string | null) {
-  const topic = await store.create(title, agentInstanceId)
-  if (topic) openTopic(topic.id)
+const creatingTopic = ref(false)
+async function onCreateTopic(title: string) {
+  if (creatingTopic.value) return
+  creatingTopic.value = true
+  // Fetch the room view while the server creates the room.
+  void import('./TopicView.vue').catch(() => {})
+  try {
+    const topic = await store.create(title)
+    if (topic)
+      await router.push({ name: 'workspace-topic', params: { projectId: topic.project_id, topicId: topic.id } })
+  } finally {
+    creatingTopic.value = false
+  }
 }
 
 // Archiving the topic you are looking at closes it — go back to the project
@@ -76,6 +86,7 @@ async function onArchiveTopic(topicId: string) {
     :topics="store.topics"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
+    :creating-topic="creatingTopic"
     :active-docs="activeDocs"
     :unread-map="store.unreadMap"
     :private-unread-map="store.privateUnreadMap"

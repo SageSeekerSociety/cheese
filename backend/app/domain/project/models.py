@@ -13,12 +13,14 @@ from datetime import datetime
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,9 +69,10 @@ class Project(UuidPk, Timestamps, Base):
         BigInteger, nullable=True, index=True
     )
     # The agent a new topic in this project gets, and the one project-wide work
-    # acts as. NULL = the implicit 芝士 (handle `cheese`, no type) — which is
-    # what every project had before agents were pickable, so nothing has to be
-    # backfilled for a project to resolve.
+    # acts as. A project is created with it (结论 4), so NULL means only that
+    # this project was made by an image that predates that — the next read seeds
+    # the row through `AgentInstanceService.materialize_default`. Nullable stays
+    # for exactly that window.
     # use_alter: projects↔agent_instances is a circular FK; add this one via ALTER.
     default_agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
@@ -179,3 +182,76 @@ class ProjectGitInstallation(UuidPk, Timestamps, Base):
     repo: Mapped[str] = mapped_column(String(255))
     # The GitHub org or user login the installation lives under.
     account: Mapped[str] = mapped_column(String(255))
+
+
+class ProjectForge(UuidPk, Timestamps, Base):
+    """The single authoritative repository for a project's code and proposals."""
+
+    __tablename__ = "project_forges"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), unique=True
+    )
+    kind: Mapped[str] = mapped_column(String(32))
+    url: Mapped[str] = mapped_column(String(2048))
+    api_url: Mapped[str] = mapped_column(String(2048))
+    repo: Mapped[str] = mapped_column(String(255))
+    default_branch: Mapped[str] = mapped_column(String(255), default="main")
+    # Only the backend can mint credentials; the account password never leaves it.
+    account_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ForgeToken(UuidPk, Timestamps, Base):
+    """Encrypted cache of access tokens with provider-enforced expiration."""
+
+    __tablename__ = "forge_tokens"
+    project_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    api_url: Mapped[str] = mapped_column(String(2048))
+    username: Mapped[str] = mapped_column(String(255))
+    value: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class ProjectArtifact(UuidPk, Timestamps, Base):
+    """项目做出来的一样东西 —— 清单上的一行 (#1085 结论二、三)。
+
+    **名字是身份，仓库那一项除外。** 一份报告的第 1 版和第 7 版是同一项，靠的是
+    它们叫同一个名字；所以同名在这里是同一项，与资料库正相反（那边同名是两份不同
+    的原件，撞了就加 `(2)`）。两边的规则相反是因为两边问的问题相反：给进来的那些
+    各是一份独立的东西，做出来的这些各有一条自己的历史。
+
+    项目那个仓库是例外，它认 `delivers_repository`：合并型的交付谁也不用起名，平台
+    自己认得出是哪一项，而人随时可以把它改成想要的名字 —— 按名字找的话，改完名的
+    下一次合并就会再长出一行。
+
+    **版本不在这张表上，它是数出来的。** 一版是一次交付，所以「第 7 版」就是第 7
+    张采纳了的、声明这一项的卡（`accept_artifact_version`）。存一个计数器要在每条
+    合并成功的路上都记得加一、在撤回采纳的路上都记得减一，而漏掉任何一条都不会报
+    错，只会让清单上的版本号和真的交出去过的东西悄悄对不上。数出来的那个数没有这
+    种失效方式。
+
+    **这张表没有路径。** 是不是产物由交付时的声明决定，不由它落在哪个目录决定
+    （#1085「语义挂在声明上，不挂在目录名上」）——目录会漂，声明不会。引用型的产
+    物（一次实验、一份几 GB 的数据集）本来就没有仓库路径，留一列路径出来只会让它
+    们看着像缺了东西。
+    """
+
+    __tablename__ = "project_artifacts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_project_artifact_name"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    #: 这一项就是项目的那个仓库。合并型的交付认的是这一位，不是名字 —— 名字改了
+    #: 它还是同一项，而按名字找的话一次改名就会让下一次合并再长出一行。一个项目
+    #: 至多一项为真（`ProjectForge` 保证一个项目只有一个仓库）。
+    delivers_repository: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    #: 一句话说清这是什么东西、给谁的 —— 下一次交付靠它判断「我做的是不是它的新
+    #: 一版」。写的是这样东西本身，所以它在第 1 版和第 20 版都成立；这一版做了什么
+    #: 在卡的 `change_subject` 上，不在这里。
+    about: Mapped[str] = mapped_column(String(80), default="", server_default="")

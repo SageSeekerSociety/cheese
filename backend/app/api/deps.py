@@ -15,7 +15,11 @@ from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
-from app.domain.agent.runtime import AgentWorkRunner, get_broker
+from app.domain.agent.runtime import (
+    AgentWorkRunner,
+    addressed_to_agent,
+    get_broker,
+)
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.actor import Actor
@@ -100,15 +104,21 @@ async def _read_topic_cloud(topic_id: uuid.UUID) -> CloudLease | None:
 
 
 @lru_cache
-def get_chat_service() -> ChatService:
-    # Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
-    # when the pool routes through the self-hosted gateway AND admin creds are
-    # configured.
-    gateway = None
+def get_llm_gateway() -> LlmGateway | None:
+    """Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
+    when the pool routes through the self-hosted gateway AND admin creds are
+    configured. ``None`` is a supported deployment, not a fault — it means no
+    metering, no brake, and a model catalogue that stays on its floor."""
     if settings.llm_gateway_admin_base and settings.llm_gateway_admin_key:
-        gateway = LlmGateway(
+        return LlmGateway(
             settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
         )
+    return None
+
+
+@lru_cache
+def get_chat_service() -> ChatService:
+    gateway = get_llm_gateway()
     cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
@@ -138,13 +148,29 @@ def get_cloud_wakeup() -> CloudWakeup:
         async with async_session_factory() as session:
             return await MachineService(session).ready_topic_devices(device_id)
 
-    async def kickoff(topic_id: uuid.UUID) -> None:
-        get_work_runner().submit_kickoff(chat, topic_id, prompt=WAKE_PROMPT)
+    async def deliver_held(topic_id: uuid.UUID) -> None:
+        """把房间扣着的那条消息送出去 —— 收件人是它当初点的那个席位。
 
-    async def announce(topic_id: uuid.UUID) -> None:
+        房间里看见的那一行先落库，再投递，而且是**等它落完**才投递：这一行不只是
+        一句话，它还是这个房间的 Cloud 生命周期从「正在创建」转出去的那条记录
+        （`cloud_waiting_topics` 读它的 `state`），也就是「这个房间已经叫醒过了」
+        本身。交给这一轮去写，它就落在算力闸的后面 —— 算力用尽那一轮直接被拒，记
+        录永远不写，房间永远停在 waiting，于是每一拍扫描、每一次连接器挂上来都再
+        投递一次，房间里堆出一串「算力用尽」；就算不撞闸，`submit` 是当场返回的，
+        记录要等这一轮排到队才写，这中间的扫描和连接器会为同一个房间起第二轮。
+
+        `WAKE_PROMPT` 只作为提示词进到 agent 那边，不进时间线：平台在房间里说的每
+        一句都是系统事件，没有一条冒充人说的话。所以这一轮不再自带开场白
+        （`nudge_event` 留空）—— 开场白已经在上面写好了，一件事一条记录。
+        """
+        from app.domain.topic_membership.services import addressable_seat
+
+        seat = await addressable_seat(async_session_factory, topic_id)
+        turn_id = uuid.uuid4()
         block = await chat.post_system_event(
             topic_id,
             WAKE_NOTICE,
+            turn_id,
             meta={
                 "event_type": "cloud_provisioning",
                 "state": "ready",
@@ -152,10 +178,19 @@ def get_cloud_wakeup() -> CloudWakeup:
                 "who": WHO_PLATFORM,
             },
         )
-        if block is not None:
-            await get_broker().publish(
-                str(topic_id), {"type": "event_block", "block": block}
-            )
+        if block is None:
+            return  # 房间没了，没有什么可送
+        await get_broker().publish(
+            str(topic_id), {"type": "event_block", "block": block}
+        )
+        get_work_runner().submit(
+            chat,
+            topic_id,
+            author="system",
+            content=WAKE_PROMPT,
+            addressed=addressed_to_agent(seat),
+            turn_id=turn_id,
+        )
 
     async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
         from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
@@ -183,8 +218,7 @@ def get_cloud_wakeup() -> CloudWakeup:
     return CloudWakeup(
         ready_leases=ready_leases,
         waiting_topics=chat.cloud_waiting_topics,
-        kickoff=kickoff,
-        announce=announce,
+        deliver_held=deliver_held,
         is_online=device_hub.is_online,
         announce_failure=announce_failure,
     )

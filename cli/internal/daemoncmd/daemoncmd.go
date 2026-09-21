@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/auth"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
@@ -369,11 +371,50 @@ func updateCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 }
 
 func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
-	return withConfig(&cobra.Command{
+	var force bool
+	uninstall := withConfig(&cobra.Command{
 		Use:   "uninstall",
-		Short: "Remove the cheese CLI from this machine (service, config, and binary)",
+		Short: "Remove cheese from this machine (service, config, everything it wrote, binary)",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			// Resolved before anything is stopped: a home we cannot name is a
+			// footprint we cannot remove, and finding that out after the service
+			// is gone leaves the machine half-uninstalled.
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("locate home directory: %w", err)
+			}
+			footprint := filepath.Join(home, place.Root)
 			warnScreens(*cfgPath)
+			// Said before it happens, because it is the part nobody expects. The
+			// service and the binary are ours and nobody misses them; the
+			// footprint root is where every room's session home and worktree
+			// live, so on a machine that is mid-task this line is the only
+			// warning that unpushed work is about to go.
+			fmt.Printf(
+				"This also deletes %s and everything in it: the session home and "+
+					"worktree of every room that ran here, and the package caches "+
+					"they share.\n",
+				footprint)
+			// And then waited on, for as long as there is something to lose:
+			// rooms' files on disk, or sessions running right now. A stat that
+			// fails for any other reason counts as something — the answer to
+			// "cannot tell" is to ask. A machine with neither has nothing to
+			// lose, and those runs go through untouched.
+			//
+			// The rooms are stopped a few lines down, so this is the owner's
+			// last chance to push what one of them has not, and `link
+			// disconnect` already asks before doing the much smaller thing of
+			// stopping them. A terminal is where the question can be answered,
+			// so over ssh without one `confirm` declines, and --force is how an
+			// unattended uninstall says it meant it.
+			_, footprintErr := os.Stat(footprint)
+			atStake := !errors.Is(footprintErr, os.ErrNotExist) || state.Screens(*cfgPath) > 0
+			if atStake && !force {
+				if !confirm("Uninstall anyway?") {
+					fmt.Println("Aborted. (Use --force to skip this prompt.)")
+					return nil
+				}
+			}
 			// Capture the live connector's pid (recorded by `cheese run`) BEFORE anything,
 			// so we can guarantee it is actually stopped.
 			pid := state.RawPID(*cfgPath)
@@ -391,8 +432,8 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 					"the cheese connector is still running (pid %d) and could not be stopped; "+
 						"nothing was removed — stop it and run this again", pid)
 			}
-			if err := os.RemoveAll(config.Dir()); err != nil {
-				return fmt.Errorf("remove config %s: %w", config.Dir(), err)
+			if err := removeFootprint(config.Dir(), home); err != nil {
+				return err
 			}
 			exe, err := os.Executable()
 			if err != nil {
@@ -401,10 +442,29 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err := os.Remove(exe); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove binary %s: %w (delete it manually)", exe, err)
 			}
-			fmt.Println("cheese uninstalled — service, config, and binary removed.")
+			fmt.Println("cheese uninstalled — service, config, footprint, and binary removed.")
 			return nil
 		},
 	})
+	uninstall.Flags().BoolVar(&force, "force", false, "uninstall without asking, even with sessions running or rooms' work on disk")
+	return uninstall
+}
+
+// removeFootprint deletes everything `cheese` leaves on a machine: this
+// installation's own config, and the root every room was written under.
+//
+// The footprint is the part that used to survive an uninstall. Nothing in the
+// connector ever created it — the backend's launcher does, over the link — so
+// removing the connector left gigabytes of session homes and package stores on
+// a machine whose owner had just been told cheese was gone, with nothing left
+// installed that knew how to find them.
+func removeFootprint(configDir, home string) error {
+	for _, directory := range []string{configDir, filepath.Join(home, place.Root)} {
+		if err := os.RemoveAll(directory); err != nil {
+			return fmt.Errorf("remove %s: %w", directory, err)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

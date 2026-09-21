@@ -24,14 +24,14 @@ import asyncio
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent.github_app import github_app_tokens_for_project
+from app.domain.project.forge import branch_head, proposal_client, status_client
 from app.domain.review import notes
-from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
-from app.domain.workspace import service as ws
+from app.domain.review.forgejo_pr import ForgejoPRClient
+from app.domain.review.github_pr import GitHubPRClient
 
 logger = logging.getLogger("cheesex.pr_publish")
 
@@ -48,7 +48,9 @@ def enabled() -> bool:
     """Cheap pre-check: the GitHub App is configured at all. The per-project
     eligibility (which installation, upstream is a GitHub https remote) is
     resolved in the task itself — it needs the DB and a subprocess."""
-    return bool(settings.github_app_id) and bool(settings.github_app_private_key_path)
+    return bool(settings.forgejo_url) or (
+        bool(settings.github_app_id) and bool(settings.github_app_private_key_path)
+    )
 
 
 def dispatch(
@@ -126,14 +128,9 @@ async def open_pr_for_card(
     Only ever reads through `session`; the card row is written by whoever
     owns it (`record_pr` below, or the accept transaction)."""
     # #192: the installation is resolved from this card's project, not a global.
-    tokens = await github_app_tokens_for_project(project_id, session)
-    if tokens is None:
+    client = await proposal_client(project_id, session)
+    if client is None:
         return None
-    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-    parsed = parse_github_repo(upstream)
-    if parsed is None:
-        return None  # not a GitHub https upstream — PR path not applicable
-    owner, repo_name = parsed
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.services import TaskService
 
@@ -141,11 +138,12 @@ async def open_pr_for_card(
     if card is None or card.task_id is None:
         return None
     task = await TaskService(session).require_in_room(topic_id, card.task_id)
-    if not await asyncio.to_thread(ws.topic_branch_exists, project_id, task.id):
+    if not task.branch_name or not await branch_head(
+        project_id, session, task.branch_name
+    ):
         return None  # discussion-only topic — nothing a PR could carry
 
-    token, _ = await tokens.write_token()
-    branch = await asyncio.to_thread(ws.push_topic_branch, project_id, task.id, token)
+    branch = task.branch_name
     base = task.base_branch
     if base is None:
         raise ValueError("Task has no target branch")
@@ -153,18 +151,13 @@ async def open_pr_for_card(
     title, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
-    client = GitHubPRClient(owner, repo_name, tokens)
-    pr = await client.open_pr(
+    opened = await client.open_pr(
         head=branch,
         base=base,
         title=title,
         body=body,
-        # Open it as the person whose work it is, not as the bot — see
-        # `GitHubPRClient.open_pr`. Push above still uses the App token: pushing
-        # is not attributed to anyone, and the App's write access is the one
-        # thing here that is guaranteed to work.
-        as_user_token=await _requester_token(session, topic_id),
     )
+    pr = opened.pr
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -185,7 +178,7 @@ async def open_pr_for_card(
 
 
 async def sync_pr_text(
-    client: GitHubPRClient, pr: dict, *, title: str, body: str
+    client: GitHubPRClient | ForgejoPRClient, pr: dict, *, title: str, body: str
 ) -> None:
     """Make the PR on GitHub say what `title`/`body` say — and only then.
 
@@ -202,7 +195,9 @@ async def sync_pr_text(
     pr.update(updated)
 
 
-async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]:
+async def sweep_draft_prs(
+    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
     Commits arrive from different executors through Git; the shared PR poller
@@ -213,11 +208,15 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
-    await retarget_completed_dependencies(session_factory)
+    await retarget_completed_dependencies(session_factory, project_id)
     if not enabled():
         return counts
     async with session_factory() as session:
-        wanted = [t.id for t in await TaskService(session).open_without_pr()]
+        wanted = [
+            t.id
+            for t in await TaskService(session).open_without_pr()
+            if project_id is None or t.project_id == project_id
+        ]
     for task_id in wanted:
         try:
             async with session_factory() as session:
@@ -231,35 +230,57 @@ async def sweep_draft_prs(session_factory: async_sessionmaker) -> dict[str, int]
     return counts
 
 
-async def retarget_completed_dependencies(session_factory: async_sessionmaker) -> None:
-    """Retry child PR retargeting without rolling back a parent's completed merge."""
+async def retarget_completed_dependencies(
+    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+) -> None:
+    """Retarget delivered dependencies and persist instructions for the executor."""
     from sqlalchemy.orm import aliased
 
+    from app.domain.agent.announce import announce
+    from app.domain.agent.platform_notices import (
+        EVENT_DEPENDENCY_CLOSED,
+        EVENT_DEPENDENCY_REJECTED,
+        SEVERITY_INFO,
+        WHO_CHEESE,
+        notice,
+    )
+    from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+    from app.domain.idempotency import store as idem
+    from app.domain.idempotency.keys import action_key
+    from app.domain.review.models import AcceptCard, AcceptStatus
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.room_task.services import TaskService
 
     parent = aliased(Task)
-    async with session_factory() as session:
-        wanted = list(
-            await session.scalars(
-                select(Task.id)
-                .join(parent, Task.base_task_id == parent.id)
+    query = (
+        select(Task.id)
+        .join(parent, Task.base_task_id == parent.id)
+        .where(
+            Task.status == TaskStatus.open,
+            or_(
+                parent.status == TaskStatus.closed,
+                select(AcceptCard.id)
                 .where(
-                    Task.status == TaskStatus.open,
-                    parent.status == TaskStatus.closed,
-                    (
-                        parent.accepted_at.is_not(None)
-                        | parent.delivered_head.is_not(None)
-                    ),
-                    Task.base_branch == parent.branch_name,
+                    AcceptCard.task_id == parent.id,
+                    AcceptCard.status == AcceptStatus.rejected,
                 )
-            )
+                .exists(),
+            ),
         )
+    )
+    if project_id is not None:
+        query = query.where(Task.project_id == project_id)
+    async with session_factory() as session:
+        wanted = list(await session.scalars(query))
     for task_id in wanted:
         try:
+            # Decide on an unlocked read, call GitHub with no transaction open,
+            # then lock the row only to record it. A row lock held across the
+            # GitHub call would queue every other writer of this task behind
+            # it with a pool connection each (dev outage of 2026-09-18).
             async with session_factory() as session:
-                task = await session.get(Task, task_id, with_for_update=True)
+                task = await session.get(Task, task_id)
                 if (
                     task is None
                     or task.status != TaskStatus.open
@@ -267,15 +288,42 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                 ):
                     continue
                 ancestor = await TaskService(session).get(task.base_task_id)
-                if ancestor is None or (
-                    ancestor.accepted_at is None and ancestor.delivered_head is None
-                ):
+                if ancestor is None:
                     continue
-                TaskService._bind_workspace(ancestor)
+                parent_card = (
+                    await AcceptCardRepository(session).latest_by_task([ancestor.id])
+                ).get(ancestor.id)
+                rejected_id = (
+                    parent_card.id
+                    if parent_card is not None
+                    and parent_card.status == AcceptStatus.rejected
+                    else None
+                )
+                if ancestor.status != TaskStatus.closed and rejected_id is None:
+                    continue
+                event_type = (
+                    EVENT_DEPENDENCY_CLOSED
+                    if ancestor.status == TaskStatus.closed
+                    else EVENT_DEPENDENCY_REJECTED
+                )
+                delivered = bool(ancestor.accepted_at or ancestor.delivered_head)
                 base = ancestor.base_branch
-                if base is None:
+                if delivered and base is None:
                     raise ValueError("Parent task has no target branch")
-                if task.pr_number is not None:
+                seen = (task.base_task_id, task.base_branch, task.pr_number)
+                parent_state = (
+                    ancestor.status,
+                    ancestor.closed_at,
+                    ancestor.accepted_at,
+                    ancestor.delivered_head,
+                    rejected_id,
+                )
+                key = action_key(task.id, event_type, ancestor.id, *parent_state)
+                if await idem.stored_result(session, key) is not None:
+                    continue
+                retarget = delivered and task.base_branch == ancestor.branch_name
+                client = None
+                if retarget and task.pr_number is not None:
                     from app.domain.review.services import AcceptService
                     from app.domain.topic.models import Topic
 
@@ -285,21 +333,160 @@ async def retarget_completed_dependencies(session_factory: async_sessionmaker) -
                     client = await AcceptService(session)._app_pr_client(room)
                     if client is None:
                         raise RuntimeError(
-                            "Cannot retarget the task PR without its GitHub connection"
+                            "Cannot retarget the task PR without its forge connection"
                         )
-                    await client.update_pr(task.pr_number, base=base)
-                task.base_branch = base
-                TaskService._bind_workspace(task)
+            if client is not None:
+                # Setting the base is idempotent: a sweep that records nothing
+                # below simply sets it again next time.
+                await client.update_pr(seen[2], base=base)
+            async with session_factory() as session:
+                task = await session.get(Task, task_id, with_for_update=True)
+                if (
+                    task is None
+                    or task.status != TaskStatus.open
+                    or (task.base_task_id, task.base_branch, task.pr_number) != seen
+                ):
+                    continue
+                ancestor = await session.get(Task, task.base_task_id)
                 cards = AcceptCardRepository(session)
+                parent_card = (
+                    (await cards.latest_by_task([ancestor.id])).get(ancestor.id)
+                    if ancestor is not None
+                    else None
+                )
+                if (
+                    ancestor is None
+                    or (
+                        ancestor.status,
+                        ancestor.closed_at,
+                        ancestor.accepted_at,
+                        ancestor.delivered_head,
+                        parent_card.id
+                        if parent_card is not None
+                        and parent_card.status == AcceptStatus.rejected
+                        else None,
+                    )
+                    != parent_state
+                ):
+                    continue
+                if not await idem.claim(
+                    session, key, action=event_type, scope_id=str(task.id)
+                ):
+                    continue
+                if retarget:
+                    task.base_branch = base
+                outcome = (
+                    "已合并"
+                    if delivered
+                    else "已关闭，未交付"
+                    if ancestor.status == TaskStatus.closed
+                    else "验收卡被驳回，任务仍在进行"
+                )
+                headline = f"父任务{outcome}，子任务需要重新检查依赖"
+                rejection = (
+                    parent_card
+                    if not delivered
+                    and parent_card is not None
+                    and parent_card.status == AcceptStatus.rejected
+                    else None
+                )
+                # A parent can detach from a rejected ancestor before merging.
+                # Its durable notices retain the review context after that link
+                # is cleared; pass it on so descendants do not revive old work.
+                review_history = {}
+                parent_notices = await session.scalars(
+                    select(Block)
+                    .where(
+                        Block.topic_id == ancestor.room_id,
+                        Block.meta["dependency_task_id"].as_string()
+                        == str(ancestor.id),
+                    )
+                    .order_by(Block.created_at)
+                )
+                for parent_notice in parent_notices:
+                    previous_reviews = list(
+                        parent_notice.meta.get("dependency_review_history", [])
+                    )
+                    previous_rejection = parent_notice.meta.get("dependency_rejection")
+                    if previous_rejection is not None:
+                        previous_reviews.append(previous_rejection)
+                    for previous_review in previous_reviews:
+                        review_history[previous_review["card_id"]] = previous_review
+                instruction = (
+                    f"任务 {task.id} 的父任务 {ancestor.id} {outcome}。\n"
+                    f'先执行 cd "$(cheese worktree {task.id})"。\n'
+                    + (
+                        f"当前目标分支为 {task.base_branch}。获取远端分支，"
+                        "将本任务的提交整理到目标分支上，解决冲突，重新运行检查并推送。"
+                        "父任务可能采用 squash 合并，请核对补丁，"
+                        "只重放本任务独有的改动；不要重新带入父任务整理时移除、"
+                        "且尚未重新获准的祖先改动。"
+                        "普通 rebase 成功不代表提交范围正确，"
+                        "请核对最终差异是否仅含本任务交付。"
+                        if delivered
+                        else "保留现有工作，检查本任务依赖了哪些尚未交付的修改。"
+                        "根据任务要求决定移除依赖、独立实现或报告无法继续的原因；"
+                        "不要把驳回或关闭当作代码已经合并，也不要自动关闭子任务。"
+                        "决定移除依赖时，在本任务分支上，以项目默认分支为基线"
+                        "重新整理本任务独有的提交，"
+                        "验证差异不包含被驳回的改动，再执行 "
+                        "cheese push-fix --drop-dependency。"
+                        "它会更新现有 PR 的目标分支、清除任务依赖和旧批准；"
+                        "不要重复递卡或自行合并。"
+                    )
+                    + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
+                )
+                if review_history:
+                    instruction += (
+                        "\n祖先依赖的历史驳回记录如下；这不是当前状态，"
+                        "请重新读取对应验收卡和任务，核对哪些改动已被撤回或后来获准。"
+                    )
+                    for previous_review in review_history.values():
+                        instruction += (
+                            f"\n验收卡 {previous_review['card_id']} 的历史驳回理由：\n"
+                            + (previous_review.get("reason") or "未填写理由")
+                        )
+                if rejection is not None:
+                    instruction += f"\n父任务最近一张验收卡 {rejection.id} 被驳回。" + (
+                        f"驳回理由原文：\n{rejection.note}"
+                        if rejection.note
+                        else "验收人没有填写驳回理由。"
+                    )
                 for card in await cards.list_for_task(task.id):
                     if card.status in ("pending", "conflict"):
                         await cards.clear_approvals(card.id)
                         card.auto_merge_armed_by = None
                         card.auto_merge_armed_at = None
-                        card.note = (
-                            f"父任务已采纳，目标分支改为 {base}；"
-                            "请集成目标分支并重新验证。"
-                        )
+                        card.note = headline
+                block = await announce(
+                    session,
+                    place_id=task.room_id,
+                    content=headline,
+                    meta={
+                        **notice(
+                            event_type,
+                            severity=SEVERITY_INFO,
+                            who=WHO_CHEESE,
+                            detail=instruction,
+                            detail_label="下一步",
+                        ),
+                        AGENT_NOTICE_META_KEY: instruction,
+                        "dependency_task_id": str(task.id),
+                        "dependency_review_history": list(review_history.values()),
+                        "dependency_rejection": (
+                            {
+                                "card_id": str(rejection.id),
+                                "decided_by": rejection.decided_by,
+                                "reason": rejection.note,
+                            }
+                            if rejection is not None
+                            else None
+                        ),
+                    },
+                )
+                if block is None:
+                    raise ValueError("Task room is missing")
+                await idem.record_result(session, key, {"block_id": str(block.id)})
                 await session.commit()
         except Exception:
             logger.warning(
@@ -362,34 +549,43 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     upstream, and — the ordinary case, on every tick — a branch with nothing on
     it. A newly created task has no changes to review until its first commit.
     """
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
 
     project_id = task.project_id
-    tokens = await github_app_tokens_for_project(project_id, session)
-    if tokens is None:
-        return None
-    upstream = await asyncio.to_thread(ws.get_upstream, project_id)
-    parsed = parse_github_repo(upstream)
-    if parsed is None:
+    client = await proposal_client(project_id, session)
+    if client is None:
         return None
     branch = task.branch_name
-    if not await asyncio.to_thread(
-        ws.branch_has_commits, project_id, branch, base=task.base_branch
-    ):
+    head = await branch_head(project_id, session, branch)
+    if head is None:
+        return None
+    token, _ = await client.tokens.installation_token()
+    reader = await status_client(project_id, session)
+    from app.domain.project.forge import binding_for_project
+
+    binding = await binding_for_project(project_id, session)
+    if binding is None:
+        return None
+    owner, repo = binding.repo.split("/", 1)
+    difference = await reader.compare_status(
+        owner=owner, repo=repo, base=task.base_branch, head=head, token=token
+    )
+    if difference not in ("ahead", "diverged"):
         return None
     place = await PlaceResolver(session).resolve(task.room_id)
     if place is None:
         return None
     room = place.room
 
-    token, _ = await tokens.write_token()
-    await asyncio.to_thread(ws.push_branch, project_id, branch, token)
     base = task.base_branch
-    who = await identity.attribution(session, room)
-    client = GitHubPRClient(*parsed, tokens)
-    pr = await client.open_pr(
+    who = await identity.attribution(session, room, task_id=task.id)
+    from app.domain.project.forge import ensure_author_email
+
+    if who.author:
+        await ensure_author_email(project_id, session, who.author.email)
+    opened = await client.open_pr(
         head=branch,
         base=base,
         # No `Reviewed-by` and no card: nobody has accepted, and the subject
@@ -397,9 +593,9 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         # card. `WIP:` says both — and 递卡 replaces it (`sync_pr_text`).
         title=f"WIP: {task.title or branch}"[:255],
         body=pr_text.pr_body(room, "", None, who),
-        as_user_token=await _requester_token(session, room.id),
         draft=True,
     )
+    pr = opened.pr
     logger.info(
         "draft PR #%s opened for task %s (%s)",
         pr.get("number"),
@@ -407,33 +603,6 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         pr.get("html_url"),
     )
     return pr
-
-
-async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
-    """The GitHub credential of the human this topic belongs to, so the PR is
-    opened in their name. None whenever they have not connected GitHub, their
-    token cannot be refreshed, or anything at all goes wrong — this is an
-    attribution nicety and must never be the reason a PR fails to open.
-
-    Who that human is comes from `identity.requester_handle`, not from
-    `Topic.created_by`: on a 分身-split room the creator is the 分身's own
-    `cheese-<hex12>` handle, which matches no account, so this returned None and
-    every such PR opened as `cheesex-app[bot]`."""
-    from app.domain.oauth.services import get_github_user_token_for_handle
-    from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
-
-    try:
-        place = await PlaceResolver(session).resolve(topic_id)
-        if place is None:
-            return None
-        handle = await identity.requester_handle(session, place.room)
-        if not handle:
-            return None
-        return await get_github_user_token_for_handle(session, handle)
-    except Exception:  # noqa: BLE001
-        logger.info("no requester token for topic %s", topic_id, exc_info=True)
-        return None
 
 
 async def _pr_text(
@@ -455,10 +624,10 @@ async def _pr_text(
     验收卡即合并本 PR" — is gone. It described the platform's workflow to people
     who were already inside it, while the reviewer opening the PR on GitHub
     wanted to know what changed and why."""
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
 
     place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)
@@ -466,6 +635,10 @@ async def _pr_text(
         return branch, f"Cheese-Topic: {topic_id}"
     topic = place.room
     who = await identity.attribution(session, topic, card=card)
+    from app.domain.project.forge import ensure_author_email
+
+    if who.author:
+        await ensure_author_email(topic.project_id, session, who.author.email)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.

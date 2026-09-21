@@ -12,7 +12,11 @@ import uuid
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from tests.integration.conftest import session_auth_headers, session_token
+from tests.integration.conftest import (
+    room_agent_seat,
+    session_auth_headers,
+    session_token,
+)
 
 
 def _project(client, name: str = "Mailbox") -> str:
@@ -330,39 +334,6 @@ def test_resolve_attributes_the_decision_to_the_verified_caller(client):
     assert decision["author"] == "alice"
 
 
-# ---- The overview board no longer republishes everyone's mailbox --------------
-
-
-def test_overview_requires_auth_and_shows_only_the_callers_items(client):
-    pid = _project(client)
-    _decision(client, pid, "alice的事", target="alice")
-    _decision(client, pid, "bob的事", target="bob")
-    r = client.post(
-        f"/projects/{pid}/alerts",
-        json={
-            "level": "strong",
-            "kind": "accept_request",
-            "title": "大家的事",
-        },
-    )
-    assert r.status_code == 200, r.text
-
-    # Anonymous → 401, and no titles/ids leak.
-    r = client.get(f"/projects/{pid}/overview")
-    assert r.status_code == 401, r.text
-    assert "bob的事" not in r.text
-
-    # Alice sees her own slice + broadcasts — never bob's.
-    ov = client.get(
-        f"/projects/{pid}/overview", headers=session_auth_headers("alice")
-    ).json()["data"]
-    waiting = ov["waiting_on_you"]
-    assert [x["title"] for x in waiting.get("alice", [])] == ["alice的事"]
-    assert "bob" not in waiting
-    flat = [x["title"] for items in waiting.values() for x in items]
-    assert "大家的事" in flat and "bob的事" not in flat
-
-
 # ---- topic-unread: same rule, same layer --------------------------------------
 
 
@@ -396,7 +367,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
                 author=author,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content="msg",
                 kind=BlockKind.message,
             )
@@ -418,7 +389,7 @@ def _topic_unread(client, project_id: str, handle: str) -> dict:
 
 
 def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
-    """Sibling of the /overview hole: /members/{handle}/summary read the NAMED
+    """Sibling of the mailbox hole: /members/{handle}/summary read the NAMED
     member's inbox with no auth at all, so anyone could harvest anybody's
     pending decisions (titles + ids) by naming them in the URL."""
     pid = _project(client)
@@ -545,7 +516,12 @@ def test_creating_with_a_scoped_token_works(client):
     tid = _topic(client, pid)
     for token, body in (
         (
-            mint_scoped_token(project_id=pid, topic_id=tid, access_scope="project"),
+            mint_scoped_token(
+                project_id=pid,
+                topic_id=tid,
+                access_scope="project",
+                agent_handle=room_agent_seat(client, tid),
+            ),
             _create_body(),
         ),
         (

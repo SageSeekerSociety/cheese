@@ -13,6 +13,7 @@ import {
   readPreviewFile,
   requestPreviewSession,
 } from '../../api'
+import { t } from '../../i18n'
 import { useDocumentBytes } from '../../lib/documentBytes'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import { markdown, sanitizeRendered } from '../../lib/markdown'
@@ -21,6 +22,7 @@ import { postPreviewSession } from '../../lib/previewSession'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
+import RoomOutputs from './preview/RoomOutputs.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -386,14 +388,16 @@ watch(
 <template>
   <div ref="panelElement" class="panel-preview">
     <div class="preview-head">
+      <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
+           想把它发出去，这是唯一要跳出去的一下。 -->
       <v-btn
         v-if="projectId"
-        :to="{ name: 'project-delivery', params: { projectId } }"
+        :to="{ name: 'workspace-running', params: { projectId } }"
         size="small"
         variant="text"
         class="c-muted"
       >
-        导出与发布
+        发布网站
       </v-btn>
       <v-spacer />
       <template v-if="previewUrl || previewFile">
@@ -471,12 +475,12 @@ watch(
            gone. Collapsing them told people to summon 芝士 again for a tunnel
            that no summon brings back. -->
       <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
-      <div>应用暂时不在线</div>
+      <div>{{ t('tasks.preview.unavailable') }}</div>
       <div v-if="previewTunnelUp" class="text-caption mt-1">
-        那台机器还连着，但登记的端口上没有服务在应答。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
+        {{ t('tasks.preview.appUnavailable') }}
       </div>
       <div v-else class="text-caption mt-1">
-        跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
+        {{ t('tasks.preview.connectionUnavailable') }}
       </div>
     </div>
     <div v-else-if="documentType && previewFile" class="doc">
@@ -578,6 +582,10 @@ watch(
       <div>暂无预览</div>
       <div class="text-caption mt-1">芝士做出网页、图表等可看的成果时，会放到这里。</div>
     </div>
+
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs :topic-id="topicId" />
   </div>
 </template>
 

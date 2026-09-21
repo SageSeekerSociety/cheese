@@ -77,6 +77,46 @@ async function fieldDefects(scope: Locator): Promise<Defect[]> {
 }
 
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
+  test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
+    await login(page);
+    await page.locator('.app-rail-item--tile').first().click();
+    await page.waitForURL(/\/projects\/[^/]+/);
+    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const artifactId = '00000000-0000-0000-0000-000000000123';
+    const versions = [1, 2].map(number => ({
+      number, card_id: `version-${number}`, subject: `Report ${number}`,
+      delivered_at: '2026-09-20T12:00:00Z', decided_by: 'alice',
+      kind: 'file', filename: 'report.txt', url: null,
+    }));
+    await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}`, route => route.fulfill({
+      json: { code: 200, data: { id: artifactId, name: 'Version comparison fixture', version: 2, delivered_at: versions[1].delivered_at, versions } },
+    }));
+    await page.route(`**/api/projects/${projectId}/artifacts/${artifactId}/compare?*`, route => route.fulfill({
+      json: { code: 200, data: { kind: 'file', identical: false, note: null, files: [{ path: 'report.txt', diff: '--- report.txt\n+++ report.txt\n@@ -1 +1 @@\n-before\n+after', note: null }] } },
+    }));
+    await page.goto(`/projects/${projectId}/artifacts/${artifactId}`);
+    await expect(page.getByText('+after', { exact: true })).toBeVisible();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(page.getByLabel('基准版本', { exact: true })).toBeVisible();
+      await expect(page.getByLabel('对比版本', { exact: true })).toBeVisible();
+      const lines = await page.locator('.comparison-diff span').evaluateAll(nodes => nodes.map(node => {
+        const r = node.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, left: r.left };
+      }));
+      expect(lines.length).toBe(5);
+      for (let i = 1; i < lines.length; i++) {
+        expect(lines[i].top).toBeGreaterThanOrEqual(lines[i - 1].bottom);
+        expect(lines[i].left).toBe(lines[0].left);
+      }
+      const selectors = await page.locator('.comparison-selectors').boundingBox();
+      expect(selectors!.x + selectors!.width).toBeLessThanOrEqual(width);
+    }
+    await page.getByLabel('对比版本', { exact: true }).selectOption('version-1');
+    await expect(page.getByText('请选择两个不同的版本')).toBeVisible();
+    await expect(page.locator('.comparison-diff')).toHaveCount(0);
+  });
+
   test('登录页', async ({ page }) => {
     await page.goto('/account/signin');
     await page.getByLabel('用户名').waitFor();
@@ -96,11 +136,11 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
     const dialog = page.locator('.v-overlay__content').filter({ hasText: '修改 AI 队友' });
     await dialog.waitFor();
-    // 两个下拉的选项是异步取回来的，而「角色设定」是 autoGrow 的文本域——内容灌
-    // 进去之后高度才定下来。等到两个下拉都显示出选中的值，这一屏就不会再动了。
-    // （不等 getByLabel('模型')：v-select 的可访问名来自内部那个 combobox，不是
-    //  描边缺口里的那行字。）
-    await expect(dialog.locator('.v-select__selection')).toHaveCount(2);
+    // 这张表单不再取任何异步选项（模型与运行方式都不是队友的属性了），会动的
+    // 只剩「角色设定」那个 autoGrow 的文本域——内容灌进去之后高度才定下来。
+    // 等到名字和角色设定都是这个队友自己的值，这一屏就不会再动了。
+    await expect(dialog.getByLabel('名字', { exact: true })).toHaveValue(/.+/);
+    await expect(dialog.getByLabel('角色设定（可留空）')).toBeVisible();
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@
 
 Claude Code runs on the central host. Its native file tools and shell commands execute through a persistent service on the assigned machine. Custom stdio MCP servers also run there, with their configured environment. Cheese RC remains attached to the central terminal; its file previews, diffs and shell task controls go to the executor.
 
-Central sessions require Claude Code 2.1.265. They use the function hook interface enabled by `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, so upgrading Claude Code requires rerunning acceptance. The executor uses the same pinned build's `claude mcp serve` for native file operations and owns shell processes itself.
+Central sessions require Claude Code 2.1.277. They use the function hook interface enabled by `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, so upgrading Claude Code requires rerunning acceptance. The executor runs both native file operations and shell commands through the same pinned build's `claude mcp serve`, so a command's working directory, its return to the workspace root after leaving it, and the text a failure comes back as are that build's own. Four of the behaviours this relies on are in no published contract — a `cd` outliving its call, the workspace-root return, the disk path a backgrounded command's output lands on, and the build offering no way back to a backgrounded task from serve mode (`TaskStop` answers `No task found`, and 2.1.277 stopped serving `TaskOutput` there) — so `scripts/remote_execution/mcp_contract.py` checks them: CI runs it against the pinned build on changes here and against the newest published build daily. The executor reads a backgrounded command's output from disk and stops a command by the marker it puts in the shell's argv. The wait is the executor's own: the serve call carries the largest timeout there is, because at the build's own foreground timeout a command is killed or backgrounded depending on whether it printed anything right at the start, a rule written down nowhere; the agent's timeout, the room's move-to-background and interrupt are all decided by the executor no longer waiting for an answer the command goes on producing.
 
 ## Room placement
 
@@ -13,6 +13,14 @@ An ordinary room keeps its selected Cloud or enrolled execution device. The back
 An existing session moves on its next opening. The backend requests exit from the old Claude Code process, copies and verifies its original conversation files, then resumes on the central host. Source files remain available. Missing history, an offline host or a changed resource generation prevents the opening. Recovery can finish consuming a turn that began before migration.
 
 Before deployment, connect the configured session host and install the private executor image described in `where-a-turn-runs.md`. Ordinary executors obtain the pinned binary from the backend's Claude Code download endpoint. Pool scheduling remains a design plan in RFC #927.
+
+## Executor upgrades
+
+Ordinary room executors use versioned directories for the runtime and platform helpers. New environments start with the current release. When an existing environment is prepared, a changed release is staged separately. If a tool call or background command is still running, preparation returns the existing executor with `upgrade_pending: true`; the next preparation retries the upgrade. The executor keeps accepting work while the upgrade is deferred.
+
+Once idle, the executor stops accepting new work before it is replaced. Task inspection and cancellation remain available during that interval. Completed request receipts and task output stay in the same state directory. If installation fails after admission closes, repeating preparation completes the switch or restarts the previously selected release. Running shells and MCP processes are not transferred between releases. Dependency configuration changes require resetting or recreating the execution environment.
+
+This upgrade path applies to ordinary room executors. Private execution containers retain their existing lifecycle.
 
 ## Acceptance
 

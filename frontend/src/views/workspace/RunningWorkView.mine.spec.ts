@@ -19,7 +19,13 @@ const listProjectTasks = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listProjectTasks: (...a: unknown[]) => listProjectTasks(...a) }
+  // 这些用例问的是板，所以清单是空的：那一块自己就不出现（它的行为在
+  // `components/ArtifactManifest.spec.ts` 里）。不给这一条，组件会去真发一次请求。
+  return {
+    ...actual,
+    listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
+    listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+  }
 })
 
 // 地址栏。测试改它，视图就该跟着变——这正是「开关住在地址里」的意思。
@@ -180,7 +186,7 @@ describe('筛完之后板还是一块板', () => {
     expect(getAllByText('暂无归你的任务').length).toBe(3)
     expect(queryByText('暂无施工中的任务')).toBeNull()
     // 顶上那行数的仍然是整块板：它说的是这个项目有多少活，和取景无关。
-    expect(container.querySelector('.board__head p')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
+    expect(container.querySelector('.board__tally')?.textContent?.replace(/\s+/g, '')).toBe('待处理1')
   })
 
   it('筛掉之后那一列的下一步提示也收起来 —— 「在房间里说明要做什么」在这一刻是句错话', async () => {

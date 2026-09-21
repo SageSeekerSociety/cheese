@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/gorilla/websocket"
 )
@@ -85,23 +86,77 @@ func TestFirstAndCachedPromptsAreEachDeliveredOnce(t *testing.T) {
 	}
 }
 
-func TestWriteScreenFileIsAtomicAndConfinedToUploads(t *testing.T) {
-	work := t.TempDir()
+func TestUnavailablePromptSocketReturnsMachineReadableFailure(t *testing.T) {
+	old := rvDialWindow
+	rvDialWindow = 10 * time.Millisecond
+	t.Cleanup(func() { rvDialWindow = old })
+	dir := t.TempDir()
+	token := filepath.Join(dir, "token")
+	if err := os.WriteFile(token, []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := hostOnAFakeServer(t, map[string]*sess{"s1": {
+		rvPath: filepath.Join(dir, "missing.sock"), rvTokenFile: token,
+	}})
+	server.send(t, link.Msg{T: "rpc.call", Sid: "s1", ID: "missing",
+		Name: "prompt", Args: []any{"continue"}})
+	result := server.awaitResult(t, "missing")
+	value, ok := result.Value.(map[string]any)
+	if result.Error == "" || !ok || value["failure_code"] != "prompt_socket_unavailable" {
+		t.Fatalf("missing safe-recovery classification: %+v", result)
+	}
+}
+
+// A server-sent file lands under the platform's footprint and nowhere else.
+//
+// The rejected paths are the point, and `room/` among them most of all: the
+// screen's checkout lives there, and a file the platform writes into it is an
+// untracked file in a repository whose owner never added it and that `cheese
+// uninstall` does not remove (结论 49). The server checks the same rule before
+// it sends; this is the half that holds when some caller builds a path wrong.
+func TestFootprintFileIsAtomicAndConfinedToTheFootprint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	raw := []byte("\x89PNG\r\n\x1a\nimage")
 	encoded := base64.StdEncoding.EncodeToString(raw)
 
-	if err := writeScreenFile(work, "uploads/img-a.png", encoded); err != nil {
-		t.Fatalf("writeScreenFile: %v", err)
+	wire := "$HOME/" + place.Root + "/home/p/r/attachments/img-a.png"
+	landed, err := writeFootprintFile(wire, encoded)
+	if err != nil {
+		t.Fatalf("writeFootprintFile: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(work, "uploads", "img-a.png"))
+	// Symlinks resolved, because that is the path handed back to the server and
+	// @-mentioned to the agent: on macOS a temp home under /var really lives at
+	// /private/var, and a mention of the unresolved spelling is a mention of a
+	// path the agent may not be able to open.
+	real, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(real, place.Root, "home", "p", "r", "attachments", "img-a.png")
+	if landed != want {
+		t.Fatalf("landed at %q, want %q", landed, want)
+	}
+	got, err := os.ReadFile(want)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != string(raw) {
 		t.Fatalf("got %q, want %q", got, raw)
 	}
-	for _, bad := range []string{"../escape.png", "/absolute.png", "src/main.go"} {
-		if err := writeScreenFile(work, bad, encoded); err == nil {
+	for _, bad := range []string{
+		// The checkout, which is what this used to be relative to.
+		"uploads/img-a.png",
+		"../escape.png",
+		"/absolute.png",
+		"$HOME/elsewhere/img.png",
+		"$HOME/" + place.Root + "/../escape.png",
+		// Inside the footprint, but not the spelling the server sends. One
+		// destination has one spelling: a second accepted one is a second way
+		// to name the same file, and the next path built by hand takes it.
+		place.Root + "/home/p/r/attachments/img-a.png",
+	} {
+		if _, err := writeFootprintFile(bad, encoded); err == nil {
 			t.Fatalf("unsafe path %q was accepted", bad)
 		}
 	}

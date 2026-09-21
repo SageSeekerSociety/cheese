@@ -1,3 +1,4 @@
+import contextlib
 from typing import Any
 
 from fastapi import Request
@@ -15,6 +16,7 @@ from starlette.status import (
     HTTP_422_UNPROCESSABLE_CONTENT,
     HTTP_429_TOO_MANY_REQUESTS,
     HTTP_500_INTERNAL_SERVER_ERROR,
+    HTTP_502_BAD_GATEWAY,
     HTTP_503_SERVICE_UNAVAILABLE,
     HTTP_504_GATEWAY_TIMEOUT,
 )
@@ -283,6 +285,40 @@ class GatewayUnavailableError(AppError):
     message = "AI gateway unavailable"
 
 
+def closing_the_socket(handler):  # type: ignore[no-untyped-def]
+    """The same handler, over a WebSocket connection: close it, answer nothing.
+
+    A handler's answer is an HTTP response, and Starlette sends whatever a
+    handler returns down the connection the exception came from — on a socket
+    already accepted that is `websocket.http.response.start`, which uvicorn
+    refuses with 「Expected ASGI message 'websocket.send' or 'websocket.close'」
+    and logs as an application error. The connection owner hit it 1143 times
+    on 2026-09-19 for one machine whose link died between `accept` and the
+    welcome frame: `attach_device` raised DeviceOffline into the `/agent`
+    route, the DeviceOffline handler answered 409, and the 409 had nowhere to
+    go. Each one an alert, for a link that was simply already gone.
+
+    Nothing about the condition changes: the socket is closed (a policy
+    refusal before `accept` still arrives as the 403 it always was), the
+    failure is logged once at WARNING with its name, and no response is sent.
+    """
+
+    async def handle(conn: Request, exc: Exception):  # type: ignore[no-untyped-def]
+        if conn.scope["type"] != "websocket":
+            return await handler(conn, exc)
+        _log.warning(
+            "websocket_closed_on_error",
+            path=conn.url.path,
+            error=type(exc).__name__,
+            detail=str(exc)[:200],
+        )
+        with contextlib.suppress(Exception):  # the peer may be the one that left
+            await conn.close(code=1011)  # type: ignore[attr-defined]
+        return None
+
+    return handle
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register BOTH error frameworks (fusion merge): main's BaseError family +
     HTTP/validation handlers, and cheesex's AppError handler. Called from our
@@ -290,9 +326,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     # Imported here, not at module scope: `device_hub` sits above this module and
     # imports back through `app.core`, and nothing but this registration needs
     # the name.
-    from app.domain.agent.device_hub import DeviceOffline
+    from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 
-    @app.exception_handler(DeviceOffline)
     async def _handle_device_offline(_: Request, exc: DeviceOffline) -> JSONResponse:
         """A machine that is off is an answer, not a fault of this server.
 
@@ -319,7 +354,39 @@ def register_exception_handlers(app: FastAPI) -> None:
             headers={"X-Device-Id": exc.device_id},
         )
 
-    @app.exception_handler(ClientDisconnect)
+    async def _handle_device_call_error(
+        request: Request, exc: DeviceCallError
+    ) -> JSONResponse:
+        """The machine answered, and its answer was a failure of its own.
+
+        The words are the machine's — 「dial unix …sock: no such file」, 「lstat
+        …/.cheese/executor: no such file」 — and they are what the person in
+        the room can act on, so they travel: `name` says which condition this
+        was and `message` carries them. 502 because the failure is on the far
+        side of a gateway this process is; 500「服务器内部错误」 said the
+        opposite, in both processes at once, and hid the words.
+
+        The connection owner and the business backend share this registration
+        (device_connection_app.py, main.py): the owner is what turns the hub's
+        exception into the wire, and `DeviceHubRPC._request` turns the wire back
+        into the same exception, so a caller reads one type whichever side of
+        the owner it runs on.
+        """
+        _log.warning(
+            "device_call_failed",
+            path=request.url.path,
+            method=request.method,
+            error=str(exc),
+        )
+        content = format_error_response(
+            status_code=HTTP_502_BAD_GATEWAY,
+            message=str(exc),
+            name="DeviceCallError",
+        )
+        if exc.failure_code is not None:
+            content["error"]["failure_code"] = exc.failure_code
+        return JSONResponse(status_code=HTTP_502_BAD_GATEWAY, content=content)
+
     async def _handle_client_disconnect(
         request: Request, _: ClientDisconnect
     ) -> JSONResponse:
@@ -341,7 +408,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             ),
         )
 
-    @app.exception_handler(AppError)
     async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.code,
@@ -376,6 +442,13 @@ def register_exception_handlers(app: FastAPI) -> None:
             },
         )
 
-    app.add_exception_handler(BaseError, base_error_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)  # type: ignore[arg-type]
+    for exc_type, handler in (
+        (DeviceOffline, _handle_device_offline),
+        (DeviceCallError, _handle_device_call_error),
+        (ClientDisconnect, _handle_client_disconnect),
+        (AppError, _handle_app_error),
+        (BaseError, base_error_handler),
+        (StarletteHTTPException, http_exception_handler),
+        (RequestValidationError, validation_exception_handler),
+    ):
+        app.add_exception_handler(exc_type, closing_the_socket(handler))  # type: ignore[arg-type]

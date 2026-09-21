@@ -249,6 +249,87 @@ with (root / "delivered").open("a") as output:
                     process.wait(timeout=5)
 
 
+def test_a_room_that_will_not_leave_is_ended_once_the_grace_has_run_out(tmp_path):
+    """An archived room whose processes ignore the polite request is ended.
+
+    Before the grace, prepare refuses with the same "still has processes"
+    it always did, and the process lives on. After it, prepare ends the
+    process and completes — the process here has a cwd inside the room and
+    handles nothing, the way a dev server an agent left behind does.
+    """
+    project, resource, operation = (str(uuid.uuid4()) for _ in range(3))
+    home, work = cleanup.resource_paths(tmp_path, project, resource)
+    for name in (".claude", ".cheese"):
+        (home / name).mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True)
+    squatter = subprocess.Popen(["sleep", "300"], cwd=work)
+    command = [
+        sys.executable,
+        cleanup.__file__,
+        "prepare",
+        project,
+        resource,
+        operation,
+    ]
+    receipt = tmp_path / ".cheese/cleanup" / operation / (resource + ".ready")
+    try:
+        refused = subprocess.run(
+            command,
+            env={
+                **os.environ,
+                "HOME": str(tmp_path),
+                "CHEESE_CLEANUP_FORCE_AFTER_S": "3600",
+            },
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert refused.returncode != 0 and "still has processes" in refused.stderr
+        assert squatter.poll() is None and not receipt.exists()
+        ended = subprocess.run(
+            command,
+            env={
+                **os.environ,
+                "HOME": str(tmp_path),
+                "CHEESE_CLEANUP_FORCE_AFTER_S": "0",
+            },
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert ended.returncode == 0, ended.stderr
+        assert receipt.read_text() == "ready\n"
+        assert squatter.wait(timeout=5) != 0
+    finally:
+        if squatter.poll() is None:
+            squatter.kill()
+            squatter.wait(timeout=5)
+
+
+def test_a_safety_refusal_is_never_overruled_by_time(tmp_path):
+    """Only "still running" ages into force; a socket of another user does not."""
+    project, resource, operation = (str(uuid.uuid4()) for _ in range(3))
+    home, work = cleanup.resource_paths(tmp_path, project, resource)
+    for name in (".claude", ".cheese"):
+        (home / name).mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True)
+    (home / ".cheese/environment-session.json").write_text(
+        json.dumps(["/dev/null", "cheese_0"])
+    )
+    refused = subprocess.run(
+        [sys.executable, cleanup.__file__, "prepare", project, resource, operation],
+        env={**os.environ, "HOME": str(tmp_path), "CHEESE_CLEANUP_FORCE_AFTER_S": "0"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert refused.returncode != 0
+    assert "owned by another user" in refused.stderr
+    assert not (
+        tmp_path / ".cheese/cleanup" / operation / (resource + ".ready")
+    ).exists()
+
+
 def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
     home = tmp_path / "home"
     original = home / ".claude/projects/p/session.jsonl"
@@ -266,6 +347,40 @@ def test_deletion_refuses_tail_written_after_confirmation(tmp_path):
     with pytest.raises(RuntimeError, match="changed"):
         cleanup.check_transcripts(home, receipts)
     assert original.read_bytes().endswith(b"late result\n")
+
+
+def test_a_linked_subagent_transcript_is_not_a_second_transcript(tmp_path):
+    """Claude Code links a resumed session's subagent transcript to the original
+    session's file. The uploader skips links, so the receipts never name one;
+    the check must skip the same links, or a room that ever resumed a session
+    with subagents can never be cleaned up."""
+    home = tmp_path / "home"
+    original = home / ".claude/projects/p/77d3f6bc/subagents/agent-a.jsonl"
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"original\n")
+    linked = home / ".claude/projects/p/32a0b25e/subagents/agent-a.jsonl"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(original)
+    receipts = [
+        {
+            "source": str(original.relative_to(home)),
+            "size": 9,
+            "sha256": hashlib.sha256(b"original\n").hexdigest(),
+        }
+    ]
+    cleanup.check_transcripts(home, receipts)
+
+
+def test_a_link_to_a_transcript_outside_the_home_is_still_not_read(tmp_path):
+    outside = tmp_path / "elsewhere/session.jsonl"
+    outside.parent.mkdir(parents=True)
+    outside.write_bytes(b"secret\n")
+    home = tmp_path / "home"
+    linked = home / ".claude/projects/p/session.jsonl"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(outside)
+    # Nothing was uploaded, nothing is found: the link is neither read nor hashed.
+    cleanup.check_transcripts(home, [])
 
 
 @pytest.mark.parametrize("name", ["cheese-preview", "cheese-tunnel"])

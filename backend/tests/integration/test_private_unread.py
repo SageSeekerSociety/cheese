@@ -35,7 +35,7 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
                 author=author,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 content="msg",
                 kind=BlockKind.message,
             )

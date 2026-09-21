@@ -66,7 +66,7 @@ def main():
         connections = []
 
         class Control:
-            async def current(self, topic_id):
+            async def current(self, topic_id, agent_handle=None):
                 return {"id": fixture.sid, "status": "active"}
 
             async def enqueue(self, sid, frame, actor):
@@ -195,7 +195,11 @@ def main():
     try:
         acceptance.main()
         requests = sorted(output.glob("request-*.json"))
-        assert len(requests) == 17
+        # One model request per scripted tool call plus the opening turn —
+        # the count the acceptance sequence produces (`request_count` in its
+        # summary), so it moves when that sequence does.
+        summary = json.loads((output / "summary.json").read_text())
+        assert len(requests) == summary["request_count"], len(requests)
         assert "BEFORE_RELEASE" not in requests[0].read_text()
     finally:
         rendezvous.unlink(missing_ok=True)

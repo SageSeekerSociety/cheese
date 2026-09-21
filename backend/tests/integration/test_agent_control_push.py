@@ -28,7 +28,9 @@ def place(client):
         "/topics",
         json={"project_id": project["id"], "title": "RC push", "created_by": "alice"},
     ).json()["data"]
-    return project["id"], topic["id"]
+    rows = client.get(f"/projects/{project['id']}/agents").json()["data"]["data"]
+    (default,) = [row for row in rows if row["is_default"]]
+    return project["id"], topic["id"], default["seat_handle"]
 
 
 def test_a_question_from_the_agent_reaches_the_room_without_being_polled_for(
@@ -37,11 +39,13 @@ def test_a_question_from_the_agent_reaches_the_room_without_being_polled_for(
     from app.api.routes.remote_control import store
     from app.domain.agent.runtime import get_broker
 
-    project, topic = place
+    project, topic, agent = place
 
+    # WHICH agent is asking: `rc_create` settles that when the session opens and
+    # records it, and everything the session says afterwards is signed with it.
     async def start_session():
         session = await store().create(
-            {"p": project, "t": topic, "exp": int(time.time()) + 3600}, {}
+            {"p": project, "t": topic, "a": agent, "exp": int(time.time()) + 3600}, {}
         )
         return session["id"], await store().bridge(session)
 
@@ -89,6 +93,6 @@ def test_a_question_from_the_agent_reaches_the_room_without_being_polled_for(
 
         async def close():
             await subscription.__aexit__(None, None, None)
-            await store().redis.delete(key(sid), key(topic, "current"))
+            await store().redis.delete(key(sid), key(topic, f"current:{agent}"))
 
         client.portal.call(close)

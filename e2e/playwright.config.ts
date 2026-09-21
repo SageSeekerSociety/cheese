@@ -9,7 +9,9 @@ import { defineConfig } from '@playwright/test';
 // must be kept in step with the resolution below by hand.
 const BACKEND_PORT = process.env.E2E_BACKEND_PORT ?? '8081';
 const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
+const STUB_GATEWAY_PORT = process.env.E2E_STUB_GATEWAY_PORT ?? '4010';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
+const STUB_GATEWAY_URL = `http://127.0.0.1:${STUB_GATEWAY_PORT}`;
 
 export default defineConfig({
   testDir: './tests',
@@ -40,9 +42,31 @@ export default defineConfig({
   ],
   webServer: [
     {
+      command: `node ./stub-gateway.mjs`,
+      env: { STUB_GATEWAY_PORT },
+      url: `${STUB_GATEWAY_URL}/healthz`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+    {
       command: `cd ../backend && uv run uvicorn app.main:app --host 0.0.0.0 --port ${BACKEND_PORT}`,
-      // Exercise model selection without configuring a live inference provider.
-      env: { AGENT_HARNESS_MODELS: '{"codex": ["codex-ci-fixture"]}' },
+      // A model catalogue without a live inference provider.
+      //
+      // FEEDBACK_ADMIN_HANDLES: the feedback admin surface (feedback-flows.spec.ts
+      // 的「管理员」那条) is gated on a platform-level handle allowlist that no
+      // deployment config sets, so without it every admin step is a 403 and the
+      // spec fails on the gate instead of on what it means to check. Value is a
+      // JSON list — pydantic-settings parses it, commas make the app refuse to
+      // boot (the "Comma-separated in env" comment in core/config.py is wrong).
+      env: {
+        FEEDBACK_ADMIN_HANDLES: '["alice"]',
+        // Which models the platform pool offers is the gateway's answer, so a
+        // run without one can only pick AGENT_MODEL — and a deployment with no
+        // model at all cannot start a turn. stub-gateway.mjs answers that one
+        // question and nothing else; it is not an inference provider.
+        LLM_GATEWAY_ADMIN_BASE: STUB_GATEWAY_URL,
+        LLM_GATEWAY_ADMIN_KEY: 'stub-gateway-key',
+      },
       url: `${BACKEND_URL}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,

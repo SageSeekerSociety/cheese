@@ -23,6 +23,7 @@ def build_system_prompt(
     roster: list[dict] | None = None,
     topics: list[dict] | None = None,
     untitled: bool = False,
+    artifacts: list[dict] | None = None,
     session_opening: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
@@ -68,6 +69,68 @@ def build_system_prompt(
             "拿到 id 后用 `<#id>` 就能精确引用任何一个话题（包括没列在下面的）。\n"
             + lines
         )
+    if artifacts is not None:
+        # 产物清单进每一轮的开场 (#1085 结论三)。它在这里是为了让下一次交付点得准
+        # 名字 —— 而先说清哪一次交付根本不用点名：交出去这次合并本身的，交的是这
+        # 个项目的仓库，平台自己认得出是哪一项。那条路上没有名字可写错，也就没有
+        # 什么可嘱咐的。
+        #
+        # 剩下交一份文件、交一个地址的，才真的有得选（一个项目可以既交一份报告又
+        # 交一个网站），所以下面那几行是说给它们听的。
+        #
+        # **清单空着的时候这一段照样出现。** 那是必须说话的那一次：一个交文件的项
+        # 目，第一次交付只能新建，而它起的那个名字会留在清单上，进后面每一轮的开
+        # 场。这一段不在的话，提示里没有一个字提到产物，只剩递卡被打回这一条路能
+        # 让人知道要声明——而递卡是一整轮工作的最后一步。
+        head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
+        # 这一版交出去的是什么，也在递卡时说 (#1085 结论五)。它排在最前面，因为它
+        # 的答案决定了后面那两段要不要读。
+        hands_over = (
+            "**先说这一版交出去的是什么**，因为它决定了后面还要不要说别的：\n"
+            "- 两个都不给 = 交出去这次**合并**本身（代码仓库这类项目交的就是它）。"
+            "这种交付**不用声明产物** —— 交出去的是这个项目的仓库，一个项目只有一"
+            "个，平台认得出是清单上哪一项。传了 `artifact` / `new_artifact` 反而会"
+            "被打回。\n"
+            "- `deliver=<工作目录里的路径>` = 交出去一份文件（平台在递卡这一刻留一"
+            "份快照，所以**先把它构建出来再递卡** —— 过了这一轮那份文件就没了）。\n"
+            "- `deliver_url=<网址>` = 交出去一个地址。\n"
+            "后两种要接着说清动的是清单上哪一项："
+        )
+        # 那一句话怎么写 —— 规则加检验方法。规则会忘，检验方法当场能自查，所以两
+        # 者一起给。同一条检验对名字也成立，因此这里说一次，管名字也管那句话。
+        about_rule = (
+            "\n\n`about` 那一句话说的是**这样东西本身**（是什么、给谁的），不是这"
+            "一版做了什么 —— 这一版做了什么在 `subject` 上，已经有了。三条检验，起"
+            "名字用的是同一条第 1 条：\n"
+            "1. 这句话（这个名字）在**第 1 版和第 20 版都成立**。一交新版就得改的，"
+            "就是写错了。正因为写对了，它不必每版重写。\n"
+            "2. 换到清单上另一项头上**也说得通，就是白写**，重写。\n"
+            "3. 别把改动标题抄进来 —— 那条路的尽头是清单长成一份改动列表。"
+        )
+        if artifacts:
+            lines = "\n".join(
+                f"- 《{a['name']}》"
+                + (f"　第 {a['version']} 版" if a["version"] else "　还没交付过")
+                + (f"　{a['about']}" if a.get("about") else "")
+                + f"　id={a['id']}"
+                for a in artifacts
+            )
+            parts.append(
+                head + hands_over + "交付下面某一项的新一版，用 `artifact=<id>` 点名"
+                "它（**照抄下面那一行的 id，不要写名字**——名字写错不会报错，只会在清"
+                "单上多一项看着像重复的东西）；确实做出了一样下面没有的东西，用 "
+                "`new_artifact=<真名>` 加 `about=<一句话>` 声明它，返回里带着新的 id。"
+                "两个都不给、或者两个都给，递卡会被打回。" + about_rule + "\n\n" + lines
+            )
+        else:
+            parts.append(
+                head
+                + "清单还空着，这个项目一样东西都还没交出去过。\n\n"
+                + hands_over
+                + "清单上还没有可沿用的，所以用 `new_artifact=<真名>` 加 "
+                "`about=<一句话>` 声明它，返回里带着它的 id，以后交付它的新一版用 "
+                "`artifact=<id>` 点名。" + about_rule
+            )
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{m['role']}，handle: {m['handle']}）" for m in roster
@@ -122,17 +185,6 @@ def build_system_prompt(
     return "\n\n".join(parts)
 
 
-KICKOFF_PROMPT = (
-    "这个话题刚从一条消息升级出来，由你负责推进。任务简报在系统提示的"
-    "「当前话题的实况文档」里：被升级的那段讨论 + 它原来所在地方的文档快照。"
-    "现在开工：\n"
-    "1. 先发开场白：一两句复述你理解的任务、说明打算怎么推进（给人纠偏的机会）；"
-    "简报信息不足就明确列出缺什么、@ 升级发起人补充。\n"
-    "2. 把实况文档改写成你自己的状态摘要（目标/约束/下一步），别留着简报原文不动。\n"
-    "3. 能直接开始的活就开始干；需要拍板的用决策请求找对的人。"
-)
-
-
 def thread_relay_prompt(
     *, task_id: uuid.UUID, task_title: str, author: str, message: str
 ) -> str:
@@ -155,30 +207,6 @@ def thread_relay_prompt(
     )
 
 
-def thread_upgraded_prompt(*, task_id: uuid.UUID, source_message: str) -> str:
-    """The ROOM's wake-up instruction when one of its messages became a thread.
-
-    Addressed to the room because a thread is a 分身 inside the room's own
-    session and has no session to wake. The platform writes the row, its card
-    block and its brief; raising the worker is the room's, and so is naming the
-    thread — it is created untitled and nothing else is in a position to name it.
-    """
-    return (
-        f"你把一条消息升级成了这个房间里的一条活（task id `{task_id}`）。"
-        "被升级的那段话就是它的简报，平台已经记在卡上了：\n\n"
-        f"---\n{source_message}\n---\n\n"
-        "接下来是你的事：\n"
-        f'1. `cheese_title(text="<≤12 字的标题>", task="{task_id}")`'
-        "——它现在还叫「新话题」，"
-        "只有你能给它起名字。\n"
-        "2. 用你的 Agent 工具起一个分身，**把上面这段简报原文放进它的 prompt**"
-        "（分身不会自己去读文档）。\n"
-        f'3. `cheese_bind(task_id="{task_id}", agent_id=<分身的 agent_id>)`'
-        "——不 bind，这条活在界面上"
-        "永远是「没人做」，分身干的每件事都记在你头上。"
-    )
-
-
 PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
 
 
@@ -186,17 +214,8 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str, *, is_private: bool = False) -> str:
+def publication_prompt(content: str) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
-    if is_private:
-        return (
-            content
-            + "\n\n"
-            + platform_prompt(
-                "这是私聊，最终答复会自动发布给用户。直接回答，"
-                "不要再用 chat_send 重复发送同一答复。"
-            )
-        )
     return (
         content
         + "\n\n"

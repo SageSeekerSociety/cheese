@@ -45,7 +45,7 @@ def _seed_block(
             block = await BlockRepository(session).add(
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
-                author="cheese" if author_type != AuthorType.human else "u",
+                author="cheese",
                 author_type=author_type,
                 content=content,
                 kind=kind,
@@ -65,7 +65,7 @@ def _tool_block(client, pid: str, tid: str, *, age: timedelta) -> None:
         pid,
         tid,
         kind=BlockKind.event,
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content="运行 `pytest -q`",
         meta={"tool": "Bash", "platform": False},
         age=age,
@@ -115,7 +115,7 @@ def test_a_turn_that_finished_hours_ago_is_not_stalled(client):
         pid,
         tid,
         kind=BlockKind.message,
-        author_type=AuthorType.ai,
+        author_type=AuthorType.participant,
         content="跑完了，全绿。",
         age=timedelta(hours=5),
     )
@@ -137,7 +137,7 @@ def test_the_signal_goes_quiet_once_the_platform_has_announced_the_death(client)
         pid,
         tid,
         kind=BlockKind.event,
-        author_type=AuthorType.system,
+        author_type=AuthorType.platform,
         content="⚠️ 芝士上一轮卡死了，已强制结束。",
         age=timedelta(hours=5),
     )
