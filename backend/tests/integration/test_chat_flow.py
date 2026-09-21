@@ -96,7 +96,9 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert assistant["author"] == agent
 
     user = next(f for f in frames if f["type"] == "user_block")["block"]
-    assert user["content"] == "你好芝士"
+    # 正文里的 @ 在落库前被规范成席位 token，和 @ 一个人完全一样 —— 时间线上那条
+    # 消息因此自己说明了它叫的是谁。
+    assert user["content"] == f"<@{agent}> 你好芝士"
     assert user["author"] == "user-1"
     # Explicit null distinguishes a new pending input from an unmarked legacy
     # block. A later exact receipt replaces it with the consuming turn id.
@@ -255,7 +257,7 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     prompt = stub_hooks.last_prompt or ""
     assert "[alice]: 先随便说一句" in prompt
     assert "[bob]: 再补一句" in prompt
-    assert "[alice]: 芝士看看" in prompt
+    assert f"[alice]: <@{room_agent_seat(client, topic_id)}> 芝士看看" in prompt
 
 
 def _drain_until_done(ws) -> list[dict]:

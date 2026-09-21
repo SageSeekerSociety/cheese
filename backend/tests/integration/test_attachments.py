@@ -14,7 +14,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.main import app
 from tests.conftest import StubChannel
-from tests.integration.conftest import chat_ws_url, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
 PNG_1PX = bytes.fromhex(
@@ -120,15 +124,21 @@ def test_document_reaches_agent_as_file(client, stub_hooks):
         files={"file": ("paper.pdf", b"%PDF-1.7 test", "application/pdf")},
     ).json()["data"]
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        # 正文只有一个 @：点名写在正文里（I13），一份没点名的文件只是落在房间
+        # 里。输入框上对着一个附件按 ⌘Enter，发出去的就是这一条。
         ws.send_json(
             {
                 "type": "message",
-                "content": "",
+                "content": "@芝士",
                 "attachments": [att],
             }
         )
         frames = _drain_until_done(ws)
-    block = next(f["block"] for f in frames if f["type"] == "user_block")
+    block = next(
+        f["block"]
+        for f in frames
+        if f["type"] == "user_block" and f["block"]["kind"] == "attachment"
+    )
     assert block["kind"] == "attachment"
     assert block["mime_type"] == "application/pdf"
     assert att["path"] in (stub_hooks.last_prompt or "")
@@ -255,7 +265,7 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
         ws.send_json(
             {
                 "type": "message",
-                "content": "看看这张截图",
+                "content": "@芝士 看看这张截图",
                 "attachments": [att],
             }
         )
@@ -272,7 +282,7 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     # The prompt tells 芝士 the image is attached INLINE (images= carries the
     # content to the model) and where the file lives in its workspace.
     prompt = stub_hooks.last_prompt or ""
-    assert "[user-1]: 看看这张截图" in prompt
+    assert f"[user-1]: <@{room_agent_seat(client, topic_id)}> 看看这张截图" in prompt
     assert att["path"] in prompt
     assert "已附在本条消息里" in prompt
 
@@ -283,7 +293,12 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
 
 
 def test_image_only_message_allowed(client, stub_hooks):
-    """A send with no text but an image still posts and reaches 芝士."""
+    """一张图可以是这条消息的全部内容：正文只剩一个 @，照样到得了芝士。
+
+    以前这条叫「没有正文」：召唤是帧上那一位说了算的，所以一张光秃秃的图自己就
+    能把芝士叫起来。点名写进正文之后（I13），没点名的图只是落在房间里 —— 输入框
+    上对着一张图按 ⌘Enter，发出去的正是下面这一条。
+    """
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 
@@ -291,14 +306,14 @@ def test_image_only_message_allowed(client, stub_hooks):
         ws.send_json(
             {
                 "type": "message",
-                "content": "",
+                "content": "@芝士",
                 "attachments": [att],
             }
         )
         frames = _drain_until_done(ws)
 
     user_frames = [f["block"] for f in frames if f["type"] == "user_block"]
-    assert [b["kind"] for b in user_frames] == ["attachment"]
+    assert [b["kind"] for b in user_frames] == ["message", "attachment"]
     # Twice, and both are load-bearing: the line that tells 芝士 what was
     # posted, and the @-mention the screen resolves into the image itself.
     assert (stub_hooks.last_prompt or "").count(att["path"]) == 2
@@ -345,7 +360,7 @@ def test_prompt_does_not_claim_attachment_when_backend_drops_images(client, tmp_
         ws.send_json(
             {
                 "type": "message",
-                "content": "看看这张截图",
+                "content": "@芝士 看看这张截图",
                 "attachments": [att],
             }
         )

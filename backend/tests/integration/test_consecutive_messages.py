@@ -14,6 +14,7 @@
 """
 
 import asyncio
+import re
 import uuid
 
 import pytest
@@ -156,10 +157,10 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(client, tmp_
     await broker.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
 
     await _until(lambda: len(screen.delivered) == 2)
-    assert [p.split("\n\n", 1)[0] for p in screen.delivered] == [
-        "[wangchangxin]: 直接说你准备怎么改",
-        "[wangchangxin]: <@cheese>",
-    ]
+    heads = [p.split("\n\n", 1)[0] for p in screen.delivered]
+    assert heads[0] == "[wangchangxin]: 直接说你准备怎么改"
+    # 一条光秃秃的 @：落库前它已经被规范成这个房间的席位 token。
+    assert re.fullmatch(r"\[wangchangxin\]: <@cheese-[0-9a-f]+>", heads[1]), heads
 
     screen.release.set()
     await settle_turn(svc, topic_id)
@@ -211,7 +212,7 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(client, tmp_p
 
     assert len(screen.prompts) == 1
     assert "先记一句" in screen.prompts[0]
-    assert "<@cheese>" in screen.prompts[0]
+    assert re.search(r"<@cheese-[0-9a-f]+>", screen.prompts[0]), screen.prompts[0]
 
     screen.release.set()
     await settle_turn(svc, topic_id)
