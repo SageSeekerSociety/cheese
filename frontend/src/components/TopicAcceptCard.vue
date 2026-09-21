@@ -30,6 +30,8 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import {
   acceptCard,
   approveCard,
+  cardDeliverableUrl,
+  downloadFile,
   getAcceptCards,
   getPrChecks,
   mergeCardAnyway,
@@ -239,6 +241,26 @@ watch(
 onUnmounted(() => {
   if (prPollTimer !== null) window.clearInterval(prPollTimer)
 })
+
+// 这一版交出去的那一份，在人点采纳之前拿到手 (#1085 结论五)。走下载而不是预览：
+// 给的是递卡那一刻落下的快照，要审的就是这些字节本身。
+const deliverableBusy = ref(false)
+const deliverableError = ref('')
+
+async function onDownloadDeliverable() {
+  const card = pendingCard.value
+  const filename = card?.deliverable?.filename
+  if (!card || !filename || deliverableBusy.value) return
+  deliverableBusy.value = true
+  deliverableError.value = ''
+  try {
+    await downloadFile(cardDeliverableUrl(card.id), filename)
+  } catch (e) {
+    deliverableError.value = e instanceof Error ? e.message : '未能下载这一份'
+  } finally {
+    deliverableBusy.value = false
+  }
+}
 
 // 主分支保护 (spec §4.4): my vote toward the pending card's accept.
 async function onApproveCard() {
@@ -511,6 +533,49 @@ defineExpose({ reload: loadAcceptCard })
         </div>
         <div v-if="pendingCard.routing_reason" class="text-caption text-medium-emphasis mb-3">
           推荐理由：{{ pendingCard.routing_reason }}
+        </div>
+        <!--
+          这次交付定的是哪一项产物的哪一版，以及交出去的那一份东西 (#1085 结论
+          三/五)。它在提交标题上面，因为点采纳定的首先是这件事：这一版要不要成为
+          《报告》的当前版本、交出去的是不是这一份文件。提交标题是它被记进历史时
+          的写法，不是它本身。
+          三种交法各有各的落点：文件能当场拿走（快照在递卡那一刻就落好了），地址
+          能当场打开，而一次合并没有可拿的东西——那时候只写产物和版本，不补一句
+          「交出去的是这次合并」凑格式。
+          版本号是后端按卡的状态算的，这里一个都不推。落地之前递的那些卡两样都没
+          有，整块就不出现。
+        -->
+        <div v-if="pendingCard.artifact || pendingCard.deliverable" class="mb-3">
+          <div class="text-caption text-medium-emphasis">这次交付</div>
+          <div class="d-flex align-center flex-wrap ga-2">
+            <span v-if="pendingCard.artifact" class="text-body-2">
+              《{{ pendingCard.artifact.name }}》第 {{ pendingCard.artifact.version }} 版
+            </span>
+            <template v-if="pendingCard.deliverable?.kind === 'file' && pendingCard.deliverable.filename">
+              <span class="text-medium-emphasis">·</span>
+              <code class="text-caption">{{ pendingCard.deliverable.filename }}</code>
+              <v-btn
+                size="x-small"
+                variant="text"
+                density="comfortable"
+                class="text-medium-emphasis"
+                prepend-icon="mdi-tray-arrow-down"
+                :loading="deliverableBusy"
+                @click="onDownloadDeliverable"
+              >
+                下载
+              </v-btn>
+            </template>
+            <template v-else-if="pendingCard.deliverable?.kind === 'link' && pendingCard.deliverable.url">
+              <span class="text-medium-emphasis">·</span>
+              <a class="text-caption" :href="pendingCard.deliverable.url" target="_blank" rel="noopener">
+                {{ pendingCard.deliverable.url }}
+              </a>
+            </template>
+          </div>
+          <div v-if="deliverableError" role="alert" class="text-caption text-error mt-1">
+            {{ deliverableError }}
+          </div>
         </div>
         <!--
           提交与 PR 规范: 采纳会把整个分支压成一个提交，标题就是这一行。

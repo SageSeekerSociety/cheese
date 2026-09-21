@@ -13,6 +13,9 @@ const state = ref<TopicComputeProfile | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+// 选择变成了一条提议：这次点击没有改掉任何东西，等人点头。不是错误，所以不走
+// `error` 那一行红字。
+const proposal = ref('')
 const menuOpen = ref(false)
 const more = ref(false)
 const choices = computed(() =>
@@ -39,9 +42,16 @@ async function pick(choice: ComputeChoice) {
   if (!state.value || state.value.locked) return
   saving.value = true
   error.value = ''
+  proposal.value = ''
   try {
-    await setTopicComputeChoice(props.topicId, choice)
+    const saved = await setTopicComputeChoice(props.topicId, choice)
     await load()
+    // 变提议时选择器上什么都没变，重新加载回来的还是原来那一项 —— 不说话就等于
+    // 这次点击石沉大海。菜单留着不收，那句话就在他刚按下的那个控件上。
+    if (saved.proposal) {
+      proposal.value = saved.proposal.content
+      return
+    }
     menuOpen.value = false
     more.value = false
   } catch (e) {
@@ -118,6 +128,7 @@ watch(
             :busy="saving"
             @select="pick"
           />
+          <p v-if="proposal" role="status" class="cp-proposal">{{ proposal }}</p>
           <p v-if="error" role="alert" class="cp-error">{{ error }}</p>
         </v-card>
       </v-menu>
@@ -213,6 +224,11 @@ watch(
 .cp-error {
   padding: 8px;
   color: var(--danger-ink);
+  font-size: 13px;
+}
+.cp-proposal {
+  padding: 8px;
+  color: var(--warn-ink);
   font-size: 13px;
 }
 </style>

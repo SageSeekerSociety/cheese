@@ -78,6 +78,8 @@ from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -1336,6 +1338,8 @@ async def set_topic_compute_profile(
 
     from app.domain.agent.compute_configs import (
         ComputeChoice,
+        machine_policy_call,
+        room_choice,
         standard_choice,
         validate_choice,
     )
@@ -1392,6 +1396,51 @@ async def set_topic_compute_profile(
         if device_id not in {device.device_id for device in scoped_devices}:
             raise ValidationError("设备不属于当前项目")
 
+    # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
+    # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
+    # 人的提议——自托管那台机器的提议收件人就是**机主本人**（结论 40「要那台机器
+    # 的主人点头」），Cloud 花的是项目的钱，收件人是项目的主人。
+    #
+    # 放在这里而不是更早：前面几步在答「这个选择本身成不成立」（池接没接入、设备
+    # 属不属于这个项目），闸门答的是「这个成立的选择可不可以自己发生」。
+    project = await ProjectRepository(db).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    policy = gate.policy_of(project.settings)
+    # 不限档的项目——今天的每一个——连这次调用都不必写出来：构造它要再列一遍项目设
+    # 备、再取一次机主，而不限档时判决与那几条查询无关。
+    if not policy.lets_everything_through:
+        verdict = gate.check(
+            await machine_policy_call(db, project=project, topic=topic, choice=choice),
+            policy,
+            actor.handle,
+        )
+        if isinstance(verdict, gate.Proposal):
+            # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
+            # 是一条提议，下一步在 approver 手上。
+            await propose(db, verdict, place_id=topic_id)
+            await db.flush()
+            # 报的是这个房间**现在**的算力，也就是同一秒 GET 会报的那一份 —— 它由
+            # `room_choice` 算出来，不是 `topic` 那两个还没被写过的列。第一轮之前
+            # 的房间上它们本来就是空的，直接吐出去等于告诉客户端「这个房间没有算力
+            # 选择」，而 GET 同时在说它继承了项目默认。同一个资源两个接口两种说
+            # 法，先信谁？
+            current = room_choice(topic, project.settings)
+            return ok(
+                {
+                    "current": current.profile,
+                    "choice": current.model_dump(),
+                    "device_id": current.device_id,
+                    "locked": False,
+                    "inherited": topic.compute_profile is None,
+                    "proposal": {
+                        "approver": verdict.approver,
+                        "tier": verdict.call.tier,
+                        "content": verdict.content,
+                    },
+                }
+            )
+
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind
     # itself never overwrites, while an explicit user change before the lock removes
@@ -1422,6 +1471,7 @@ async def set_topic_compute_profile(
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "locked": False,
             "inherited": False,
+            "proposal": None,
         }
     )
 
