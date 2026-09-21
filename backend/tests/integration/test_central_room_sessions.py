@@ -38,6 +38,7 @@ from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.harness.pi.device_launch import PiLaunch
+from app.domain.agent.place import Lease, LeaseState
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -638,7 +639,16 @@ async def test_room_starts_centrally_and_keeps_recorded_placement(
     place = await session_place(client.test_factory, topic)
     assert place is not None
     assert place.machine == "center"
-    assert place.lease == target
+    # 落库的那一行是这一轮租到的那份租约：机器要读的执行目标一个字段不少，外加租
+    # 约自己的状态与期限——机器不需要知道租到什么时候，平台需要。
+    assert place.lease is not None
+    assert place.lease | target == place.lease
+    lease = Lease.from_record(place.lease)
+    assert lease is not None
+    assert lease.machine == target["device_id"]
+    assert lease.resource_id == target["resource_id"]
+    assert lease.state is LeaseState.in_use
+    assert lease.expires_at is None
     monkeypatch.setattr(settings, "agent_session_device_id", "another-host")
     assert await central.precheck(ref(project, topic), needs_place=True) == precheck
     central._hub.is_online = lambda device: device == "executor"
