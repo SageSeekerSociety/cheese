@@ -81,7 +81,7 @@ def _card(client, tid: str, reviewer: str) -> str:
 def _say(client, tid: str, speaker: str, text: str) -> None:
     """Post a human message, no agent turn — mentions fire on the block persist."""
     with client.websocket_connect(chat_ws_url(tid, speaker)) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": False})
+        ws.send_json({"type": "message", "content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
@@ -309,3 +309,20 @@ def test_relevance_costs_three_queries_whatever_the_project_size(client, sql_log
     # And nothing else in the endpoint grew either: twelve times the rows, the
     # same number of round trips.
     assert len(big_log) == len(small_log)
+
+
+def test_created_room_is_immediately_in_its_creators_sidebar_group(client):
+    pid = _project(client)
+    response = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "New"},
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200
+    created = response.json()["data"]
+    assert created["i_participate"] is True
+    assert created["can_archive"] is True
+    fetched = client.get(
+        f"/topics/{created['id']}", headers=session_auth_headers("alice")
+    ).json()["data"]
+    assert fetched["i_participate"] == created["i_participate"]

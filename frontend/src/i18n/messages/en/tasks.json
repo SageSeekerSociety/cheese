@@ -9,6 +9,7 @@
     "before": "Base version",
     "oversized": "This file exceeds 1 MB. Preview or download both versions to compare them",
     "binary": "This format has no line-by-line diff. Preview or download both versions to compare them",
+    "document": "This compares the document text, not its layout or tracked changes",
     "unsupported": "This file format or size does not support line-by-line comparison",
     "unavailable": "These versions use different delivery formats, or have no retained content to compare",
     "source": "Comparing the complete project source at the two deliveries",

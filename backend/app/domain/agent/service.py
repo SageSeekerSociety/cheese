@@ -3,6 +3,19 @@
 Each harness translates its structured protocol into these events. Session
 ownership travels with resumable pointers because a delayed event may arrive
 after the room has selected another teammate or harness.
+
+``thread_label`` is the contract's answer to "whose work is this" (结论 43): a
+string the agent hands its subagent when it spawns one, which the harness then
+puts on EVERY event of that sub-thread, unchanged. The platform reads it and
+nothing else — the id a harness mints for a worker is its own business, and a
+harness that cannot carry a label through fills that cell of the matrix with a
+difference code rather than being guessed at from here. Each harness binds the
+label to whichever field of its own records rides on a whole sub-thread rather
+than on one call; what that field is called there stays inside that harness's
+adapter, and the platform never learns the name.
+
+None means the session's own thread: a main thread's records carry no label at
+all, so absent IS the answer rather than a gap to reconcile.
 """
 
 from dataclasses import dataclass
@@ -34,12 +47,10 @@ class AgentMessage:
     # room showed 「先看代码链路。」 between the two greps it introduced.
     # None off the hooks path, where the persist time is already the right one.
     at: datetime | None = None
-    # WHO produced this, when it was not the session itself: a subagent the
-    # session spawned. See the module note on AgentSubagentStart. None means the
-    # main thread — the harness leaves the key off entirely there, so absent and
-    # "the session" are the same answer.
-    agent_id: str | None = None
-    agent_type: str | None = None
+    # WHICH sub-thread said this, when it was not the session itself. See the
+    # module note: the label the agent gave the subagent it spawned, None for
+    # the main thread.
+    thread_label: str | None = None
     agent_handle: str | None = None
     # Every representation of this message shares its ID. Legacy hooks can
     # echo a Stop under another ID and still need text-based recovery dedup.
@@ -61,9 +72,8 @@ class AgentToolUse:
     # ``eid``: that one identifies the DELIVERY, and a call and its result are
     # two deliveries. None where the harness does not say.
     call_id: str | None = None
-    # Which subagent did this; None for the session's own thread (AgentMessage).
-    agent_id: str | None = None
-    agent_type: str | None = None
+    # Which sub-thread did this; None for the session's own (AgentMessage).
+    thread_label: str | None = None
 
 
 #: 一条失败摘要在现场占多少。和分身结论同一个数（``_SUBAGENT_RESULT_MAX``），
@@ -90,7 +100,7 @@ class AgentStepFailed:
 
     call_id: str
     text: str = ""
-    agent_id: str | None = None
+    thread_label: str | None = None
 
 
 @dataclass
@@ -113,11 +123,10 @@ class AgentToolResult:
     description: str = ""
     # Stable per-event id, same contract as AgentToolUse.eid.
     eid: str | None = None
-    # Which subagent SPAWNED this one — not the one it describes. A subagent may
-    # spawn its own, and the id on the hook is always the thread the tool call
-    # was made from.
-    agent_id: str | None = None
-    agent_type: str | None = None
+    # Which sub-thread SPAWNED this one — not the one it describes. A subagent
+    # may spawn its own, and the label on the record is always the thread the
+    # tool call was made from.
+    thread_label: str | None = None
 
 
 @dataclass
@@ -168,10 +177,9 @@ class AgentResult:
     # re-derived: the alternative is reading back the sentence this same code
     # just wrote, which makes the copy unchangeable.
     failure_code: str | None = None
-    # Which subagent stopped, when the Stop came from one. None for the
+    # Which sub-thread stopped, when the Stop came from one. None for the
     # session's own Stop — the one that ends a turn.
-    agent_id: str | None = None
-    agent_type: str | None = None
+    thread_label: str | None = None
     agent_handle: str | None = None
     harness: str | None = None
 
@@ -181,19 +189,22 @@ class AgentSubagentStart:
     """A subagent the session spawned has begun work.
 
     A subagent is a second worker inside one session: it has its own context and
-    its own tool calls, and everything it does reaches us through the SAME hook
-    stream as the session's own work, distinguished only by ``agent_id`` riding
-    on each payload. The main thread's hooks carry no such key at all, so
-    "absent" is the session itself rather than an unknown subagent — which is
-    what makes the id usable as the sole discriminator.
+    its own tool calls, and everything it does reaches us through the SAME
+    stream as the session's own work, told apart by the ``thread_label`` riding
+    on each record (see the module note).
 
-    Carried as its own event rather than inferred from the first tool call an
-    unseen id makes: a subagent that starts and dies without calling anything is
+    ``agent_id`` is the harness's own name for the worker, and the platform
+    keeps it for one job: saying on the card WHICH worker is doing it and
+    whether that worker is still alive. It answers no question about which card
+    — that is the label's, and only the label's.
+
+    Carried as its own event rather than inferred from the first tool call a
+    label makes: a subagent that starts and dies without calling anything is
     invisible under inference, and that is exactly the case a reader needs told.
     """
 
     agent_id: str
-    agent_type: str = ""
+    thread_label: str = ""
     #: The session this subagent belongs to (the spawner's, not its own).
     session_id: str | None = None
 
@@ -214,7 +225,7 @@ class AgentSubagentStop:
 
     agent_id: str
     text: str = ""
-    agent_type: str = ""
+    thread_label: str = ""
     #: Path to the subagent's own transcript ON THE MACHINE THAT RAN IT. Present
     #: for a reader that can reach that filesystem; useless to one that cannot,
     #: which is why the closing message is carried in full rather than by

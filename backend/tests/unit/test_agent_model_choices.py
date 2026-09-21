@@ -1,4 +1,10 @@
-"""Explicit model selection never silently delegates to the CLI default."""
+"""这个项目能用哪些模型，以及这套部署跑的骨架指得到哪些。
+
+模型不是参与者的属性（结论 3），所以这里没有一条是在问「这个 agent 用什么」：
+问的全是「这套部署、这个项目，能用的是哪一批」。按骨架筛是部署这一级的事
+（结论 3「部署决定可选列表（按 harness 筛）」，结论 28「harness 是部署/项目级的
+开发者设置」）。
+"""
 
 import asyncio
 
@@ -9,15 +15,19 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
+from app.domain.agent.harness import CODEX, PI
 from app.domain.agent.market import subscription_model_alias
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    harness_choices,
-    initial_model,
-    model_choices,
-    models_for,
-    validate_configuration,
-)
+from app.domain.agent_instance import configuration as config
+from app.domain.agent_instance.configuration import model_choices
+
+
+def _offered(project_settings: dict | None = None) -> set[str]:
+    return {item["id"] for item in model_choices(project_settings)}
+
+
+def _running(monkeypatch, harness: str) -> None:
+    """这套部署跑的是哪个骨架。它是部署的选择，不是谁的属性。"""
+    monkeypatch.setattr(config, "DEFAULT_HARNESS", harness)
 
 
 @pytest.mark.parametrize(
@@ -48,17 +58,13 @@ def test_unknown_model_is_not_a_default(chosen):
         (True, "subscription", "sonnet"),
     ],
 )
-def test_choices_and_validation_follow_project_supply(
-    monkeypatch, enabled, supply, expected
-):
+def test_choices_follow_project_supply(monkeypatch, enabled, supply, expected):
     monkeypatch.setattr(settings, "subscription_enabled", enabled)
     monkeypatch.setattr(settings, "agent_model", "gateway-model")
     project = {"supply": supply}
-    assert initial_model(project) == expected
-    assert expected in {item["id"] for item in model_choices(project)}
-    validate_configuration(AgentConfiguration(model=expected), project)
-    with pytest.raises(ValidationError):
-        validate_configuration(AgentConfiguration(model="unknown"), project)
+    chosen = [item for item in model_choices(project) if item["default"]]
+    assert [item["id"] for item in chosen] == [expected]
+    assert "unknown" not in _offered(project)
 
 
 def test_subscription_models_are_unavailable_without_subscription_transport(
@@ -66,77 +72,44 @@ def test_subscription_models_are_unavailable_without_subscription_transport(
 ):
     monkeypatch.setattr(settings, "subscription_enabled", False)
     project = {"supply": "subscription"}
-    assert {"glm-5.2", "deepseek-flash"} <= {
-        item["id"] for item in model_choices(project)
-    }
-    assert initial_model(project) == settings.agent_model
-    with pytest.raises(ValidationError, match="请选择可用模型"):
-        validate_configuration(AgentConfiguration(model="sonnet"), project)
+    assert {"glm-5.2", "deepseek-flash"} <= _offered(project)
+    assert "sonnet" not in _offered(project)
 
 
 @pytest.mark.parametrize("supply", ["subscription", "gateway"])
-def test_agents_can_select_each_gateway_model_without_changing_project_supply(
+def test_every_gateway_model_is_offered_whatever_the_projects_supply_is(
     monkeypatch, supply, deployed_pool
 ):
     monkeypatch.setattr(settings, "subscription_enabled", True)
     project = {"supply": supply}
-    for model in ("glm-5.2", "deepseek-flash", "sonnet"):
-        validate_configuration(AgentConfiguration(model=model), project)
+    assert {"glm-5.2", "deepseek-flash", "sonnet"} <= _offered(project)
     assert sum(item["default"] for item in model_choices(project)) == 1
 
 
-def test_a_harness_is_offered_only_where_it_has_something_to_drive(monkeypatch):
-    """A deployment that serves no model a harness supports does not have that
-    harness, whatever the registry says. Offering it produces a teammate that
-    cannot take a turn."""
-    monkeypatch.setattr(settings, "agent_harness_models", {})
-    offered = {item["id"] for item in harness_choices({})}
-    assert "codex" not in offered, "Codex brings its own list and none was named"
-    # The two that speak the platform gateway need no list to be usable.
-    assert {"claude-code", "pi"} <= offered
+def test_a_deployment_on_a_gateway_harness_offers_every_model_it_has(monkeypatch):
+    """它是通过网关够到模型的，和项目自己那个池是同一条路，所以在这里重述一遍
+    「哪些能跑」只会多出一份会过期的副本。"""
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
+    _gateway_reports(_routes("glm-5.2"), _routes("deepseek-flash"))
+    everything = _offered({})
+    _running(monkeypatch, PI)
+    assert _offered({}) == everything
 
 
-def test_a_harness_that_speaks_the_gateway_drives_every_model_the_project_has(
+def test_a_deployment_is_offered_only_what_its_harness_has_an_adapter_for(
     monkeypatch,
 ):
-    """It reaches models through the same gateway the project's own pool is,
-    so restating which ones would be a second list to fall out of date."""
+    """跑的骨架不说网关那套话时，它只指得到运维替它点名的那几个——别的列出来，
+    就是让绑上它的那条活在派出去的那一刻才失败。"""
     monkeypatch.setattr(settings, "subscription_enabled", False)
-    everything = {item["id"] for item in model_choices({})}
-    for harness in ("claude-code", "pi"):
-        assert set(models_for(harness, {})) == everything
-        for model in everything:
-            validate_configuration(AgentConfiguration(model=model, harness=harness), {})
-
-
-def test_a_harness_drives_only_what_was_named_for_it(monkeypatch):
+    monkeypatch.setattr(settings, "agent_model", "glm-5.2")
     monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
-    validate_configuration(
-        AgentConfiguration(model="codex-fixture", harness="codex"), {}
-    )
-    with pytest.raises(ValidationError):
-        validate_configuration(AgentConfiguration(model="glm-5.2", harness="codex"), {})
-    # And a model named for one harness is not thereby withheld from the rest:
-    # it reaches the same gateway.
-    validate_configuration(AgentConfiguration(model="codex-fixture"), {})
+    _gateway_reports(_routes("glm-5.2"))
+    assert {"glm-5.2", "codex-fixture"} <= _offered({})
 
-
-def test_refusing_a_pair_names_the_harness_rather_than_the_model(monkeypatch):
-    """The two halves fail for different reasons, and naming the wrong one
-    sends a person to change the half they chose on purpose. This read as
-    「当前项目无法使用模型 X」 while the model was perfectly available."""
-    monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
-    with pytest.raises(ValidationError) as refusal:
-        validate_configuration(AgentConfiguration(model="glm-5.2", harness="codex"), {})
-    assert "Codex" in str(refusal.value)
-    assert "glm-5.2" in str(refusal.value)
-
-
-def test_an_unknown_harness_is_refused_as_a_harness(monkeypatch):
-    with pytest.raises(ValidationError, match="运行方式"):
-        validate_configuration(
-            AgentConfiguration(model="glm-5.2", harness="nothing-we-run"), {}
-        )
+    _running(monkeypatch, CODEX)
+    assert _offered({}) == {"codex-fixture"}
 
 
 def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
@@ -144,35 +117,17 @@ def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
 ):
     """The credential, not the request shape: a subscription turn authenticates
     with something minted for one harness, so listing the alias among another
-    harness's API models must not make it selectable there."""
+    harness's API models must not make it reachable on a deployment that runs
+    that other harness."""
     monkeypatch.setattr(settings, "subscription_enabled", True)
     monkeypatch.setattr(
         settings, "agent_harness_models", {"codex": ["sonnet", "codex-fixture"]}
     )
-    for harness in ("codex", "pi"):
-        assert "sonnet" not in models_for(harness, {})
-        with pytest.raises(ValidationError):
-            validate_configuration(
-                AgentConfiguration(model="sonnet", harness=harness), {}
-            )
-    validate_configuration(AgentConfiguration(model="sonnet"), {})
+    assert "sonnet" in _offered({})
 
-
-def test_a_new_agent_starts_on_a_model_its_harness_can_drive(monkeypatch):
-    """A preset that asks for a harness of its own would otherwise start
-    pointed at the project's default model and be refused on the way in, for a
-    combination nobody chose."""
-    monkeypatch.setattr(settings, "subscription_enabled", True)
-    monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
-    project = {"supply": "subscription"}
-    # The project's own default is a subscription model Codex cannot carry.
-    assert initial_model(project) == "sonnet"
-    assert initial_model(project, "codex") == "codex-fixture"
-    for harness in ("claude-code", "codex", "pi"):
-        validate_configuration(
-            AgentConfiguration(model=initial_model(project, harness), harness=harness),
-            project,
-        )
+    _running(monkeypatch, CODEX)
+    assert "sonnet" not in _offered({})
+    assert "codex-fixture" in _offered({})
 
 
 @pytest.mark.parametrize(
@@ -200,9 +155,9 @@ def test_project_default_model_overrides_deployment_default(
     choices = model_choices(project)
     defaults = [item for item in choices if item["default"]]
     assert len(defaults) == 1
+    # 主线 resolve(None, catalog) 拿的就是 catalog 里 default=True 的那一条，
+    # 所以「目录里只有它标了 default」就是「主线走它」。
     assert defaults[0]["id"] == default_model
-    # 主线 resolve(None, catalog) 拿到的就是这条
-    assert initial_model(project) == default_model
 
 
 def test_no_default_model_falls_back_to_deployment_default(monkeypatch, deployed_pool):
@@ -302,7 +257,6 @@ def test_a_model_the_gateway_starts_routing_is_offered_without_a_release(
     offered = {item["id"]: item for item in model_choices({})}
     assert "brand-new-model" in offered
     assert offered["brand-new-model"]["label"] == "Something Just Released"
-    validate_configuration(AgentConfiguration(model="brand-new-model"), {})
 
     # And one the gateway stops routing stops being offered, rather than sitting
     # in the picker until someone notices a turn failing on it.
@@ -317,8 +271,6 @@ def test_a_model_the_gateway_routes_for_us_is_not_a_menu_item(
     person to pick a model the platform routes to on their behalf."""
     monkeypatch.setattr(settings, "subscription_enabled", False)
     assert "glm-4.5" not in {item["id"] for item in model_choices({})}
-    with pytest.raises(ValidationError, match="请选择可用模型"):
-        validate_configuration(AgentConfiguration(model="glm-4.5"), {})
 
 
 def test_a_model_the_gateway_cannot_bill_is_not_offered(monkeypatch):
@@ -350,7 +302,6 @@ def test_an_unreachable_gateway_keeps_offering_what_it_last_reported(monkeypatch
     )
     assert asyncio.run(gateway_catalog.refresh(dead)) is False
     assert {"glm-5.2", "deepseek-flash"} <= {item["id"] for item in model_choices({})}
-    validate_configuration(AgentConfiguration(model="deepseek-flash"), {})
 
 
 def test_a_deployment_with_no_gateway_admin_api_still_runs_its_own_model(monkeypatch):
@@ -361,7 +312,6 @@ def test_a_deployment_with_no_gateway_admin_api_still_runs_its_own_model(monkeyp
     monkeypatch.setattr(settings, "agent_model", "the-configured-one")
     assert asyncio.run(gateway_catalog.refresh(None)) is False
     assert {item["id"] for item in model_choices({})} == {"the-configured-one"}
-    assert initial_model({}) == "the-configured-one"
 
 
 @pytest.mark.anyio

@@ -257,7 +257,7 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 - **Project delivery:** topic acceptance merges reviewed work into the project's accepted branch. The project-level delivery page publishes a private static Site from a specific accepted revision. Each project owns one Site; its URL stays fixed, and accepted changes reach the live Site only after an explicit publish. Files are copied into persistent release storage, so the Site does not depend on the development machine. Topic previews link to project delivery without publishing their working branches. Automatic builds, backend application hosting, public sharing, PDF export and GitHub mirroring are outside this initial release.
 - 话题的核心生命周期事件是"采纳"（Accept）：话题的主要成果被验收通过 = 这件事完成。因为所有产出底层都是 git repo 里的文件，采纳在实现上就是**当场 merge**（#718：点一下就是合并，合的是人看到的那个 commit；"只在绿的时候合"由项目的分支保护规则执行）——不管产出是代码、报告还是设计稿。采纳**不归档**（#442 决定 1）：话题保持活跃，归档是人单独做的动作；归档后工作面冻结，但对话永远可以追加评论（和 GitHub 里 merge 后的 PR 一样）。一件活 = 一件事 = 一次交付；想分批做 = 在同一个房间里再派一件活。没做完的房间也可以归档（打个"草稿"标签）。
 - 谁来验收：在项目设定的权限策略范围内（见 §4.4），芝士根据判断把验收卡递给一个具体的人（谁最懂这块/谁没参与过/谁有空），卡上写"等 XX 验收"。组长可以通过私聊告诉芝士偏好（见 §1 私聊）。验收记名、可撤回。
-- 冲突处理：芝士先尝试解决（它能看到两边话题的完整上下文）；解决不了就把两边放在一起，@ 相关人来拍板，结论写回文档。总览的定期巡检也会预警"两个话题改了同一个文件"。
+- 冲突处理：不加锁、不做事前预警（#1085 结论六：告诉另一个房间"我在改《合同》"之后，它并没有更好的选择）。允许并发，采纳时撞上了才处理。文本源（代码、Markdown、typst）由 git 合并，冲突以标记物化在任务分支上交给房间的芝士，解决不了就把两边放在一起、@ 相关人来拍板，结论写回文档；**文档（.docx / .pptx / .xlsx）不做内容合并**——办不到，而且 git 不在二进制文件里留标记，它把本轮那一版留在工作目录里，直接提交等于把对方那次修改静默丢掉。这类文件在对方那一版上把本轮改动重做一遍，再拒绝掉全部修订、和两边共同的那一版逐字对比，以此证明别的地方一个字没动。重做落不下去（两边改了同一句、本轮不是可重放的替换、两边各自重写了整份文档）就停下，给人两个确定的出口：用这一版，或用主干那一版。
 - 讨论串里谁先发谁先说，AI 不自动开场；但从讨论升级出来的新话题，第一条必须是芝士的开场白——复述任务、确认理解（和 Claude Code 的 plan 确认一样）。
 - 周报、文献追踪这种长期重复的工作也是话题，AI 定期在里面产出内容。
 
@@ -335,15 +335,15 @@ Project 自己管自己的策略。因为所有话题底层是 git 分支，权�
 
 ### 8.2 Project agents and starting configurations
 
-Each project agent owns its name, role instructions, explicit model and memory. A room selects an agent; the project selects the default agent for new rooms.
+Each project agent owns its name, role instructions and memory. A room selects an agent; the project selects the default agent for new rooms.
 
-Built-in presets provide starting values when an agent is created. A preset can supply role instructions, a model and existing tool settings. Missing model values are filled from the available supply's creation default and saved on the new agent. Subsequent preset changes do not affect existing agents. There is no editable team or global role catalog.
+Built-in presets provide starting values when an agent is created. A preset can supply role instructions and existing tool settings. Subsequent preset changes do not affect existing agents. There is no editable team or global role catalog.
 
 Users edit an individual agent in AI 队友. Edits take effect from its next turn in every room using that agent. The current turn uses one configuration snapshot. Existing agent IDs, handles and memory remain unchanged, and other agents keep their own configuration. New rooms require an active agent, so the last active agent cannot be retired.
 
-Model choices come from the project's connected supply. An unavailable saved model produces an error requiring a new selection. The model is bound to a piece of work, not to a participant: a card carries its own binding, a room's main thread always runs the project default, and one control point — admission, when the turn reaches the metering proxy — resolves which model a request runs on. A reused process is refreshed between turns when the agent configuration or that resolution changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
+Model choices come from the project's connected supply. The model is bound to a piece of work, not to a participant: a card carries its own binding, a room's main thread always runs the project default, and one control point — admission, when the turn reaches the metering proxy — resolves which model a request runs on. A reused process is refreshed between turns when the agent configuration or that resolution changes. This guarantees the requested model; provider-side substitutions are outside this setting's guarantee.
 
-Migration copies existing role instructions and the effective model onto each agent. Projects with an implicit default receive a saved agent under the same cheese handle, preserving their memory keys. Original custom roles and project settings remain in archive tables for inspection and rollback.
+Migration copies existing role instructions onto each agent. Projects with an implicit default receive a saved agent under the same cheese handle, preserving their memory keys. Original custom roles and project settings remain in archive tables for inspection and rollback.
 
 ### 8.3 Skills：产品的配方
 

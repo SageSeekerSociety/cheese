@@ -9,7 +9,7 @@
 芝士的那些也不通知 —— 下一步不在人手上。
 
 GitHub 全程是 test double，复用 `test_accept_pr` 那套世界（平台 GitHub App 开 PR，
-scheduler 轮询推进），也就是生产上真正跑着的那条路。
+`review/pr_poll.py` 轮询推进），也就是生产上真正跑着的那条路。
 """
 
 import pytest

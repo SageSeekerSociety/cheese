@@ -9,7 +9,7 @@ and multiple connections to the same topic all see the live stream.
 
 Protocol (unchanged frontend contract):
   connect → /api/topics/{id}/chat?token=<session token>   (required)
-  client → {"type":"message","content": str, "summon": bool,
+  client → {"type":"message","content": str,
             "attachments"?: [{"path": str, "mime": str}]}
   client → {"type":"ping"}  →  server → {"type":"pong"}
   server → user_block / reaction / tool / todo / state / event_block /
@@ -49,7 +49,7 @@ from starlette.websockets import WebSocketState
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.core.config import settings
-from app.core.errors import AppError, ForbiddenError
+from app.core.errors import AppError, BaseError, ForbiddenError
 from app.core.obs import get_logger
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
@@ -176,8 +176,12 @@ async def chat(
                     else (payload.get("author") or "anonymous").strip()[:64]
                     or "anonymous"
                 )
-                # @芝士 toggle: summon the AI, or just post (spec C3).
-                summon = bool(payload.get("summon", False))
+                # 帧上没有「叫不叫它」这一位。**这条消息点了谁的名，是服务端从正文
+                # 里解析出来的**（不变量 I13）：@ 了这个房间的哪个席位就是点了谁，私
+                # 聊是两席的房间、说话就是对着对方说的。以前这里读一个浏览器算好的
+                # `summon` 布尔，和服务端解析出来的 @ 做或运算 —— 于是一条谁也没 @
+                # 的消息，只要客户端把那一位置真，照样起一轮，而时间线上那条消息看不
+                # 出它叫了谁。
                 # B3: replying to a specific message threads under it.
                 reply_to = payload.get("reply_to") or None
                 # 图片输入: previously-uploaded worktree files this message carries.
@@ -195,7 +199,14 @@ async def chat(
                     str(raw_client_id)[:64] if isinstance(raw_client_id, str) else None
                 )
                 if not content and not attachments:
-                    await send({"type": "error", "message": "empty content"})
+                    await send(
+                        {
+                            "type": "error",
+                            "code": "empty_message",
+                            "message": "请输入消息或添加附件",
+                            "client_id": client_id,
+                        }
+                    )
                     continue
                 # Await only the short durable receive. Any model work is still
                 # background-owned by AgentWorkRunner and survives this socket.
@@ -211,7 +222,6 @@ async def chat(
                         topic_id,
                         author=author,
                         content=content,
-                        summon=summon,
                         reply_to=reply_to,
                         attachments=attachments,
                         provision_actor=conn_actor,
@@ -223,11 +233,30 @@ async def chat(
                         turn=str(turn_id),
                         duration_ms=(time.monotonic() - received_at) * 1000,
                     )
-                except AppError as exc:
-                    await send({"type": "error", "message": exc.message})
+                except (AppError, BaseError) as exc:
+                    await send(
+                        {
+                            "type": "error",
+                            "code": type(exc).__name__,
+                            "message": exc.message
+                            if isinstance(exc, AppError)
+                            else str(exc.args[0]),
+                            "client_id": client_id,
+                        }
+                    )
                 except Exception:  # noqa: BLE001 — keep the socket usable
                     _log.exception("chat_message_receive_failed", topic=str(topic_id))
-                    await send({"type": "error", "message": "消息未能保存，请重新发送"})
+                    await send(
+                        {
+                            "type": "error",
+                            "code": "message_receive_failed",
+                            "message": (
+                                "发送结果暂时无法确认，请重试；"
+                                "系统会核对记录以避免重复发送"
+                            ),
+                            "client_id": client_id,
+                        }
+                    )
         except WebSocketDisconnect:
             pass
         finally:

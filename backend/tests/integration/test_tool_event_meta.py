@@ -34,7 +34,7 @@ def stub_hooks() -> ToolScreen:
 
 def _chat(client, topic_id: str) -> None:
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.send_json({"type": "message", "content": "@芝士 hi"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

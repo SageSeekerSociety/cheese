@@ -134,7 +134,7 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
             }
         )[0]
         assert isinstance(tool, AgentToolUse)
-        assert (tool.agent_id, tool.agent_type) == (child, "explorer")
+        assert tool.thread_label == "explorer"
         message = assembler.accept(
             {
                 "method": "item/completed",
@@ -149,7 +149,7 @@ def test_child_events_do_not_replace_root_session_or_finish_its_turn():
             }
         )[0]
         assert isinstance(message, AgentMessage)
-        assert (message.agent_id, message.agent_type) == (child, "explorer")
+        assert message.thread_label == "explorer"
         stopped = assembler.accept(
             {
                 "method": "turn/completed",

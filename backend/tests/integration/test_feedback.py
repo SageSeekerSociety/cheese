@@ -34,7 +34,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.repositories import FeedbackRepository
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_agent_seat, session_auth_headers
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
 #: of anything: platform admin is a platform-level fact, not a project role.
@@ -59,7 +59,7 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     `admin_handles()` re-reads settings on every call precisely so this works
     without a restart (see `services.admin_handles`).
     """
-    monkeypatch.setattr(settings, "feedback_admin_handles", [ADMIN])
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
     return ADMIN
 
 
@@ -1590,7 +1590,7 @@ def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
     about the credential alone; the binding half is the test below.
     """
     agent = "agent-on-the-list"
-    monkeypatch.setattr(settings, "feedback_admin_handles", [agent])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent])
     screen = _register_screen(handle=agent)
     try:
         allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
@@ -1631,7 +1631,7 @@ def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkey
     )
     assert made.status_code == 200, made.text
     agent = agent_instance_handle(made.json()["data"]["id"])
-    monkeypatch.setattr(settings, "feedback_admin_handles", [agent, REPORTER])
+    monkeypatch.setattr(settings, "platform_admin_handles", [agent, REPORTER])
 
     refused = client.get("/admin/feedback", headers=session_auth_headers(agent))
     assert refused.status_code == 403, refused.text
@@ -1916,3 +1916,233 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
         headers=session_auth_headers(ADMIN),
     ).json()["data"]["data"]
     assert {card["id"] for card in listed} == {mine["id"]}
+
+
+# --- 成员管理：名单两份来源、加进去的人当场生效、根删不掉 --------------------
+#
+# 这里建的是**真账号**（`seed_user` 直接落库并提交），不是 `session_auth_headers`
+# 那种只带 handle 的令牌：能加进名单的前提是平台里真有这个人，而「有」与「没有」
+# 正是这几条用例要分开的两件事。
+
+
+def _admins(client, handle: str) -> dict:
+    r = client.get("/admin/admins", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _add_admin(client, *, by: str, target: str):
+    return client.post(
+        "/admin/admins", json={"handle": target}, headers=session_auth_headers(by)
+    )
+
+
+def _searched(client, handle: str, q: str) -> list[dict]:
+    """加人那个选择器看到的候选（`GET /admin/users`）。"""
+    r = client.get(
+        "/admin/users", params={"q": q}, headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["items"]
+
+
+def _nickname_user(client, handle: str, nickname: str) -> None:
+    """给一个真人写上昵称，选择器「按名字搜」的那一半才有东西可搜。
+
+    直接写库：注册那条路要邮箱验证码，而这里要的只是「user_profile 里有一行」
+    这一件事（`seed_user` 建人的时候也没写 profile，所以这里自己补一条）。
+    """
+    from app.domain.user.models import UserProfile
+    from app.domain.user.repositories import UserRepository
+
+    async def _write() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None, handle
+            now = datetime.now(UTC)
+            session.add(
+                UserProfile(
+                    user_id=user.id,
+                    nickname=nickname,
+                    intro="",
+                    avatar_id=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_write())
+
+
+def test_the_roster_is_two_lists_and_only_the_added_one_can_be_edited(client, as_admin):
+    """配置里那份列得出来、删不掉；页面上加的那份可删，删一个不在名单里的不是错。"""
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-hired")
+    assert _admins(client, as_admin) == {"root": [ADMIN], "added": []}
+
+    added = _add_admin(client, by=as_admin, target="fb-hired")
+    assert added.status_code == 200, added.text
+    body = added.json()["data"]
+    assert body["created"] is True
+    assert [(row["handle"], row["added_by_handle"]) for row in body["added"]] == [
+        ("fb-hired", as_admin)
+    ]
+    # `root` 那一份不受影响：加一个人不会把他挪成根管理员。
+    assert body["root"] == [ADMIN]
+
+    # 根管理员删不掉 —— 它是部署配置，改它要有服务器权限。409 而不是静默不动：
+    # 真按到了说明页面和服务端对不上，那就该说出来。
+    refused = client.delete(
+        f"/admin/admins/{as_admin}", headers=session_auth_headers(as_admin)
+    )
+    assert refused.status_code == 409, refused.text
+    assert _admins(client, as_admin)["root"] == [ADMIN]
+
+    gone = client.delete(
+        "/admin/admins/fb-hired", headers=session_auth_headers(as_admin)
+    )
+    assert gone.status_code == 200, gone.text
+    assert gone.json()["data"]["removed"] is True
+    assert gone.json()["data"]["added"] == []
+
+    # 删一个已经不在名单里的人不是错误：他要的结果（这个人不在名单里）已经成立。
+    again = client.delete(
+        "/admin/admins/fb-hired", headers=session_auth_headers(as_admin)
+    )
+    assert again.status_code == 200
+    assert again.json()["data"]["removed"] is False
+
+
+def test_whoever_the_page_added_is_an_admin_on_their_next_request(client, as_admin):
+    """加完就生效，不重启也不再改配置 —— 判据是「根 ∪ 表」，不是只有根。
+
+    这条钉的是**两个来源真的合成了一个答案**：只读配置的话，页面上加的人会出现在
+    名单里却什么也打不开（名单说他在，接口说他不是）；只读表的话，根管理员反而
+    进不去。
+    """
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-hired")
+    private = _report(client, REPORTER, visibility="private")
+
+    def is_admin(handle: str) -> bool:
+        r = client.get("/feedback/meta", headers=session_auth_headers(handle))
+        assert r.status_code == 200, r.text
+        return bool(r.json()["data"]["is_admin"])
+
+    def open_private(handle: str):
+        return client.get(
+            f"/feedback/{private['id']}", headers=session_auth_headers(handle)
+        )
+
+    assert is_admin("fb-hired") is False
+    assert (
+        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+    ).status_code == 403
+    assert open_private("fb-hired").status_code == 404
+
+    assert _add_admin(client, by=as_admin, target="fb-hired").status_code == 200
+
+    assert is_admin("fb-hired") is True
+    assert (
+        client.get("/admin/feedback", headers=session_auth_headers("fb-hired"))
+    ).status_code == 200
+    # 私密反馈对他是真的打开了：名单生效不只是改了一个布尔值。
+    assert open_private("fb-hired").status_code == 200
+
+
+def test_the_page_refuses_names_that_would_leave_the_roster_wrong(client, as_admin):
+    """三种拒绝，各自对应一种「名单上有他但他进不来 / 进得来而名单骗人」。"""
+    # 空白：名单按 handle 精确匹配，空串谁也匹配不上。
+    assert _add_admin(client, by=as_admin, target="   ").status_code == 400
+    # 平台上没有这个账号：写进去的表现是「名单里有人」而那个人根本不存在。
+    assert _add_admin(client, by=as_admin, target="fb-nobody-at-all").status_code == 400
+    # 根管理员不用再在页面上加一遍：加进去会落一行删不掉的重复，页面上显示两遍。
+    assert _add_admin(client, by=as_admin, target=ADMIN).status_code == 409
+
+
+def test_an_agent_is_a_refusal_in_the_add_form_and_absent_from_the_picker(
+    client, as_admin
+):
+    """agent 当不了管理员（管理动作 agent 不能做），选择器里也不该出现它。
+
+    这两件事要一起钉：只钉「加它是 400」的话，写错成「平台里没有这个账号」也照样
+    绿 —— 而那条提示会把人送去查拼写，真正的原因却是这个身份不能有权限。
+    """
+    from tests.conftest import seed_user
+
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    agent = room_agent_seat(client, topic)
+
+    refused = _add_admin(client, by=as_admin, target=agent)
+    assert refused.status_code == 400, refused.text
+    assert "agent" in refused.json()["message"]
+
+    # 同一个搜索找得到真人，却找不到 agent —— 否则上面那条「搜不到」是空搜索在过关。
+    seed_user(client, "cheese-human")
+    hits = {row["handle"] for row in _searched(client, as_admin, "cheese")}
+    assert "cheese-human" in hits
+    assert agent not in hits
+
+
+def test_the_roster_is_not_something_a_stranger_can_read_or_change(client, as_admin):
+    """四个端点全部要管理员。
+
+    拒的理由不是「这个页面不该被看见」，而是**这份名单决定了谁能看见私密反馈和
+    安全问题** —— 能读它就知道谁能看所有人的私密条目，能改它就能给自己开门。
+    """
+    calls = [
+        ("GET", "/admin/admins", None),
+        ("GET", "/admin/users?q=a", None),
+        ("POST", "/admin/admins", {"handle": STRANGER}),
+        ("DELETE", f"/admin/admins/{ADMIN}", None),
+    ]
+    for method, path, body in calls:
+        theirs = client.request(
+            method, path, json=body, headers=session_auth_headers(STRANGER)
+        )
+        assert theirs.status_code == 403, (method, path, theirs.text)
+        # 没登录也一样：这不是「页面看不见」，是名单本身不给外人看。
+        anonymous = client.request(method, path, json=body)
+        assert anonymous.status_code in (401, 403), (method, path, anonymous.text)
+
+    # 空搜索词是 400：空串搜出的是「平台的前 20 个账号」，那不是搜索结果。
+    assert (
+        client.get(
+            "/admin/users", params={"q": ""}, headers=session_auth_headers(as_admin)
+        ).status_code
+        == 400
+    )
+
+
+def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
+    """选择器的搜索在 SQL 里、按两列搜，页面上的「搜不到」只有两种意思。
+
+    复用 `GET /users?q=` 是不行的：那条接口先把一页 profile 取出来再在 Python 里
+    过滤，所以搜索只在那一页里成立 —— 加人的时候「搜不到」就成了第三件事（这个人
+    在，只是不在这一页），而界面上三件事长得一模一样。
+    """
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb-peng")
+    _nickname_user(client, "fb-peng", "彭文博")
+    seed_user(client, "fb-cat")
+
+    by_name = _searched(client, as_admin, "彭文博")
+    assert [(row["handle"], row["nickname"]) for row in by_name] == [
+        ("fb-peng", "彭文博")
+    ]
+    assert by_name[0]["already_admin"] is False
+    # 只记得 handle 也搜得到。
+    assert [row["handle"] for row in _searched(client, as_admin, "fb-cat")] == [
+        "fb-cat"
+    ]
+    assert _searched(client, as_admin, "这个人肯定没有") == []
+
+    # 已经在名单里的人**照常出现**，带 already_admin —— 选择器据此画「已选中」，
+    # 而不是画成「没有这个人」：后者会让人以为名单已经变了。
+    assert _add_admin(client, by=as_admin, target="fb-peng").status_code == 200
+    assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True

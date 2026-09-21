@@ -5,7 +5,10 @@ membership is what ``authorize_topic_access`` reads to let someone into every
 topic of that project. So the acting identity is resolved at the trust boundary
 (``ActorResolverDep``) and the service authorizes it — unlike most 2.0 routes
 these do NOT honor a handle passed in the body: a claimed handle is exactly the
-forgery this surface must not accept. Reading the roster stays open, as it was.
+forgery this surface must not accept. Reading the roster used to stay open; it
+does not any more (see ``list_members``). The invitation list is part of the
+same surface - it names who is still expected to answer - and took the same
+door late, because this docstring still promised the old behaviour.
 """
 
 import uuid
@@ -141,8 +144,18 @@ async def invite_member(
 
 
 @router.get("/projects/{project_id}/invitations")
-async def list_project_invitations(project_id: uuid.UUID, db: DbSession) -> dict:
-    """这个项目还在等谁答复。读是开放的，和读名册一样。"""
+async def list_project_invitations(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这个项目还在等谁答复。
+
+    Same door as the roster next door. It lists handles and roles of people
+    who have not even joined yet, so "读是开放的" stopped being true the day
+    the roster was guarded - this route was left behind holding the old
+    promise.
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     svc = InvitationService(db)
     items = await svc.list_for_project(project_id)
     rows = [await svc.describe(i) for i in items]

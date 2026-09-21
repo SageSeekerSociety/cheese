@@ -2,6 +2,7 @@
 """Provision the deployment's Forgejo admin and persistent event relay settings."""
 
 import argparse
+from collections.abc import Iterable
 import json
 import logging
 import os
@@ -34,12 +35,23 @@ def environment_values(content: str) -> dict[str, str]:
     return values
 
 
-def save_environment(path: Path, updates: dict[str, str]) -> None:
+def save_environment(
+    path: Path, updates: dict[str, str], *, remove: Iterable[str] = ()
+) -> None:
+    """Write `updates` into an env file, replacing those keys and dropping `remove`.
+
+    `remove` is for a key this file should no longer carry AT ALL — a rename.
+    Rewriting a key is what `updates` does; that cannot express "and delete the
+    old spelling", and leaving both lines behind is the worse state: the old one
+    still loads (a rename keeps the alias so an unswept box keeps booting), so
+    the stale line reads like configuration and does nothing when edited.
+    """
     original = path.read_text() if path.exists() else ""
+    dropped = {*updates, *remove}
     lines = [
         line
         for line in original.splitlines()
-        if line.strip().removeprefix("export ").partition("=")[0] not in updates
+        if line.strip().removeprefix("export ").partition("=")[0] not in dropped
     ]
     content = (
         "\n".join(lines + [f"{key}={value}" for key, value in updates.items()]) + "\n"

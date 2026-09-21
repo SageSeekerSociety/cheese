@@ -3,9 +3,10 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.thread_label import thread_label
 
 
 class PresentationOut(BaseModel):
@@ -44,8 +45,8 @@ class TaskOut(BaseModel):
     pr_number: int | None = None
     pr_url: str | None = None
     delivered_head: str | None = None
-    # 哪个分身在做它. NULL = 还没有分身认领——派活写下这一行，绑定发生在房间
-    # 真的起了一个分身之后，中间这段时间是正常状态，不是错误。
+    # 哪个分身在做它. NULL = 还没有分身开工——开卡写下这一行，平台看见分身开工
+    # 才写上它的 id，中间这段时间是正常状态，不是错误。
     subagent_id: str | None = None
     # Acceptance closes the task; closing a task alone does not imply delivery.
     accepted_by: str | None = None
@@ -62,3 +63,13 @@ class TaskOut(BaseModel):
     # 端点会填（见 tasks 列表和 `GET /topics/{id}`），别处保持 None —— 意思是
     # 「没人算过」，不是「没有」。ORM 行上没有这个属性，from_attributes 会留默认值。
     presentation: PresentationOut | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def thread_label(self) -> str:
+        """起子 agent 时把这个字符串带上，它干的每件事就落在这张卡上（结论 43）。
+
+        算出来的，不是库里的一列：一列要有人去写、去和卡对上，而它对不上的那天，
+        卡上写着一个标识、事件上带着另一个，没有任何地方能说出哪份是对的。
+        """
+        return thread_label(self.id)

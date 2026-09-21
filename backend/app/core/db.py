@@ -177,3 +177,14 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def release_read_session(session: AsyncSession) -> None:
+    """Release a read-only request's connection before waiting on remote I/O.
+
+    Callers opt in only for read transactions. Closing detaches loaded rows,
+    whose scalar values remain available, and permits subsequent reads.
+    """
+    if session.new or session.dirty or session.deleted:
+        raise RuntimeError("Remote read attempted with pending database writes")
+    await session.close()

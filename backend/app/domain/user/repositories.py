@@ -1,11 +1,12 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer
 from app.domain.avatars.models import Avatar
+from app.domain.identity.models import AgentBinding
 from app.domain.knowledge.models import Knowledge
 from app.domain.questions.models import Question
 from app.domain.user.models import (
@@ -33,6 +34,38 @@ class UserRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def search_accounts(self, q: str, limit: int) -> Sequence[tuple[str, str]]:
+        """(handle, 昵称) —— 按关键词找账号，给「加管理员」那个选择器用。
+
+        昵称在 `user_profile` 上，所以是 **left** join：注册路径会写一条 profile，
+        历史账号不一定有，inner join 会让那些账号在图谱里彻底消失（搜 handle 也搜
+        不到）。没有昵称的回 handle 本身，界面至少显示得出一个能认的东西。
+
+        两列都搜：加人的时候有人想得起名字、有人只记得 handle。
+
+        agent 用 `NOT EXISTS` 在**这里**排掉，不是回给调用方再过滤一遍 —— agent
+        当不了管理员（`FeedbackService.add_admin` 会拒），把它画在选择器里等于给人
+        一个点下去必然失败的选项。判据是同一张 `agent_bindings` 表，只是从一次一个
+        的 `IdentityService.is_agent` 变成了一次一条 SQL。
+        """
+        pattern = f"%{q.strip()}%"
+        stmt = (
+            select(User.username, UserProfile.nickname)
+            .outerjoin(UserProfile, UserProfile.user_id == User.id)
+            .where(
+                User.deleted_at.is_(None),
+                or_(
+                    User.username.ilike(pattern),
+                    UserProfile.nickname.ilike(pattern),
+                ),
+                ~exists().where(AgentBinding.user_id == User.id),
+            )
+            .order_by(User.username)
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [(username, nickname or username) for username, nickname in result]
 
     async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
         """Batch handle → user. Roster-wide lookups run on every agent turn, so

@@ -525,9 +525,9 @@ hooks: {on_start: …, on_stop: …}
 
 ### 12.2 Project agent configuration
 
-`agent_instances.configuration` stores the role instructions, model, harness, effort and existing tool settings for one project agent. Memory remains keyed by its project and stable handle. A room's `compute_profile` selects where the work runs; the agent's model selects what it requests there.
+`agent_instances.configuration` stores what one project agent IS — role instructions, skills, MCP servers. Memory remains keyed by its project and stable handle. A room's `compute_profile` selects where the work runs; which model a turn requests comes from the binding on the piece of work (`room_task/binding.py`), never from the agent.
 
-Built-in presets in `agent_type/library.py` initialize new agents. The saved `type_name` records which preset was used at creation and is not consulted when the agent runs. Users edit individual agents; there is no mutable shared role catalog or project model default. See spec §8.2 for model validation, turn boundaries and migration behavior.
+Built-in presets in `agent_type/library.py` initialize new agents. The saved `type_name` records which preset was used at creation and is not consulted when the agent runs. Users edit individual agents; there is no mutable shared role catalog. See spec §8.2 for turn boundaries and migration behavior.
 
 ### 12.3 建议：抄纪律，不抄格式
 
@@ -536,9 +536,7 @@ Built-in presets in `agent_type/library.py` initialize new agents. The saved `ty
 1. **两层 prompt 的纪律**（最值钱）。明确划出「平台层」和「角色层」，并规定角色层不许重复平台层。
    我们现在没有这条约定——阶段说明、CLI 规则、记忆、成员表、话题表、活文档全都每轮拼进去，
    没人说得清哪一层归谁、谁该为体积负责。
-2. **把「怎么跑」并进角色定义**：角色定义上要有 model / effort / 工具白名单。
-   这直接就是 @fulu 说的「名称、harness 工程、模型、effort」。（见 §12.2 的实例配置。）
-3. **配置与记忆分离**：角色是出厂设置，core 记忆是它自己长出来的那部分。
+2. **配置与记忆分离**：角色是出厂设置，core 记忆是它自己长出来的那部分。
    这和 §6.2 ① 那条「我们缺 core 这一层」是同一件事，应该一起做（并入 issue #187）。
 
 **不建议抄的：**
@@ -593,14 +591,12 @@ agent（池里的一个身份）
 （一个连飞书、一个连数据库、一个只读代码），per-agent MCP 就有了意义。
 Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的配置。
 
-### 12.6 三件要一起想清楚的
+### 12.6 两件要一起想清楚的
 
-1. **harness 下沉到 agent 级** —— 做了：`agent_types.harness`。留 NULL 表示「这个类型不在乎」，
-   部署自己的选择（`settings.agent_backend`）照旧生效。
-2. **谁是主体：agent 订阅房间，还是房间邀请 agent？** buzz 是前者（persona frontmatter 里
+1. **谁是主体：agent 订阅房间，还是房间邀请 agent？** buzz 是前者（persona frontmatter 里
    `subscribe: ["#security-reviews"]`，agent 主动订阅频道）；我们走的是后者（建话题时选）。
    要记住的是：**选的是初始值，后面还能加/换**（roster 支持多 agent）。
-3. **session 数量的生命周期。** session 数 = 房间数 × 该房间里的 agent 数 × 它手上的活数，
+2. **session 数量的生命周期。** session 数 = 房间数 × 该房间里的 agent 数 × 它手上的活数，
    而容器不再随采纳回收，所以只涨不跌。buzz 一个进程的并发 session 上限是 8。
    §2.4 那条「主动轮换 session」**至今没做**，记在账上。
 
@@ -681,7 +677,7 @@ Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的
 比分池更糟。所以顺序只能是：先有 core ＋ 按需检索，再归并。
 后来正是按这个顺序做的（`store.py` 里的两层预算，注释拿的就是本项目这组数字）。
 
-#### 还剩四个问题
+#### 还剩三个问题
 
 1. **`cheese` 这个 handle 现在兼任两个身份。** `handles.py` 的注释写着它是
    *"the fallback identity: what a token that names no 分身 resolves to"* ——
@@ -690,11 +686,7 @@ Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的
 2. **「换 agent」必须重开 session。** 一个房间跑到一半换成另一个 agent（比如换成运维芝士），
    接着用同一份 transcript 会人格分裂 —— 所以换 agent ≈ 重开会话，是**有代价的动作**，
    不是切个开关。设计上要明说，UI 上要提示。
-3. **范围分两层** —— 落地了：类型（出厂设置：harness / skills / mcp / model / effort）
-   **不属于任何项目**，所以一个类型能同时撑起每个项目里的一个 agent；
-   **记忆必须项目内**（挂在 `agent_instances` 上）。
-   正好对应 buzz 的 persona（可分发）vs engram（community-local）。
-4. **默认 agent 是项目级可覆盖的**，不是平台硬编码。
+3. **默认 agent 是项目级可覆盖的**，不是平台硬编码。
 
 ## 13. 子话题 ＝ subagent 的可视化（<@wangchangxin> 2026-08-17）
 

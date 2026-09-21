@@ -39,7 +39,7 @@
 """
 
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -164,7 +164,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
 async def sweep(
     session_factory: async_sessionmaker,
     *,
-    nudge: Callable[[uuid.UUID, str, str, dict], None] | None = None,
+    nudge: Callable[[uuid.UUID, str, str, dict], Awaitable[None]] | None = None,
     skip_card_ids: Iterable[uuid.UUID] | None = None,
     now: datetime | None = None,
 ) -> dict:
@@ -175,7 +175,7 @@ async def sweep(
     叫人（启动早期 runner 还没准备好时用得上）。`content` 是给芝士的完整说明，
     `event` + `meta` 是房间里那一行（平台提示统一契约）。
 
-    一张卡一个事务，跟 `SchedulerService.poll_open_prs` 同样的理由：一张卡出错
+    一张卡一个事务，跟 `review/pr_poll.py::poll_open_prs` 同样的理由：一张卡出错
     不能把另一张卡已经判死的结果回滚掉。
     """
     from app.domain.review import gate
@@ -204,7 +204,7 @@ async def sweep(
                 continue
         condemned.append(card_id)
         if nudge is not None:
-            nudge(
+            await nudge(
                 topic_id,
                 _ABANDONED_NUDGE,
                 _ABANDONED_EVENT,

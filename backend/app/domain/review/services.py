@@ -46,6 +46,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.agent.runtime import addressed_to_agent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -81,6 +82,7 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.webhook import service as webhook_service
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -1954,7 +1956,7 @@ class AcceptService:
         onto the card, send the events the 「谁的活」 table names (deduped
         through the nudge ledger), and merge a card whose auto-merge is armed
         once the rules are satisfied. Called by
-        SchedulerService.poll_open_prs(); never raises for a transient GitHub
+        `review/pr_poll.py::poll_open_prs`; never raises for a transient GitHub
         hiccup — the next poll just retries."""
         # A webhook and the reconciliation clock may observe the same card.
         # Only one transaction may advance it or emit its notifications.
@@ -2298,7 +2300,7 @@ class AcceptService:
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
         """Same explanation as `_note_poll_failed`, for a poll that died on
-        something other than a GitHub error (the scheduler's own catch-all).
+        something other than a GitHub error (the poller's own catch-all).
 
         Its caller rolled the failed tick back, so this runs on a fresh session
         and is a no-op for a card that has since settled or lost its PR.
@@ -2931,7 +2933,15 @@ class AcceptService:
                 f"```\n{reason[:1500]}\n```\n"
                 f"{action}"
             ),
-            summon=actionable,
+            # 合不上这件事点的是芝士的名：活还开着，改在它手上。活关了就谁也没点到，
+            # 房间里照样看得见这一行，只是不会有人被叫起来（I13）。
+            addressed=addressed_to_agent(
+                await TopicMemberService(self._session).addressable_agent_handle(
+                    topic.id
+                )
+                if actionable
+                else None
+            ),
             # 平台提示统一契约: the room gets one line; GitHub's own words ride in
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
             # the same 1500-char bound the message body always used). `content`
@@ -3143,6 +3153,11 @@ class AcceptService:
             await TaskService(self._session).get(card.task_id) if card.task_id else None
         )
         actionable = task is not None and task.status == TaskStatus.open
+        seat = (
+            await TopicMemberService(self._session).addressable_agent_handle(topic.id)
+            if actionable
+            else None
+        )
         for nudge in fresh:
             if nudge.capped:
                 continue
@@ -3157,7 +3172,7 @@ class AcceptService:
                     else f"{nudge.event}。原任务已关闭或不存在；"
                     "如需继续修改，请由新任务承接。"
                 ),
-                summon=actionable,
+                addressed=addressed_to_agent(seat),
                 nudge_event=nudge.event,
                 nudge_meta=notice(
                     nudge.event_type,

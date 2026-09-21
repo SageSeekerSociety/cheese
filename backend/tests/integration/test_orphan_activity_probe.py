@@ -1,6 +1,6 @@
 """The liveness probe the orphan sweep judges silence on.
 
-`SchedulerService.last_block_at` is the only DB-backed half of the wedged-turn
+`background.last_block_at` is the only DB-backed half of the wedged-turn
 verdict, and the whole feature rests on it: if it reports a topic as quieter
 than it is, the sweep cancels live work. It is also the signal a human checks by
 hand (「最后一块是几点」), so it has to agree with what the topic shows.
@@ -12,26 +12,16 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.domain.agent.chat import ChatService
+from app.core.background import last_block_at
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
-from app.domain.scheduler.service import SchedulerService
 from app.domain.topic.services import TopicService
-from tests.conftest import stub_compute
 
 
 @pytest.mark.anyio
-async def test_last_block_at_reports_the_newest_block_per_topic(client, tmp_path):
+async def test_last_block_at_reports_the_newest_block_per_topic(client):
     factory = client.test_factory
-    svc = SchedulerService(
-        chat_service=ChatService(
-            session_factory=factory,
-            base_system_prompt="你是芝士。",
-            workspace_root=str(tmp_path / "ws"),
-            compute=stub_compute(),
-        )
-    )
 
     async with factory() as session:
         project = await ProjectService(session).create(name="P", owner_handle="u")
@@ -58,7 +48,7 @@ async def test_last_block_at_reports_the_newest_block_per_topic(client, tmp_path
         )
         await session.commit()
 
-    got = await svc.last_block_at({chatty.id, quiet.id, empty.id})
+    got = await last_block_at(factory, {chatty.id, quiet.id, empty.id})
 
     now = datetime.now(UTC)
     # Every returned timestamp is tz-aware: the sweep subtracts it from a real
@@ -73,16 +63,9 @@ async def test_last_block_at_reports_the_newest_block_per_topic(client, tmp_path
 
 
 @pytest.mark.anyio
-async def test_last_block_at_is_empty_for_no_topics(client, tmp_path):
+async def test_last_block_at_is_empty_for_no_topics(client):
     """The sweep calls this with whatever is in `_live`, which is usually
     nothing — that must not turn into a `WHERE topic_id IN ()` round trip."""
-    svc = SchedulerService(
-        chat_service=ChatService(
-            session_factory=client.test_factory,
-            base_system_prompt="你是芝士。",
-            workspace_root=str(tmp_path / "ws"),
-            compute=stub_compute(),
-        )
-    )
-    assert await svc.last_block_at(set()) == {}
-    assert await svc.last_block_at({uuid.uuid4()}) == {}
+    factory = client.test_factory
+    assert await last_block_at(factory, set()) == {}
+    assert await last_block_at(factory, {uuid.uuid4()}) == {}

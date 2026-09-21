@@ -35,30 +35,18 @@ def _run(monkeypatch, argv: list[str], data: dict) -> list[tuple[str, str, dict]
     return calls
 
 
-def test_split_says_the_work_has_nobody_on_it_yet(monkeypatch, capsys):
+def test_split_hands_back_the_label_the_subagent_must_carry(monkeypatch, capsys):
+    """开完卡就打印线程标识 —— 起分身的那一步要用它，而这是 agent 拿到它的地方。"""
     _run(
         monkeypatch,
         ["split", "查一下分页", "--brief", "干这个"],
-        {"id": _TASK, "title": "查一下分页"},
+        {"id": _TASK, "title": "查一下分页", "thread_label": f"work-{_TASK}"},
     )
     out = capsys.readouterr().out
 
     assert f"/tasks/{_TASK}" in out
-    assert "使用原生分身时" in out
-    assert "cheese bind" in out
-
-
-def test_bind_posts_the_worker_id_to_the_thread(monkeypatch, capsys):
-    calls = _run(
-        monkeypatch,
-        ["bind", _TASK, "worker-1"],
-        {"id": _TASK, "title": "查一下分页", "subagent_id": "worker-1"},
-    )
-
-    assert calls == [
-        ("POST", f"/topics/{_ROOM}/tasks/{_TASK}/bind", {"agent_id": "worker-1"})
-    ]
-    assert "worker-1" in capsys.readouterr().out
+    assert f"work-{_TASK}" in out
+    assert "线程标识" in out
 
 
 def test_close_task_names_the_thread_it_is_about(monkeypatch, capsys):

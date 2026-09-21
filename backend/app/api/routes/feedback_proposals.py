@@ -189,7 +189,7 @@ async def accept_feedback_proposal(
     block = await _require_proposal_block(db, topic_id, block_id)
     payload = proposal_rules.proposal_block_or_404(block)
     service = FeedbackService(db)
-    is_admin = service.is_admin(actor.handle)
+    is_admin = await service.is_admin(actor.handle)
     already = proposal_rules.accepted_feedback_id(block.meta or {})
     if already is not None:
         # 同一条卡发两次不是两件事。取回第一条 —— `visible_row` 而不是直接读：

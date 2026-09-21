@@ -428,7 +428,6 @@ async def test_a_private_room_lets_go_of_the_machine_it_no_longer_holds(client, 
                 title="芝士",
                 kind=TopicKind.topic,
                 is_private=True,
-                private_owner="alice",
             )
         )
         session.add(

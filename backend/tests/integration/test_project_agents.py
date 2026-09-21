@@ -136,7 +136,6 @@ def test_a_project_starts_with_one_editable_cheese(client):
     assert agents[0]["id"] is not None
     # 它是一行真的实例，不是一个「还没配过」的占位：有 id，就有它坐名册的 handle。
     assert agents[0]["seat_handle"] == agent_instance_handle(agents[0]["id"])
-    assert agents[0]["configuration"]["model"]
     assert (
         client.post(f"/projects/{pid}/agents", json={"handle": "cheese"}).status_code
         == 422
@@ -468,8 +467,12 @@ def test_a_credential_without_an_agent_identity_is_rejected(client):
 
 
 def _turn(client, room: str, text: str) -> None:
+    """点名由正文说了算（I13）。已经点了名的原样发出去 —— 在 `<@seat> 还在吗`
+    前面再补一个 `@芝士`，点到的就成了名册上排在前面的那一个，于是接话的不是被
+    叫的那个队友。"""
+    addressed = text if "<@" in text else f"@芝士 {text}"
     with client.websocket_connect(chat_ws_url(room, "u")) as ws:
-        ws.send_json({"type": "message", "content": text, "summon": True})
+        ws.send_json({"type": "message", "content": addressed})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

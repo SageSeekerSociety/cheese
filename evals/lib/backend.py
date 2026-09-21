@@ -4,7 +4,7 @@ Boots the REAL FastAPI app (app.main:app) as a subprocess with an eval-only
 environment: per-run sqlite database, per-run workspace root (so the in-flight
 turn registry, worktrees and session dirs never touch the dev backend), sandbox
 disabled (turns run as plain model turns through the real gateway — see
-README "沙箱模式" for the trade-off), scheduler off.
+README "沙箱模式" for the trade-off).
 
 The gateway credentials (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / AGENT_MODEL)
 come from backend/.env exactly like the dev backend — pydantic-settings reads it
@@ -63,7 +63,6 @@ class EvalBackend:
                 "DATABASE_URL": f"sqlite+aiosqlite:///{self.db_path}",
                 "AGENT_SANDBOX_ENABLED": "false",
                 "WORKSPACE_ROOT": str(self.workspace_root),
-                "SCHEDULER_INTERVAL_SECONDS": "0",
                 "SANDBOX_TOKEN": self.sandbox_token,
                 # Scenarios speak as several different people ("xinyu", "alice",
                 # …) with no login behind them, so their chat sockets carry no

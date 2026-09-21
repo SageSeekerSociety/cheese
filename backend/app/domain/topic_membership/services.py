@@ -26,7 +26,7 @@ from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
-__all__ = ["CHEESE_HANDLE", "TopicMemberService"]
+__all__ = ["CHEESE_HANDLE", "TopicMemberService", "addressable_seat"]
 
 # Roles allowed to manage a topic's roster (add / remove / change roles).
 _MANAGER_ROLES = frozenset({TopicRole.owner, TopicRole.admin})
@@ -179,9 +179,7 @@ class TopicMemberService:
         """一间私聊的两席：房主那一席，和对面那一席。不是恰好两席时 None。
 
         私聊是项目内名册两席的房间（结论 19），所以「这间房里的另一位是谁」只有
-        名册一个出处。以前还有第二个出处，就是 ``topics.private_owner`` 与
-        ``private_peer`` 两列；同一件事有两份声明，而加人、换席位、撤席位改的
-        只有名册那一份。
+        名册一个出处：加人、换席位、撤席位改的就是这一份。
 
         人这一席是 ``owner``：建私聊的人是房主，人对人的私聊里房主是规范化之后
         排在前面的那一位（``TopicService.get_or_create_private``），AI 队友按它
@@ -445,6 +443,22 @@ class TopicMemberService:
             return own
         return own if own in handles else handles[0]
 
+    async def addressable_agent_handle(
+        self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
+    ) -> str | None:
+        """名册上**真有**的那个 agent 席位，一个都没有就是 None。
+
+        与 :meth:`resolve_agent_handle` 的区别就在这一档，而两者的用途本来就不同：
+        那个答的是「这一轮署谁的名」，一个房间无论如何都得答得出来，所以名册空了它
+        回落到这个地点的 sandbox token 名下的 ``cheese-<hex12>``。点名答的是「这条
+        事件送给谁」，而那个回落出来的 handle 不在名册上 —— 拿它去点名，寻址结果看
+        着有一个收件人，落到正文里的 @ 却谁也对不上，于是事件送出去了、却什么也不会
+        发生。没人可点就是没人可点，如实答 None。
+        """
+        if not await self.agent_handles(room_id or topic_id):
+            return None
+        return await self.resolve_agent_handle(topic_id, room_id=room_id)
+
     async def add(
         self, *, topic_id: uuid.UUID, handle: str, role: TopicRole, actor: str
     ) -> TopicMembership:
@@ -497,3 +511,24 @@ class TopicMemberService:
         ):
             raise ValidationError("不能移除最后一个 owner")
         await self._repo.delete(member)
+
+
+async def addressable_seat(session_factory, topic_id: uuid.UUID) -> str | None:
+    """这个房间的 agent 席位 —— 平台自己那些事件点的就是它的名。
+
+    读名册，不写：`address()` 要的是一个 handle，而「谁是这里的芝士」名册上已经答
+    过一次，这里不重答。名册上一个 agent 都没有就返回 None，寻址结果随之为空 ——
+    一个没有 agent 席位的房间，平台点不出收件人来，也就什么都不会起。
+
+    读失败**照常抛出去**。这个读只有两种结果：名册上有席位，或者名册是空的。把
+    连接池耗尽、数据库抖动这一类失败也答成 None，就等于对调用点说「这个房间谁也
+    不在」—— 而问这个问题的几处里有两处是重发（`_recover_silent_turn`、
+    `_schedule_resend`），它们存在的全部理由就是「刚才那条消息没送到，原样再送一
+    次」，静默地不送等于把那条消息丢了。
+
+    ``session_factory`` 而不是一个 session：问的几处都在自己的事务之外（后台扫、
+    连接器挂上来、重发定时器），各自开一个只读的短会话。手上已经有 session 的调用
+    点直接用 :meth:`TopicMemberService.addressable_agent_handle`。
+    """
+    async with session_factory() as session:
+        return await TopicMemberService(session).addressable_agent_handle(topic_id)

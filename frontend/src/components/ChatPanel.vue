@@ -36,11 +36,11 @@ const composerMemory = new Map<string, ComposerDraft>()
 interface Outgoing {
   clientId: string
   content: string
-  summon: boolean
   replyTo?: string
   atts?: ChatAttachment[]
   /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
   state: 'queued' | 'sending' | 'failed'
+  error?: string
 }
 </script>
 
@@ -864,6 +864,18 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
+      if (frame.client_id) {
+        const item = outbox.value.find((entry) => entry.clientId === frame.client_id)
+        if (item) {
+          clearEchoTimer(item.clientId)
+          item.state = 'failed'
+          item.error = frame.message
+          if (activeTurnIds.value.size === 0) awaitingReply.value = false
+        } else {
+          errorMsg.value = frame.message
+        }
+        return
+      }
       // The socket was refused at connect — the backend closes right after this
       // frame, so latch the reason and stop the reconnect loop from burying it.
       if (frame.code && CONNECT_REFUSAL_CODES.has(frame.code)) {
@@ -1109,11 +1121,10 @@ function markFailed(clientId: string) {
 function flushOutbox() {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   for (const item of outbox.value) {
-    if (item.state === 'sending') continue
+    if (item.state !== 'queued') continue
     const msg: WsClientChatMessage = {
       type: 'message',
       content: item.content,
-      summon: item.summon,
       reply_to: item.replyTo,
       attachments: item.atts,
       client_id: item.clientId,
@@ -1143,6 +1154,7 @@ function retrySend(clientId: string) {
   const item = outbox.value.find((o) => o.clientId === clientId)
   if (!item) return
   item.state = 'queued'
+  item.error = undefined
   flushOutbox()
 }
 
@@ -1160,7 +1172,6 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   outbox.value.push({
     clientId: `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     content: trimmed,
-    summon,
     replyTo: replyTarget.value?.id ?? undefined,
     atts,
     state: 'queued',
@@ -1346,7 +1357,7 @@ function onAvatarError(handle: string): void {
 const myName = computed(() => memberByHandle.value.get(AUTHOR)?.name || AUTHOR)
 
 function outgoingState(item: Outgoing): string {
-  if (item.state === 'failed') return '未送达'
+  if (item.state === 'failed') return item.error ? '待处理' : '未送达'
   return connected.value ? '发送中…' : '等待连接'
 }
 
@@ -2395,6 +2406,7 @@ onBeforeUnmount(() => {
                 <span class="im-time">{{ outgoingState(item) }}</span>
               </div>
               <div class="im-text im-text--verbatim" v-html="renderPlain(item.content)" />
+              <p v-if="item.error" class="outbox-error" role="alert">{{ item.error }}</p>
               <div v-if="item.state === 'failed'" class="outbox-actions">
                 <button type="button" class="outbox-act" @click="retrySend(item.clientId)">重试</button>
                 <button type="button" class="outbox-act" @click="dropSend(item.clientId)">删除</button>
@@ -2797,8 +2809,15 @@ details.sys-row > summary::-webkit-details-marker {
 .im-row--pending .im-name {
   opacity: 0.62;
 }
+.outbox-error {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--danger-ink);
+  overflow-wrap: anywhere;
+}
 .outbox-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
   margin-top: 2px;
 }

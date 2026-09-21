@@ -110,6 +110,7 @@ const GET_RETRY_DELAYS_MS = [250, 750]
 // both say 200 — and, like the statuses above, it is about this second.
 export function isRetryableGetFailure(method: string, status?: number, error?: unknown, errorPage = false): boolean {
   if (method.toUpperCase() !== 'GET') return false
+  if (error instanceof ApiError && error.retryable === false) return false
   if (errorPage) return true
   if (status != null) return RETRYABLE_GET_STATUSES.has(status)
   return !(error instanceof DOMException && error.name === 'AbortError')
@@ -141,10 +142,53 @@ function wait(ms: number): Promise<void> {
 export class ApiError extends Error {
   constructor(
     readonly status: number,
-    message: string
+    message: string,
+    readonly code?: string,
+    readonly requestId?: string,
+    readonly retryable?: boolean
   ) {
     super(message)
     this.name = 'ApiError'
+  }
+}
+
+export class RequestTimeoutError extends Error {
+  constructor() {
+    super('请求等待超时，请重试')
+    this.name = 'RequestTimeoutError'
+  }
+}
+
+export const READ_BUDGET_MS = 20_000
+export const TOKEN_REFRESH_BUDGET_MS = 10_000
+
+async function withinBudget<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  outer?: AbortSignal | null
+): Promise<T> {
+  if (outer?.aborted) throw outer.reason ?? new DOMException('请求已取消', 'AbortError')
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      controller.abort(outer?.reason)
+      reject(outer?.reason ?? new DOMException('请求已取消', 'AbortError'))
+    }
+    if (outer?.aborted) onAbort()
+    else outer?.addEventListener('abort', onAbort, { once: true })
+    timer = setTimeout(() => {
+      const error = new RequestTimeoutError()
+      controller.abort(error)
+      reject(error)
+    }, ms)
+  })
+  try {
+    return await Promise.race([work(controller.signal), cancelled])
+  } finally {
+    clearTimeout(timer)
+    if (onAbort) outer?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -217,14 +261,18 @@ export async function refreshNow(): Promise<void> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
-        const res = await fetch('/api/users/auth/refresh-token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-        })
-        if (!res.ok) return
-        const body = (await res.json()) as { data?: { accessToken?: string } }
-        const next = body?.data?.accessToken
+        const next = await withinBudget(async (signal) => {
+          const res = await fetch('/api/users/auth/refresh-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            signal,
+          })
+          if (!res.ok) return undefined
+          const body = (await res.json()) as { data?: { accessToken?: string } }
+          signal.throwIfAborted()
+          return body?.data?.accessToken
+        }, TOKEN_REFRESH_BUDGET_MS)
         if (next) localStorage.setItem('accessToken', next)
       } catch {
         // Offline, or the refresh cookie is gone. Sending the stale token is
@@ -251,7 +299,12 @@ function roomRead<T>(path: string): Promise<T> {
   return started
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
+  return withinBudget((signal) => performRequest<T>(path, { ...init, signal }), READ_BUDGET_MS, init?.signal)
+}
+
+async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
@@ -262,6 +315,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // for some other reason would make every call fire twice.
   let authRetried = false
   for (let attempt = 0; ; attempt += 1) {
+    init?.signal?.throwIfAborted()
     let res: Response
     try {
       res = await fetch(`${BASE}${path}`, {
@@ -304,7 +358,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
-      if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
+      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
+      if (
+        details.error?.retryable !== false &&
+        attempt < GET_RETRY_DELAYS_MS.length &&
+        isRetryableGetFailure(method, res.status)
+      ) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
@@ -312,10 +371,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
       // sends the room hunting a mystery the server had already explained.
       const said = body as { message?: string; error?: { message?: string } }
-      const serverSaid = said.message || said.error?.message || ''
+      const serverSaid = said.error?.message || said.message || ''
       throw new ApiError(
         res.status,
-        serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`
+        serverSaid || `请求失败（HTTP ${res.status}）`,
+        details.error?.name,
+        res.headers?.get('X-Request-ID') ?? undefined,
+        details.error?.retryable
       )
     }
     const envelope = body as ApiEnvelope<T>
@@ -867,37 +929,17 @@ export function setTopicComputeProfile(
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
-// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
-// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+// 一个模型在选单上的样子。后端是唯一事实源（model_choices），这里不留第二份
+// 清单。
 export interface AgentFieldChoice {
   id: string
   label: string
   description: string
   default: boolean
-  /** 只有「运行方式」的选项带这个：这个 harness 在本项目里能被指向哪些模型。
-   *  约束的方向是 harness → model（后端 agent/harness/__init__.py 写了为什么），
-   *  所以这份清单只会挂在 harness 上，模型自己对运行方式没有意见。 */
-  models?: string[]
-}
-
-export interface AgentFieldOptions {
-  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
-  state: 'choosable' | 'unavailable'
-  choices: AgentFieldChoice[]
-  reason: string
-  note: string
-}
-
-export type AgentTypeOptions = Record<string, AgentFieldOptions>
-
-export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOptions> {
-  return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
 }
 
 // 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
-// 旧 UI 是 agent 上选模型反推池；现在主线读项目默认，agent 上的模型只在派子 agent
-// 时用。这条端点给项目默认一个真正的写入口（之前只能手改数据库）。
+// 用户接触模型的地方只有卡和这个项目级设置——一个参与者身上没有模型。
 export interface ProjectDefaultModel {
   /** 项目显式设的模型；null = 没设，走 deployment_default */
   model: string | null
@@ -2204,6 +2246,66 @@ export function createAdminFeedbackNote(feedbackId: string, body: string): Promi
 }
 
 export type { FeedbackNote }
+
+/* ---- 平台管理员名单 (`/admin/admins`) ----
+ *
+ * 「谁算平台管理员」是**服务端**的一个判据（配置里的根名单 ∪ 这张表），客户端只画。
+ * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
+ * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
+
+/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
+ *  仍然要说得出是谁加的。 */
+export interface PlatformAdminRow {
+  handle: string
+  added_by_handle: string
+  created_at: string
+}
+
+export interface PlatformAdminsPayload {
+  /** 部署配置里那份。列得出来，删不掉。 */
+  root: string[]
+  added: PlatformAdminRow[]
+}
+
+export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
+  return request<PlatformAdminsPayload>('/admin/admins')
+}
+
+/** 「加一个人」那个选择器的候选：按 handle 或昵称搜账号。
+ *
+ *  单开一条而不是复用用户目录接口：那条只在它取回的那一页里过滤（这个部署上账号
+ *  上千，搜昵称十有八九回空），而这里「搜不到」是要么换个说法要么这个人没有账号。
+ *  `already_admin` 里的人照常返回 —— 选择器要把他们画成已选中，而不是「搜不到」。 */
+export interface AdminCandidate {
+  handle: string
+  nickname: string
+  /** 没挑过头像的人是 null（和反馈卡片、聊天区名册同一条判据），界面画彩色首字母。 */
+  avatar_id: number | null
+  already_admin: boolean
+}
+
+export function searchAdminCandidates(q: string, limit = 20): Promise<{ items: AdminCandidate[] }> {
+  return request<{ items: AdminCandidate[] }>(
+    `/admin/users?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`
+  )
+}
+
+/** 加一个人。回的是**更新后的整份名单**（`created` 说明这次是真加了还是他本来就在）：
+ *  加完之后页面上两块都可能变，让客户端自己再拉一次中间那一下页面是旧的。 */
+export function addPlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { created: boolean }> {
+  return request<PlatformAdminsPayload & { created: boolean }>('/admin/admins', {
+    method: 'POST',
+    body: JSON.stringify({ handle }),
+  })
+}
+
+/** 从名单里移出一个人，同样回整份（`removed` 说这次有没有真删掉一行 —— 删一个不在
+ *  名单里的人不是错误，他的目的已经成立了）。根管理员到这里会拿到 409。 */
+export function removePlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { removed: boolean }> {
+  return request<PlatformAdminsPayload & { removed: boolean }>(`/admin/admins/${encodeURIComponent(handle)}`, {
+    method: 'DELETE',
+  })
+}
 
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */
 
