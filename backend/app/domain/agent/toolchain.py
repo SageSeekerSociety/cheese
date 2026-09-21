@@ -33,7 +33,7 @@ from dataclasses import dataclass
 TYPST_VERSION = "0.15.1"
 PANDOC_VERSION = "3.11"
 UV_VERSION = "0.12.15"
-FJ_VERSION = "0.6.0"
+FJ_VERSION = "0.6.0-cheese.2"
 GH_VERSION = "2.62.0"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
@@ -44,9 +44,9 @@ _TYPST_BASE = f"https://github.com/typst/typst/releases/download/v{TYPST_VERSION
 _PANDOC_BASE = f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}"
 _UV_BASE = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}"
 _GH_BASE = f"https://github.com/cli/cli/releases/download/v{GH_VERSION}"
-_FJ_MAC_BASE = (
+_FJ_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
-    "forgejo-cli-v0.6.0-cheese.1"
+    f"forgejo-cli-v{FJ_VERSION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
@@ -71,17 +71,17 @@ class Artifact:
 
 
 ARTIFACTS: dict[tuple[str, str], Artifact] = {
-    # Upstream has no macOS archives; scripts/build-forge-cli.sh builds these.
+    # scripts/build-forge-cli.sh applies the merged-status localization fix.
     ("fj", "darwin-arm64"): Artifact(
-        f"{_FJ_MAC_BASE}/fj-0.6.0-aarch64-apple-darwin.tar.gz",
-        "58d721ad1b4f990734d46c5f3fd13993f60fa3c07b408167978328f797f8ab96",
-        9143322,
+        f"{_FJ_BASE}/fj-{FJ_VERSION}-aarch64-apple-darwin.tar.gz",
+        "ad2417988cd247aae548d9402c23848de5823b1a2ae4b42059dd271dade9be36",
+        9139710,
         ".tar.gz",
     ),
     ("fj", "darwin-x64"): Artifact(
-        f"{_FJ_MAC_BASE}/fj-0.6.0-x86_64-apple-darwin.tar.gz",
-        "6139a457467e0e37faca5163b669f9a2ef52ac73ca3f91d586bb1d46f4ab05ed",
-        9227205,
+        f"{_FJ_BASE}/fj-{FJ_VERSION}-x86_64-apple-darwin.tar.gz",
+        "a491ad2b029d1821690e9d1a5bba62e01fd02b80ec4c023b98a59307f24668fc",
+        9231710,
         ".tar.gz",
     ),
     ("gh", "linux-x64"): Artifact(
@@ -109,15 +109,15 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         ".zip",
     ),
     ("fj", "linux-arm64"): Artifact(
-        f"https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v{FJ_VERSION}/forgejo-cli-aarch64-linux.tar.gz",
-        "f427e0f94e2bf6f4b44bff17020706915bccfe7abb7ad9b9cbb74cc1aa2dd7b5",
-        9680784,
+        f"{_FJ_BASE}/fj-{FJ_VERSION}-aarch64-unknown-linux-gnu.tar.gz",
+        "ae29e149de589d04d1e83fc9eb23eb8118bd9cc871bfb07dc8515fc874b2b412",
+        10381911,
         ".tar.gz",
     ),
     ("fj", "linux-x64"): Artifact(
-        f"https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v{FJ_VERSION}/forgejo-cli-x86_64-linux.tar.gz",
-        "ea559da5449b6dd7e0dd9f7ea51c906b575696f782edd606b52adcf773602742",
-        7752840,
+        f"{_FJ_BASE}/fj-{FJ_VERSION}-x86_64-unknown-linux-gnu.tar.gz",
+        "f426f59e0f4136b0a97c0ae24367f4a4dcc865d4f805aa1f9ec8bde082d371f7",
+        10239679,
         ".tar.gz",
     ),
     ("typst", "linux-x64"): Artifact(
