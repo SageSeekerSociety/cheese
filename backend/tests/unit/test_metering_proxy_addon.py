@@ -25,6 +25,8 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ADDON = REPO_ROOT / "deploy" / "metering-proxy" / "billing_addon.py"
 COMPOSE = REPO_ROOT / "deploy" / "metering-proxy" / "compose.yml"
@@ -829,7 +831,13 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
             {"model": "glm-5.2", "usage": {"input_tokens": 10, "output_tokens": 20}}
         ).encode()
         mod.responseheaders(flow)
-        assert flow.response.stream is True
+        if content_type == "text/event-stream":
+            assert callable(flow.response.stream)
+        else:
+            assert flow.response.stream is True
+        if callable(flow.response.stream):
+            flow.response.stream(b'data: {"type":"message_stop"}\n\n')
+            flow.response.stream(b"")
         mod.response(flow)
     assert mod.METER.used() == 0
     assert not mod.USAGE_LOG.exists()
@@ -868,8 +876,9 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
     flow.response.raw_content = b"private-response-body"
     with caplog.at_level("INFO", logger="cheese.metering"):
         mod.responseheaders(flow)
+        flow.response.stream(b'data: {"type":"message_stop"}\n\n')
         mod.response(flow)
-    assert flow.response.stream is True
+    assert callable(flow.response.stream)
     assert mod.METER.used() == 0
     messages = [
         r.message
@@ -903,6 +912,73 @@ def test_gateway_timing_preserves_request_boundary_and_omits_credentials(
     assert event["route_ready"] is not None
     assert event["status"] == 200 and event["failed"] is False
     assert "private-" not in messages[0]
+
+
+@pytest.mark.parametrize(
+    "ending,expected",
+    [
+        (b'data: {"type":"message_stop"}\n\n', False),
+        (
+            b'data: {"type":"error","error":{"message":"private upstream text"}}\n\n',
+            True,
+        ),
+        (b"", True),
+    ],
+)
+async def test_gateway_stream_failure_is_reported_without_waiting_for_client_retries(
+    monkeypatch, tmp_path, ending, expected
+):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None, scoped_secret="test-secret")
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    flow = _make_flow()
+    flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
+    flow.response = _make_response()
+    flow.response.headers["x-litellm-call-id"] = "call-1"
+    posted = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, size):
+            return b"{}"
+
+    def post(request, timeout):
+        posted.append((request.full_url, json.loads(request.data)))
+        return Response()
+
+    monkeypatch.setattr(mod, "urlopen", post)
+    mod.responseheaders(flow)
+    prefix = (
+        b'data: {"type":"content_block_delta","delta":{"text":"private answer"}}\n\n'
+    )
+    # Arbitrary network chunk boundaries must preserve both bytes and detection.
+    for chunk in (prefix[:9], prefix[9:], ending[:12], ending[12:], b""):
+        assert flow.response.stream(chunk) == chunk
+    mod.response(flow)
+    await asyncio.gather(*mod._failure_reports)
+    assert len(posted) == int(expected)
+    if expected:
+        url, body = posted[0]
+        assert url == "http://backend/backend-errors"
+        assert body["errors"][0]["exc_type"] == "GatewayStreamError"
+        assert body["errors"][0]["request_id"] == "call-1"
+        assert "private" not in json.dumps(body)
+    assert mod.METER.used() == 0
+
+
+async def test_client_disconnect_does_not_raise_a_model_failure(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, inject=None, scoped_secret="test-secret")
+    flow = _make_flow()
+    flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
+    flow.response = _make_response()
+    flow.error = SimpleNamespace(msg="client disconnected")
+    mod.responseheaders(flow)
+    mod.error(flow)
+    assert not mod._failure_reports
 
 
 def test_admission_timing_separates_executor_queue_from_check(

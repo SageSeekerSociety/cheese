@@ -1,4 +1,9 @@
 {
+  "preview": {
+    "unavailable": "应用预览暂不可用",
+    "appUnavailable": "预览连接正常，但应用没有响应。请让芝士检查应用是否正常运行。",
+    "connectionUnavailable": "预览连接尚未建立或已断开，不代表芝士已停止工作。请在现场查看运行状态；连接恢复后，此处会自动更新。"
+  },
   "artifactComparison": {
     "title": "版本比较",
     "before": "基准版本",
