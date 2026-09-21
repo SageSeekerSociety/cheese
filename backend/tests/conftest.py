@@ -103,7 +103,7 @@ from app.main import app  # noqa: E402
 # decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
-# platform runs (scheduler/jobs.py). Three of them would act on the test's own
+# platform runs (app/core/background.py). Three of them would act on the test's own
 # data behind its back: the email drain claims whatever a notification test
 # queued and dead-letters it after three tries, the finalizer closes an
 # aggregation window a test may be asserting is still open, and the deadline

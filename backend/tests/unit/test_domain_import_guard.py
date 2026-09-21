@@ -107,7 +107,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- questions ---
         ("app.domain.questions.services", "app.domain.user.repositories"),
         ("app.domain.questions.services", "app.domain.answers.repositories"),
-        # --- review / scheduler ---
+        # --- review ---
         # review.archive / review.gate_sweep 是本分支挂起期间从 main 进来的
         # （#286 闸门孤儿清扫等），不是本轮新欠的债，按存量入账。
         ("app.domain.review.archive", "app.domain.block.repositories"),

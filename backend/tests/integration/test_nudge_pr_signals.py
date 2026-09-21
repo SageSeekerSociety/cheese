@@ -8,7 +8,7 @@
 
 GitHub 全程是 test double（`FakeGitHubPrClient`），复用 `test_accept_app_waits_
 for_ci` 的那套世界 —— 它模拟的是真正在生产上跑的那条路：平台 GitHub App 开 PR，
-scheduler 轮询推进。
+`review/pr_poll.py` 轮询推进。
 """
 
 import asyncio

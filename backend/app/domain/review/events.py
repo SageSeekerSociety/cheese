@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.forge_events import subscription_assertion
 from app.domain.project.models import ProjectGitInstallation
+from app.domain.review import pr_poll
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ async def register_subscriptions(socket, sessions: SessionFactory):
         await asyncio.sleep(60)
 
 
-async def listen(scheduler, sessions: SessionFactory):
+async def listen(chat, sessions: SessionFactory):
     while True:
         try:
             async with connect(
@@ -65,8 +66,8 @@ async def listen(scheduler, sessions: SessionFactory):
             ) as socket:
                 logger.info("Forge event relay connected")
                 # Reconcile immediately after every reconnect, including startup.
-                await scheduler.open_draft_prs()
-                await scheduler.poll_open_prs()
+                await pr_poll.open_draft_prs(chat)
+                await pr_poll.poll_open_prs(chat)
                 async with asyncio.TaskGroup() as group:
                     subscription = group.create_task(
                         register_subscriptions(socket, sessions)
@@ -74,7 +75,7 @@ async def listen(scheduler, sessions: SessionFactory):
                     async for raw in socket:
                         event = json.loads(raw)
                         if event.get("kind") != "subscription_ack":
-                            await scheduler.forge_repository_changed(**event)
+                            await pr_poll.forge_repository_changed(chat, **event)
                     # A clean socket close must also stop the subscription renewer.
                     subscription.cancel()
                 raise ConnectionError("Forge event connection closed")

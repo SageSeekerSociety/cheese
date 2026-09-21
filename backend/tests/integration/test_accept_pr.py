@@ -157,10 +157,24 @@ def _topic(client, topic_id: str) -> dict:
     return client.get(f"/topics/{topic_id}").json()["data"]
 
 
+def _chat_service():
+    """生产上轮询器拿到的就是这一个 ChatService（`deps.get_chat_service` 的单例）。"""
+    from app.api.deps import get_chat_service
+    from app.main import app
+
+    return app.dependency_overrides[get_chat_service]()
+
+
 def _poll(client) -> dict:
-    r = client.post("/admin/scheduler/poll-open-prs")
-    assert r.status_code == 200
-    return r.json()["data"]
+    """跑一轮合并态轮询。
+
+    在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：轮询会 `submit`
+    真正的轮次，它们得落在 work runner 所在的那个循环上——生产上这一轮也正是
+    从那里跑的（`app/core/background.py` 的 "pr poll"）。
+    """
+    from app.domain.review import pr_poll
+
+    return client.portal.call(pr_poll.poll_open_prs, _chat_service())
 
 
 def _room(client, topic_id: str) -> str:

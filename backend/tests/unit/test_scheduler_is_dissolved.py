@@ -32,6 +32,12 @@ _SKIP_DIRS = {
     "htmlcov",
 }
 
+#: `docs/plans/` 和 `docs/topics/` 里是**写完就定格的记录**——一份带日期的方案、
+#: 一次 rebase 的语义冲突怎么解的、某条结论是哪天合的。它们写下时是真的，读的人
+#: 也是当记录读。守卫逼着去改它们，改出来的不是更新，是一份假的历史。所以这条
+#: 守卫盯的是活代码、配置，和描述「现在是什么样」的文档。
+_SKIP_PATHS = {"docs/plans", "docs/topics"}
+
 _THIS_FILE = Path(__file__).resolve()
 
 
@@ -44,7 +50,8 @@ def _repo_text_files() -> list[Path]:
             if entry.is_symlink():
                 continue
             if entry.is_dir():
-                if entry.name not in _SKIP_DIRS:
+                relative = entry.relative_to(REPO).as_posix()
+                if entry.name not in _SKIP_DIRS and relative not in _SKIP_PATHS:
                     stack.append(entry)
                 continue
             if entry.resolve() == _THIS_FILE:
@@ -80,12 +87,18 @@ def test_the_scheduler_interval_knob_is_gone() -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/admin/scheduler/tick", "/admin/scheduler/poll-open-prs"],
+    [
+        "/admin/scheduler/tick",
+        "/admin/scheduler/poll-open-prs",
+        "/admin/scheduler/sweep-abandoned-gates",
+    ],
 )
 def test_the_scheduler_routes_are_not_mounted(path: str) -> None:
-    """三个手动扳机跟着包一起退场。周期扫底仍然是那条死锁的出口，
-    `gate_sweep_interval_s` 就是它的上界。"""
+    """三个手动扳机跟着包一起退场——它们还是全仓唯一一组没有鉴权的 `/admin/*`。
+    闸门那条死锁的出口仍然在，只是只剩周期扫底一条，上界是 `gate_sweep_interval_s`。
+
+    读的是 app 自己的 OpenAPI，不是 `app.routes`：FastAPI 把 include 进来的路由存成
+    一条 `_IncludedRouter`，它自己的 `path` 是 `None`，照着那张表找什么都找不到。"""
     from app.main import app
 
-    mounted = {getattr(route, "path", None) for route in app.routes}
-    assert path not in mounted
+    assert path not in app.openapi()["paths"]

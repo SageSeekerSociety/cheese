@@ -9,12 +9,21 @@ from sqlalchemy import select
 
 from app.domain.block.models import Block
 from app.domain.project.models import Project
+from app.domain.review import pr_poll
 from app.domain.review.models import AcceptApproval, AcceptCard, AcceptStatus
 from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.scheduler.service import SchedulerService
 from app.domain.topic.models import Topic
+
+
+@pytest.fixture(autouse=True)
+def _forget_wakes_between_tests():
+    """「这个房间的叫醒还在飞」是进程状态，不是某个对象的字段——所以它也得在
+    每条用例之间归零，否则上一条留下的房间会让下一条静悄悄地少提交一轮。"""
+    pr_poll._dependency_wakes.clear()
+    yield
+    pr_poll._dependency_wakes.clear()
 
 
 async def seed(factory, *, delivered):
@@ -339,24 +348,24 @@ async def test_pending_notice_wakes_again_after_restart_until_receipted(
     )
     runner = Mock()
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
-    scheduler = SchedulerService(chat_service=chat)
-    await scheduler.deliver_dependency_notices()
-    await scheduler.deliver_dependency_notices()
+    await pr_poll.deliver_dependency_notices(chat)
+    await pr_poll.deliver_dependency_notices(chat)
     assert runner.submit.call_count == 1
     assert runner.submit.call_args.args[1] == child.room_id
     assert runner.submit.call_args.kwargs["nudge_event"]
-    scheduler = SchedulerService(chat_service=chat)
-    await scheduler.deliver_dependency_notices()
+    # 重启：叫醒还在飞的那张表随进程没了，而块还在库里没人签收。
+    pr_poll._dependency_wakes.clear()
+    await pr_poll.deliver_dependency_notices(chat)
     assert runner.submit.call_count == 2
     runner.submit.call_args.kwargs["on_done"]()
     chat.has_running_turn.return_value = True
-    await scheduler.deliver_dependency_notices()
+    await pr_poll.deliver_dependency_notices(chat)
     chat.notify_running_turn.assert_awaited_once()
     async with db_factory() as session:
         block = await session.scalar(select(Block))
         block.meta = {**block.meta, "consumed_turn": "acknowledged"}
         await session.commit()
-    await scheduler.deliver_dependency_notices()
+    await pr_poll.deliver_dependency_notices(chat)
     assert chat.notify_running_turn.await_count == 1
 
 
@@ -413,12 +422,13 @@ async def test_dependency_notice_waits_for_matching_prompt_receipt(
             return _pending_platform_notices(history)
 
     chat = service()
-    await SchedulerService(chat_service=chat).deliver_dependency_notices()
+    await pr_poll.deliver_dependency_notices(chat)
     assert len(received) == 1
     assert len(await waiting()) == 1
+    # 重启：新进程、新的 ChatService，库里那条块还在等签收。
+    pr_poll._dependency_wakes.clear()
     chat = service()
-    scheduler = SchedulerService(chat_service=chat)
-    await scheduler.deliver_dependency_notices()
+    await pr_poll.deliver_dependency_notices(chat)
     assert len(received) == 2
     assert received[0] == received[1]
     assert str(child.id) in received[1]
@@ -434,5 +444,5 @@ async def test_dependency_notice_waits_for_matching_prompt_receipt(
             select(Block).where(Block.topic_id == child.room_id)
         )
         assert block.meta["consumed_turn"] == str(chat._active_turn_ids[child.room_id])
-    await scheduler.deliver_dependency_notices()
+    await pr_poll.deliver_dependency_notices(chat)
     assert len(received) == 2

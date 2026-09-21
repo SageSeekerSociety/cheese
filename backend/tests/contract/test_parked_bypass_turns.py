@@ -22,12 +22,16 @@ PARKED = [
 
 
 def _mounted() -> set[tuple[str, str]]:
+    """What the app actually serves, read off its own OpenAPI schema.
+
+    NOT `app.routes`: FastAPI keeps an included router as one `_IncludedRouter`
+    entry whose own `path` is `None`, so walking that list finds none of the
+    routes this file is here to watch for — the guard passed no matter what was
+    mounted."""
     live: set[tuple[str, str]] = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        for method in getattr(route, "methods", None) or ():
-            if path and method not in {"HEAD", "OPTIONS"}:
-                live.add((method, path))
+    for path, operations in app.openapi()["paths"].items():
+        for method in operations:
+            live.add((method.upper(), path))
     return live
 
 
@@ -38,23 +42,3 @@ def test_a_parked_bypass_turn_has_no_route(method: str, path: str) -> None:
         "2026-08-12 — read docs/agent-principles.md §12 before restoring one, "
         "and bring a design that does not give the turn its own session."
     )
-
-
-@pytest.mark.anyio
-async def test_a_scheduler_round_no_longer_wakes_the_agent() -> None:
-    """The runner wiring stays; the round it drives must wake nobody.
-
-    Kept separate from the route guard because the timer, not the route, is what
-    actually fired in production — the endpoint was barely used and the clock ran
-    against every project.
-    """
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    from app.domain.scheduler.service import SchedulerService
-
-    chat = SimpleNamespace(session_factory=None, run_heartbeat=AsyncMock())
-    result = await SchedulerService(chat_service=chat).tick()
-
-    chat.run_heartbeat.assert_not_awaited()
-    assert result["projects_inspected"] == 0
