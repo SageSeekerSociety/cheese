@@ -15,10 +15,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, func, or_, select, true, update
+from sqlalchemy import Select, and_, exists, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -41,6 +41,7 @@ from app.domain.feedback.models import (
 # repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
 # 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
 from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
+from app.domain.platform_stats.windows import utc_day
 from app.domain.topic.models import TopicMembership
 
 #: 「热门」要多少分 —— 按支持数算，不按浏览量。原型给过理由（「浏览是路过，
@@ -576,6 +577,11 @@ class FeedbackRepository:
         finished suggestion is in both `all` and `resolved`, so the tab numbers
         do not sum to a total. That is the decision, not an accounting bug — if
         it ever needs to be a partition, this is the one line to change.
+
+        `public_counts` now reports a `deployed` count **beside** this one, so
+        the dashboard can draw 「解决」 and 「上线」 as two lines. The tab's own
+        numbers are unchanged: `resolved` still means the pair, and it still
+        overlaps `all`. The extra number narrows nothing.
         """
         if tab == "resolved":
             return [Feedback.status.in_(list(CLOSED_STATUSES))]
@@ -633,6 +639,13 @@ class FeedbackRepository:
         all_count = await self._count([*where, *self._tab_where("all")])
         active_count = await self._count([*where, *self._tab_where("active")])
         resolved_count = await self._count([*where, *self._tab_where("resolved")])
+        # 「上线」那一个数，单独给。`resolved` 那一栏装的是**修复 + 上线**这一对
+        # （见 `_tab_where` 的 docstring），那个口径不改：对提交的人来说那是同一个
+        # 答复的两半。这只是**另外**多报一个数，让看板上「解决」和「上线」两条线画
+        # 得出来 —— 缺了它，「上线了多少」在这个平台上从来没有被数过。
+        deployed_count = await self._count(
+            [*where, Feedback.status == FeedbackStatus.deployed]
+        )
         hot_base = [*where, *self._tab_where("hot")]
         # `_tab_where("hot")`, not a second copy of the condition: this is the
         # number on the tab and the rows behind it, and the two were one status
@@ -657,6 +670,7 @@ class FeedbackRepository:
             "hot": hot_count,
             "active": active_count,
             "resolved": resolved_count,
+            "deployed": deployed_count,
         }
 
     async def list_admin(
@@ -668,6 +682,9 @@ class FeedbackRepository:
         sort: str = "new",
         limit: int,
         offset: int,
+        since: datetime | None = None,
+        resolved_since: datetime | None = None,
+        deployed_since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         where: list[Any] = []
         if tab == "private":
@@ -688,6 +705,12 @@ class FeedbackRepository:
             where.append(Feedback.assignee_handle == assignee)
         if q:
             where.append(matching(q))
+        if since is not None:
+            where.append(Feedback.created_at >= since)
+        if resolved_since is not None:
+            where.append(self._reached_since(FeedbackStatus.resolved, resolved_since))
+        if deployed_since is not None:
+            where.append(self._reached_since(FeedbackStatus.deployed, deployed_since))
         rows = list(
             (
                 await self._session.execute(
@@ -698,6 +721,71 @@ class FeedbackRepository:
             .all()
         )
         return rows, await self._count(where)
+
+    # --- 平台看板的两个时间读 --------------------------------------------------
+
+    @staticmethod
+    def _reached_since(status: FeedbackStatus, since: datetime) -> Any:
+        """这条反馈在 `since` 之后**到过**这个状态 —— 一条 `EXISTS`。
+
+        状态变迁只记在 `feedback_timeline` 上，所以这里问的是时间线，`at >= since`
+        走 `ix_feedback_timeline_at`（跨反馈的范围条件，既有那条复合索引的打头列是
+        `feedback_id`，用不上）。
+
+        **不为此给 `feedback` 加 `resolved_at` / `deployed_at`**：那要回填历史（时间线
+        里有、但列上没有），还要在每个写状态的路径上双写，而两处记同一件事迟早会漂开
+        —— 时间线本来就把「什么时候到过这里」记着了（见 `FeedbackTimeline` 的
+        docstring：「什么时候到过这里，不是现在在哪」）。
+        """
+        return exists().where(
+            FeedbackTimeline.feedback_id == Feedback.id,
+            FeedbackTimeline.status == status,
+            FeedbackTimeline.at >= since,
+        )
+
+    async def created_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 **UTC 的天**新建的反馈数，稀疏；补 0 由调用方做。"""
+        day = utc_day(Feedback.created_at)
+        stmt = (
+            select(day.label("day"), func.count(Feedback.id))
+            .where(
+                Feedback.deleted_at.is_(None),
+                Feedback.created_at >= since,
+                Feedback.created_at < until,
+            )
+            .group_by(day)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row[0].date(): int(row[1]) for row in rows}
+
+    async def reached_series(
+        self, *, status: FeedbackStatus, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 **UTC 的天**「到过」这个状态的反馈数，稀疏。
+
+        `count(DISTINCT feedback_id)` 而不是 `count(*)`：同一个状态可以有第二行
+        （改了又改回来，见 `FeedbackTimeline` 的 docstring），行数是「到过几次」，
+        而这条折线画的是「几条反馈」。
+        """
+        day = utc_day(FeedbackTimeline.at)
+        stmt = (
+            select(
+                day.label("day"),
+                func.count(func.distinct(FeedbackTimeline.feedback_id)),
+            )
+            .where(
+                FeedbackTimeline.status == status,
+                FeedbackTimeline.at >= since,
+                FeedbackTimeline.at < until,
+            )
+            .group_by(day)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row[0].date(): int(row[1]) for row in rows}
 
     async def list_related_to(
         self, handle: str, *, is_admin: bool, limit: int, offset: int
@@ -1186,20 +1274,38 @@ class FeedbackRepository:
         return row
 
     async def count_activity_since(
-        self, handles: Sequence[str], since: datetime | None
+        self,
+        handles: Sequence[str],
+        since: datetime | None,
+        *,
+        is_admin: bool = False,
     ) -> int:
         """New comments + status events on the items these handles are party to.
 
         Two event tables, counted separately then summed — a UNION would have to
         dedupe rows that carry no shared id, and the sum of two indexed counts is
         cheaper than the sort that costs.
+
+        The 指派给我的 arm carries `visible_to`, exactly as `list_related_to`
+        does and for the same reason: being handed a report is work, not access.
+        Without it a non-admin assignee of a private row got an unread number for
+        a report that the list filters out and the detail endpoint answers with a
+        404 — a count saying "something happened" about a row they can never
+        open, and that cannot be cleared because there is nothing to read.
         """
         if not handles:
             return 0
+        who = list(handles)
         mine = or_(
-            Feedback.author_handle.in_(list(handles)),
-            Feedback.submitted_by_handle.in_(list(handles)),
-            Feedback.assignee_handle.in_(list(handles)),
+            Feedback.author_handle.in_(who),
+            Feedback.submitted_by_handle.in_(who),
+            *[
+                and_(
+                    Feedback.assignee_handle == handle,
+                    visible_to(handle, is_admin=is_admin),
+                )
+                for handle in who
+            ],
         )
         comments_stmt = (
             select(func.count(FeedbackComment.id))
@@ -1209,7 +1315,7 @@ class FeedbackRepository:
                 Feedback.deleted_at.is_(None),
                 FeedbackComment.deleted_at.is_(None),
                 # My own words are not news to me.
-                FeedbackComment.author_handle.notin_(list(handles)),
+                FeedbackComment.author_handle.notin_(who),
             )
         )
         timeline_stmt = (
@@ -1220,7 +1326,7 @@ class FeedbackRepository:
                 Feedback.deleted_at.is_(None),
                 or_(
                     FeedbackTimeline.by_handle.is_(None),
-                    FeedbackTimeline.by_handle.notin_(list(handles)),
+                    FeedbackTimeline.by_handle.notin_(who),
                 ),
             )
         )
@@ -1258,44 +1364,6 @@ class FeedbackRepository:
             if at is not None and (feedback_id not in out or at > out[feedback_id]):
                 out[feedback_id] = at
         return out
-
-    async def ids_with_activity_between(
-        self, handles: Sequence[str], since: datetime | None
-    ) -> set[uuid.UUID]:
-        """Which items the unread count is actually about (for the list's dot)."""
-        if not handles:
-            return set()
-        mine = or_(
-            Feedback.author_handle.in_(list(handles)),
-            Feedback.submitted_by_handle.in_(list(handles)),
-            Feedback.assignee_handle.in_(list(handles)),
-        )
-        comment_stmt = (
-            select(FeedbackComment.feedback_id)
-            .join(Feedback, Feedback.id == FeedbackComment.feedback_id)
-            .where(
-                mine,
-                FeedbackComment.deleted_at.is_(None),
-                FeedbackComment.author_handle.notin_(list(handles)),
-            )
-        )
-        event_stmt = (
-            select(FeedbackTimeline.feedback_id)
-            .join(Feedback, Feedback.id == FeedbackTimeline.feedback_id)
-            .where(
-                mine,
-                or_(
-                    FeedbackTimeline.by_handle.is_(None),
-                    FeedbackTimeline.by_handle.notin_(list(handles)),
-                ),
-            )
-        )
-        if since is not None:
-            comment_stmt = comment_stmt.where(FeedbackComment.created_at > since)
-            event_stmt = event_stmt.where(FeedbackTimeline.at > since)
-        ids = set((await self._session.execute(comment_stmt)).scalars().all())
-        ids |= set((await self._session.execute(event_stmt)).scalars().all())
-        return ids
 
     async def unassigned_count(self) -> int:
         """The admin's 「还没人管」 number, asked once per admin list render.

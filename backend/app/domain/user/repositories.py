@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from app.domain.answers.models import Answer
 from app.domain.avatars.models import Avatar
 from app.domain.identity.models import AgentBinding
 from app.domain.knowledge.models import Knowledge
+from app.domain.platform_stats.windows import utc_day
 from app.domain.questions.models import Question
 from app.domain.user.models import (
     User,
@@ -143,6 +144,42 @@ class UserRepository:
         result = await self._session.execute(stmt)
         users = list(result.scalars().all())
         return {u.id: u for u in users}
+
+    async def count_accounts(self) -> int:
+        """平台上的账号总数。
+
+        **这是全仓少数几个诚实的全表聚合之一**，而且它必须说得出为什么：`user`
+        表只有约 1200 行（`api/routes/admin_members.py` 的注释记着这个部署的数），
+        整张表比 `resource_usage` 一天的增量还小。`created_at` 上没有索引，计划是
+        顺序扫 —— 这个规模下那是正确的计划，加索引反而多一份写放大。
+
+        与「在线人数」无关：那需要每个账号的活动时间，而这个表里没有那样一列，也
+        不该为了一个看板数字凭空造一个。
+        """
+        stmt = select(func.count(User.id)).where(User.deleted_at.is_(None))
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    async def accounts_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 **UTC 的天**新增的账号数，稀疏；补 0 由调用方做。
+
+        和 `count_accounts` 同一个规模判断：这张表小，扫它不需要索引，`created_at`
+        上的范围条件走的是顺序扫。
+        """
+        day = utc_day(User.created_at)
+        stmt = (
+            select(day.label("day"), func.count(User.id))
+            .where(
+                User.deleted_at.is_(None),
+                User.created_at >= since,
+                User.created_at < until,
+            )
+            .group_by(day)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {row[0].date(): int(row[1]) for row in rows}
 
 
 class UserProfileRepository:

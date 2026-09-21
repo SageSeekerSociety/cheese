@@ -273,6 +273,10 @@ class FeedbackCounts(BaseModel):
     hot: int
     active: int
     resolved: int
+    #: 「上线」单独一个数。`resolved` 装的是**修复 + 上线**这一对（`_tab_where` 的
+    #: docstring 写着那条决定），这里只是**另外**多给一个，栏位口径不变 —— 看板上
+    #: 「解决」和「上线」要画成两条线，缺了它「上线了多少」在这个平台上没被数过。
+    deployed: int = 0
     #: 「我的反馈」的未读数 —— 我的条目上别人留下的评论或状态变化。同一次请求返回，
     #: 因为铃铛和列表永远同时出现在管理页上。
     unread: int = 0

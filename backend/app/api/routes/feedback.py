@@ -157,6 +157,7 @@ async def get_feedback_counts(
         hot=counts["hot"],
         active=counts["active"],
         resolved=counts["resolved"],
+        deployed=counts["deployed"],
         unread=counts["unread"],
     )
     return ok(payload.model_dump(mode="json"))

@@ -1498,6 +1498,63 @@ def test_the_unread_cursor_counts_activity_and_clears_when_read(client):
     assert cleared < after
 
 
+def test_the_unread_number_counts_only_what_the_list_would_show(client, as_admin):
+    """数字和列表答的是同一个问题，所以走的是同一处收窄。
+
+    「我的反馈」把 指派给我的 那一条胳膊 AND 上 `visible_to`：被派活是工作，不是
+    权限。未读计数以前没有收窄，于是「一条私密反馈指派给了一个非管理员」的后果就是
+    铃铛上多一个数——而这个数指着一条列表会滤掉、详情接口回 404 的反馈。读不到就清
+    不掉，所以它是一个永远亮着、又永远点不出东西的角标。
+
+    钉住它是因为这条胳膊除了列表只有这一个读者，两处漂开时没有别的地方会说话。用例
+    本身要防的还有一个反向的错法：收窄的判据如果写成「调用方传进来的 `is_admin`」，
+    铃铛轮询的 `/feedback/counts` 上没有身份、也不传这一位，于是管理员会因为这次收窄
+    反过来丢掉自己的未读数——最后一段就是钉这个的。
+    """
+    private = _report(
+        client, REPORTER, title="指给非管理员的私密", visibility="private"
+    )
+    public = _report(client, REPORTER, title="指给同一个人的公开")
+    for row in (private, public):
+        r = client.patch(
+            f"/admin/feedback/{row['id']}",
+            json={"assignee_handle": STRANGER},
+            headers=session_auth_headers(as_admin),
+        )
+        assert r.status_code == 200, r.text
+
+    headers = session_auth_headers(STRANGER)
+    client.post("/feedback/read", headers=headers)
+
+    # 私密那条上的活动：列表会滤掉它，所以数字也不该看见。
+    _comment(client, REPORTER, private["id"], "补充一下复现步骤")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] == 0
+
+    # 同一个人的同一条胳膊上，公开的那条照旧算数——上面那个 0 不是「这个人没有
+    # 身份」或者「计数根本没在跑」。
+    _comment(client, REPORTER, public["id"], "这条也补一句")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] >= 1
+
+    # 数字和列表一致：列表是这条胳膊的另一个读者。
+    mine = {card["id"] for card in _mine(client, STRANGER)}
+    assert private["id"] not in mine
+    assert public["id"] in mine
+
+    # 管理员反过来不能被这次收窄伤到：他看得见私密，所以同一条反馈改派给他，
+    # 数字照旧有。
+    r = client.patch(
+        f"/admin/feedback/{private['id']}",
+        json={"assignee_handle": as_admin},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    _comment(client, REPORTER, private["id"], "管理员也在看")
+    admin = client.get(
+        "/feedback/counts", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    assert admin["unread"] >= 1
+
+
 def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
     anon = client.get("/feedback/meta").json()["data"]
     assert anon["is_admin"] is False
