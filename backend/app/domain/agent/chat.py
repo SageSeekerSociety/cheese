@@ -132,6 +132,8 @@ from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.task import teaching as teaching_context
+from app.domain.task.teaching import TeachingContext
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -233,6 +235,10 @@ class _TurnContext:
     is_private: bool
     private_owner: str | None
     untitled: bool
+    # 本周教学范围 (#8d772257). None for every project that is not a course —
+    # and None is what keeps the prompt byte-identical to what it was before
+    # this key existed, which is the property the non-course tests pin.
+    teaching: TeachingContext | None
 
     # What this turn was given, and what it is being asked about.
     prompt_text: str
@@ -4458,6 +4464,18 @@ class ChatService:
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
+            # 本周教学范围 (#8d772257), for a project that came from a course's
+            # 赛题. Resolved here — in the transaction everything else the prompt
+            # is built from is read in, and fresh on every turn — so a 项目集 that
+            # moved on to 第 4 周 is what the NEXT session starts with. (What a
+            # session already running sees is `harness.prompt`'s 生效语义.)
+            #
+            # A project that is not a course pays nothing for this line: no
+            # 赛题, or no `teaching` on the 项目集, is no query and no prompt
+            # text — not a section that renders empty.
+            teaching = await teaching_context.for_project(
+                session=session, project=project
+            )
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             wanted_harness = await agents.harness(agent)
@@ -4734,6 +4752,7 @@ class ChatService:
             topic_refs=topic_refs,
             topic_refs_for_prompt=topic_refs_for_prompt,
             artifacts=artifact_refs,
+            teaching=teaching,
             topic_stage=topic_stage,
             turn_images=turn_images,
             untitled=untitled,
@@ -4802,6 +4821,7 @@ class ChatService:
         topic_refs = prepared.topic_refs
         topic_refs_for_prompt = prepared.topic_refs_for_prompt
         artifact_refs = prepared.artifacts
+        teaching = prepared.teaching
         topic_stage = prepared.topic_stage
         turn_images = prepared.turn_images
         untitled = prepared.untitled
@@ -4833,6 +4853,7 @@ class ChatService:
             artifacts=artifact_refs,
             memories_omitted=memories.omitted,
             memories_core_omitted=memories.core_omitted,
+            teaching=teaching,
             session_opening=_session_opening_lines(
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
