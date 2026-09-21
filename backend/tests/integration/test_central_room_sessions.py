@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import threading
 import uuid
@@ -20,7 +21,7 @@ from app import device_connection_app
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel, EnvironmentPreparationError
@@ -35,6 +36,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.remote_execution.launch import file_sources
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.harness.codex import CodexChannel
+from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.harness.pi.device_launch import PiLaunch
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
@@ -210,6 +212,97 @@ INSTALLED = {
     "mcp_servers": [],
     "state": "/room/.cheese/executor",
 }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("central_execution", [True, False])
+async def test_commits_use_the_authenticated_teammate_not_the_room_identity(
+    client, room, monkeypatch, tmp_path, central_execution
+):
+    from app.domain.agent.harness.claude_code.remote_execution import launch
+    from app.domain.identity.services import IdentityService
+
+    project, topic = room
+    async with client.test_factory() as db:
+        actor = await IdentityService(db).ensure_agent_user(handle="other-teammate")
+        actor_id = actor.id
+        await db.commit()
+    central = channel(client, monkeypatch)
+    captured = {}
+    central._hub.all_online_screens = lambda: []
+
+    def bootstrap(project, resource, env):
+        captured.update(env)
+        return "fixture-bootstrap"
+
+    monkeypatch.setattr(launch, "script", bootstrap)
+    selected = central if central_execution else central.executor
+    selected._ensure_screen = AsyncMock(
+        return_value=SimpleNamespace(device_id="center")
+    )
+    await selected.ensure_ready(
+        session=ref(project, topic),
+        token=mint_scoped_token(
+            project_id=str(project), topic_id=str(topic), agent_handle="other-teammate"
+        ),
+        env={},
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        launch=ClaudeLaunch("System"),
+        precheck=("executor", 1, "room-stand-in"),
+    )
+    screen = selected._ensure_screen.await_args.kwargs
+    assert screen["agent_handle"] == "other-teammate"
+    assert screen["agent_user_id"] == actor_id
+    if not central_execution:
+        captured = machine_launcher.screen_env(
+            MachinePlace(
+                home=str(tmp_path),
+                workdir=str(tmp_path),
+                store="",
+                state="",
+                api_base="http://fixture",
+                project_id=str(project),
+                topic_id=str(topic),
+                agent_handle=screen["agent_handle"],
+            ),
+            hook_url="http://fixture/hooks",
+            token=screen["token"],
+        )
+    assert captured["CHEESE_AUTHOR"] == "other-teammate"
+    env = {
+        **os.environ,
+        **captured,
+        "GIT_COMMITTER_NAME": "fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.test",
+    }
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Fixture",
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    result = subprocess.run(
+        ["git", "-C", str(tmp_path), "show", "-s", "--format=%an <%ae>"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "other-teammate <other-teammate@agent.cheese.local>"
 
 
 @pytest.mark.anyio
