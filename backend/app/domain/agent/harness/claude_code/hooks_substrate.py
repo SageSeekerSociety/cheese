@@ -48,6 +48,7 @@ from app.domain.agent.harness import (
 )
 from app.domain.agent.harness.channel import (
     Channel,
+    Placement,
     PromptSocketUnavailable,
     ScreenSetupError,
 )
@@ -1466,6 +1467,7 @@ class ClaudeCodeRuntime:
         precheck = await self._channel.precheck(
             session, needs_place=opening.needs_place
         )
+        assert isinstance(precheck, Placement)
         logger.info(
             "session setup phase=precheck topic=%s elapsed_ms=%d",
             session.topic_id,
@@ -1476,7 +1478,12 @@ class ClaudeCodeRuntime:
             topic_id=str(session.topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
             access_scope="project",
-            agent_handle=opening.agent_handle,
+            # WHO acts with it. The caller pins a teammate when a message named
+            # one; unnamed, it is the agent the machine resolver already
+            # resolved for this room — the same answer the codex and pi channels
+            # mint with. The room itself never answers: it may seat several
+            # agents, and a name signed into a token cannot be taken back.
+            agent_handle=opening.agent_handle or precheck.agent_handle,
         )
         screen = await self._channel.ensure_ready(
             session=session,
@@ -1649,6 +1656,7 @@ class ClaudeCodeRuntime:
             # 稿区去，那是另一件事，不在 P21 里。写出来是为了让它看得见——这里没
             # 有默认值可继承。
             precheck = await self._channel.precheck(session, needs_place=True)
+            assert isinstance(precheck, Placement)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc),
@@ -1663,7 +1671,9 @@ class ClaudeCodeRuntime:
             topic_id=str(topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
             access_scope="project",
-            agent_handle=agent_handle,
+            # Same rule as `ensure` above: the caller's teammate, else the one
+            # the precheck resolved for this room.
+            agent_handle=agent_handle or precheck.agent_handle,
         )
         attribution: WorkAttribution | None = None
         try:
