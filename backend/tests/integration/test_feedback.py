@@ -301,6 +301,49 @@ def test_the_room_that_filed_it_can_see_it(client):
     assert opened(DEPARTED) == 404
 
 
+def test_security_does_not_narrow_the_room_arm(client, as_admin):
+    """管理员标了安全问题之后，提出它的那个房间的人照样打得开。
+
+    `security` 收窄的是**公开那一档**（§8.3）：它把一条公开反馈从「所有登录用户」缩回
+    到私密那套鉴权。房间那一档不在它的收窄范围里，理由和「作者保住自己那条」是同一
+    条——「不能泄露」说的是泄露给没看过它的人，而那个房间的人看过：这条反馈的全文本来
+    就落在他们的对话流里。
+
+    两条断言一起才是负向对照。只断房间那一档，把这一档整个删掉也照样绿；只断外人那一
+    条，往房间那一档上加一句 `and not row.security` 也照样绿。外人的 200 先断一次，是
+    为了让他后面那个 404 确实由这次 PATCH 造成，而不是他本来就看不见。
+    """
+    project = _project(client, REPORTER)
+    topic = _topic(client, project, REPORTER)
+    _join_project(client, project, ROOMMATE, by=REPORTER)
+    _join_room(client, topic, ROOMMATE, by=REPORTER)
+    # 同项目、不在那个房间：他手上只有公开那一档，所以他是被收窄的那一侧。
+    _join_project(client, project, OUTSIDER, by=REPORTER)
+
+    row = _report_in_room(client, project, topic, REPORTER)
+    assert row["visibility"] == "public"
+
+    def opened(handle: str) -> int:
+        return client.get(
+            f"/feedback/{row['id']}", headers=session_auth_headers(handle)
+        ).status_code
+
+    # 标之前：公开那一档对两个人都开着。
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 200
+
+    patched = client.patch(
+        f"/admin/feedback/{row['id']}",
+        json={"security": True},
+        headers=session_auth_headers(as_admin),
+    )
+    assert patched.status_code == 200, patched.text
+
+    # 标之后：公开那一档关了，房间那一档没有。
+    assert opened(ROOMMATE) == 200
+    assert opened(OUTSIDER) == 404
+
+
 def test_a_report_filed_outside_any_room_opens_no_second_door(client):
     """没有房间来源的反馈，房间这一档就关着。
 

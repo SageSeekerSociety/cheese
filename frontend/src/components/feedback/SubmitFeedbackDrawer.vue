@@ -144,9 +144,14 @@ async function submit() {
             <template #label>
               <div>
                 <div class="fb-radio__title">私密</div>
-                <div class="fb-radio__hint">
+                <!-- 两种写法，分的是这一条有没有房间来源。`draft.proposal` 有值才走
+                     accept 那条路，服务端才解得出 `topic_id`；从反馈中心自己开抽屉提的
+                     一条没有房间，房间那一档对它永远关着。读这句话的人正在决定要不要把
+                     敏感内容写进去，说宽了他会白删掉细节。 -->
+                <div v-if="store.draft.proposal" class="fb-radio__hint">
                   只有你、平台管理员、以及提出它时在那个房间里的人可见，不进公开列表、不能被支持
                 </div>
+                <div v-else class="fb-radio__hint">只有你和平台管理员可见，不进公开列表、不能被支持</div>
               </div>
             </template>
           </v-radio>

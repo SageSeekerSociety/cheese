@@ -144,7 +144,9 @@ class FeedbackService:
         退项目、退队、不再是出题者是三条路，只有「今天还读得到吗」一句话同时管住。
 
         问的是**房间自己的项目**（`may_read_topic` 从 topic 解出来），不是
-        `row.project_id` —— 后者是 `create` 里原样收下的请求体字段，提交者说了算。
+        `row.project_id`：这一档的授权键只有一个，就是 `topic_id`，那么项目也必须从它
+        解出来。读第二列等于让两个可以各自漂开的字段回答同一个问题——房间被移去别的项
+        目、或者哪天 `project_id` 换个来源，两列就不再说同一件事，而鉴权只能有一个答案。
 
         `security` narrows the public arm, so it is checked in the same breath:
         a row an admin flagged as a security matter is not public even though the
