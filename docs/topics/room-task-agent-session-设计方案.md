@@ -303,8 +303,9 @@ workflow run）。这一条**不矛盾**——#206 说的是「平台不去判�
 父话题那一轮结束时**默认采信**（另有 30 分钟绝对超时），
 父话题可以 `need-evidence` 打回一次或 `escalate` 转人。这套一直是完整的。
 
-**母 → 子**：当初是断的——评论端点里 summon 的条件是 `if not actor.is_agent`（只有人类评论
-才唤醒对方），而且更上面还有一道 403（per-turn token 带着自己的话题 claim，指向别的话题直接拒）。
+**母 → 子**：当初是断的——评论端点里 summon 的条件是「这个 handle 在这个房间有没有
+agent 席位」（坐着席位的不唤醒对方），而且更上面还有一道 403（per-turn token 带着自己的
+话题 claim，指向别的话题直接拒）。
 现在有了一条**显式的、只开父子这一条边**的通道：`cheese tell` → `POST /topics/{id}/tell`
 （<&backend/app/api/routes/topics.py>、<&backend/app/domain/topic/relay.py>），写 block **并唤醒**对方。
 
@@ -786,7 +787,8 @@ docstring 明确把它和 split 对立着写：*"clone instead forks the source'
 
 - **子 → 母**：`cheese conclude` 开结论卡，房间可采信 / 补证据 / 升级（`ConclusionCardService`）。
 - **母 → 子**：当初有两处独立的拦截——per-turn token 的 topic claim 直接 403，
-  以及评论端点里 summon 的条件是 `if not actor.is_agent`（只有人类评论才唤醒）。
+  以及评论端点里 summon 的条件是「这个 handle 在这个房间有没有 agent 席位」
+  （坐着席位的不唤醒）。
   现在走 `cheese tell` → `POST /topics/{id}/tell`，写 block **并**唤醒对方，只开父子这一条边。
 - 结论卡「补证据」打回也会叫醒了，而且叫醒的是**支线**不是房间。
 

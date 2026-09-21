@@ -509,13 +509,22 @@ def app_world(client, monkeypatch):
             recorded["prs_by_head"][head] = pr
             return OpenedPR(pr)
 
-        async def update_pr(self, number: int, *, title: str, body: str) -> dict:
-            recorded["patched"].append({"number": number, "title": title, "body": body})
+        async def update_pr(
+            self, number: int, *, title=None, body=None, base=None
+        ) -> dict:
+            fields = {
+                key: value
+                for key, value in {"title": title, "body": body, "base": base}.items()
+                if value is not None
+            }
+            recorded["patched"].append({"number": number, **fields})
+            if base is not None:
+                fake.prs[number]["base"] = base
             for pr in recorded["prs_by_head"].values():
                 if pr["number"] == number:
-                    pr.update(title=title, body=body)
+                    pr.update(fields)
                     return pr
-            return {"number": number, "title": title, "body": body}
+            return {"number": number, **fields}
 
         async def mark_ready_for_review(self, node_id: str) -> None:
             recorded["readied"].append(node_id)
@@ -529,6 +538,11 @@ def app_world(client, monkeypatch):
                 if pr["number"] == number:
                     return pr
             raise AssertionError(f"no such PR: {number}")
+
+        async def pr_status(self, number: int):
+            return await fake.pull_request_status(
+                owner="owner", repo="repo", number=number, token="ghs_app_read"
+            )
 
     async def _tokens_for_project(_project_id, _session):
         return _FakeTokens()
@@ -2206,6 +2220,77 @@ def test_push_fix_observes_machine_push_and_disarms_old_approval(client, app_wor
     assert again["pushed"] is False, "没有新东西可推时,再问一次不算错误"
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_push_fix_drops_dependency_only_after_forge_confirms_target(
+    client, app_world, monkeypatch, confirmed
+):
+    from app.domain.room_task.models import Task, TaskStatus
+
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    task_id = delivery_task_id(client, tid)
+
+    async def dependency():
+        async with client.test_factory() as session:
+            parent = Task(
+                project_id=_uuid.UUID(pid),
+                room_id=_uuid.UUID(tid),
+                title="Rejected parent",
+                branch_name="task/parent",
+                base_branch="main",
+                status=TaskStatus.closed,
+            )
+            session.add(parent)
+            await session.flush()
+            child = await session.get(Task, task_id)
+            child.base_task_id = parent.id
+            child.base_branch = parent.branch_name
+            child.pr_number = number
+            child.pr_url = f"https://github.com/{REPO}/pull/{number}"
+            await session.commit()
+
+    asyncio.run(dependency())
+    fake.prs[number]["base"] = "task/parent"
+    _protect(client, pid, auto_merge_allowed=True)
+    assert _approve(client, cid, "alice").status_code == 200
+    assert _arm(client, cid, "alice").status_code == 200
+    if not confirmed:
+        original = fake.pull_request_status
+
+        async def stale_status(**kwargs):
+            status = await original(**kwargs)
+            from dataclasses import replace
+
+            return replace(status, base_ref="task/parent")
+
+        monkeypatch.setattr(fake, "pull_request_status", stale_status)
+
+    endpoint = f"/topics/{tid}/tasks/{task_id}/push-fix?drop_dependency=true"
+    response = client.post(endpoint, headers=session_auth_headers("alice"))
+    assert response.status_code == (200 if confirmed else 422), response.text
+    card = _cards(client, tid)[0]
+    task = client.get(f"/topics/{tid}/tasks/{task_id}").json()["data"]
+    assert len(_cards(client, tid)) == 1
+    assert card["id"] == cid
+    assert fake.merge_calls == []
+    if confirmed:
+        assert response.json()["data"]["pushed"] is True
+        assert fake.prs[number]["base"] == "main"
+        assert task["base_task_id"] is None
+        assert task["base_branch"] == "main"
+        assert card["approvals"] == []
+        assert card["auto_merge"]["armed_by"] is None
+        assert card["pr_head_sha"] == head_sha
+        again = client.post(endpoint, headers=session_auth_headers("alice"))
+        assert again.json()["data"]["pushed"] is False
+    else:
+        assert "仓库尚未确认新的目标分支" in response.json()["message"]
+        assert task["base_task_id"] is not None
+        assert task["base_branch"] == "task/parent"
+        assert card["approvals"]
+        assert card["auto_merge"]["armed_by"] == "alice"
+
+
 def test_push_fix_reports_unreachable_forge_without_pushing(client, app_world):
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
     app_world["fake"].status_error = github_pr.GitHubPrError("HTTP 502")
@@ -2340,6 +2425,49 @@ def test_a_batch_with_nothing_on_its_branch_gets_no_pr(client, sweeping):
 
     assert counts["opened"] == 0
     assert sweeping["opened"] == []
+
+
+def test_push_fix_can_drop_dependency_before_filing_a_card(client, sweeping):
+    from app.domain.room_task.models import Task, TaskStatus
+
+    pid, tid = _room_with_work(client)
+    assert _sweep(client)["opened"] == 1
+    task_id = delivery_task_id(client, tid)
+    number = sweeping["opened"][0]["number"]
+
+    async def dependency():
+        async with client.test_factory() as session:
+            parent = Task(
+                project_id=_uuid.UUID(pid),
+                room_id=_uuid.UUID(tid),
+                title="Rejected parent",
+                branch_name="task/parent",
+                base_branch="main",
+                status=TaskStatus.closed,
+            )
+            session.add(parent)
+            await session.flush()
+            child = await session.get(Task, task_id)
+            child.base_task_id = parent.id
+            child.base_branch = parent.branch_name
+            await session.commit()
+
+    asyncio.run(dependency())
+    sweeping["fake"].prs[number]["base"] = "task/parent"
+    response = client.post(
+        f"/topics/{tid}/tasks/{task_id}/push-fix?drop_dependency=true",
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["pushed"] is True
+    assert response.json()["data"]["pr_number"] == number
+    assert _cards(client, tid) == []
+    assert len(sweeping["opened"]) == 1
+    assert sweeping["fake"].draft_by_number[number] is True
+    assert sweeping["fake"].merge_calls == []
+    task = client.get(f"/topics/{tid}/tasks/{task_id}").json()["data"]
+    assert task["base_task_id"] is None
+    assert task["base_branch"] == "main"
 
 
 def test_the_sweep_never_opens_a_second_pr_for_the_same_batch(client, sweeping):

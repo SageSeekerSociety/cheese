@@ -53,6 +53,7 @@ from app.domain.feedback.models import (
 )
 from app.domain.feedback.proposals import AcceptedProposal
 from app.domain.feedback.schemas import FeedbackCreate, FeedbackDetail, FeedbackPatch
+from app.domain.identity.services import IdentityService
 from app.domain.user.services import chosen_avatars_by_handle
 
 #: The admin surface's tiers, in the order the admin tab bar draws them.
@@ -301,7 +302,6 @@ class FeedbackService:
         *,
         actor_handle: str,
         actor_user_id: int | None,
-        actor_is_agent: bool,
         proposal: AcceptedProposal | None = None,
     ) -> Feedback:
         """File a report.
@@ -320,7 +320,9 @@ class FeedbackService:
         The same rule closes the other door: an agent sending an *existing*
         proposal is still an agent publishing itself, just in two steps. Both
         branches sit here rather than in the routes so that neither door depends
-        on a caller remembering to pass the flag honestly.
+        on a caller remembering to pass the flag honestly — and the answer is
+        read here too, from the agent-binding the handle does or does not carry,
+        so the door no longer depends on a caller passing a flag at all.
 
         When `proposal` is set, authorship comes from the proposal (the agent
         that found it) and `submitted_by` from the verified caller (the person
@@ -329,7 +331,7 @@ class FeedbackService:
         the drawer lets the sender edit before sending, and the person pressing
         send is accountable for what they send.
         """
-        if actor_is_agent:
+        if await IdentityService(self._session).is_agent(actor_handle):
             raise ForbiddenError(
                 "agent 不能直接发布反馈：用 `cheese feedback propose` 提案，"
                 "由人确认后再发送"
@@ -350,7 +352,10 @@ class FeedbackService:
             problem=body.problem,
             author_handle=actor_handle,
             author_user_id=actor_user_id,
-            author_is_agent=actor_is_agent,
+            # False, and not a variable: the branch above already refused every
+            # agent, so the only author reaching this row is a person. An
+            # agent-authored report exists solely via `_create_from_proposal`.
+            author_is_agent=False,
             why=body.why,
             expectation=body.expectation,
             what_happened=body.what_happened,
@@ -488,9 +493,13 @@ class FeedbackService:
         *,
         actor_handle: str,
         actor_user_id: int | None,
-        actor_is_agent: bool,
         is_admin: bool,
     ) -> tuple[FeedbackComment, Feedback]:
+        """Add a comment. Whether its author is an agent is read from the
+        handle's agent-binding, not taken from the caller: it is stored on the
+        row (the 「芝士回的」 badge), and a stored fact a route hands in is one
+        the route can hand in wrong."""
+        actor_is_agent = await IdentityService(self._session).is_agent(actor_handle)
         row = await self.visible_row(
             feedback_id, handle=actor_handle, is_admin=is_admin
         )
