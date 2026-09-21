@@ -1,6 +1,5 @@
 """Project routes."""
 
-import asyncio
 import logging
 import uuid
 from dataclasses import asdict
@@ -16,15 +15,14 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
-    get_work_runner,
     project_device_online,
 )
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
-    GatewayUnavailableError,
     NotFoundError,
     ValidationError,
 )
@@ -35,7 +33,6 @@ from app.domain.agent.compute_configs import (
     validate_choice,
 )
 from app.domain.agent.github_app import (
-    GitHubAppError,
     github_app_read_token_for_project,
 )
 from app.domain.agent.market import (
@@ -44,7 +41,6 @@ from app.domain.agent.market import (
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -64,7 +60,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
+from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
 from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
@@ -86,12 +82,11 @@ from app.domain.project.repositories import (
     ProjectRepository,
 )
 from app.domain.project.schemas import (
+    ForgeAttributionUpdate,
     ProjectCreate,
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.repository import service as ws
-from app.domain.repository import upstream_conflict
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
@@ -101,23 +96,6 @@ from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.projects")
-
-
-def _is_a_real_person(handle: str | None) -> bool:
-    """Could this handle ever match a human account?
-
-    `anonymous` is what an unidentified caller resolves to: nobody, so no owner.
-    An agent handle is somebody, and can hold a project role like anybody else —
-    it is excluded here only because this answers "is there a person to name in
-    the log", and naming 芝士 as the person answers nothing.
-
-    Advisory only — this decides whether to LOG, never whether to allow. That
-    is why `looks_like_agent_handle` is fair game here despite its docstring
-    forbidding it in authorization: nothing downstream branches on the answer.
-    """
-    return (
-        bool(handle) and handle != "anonymous" and not looks_like_agent_handle(handle)
-    )
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -153,18 +131,24 @@ async def create_project(
     owner_handle = body.owner_handle or (
         who.handle if who.authenticated and who.handle else None
     )
-    if not _is_a_real_person(owner_handle):
+    if not owner_handle or owner_handle == ANONYMOUS_HANDLE:
         # Silence is how this got expensive (#315). A project whose owner is not
         # a real person can be repaired — PUT /{id}/owner exists now — but
         # nothing else in the system will ever mention it: all seven readers of
         # the field fall back to `lead` without erroring, so the gap surfaces
         # only as "why can only one person do anything here", six days later.
         #
-        # The check is "a real person", not "not empty", because the empty case
+        # The check covers `anonymous` as well as empty, because the empty case
         # is no longer the one that happens. `resolve()` hands back the literal
         # handle `anonymous` rather than nothing, so an unidentified creator now
         # produces a *populated* owner column that still matches no user — the
         # same collapse onto `lead`, wearing a value.
+        #
+        # It does NOT ask whether the owner is a person. An agent instance is a
+        # participant and holds a project role like anybody else, so a handle
+        # that names one is an owner this log has nothing to warn about; reading
+        # the handle's SHAPE to decide otherwise was the platform guessing at a
+        # participant's kind from its name.
         logger.warning(
             "project created without a real owner name=%r owner=%r",
             body.name,
@@ -177,6 +161,7 @@ async def create_project(
         agent_type=body.agent_type,
         team_id=body.team_id,
         external_task_id=body.external_task_id,
+        forge_kind=body.forge_kind,
     )
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
@@ -546,6 +531,92 @@ async def list_artifacts(
     return ok(page(items, len(items)))
 
 
+@router.get("/{project_id}/artifacts/{artifact_id}")
+async def read_artifact(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> dict:
+    """清单上这一项自己的那一页 (#1085 结论二)：现在是第几版，以及交付过的每一版。
+
+    一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
+    纳，它后面几版的号自己往前挪。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    listed = await artifacts.summary(db, row.id)
+    history = await artifacts.versions(db, row.id)
+    return ok(
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "version": listed.version if listed else 0,
+            "delivered_at": (
+                listed.delivered_at.isoformat()
+                if listed and listed.delivered_at
+                else None
+            ),
+            "versions": [
+                {
+                    "number": v.number,
+                    "card_id": str(v.card_id),
+                    "subject": v.subject,
+                    "delivered_at": (
+                        v.delivered_at.isoformat() if v.delivered_at else None
+                    ),
+                    "decided_by": v.decided_by,
+                    "kind": v.kind,
+                    "filename": v.filename,
+                    "url": v.url,
+                }
+                for v in history
+            ],
+        }
+    )
+
+
+@router.get("/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file")
+async def download_artifact_version(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    card_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> Response:
+    """这一版交出去的那一份字节 (#1085 结论五)。
+
+    取的是当时交出去的那个快照，不是现在从源重建一次的结果：半年之后依赖变了、字
+    体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
+    一份。"""
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    version = next(
+        (v for v in await artifacts.versions(db, artifact_id) if v.card_id == card_id),
+        None,
+    )
+    if version is None:
+        raise NotFoundError("这一项没有这一版")
+    if version.kind != "file" or not version.filename:
+        # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
+        raise NotFoundError("这一版交出去的不是一份文件")
+    data = library.read_artifact_snapshot(project_id, card_id, version.filename)
+    filename = quote(version.filename, safe="")
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
 async def _artifact_keeper(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> None:
@@ -780,9 +851,12 @@ async def _agent_memory_scope(
     place, actor = caller
     project = await ProjectService(db).get_or_404(project_id)
     agents = AgentInstanceService(db)
-    agent = await agents.for_seat_handle(
-        project, actor.handle if actor.is_agent else None
-    )
+    # The seat handle answers for itself: `for_seat_handle` matches it against
+    # the project's saved teammates and returns None for a person, the shared
+    # `cheese` seat and a room-derived one. Pre-filtering by "is the caller an
+    # agent" asked a second, coarser question whose only effect was to skip a
+    # lookup that already says no.
+    agent = await agents.for_seat_handle(project, actor.handle)
     if agent is None:
         agent = await agents.for_topic(place.room, project)
     return memory_pool(project_id, agent)
@@ -944,6 +1018,69 @@ async def get_private_chat(
         agent_handle=agent_handle,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+
+
+@router.get("/{project_id}/forge")
+async def get_project_forge(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.project.forge import binding_for_project
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    binding = await binding_for_project(project_id, db)
+    return ok(
+        {
+            "kind": binding.kind
+            if binding
+            else (project.settings or {}).get("forge_kind", "forgejo"),
+            "connected": binding is not None,
+            "repo": binding.repo if binding else None,
+            "url": binding.url.removesuffix(".git") if binding else None,
+        }
+    )
+
+
+@router.get("/{project_id}/forge-attribution")
+async def get_forge_attribution(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    from app.domain.repository.identity import requester_credit_enabled
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok(
+        {
+            "requester_coauthor": (project.settings or {}).get(
+                "forge_requester_coauthor"
+            ),
+            "effective": requester_credit_enabled(project.settings or {}),
+            "deployment_default": settings.forge_attribution_default,
+        }
+    )
+
+
+@router.put("/{project_id}/forge-attribution")
+async def save_forge_attribution(
+    project_id: uuid.UUID,
+    body: ForgeAttributionUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if body.requester_coauthor is None:
+        values.pop("forge_requester_coauthor", None)
+    else:
+        values["forge_requester_coauthor"] = body.requester_coauthor
+    project.settings = values
+    await db.flush()
+    return await get_forge_attribution(project_id, db, resolver)
 
 
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
@@ -1239,58 +1376,37 @@ async def set_branch_protection(
 
 
 @router.get("/{project_id}/upstream")
-async def get_project_upstream(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's linked upstream repo (关联已有 repo, spec §6.3), if any."""
-    await ProjectService(db).get_or_404(project_id)
-    return ok({"url": ws.get_upstream(project_id)})
+async def get_project_upstream(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The GitHub repository selected for the installation flow."""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
 @router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Link the project to an existing git repo (empty url → unlink). The repo's
-    history then flows in via 同步上游, and stays syncable afterwards."""
-    await ProjectService(db).get_or_404(project_id)
-    url = ws.set_upstream(project_id, str(body.get("url") or ""))
+    """Select a GitHub repository before binding its installation."""
+    from app.domain.project.forge import binding_for_project
+    from app.domain.review.github_pr import parse_github_repo
+
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    if await binding_for_project(project_id, db) is not None:
+        raise ConflictError("项目已连接代码仓库，暂不支持更换")
+    if (project.settings or {}).get("forge_kind") != "github_app":
+        raise ConflictError("这个项目由芝士托管，暂不支持切换到 GitHub")
+    raw = str(body.get("url") or "").strip()
+    parsed = parse_github_repo(raw) if raw else None
+    if raw and parsed is None:
+        raise ValidationError("请输入 GitHub 仓库地址")
+    url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
+    project.settings = {**(project.settings or {}), "github_repository_url": url}
+    await db.flush()
     return ok({"url": url})
-
-
-@router.post("/{project_id}/upstream/sync")
-async def sync_project_upstream(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
-) -> dict:
-    """同步上游: fetch + merge the upstream default branch into the project base.
-    Conflicts abort cleanly and come back as {"synced": false, "reason": ...} —
-    and, when we know who asked, 芝士 is dispatched at the materialized conflict
-    so that report is a starting point instead of a dead end (spec §6.3, same
-    contract as 采纳冲突 in routes/accept.py)."""
-    await ProjectService(db).get_or_404(project_id)
-    # The App's token for a bound project, nothing for an unbound one: the
-    # fetch runs on the platform's own identity or on none.
-    try:
-        token = await github_app_read_token_for_project(project_id, db)
-    except GitHubAppError as exc:
-        raise GatewayUnavailableError(str(exc)) from exc
-    result = await asyncio.to_thread(ws.sync_upstream, project_id, token=token)
-    if result.get("synced") or not result.get("conflicts"):
-        return ok(result)
-    # Anonymous callers get the old behaviour: with no handle there is no 1:1
-    # room to put the work in, and inventing one would strand it.
-    actor = await resolver.resolve(fallback_handle=None)
-    if not actor.authenticated or not actor.handle:
-        return ok(result)
-    dispatched = await upstream_conflict.dispatch(
-        db,
-        project_id,
-        requested_by=actor.handle,
-        chat=chat,
-        runner=runner,
-    )
-    if dispatched is not None:
-        result = {**result, "dispatched": dispatched}
-    return ok(result)

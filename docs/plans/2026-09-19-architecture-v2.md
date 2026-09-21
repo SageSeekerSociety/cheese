@@ -305,6 +305,11 @@ and de-authorizing it is a single row delete rather than waiting out a token's T
     名字不在清单上就当场新建一项，并在房间里当场说出来（#1085 结论三）。
     **当前版本不存进表里**：一版是一次交付，所以它就是采纳了的、点名这一项的卡的条数，
     撤回采纳那一版随之不在。清单进每一轮的 system prompt，下一次交付照着它点名。
+    **这一版交出去的是什么记在那张卡上**（`deliverable_kind`：一份文件 / 一个地址 /
+    一次合并，#1085 结论五）：文件的字节在递卡那一刻从工作目录读下来，落在资料库旁边
+    （`.artifacts/<project_id>/<card_id>/`，`artifact_snapshot_path`），不进源仓库、
+    也不在有人要下载时重建——重建出来的可能和当时交出去的不是同一份东西。单份 80MB 封顶。
+    这一列之前递的卡是 NULL，那几版没有留存文件，而这补不回来。
     文件型的源进源仓库；**引用型只记指针与运行记录** [已定] 结论 26（「资料库和引用型产物在它之外；办公文件走资料库进、产物出」）。
     **流向是一条直线**：办公文件从**资料库**进来，产出作为**产物**出去，**两端都不进源仓库** [已定] 结论 26。
   - 成员名册、agent 实例、默认地点、托管方绑定、**默认模型与启用列表**（含它按费用分的那几档）[已定] 结论 44。
@@ -1031,55 +1036,17 @@ so the native tool is denied outright rather than left as a trap」）。
 
 ### 4.5 托管方接口
 
-`Forge` ABC（`review/forge.py`）：四个操作 + 一组能力位，三个实现。能力位是
-`ForgeCapabilities`，由 `capabilities_of()` 从 `ProjectForgeFacts`（装没装 App、有没有
-远端、有没有写那个远端的凭据）纯函数算出来 [已定]，上位依据是 #363 那张 provider 表；
-`resolve()` 不问「这个 URL 像不像 github.com」，它按能力位查 `FORGES` 注册表。
+`review/forge.py` 中的 `Forge` 定义采纳、刷新评审版本、状态同步和人工覆盖检查后的合并操作。
+`resolve()` 根据项目保存的 `ProjectForge` 绑定选择 GitHub 或 Forgejo；绑定缺失或不可读时，
+采纳停止并给出原因。
 
-| 能力位 | 它说的事实 |
-|---|---|
-| `reports_checks` | 这个托管方跑不跑检查、平台能不能读到结论 |
-| `hosts_proposals` | 改动在外部有没有一个可以被人打开的提案页 |
-| `can_write_remote` | 我们有没有写那个远端的凭据——对远端做一次 `git push --dry-run` 到一个新 ref 问出来的（`workspace/service.py can_push_upstream`），不按地址形状猜；答案按（项目，地址）在进程里记 10 分钟 |
-| `has_external_remote` | 项目填没填一个外部 git 远端 |
-| `pushes_to_external_remote` | `has_external_remote` ∧ `can_write_remote` |
-| `identity` | 提案与合并署谁的名（用户的，还是平台的 App） |
+新项目默认使用部署内的 Forgejo。选择 GitHub 的项目可以等待仓库连接，已连接的项目继续以
+GitHub 为代码仓库。机器直接克隆、提交和推送，无法直连时使用认证中转。后端从 Forge 读取
+已提交的文件，从任务机器读取尚未提交的文件。
 
-`has_external_remote` 单独占一位，是因为「没填地址」和「填了地址我们推不动」在
-`pushes_to_external_remote` 上都是否，而卡上要说的不是同一句话：后者被告知「本项目
-未接外部仓库」，等于当着填过地址的人的面说他没填。
-
-| 实现 | reports_checks | hosts_proposals | pushes_to_external_remote | 对应哪种项目 |
-|---|---|---|---|---|
-| GitHub | 是 | 是 | 是 | 绑了 GitHub |
-| 外部远端 | 否 | 否 | **是** | 有 git 远端但不是 GitHub（gitee、校内 GitLab、自建） |
-| 平台 | 否 | 否 | 否 | 什么都没绑，或者填了地址而我们没有写它的凭据（两种情况 `declaration` 不同） |
-
-**中间这一档是 `ExternalRemoteForge`**：采纳 squash 进平台仓库的 main，**并把 main 推回
-项目自己的远端**（`review/services.py` 的 `_accept_external_remote`）；少掉的只有外部检查
-和提案页，那是那个远端本来就没有的。判据在 `forge.py` 一处，不在 `services.py`——
-`services.py` 只负责读那三个事实，挑哪一档由 `serves()` 自己答。
-
-**它不存在的时候会发生什么**（这一档就是为它建的）：一个用校内 GitLab 的老师填了自己的
-仓库地址、点了同步、看见历史进来了，于是合理地认为这是双向的。此后每一次采纳都只落在平台
-自己的仓库里，他的 GitLab 一个 commit 都收不到，**没有任何一句话告诉他**。
-反过来，一个填了地址但没给我们写权限的项目，会拿到一个永远推不上去的 forge——
-所以 `can_write_remote` 和 `has_external_remote` 必须是**合取**，缺一半就落平台那一档，
-而那一档必须说得出「远端在，我们没有写它的凭据」，否则只是把沉默换成一句假话。
-
-#### 评审发生在用户所在的地方
-
-[已定] 结论 51。这是托管方接口上的一条产品规则，不是实现之间的差异：
-
-- **代码项目的用户在 forge**：评审就在那个提案页（PR）上——讨论、逐行意见、批准都发生在那里，
-  **房间里只放一条链接**。不把 PR 的评论搬回时间线做第二份，两份评审就是两个真相（I4a）。
-- **文档项目的用户不在 forge**：评审在**房间和卡片**里，**forge 只是存档**——
-  它照旧收下改动与历史（版本、差异由文件自带，#1086），但没有人被要求去那里看。
-- **判据是「这个项目的用户在哪」，不是「托管方实现是谁」**：
-  同一个 `GitHubForge` 既服务代码项目也服务文档项目，评审落点不因此改变；
-  `hosts_proposals=是` 只说明外部存在一个可以被打开的提案页，不说明评审该发生在那里。
-- **与结论 50 的关系**：评审在 PR 上进行，用的是用户**已经在用**的那套东西，不要求他为我们改任何设置；
-  平台在那一侧只读结论（`reports_checks`），不去那里建第二套流程。
+所有项目都在 Cheese 面板评审。面板意见同步到 Forge，外部评论在面板显示并标明来源。
+Forge 记录代码、检查和合并结果；外部合并会同步为任务已交付。具体采纳规则见
+[采纳流程](../accept-is-merge.md)。
 
 ### 4.6 模型供给为什么不是第四个接口
 
@@ -1667,7 +1634,7 @@ so check there and not in the menu, the contract or the doc**」。
 | **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `Topic.session_placement`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④`topics.session_placement` 不存在，它拆成两条并都挂到会话上（结论 56，按结论 60 修订）：`agent_sessions` 上每条会话自己的工作机器租约一列、自己的运行位置一列；⑤租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑥地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
 | **托管方** | `review/forge.py Forge` + `github_pr.py` + `agent/github_app.py`。`resolve()` 按能力位查注册表，三档齐全，署名降级进房间 | 写远端的凭据由一次真探测答（`git push --dry-run`），探测本身要连远端，所以读路径上有一份 10 分钟的进程内缓存 | 平台开始持有远端凭据的记录时，探测改成先问记录再连远端 |
-| **事件** | `block/`（脊柱的载体）；`alert/` + `notification/` + `agent/platform_notices.py`（两张通知表） | `AuthorType` 的 `human`/`ai`/`system` 三档是种类分叉；事件没有「关于什么」这一栏，落点由各调用点自己挑 | ①`AuthorType` 只剩「参与者」和「平台」两档；②每条事件带一个「关于什么」，落点从一张封闭表取（I10） |
+| **事件** | `block/`（脊柱的载体）；`alert/` + `notification/` + `agent/platform_notices.py`（两张通知表） | `AuthorType` 的 `human`/`ai`/`system` 三档是种类分叉；事件的落点来自 `block/about.py` 的封闭表（`EventAbout` 三档 + `landing()`），架在现有的 `topic_id`/`task_id` 两列上，21 处产生事件的调用点无一自己挑落点（守卫 `test_event_landing_guard.py`） | ①`AuthorType` 只剩「参与者」和「平台」两档；②结论 14 列在项目总览那一档的事件都从 `EventAbout.project` 取落点：房间归档（含级联）与取消归档已经落在 `Project.root_topic_id` 那个房间而不是被归档的房间自己的时间线上，巡检决策日志同；房间创生、主干新提交、名册变化今天还没有产生方，它们出现时走同一档 |
 | **记忆** | `memory/`（`MemoryScope` 四档，`agent_project` 的 scope_id 是 `<project>:<handle>`） | `MemoryScope.project` 7 处，`dream.py:253` 把它当 shared 池写；`user` 池只在私聊读（`chat.py:4323-4324`），而且它的 scope_id 是**人的 handle**（`memory/models.py:31` 注释逐字「个人记忆: 跨项目, 跟着人走」）——跨项目、不按实例分，与结论 8 正相反；池 key 与整理 key 不相交（#1200） | ①`MemoryScope.project` 全仓零命中，**那 7 处各自指名改写到哪一份文档**（1.12）：`dream.py:253` 的 shared 写入 → 项目总览的实况文档；`chat.py:3032`、`chat.py:5187` 两个读点 → 读项目总览与本房间的实况文档；`api/routes/memory.py:92/147` 的列与删 → 改成列/删本实例的 `agent_project` 与 `user` 池，项目那一份由文档接口提供；`api/routes/projects.py:764/808`（`cheese remember` / `cheese recall` 的端点）→ 写落 `agent_project`，「写给所有人看」的那一路改成写文档（去向同时写进 8.1 的暴露面）；②`user` 池的 scope_id 变成 `<project_id>:<agent_handle>:<person>`，跨项目那一份的去向是结论 10 的个人资料（1.12）；③读关于人的池不按在场过滤——任何房间都读得到（结论 54 修订结论 9），取记忆的代码里没有一处按名册过滤池，而跨项目仍然读不到；④一条记忆是一个文件，落在「一个实例一个目录、目录下分三个子目录」那棵树上，存在平台侧、有平台给的版本，项目源仓库里零命中；⑤profile 上有一页「记忆」，能翻历史、能删，而关于某个人的文件只有当事人列得出来（结论 42） |
 | **模型供给与计量** | `llm/`（1136 行）、`usage/`（705 行）、`core/config.py` 的 `agent_harness_models` | 没有一处是 `(骨架, 模型) → 供给` 那张注册表的所有者；卡上没有「这一轮用了什么」 | ①全仓只有一处回答「这一轮走哪条供给」；②卡上的模型显示从用量记录算出来，没有一个被 set 的模型状态字段；③供给不可用时的出口只有拒绝和可见等待（I27）；④**账按项目记，卡上的费用从 hook 用量按线程标识算出来**，模型请求上没有「这是哪张卡」这个字段（结论 53） |
 | **轮次** | `agent/chat.py` + `agent/runtime.py` | 每一轮都去要手；5 处平台自召唤 + 1 处客户端算的 `summon` | ①`needs_place` 是轮次解析里一个真的分支，`central_provider.py:100` 不再无条件 `return await self.executor.precheck(...)`；②`api/routes/chat.py:180` 的 `summon` 入参不存在；③5.4 那五处各自换成事件或投递 |
@@ -1685,7 +1652,7 @@ so check there and not in the menu, the contract or the doc**」。
 - **可迁移的会话**：有 `agent_sessions` 行，没有把 transcript 从平台放回一台新机器的路径。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
-- **「投递」这一层**：有事件、有两张通知表、有看板列，但没有一处代码回答「这个事件关于什么、点到了谁」。
+- **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。
 - **投递记录**（结论 58，5.7）：今天没有「给了谁、发没发、确认没有」这一条记录，
   所以重启之后没送到的那些投递无从补发，去重也只能靠各调用点自己小心。
 - **平台侧的执行记录**（结论 57，6.5）：今天没有一份「发出过哪些请求、哪些结果未知」的记录，

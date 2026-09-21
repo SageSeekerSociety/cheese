@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.repository import service as ws
 from app.domain.site.services import get_current_release, read_release_file
 from tests.integration.conftest import session_auth_headers
 from tests.machine_work import declare_task, machine_commits
+from tests.support import git_store
 
 
 @pytest.fixture(autouse=True)
@@ -33,11 +33,11 @@ def _accepted(pid, files):
     tid = uuid.uuid4()
     declare_task(pid, tid)
     machine_commits(pid, tid, files)
-    result = ws.merge_topic(
+    result = git_store.merge_task(
         pid, tid, message="Publish test website\n\nRequested-by: alice"
     )
-    assert result["merged"] is True
-    return ws.accepted_revision(pid)
+    assert result
+    return git_store.head(pid)
 
 
 def _get(client, pid, handle="alice"):
@@ -78,8 +78,8 @@ def test_only_accepted_files_are_published_and_survive_machine_and_repo_removal(
     }
     revision = _accepted(pid, accepted)
     # A dirty main checkout must not leak into the immutable publication.
-    ws.write_file(pid, "web/index.html", "dirty checkout")
-    ws.write_file(pid, "web/untracked.txt", "untracked")
+    (git_store.path(pid) / "web/index.html").write_text("dirty checkout")
+    (git_store.path(pid) / "web/untracked.txt").write_text("untracked")
     state = _get(client, pid).json()["data"]
     assert state["source_revision"] == revision
     assert state["candidates"] == [{"directory": "web", "entry_file": "web/index.html"}]
@@ -88,7 +88,7 @@ def test_only_accepted_files_are_published_and_survive_machine_and_repo_removal(
     assert response.json()["data"]["url"] == f"/sites/{pid}"
     release = _release(client, pid)
     assert release is not None
-    shutil.rmtree(ws.ensure_repo(pid))
+    shutil.rmtree(git_store.ensure_repo(pid))
     for path, content in accepted.items():
         relative = path.removeprefix("web/")
         if relative != ".env":

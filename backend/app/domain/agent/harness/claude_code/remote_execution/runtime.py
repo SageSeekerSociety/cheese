@@ -1074,7 +1074,7 @@ class Executor:
                 "instructions": "This chat has temporary scratch space at /work. "
                 "Use shell and file tools for drafts and small processing tasks. "
                 "Save finished documents through cheese doc set and publish artifacts "
-                "through cheese artifact. Scratch files can disappear when execution "
+                "through cheese show. Scratch files can disappear when execution "
                 "is released; they are not permanent storage. "
                 "No project checkout is available.",
             }
@@ -1127,6 +1127,147 @@ class Executor:
             "file_names": file_names,
             "instructions": "\n\n".join(instructions),
         }
+
+    def task_fs(self, params):
+        """Read or edit one task's live worktree, never the room's host filesystem."""
+        task_id = str(uuid.UUID(params["task_id"]))
+        home = Path(self.env["HOME"]).resolve()
+        root = (home / ".cheese" / "tasks" / task_id).resolve()
+        root.relative_to(home)
+        if not root.is_dir():
+            return {"error": "not_found"}
+        operation = params["operation"]
+        if operation == "diff":
+
+            def git(*args, expected=(0,)):
+                result = subprocess.run(
+                    ["git", "-C", str(root), *args], capture_output=True, timeout=30
+                )
+                if result.returncode not in expected:
+                    raise ValueError("Cannot read the task's Git comparison")
+                return result.stdout
+
+            base = "refs/remotes/origin/" + params["base_branch"]
+            ancestor = git("merge-base", "HEAD", base).decode().strip()
+            diff = git("diff", "--no-ext-diff", "--no-textconv", ancestor, "--")
+            untracked = git("ls-files", "--others", "--exclude-standard", "-z")
+            for name in untracked.decode().split("\0"):
+                if not name:
+                    continue
+                path = (root / name).resolve()
+                try:
+                    path.relative_to(root)
+                except ValueError:
+                    continue
+                if path.is_file():
+                    diff += git(
+                        "diff",
+                        "--no-index",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--",
+                        "/dev/null",
+                        name,
+                        expected=(0, 1),
+                    )
+            return {"diff": diff.decode("utf-8", errors="replace")}
+        if operation == "tree":
+            listed = (
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(root),
+                        "ls-files",
+                        "-c",
+                        "-o",
+                        "--exclude-standard",
+                        "-z",
+                    ],
+                    capture_output=True,
+                    check=True,
+                )
+                .stdout.decode()
+                .split("\0")
+            )
+            files = []
+            for name in sorted(set(listed) - {""}):
+                path = root / name
+                try:
+                    path.resolve().relative_to(root)
+                    if path.is_file():
+                        files.append({"path": name, "bytes": path.stat().st_size})
+                except (ValueError, OSError):
+                    continue
+            return {"files": files}
+        name = params.get("path", "")
+        relative = Path(name)
+        if (
+            not name
+            or relative.is_absolute()
+            or any(p in ("..", ".git") for p in relative.parts)
+        ):
+            raise ValueError("Invalid task file path")
+        path = (root / relative).resolve()
+        path.relative_to(root)
+        if not path.is_file():
+            return {"error": "not_found"}
+        if operation == "read":
+            offset = params.get("offset", 0)
+            count = params.get("size", 1024 * 1024)
+            if (
+                not isinstance(offset, int)
+                or not isinstance(count, int)
+                or offset < 0
+                or not 0 <= count <= 2 * 1024 * 1024
+            ):
+                raise ValueError("Invalid task file byte range")
+            with path.open("rb") as file:
+                before = os.fstat(file.fileno())
+                version = hashlib.file_digest(file, "sha256").hexdigest()[:16]
+                if params.get("version") and params["version"] != version:
+                    return {"error": "conflict"}
+                file.seek(offset)
+                data = file.read(count)
+                after = os.fstat(file.fileno())
+                if (before.st_size, before.st_mtime_ns) != (
+                    after.st_size,
+                    after.st_mtime_ns,
+                ):
+                    return {"error": "conflict"}
+            return {
+                "data": base64.b64encode(data).decode(),
+                "bytes": before.st_size,
+                "version": version,
+            }
+        if operation in ("write", "write_bytes"):
+            limit = (1 if operation == "write" else 10) * 1024 * 1024
+            if path.stat().st_size > limit:
+                raise ValueError("Text file is too large")
+            old = path.read_bytes()
+            version = hashlib.sha256(old).hexdigest()[:16]
+            if params.get("version") != version:
+                return {"error": "conflict"}
+            if operation == "write" and b"\0" in old[:8192]:
+                raise ValueError("Binary task files cannot be edited as text")
+            if operation == "write":
+                old.decode("utf-8")
+                data = params["content"].encode("utf-8")
+            else:
+                data = base64.b64decode(params["data"], validate=True)
+            if len(data) > limit:
+                raise ValueError("Text file is too large")
+            temporary = path.with_name(path.name + ".cheese-save-" + uuid.uuid4().hex)
+            try:
+                temporary.write_bytes(data)
+                temporary.chmod(path.stat().st_mode & 0o777)
+                if path.read_bytes() != old:
+                    return {"error": "conflict"}
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            return {"version": hashlib.sha256(data).hexdigest()[:16]}
+        raise ValueError("Unknown task filesystem operation")
 
     def context_fs(self, params):
         """Expose the native project context as a bounded read-only file view."""
@@ -1395,6 +1536,8 @@ class Executor:
             return self.context(params.get("known_files"))
         if method == "context_fs":
             return self.context_fs(params)
+        if method == "task_fs":
+            return self.task_fs(params)
         if method == "mcp":
             return self.client(params["server"]).call(
                 params["method"], params.get("params")

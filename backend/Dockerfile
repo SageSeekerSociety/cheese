@@ -32,20 +32,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # copies up every file it touches into a fresh layer — measured at 101s and
 # roughly a duplicate of .venv + connector-dist on 2026-08-17.
 #
-# The uid/gid are NOT free to pick: this process and the agent sandbox share one
-# git store on disk (ws.sandbox_vcs_mounts bind-mounts the project's main-repo
-# `.git` into every sandbox container, read-write) and BOTH commit into it — the
-# agent's own commit is how a topic branch moves. git creates object directories
-# 0755 and loose objects 0444, owned by whoever wrote them, so a second uid can
-# read every one of them and add nothing: its commit fails on a directory it
-# does not own. Backend-side that surfaced as a project-wide 422 on the file
-# panel; sandbox-side as an agent whose work could not leave the container.
-#
-# 1000 rather than some other number because the sandbox side is the one we do
-# not fully control: it is `node:22` + `USER node` (= 1000), the tmux provider
-# starts it with `--user node`, and a project may point `sandbox_image` at any
-# other node-based image. See backend/sandbox/Dockerfile and
-# app.domain.repository.service.AGENT_UID (which tests pin against this line).
+# Keep uid/gid 1000 so this image can access existing persistent volumes.
 RUN addgroup --system --gid 1000 python \
     && adduser --system --uid 1000 --gid 1000 cheese \
     && test "$(id -u cheese)" = 1000 \
@@ -208,6 +195,9 @@ COPY --chown=cheese:python sandbox ./sandbox
 # rest of that directory is dev probes and demo seeders that have no business in
 # a production image.
 COPY --chown=cheese:python scripts/migrate_memory_to_openviking.py ./scripts/
+COPY --chown=cheese:python scripts/migrate_forge.py ./scripts/
+# Export only the App's public key to the separate event relay.
+COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

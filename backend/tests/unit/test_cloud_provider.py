@@ -43,7 +43,7 @@ class _Hub:
 
 async def test_running_machine_waits_until_ai_and_connector_are_ready():
     topic_id, project_id = uuid.uuid4(), uuid.uuid4()
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
     provisioning = CloudLease(
         project_id=project_id,
         device_id="cloud-1",

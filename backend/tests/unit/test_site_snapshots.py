@@ -1,5 +1,6 @@
 """Snapshot real Git trees, including binary files and unsafe tree entries."""
 
+import asyncio
 import subprocess
 import uuid
 from datetime import UTC, datetime
@@ -8,9 +9,9 @@ import pytest
 
 from app.core.config import settings
 from app.core.errors import ValidationError
-from app.domain.repository import service as ws
 from app.domain.site.models import SiteRelease
 from app.domain.site.services import _snapshot, publication_source, read_release_file
+from tests.support import git_store
 
 
 def _git(path, *args):
@@ -22,9 +23,52 @@ def _git(path, *args):
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    from app.domain.site import services
+
+    class Repository:
+        def __init__(self, session, project_id, task_id):
+            self.project_id = project_id
+
+        async def revision(self):
+            return git_store.head(self.project_id)
+
+        async def committed_entries(self, revision):
+            tree = git_store.git(
+                git_store.path(self.project_id), "ls-tree", "-rlz", revision
+            )
+            entries = []
+            for record in tree.split("\0"):
+                if not record:
+                    continue
+                metadata, path = record.split("\t", 1)
+                mode, kind, oid, size = metadata.split()
+                entries.append(
+                    dict(
+                        path=path,
+                        mode=mode,
+                        kind=kind,
+                        oid=oid,
+                        bytes=0 if size == "-" else int(size),
+                    )
+                )
+            return entries
+
+        async def committed_blobs(self, oids):
+            return {
+                oid: subprocess.run(
+                    ["git", "cat-file", "blob", oid],
+                    cwd=git_store.path(self.project_id),
+                    capture_output=True,
+                    check=True,
+                    timeout=60,
+                ).stdout
+                for oid in oids
+            }
+
+    monkeypatch.setattr(services, "ProjectFiles", Repository)
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
     pid = uuid.uuid4()
-    repo = ws.ensure_repo(pid)
+    repo = git_store.ensure_repo(pid)
     (repo / "web").mkdir()
     (repo / "web/index.html").write_text(
         '<img src="image.png"><script src="app.js"></script>'
@@ -38,7 +82,7 @@ def project(tmp_path, monkeypatch):
 
 def _publish(pid, revision):
     release_id = uuid.uuid4()
-    manifest = _snapshot(pid, revision, "web", release_id)
+    manifest = asyncio.run(_snapshot(None, pid, revision, "web", release_id))
     return SiteRelease(
         id=release_id,
         project_id=pid,
@@ -51,9 +95,13 @@ def _publish(pid, revision):
     )
 
 
+def _source(pid):
+    return asyncio.run(publication_source(None, pid))
+
+
 def test_binary_resources_are_byte_exact_and_revision_does_not_follow_checkout(project):
     pid, repo = project
-    revision = ws.accepted_revision(pid)
+    revision = git_store.head(pid)
     (repo / "web/image.png").write_bytes(b"dirty")
     release = _publish(pid, revision)
     assert read_release_file(release, "image.png") == bytes(range(256)) * 4
@@ -66,19 +114,19 @@ def test_symlink_resources_are_refused_instead_of_dereferenced(project, target):
     (repo / "web/link.js").symlink_to(target)
     _git(repo, "add", "web/link.js")
     _git(repo, "commit", "-m", "link resource")
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="符号链接"):
-        _publish(pid, ws.accepted_revision(pid))
+        _publish(pid, git_store.head(pid))
 
 
 def test_submodule_is_not_published_as_an_empty_directory(project):
     pid, repo = project
-    revision = ws.accepted_revision(pid)
+    revision = git_store.head(pid)
     _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{revision},web/vendor")
     _git(repo, "commit", "-m", "gitlink resource")
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="子模块"):
-        _publish(pid, ws.accepted_revision(pid))
+        _publish(pid, git_store.head(pid))
 
 
 def test_oversized_bundle_is_refused_before_copying(project, monkeypatch):
@@ -86,16 +134,16 @@ def test_oversized_bundle_is_refused_before_copying(project, monkeypatch):
 
     pid, _ = project
     monkeypatch.setattr(services, "MAX_SITE_BYTES", 100)
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="总大小"):
-        _publish(pid, ws.accepted_revision(pid))
+        _publish(pid, git_store.head(pid))
 
 
 def test_release_reader_never_reads_files_outside_its_manifest(project):
     from app.domain.site.services import release_directory
 
     pid, _ = project
-    release = _publish(pid, ws.accepted_revision(pid))
+    release = _publish(pid, git_store.head(pid))
     root = release_directory(release)
     (root / "not-published.txt").write_text("operator file")
     for path in ("not-published.txt", "/index.html", "../index.html", ".env", "a\\b"):
@@ -125,11 +173,11 @@ def _entry_commit(repo, html):
 )
 def test_missing_or_invalid_direct_resources_are_refused(project, html, message):
     pid, repo = project
-    old_release = _publish(pid, ws.accepted_revision(pid))
+    old_release = _publish(pid, git_store.head(pid))
     _entry_commit(repo, html)
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match=message):
-        _publish(pid, ws.accepted_revision(pid))
+        _publish(pid, git_store.head(pid))
     assert (
         read_release_file(old_release, "index.html")
         == b'<img src="image.png"><script src="app.js"></script>'
@@ -153,11 +201,11 @@ def test_missing_or_invalid_direct_resources_are_refused(project, html, message)
 def test_valid_absolute_and_external_resources_remain_publishable(project, html):
     pid, repo = project
     _entry_commit(repo, html)
-    assert publication_source(pid)["candidates"] == [
+    assert _source(pid)["candidates"] == [
         {"directory": "web", "entry_file": "web/index.html"}
     ]
     assert (
-        read_release_file(_publish(pid, ws.accepted_revision(pid)), "index.html")
+        read_release_file(_publish(pid, git_store.head(pid)), "index.html")
         == html.encode()
     )
 
@@ -171,12 +219,12 @@ def test_first_base_href_changes_relative_resource_resolution(project):
         '<base href="/assets/"><base href="/ignored/">'
         '<script src="chunk.js"></script><img src="../image.png">',
     )
-    assert publication_source(pid)["candidates"] == [
+    assert _source(pid)["candidates"] == [
         {"directory": "web", "entry_file": "web/index.html"}
     ]
-    release = _publish(pid, ws.accepted_revision(pid))
+    release = _publish(pid, git_store.head(pid))
     assert read_release_file(release, "assets/chunk.js") == b"export const value = 1"
     _entry_commit(repo, '<base href="/missing/"><script src="app.js"></script>')
-    assert publication_source(pid)["candidates"] == []
+    assert _source(pid)["candidates"] == []
     with pytest.raises(ValidationError, match="missing/app.js"):
-        _publish(pid, ws.accepted_revision(pid))
+        _publish(pid, git_store.head(pid))

@@ -70,8 +70,8 @@ async def test_the_lock_key_names_the_topic_and_the_feature():
     """Different topics take different locks, and the key says whose it is.
 
     Not decoration: advisory locks are one 64-bit space per cluster, shared with
-    every other feature that takes one (`agent.execution.lock_release`,
-    `machine.warm`). A namespaced string is what keeps two features off one hash.
+    every other feature that takes one (`machine.warm`). A namespaced string is
+    what keeps two features off one hash.
     """
     keys = []
     for topic in (TOPIC, uuid.uuid4()):

@@ -10,6 +10,13 @@ backend_state=""
 frontend_state=""
 backend_status=""
 frontend_status=""
+forgejo_count=0
+forgejo_state=""
+forgejo_status=""
+events_count=0
+events_image=""
+events_state=""
+events_status=""
 
 while IFS=$'\t' read -r service image state status; do
   case "$service" in
@@ -24,6 +31,17 @@ while IFS=$'\t' read -r service image state status; do
       frontend_image="$image"
       frontend_state="$state"
       frontend_status="$status"
+      ;;
+    forgejo)
+      forgejo_count=$((forgejo_count + 1))
+      forgejo_state="$state"
+      forgejo_status="$status"
+      ;;
+    forge-events)
+      events_count=$((events_count + 1))
+      events_image="$image"
+      events_state="$state"
+      events_status="$status"
       ;;
   esac
 done
@@ -63,9 +81,16 @@ check_service() {
 
 check_service backend "$backend_count" "$backend_image" "$backend_state" "$backend_status"
 check_service frontend "$frontend_count" "$frontend_image" "$frontend_state" "$frontend_status"
+if [ "${FORGE_EVENTS_LOCAL:-false}" = true ] || [ "$events_count" -gt 0 ]; then
+  check_service forge-events "$events_count" "$events_image" "$events_state" "$events_status"
+fi
+if [ "$forgejo_count" -ne 1 ] || [ "$forgejo_state" != running ] || [[ "$forgejo_status" != *"(healthy)"* ]]; then
+  echo "APP-TIER ERROR: expected one running healthy forgejo container, found $forgejo_count ($forgejo_state, $forgejo_status)" >&2
+  failures=$((failures + 1))
+fi
 
 if [ "$failures" -ne 0 ]; then
   exit 1
 fi
 
-echo "APP-TIER OK: backend and frontend are healthy at tag $expected_tag"
+echo "APP-TIER OK: backend and frontend are healthy at tag $expected_tag; forgejo is healthy"

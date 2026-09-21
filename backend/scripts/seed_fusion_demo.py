@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 
 import app.models  # noqa: F401 — every table, so any FK on the ones below resolves
 from app.core.db import async_session_factory
+from app.domain.project.forge import provision_repository
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -120,6 +121,7 @@ async def seed() -> None:
                 root.id, owner_handle=OWNER, member_handles=[OWNER, CHEESE]
             )
             await members.seed(work.id, owner_handle=OWNER)
+            await provision_repository(project.id, s)
             print(f"seeded project '{name}' (team {team_id})")
         await s.commit()
 

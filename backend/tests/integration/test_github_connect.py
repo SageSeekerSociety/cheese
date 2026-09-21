@@ -8,6 +8,8 @@ the install URL when nothing matches. GitHub itself is faked at the module
 seams; the tests assert what the route DOES, not HTTP details.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from tests.integration.conftest import session_auth_headers
@@ -16,7 +18,10 @@ pytestmark = pytest.mark.usefixtures("github_binding_user")
 
 
 def _make_project(client) -> str:
-    r = client.post("/projects", json={"name": "P", "owner_handle": "alice"})
+    r = client.post(
+        "/projects",
+        json={"name": "P", "owner_handle": "alice", "forge_kind": "github_app"},
+    )
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -30,7 +35,7 @@ def _github_world(
 ):
     """Point the connect route's GitHub + workspace seams at fakes."""
     from app.api.routes import github_install
-    from app.domain.repository import service as ws
+    from app.domain.review.github_pr import parse_github_repo
 
     calls: dict[str, int] = {"list": 0, "repos": 0}
 
@@ -44,7 +49,12 @@ def _github_world(
 
     monkeypatch.setattr(github_install, "list_user_installations", _fake_list)
     monkeypatch.setattr(github_install, "fetch_user_installation_repos", _fake_repos)
-    monkeypatch.setattr(ws, "get_upstream", lambda pid: upstream)
+    parsed = parse_github_repo(upstream) if upstream else None
+    monkeypatch.setattr(
+        github_install,
+        "_upstream_repo",
+        AsyncMock(return_value="/".join(parsed) if parsed else None),
+    )
     return calls
 
 

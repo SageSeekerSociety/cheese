@@ -21,13 +21,14 @@ Exit code 0 only when every check passes; the summary lists PASS/FAIL per check.
 """
 
 import asyncio
+import base64
 import json
 import os
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 import uuid
+from urllib.parse import quote
 
 BASE = os.environ.get("BASE", "http://localhost:8081").rstrip("/")
 PROJECT_NAME = os.environ.get("PROJECT_NAME", "cheese 自建")
@@ -72,8 +73,8 @@ async def main() -> int:
     from app.common.auth import create_access_token
     from app.core.db import async_session_factory
     from app.domain.device.models import DeviceProjectRow
+    from app.domain.project import forge
     from app.domain.project.models import Project
-    from app.domain.repository import service as ws
     from app.domain.user.models import User
 
     # 1. Resolve the actor + the device-backed project straight from the DB, so the
@@ -135,7 +136,6 @@ async def main() -> int:
             {"project_id": str(project_id), "title": f"设备自托管冒烟 {MARKER}"},
         )["data"]["id"]
     )
-    repo = ws.ensure_repo(project_id)
     task = api(
         "POST",
         f"/topics/{topic_id}/split",
@@ -144,26 +144,20 @@ async def main() -> int:
     )["data"]
     branch = task["branch_name"]
 
-    def branch_head() -> str:
-        return subprocess.run(
-            ["git", "rev-parse", branch],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip()
+    async def branch_head() -> str:
+        async with async_session_factory() as session:
+            return await forge.branch_head(project_id, session, branch) or ""
 
-    def branch_readme() -> str:
-        result = subprocess.run(
-            ["git", "show", f"{branch}:README.md"],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return result.stdout if result.returncode == 0 else ""
+    async def branch_readme() -> str:
+        async with async_session_factory() as session:
+            data = await forge.repository_data(
+                project_id,
+                session,
+                f"/contents/README.md?ref={quote(branch, safe='')}",
+            )
+        return base64.b64decode(data["content"]).decode() if data else ""
 
-    before_head = branch_head()
+    before_head = await branch_head()
     print(f"topic={topic_id} branch={branch} base={before_head}", flush=True)
 
     # 2. Drive one summoned turn over the chat WS, recording every relayed frame
@@ -235,15 +229,15 @@ async def main() -> int:
     # grace window rather than reading the instant the stream goes quiet.
     for _ in range(20):
         cards_now = api("GET", f"/topics/{topic_id}/accept-card", token)["data"]
-        seen = MARKER in branch_readme()
+        seen = MARKER in await branch_readme()
         if seen and int(cards_now.get("total") or 0) > 0:
             break
         await asyncio.sleep(6)
 
-    after_head = branch_head()
+    after_head = await branch_head()
     pushed = bool(after_head) and after_head != before_head
     custom = bool(os.environ.get("PROMPT", "").strip())
-    edited = MARKER in branch_readme()
+    edited = MARKER in await branch_readme()
     if custom:
         # A caller-supplied task may write anything; a changed branch head proves
         # that the device committed and pushed its work back.

@@ -100,7 +100,7 @@ async def require_preview_access(
 ) -> Place:
     place = await TopicService(session).place_or_404(topic_id)
     resolver = ActorResolver(session=session, bearer=None, cheese_token="")
-    actor = Actor(handle=handle, user_id=None, is_agent=False, via="token")
+    actor = Actor(handle=handle, user_id=None, via="token")
     if not await resolver.can_access_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     ):

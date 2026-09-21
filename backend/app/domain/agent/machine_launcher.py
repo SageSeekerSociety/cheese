@@ -43,6 +43,7 @@ from pathlib import Path
 from app.domain.agent import (
     environment_runner,
     event_drain,
+    forge_cli,
     machine_tunnel,
     preview_tunnel,
     toolchain,
@@ -195,7 +196,7 @@ printf '%s\\n' "$WANT" > "$STAMPF"
 """
 
 
-def toolchain_block() -> str:
+def toolchain_fetcher() -> str:
     """Place the room's document toolchain on this machine, once per machine.
 
     These are capabilities, not dependencies — a room that never writes a
@@ -282,6 +283,12 @@ def toolchain_block() -> str:
 
 {places}
 """
+    return fetcher
+
+
+def toolchain_block() -> str:
+    fonts_pin = toolchain.fonts_pin()
+    fetcher = toolchain_fetcher()
     return f"""CHEESE_TOOLCHAIN="$REAL_HOME/.cheese/toolchain"
 export CHEESE_TOOLCHAIN
 export PATH="$CHEESE_TOOLCHAIN/bin:$PATH"
@@ -396,8 +403,7 @@ def screen_env(
             env[name] = value
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
-    if place.git_remote:
-        env["CHEESE_GIT_REMOTE"] = place.git_remote
+    if place.project_id:
         # Who the turn's commits belong to (workspace/identity.py). Absent, the
         # launcher falls back to 芝士 — the same default the in-repo snapshot
         # path uses, so both surfaces agree.
@@ -432,6 +438,7 @@ def launch_script(
     cli_source = (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
         encoding="utf-8"
     )
+    forge_source = Path(forge_cli.__file__).read_text()
     # Shipped by reading each module's own bytes rather than by keeping a second
     # copy here: they are real, linted, unit-tested modules precisely so there is
     # only one version of them to be wrong.
@@ -570,6 +577,12 @@ chmod +x "$HOME/.cheese/cheese-hook"
 cat > "$HOME/.cheese/cheese" <<'CHEESE_PLATFORM_CLI'
 {cli_source}CHEESE_PLATFORM_CLI
 chmod +x "$HOME/.cheese/cheese"
+cat > "$HOME/.cheese/gh" <<'CHEESE_FORGE_CLI'
+{forge_source}CHEESE_FORGE_CLI
+cp "$HOME/.cheese/gh" "$HOME/.cheese/fj"
+chmod +x "$HOME/.cheese/gh" "$HOME/.cheese/fj"
+cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
+{tunnel_helper}TUNNELPY
 export PATH="$HOME/.cheese:$PATH"
 {toolchain}cheese_launch_phase files_written
 {credentials}\
@@ -600,8 +613,6 @@ mv "$HOME/.cheese/cheese-drain.env.tmp" "$HOME/.cheese/cheese-drain.env"
 # token per connection, so replacing this file is how a refreshed credential
 # reaches a still-running helper (#385's shape, one layer down).
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-  cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
-{tunnel_helper}TUNNELPY
   # Use the place-scoped CONNECT credential, including its RC claim. The hook
   # token can have project scope; the machine OAuth ticket is never a tunnel
   # credential. A missing CONNECT token must not fall back to either one.

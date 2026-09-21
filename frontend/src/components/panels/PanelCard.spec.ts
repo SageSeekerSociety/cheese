@@ -253,7 +253,7 @@ function acceptCard(over: Partial<AcceptCard> = {}): AcceptCard {
       since: null,
     } as MergeStateInfo,
     forge: {
-      kind: 'platform',
+      kind: 'forgejo',
       reports_checks: false,
       hosts_proposals: false,
       can_write_remote: false,

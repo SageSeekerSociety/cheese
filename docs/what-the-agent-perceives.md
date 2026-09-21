@@ -63,7 +63,7 @@
 
 回流的那几种是一件一件加上去的：最早是验收卡被驳回（#529），后来是采纳冲突、上游冲突、合并被拒、PR 信号，每一次都是有人撞上了一个具体的坑才补的。**判据始终没人定过**，所以下一种事件该不该给它，今天还是只能靠猜测。
 
-**这两件比以前更急。** 芝士自己提交、推送、开 PR 之后（`docs/plans/2026-08-27-retire-jj-design.md`），做事的人和看得见结果的人变回了同一个——但那次改造也把大量「平台知道、芝士不知道」的事情搬到了它那边，今天这五种猜法会在新路径上重新长一遍。
+**这两件比以前更急。** 芝士自己提交、推送、开 PR 之后（[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)），做事的人和看得见结果的人变回了同一个——但那次改造也把大量「平台知道、芝士不知道」的事情搬到了它那边，今天这五种猜法会在新路径上重新长一遍。
 
 ## 4. 一条候选判据（未定，供推翻）
 
@@ -93,4 +93,4 @@
 - `backend/app/domain/agent/chat.py` — `notify_running_turn`（唯一的平台→芝士通道）与它的标记机制
 - `backend/app/domain/agent/platform_notices.py` — 三十三种事件的定义
 - `backend/sandbox/skills/cheese/SKILL.md` — 今天用一段说明文字代替「让它看得见」
-- `docs/plans/2026-08-27-retire-jj-design.md` — 它自己提交推送，于是看得见自己
+- [退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)

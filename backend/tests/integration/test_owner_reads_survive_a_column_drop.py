@@ -18,6 +18,7 @@ import pytest
 from sqlalchemy import text
 
 from app.domain.device import owner_reads
+from tests.integration.conftest import session_token
 
 
 async def _project(db_session, handle: str = "alice") -> uuid.UUID:
@@ -105,3 +106,86 @@ def test_loading_the_whole_room_is_what_the_incident_was(db_session, _portal):
 
     with pytest.raises(ProgrammingError, match="title"):
         _portal.call(ask_the_old_way)
+
+
+def test_device_auth_and_transcript_permissions_survive_unrelated_column_drops(
+    db_session, _portal
+):
+    from app.domain.device.models import DeviceTopicRow
+    from tests.integration.test_archive_retires_storage import _seed_device
+
+    async def ask():
+        project = await _project(db_session)
+        place = uuid.uuid4()
+        await _seed_device(db_session, "allowed", project_id=project)
+        await _seed_device(db_session, "outsider")
+        await _without_column(db_session, "device", "ccproxy_upstream")
+        await _without_column(db_session, "device", "visibility")
+        await _without_column(db_session, "hosted_device", "owner_user_id")
+        identity = await owner_reads.device_for_token(db_session, "tok-allowed")
+        assert identity == owner_reads.DeviceIdentity("allowed", "allowed")
+        assert await owner_reads.device_for_token(db_session, "wrong") is None
+        assert await owner_reads.device_for_token(db_session, "") is None
+        assert await owner_reads.device_ran_place(db_session, "allowed", project, place)
+        assert not await owner_reads.device_ran_place(
+            db_session, "outsider", project, place
+        )
+        db_session.add(DeviceTopicRow(topic_id=place, device_id="outsider"))
+        await db_session.flush()
+        await _without_column(db_session, "device_topic", "visibility")
+        assert await owner_reads.device_ran_place(
+            db_session, "outsider", project, place
+        )
+        assert not await owner_reads.device_ran_place(
+            db_session, "allowed", project, place
+        )
+
+    _portal.call(ask)
+
+
+def test_device_can_connect_after_an_unrelated_column_is_dropped(
+    api_client, db_session, _portal, monkeypatch
+):
+    from app.core.config import settings
+    from tests.integration.test_archive_retires_storage import _seed_device
+
+    async def prepare():
+        await _seed_device(db_session, "connect-after-migration")
+        await _without_column(db_session, "device", "ccproxy_upstream")
+
+    _portal.call(prepare)
+    monkeypatch.setattr(settings, "device_connection_owner", True)
+    with api_client.websocket_connect(
+        "/connector/agent?token=tok-connect-after-migration"
+    ) as ws:
+        assert ws.receive_json()["t"] == "welcome"
+
+
+@pytest.mark.parametrize("membership", ["project", "topic"])
+def test_viewer_authorization_survives_unrelated_membership_column_drops(
+    db_session, _portal, membership
+):
+    from types import SimpleNamespace
+
+    from app.api.routes.connector import _may_view_screen
+    from app.domain.project.models import ProjectMember
+    from app.domain.topic.models import TopicMembership
+
+    async def ask():
+        project = await _project(db_session, handle="owner")
+        room = await _room(db_session, project)
+        if membership == "project":
+            db_session.add(ProjectMember(project_id=project, user_handle="viewer"))
+        else:
+            db_session.add(TopicMembership(topic_id=room, member_handle="viewer"))
+        await db_session.flush()
+        await _without_column(db_session, "project_members", "role")
+        await _without_column(db_session, "topic_memberships", "role")
+        screen = SimpleNamespace(project_id=project, topic_id=room)
+        assert await _may_view_screen(db_session, screen, session_token("viewer"))
+        assert await _may_view_screen(db_session, screen, session_token("owner"))
+        assert not await _may_view_screen(db_session, screen, session_token("outsider"))
+        assert not await _may_view_screen(db_session, screen, "bad-token")
+        assert not await _may_view_screen(db_session, screen, None)
+
+    _portal.call(ask)

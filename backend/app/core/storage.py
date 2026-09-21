@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -24,6 +25,20 @@ class _S3Connections:
 
 
 _s3_connections: _S3Connections | None = None
+
+
+def _retry_incomplete_s3_part(response, attempts: int, **_) -> float | None:
+    # S3 can reject a truncated part with HTTP 400, outside the SDK's default retries.
+    if (
+        response is not None
+        and response[1].get("Error", {}).get("Code") == "IncompleteBody"
+        and attempts < 3
+    ):
+        logging.getLogger(__name__).warning(
+            "Retrying incomplete S3 upload part after attempt %s", attempts
+        )
+        return float(attempts)
+    return None
 
 
 @asynccontextmanager
@@ -165,6 +180,9 @@ class S3StorageBackend(StorageBackend):
         def new_client() -> Any:
             # aioboto3 inherits boto3's synchronous client typing.
             session: Any = aioboto3.Session()
+            session.events.register(
+                "needs-retry.s3.UploadPart", _retry_incomplete_s3_part
+            )
             return session.client("s3", **kwargs)
 
         pool = _s3_connections

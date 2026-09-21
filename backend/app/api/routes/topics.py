@@ -8,7 +8,7 @@ import shutil
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
@@ -85,8 +85,8 @@ from app.domain.preview.office import (
     is_renderable,
     render_to_pdf,
 )
+from app.domain.project import room_files
 from app.domain.project.repositories import ProjectRepository
-from app.domain.repository import service as ws
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
@@ -711,7 +711,7 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    if not actor.is_agent:
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         runner.submit(
             chat,
             place.room_id,
@@ -943,7 +943,7 @@ def _card_snapshot(card: AcceptCard) -> dict:
         ),
         "gate_output_tail": card.gate_output[-_GATE_OUTPUT_TAIL:],
         # PR-based accept (#188 §5.1): the agent checks its PR's CI itself
-        # (`cheese gh-token` + gh api) — the snapshot carries the pointer.
+        # (`gh api`) — the snapshot carries the pointer.
         "pr_number": card.pr_number,
         "pr_url": card.pr_url,
         "created_at": card.created_at.isoformat(),
@@ -1117,7 +1117,7 @@ async def add_comment(
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
 
-    if not actor.is_agent:
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
         runner.submit(
@@ -1449,11 +1449,16 @@ async def publish_chat_message(
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
-    if not actor.authenticated or not actor.is_agent:
+    if not actor.authenticated:
         raise ForbiddenError("An authenticated agent must publish this message")
+    # 先授权，再问席位。两道都是 403，顺序不改任何调用者看到的结果；改的是代价：
+    # 席位那一问要读花名册、把 handle 换成用户行、再查 agent 绑定，而这条路由是
+    # 每条消息都走的。没权限进这个房间的调用者不必先替我们付这几次查询。
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+        raise ForbiddenError("An authenticated agent must publish this message")
     content = body.content.strip()
     if not content:
         raise ValidationError("content must not be blank")
@@ -1520,7 +1525,10 @@ async def ask_options(
     # 不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝士刚问出口的这道
     # 题，它对着自己的问题再答一遍。人在房间里问出的那种照旧是一条待读输入。
     if actor.authenticated:
-        author, asked_by_agent = actor.handle, actor.is_agent
+        author = actor.handle
+        asked_by_agent = await TopicMemberService(db).holds_an_agent_seat(
+            place.room, author
+        )
     else:
         author = await TopicMemberService(db).resolve_agent_handle(
             topic_id, room_id=place.room_id
@@ -2183,11 +2191,15 @@ async def _bind_source_task(
     work = await TaskRepository(db).get(task)
     if work is None or work.room_id != room_id or work.branch_name is None:
         raise NotFoundError("Task not found")
-    TaskService._bind_workspace(work)
 
 
-def _source_bytes(
-    project_id: uuid.UUID, room_id: uuid.UUID, path: str, task: uuid.UUID | None
+async def _source_bytes(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    path: str,
+    task: uuid.UUID | None,
+    source: Literal["live", "committed"] = "live",
 ) -> bytes:
     """One of this room's files, from whichever store holds it.
 
@@ -2198,10 +2210,13 @@ def _source_bytes(
     each being wired to one store — that wiring is why a document on a branch
     had no view but a raw binary diff.
     """
-    if task is not None:
+    if task is not None or source == "committed":
         if library.library_name(path) is not None:
             raise ValidationError("资料库里的文件不属于某个任务分支")
-        return ws.read_file_bytes(project_id, path, topic_id=task)
+        from app.domain.repository.forge_files import ProjectFiles
+
+        data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
+        return data
     return library.read_attachment(project_id, room_id, path)
 
 
@@ -2218,7 +2233,7 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese_artifact 点名一个文件——网页、图片，"
+            "要给人看结果也可以用 cheese_show 点名一个文件——网页、图片，"
             "或报告、表格这类文档。"
         )
     if not await preview_hub.probe(topic_id):
@@ -2228,15 +2243,17 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         )
 
 
-@router.post("/{topic_id}/artifact")
-async def set_artifact(
+@router.post("/{topic_id}/shown")
+async def show_in_room(
     topic_id: uuid.UUID,
     body: dict,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
-    `cheese artifact`. With no anchor it becomes this place's current preview."""
+    """芝士 摆一份东西出来给这个房间里的人看 —— `cheese show` (#1085 结论四)。
+
+    摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
+    （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。"""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     declared = (body.get("as") or "").strip().lower()
@@ -2289,6 +2306,56 @@ async def set_artifact(
         refs=[path],
     )
     return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+
+
+@router.get("/{topic_id}/shown")
+async def list_shown(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """这个房间里摆出来过的东西 (#1085 结论四)。
+
+    一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    shown = await BlockRepository(db).shown_in_room(place.room_id)
+    items = [
+        {
+            "path": block.content,
+            "mime": block.mime_type,
+            "kind": "app" if block.mime_type == _ARTIFACT_MIME["app"] else "file",
+            "shown_at": block.created_at.isoformat(),
+        }
+        for block in shown
+    ]
+    return ok(page(items, len(items)))
+
+
+@router.post("/{topic_id}/shown/save")
+async def save_shown_to_library(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
+
+    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
+    它：这份东西以后还用不用得上，是人的判断。"""
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await resolver.require_verified_caller(project_id=place.project_id)
+    await resolver.authorize_project(actor, project_id=place.project_id)
+    name = await room_files.save_to_library(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=_clean_artifact_path(str(body.get("path") or "")),
+        by=actor.handle,
+    )
+    await db.commit()
+    return ok({"name": name})
 
 
 @router.post("/{topic_id}/documents/recalc")
@@ -2368,6 +2435,7 @@ async def list_document_revisions(
     db: DbSession,
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> dict:
     """The tracked changes in a `.docx`, one row per decision a reader makes.
 
@@ -2386,7 +2454,7 @@ async def list_document_revisions(
     clean = _clean_artifact_path(path)
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
@@ -2443,7 +2511,7 @@ async def decide_document_revisions(
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    raw = _source_bytes(topic.project_id, topic_id, clean, task)
+    raw = await _source_bytes(db, topic.project_id, topic_id, clean, task)
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(
@@ -2457,7 +2525,11 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(str(exc)) from exc
     if task is not None:
-        ws.write_file_bytes(topic.project_id, clean, made, topic_id=task)
+        from app.domain.repository.forge_files import ProjectFiles
+
+        await ProjectFiles(db, topic.project_id, task).write_bytes(
+            clean, made, expected
+        )
     else:
         library.write_room_file(topic.project_id, topic_id, clean, made)
     return ok(
@@ -2690,6 +2762,7 @@ async def attachment_raw(
     resolver: ActorResolverDep,
     download: bool = False,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
@@ -2711,7 +2784,7 @@ async def attachment_raw(
         raise ValidationError("只能读取图片附件")
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -2722,7 +2795,9 @@ async def attachment_raw(
             ),
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": (
+                "no-store" if task or source == "committed" else "private, max-age=3600"
+            ),
         },
     )
 
@@ -2734,6 +2809,7 @@ async def attachment_as_pdf(
     db: DbSession,
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
 ) -> Response:
     """A Word or PowerPoint deliverable, converted so a browser can show it.
 
@@ -2756,7 +2832,7 @@ async def attachment_as_pdf(
         raise ValidationError("这个格式不能转换为预览")
     if task is not None:
         await _bind_source_task(db, topic_id, task)
-    data = _source_bytes(topic.project_id, topic_id, clean, task)
+    data = await _source_bytes(db, topic.project_id, topic_id, clean, task, source)
     if len(data) > MAX_ARTIFACT_BYTES:
         raise ValidationError(
             f"文件超过 {MAX_ARTIFACT_BYTES // (1024 * 1024)}MB，无法生成预览"
@@ -2778,7 +2854,9 @@ async def attachment_as_pdf(
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": "private, max-age=3600",
+            "Cache-Control": (
+                "no-store" if task or source == "committed" else "private, max-age=3600"
+            ),
         },
     )
 

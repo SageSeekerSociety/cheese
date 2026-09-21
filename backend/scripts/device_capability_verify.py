@@ -10,12 +10,13 @@ Usage: python device_capability_verify.py <topic_id> [marker]
 """
 
 import asyncio
+import base64
 import json
 import os
-import subprocess
 import sys
 import urllib.request
 import uuid
+from urllib.parse import quote
 
 BASE = os.environ.get("BASE", "http://localhost:8081").rstrip("/")
 USER_HANDLE = os.environ.get("USER_HANDLE", "andy")
@@ -28,7 +29,7 @@ async def main() -> int:
 
     from app.common.auth import create_access_token
     from app.core.db import async_session_factory
-    from app.domain.repository import service as ws
+    from app.domain.project.forge import repository_data
     from app.domain.room_task.services import TaskService
     from app.domain.topic.models import Topic
     from app.domain.user.models import User
@@ -62,17 +63,16 @@ async def main() -> int:
 
     seen = 0
     if MARKER and project_id is not None:
-        for branch in branches:
-            result = subprocess.run(
-                ["git", "show", f"{branch}:DEVICE_PROBE.txt"],
-                cwd=ws.ensure_repo(project_id),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode == 0 and MARKER in result.stdout:
-                seen = 1
-                break
+        async with async_session_factory() as session:
+            for branch in branches:
+                data = await repository_data(
+                    project_id,
+                    session,
+                    f"/contents/DEVICE_PROBE.txt?ref={quote(branch, safe='')}",
+                )
+                if data and MARKER.encode() in base64.b64decode(data["content"]):
+                    seen = 1
+                    break
     print(f"MARKER={seen}")
     return 0
 

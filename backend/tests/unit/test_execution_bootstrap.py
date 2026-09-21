@@ -14,6 +14,27 @@ from app.domain.agent.harness.claude_code.remote_execution import runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import script
 
 
+def test_prepared_executor_can_start_offline_forge_transport(tmp_path, monkeypatch):
+    from app.domain.agent import forge_cli
+    from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+    from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    env = {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"}
+    payload = payload_for(project, resource, env)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    with bootstrap.prepared(payload, tmp_path) as (home, _config, _state, _env):
+        monkeypatch.setenv("HOME", str(home))
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        transport = {}
+        with forge_cli.github_transport(
+            {"api_url": "http://127.0.0.1:1", "project_id": str(project)}, transport
+        ):
+            assert transport["HTTPS_PROXY"].startswith("http://127.0.0.1:")
+            assert transport["NO_PROXY"] == ""
+
+
 def test_executor_prepares_room_without_model_credentials(tmp_path):
     pin = Path.home() / ".local/share/claude/versions/2.1.277"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (

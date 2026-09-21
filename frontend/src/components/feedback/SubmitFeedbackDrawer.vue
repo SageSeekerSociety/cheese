@@ -112,13 +112,9 @@ async function submit() {
           class="mb-4"
         />
 
-        <div class="t-eyebrow mb-2">附件</div>
-        <div class="d-flex align-center flex-wrap ga-2 mb-3">
-          <v-btn variant="outlined" color="secondary" size="small" prepend-icon="mdi-paperclip" disabled>
-            选择文件
-          </v-btn>
-          <span class="t-meta">上传还没接：附件字段后端还没有，这一版只能提交文字和现场信息。</span>
-        </div>
+        <!-- 这里原本有一个禁用的「选择文件」和一句「上传还没接」。两样都删了：一个按不动
+             的按钮占着一个操作位，旁边那行字解释的是**我们**还没做什么，而读的人只想知道
+             自己能提交什么。附件字段真做出来时再把这一块加回来。 -->
 
         <!-- 「附带现场」只在从 Agent 卡片进来时出现：那三段（发生了什么 / 复现 / 证据
              加会话 ID 与环境）是卡片带来的，自己从头填的人没有现场可附带。 -->

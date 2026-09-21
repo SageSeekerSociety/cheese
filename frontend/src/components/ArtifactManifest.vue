@@ -118,7 +118,13 @@ watch(
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
       <li v-for="row in rows" :key="row.id" class="made-row">
-        <span class="made-row__name t-body">{{ row.name }}</span>
+        <!-- 点进去是这一项自己那一页：版本历史、下载当时交出去的那一份。 -->
+        <router-link
+          class="made-row__name t-body"
+          :to="{ name: 'project-artifact', params: { projectId, artifactId: row.id } }"
+        >
+          {{ row.name }}
+        </router-link>
         <span class="made-row__when t-meta c-faint">{{ version(row) }}</span>
         <v-menu location="bottom end">
           <template #activator="{ props: menu }">
@@ -244,6 +250,10 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-decoration: none;
+}
+.made-row__name:hover {
+  text-decoration: underline;
 }
 .made-row__when {
   flex: 0 0 auto;

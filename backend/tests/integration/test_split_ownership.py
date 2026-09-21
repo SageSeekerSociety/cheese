@@ -16,6 +16,7 @@ commit's own author, and a room has one git identity.
 
 import asyncio
 import uuid
+from unittest.mock import AsyncMock
 
 from app.api.deps import get_work_runner
 from app.domain.review.github_pr import OpenedPR
@@ -34,6 +35,9 @@ class _FakeClient:
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
 
+    async def update_pr(self, number: int, *, title: str, body: str) -> dict:
+        return {"number": number, "title": title, "body": body}
+
     async def open_pr(
         self,
         *,
@@ -41,11 +45,10 @@ class _FakeClient:
         base: str,
         title: str,
         body: str,
-        as_user_token: str | None = None,
     ) -> OpenedPR:
-        type(self).opened.append({"body": body, "as_user_token": as_user_token})
+        type(self).opened.append({"body": body})
         return OpenedPR(
-            {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}, None
+            {"number": 7, "html_url": "https://github.com/acme/widgets/pull/7"}
         )
 
 
@@ -53,13 +56,9 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
     """A GitHub the platform can push to. `connected` maps a handle to the
     (numeric id, login) of the account they linked — both halves matter: the id
     is what GitHub matches a no-reply address on."""
-    from app.domain.repository import service as ws
     from app.domain.review import pr_publish
 
     _FakeClient.opened = []
-
-    async def _fake_tokens_for_project(_project_id, _session):
-        return _FakeTokens()
 
     async def _fake_user_token(_session, handle: str) -> str | None:
         return f"gho_{handle}" if handle in connected else None
@@ -72,23 +71,17 @@ def _github_world(monkeypatch, *, connected: dict[str, tuple[str, str]]) -> None
         return (user_id, {"login": login, "name": login.capitalize()})
 
     monkeypatch.setattr(
-        pr_publish, "github_app_tokens_for_project", _fake_tokens_for_project
+        pr_publish,
+        "proposal_client",
+        AsyncMock(return_value=_FakeClient("acme", "widgets", _FakeTokens())),
     )
-    monkeypatch.setattr(pr_publish, "GitHubPRClient", _FakeClient)
+    monkeypatch.setattr(pr_publish, "branch_head", AsyncMock(return_value="a" * 40))
     monkeypatch.setattr(
         "app.domain.oauth.services.get_github_user_token_for_handle", _fake_user_token
     )
     monkeypatch.setattr(
         "app.domain.oauth.services.get_github_profile_for_handle", _fake_profile
     )
-    monkeypatch.setattr(
-        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
-    )
-    monkeypatch.setattr(
-        ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
-    )
-    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
-    monkeypatch.setattr(ws, "upstream_default_branch", lambda repo, **_: "main")
 
 
 def _driving(monkeypatch, handle: str | None):
@@ -127,7 +120,7 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
                 project_id=uuid.UUID(project_id),
                 user_handle=handle,
                 role=ProjectRole.member,
-                actor=Actor(handle="alice", user_id=None, is_agent=False, via="token"),
+                actor=Actor(handle="alice", user_id=None, via="token"),
             )
             await s.commit()
 
@@ -253,10 +246,7 @@ def test_the_agent_handle_never_reaches_the_pr_however_the_work_was_split(
 def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     client, monkeypatch
 ):
-    """验收 3: alice owns the room, so she is the commit's author already.
-    `Co-authored-by: alice` next to `Requested-by: alice` claimed a second
-    contributor that does not exist — this is the ordinary case, and it is why
-    most changes carry no such trailer at all."""
+    """The human requester is credited once alongside the agent author."""
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, None)
     pid, root = _project(client, owner="alice")
@@ -264,7 +254,9 @@ def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
 
     body = _pr_body(client, pid, root)
     assert "Requested-by: Alice <583231+alice@users.noreply.github.com>" in body
-    assert "Co-authored-by" not in body
+    assert (
+        body.count("Co-authored-by: Alice <583231+alice@users.noreply.github.com>") == 1
+    )
 
 
 def test_a_card_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatch):

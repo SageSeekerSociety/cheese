@@ -6,7 +6,6 @@ This is the platform half: a background loop that periodically fires 定期巡�
 heartbeat (该催谁/该拆什么/风险). Per-topic serialization lives in ChatService.
 """
 
-import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,13 +15,10 @@ from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import github_app_read_token_for_project
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import agent_handle_column
 from app.domain.memory.dream import DREAM_PROMPT, latest_dream, open_dream
-from app.domain.project.repositories import ProjectRepository
-from app.domain.repository import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
 
@@ -47,6 +43,7 @@ class SchedulerService:
         # Consecutive ticks each card has lost to the network, so that a blip
         # and an outage do not read the same. One instance drives every tick.
         self._transient_misses: dict[uuid.UUID, int] = {}
+        self._dependency_wakes: set[uuid.UUID] = set()
 
     async def tick(self) -> dict:
         """Parked — see docs/agent-principles.md §12.
@@ -249,94 +246,6 @@ class SchedulerService:
         ).scalar()
         return found is not None
 
-    async def sync_upstreams(self) -> dict:
-        """Keep every linked project's base current with its upstream, unattended.
-
-        同步上游 has only ever been a button someone presses. Nobody presses it,
-        the platform's base falls behind the upstream's default branch, and then
-        accepting stops being able to push: GitHub rejects any branch whose
-        `.github/workflows/` differs from the default branch unless the
-        credential carries `workflows` (see `push_topic_branch_for_github_pr`,
-        whose comment reads "Nearly every card hit this"). The card then
-        degrades to a local merge and the work never leaves the platform.
-
-        Measured on 2026-08-11: three accepts in a row degraded that way; one
-        manual 同步上游 later, the next four opened PRs normally. Falling behind
-        is the whole cause, and staying current is something a loop can do — so
-        this is that loop.
-
-        Conflicts hand off exactly as the manual button does. `dispatch()`
-        reuses an already-open resolution task, so repeating this on an interval
-        cannot pile up duplicates, and a project with no owner is skipped rather
-        than dispatched into nowhere."""
-        from app.api.deps import get_work_runner
-        from app.domain.repository import upstream_conflict
-
-        runner = get_work_runner()
-        synced = 0
-        dispatched = 0
-        failed: list[str] = []
-        undispatched: list[str] = []
-        errors: list[str] = []
-        async with self._sessions() as session:
-            projects = await ProjectRepository(session).list_all()
-        for project in projects:
-            try:
-                if await asyncio.to_thread(ws.get_upstream, project.id) is None:
-                    continue  # no upstream linked — nothing to keep current
-                # A bound project fetches as the App; an unbound one fetches
-                # with no credential, so a private upstream it is not bound to
-                # fails here and is logged — never read on somebody else's key.
-                async with self._sessions() as session:
-                    token = await github_app_read_token_for_project(project.id, session)
-                result = await asyncio.to_thread(
-                    ws.sync_upstream, project.id, token=token
-                )
-            except Exception as exc:  # noqa: BLE001 — one project must not stop the rest
-                errors.append(f"{project.id}: {exc}")
-                logger.exception("upstream sync failed for project %s", project.id)
-                continue
-            if result.get("synced"):
-                synced += 1
-                continue
-            if not result.get("conflicts"):
-                # A failure that is not a conflict. `sync_upstream` reports those
-                # as {"synced": False, "reason": ...} with NO "conflicts" key —
-                # an expired App token, a 403, a fetch that blew its timeout, or
-                # the fast-forward losing its compare-and-set race. The test
-                # `not result.get("conflicts")` read every one of them as a
-                # success, so the job's own line said it had brought N projects
-                # current while some of them had not fetched a byte, and the
-                # reason was dropped. A base that is quietly behind is what makes
-                # an accept degrade to a local merge, which is the failure this
-                # whole job exists to prevent.
-                failed.append(f"{project.id}: {result.get('reason') or 'unknown'}")
-                continue
-            if not project.owner_handle:
-                # A conflict with nobody to hand it to. Skipping is right — there
-                # is no owner to ask — but this project stays behind until
-                # somebody notices, so say which one rather than dropping it.
-                undispatched.append(str(project.id))
-                continue
-            async with self._sessions() as session:
-                handoff = await upstream_conflict.dispatch(
-                    session,
-                    project.id,
-                    requested_by=project.owner_handle,
-                    chat=self._chat,
-                    runner=runner,
-                )
-                await session.commit()
-            if handoff is not None:
-                dispatched += 1
-        return {
-            "synced": synced,
-            "dispatched": dispatched,
-            "failed": failed,
-            "undispatched": undispatched,
-            "errors": errors,
-        }
-
     async def open_draft_prs(self) -> dict:
         """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
         without waiting for anyone to file a card.
@@ -346,9 +255,97 @@ class SchedulerService:
         """
         from app.domain.review import pr_publish
 
-        return dict(await pr_publish.sweep_draft_prs(self._sessions))
+        result = dict(await pr_publish.sweep_draft_prs(self._sessions))
+        await self.deliver_dependency_notices()
+        return result
 
-    async def poll_open_prs(self) -> dict:
+    async def deliver_dependency_notices(self) -> None:
+        """Retry durable notices until the executor acknowledges their blocks."""
+        from app.api.deps import get_work_runner
+        from app.domain.agent.platform_notices import (
+            EVENT_DEPENDENCY_CLOSED,
+            EVENT_DEPENDENCY_REJECTED,
+            SEVERITY_INFO,
+            WHO_CHEESE,
+            notice,
+        )
+        from app.domain.block.models import (
+            AGENT_NOTICE_META_KEY,
+            CONSUMED_TURN_META_KEY,
+            Block,
+        )
+        from app.domain.topic.models import Topic, TopicStatus
+
+        async with self._sessions() as session:
+            blocks = list(
+                await session.scalars(
+                    select(Block)
+                    .join(Topic, Block.topic_id == Topic.id)
+                    .where(
+                        Topic.status != TopicStatus.archived,
+                        Block.meta["event_type"]
+                        .as_string()
+                        .in_((EVENT_DEPENDENCY_CLOSED, EVENT_DEPENDENCY_REJECTED)),
+                        Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+                        Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
+                    )
+                    .order_by(Block.created_at, Block.id)
+                )
+            )
+        rooms: dict[uuid.UUID, list] = {}
+        for block in blocks:
+            rooms.setdefault(block.topic_id, []).append(block)
+        runner = get_work_runner()
+        for room_id, pending in rooms.items():
+            if room_id in self._dependency_wakes:
+                continue
+            if self._chat.has_running_turn(room_id):
+                await self._chat.notify_running_turn(
+                    room_id,
+                    "\n".join(b.meta[AGENT_NOTICE_META_KEY] for b in pending),
+                    blocks=[b.id for b in pending],
+                )
+                continue
+            self._dependency_wakes.add(room_id)
+            try:
+                # The prompt reads the durable blocks and stamps their receipts.
+                runner.submit(
+                    self._chat,
+                    room_id,
+                    author="system",
+                    content="",
+                    summon=True,
+                    nudge_event="正在检查任务依赖",
+                    nudge_meta=notice(
+                        EVENT_DEPENDENCY_CLOSED,
+                        severity=SEVERITY_INFO,
+                        who=WHO_CHEESE,
+                    ),
+                    on_done=lambda room=room_id: self._dependency_wakes.discard(room),
+                )
+            except Exception:
+                self._dependency_wakes.discard(room_id)
+                raise
+
+    async def forge_repository_changed(
+        self, kind: str, repo: str, project_id: str | None = None
+    ) -> None:
+        from app.domain.project.models import ProjectForge
+        from app.domain.review.pr_publish import sweep_draft_prs
+
+        query = select(ProjectForge.project_id).where(
+            ProjectForge.kind == kind, ProjectForge.repo == repo
+        )
+        if project_id is not None:
+            query = query.where(ProjectForge.project_id == uuid.UUID(project_id))
+        async with self._sessions() as session:
+            projects = list(await session.scalars(query))
+        for changed_project_id in projects:
+            await self.poll_open_prs(changed_project_id)
+            await sweep_draft_prs(self._sessions, changed_project_id)
+        await self.deliver_dependency_notices()
+
+    async def poll_open_prs(self, project_id: uuid.UUID | None = None) -> dict:
         """Reconcile returned batches and advance pending PR cards (#718) one
         step — mirror its merge state, send the events the 「谁的活」 table
         names, and merge an armed auto-merge card whose rules are satisfied
@@ -365,7 +362,7 @@ class SchedulerService:
             # NOT in this list — driving them means using the approver's GitHub
             # token on work nobody tracks any more. 那条判据留在 review 领域里
             # （open_pr_card_ids），调度器只管拿 id。
-            card_ids = await AcceptService(session).open_pr_card_ids()
+            card_ids = await AcceptService(session).open_pr_card_ids(project_id)
         for card_id in card_ids:
             async with self._sessions() as session:
                 try:
