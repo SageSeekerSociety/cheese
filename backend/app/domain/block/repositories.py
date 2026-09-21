@@ -165,19 +165,6 @@ class BlockRepository:
         )
         return list(rows)
 
-    async def published_text_for_turn(self, turn_id: uuid.UUID) -> str:
-        """The agent's actual conversation, excluding terminal activity."""
-        texts = await self._session.scalars(
-            select(Block.content)
-            .where(
-                Block.turn_id == turn_id,
-                agent_handle_column(Block.author),
-                Block.kind == BlockKind.message,
-            )
-            .order_by(Block.created_at, Block.id)
-        )
-        return "\n\n".join(texts)
-
     @staticmethod
     def _in_place(topic_id: uuid.UUID, task_id: uuid.UUID | None):
         """Rows belonging to one place: a room's own main line, or one thread.

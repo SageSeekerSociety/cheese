@@ -1,9 +1,4 @@
-"""Memory store abstraction.
-
-Two backends behind one Protocol (settings.memory_backend):
-- DbMemoryStore  — flat memory_entries projection in PG (Phase 0 default).
-- OpenVikingMemoryStore — embedded OpenViking layered memory (viking:// FS,
-  L0 abstracts injected, full text behind semantic search; spec §8.4/§15 Q9).
+"""Memory store — the flat ``memory_entries`` projection in PG.
 
 The block tree remains the source of truth; memory is a fast-recall projection.
 """
@@ -14,7 +9,6 @@ from typing import Any, Protocol
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.domain.memory.keywords import is_relevant, match_content, query_terms
 from app.domain.memory.models import MemoryEntry, MemoryLayer, MemoryScope
 
@@ -48,9 +42,8 @@ class MemoryStore(Protocol):
     async def recall(
         self, scope: MemoryScope, scope_id: str, limit: int = 50
     ) -> list[str]:
-        """Return up to `limit` memory facts, newest ones, oldest first.
-        DB backend: raw facts of every layer. OpenViking backend: L0 abstract
-        lines (summaries only — the layered-memory contract)."""
+        """Return up to `limit` memory facts, newest ones, oldest first —
+        raw facts of every layer."""
         ...
 
     async def recall_core(self, scope: MemoryScope, scope_id: str) -> list[str]:
@@ -142,10 +135,21 @@ async def recall_pools(
 # wider than what is returned or a highly-relevant older fact would be cut by
 # recency before it is ever scored. It is still a cap: in a pool with more than
 # _MIN_CANDIDATES keyword matches, the oldest of them never get ranked. Today's
-# pools are ~60 facts, so nothing comes close; revisit alongside real ranking
-# (the openviking backend) rather than by raising this number forever.
+# pools are ~60 facts, so nothing comes close.
 _CANDIDATE_FACTOR = 20
 _MIN_CANDIDATES = 200
+
+
+@dataclass(frozen=True)
+class MemoryHit:
+    """One search hit: the fact, and an address the caller can quote."""
+
+    uri: str
+    abstract: str
+    score: float
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"uri": self.uri, "abstract": self.abstract, "score": self.score}
 
 
 def _like(term: str) -> str:
@@ -229,8 +233,6 @@ class DbMemoryStore:
         worse than a weak one: one empty result and the caller concludes the
         memory does not exist, then walks into the very thing it warned about.
         """
-        from app.domain.memory.openviking_store import MemoryHit
-
         terms = query_terms(query)
         # No usable keyword (punctuation only, or nothing but stopwords): the
         # whole string is all the signal there is.
@@ -274,14 +276,4 @@ class DbMemoryStore:
 
 
 def memory_store(session: AsyncSession) -> MemoryStore:
-    """Backend selector (settings.memory_backend: "db" | "openviking").
-
-    The OpenViking store is process-global and ignores the DB session; the
-    parameter keeps one call shape for both backends."""
-    if settings.memory_backend == "openviking":
-        # Lazy import: the openviking package pulls heavy deps (litellm etc.)
-        # that "db" deployments never need to load.
-        from app.domain.memory.openviking_store import OpenVikingMemoryStore
-
-        return OpenVikingMemoryStore()
     return DbMemoryStore(session)
