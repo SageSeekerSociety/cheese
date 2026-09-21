@@ -52,18 +52,13 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def rewrite_old_author_types(conn) -> None:
-    """把两个旧值改写成 participant。测试跑的就是这个函数。"""
-    conn.execute(
+def upgrade() -> None:
+    op.get_bind().execute(
         sa.text(
             "UPDATE blocks SET author_type = 'participant' "
             "WHERE author_type IN ('human', 'ai')"
         )
     )
-
-
-def upgrade() -> None:
-    rewrite_old_author_types(op.get_bind())
 
 
 def downgrade() -> None:

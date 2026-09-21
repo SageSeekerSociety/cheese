@@ -11,9 +11,15 @@
 而 ``author_type.value in {"human": 0, "ai": 0}`` 里旧值是一个**字符串字面量**，
 名字从来没出现过 —— 活跃度统计就是这样漏过去的，它不会报错，只会安静地把两个数
 字都算成 0。所以第二条不去追字面量（``"human"``/``"ai"`` 在别的地方有别的意思），
-而是追**把 ``author_type`` 当字符串读**这件事本身：``author_type.value``、
-``author_type == "..."`` 和 ``block["author_type"] == "..."``。档位是一个两档枚
-举，取出它的字符串再拿去对照或做键，问的一定是它答不了的那个问题。
+而是追**没把档位当成一个枚举成员来读**这件事本身：``author_type.value``，以及
+拿 ``author_type``（或 ``block["author_type"]``）去和一个不是 ``AuthorType.<成员>``
+的东西比。档位是一个两档枚举，除了和成员比，剩下的比法问的一定是它答不了的那个
+问题。
+
+**另一侧是个变量也算**，这是这条判据第一版漏掉的那种写法：
+``sim_real.py`` 的 ``count_blocks(topic_id, author_type, kind)`` 里比的是
+``b["author_type"] != author_type``，字面量在调用点（``"ai"``、``"human"``），两边
+各自看都干净，合起来就是三个计数恒为 0。
 
 和 ``test_no_adhoc_auth_helpers.py`` 一样，第二条是一条**静态**测试 —— 被测的东
 西本身就是源码树的一个性质，属于 CLAUDE.md 那条「测行为、不读源码」的例外。
@@ -45,8 +51,8 @@ def _sources() -> list[tuple[pathlib.Path, str]]:
     return found
 
 
-def _author_type_as_a_string_lines(tree: ast.AST) -> list[int]:
-    """把 ``author_type`` 当字符串读的那几行。"""
+def _author_type_read_as_something_else_lines(tree: ast.AST) -> list[int]:
+    """把档位读成字符串、或者拿它和一个不是枚举成员的东西比的那几行。"""
 
     def names_the_column(node: ast.AST) -> bool:
         if isinstance(node, ast.Name):
@@ -57,12 +63,17 @@ def _author_type_as_a_string_lines(tree: ast.AST) -> list[int]:
             return isinstance(key, ast.Constant) and key.value == "author_type"
         return isinstance(node, ast.Attribute) and node.attr == "author_type"
 
-    def against_a_string(node: ast.Compare) -> bool:
+    def names_a_member(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "AuthorType"
+        )
+
+    def against_a_non_member(node: ast.Compare) -> bool:
         sides = ((node.left, node.comparators[0]), (node.comparators[0], node.left))
         return any(
-            names_the_column(column)
-            and isinstance(other, ast.Constant)
-            and isinstance(other.value, str)
+            names_the_column(column) and not names_a_member(other)
             for column, other in sides
         )
 
@@ -74,7 +85,7 @@ def _author_type_as_a_string_lines(tree: ast.AST) -> list[int]:
             and names_the_column(node.value)
         ):
             lines.add(node.lineno)
-        elif isinstance(node, ast.Compare) and against_a_string(node):
+        elif isinstance(node, ast.Compare) and against_a_non_member(node):
             lines.add(node.lineno)
     return sorted(lines)
 
@@ -98,17 +109,19 @@ def test_every_scanned_root_still_exists() -> None:
     assert not missing, f"扫描根已经不存在了：{missing}"
 
 
-def test_no_one_reads_the_author_type_column_as_a_string() -> None:
+def test_no_one_reads_the_author_type_column_as_anything_but_a_member() -> None:
     """取出档位的字符串，为的只会是拿它去对照旧值 —— 而它已经答不了那个问题。"""
     offenders: list[str] = []
     for path, rel in _sources():
-        for lineno in _author_type_as_a_string_lines(ast.parse(path.read_text())):
+        for lineno in _author_type_read_as_something_else_lines(
+            ast.parse(path.read_text())
+        ):
             offenders.append(f"{rel}:{lineno}")
 
     assert not offenders, (
-        "这些地方把事件行的档位取成字符串再用：\n  "
+        "这些地方没把事件行的档位当成一个枚举成员来读：\n  "
         + "\n  ".join(offenders)
-        + "\n\n档位只有「参与者」和「平台」两档，取它的字符串去当字典键或者比对，"
-        "问的一定是署名才答得了的问题（looks_like_agent_handle），"
-        "而档位本身用 app.domain.block.authorship 判。"
+        + "\n\n档位只有「参与者」和「平台」两档，取它的字符串去当字典键、或者拿它"
+        "和一个字面量、一个变量比，问的一定是署名才答得了的问题"
+        "（looks_like_agent_handle），而档位本身用 app.domain.block.authorship 判。"
     )

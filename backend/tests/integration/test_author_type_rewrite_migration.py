@@ -10,9 +10,11 @@
 上一版镜像，它的枚举里没有 `platform`。所以改写 `system` 的那一行 SQL 属于下一次
 发布，这里出现它就是把 dev 在窗口里打穿。
 
-测试跑的是**迁移里那段真实 SQL**（`rewrite_old_author_types`，从迁移模块导入），
-不是照抄一份——不然测的就不是要发布的东西了。判据也落在读得出来的那一头：改写完
-之后，同一批行由 ORM 取回来，每一条都是枚举认得的值。
+测试跑的是**迁移的 `upgrade()` 本身**——把迁移模块加载进来，配一个真的 alembic
+operations 上下文，然后调它，跟 `alembic upgrade head` 走的是同一条路。不抽一个
+函数出来绕开 alembic：那样一来「`upgrade()` 确实调了改写」就没人盯着，把那一行
+删掉这条测试照样全绿，而 dev 部署之后每一条旧行被取到都是 `LookupError`。判据落
+在读得出来的那一头：改写完之后，同一批行由 ORM 取回来，每一条都是枚举认得的值。
 """
 
 import asyncio
@@ -21,6 +23,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import select, text
 
 from app.domain.block.models import AuthorType, Block
@@ -63,8 +67,8 @@ def _load_migration():
 
 
 def test_every_author_type_row_comes_back_as_a_value_the_enum_has(client):
-    """铺出库里有过的每一个值，跑一遍改写，再从 ORM 读回来核对。"""
-    rewrite = _load_migration().rewrite_old_author_types
+    """铺出库里有过的每一个值，跑一遍 `upgrade()`，再从 ORM 读回来核对。"""
+    migration = _load_migration()
     ids: dict[str, uuid.UUID] = {}
 
     async def _seed() -> None:
@@ -108,9 +112,14 @@ def test_every_author_type_row_comes_back_as_a_value_the_enum_has(client):
 
     asyncio.run(_seed())
 
+    def _upgrade(conn) -> None:
+        """跟 `alembic upgrade head` 一样：给 `op` 配上下文，再调 `upgrade()`。"""
+        with Operations.context(MigrationContext.configure(conn)):
+            migration.upgrade()
+
     async def _rewrite() -> None:
         async with client.test_factory() as s:
-            await s.run_sync(lambda conn: rewrite(conn))
+            await s.run_sync(_upgrade)
             await s.commit()
 
     asyncio.run(_rewrite())
