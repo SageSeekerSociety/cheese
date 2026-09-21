@@ -425,6 +425,10 @@ def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
     _add_member(client, pid, "bob")
     _add_member(client, pid, "alice")
     _notify(client, pid, "bob拍板", target="bob", kind="decision_request")
+    # Alice has mail of her own in this project. Without it the page could be
+    # reading *her* inbox and still look right, because the only thing she owns
+    # here would be her row of the broadcast — which bob owns a copy of too.
+    _notify(client, pid, "alice拍板", target="alice", kind="decision_request")
     _broadcast(client, pid, "谁来都行", kind="decision_request", level="strong")
 
     # Anonymous → 401, and nothing of bob's leaks.
@@ -448,9 +452,23 @@ def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
         assert r.status_code == 200, r.text
         return {w["title"] for w in r.json()["data"]["waiting_on_you"]}
 
-    # bob's own page shows bob's items; a teammate sees only the broadcasts.
+    # bob's own page shows bob's items — broadcasts included, he has a row of his
+    # own now. On bob's page alice gets nothing: not bob's mail, and not her own
+    # either, which is what the page hands out when it reads the viewer's inbox
+    # and puts the member's name on it.
     assert waiting("bob") == {"bob拍板", "谁来都行"}
-    assert waiting("alice") == {"谁来都行"}
+    assert waiting("alice") == set()
+
+    # And alice's own page is alice's own mail, not bob's.
+    r = client.get(
+        f"/projects/{pid}/members/alice/summary",
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert {w["title"] for w in r.json()["data"]["waiting_on_you"]} == {
+        "alice拍板",
+        "谁来都行",
+    }
 
 
 # ---- topic read-cursor: identity comes from the credential, not the body ------
@@ -625,3 +643,102 @@ def test_topic_unread_refuses_an_unverified_or_mismatched_handle(client):
         f"/projects/{pid}/topic-unread", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200, r.text
+
+
+# ---- deleted from 站内信 means gone from the project side too ------------------
+
+
+def _relevance(client, project_id: str, handle: str) -> dict[str, dict]:
+    r = client.get(
+        "/topics",
+        params={"project_id": project_id},
+        headers=session_auth_headers(handle),
+    )
+    assert r.status_code == 200, r.text
+    return {t["title"]: t for t in r.json()["data"]["data"]}
+
+
+def _notify_in_room(client, project_id: str, topic_id: str, title: str, **kw) -> dict:
+    r = client.post(
+        f"/projects/{project_id}/alerts",
+        json={"level": "strong", "title": title, "topic_id": topic_id, **kw},
+    )
+    assert r.status_code == 200, r.text
+    rows = r.json()["data"]["data"]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_deleting_a_notification_takes_it_out_of_the_project_side_too(client):
+    """站内信里删掉的那一条，项目这一侧也不能再算它。
+
+    并表之前删不掉：软删只作用在社交那张表上，项目通知在另一张表里，两边碰不到。
+    现在是同一行 —— 站内信按账号读它，项目收件箱按 handle 读同一行 —— 所以
+    `DELETE /notifications/{id}` 之后，列表、「等你决定」、角标和话题相关性里
+    都不能再出现它，否则人删了它，它还在那儿亮着。
+    """
+    from tests.conftest import seed_user
+
+    account = {"Authorization": f"Bearer {seed_user(client, 'alice')}"}
+    pid = _project(client)
+    _add_member(client, pid, "alice")
+    tid = _topic(client, pid, "被@的房间")
+    decision = _notify(
+        client,
+        pid,
+        "alice拍板",
+        target="alice",
+        level="strong",
+        kind="decision_request",
+    )
+    mention = _notify_in_room(
+        client, pid, tid, "有人@你", kind="mention", target_handle="alice"
+    )
+
+    assert _unread(client, pid, "alice") == 2
+    assert _relevance(client, pid, "alice")["被@的房间"]["awaits_me"] is True
+
+    for row in (decision, mention):
+        r = client.delete(f"/notifications/{row['id']}", headers=account)
+        assert r.status_code == 204, r.text
+
+    alice = session_auth_headers("alice")
+    assert _titles(client.get(f"/projects/{pid}/alerts", headers=alice)) == []
+    assert _titles(client.get(f"/projects/{pid}/inbox", headers=alice)) == []
+    assert _unread(client, pid, "alice") == 0
+    assert _relevance(client, pid, "alice")["被@的房间"]["awaits_me"] is False
+
+
+# ---- a broadcast that reaches nobody is not a success -------------------------
+
+
+def test_a_broadcast_with_nobody_to_send_it_to_is_refused(client):
+    """展开成零行的广播报错，不静默回 200。
+
+    广播现在是「名册上一人一行」，而一间只坐着芝士的房间展开出来是空的 —— 回 200
+    的话 `cheese notify` 把返回值整个丢掉，写的人和该收的人都不会知道这条通知掉在
+    了地上。并表之前它是一行 `target_handle IS NULL`，谁读都看得见，丢不掉。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid, "只有芝士在")
+
+    r = client.post(
+        f"/projects/{pid}/alerts",
+        json={
+            "level": "light",
+            "kind": "change_alert",
+            "title": "没人收得到",
+            "topic_id": tid,
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "收件人" in r.text
+
+    # 点名一个人照发 —— 拦的是「到不了任何人」，不是这间房间。
+    _add_member(client, pid, "alice")
+    assert (
+        _notify_in_room(
+            client, pid, tid, "点名给alice", kind="change_alert", target_handle="alice"
+        )["target_handle"]
+        == "alice"
+    )

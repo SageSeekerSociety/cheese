@@ -39,6 +39,11 @@ depends_on: str | Sequence[str] | None = None
 #:
 #: `left(handle, 7) <> 'cheese-'` 是 `identity/handles.looks_like_agent_handle`
 #: 的 SQL 孪生，判据逐字相同（不写 LIKE：`%` 要跨 DBAPI 的参数风格转义）。
+#:
+#: handle 查账号那一句和服务侧是同一句：`UserRepository.get_by_username` 带
+#: `deleted_at IS NULL`，这里也带。`user.username` 上没有唯一约束，所以一个注销
+#: 后被重新注册的 handle 在表里有两行，`ORDER BY u.id` 取的是最老的那一行 ——
+#: 不挡注销账号就正好指向那个死账号，搬过来的通知永远不出现在真人的站内信里。
 MOVE_ALERTS = sa.text(
     """
     INSERT INTO notification (
@@ -49,7 +54,8 @@ MOVE_ALERTS = sa.text(
     )
     SELECT
         nextval('notification_seq'),
-        (SELECT u.id FROM "user" u WHERE u.username = r.handle
+        (SELECT u.id FROM "user" u
+          WHERE u.username = r.handle AND u.deleted_at IS NULL
           ORDER BY u.id LIMIT 1),
         r.handle,
         CASE a.kind WHEN 'mention' THEN 'MENTION' ELSE a.kind END,
@@ -159,5 +165,10 @@ def downgrade() -> None:
         "recipient_handle",
     ):
         op.execute(f"ALTER TABLE notification DROP COLUMN IF EXISTS {column}")
-    op.execute("UPDATE notification SET receiver_id = 0 WHERE receiver_id IS NULL")
+    # `receiver_id` 为空的行不只是搬家搬来的：handle 在账号池里没有对应行时，新
+    # 代码本来就这么写（`services.py` 的 `create`），@ 一个 agent 就产生一条。把
+    # 它们编成「0 号用户」是为了把 NOT NULL 加回去而造一个不存在的账号 —— 那个
+    # 信箱谁也打不开，`count_unread_for_user(0)` 却认得它们。删掉：知是那一侧按
+    # `receiver_id` 查，本来就一条都读不到它们。
+    op.execute("DELETE FROM notification WHERE receiver_id IS NULL")
     op.execute("ALTER TABLE notification ALTER COLUMN receiver_id SET NOT NULL")

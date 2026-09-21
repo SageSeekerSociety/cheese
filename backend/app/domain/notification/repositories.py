@@ -249,7 +249,13 @@ class NotificationRepository:
         return notification
 
     def _mine_in(self, stmt, project_id: uuid.UUID, recipient_handle: str | None):
-        stmt = stmt.where(Notification.project_id == project_id)
+        # `deleted_at` 也挡在这里：一条通知现在两侧都读得到（站内信按
+        # `receiver_id`，项目收件箱按 handle），所以 `DELETE /notifications/{id}`
+        # 软删掉的那一条不能还在项目角标和「等你决定」里亮着。
+        stmt = stmt.where(
+            Notification.project_id == project_id,
+            Notification.deleted_at.is_(None),
+        )
         if recipient_handle is not None:
             stmt = stmt.where(Notification.recipient_handle == recipient_handle)
         return stmt
@@ -330,6 +336,7 @@ class NotificationRepository:
                 Notification.topic_id.in_(topic_ids),
                 Notification.type == NotificationType.MENTION.value,
                 Notification.recipient_handle == recipient_handle,
+                Notification.deleted_at.is_(None),
             )
             .group_by(Notification.topic_id)
         )

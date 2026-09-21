@@ -145,10 +145,9 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
-- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）在写入时展开成名册上一人一行。
+- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）在写入时展开成名册上一人一行 —— 说了房间就是房间的名册，没说房间就是项目名册加项目主人，agent 不在里面；展开成零行（名册上只剩 agent）直接报错，不静默丢掉。
 - **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
-- **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
 - **实现**：`ProjectNotificationService`（`backend/app/domain/notification/`，与人对人的通知同住 `notification` 一张表）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`，通知 id 是 bigint。前端 `components/NeedsYou.vue`。
 
 ### 3.8 里程碑 / 日历  ✅ / 🟡

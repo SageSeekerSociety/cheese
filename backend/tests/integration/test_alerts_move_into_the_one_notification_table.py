@@ -228,6 +228,48 @@ def test_running_the_move_twice_adds_nothing(client):
     }
 
 
+def test_the_move_finds_the_live_account_not_a_retired_one(client):
+    """搬过来的行挂在**活着**的那个账号上。
+
+    `user.username` 上没有唯一约束，所以一个 handle 注销之后被重新注册就是两行。
+    按 id 取最老的一行正好取中那个死账号 —— 这条通知于是永远不出现在真人的站内信
+    里。服务侧的判据（`UserRepository.get_by_username`）挡了注销账号，搬家那一句
+    要挡同一个，否则两边认的不是同一个人。
+    """
+    pid, tid = _room(client)
+    retired, live = _two_accounts_named(client, "alice")
+    _seed_alerts(
+        client, pid, tid, [{"target": "alice", "title": "给alice", "topic": True}]
+    )
+
+    _upgrade(client)
+
+    assert _receivers_of(client, "给alice") == {live}, retired
+
+
+def test_rolling_back_does_not_invent_an_account_for_the_rows_it_keeps(client):
+    """回滚把收件人为空的行删掉，而不是编一个 0 号用户。
+
+    这些行不只是搬家搬来的：handle 在账号池里没有对应行时新代码本来就这么写，
+    @ 一个 agent 就产生一条，而 `DELETE ... delivery_key LIKE 'alert:%'` 删不掉
+    它们。给它们编一个不存在的账号 id，回滚之后它们就停在那个谁也打不开的信箱
+    里，而按 `receiver_id` 数未读的那一侧认得它们。
+    """
+    pid, tid = _room(client)
+    # 点名给 agent 的那一条：`cheese-…` 在账号池里没有行，所以 `receiver_id` 为空。
+    _seed_alerts(
+        client, pid, tid, [{"target": AGENT, "title": "点名给芝士", "topic": True}]
+    )
+    _upgrade(client)
+    orphans = _ids_without_an_account(client)
+    assert orphans, "这一步该留下一条收件人为空的行，否则下面测不到东西"
+
+    _downgrade(client)
+
+    assert _count_where(client, "receiver_id = 0") == 0
+    assert _count_where(client, f"id IN ({','.join(str(i) for i in orphans)})") == 0
+
+
 def _recipients_of(client, title: str) -> set[str]:
     """这条通知在收件箱里落到了谁头上。"""
 
@@ -238,5 +280,86 @@ def _recipients_of(client, title: str) -> set[str]:
                 {"title": title},
             )
             return {row[0] for row in rows.all()}
+
+    return asyncio.run(_run())
+
+
+def _receivers_of(client, title: str) -> set[int | None]:
+    """这条通知挂在账号池里的哪一行上。"""
+
+    async def _run() -> set[int | None]:
+        async with client.test_factory() as s:
+            rows = await s.execute(
+                text("SELECT receiver_id FROM notification WHERE title = :title"),
+                {"title": title},
+            )
+            return {row[0] for row in rows.all()}
+
+    return asyncio.run(_run())
+
+
+def _two_accounts_named(client, handle: str) -> tuple[int, int]:
+    """同一个 handle 的两行：先注销的那一行，和现在活着的那一行。"""
+
+    async def _run() -> tuple[int, int]:
+        async with client.test_factory() as s:
+            now = datetime.now(UTC)
+            ids = []
+            for deleted_at in (now, None):
+                row = await s.execute(
+                    text(
+                        'INSERT INTO "user"'
+                        " (username, email, created_at, updated_at, deleted_at)"
+                        " VALUES (:h, :email, :now, :now, :deleted_at)"
+                        " RETURNING id"
+                    ),
+                    {
+                        "h": handle,
+                        "email": f"{uuid.uuid4().hex}@example.com",
+                        "now": now,
+                        "deleted_at": deleted_at,
+                    },
+                )
+                ids.append(int(row.scalar_one()))
+            await s.commit()
+            return ids[0], ids[1]
+
+    return asyncio.run(_run())
+
+
+def _downgrade(client) -> None:
+    def _apply(conn) -> None:
+        with Operations.context(MigrationContext.configure(conn)):
+            _load().downgrade()
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            await (await s.connection()).run_sync(_apply)
+            await s.commit()
+
+    asyncio.run(_run())
+
+
+def _ids_without_an_account(client) -> list[int]:
+    async def _run() -> list[int]:
+        async with client.test_factory() as s:
+            rows = await s.execute(
+                text("SELECT id FROM notification WHERE receiver_id IS NULL")
+            )
+            return [int(row[0]) for row in rows.all()]
+
+    return asyncio.run(_run())
+
+
+def _count_where(client, predicate: str) -> int:
+    async def _run() -> int:
+        async with client.test_factory() as s:
+            return int(
+                (
+                    await s.execute(
+                        text(f"SELECT count(*) FROM notification WHERE {predicate}")
+                    )
+                ).scalar_one()
+            )
 
     return asyncio.run(_run())

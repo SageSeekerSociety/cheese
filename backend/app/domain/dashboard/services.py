@@ -103,9 +103,8 @@ class DashboardService:
         waiting on them, their role. Doubles as the portfolio source.
 
         The public half (topics, contributions, role) is the same for everyone;
-        ``waiting_on_you`` is the member's mailbox, so it is intersected with
-        what ``viewer`` may see: broadcasts for any verified viewer, the
-        member's own items only on their own page."""
+        ``waiting_on_you`` is one person's mailbox, so only that person gets it
+        — on anybody else's page it is empty."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         members = await self._members.list_for_project(project_id)
@@ -151,17 +150,20 @@ class DashboardService:
                 )
             )
         ) or 0
-        inbox = await self._notifs.list_inbox(project_id, recipient_handle=viewer)
+        # 收件箱是**这个成员自己**的，所以只有他本人打得开；别人的页面上是空的。
+        # 以前广播是一行谁都看得见的记录，于是别人的页面上还剩「也在等他」的那一
+        # 档可以交集；广播现在在写入时就展开成一人一行，没有可交的东西了。
+        inbox = (
+            await self._notifs.list_inbox(project_id, recipient_handle=user_handle)
+            if viewer == user_handle
+            else []
+        )
         return {
             "handle": user_handle,
             "role": member.role.value if member else None,
             "topics_started": started,
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
-            # 读的是**看的人**自己的收件箱，一条别人的信也不经过这里。以前这
-            # 行下面还有一道过滤：广播是一行谁都看得见的记录，所以看别人的页面时
-            # 要把它从「点名给我的」里挑出来。广播现在在写入时就一人一行，交集自
-            # 己成立了。
             "waiting_on_you": [
                 {
                     "id": str(n.id),
