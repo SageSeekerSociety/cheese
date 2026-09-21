@@ -870,6 +870,33 @@ export function getProjectAgentOptions(projectId: string): Promise<AgentTypeOpti
   return request<AgentTypeOptions>(`/projects/${encodeURIComponent(projectId)}/agent-options`)
 }
 
+// 项目默认模型：#1365 之后主线（房间聊天）唯一能读到「项目想用哪个模型」的地方。
+// 旧 UI 是 agent 上选模型反推池；现在主线读项目默认，agent 上的模型只在派子 agent
+// 时用。这条端点给项目默认一个真正的写入口（之前只能手改数据库）。
+export interface ProjectDefaultModel {
+  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  model: string | null
+  /** 没设显式默认时，部署兜底算出来的那个 */
+  deployment_default: string | null
+  /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
+  choices: AgentFieldChoice[]
+  can_manage: boolean
+}
+
+export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
+}
+
+export function setProjectDefaultModel(
+  projectId: string,
+  model: string | null,
+): Promise<ProjectDefaultModel> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  })
+}
+
 // Built-in starting configurations, copied only when creating an agent.
 export function listAgentTypes(): Promise<ListPayload<AgentType>> {
   return request<ListPayload<AgentType>>('/agent-types')

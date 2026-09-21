@@ -90,6 +90,7 @@ from app.domain.project.repositories import (
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
+    ProjectDefaultModelUpdate,
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
@@ -1120,6 +1121,76 @@ async def save_forge_attribution(
     project.settings = values
     await db.flush()
     return await get_forge_attribution(project_id, db, resolver)
+
+
+# --- 项目默认模型（#1365 之后主线的唯一模型来源）---
+
+
+def _default_model_state(project_settings: dict | None) -> dict:
+    from app.domain.agent_instance.configuration import model_choices
+
+    choices = model_choices(project_settings)
+    chosen = (project_settings or {}).get("default_model")
+    # 落在目录里才是「真的设了」——历史数据可能写过部署兜底算不出来的名字，
+    # 那种情况按没设处理，由调用方决定要不要报。这里只读，不修。
+    effective = chosen if isinstance(chosen, str) and chosen in {c["id"] for c in choices} else None
+    return {
+        "model": effective,
+        "deployment_default": next(
+            (c["id"] for c in choices if c["default"]), None
+        ),
+        "choices": choices,
+        "can_manage": False,  # 由路由层按权限填
+    }
+
+
+@router.get("/{project_id}/default-model")
+async def get_default_model(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    state = _default_model_state(project.settings)
+    try:
+        await MemberService(db).require_manager(project_id, actor)
+        state["can_manage"] = True
+    except ForbiddenError:
+        state["can_manage"] = False
+    return ok(state)
+
+
+@router.put("/{project_id}/default-model")
+async def save_default_model(
+    project_id: uuid.UUID,
+    body: ProjectDefaultModelUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if body.model is None:
+        values.pop("default_model", None)
+    else:
+        from app.domain.agent_instance.configuration import model_choices
+
+        valid = {c["id"] for c in model_choices(values)}
+        if body.model not in valid:
+            raise ValidationError(
+                f"当前项目无法使用模型 {body.model!r}，请选择可用模型"
+            )
+        values["default_model"] = body.model
+    project.settings = values
+    await db.flush()
+    state = _default_model_state(project.settings)
+    state["can_manage"] = True
+    return ok(state)
 
 
 # --- Compute pool (design §3): which machine runs this project's sandbox ---
