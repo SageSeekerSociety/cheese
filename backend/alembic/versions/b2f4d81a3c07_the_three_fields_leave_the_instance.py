@@ -1,7 +1,7 @@
 """the model, the harness and the effort leave a saved configuration
 
 Revision ID: b2f4d81a3c07
-Revises: c5e7d2a91f30
+Revises: b7c4e19f2a83
 Create Date: 2026-09-21 21:00:00
 
 ``agent_instances.configuration`` has carried six keys since d7a91c4e2b60 wrote
@@ -35,7 +35,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "b2f4d81a3c07"
-down_revision: str | Sequence[str] | None = "c5e7d2a91f30"
+down_revision: str | Sequence[str] | None = "b7c4e19f2a83"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
