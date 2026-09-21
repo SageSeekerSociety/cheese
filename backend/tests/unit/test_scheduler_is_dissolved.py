@@ -14,6 +14,9 @@ import re
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -85,6 +88,14 @@ def test_the_scheduler_interval_knob_is_gone() -> None:
     assert _hits(r"scheduler_interval_seconds|SCHEDULER_INTERVAL_SECONDS") == []
 
 
+@pytest.fixture(scope="module")
+def probe() -> TestClient:
+    """The app with no lifespan run: the router answers every probe below
+    before a dependency or a handler does, so this needs no database. Same
+    client shape as tests/contract/test_api_addressing_contract.py."""
+    return TestClient(app)
+
+
 @pytest.mark.parametrize(
     "path",
     [
@@ -93,12 +104,19 @@ def test_the_scheduler_interval_knob_is_gone() -> None:
         "/admin/scheduler/sweep-abandoned-gates",
     ],
 )
-def test_the_scheduler_routes_are_not_mounted(path: str) -> None:
+def test_the_scheduler_routes_are_not_mounted(probe: TestClient, path: str) -> None:
     """三个手动扳机跟着包一起退场——它们还是全仓唯一一组没有鉴权的 `/admin/*`。
     闸门那条死锁的出口仍然在，只是只剩周期扫底一条，上界是 `gate_sweep_interval_s`。
 
-    读的是 app 自己的 OpenAPI，不是 `app.routes`：FastAPI 把 include 进来的路由存成
-    一条 `_IncludedRouter`，它自己的 `path` 是 `None`，照着那张表找什么都找不到。"""
-    from app.main import app
+    问服务端，不问 schema，也不问 `app.routes`。`app.openapi()` 只收
+    `route.include_in_schema` 为真的（`fastapi/openapi/utils.py`），而
+    `app/api/routes/` 里这个标志关掉了 17 处——把它们挂回去时顺手关掉，schema
+    读法就看不见。`app.routes` 也不行：FastAPI 把 include 进来的 router 存成一条
+    自己 `path` 是 `None` 的记录，照那张表找什么都找不到。发一次请求两头都覆盖。
 
-    assert path not in app.openapi()["paths"]
+    404 是只有「没挂」才答得出的：挂着但拒绝调用者是 401/403，挂着但方法不对是
+    405，挂着而没有数据库则直接抛出到客户端外面——三种都是红的。"""
+    response = probe.post(path)
+    assert response.status_code == 404, (
+        f"POST {path} 答了 {response.status_code}，说明它又挂回来了"
+    )

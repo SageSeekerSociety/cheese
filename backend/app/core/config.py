@@ -591,10 +591,10 @@ class Settings(BaseSettings):
     # The most one upload may carry. A device that sends more gets 413 and
     # keeps its home; the sweep says so every tick until somebody looks.
     transcripts_max_bytes: int = 512 * 1024 * 1024
-    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
-    # unlike the heartbeat above: it consumes no model calls unless it actually
-    # finds a killed turn, and its whole purpose is catching the case where
-    # nothing else will ever look — a turn dying without the process dying.
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by
+    # default: it consumes no model calls unless it actually finds a killed
+    # turn, and its whole purpose is catching the case where nothing else will
+    # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     chat_progress_check_interval_s: int = 15
     chat_progress_reminder_after_s: int = Field(default=600, gt=0)

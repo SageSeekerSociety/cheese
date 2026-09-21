@@ -10,7 +10,10 @@ This guards the *absence*: re-mounting a route makes it fail with the reason,
 which a deleted test file could not do.
 """
 
+import re
+
 import pytest
+from fastapi.testclient import TestClient
 
 from app.main import app
 
@@ -21,24 +24,35 @@ PARKED = [
 ]
 
 
-def _mounted() -> set[tuple[str, str]]:
-    """What the app actually serves, read off its own OpenAPI schema.
-
-    NOT `app.routes`: FastAPI keeps an included router as one `_IncludedRouter`
-    entry whose own `path` is `None`, so walking that list finds none of the
-    routes this file is here to watch for — the guard passed no matter what was
-    mounted."""
-    live: set[tuple[str, str]] = set()
-    for path, operations in app.openapi()["paths"].items():
-        for method in operations:
-            live.add((method.upper(), path))
-    return live
+@pytest.fixture(scope="module")
+def probe() -> TestClient:
+    """The app as the gateway hands it a request, with no lifespan run: the
+    router answers every probe below before a dependency or a handler does, so
+    this needs no database. Same client shape as
+    tests/contract/test_api_addressing_contract.py."""
+    return TestClient(app)
 
 
 @pytest.mark.parametrize(("method", "path"), PARKED)
-def test_a_parked_bypass_turn_has_no_route(method: str, path: str) -> None:
-    assert (method, path) not in _mounted(), (
-        f"{method} {path} is mounted again. These three were parked on "
-        "2026-08-12 — read docs/agent-principles.md §12 before restoring one, "
-        "and bring a design that does not give the turn its own session."
+def test_a_parked_bypass_turn_has_no_route(
+    probe: TestClient, method: str, path: str
+) -> None:
+    """Ask the server what it serves, not a schema, and not `app.routes`.
+
+    `app.openapi()` is built from `route.include_in_schema` alone
+    (fastapi/openapi/utils.py), and that flag is off on 17 routes under
+    `app/api/routes/` — so a schema read calls a hidden remount absent. Walking
+    `app.routes` is no better: FastAPI keeps an included router as one entry
+    whose own `path` is `None`, so none of these three appear there either way.
+    A request is the only reading that covers both.
+
+    404 is what only an unmounted path answers: a route that exists but declines
+    the caller answers 401 or 403, one that exists under another verb answers
+    405, and one that runs without a database raises out of the client."""
+    response = probe.request(method, re.sub(r"\{[^}]+\}", "7", path))
+    assert response.status_code == 404, (
+        f"{method} {path} answered {response.status_code} — it is mounted "
+        "again. These three were parked on 2026-08-12 — read "
+        "docs/agent-principles.md §12 before restoring one, and bring a design "
+        "that does not give the turn its own session."
     )
