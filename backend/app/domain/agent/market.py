@@ -29,6 +29,25 @@ from app.domain.device.supply import (
 COMPUTE_DEVICE = "device"
 COMPUTE_CLOUD = "cloud"
 
+# --- 档位 (结论 3: 模型是工作占用的资源，与机器（地点）同形) --------------------
+# 一件工作占用的资源花谁的钱，模型和机器用同一套词——项目的档位策略
+# (`domain/policy/gate.py`) 拿它比对，所以它在目录里声明一次，别处只读。
+#: 订阅或平台池里包含的常规档，不额外花钱。
+TIER_INCLUDED = "included"
+#: 自带的东西：某个人自己那台机器。花的是机主的电和带宽，不是项目的钱。
+TIER_BYO = "byo"
+#: 更贵的一档：按量计费的 Cloud、更快吃掉订阅额度的模型。
+TIER_PREMIUM = "premium"
+#: 前沿档。
+TIER_FRONTIER = "frontier"
+
+#: 算力池 → 档位。`compute_listings` 和档位策略读的是同一份，所以看板上写的档和
+#: 闸门比的那一档不可能对不上。
+COMPUTE_TIERS: dict[str, str] = {
+    COMPUTE_DEVICE: TIER_BYO,
+    COMPUTE_CLOUD: TIER_PREMIUM,
+}
+
 
 @dataclass(frozen=True)
 class PoolListing:
@@ -125,7 +144,7 @@ def compute_listings(
             kind="compute",
             id=COMPUTE_DEVICE,
             label="自托管设备（我的机器）",
-            tier="byo",
+            tier=COMPUTE_TIERS[COMPUTE_DEVICE],
             price="自备",
             description="在你自己连接的机器上跑，工作树与数据留在本地；先到『我的设备』连接一台。",
             available=device_ready,
@@ -135,7 +154,7 @@ def compute_listings(
             kind="compute",
             id=COMPUTE_CLOUD,
             label="Cloud",
-            tier="premium",
+            tier=COMPUTE_TIERS[COMPUTE_CLOUD],
             price="按量计费",
             description="为这个话题创建一台独占云端机器；首次启动需要等待几分钟。",
             available=cloud_ready,
@@ -234,14 +253,20 @@ def visibility_listings() -> list[PoolListing]:
 
 
 # Models available to agents using the subscription supply.
-# (id, label, description, explicit --model identifier, creation default).
-_SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
+# (id, label, description, explicit --model identifier, creation default, tier).
+#
+# 最后一列是档位，也就是这个模型吃订阅额度的速度——它就是每一行 description 里已
+# 经写给人看的那句话（「最省订阅额度」/「更快消耗订阅额度」/「前沿」）的可判形式。
+# 档位策略拿它比对，所以它必须和那句话在同一行，否则文案改了而档没跟上，用户读到
+# 的和闸门判的是两回事。
+_SUB_MODELS: list[tuple[str, str, str, str, bool, str]] = [
     (
         "sonnet",
         "Claude Sonnet 5",
         "均衡：足够聪明，最省订阅额度，适合绝大多数项目。",
         "claude-sonnet-5",
         True,
+        TIER_INCLUDED,
     ),
     # Full model ids from here down, not CLI aliases: Fable falls back to
     # Opus 4.8 specifically (safety classifiers on cyber/bio topics reroute
@@ -254,6 +279,7 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
         "最强：复杂任务表现更好，但更快消耗订阅额度（Max 有上限）。",
         "claude-opus-5",
         False,
+        TIER_PREMIUM,
     ),
     (
         "opus-4.8",
@@ -262,6 +288,7 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
         "需要复现或对齐降级后行为时可显式选它。",
         "claude-opus-4-8",
         False,
+        TIER_PREMIUM,
     ),
     (
         "fable",
@@ -271,6 +298,7 @@ _SUB_MODELS: list[tuple[str, str, str, str, bool]] = [
         "（重开会话恢复）。",
         "claude-fable-5",
         False,
+        TIER_FRONTIER,
     ),
 ]
 
@@ -282,23 +310,23 @@ def subscription_model_listings() -> list[PoolListing]:
             kind="model",
             id=mid,
             label=label,
-            tier="subscription",
+            tier=tier,
             price="包含（订阅）",
             description=desc,
             available=True,
             default=default,
         )
-        for (mid, label, desc, _alias, default) in _SUB_MODELS
+        for (mid, label, desc, _alias, default, tier) in _SUB_MODELS
     ]
 
 
 def subscription_model_default() -> str:
-    return next(mid for (mid, _l, _d, _a, dflt) in _SUB_MODELS if dflt)
+    return next(mid for (mid, _l, _d, _a, dflt, _t) in _SUB_MODELS if dflt)
 
 
 def subscription_model_alias(mid: str | None) -> str:
     """The explicit Claude model identifier for a saved selection; unknown ids fail."""
-    for m, _l, _d, alias, _dflt in _SUB_MODELS:
+    for m, _l, _d, alias, _dflt, _t in _SUB_MODELS:
         if m == mid:
             return alias
     from app.core.errors import ValidationError
@@ -307,4 +335,4 @@ def subscription_model_alias(mid: str | None) -> str:
 
 
 def subscription_model_ids() -> set[str]:
-    return {mid for (mid, _l, _d, _a, _dflt) in _SUB_MODELS}
+    return {mid for (mid, _l, _d, _a, _dflt, _t) in _SUB_MODELS}

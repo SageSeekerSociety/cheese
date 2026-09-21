@@ -125,6 +125,8 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
@@ -3991,6 +3993,32 @@ class ChatService:
                 phases_ms,
             )
 
+    async def _pass_policy_gate(
+        self,
+        topic_id: uuid.UUID | None,
+        call: gate.Call,
+        project_settings: dict | None,
+        *,
+        actor: str,
+    ) -> None:
+        """闸门放行就返回；变提议就把提议交出去，并让这一轮到此为止。
+
+        提议之后照样抛，抛的是同一个 `OverTier`：这一轮**没有发生**，而调用点分不
+        出、也不需要分出它是被拒了还是变成了提议——两种情形里这一轮都不该再往下
+        走。差别写在给人看的那句话里，不写成第二条控制流。
+
+        没有房间（私聊之外的平台活、项目级的调用）就落不下这条提议：提议是房间里
+        的一条事件。那种情形下超档只剩拒绝这一条路，闸门照抛。
+        """
+        verdict = gate.check(call, gate.policy_of(project_settings), actor)
+        if isinstance(verdict, gate.Allowed):
+            return
+        if topic_id is not None:
+            async with self._sessions() as session:
+                await propose(session, verdict, place_id=topic_id)
+                await session.commit()
+        raise gate.OverTier(verdict.content)
+
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
@@ -4046,7 +4074,30 @@ class ChatService:
         #
         # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
         # 而主线正是最长、最吃缓存的那条对话。
-        bound = binding.resolve(None, binding.catalog(project.settings))
+        choices = binding.catalog(project.settings)
+        bound = binding.resolve(None, choices)
+        # 解析出来的那个模型还要过一遍项目的档位策略（结论 3 后半）。闸门在这里，
+        # 不在 `binding.resolve` 里：那个函数只答「用哪个模型」，「超档怎么办」是
+        # 另一个问题，而且它的另一个调用者是要机器的那条路（`domain/policy/gate.py`）。
+        #
+        # 位置选在**这一轮真的要发请求之前**：超档变提议时这一轮不开始，所以一个
+        # 请求也没发出去；超档而项目的处置是拒绝时，抛出来的是一次看得见的拒绝，
+        # 和「这条活绑的模型用不了」在调用点是同一种东西（I27）。
+        await self._pass_policy_gate(
+            topic_id,
+            gate.Call(
+                resource=gate.Resource.model,
+                subject=bound.model,
+                label=choices[bound.model]["label"],
+                tier=choices[bound.model]["tier"],
+                # 模型花的是项目的额度，所以点头的是项目的主人。空 handle
+                # （建库早期留下的项目）在寻址那一层被丢掉：房间里照样有这条提
+                # 议，只是没有人被单独通知——好过把它投给一个猜出来的人。
+                approver=project.owner_handle or "",
+            ),
+            project.settings,
+            actor=acting_agent or agent.handle,
+        )
         supply = bound.supply
         model = (
             subscription_model_alias(bound.model)

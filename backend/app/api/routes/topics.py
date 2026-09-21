@@ -40,6 +40,7 @@ from app.domain.agent.harness.prompt import thread_relay_prompt, thread_upgraded
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
+    COMPUTE_TIERS,
     MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
     compute_default_name,
@@ -78,6 +79,8 @@ from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
+from app.domain.policy import gate
+from app.domain.policy.proposals import propose
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -117,6 +120,7 @@ from app.domain.topic.schemas import (
 from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.user.models import User as UserRow
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -1415,10 +1419,60 @@ async def set_topic_compute_profile(
         await validate_choice(db, topic.project_id, choice)
 
     device_service = sql_device_service(db)
+    chosen_device = None
     if device_id is not None:
         scoped_devices = await device_service.list_devices_for_project(topic.project_id)
-        if device_id not in {device.device_id for device in scoped_devices}:
+        chosen_device = next(
+            (device for device in scoped_devices if device.device_id == device_id), None
+        )
+        if chosen_device is None:
             raise ValidationError("设备不属于当前项目")
+
+    # 要一台机器，先过项目的档位策略（结论 40 后半）。闸门和模型那一侧是同一个
+    # （`domain/policy/gate.py`）：撞上策略的调用不报错、也不挂着等，它变成一条给
+    # 人的提议——自托管那台机器的提议收件人就是**机主本人**（结论 40「要那台机器
+    # 的主人点头」），Cloud 花的是项目的钱，收件人是项目的主人。
+    #
+    # 放在这里而不是更早：前面几步在答「这个选择本身成不成立」（池接没接入、设备
+    # 属不属于这个项目），闸门答的是「这个成立的选择可不可以自己发生」。
+    project = await ProjectRepository(db).get(topic.project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    approver = project.owner_handle or ""
+    if chosen_device is not None:
+        owner = await db.get(UserRow, chosen_device.owner_user_id)
+        if owner is not None:
+            approver = owner.username
+    verdict = gate.check(
+        gate.Call(
+            resource=gate.Resource.machine,
+            subject=device_id or name,
+            label=chosen_device.name if chosen_device is not None else name,
+            tier=COMPUTE_TIERS[name],
+            approver=approver,
+        ),
+        gate.policy_of(project.settings),
+        actor.handle,
+    )
+    if isinstance(verdict, gate.Proposal):
+        # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的是一
+        # 条提议，下一步在 approver 手上。
+        await propose(db, verdict, place_id=topic_id)
+        await db.flush()
+        return ok(
+            {
+                "current": topic.compute_profile,
+                "choice": (topic.compute_config or {}),
+                "device_id": None,
+                "locked": False,
+                "inherited": False,
+                "proposal": {
+                    "approver": verdict.approver,
+                    "tier": verdict.call.tier,
+                    "content": verdict.content,
+                },
+            }
+        )
 
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind
@@ -1450,6 +1504,7 @@ async def set_topic_compute_profile(
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "locked": False,
             "inherited": False,
+            "proposal": None,
         }
     )
 
