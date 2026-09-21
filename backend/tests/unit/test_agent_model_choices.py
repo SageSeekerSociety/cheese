@@ -40,18 +40,14 @@ def test_unknown_model_is_not_a_default(chosen):
 
 
 @pytest.mark.parametrize(
-    ("enabled", "supply", "expected"),
+    ("supply", "expected"),
     [
-        (True, None, "sonnet"),
-        (False, None, "gateway-model"),
-        (True, "gateway", "gateway-model"),
-        (True, "subscription", "sonnet"),
+        (None, "sonnet"),
+        ("gateway", "gateway-model"),
+        ("subscription", "sonnet"),
     ],
 )
-def test_choices_and_validation_follow_project_supply(
-    monkeypatch, enabled, supply, expected
-):
-    monkeypatch.setattr(settings, "subscription_enabled", enabled)
+def test_choices_and_validation_follow_project_supply(monkeypatch, supply, expected):
     monkeypatch.setattr(settings, "agent_model", "gateway-model")
     project = {"supply": supply}
     assert initial_model(project) == expected
@@ -61,24 +57,10 @@ def test_choices_and_validation_follow_project_supply(
         validate_configuration(AgentConfiguration(model="unknown"), project)
 
 
-def test_subscription_models_are_unavailable_without_subscription_transport(
-    monkeypatch, deployed_pool
-):
-    monkeypatch.setattr(settings, "subscription_enabled", False)
-    project = {"supply": "subscription"}
-    assert {"glm-5.2", "deepseek-flash"} <= {
-        item["id"] for item in model_choices(project)
-    }
-    assert initial_model(project) == settings.agent_model
-    with pytest.raises(ValidationError, match="请选择可用模型"):
-        validate_configuration(AgentConfiguration(model="sonnet"), project)
-
-
 @pytest.mark.parametrize("supply", ["subscription", "gateway"])
 def test_agents_can_select_each_gateway_model_without_changing_project_supply(
     monkeypatch, supply, deployed_pool
 ):
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     project = {"supply": supply}
     for model in ("glm-5.2", "deepseek-flash", "sonnet"):
         validate_configuration(AgentConfiguration(model=model), project)
@@ -96,16 +78,15 @@ def test_a_harness_is_offered_only_where_it_has_something_to_drive(monkeypatch):
     assert {"claude-code", "pi"} <= offered
 
 
-def test_a_harness_that_speaks_the_gateway_drives_every_model_the_project_has(
-    monkeypatch,
-):
-    """It reaches models through the same gateway the project's own pool is,
-    so restating which ones would be a second list to fall out of date."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
-    everything = {item["id"] for item in model_choices({})}
+def test_a_harness_that_speaks_the_gateway_drives_every_pool_model(monkeypatch):
+    """It reaches them through the same gateway the project's own pool is, so
+    restating which ones would be a second list to fall out of date. The
+    subscription's models are the exception and have their own test: they come
+    with a credential only one harness can present."""
+    pool = {item["id"] for item in model_choices({}) if item["supply"] == "gateway"}
     for harness in ("claude-code", "pi"):
-        assert set(models_for(harness, {})) == everything
-        for model in everything:
+        assert pool <= set(models_for(harness, {}))
+        for model in pool:
             validate_configuration(AgentConfiguration(model=model, harness=harness), {})
 
 
@@ -145,7 +126,6 @@ def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
     """The credential, not the request shape: a subscription turn authenticates
     with something minted for one harness, so listing the alias among another
     harness's API models must not make it selectable there."""
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     monkeypatch.setattr(
         settings, "agent_harness_models", {"codex": ["sonnet", "codex-fixture"]}
     )
@@ -162,7 +142,6 @@ def test_a_new_agent_starts_on_a_model_its_harness_can_drive(monkeypatch):
     """A preset that asks for a harness of its own would otherwise start
     pointed at the project's default model and be refused on the way in, for a
     combination nobody chose."""
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     monkeypatch.setattr(settings, "agent_harness_models", {"codex": ["codex-fixture"]})
     project = {"supply": "subscription"}
     # The project's own default is a subscription model Codex cannot carry.
@@ -235,7 +214,6 @@ def test_a_model_the_gateway_starts_routing_is_offered_without_a_release(
 ):
     """The whole point: the pool's menu follows the gateway, so putting a model
     into service does not also mean editing and shipping this codebase."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     assert "brand-new-model" not in {item["id"] for item in model_choices({})}
 
     _gateway_reports(
@@ -258,7 +236,6 @@ def test_a_model_the_gateway_routes_for_us_is_not_a_menu_item(
 ):
     """glm-4.5 is where the subagent alias points. Offering it would invite a
     person to pick a model the platform routes to on their behalf."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     assert "glm-4.5" not in {item["id"] for item in model_choices({})}
     with pytest.raises(ValidationError, match="请选择可用模型"):
         validate_configuration(AgentConfiguration(model="glm-4.5"), {})
@@ -268,7 +245,6 @@ def test_a_model_the_gateway_cannot_bill_is_not_offered(monkeypatch):
     """Its tokens meter at zero, so the project's budget never trips and the
     first sign of trouble is the invoice. A model missing from the picker gets
     noticed; a brake that stopped working does not."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     monkeypatch.setattr(settings, "agent_model", "glm-5.2")
     _gateway_reports(
         _routes("glm-5.2"),
@@ -282,7 +258,6 @@ def test_a_model_the_gateway_cannot_bill_is_not_offered(monkeypatch):
 def test_an_unreachable_gateway_keeps_offering_what_it_last_reported(monkeypatch):
     """A blip must not empty the picker: model_choices also runs when a turn
     starts, so an empty answer stops every agent on the deployment."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     monkeypatch.setattr(settings, "agent_model", "glm-5.2")
     _gateway_reports(_routes("glm-5.2"), _routes("deepseek-flash"))
 
@@ -300,11 +275,12 @@ def test_a_deployment_with_no_gateway_admin_api_still_runs_its_own_model(monkeyp
     """The admin API is optional. Such a deployment cannot be asked what it
     routes, but it is still configured to run one model, and naming that is
     better than offering nothing or inventing a list."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     monkeypatch.setattr(settings, "agent_model", "the-configured-one")
     assert asyncio.run(gateway_catalog.refresh(None)) is False
-    assert {item["id"] for item in model_choices({})} == {"the-configured-one"}
-    assert initial_model({}) == "the-configured-one"
+    assert {
+        item["id"] for item in model_choices({}) if item["supply"] == "gateway"
+    } == {"the-configured-one"}
+    assert initial_model({"supply": "gateway"}) == "the-configured-one"
 
 
 @pytest.mark.anyio
@@ -313,7 +289,6 @@ async def test_a_gateway_that_is_not_up_yet_is_asked_again_soon(monkeypatch):
     the app, so the app can easily boot first. Waiting a full refresh interval
     to ask again would leave the deployment serving fewer models than it has,
     for minutes, after an ordinary restart."""
-    monkeypatch.setattr(settings, "subscription_enabled", False)
     monkeypatch.setattr(settings, "agent_model", "the-configured-one")
     monkeypatch.setattr(gateway_catalog, "FIRST_ANSWER_RETRY_SECONDS", 0.01)
 

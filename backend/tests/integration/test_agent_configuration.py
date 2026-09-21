@@ -1,6 +1,5 @@
 """Edits belong to one project agent and survive moves between rooms."""
 
-from app.core.config import settings
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
@@ -9,7 +8,6 @@ from tests.integration.conftest import session_auth_headers
 
 
 def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
-    monkeypatch.setattr(settings, "subscription_enabled", True)
 
     async def run():
         project = await ProjectService(db_session).create(
@@ -61,7 +59,6 @@ def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
 
 
 def test_agent_configuration_api_rejects_unavailable_model(client, monkeypatch):
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     project = client.post("/projects", json={"name": "Models"}).json()["data"]
     pid = project["id"]
     agents = client.get(f"/projects/{pid}/agents").json()["data"]["data"]
@@ -79,7 +76,6 @@ def test_agent_configuration_api_rejects_unavailable_model(client, monkeypatch):
 
 
 def test_room_switch_preserves_the_selected_agents_model(client, monkeypatch):
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     pid = client.post("/projects", json={"name": "Rooms"}).json()["data"]["id"]
     agent = client.post(
         f"/projects/{pid}/agents",

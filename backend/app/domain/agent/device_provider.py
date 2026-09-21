@@ -314,41 +314,39 @@ def _launch_identity(
 
 
 def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
-    # ANTHROPIC_BASE_URL is the gateway route; HTTPS_PROXY is the subscription's
-    # CONNECT route to the metering proxy. Either one pointing at a box-local
-    # address fails identically off-box.
-    for key in ("ANTHROPIC_BASE_URL", "HTTPS_PROXY"):
-        value = env.get(key, "")
-        # A configured tunnel intentionally points HTTPS_PROXY at the helper on
-        # the device's own loopback; that address is not a backend-host leak.
-        if key == "HTTPS_PROXY" and env.get("CHEESE_TUNNEL_URL"):
-            continue
-        if any(h in value for h in _BOX_LOCAL_HOSTS):
-            logger.error(
-                "device %s received %s=%s, which only "
-                "resolves on the backend's own host — its turns will fail to "
-                "reach a model. Give devices a reachable address "
-                "(subscription_device_proxy_host for the metering proxy) or "
-                "configure subscription_tunnel_url.",
-                device_id,
-                key,
-                value,
-            )
+    # HTTPS_PROXY is the machine's CONNECT route to the metering proxy, and the
+    # only way its traffic reaches a model at all. Pointing it at a box-local
+    # address fails off-box.
+    value = env.get("HTTPS_PROXY", "")
+    # A configured tunnel intentionally points HTTPS_PROXY at the helper on
+    # the device's own loopback; that address is not a backend-host leak.
+    if env.get("CHEESE_TUNNEL_URL"):
+        return
+    if any(h in value for h in _BOX_LOCAL_HOSTS):
+        logger.error(
+            "device %s received HTTPS_PROXY=%s, which only "
+            "resolves on the backend's own host — its turns will fail to "
+            "reach a model. Give devices a reachable address "
+            "(subscription_device_proxy_host for the metering proxy) or "
+            "configure subscription_tunnel_url.",
+            device_id,
+            value,
+        )
 
 
 def _read_proxy_ca() -> str:
     """The metering proxy's CA, read where THIS backend can see it — required for
-    a subscription device turn (the launcher embeds it; without it the screen's
-    `claude` cannot trust the proxy and fails as an opaque TLS error). Raising
-    here, with the setting named, beats the silent alternative: falling back to
-    the gateway would swap the model out from under the user — the exact failure
-    #325 G2 removes."""
+    every device turn (the launcher embeds it; without it the screen's `claude`
+    cannot trust the proxy and fails as an opaque TLS error). Raising here, with
+    the setting named, is the only exit: there is no second launch shape to fall
+    back to, and falling back to one would swap the model out from under the
+    user — the exact failure #325 G2 removes."""
     path = settings.subscription_ca_backend_path.strip()
     if not path:
         raise ScreenSetupError(
-            "subscription_enabled 但未设置 SUBSCRIPTION_CA_BACKEND_PATH——"
-            "device 屏幕需要后端能读到计费代理的 CA（部署侧把代理的 "
-            "mitmproxy-ca-cert.pem 只读挂载进后端并指向它）"
+            "未设置 SUBSCRIPTION_CA_BACKEND_PATH——device 屏幕需要后端能读到"
+            "计费代理的 CA（部署侧把代理的 mitmproxy-ca-cert.pem 只读挂载进"
+            "后端并指向它）"
         )
     try:
         ca = Path(path).read_text(encoding="utf-8")
@@ -536,10 +534,9 @@ class DeviceChannel(Channel):
     # 长什么样推 (#282 决定 2)。基类的 `owns` 读的就是这一位。
     supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
-    # — the metering-proxy env under a subscription, the backend's /llm route and
-    # a scoped token without one. Either way the machine holds no provider
-    # credential, so the platform must hand this transport the model choice and
-    # nothing else. Every transport that reaches a machine over a link inherits
+    # — one shape, the metering-proxy env, and no other. The machine holds no
+    # provider credential and no model name; both are settled per request at
+    # admission. Every transport that reaches a machine over a link inherits
     # this build, and inherits the declaration with it.
     builds_model_env = True
     needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
@@ -1328,149 +1325,95 @@ class DeviceChannel(Channel):
         home_dir = device_home_dir(project_id, resource_id)
         work_dir = self._work_dir(project_id, resource_id)
         api_base = await self._device_api_base(device_id)
-        ca_pem = ""
-        if settings.subscription_enabled:
-            # Every request from every machine reached this way runs on the
-            # subscription through the metering proxy — an enrolled device and a
-            # leased Cloud box alike, since both are launched from right here
-            # (#325 G2). This is what ``builds_model_env`` declares: the platform
-            # sends the model choice, and the env around it is assembled below.
-            # The machine holds no real credential either way: the env ships a
-            # scoped cheese token as the fake login, the proxy verifies it and
-            # injects the real token backend-side. The gateway route is NOT a
-            # fallback here — falling back silently is exactly the model swap
-            # this branch exists to kill (dev shipped device screens with
-            # CLAUDE_MODEL=deepseek-chat while users thought they were talking
-            # to Claude).
-            ca_pem = _read_proxy_ca()
-            # Session-length TTL, not the 1h default. This token is baked into the
-            # bare process's HTTPS_PROXY (CONNECT credential) and
-            # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
-            # hot-refreshed; the screen is reused across turns (a reassert only
-            # re-attaches, it does not relaunch claude). A 1h token
-            # thus expires under a still-running process, and every turn after the
-            # first hour is rejected by the metering proxy (407) — the agent looks
-            # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
-            session_token = mint_scoped_token(
-                project_id=str(project_id),
-                topic_id=str(topic_id),
-                ttl_s=SESSION_TOKEN_TTL_S,
-                remote_control=True,
-                resource_id=str(resource_id),
-                # WHO acts with it. The launcher has known this all along and
-                # let the minter fall back to a handle derived from the room —
-                # which is the one thing a room cannot answer once it may seat
-                # more than one agent.
-                agent_handle=agent_handle,
-            )
-            tunnel_url = settings.subscription_tunnel_url.strip()
-            via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
-            tunnel_port = tunnel_port_for_topic(topic_id)
-            connect_proxy_url = connect_transport(
-                session_token=session_token,
-                via_tunnel=via_tunnel,
-                tunnel_port=tunnel_port,
-            )
-            sub = provider_env.subscription_provider(
-                ca_path=_DEVICE_PROXY_CA_PATH,
-                project_id=str(project_id),
-                topic_id=str(topic_id),
-                session_token=session_token,
-                connect_proxy_url=connect_proxy_url,
-                no_proxy=self._no_proxy_hosts(),
-            )
-            # The subscription env WINS over the caller's `env` — that env is
-            # the gateway shape (BASE_URL + model pins), and any of those keys
-            # surviving flips the CLI into API-key mode or asks the subscription
-            # for a model it does not serve. Dropped, not overridden, because
-            # subscription_provider only ADDS keys.
-            #
-            # Which model a request runs on is decided at one control point —
-            # admission, when the request reaches the metering proxy (结论 46)
-            # — reading the binding. What the launch env still carries is not a
-            # second declaration of that: it is how the resolved model reaches
-            # the REQUEST BODY, which is the only place LiteLLM reads a model
-            # name from, and the proxy leaves the body alone (`_route_to_gateway`
-            # swaps the host and the credential, nothing else).
-            #
-            # So a gateway-pool project needs the name in the body, and the CLI
-            # writes it from two sources: `claude --model` (CLAUDE_MODEL, set
-            # further down this launch) for the main reply, and the three alias
-            # defaults below for everything the CLI addresses by family instead
-            # — title generation, file suggestions, and every subagent, which
-            # is every piece of work. Drop those three and a gateway project's
-            # subagents ask LiteLLM for `claude-3-5-haiku-*`, which it does not
-            # serve.
-            #
-            # All four say the same thing and leave together, on the day the
-            # proxy rewrites the model name in the body on its way to LiteLLM
-            # (结论 46「要做的两件」, P34). Until then, four keys carrying one
-            # answer beats three deleted and one kept.
-            merged = {**(env or {})}
-            for k in (
-                "ANTHROPIC_BASE_URL",
-                "CLAUDE_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            ):
-                merged.pop(k, None)
-            merged.update(sub.env)
-            if launch.model and not launch.model.startswith("claude-"):
-                # A subscription model arrives here as its full Claude name, and
-                # the CLI's own alias defaults already point at Claude models,
-                # so only the gateway case has anything to say.
-                for family in ("HAIKU", "SONNET", "OPUS"):
-                    merged[f"ANTHROPIC_DEFAULT_{family}_MODEL"] = launch.model
-            merged["CHEESE_REMOTE_CONTROL"] = "1"
-            # The tunnel's CONNECT credential must carry the same place and RC
-            # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
-            merged["CHEESE_CONNECT_TOKEN"] = session_token
-            # These scopes describe the Cheese control credential. The model
-            # provider still authenticates inference at its existing proxy hop.
-            merged["CLAUDE_CODE_OAUTH_SCOPES"] = (
-                "user:inference user:profile user:sessions:claude_code"
-            )
-            if connect_proxy_url:
-                # The meter accepts model hosts, not package registries.
-                merged["CHEESE_MODEL_PROXY"] = "1"
-            if via_tunnel:
-                # Read by the launch script: it writes the helper and the token
-                # file, and starts the helper before `claude`. Carried on the env
-                # rather than as arguments because a remote machine's launch is
-                # built entirely from `extra_env` — there is no other channel
-                # into that builder.
-                merged["CHEESE_TUNNEL_URL"] = tunnel_url
-                merged["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
-            elif await self._device_ccproxy_upstream(device_id):
-                # A device with its own ccproxy identity runs on the machine-ticket
-                # model: the launcher's reconcile hands claude the device's
-                # own ticket instead of our scoped token, and admission tells
-                # the meter which identity to relay it over. Without this flag
-                # such a device silently falls onto the platform-credential swap
-                # path — the #393 dependency this model exists to remove.
-                merged["CHEESE_MACHINE_TICKET"] = "1"
-            model_env = merged
-            # Preserve the birth expiry across device and backend restarts.
-            credential_expires = _credential_expiry(session_token)
-            model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
-        else:
-            # No subscription deployed: the machine gets the backend's own model
-            # route and its scoped token — never the upstream provider key. The
-            # backend substitutes the project's virtual key, so the credential
-            # stays on the box and spend is attributed without having to trust
-            # the machine to report it.
-            provider = provider_env.api_key_provider(
-                gateway_base=f"{self._public_base}/llm",
-                key=token,
-                model=launch.model or settings.agent_model,
-            )
-            model_env = {**provider.env, **(env or {})}
-            # Same stamp on the gateway path: the model credential is the scoped
-            # `token`, and its expiry is what both the launcher and the reuse gate
-            # check before adopting.
-            credential_expires = _credential_expiry(token)
-            model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
+        # 一台机器只有一种启动环境（结论 46）。Every request from every machine
+        # reached this way runs through the metering proxy — an enrolled device
+        # and a leased Cloud box alike, since both are launched from right here
+        # (#325 G2) — and the proxy asks `/llm/admission` per request whether it
+        # goes to the subscription pool or is rewritten to the gateway. There is
+        # no second shape and no fallback: falling back silently is exactly the
+        # model swap this kills (dev shipped device screens with
+        # CLAUDE_MODEL=deepseek-chat while users thought they were talking to
+        # Claude). This is what ``builds_model_env`` declares.
+        #
+        # The machine holds no real credential: the env ships a scoped cheese
+        # token as the fake login, and the proxy injects the real one.
+        ca_pem = _read_proxy_ca()
+        # Session-length TTL, not the 1h default. This token is baked into the
+        # bare process's HTTPS_PROXY (CONNECT credential) and
+        # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
+        # hot-refreshed; the screen is reused across turns (a reassert only
+        # re-attaches, it does not relaunch claude). A 1h token
+        # thus expires under a still-running process, and every turn after the
+        # first hour is rejected by the metering proxy (407) — the agent looks
+        # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
+        session_token = mint_scoped_token(
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            ttl_s=SESSION_TOKEN_TTL_S,
+            remote_control=True,
+            resource_id=str(resource_id),
+            # WHO acts with it. The launcher has known this all along and
+            # let the minter fall back to a handle derived from the room —
+            # which is the one thing a room cannot answer once it may seat
+            # more than one agent.
+            agent_handle=agent_handle,
+        )
+        tunnel_url = settings.subscription_tunnel_url.strip()
+        via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
+        tunnel_port = tunnel_port_for_topic(topic_id)
+        connect_proxy_url = connect_transport(
+            session_token=session_token,
+            via_tunnel=via_tunnel,
+            tunnel_port=tunnel_port,
+        )
+        sub = provider_env.subscription_provider(
+            ca_path=_DEVICE_PROXY_CA_PATH,
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            session_token=session_token,
+            connect_proxy_url=connect_proxy_url,
+            no_proxy=self._no_proxy_hosts(),
+        )
+        # 启动环境里没有模型这件事。Which model a request runs on is decided at
+        # one control point — admission, when the request reaches the metering
+        # proxy (结论 46) — and the proxy writes the answer into the REQUEST
+        # BODY on its way out. So nothing here names a model: not
+        # `claude --model`, not the three family aliases the CLI addresses
+        # subagents by. A key here would be a second declaration of what the
+        # binding on the card already says, and nobody could write down which
+        # of the two wins (I4a).
+        model_env = {**(env or {}), **sub.env}
+        model_env["CHEESE_REMOTE_CONTROL"] = "1"
+        # The tunnel's CONNECT credential must carry the same place and RC
+        # claims as the direct proxy URL; CHEESE_TOKEN authenticates hooks.
+        model_env["CHEESE_CONNECT_TOKEN"] = session_token
+        # These scopes describe the Cheese control credential. The model
+        # provider still authenticates inference at its existing proxy hop.
+        model_env["CLAUDE_CODE_OAUTH_SCOPES"] = (
+            "user:inference user:profile user:sessions:claude_code"
+        )
+        if connect_proxy_url:
+            # The meter accepts model hosts, not package registries.
+            model_env["CHEESE_MODEL_PROXY"] = "1"
+        if via_tunnel:
+            # Read by the launch script: it writes the helper and the token
+            # file, and starts the helper before `claude`. Carried on the env
+            # rather than as arguments because a remote machine's launch is
+            # built entirely from `extra_env` — there is no other channel
+            # into that builder.
+            model_env["CHEESE_TUNNEL_URL"] = tunnel_url
+            model_env["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
+        elif await self._device_ccproxy_upstream(device_id):
+            # A device with its own ccproxy identity runs on the machine-ticket
+            # model: the launcher's reconcile hands claude the device's
+            # own ticket instead of our scoped token, and admission tells
+            # the meter which identity to relay it over. Without this flag
+            # such a device silently falls onto the platform-credential swap
+            # path — the #393 dependency this model exists to remove.
+            model_env["CHEESE_MACHINE_TICKET"] = "1"
+        # Preserve the birth expiry across device and backend restarts.
+        credential_expires = _credential_expiry(session_token)
+        model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
         _warn_if_model_endpoint_is_box_local(model_env, device_id)
         # 运行环境预览's dial-out address. Derived from the base this machine already
         # reaches for hooks, git and the CLI rather than configured separately:

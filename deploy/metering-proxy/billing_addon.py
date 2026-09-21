@@ -72,10 +72,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     GATEWAY,
-    SUBSCRIPTION,
+    TELEMETRY_HOSTS,
     AdmissionGate,
     Meter,
+    ModelRewrite,
     StreamingUsageExtractor,
+    control_answer,
     proxy_basic_password,
     verify_scoped_token,
 )
@@ -104,14 +106,7 @@ ALLOW_HEADER_ATTR = os.environ.get("CHEESE_ALLOW_HEADER_ATTR", "") == "1"
 ADMISSION_URL = os.environ.get("CHEESE_ADMISSION_URL", "")
 # Same backend as admission; no second public listener or deployment secret.
 RC_BASE = ADMISSION_URL.removesuffix("/llm/admission") if ADMISSION_URL else ""
-RC_EXTRA_HOSTS = frozenset(
-    {"claude.ai", "cdn.growthbook.io", "api.statsig.com", "statsig.anthropic.com"}
-)
-RC_FLAGS = {
-    "tengu_ccr_bridge": True,
-    "tengu_ccr_v2_bridge_create_cli": True,
-    "tengu_ccr_v2_session_crud_cli": True,
-}
+RC_EXTRA_HOSTS = frozenset({"claude.ai", "cdn.growthbook.io"}) | TELEMETRY_HOSTS
 ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 
 # Route the upstream through the EXPLICIT ccproxy (m161): measured, the OAuth
@@ -305,6 +300,39 @@ def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
     return True
 
 
+def _write_bound_model(flow: http.HTTPFlow, model: str) -> None:
+    """Put the admitted model name into this request's body, on the way past.
+
+    The one control point ends here: the launch environment names no model, so
+    the binding resolved at admission has to reach the request body, which is
+    the only place either pool reads a model name from.
+
+    Re-framed as chunked because the rewrite changes the body's length and the
+    headers have already been decided by the time the first chunk arrives —
+    there is no Content-Length that could still be right. The alternative is
+    buffering the whole body to recompute it, and a long turn re-POSTs its
+    entire grown conversation every time: that is the #654 OOM.
+    """
+    if not model:
+        return
+    rewrite = ModelRewrite(model)
+    flow.request.headers.pop("content-length", None)
+    flow.request.headers["transfer-encoding"] = "chunked"
+
+    def write(chunk: bytes) -> bytes:
+        out = rewrite.feed(chunk)
+        if rewrite.missed and not flow.metadata.get("cheese_model_missed"):
+            flow.metadata["cheese_model_missed"] = True
+            logger.error(
+                "no top-level model member in the first 64KiB of a /v1/messages "
+                "body; the turn runs on the client's own choice, not on %s",
+                model,
+            )
+        return out
+
+    flow.request.stream = write
+
+
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
     """Answer this request here, and take back the streaming decision.
 
@@ -425,42 +453,27 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
         data.ignore_connection = True
 
 
-_RC_CONTROL_PATHS = frozenset(
-    {
-        "/api/oauth/profile",
-        "/api/claude_code/settings",
-        "/api/claude_code/policy_limits",
-    }
-)
+def _answer_here(flow: http.HTTPFlow, project: str, topic: str) -> bool:
+    """Answer a non-model endpoint from the table, or leave it to go upstream.
 
-
-def _answer_rc_control(
-    flow: http.HTTPFlow, path: str, project: str, topic: str
-) -> None:
-    """Answer a control session's non-model endpoints as Cheese itself.
-
-    What goes out is Cheese's own project identity and Cheese's own policy. No
-    Anthropic account or subscription entitlement is asserted, which is right
-    for every session this is reached for: one on the gateway pool has no such
-    account, and one the control plane could not place is one we cannot say has
-    it. The upstream reply would instead name the PLATFORM'S subscription
-    account to a sandbox running someone else's code.
+    Unconditional. Which pool the project runs on used to decide who may answer
+    these, and a session admission had positively placed on the subscription was
+    let through to Anthropic — a real account asking about itself. That is the
+    second half of 结论 46, and it is gone: a machine has ONE launch shape now,
+    and that shape has to boot on a deployment that owns no subscription at all.
+    Asking who may answer would put the boot back behind an admission call that
+    can fail open, on a path whose wrong answer hands a sandbox the platform
+    account's uuid and email.
     """
-    local: dict = {}
-    if path == "/api/oauth/profile":
-        local = {
-            "account": {"uuid": topic, "email": "cheese@agent.cheese.local"},
-            "organization": {"uuid": project},
-        }
-    elif path == "/api/claude_code/policy_limits":
-        local = {"restrictions": {"allow_remote_control": {"allowed": True}}}
+    answer = control_answer(flow.request.host, flow.request.path, project, topic)
+    if answer is None:
+        return False
     flow.server_conn.via = None
     flow.request.stream = False
     flow.response = http.Response.make(
-        204 if path.endswith("/settings") else 200,
-        b"" if path.endswith("/settings") else json.dumps(local).encode(),
-        {"Content-Type": "application/json"},
+        answer.status, answer.body, {"Content-Type": "application/json"}
     )
+    return True
 
 
 def _rc_route(flow: http.HTTPFlow) -> bool:
@@ -469,18 +482,12 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
     RC ownership comes from the verified token's place, never the attribution
     header (which may select another topic for metering).
 
-    Claude Code's non-model control endpoints (`/api/oauth/profile`,
-    `/api/claude_code/settings`, `/api/claude_code/policy_limits`) are marked
-    here and answered after admission, because WHO may answer them depends on
-    which pool this project runs on, and only admission knows that now. A
-    gateway-pool session asserts no Anthropic account at all, so letting its
-    `/api/oauth/profile` go upstream would hand a sandbox running someone
-    else's code the platform subscription account's uuid and email and its org
-    uuid — one thing more than it needs to know. Only a session admission
-    positively PLACED on the subscription keeps going upstream: that one is a
-    real account asking about itself, and answering it locally too is decision
-    46's second half, which asks to be measured against a real Claude Code
-    process first (P34).
+    Claude Code's non-model startup endpoints — identity, settings, policy,
+    feature flags, telemetry — are answered right here, from the table in
+    `cheese_billing_core.control_answer`, before any upstream credential is
+    attached and without asking admission anything. That is what lets a machine
+    boot in the one launch shape on a deployment that owns no subscription
+    (结论 46).
     """
     pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
     token, claims = pinned if pinned else ("", None)
@@ -491,32 +498,10 @@ def _rc_route(flow: http.HTTPFlow) -> bool:
     path = flow.request.path.split("?", 1)[0]
     if not rc:
         return False
-    if path in _RC_CONTROL_PATHS:
-        # Deferred, not answered: which pool this project runs on comes from
-        # admission, a few lines after this returns. Same shape as the
-        # `/api/eval/` flag below. The VERIFIED place travels with it —
-        # `_attribution` lets the per-request header pick the topic inside an
-        # already-proven project, which is right for billing and wrong for
-        # identity (the first line of this docstring).
-        flow.metadata["cheese_rc_control"] = (
-            path,
-            str(claims.get("p") or ""),
-            str(claims.get("t") or ""),
-        )
-        return False
-    if path.startswith("/api/eval/"):
-        flow.metadata["cheese_rc_flags"] = True
-        return False
-    if path.startswith("/api/event_logging/") or flow.request.host in {
-        "api.statsig.com",
-        "statsig.anthropic.com",
-    }:
-        # RC telemetry contains control-session identifiers. Consume it here;
-        # neither its payload nor an upstream credential leaves this boundary.
-        flow.request.stream = False
-        flow.response = http.Response.make(
-            200, b"{}", {"Content-Type": "application/json"}
-        )
+    # The VERIFIED place is what the answer asserts — `_attribution` lets the
+    # per-request header pick the topic inside an already-proven project, which
+    # is right for billing and wrong for identity (the first line above).
+    if _answer_here(flow, str(claims.get("p") or ""), str(claims.get("t") or "")):
         return True
     if flow.request.host in RC_EXTRA_HOSTS and not path.startswith("/v1/code/"):
         _refuse(
@@ -646,47 +631,6 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
             "loop_resume": (admission_finished - check_finished) * 1000,
         }
 
-    control = flow.metadata.get("cheese_rc_control")
-    if control and not (
-        verdict is not None and not verdict.fail_open and verdict.pool == SUBSCRIPTION
-    ):
-        # Project identity and control policy, answered here instead of fetched
-        # from an Anthropic account this session may not have.
-        #
-        # The test is "not a CONFIRMED subscription", not "is a gateway".
-        # Admission is fail-open by design, and a fail-open verdict reads
-        # `pool == SUBSCRIPTION` — that is the default on a Verdict nobody
-        # filled in (CHEESE_ADMISSION_URL unset, no project id on the request,
-        # backend unreachable). `verdict.pool == GATEWAY` is therefore false in
-        # exactly the cases where the proxy knows LEAST, and the request falls
-        # through to the swap at the bottom of this function, which hangs the
-        # PLATFORM'S OWN subscription credential on it — `/api/oauth/profile`
-        # then answers with that account's uuid and email, to a sandbox running
-        # someone else's code. An unset CHEESE_ADMISSION_URL is not
-        # hypothetical: it is the day-long failure recorded further down.
-        #
-        # The two directions are not symmetric, which is what settles which way
-        # to be wrong. Answering a gateway session here gives it the right
-        # answer; answering a subscription session here costs it one echo of
-        # its own account name, and decision 46's second half wants that one
-        # local too. The other way round, an identity has already left the
-        # building, and nothing takes that back.
-        _answer_rc_control(flow, *control)
-        return
-
-    if (
-        verdict is not None
-        and verdict.pool == GATEWAY
-        and flow.metadata.get("cheese_rc_flags")
-    ):
-        # Cheese supplies its own RC flags.
-        flow.server_conn.via = None
-        flow.request.stream = False
-        flow.response = http.Response.make(
-            200, b'{"features":{}}', {"Content-Type": "application/json"}
-        )
-        return
-
     if is_messages:
         if SCOPED_SECRET and not ALLOW_HEADER_ATTR and not project_id:
             # #198: an exposed proxy must not spend the subscription for a
@@ -721,6 +665,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
                         "pool, but the pool has no route or no project key on "
                         "this deployment; no model call was made",
                     )
+                    return
+                _write_bound_model(flow, verdict.model)
                 return
         if METER.would_exceed(TOKEN_CAP):
             used = METER.used()
@@ -732,6 +678,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
                 f"in the last {CAP_WINDOW_S // 3600}h",
             )
             return
+        if verdict is not None:
+            _write_bound_model(flow, verdict.model)
 
     # A stale x-api-key would override whatever bearer goes upstream, on either
     # path below — so it is dropped before the branch, not inside one.
@@ -884,9 +832,6 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         else:
             resp.stream = True
         return
-    if flow.metadata.get("cheese_rc_flags"):
-        # Feature evaluation is small JSON. Inference SSE remains streamed.
-        return
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
         project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
@@ -1035,19 +980,6 @@ def response(flow: http.HTTPFlow) -> None:
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
         _report_gateway_failure(flow)
-        return
-    if (
-        flow.metadata.get("cheese_rc_flags")
-        and flow.response
-        and flow.response.status_code == 200
-    ):
-        try:
-            payload = json.loads(flow.response.content)
-            features = payload.setdefault("features", {})
-            features.update({k: {"defaultValue": v} for k, v in RC_FLAGS.items()})
-            flow.response.content = json.dumps(payload).encode()
-        except (ValueError, AttributeError, TypeError):
-            logger.error("RC feature evaluation returned an invalid response")
         return
     # SSE turns are metered incrementally in the responseheaders streaming tee;
     # the only body still buffered here is a non-streaming JSON message.

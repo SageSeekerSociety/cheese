@@ -1,26 +1,19 @@
-"""Choosing a provider must not change what the subscription's client looks like.
+"""A machine gets one model environment, and it names no model.
 
-Routing subscription traffic through our own HTTP client re-originates the
-request: different user agent, different header shape, different rhythm. That is
-a fingerprint the provider can act on, and the account at risk belongs to a
-person. So the two providers are served by two different mechanisms, and the
-test that matters is that they stay separate.
+There is no second provider shape to pick between any more: every machine is
+launched against the metering proxy, and which pool serves one request — and
+which model it runs on — is answered per request at admission. What this module
+must keep true is that the environment says neither.
 """
 
-from app.domain.agent.provider_env import choose
-
-_ARGS = dict(
-    gateway_base="http://gw:4000",
-    gateway_key="secret",
-    model="glm-5.2",
-    ca_path="/ca.crt",
-)
+from app.domain.agent.provider_env import subscription_provider
 
 
-def test_the_subscription_sets_no_base_url_and_pins_no_model():
-    """Setting a BASE_URL flips interactive Claude Code into API-key mode; the
-    subscription must stay OAuth, so it sets none. --add-host does the routing."""
-    env = choose(prefer_subscription=True, **_ARGS).env
+def test_the_launch_environment_sets_no_base_url_and_names_no_model():
+    """Setting a BASE_URL flips interactive Claude Code into API-key mode, where
+    it ignores the OAuth token; and any model key here would be a second
+    declaration of what the card's binding already says."""
+    env = subscription_provider(ca_path="/ca.crt").env
 
     assert "ANTHROPIC_BASE_URL" not in env
     # Blanked rather than absent: the CLI inherits the backend's os.environ, so
@@ -29,29 +22,6 @@ def test_the_subscription_sets_no_base_url_and_pins_no_model():
     assert env["ANTHROPIC_AUTH_TOKEN"] == ""
     assert not [k for k in env if "MODEL" in k], env
     assert env["NODE_EXTRA_CA_CERTS"] == "/ca.crt"
-
-
-def test_a_key_provider_is_addressed_directly_and_never_proxied():
-    """Our own key through our own gateway — we are a legitimate API client
-    there, and pushing it through the subscription's proxy would hand a third
-    party traffic that has nothing to do with it."""
-    env = choose(prefer_subscription=False, **_ARGS).env
-
-    assert env["ANTHROPIC_BASE_URL"] == "http://gw:4000"
-    assert env["CLAUDE_MODEL"] == "glm-5.2"
-    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "glm-5.2"
-    assert "HTTPS_PROXY" not in env
-    assert "HTTP_PROXY" not in env
-
-
-def test_an_unconfigured_subscription_falls_back_rather_than_half_applying():
-    """A half-applied subscription is the dangerous state: a port with no CA, or
-    a CA with nowhere to send. Falling back to the key provider is safe; the
-    reverse must never happen implicitly."""
-    for missing in ({"ca_path": ""},):
-        env = choose(prefer_subscription=True, **{**_ARGS, **missing}).env
-        assert env["ANTHROPIC_BASE_URL"] == "http://gw:4000", missing
-        assert "HTTPS_PROXY" not in env, missing
 
 
 def test_the_container_sees_the_ca_at_the_same_absolute_path():

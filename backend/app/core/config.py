@@ -328,10 +328,11 @@ class Settings(BaseSettings):
     # client would change what the provider sees. The meter is instead a proxy the
     # traffic passes through — same observability, different place.
     #
-    # OFF by default: with no proxy configured a sandbox would resolve
-    # api.anthropic.com to nothing and every turn would fail. Turning this on is a
-    # deployment decision that needs the proxy actually running.
-    subscription_enabled: bool = False
+    # This is the ONE shape a machine is launched in (结论 46): no base URL, the
+    # metering proxy on HTTPS_PROXY, a fake ticket. The proxy asks
+    # `/llm/admission` per request and sends it to the subscription pool or
+    # rewrites it to the gateway. A deployment without a reachable proxy has no
+    # second shape to fall back to — it refuses and says so.
     # Address the SANDBOX reaches the metering proxy at. The docker bridge address
     # (not loopback, which no container can reach; not 0.0.0.0, which would put the
     # subscription on the LAN).

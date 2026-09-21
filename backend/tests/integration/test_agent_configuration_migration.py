@@ -9,14 +9,12 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from app.core.config import settings
 from app.domain.project.services import ProjectService
 
 
 def test_existing_configuration_is_snapshotted_and_originals_are_archived(
     db_session, _portal, monkeypatch
 ):
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     path = (
         Path(__file__).parents[2]
         / "alembic/versions/d7a91c4e2b60_agent_owned_configuration.py"

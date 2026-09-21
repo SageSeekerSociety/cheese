@@ -45,24 +45,15 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     only one harness can present — and reading it off the id later would mean
     guessing.
     """
-    subscription_default = (
-        resolve_pool(
-            project_settings, subscription_enabled=settings.subscription_enabled
+    subscription_default = resolve_pool(project_settings) == SUBSCRIPTION
+    choices = [
+        dict(
+            asdict(item),
+            default=item.default and subscription_default,
+            supply=SUBSCRIPTION,
         )
-        == SUBSCRIPTION
-    ) and settings.subscription_enabled
-    choices = (
-        [
-            dict(
-                asdict(item),
-                default=item.default and subscription_default,
-                supply=SUBSCRIPTION,
-            )
-            for item in subscription_model_listings()
-        ]
-        if settings.subscription_enabled
-        else []
-    )
+        for item in subscription_model_listings()
+    ]
     # The pool's models come from the gateway, which is the only thing that
     # knows: it needs a route and a price to serve one at all, so a list kept
     # here could only ever be a second copy drifting out of step with the first.

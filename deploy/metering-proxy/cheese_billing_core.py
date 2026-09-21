@@ -235,6 +235,11 @@ class Verdict:
     reason: str
     pool: str = SUBSCRIPTION
     key: str | None = None
+    # The model name to write into the request body. It comes from the binding
+    # on the card, resolved at admission — the launch environment names none, so
+    # this is the only thing that says which model the turn runs on. Empty means
+    # the backend did not say, and the client's own choice is forwarded.
+    model: str = ""
     # `user:password` — which ccproxy identity to authenticate the upstream hop
     # as for this project's turns. Present only when the backend knows the
     # machine those turns run on; ccproxy scopes its fake→real ticket swap to
@@ -264,11 +269,13 @@ def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
     supply = data.get("supply") or {}
     pool = supply.get("pool")
     upstream = supply.get("upstream")
+    model = supply.get("model")
     return Verdict(
         allow=bool(data.get("allow", True)),
         reason=str(data.get("reason", "")),
         pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
         key=supply.get("key") or None,
+        model=model if isinstance(model, str) else "",
         # Shape-checked here rather than at use: a half credential ("m516:" or
         # ":pw") would authenticate as nobody, and failing at the parse names
         # the control plane as the source instead of surfacing as an upstream
@@ -344,3 +351,210 @@ class AdmissionGate:
             self._cache = {k: v for k, v in self._cache.items() if v[0] >= cutoff}
             self._cache[key] = (now, verdict)
         return verdict
+
+
+# --- Claude Code's non-model startup endpoints -------------------------------
+#
+# 一个控制点（结论 46）。A machine is launched in one shape — no base URL, this
+# proxy on HTTPS_PROXY, a fake ticket — and that shape has to boot Claude Code
+# on a deployment that owns no Anthropic subscription at all. Claude Code asks
+# for four things on its way up that have nothing to do with inference: who am
+# I, what are my settings, what is my policy, and here is my telemetry. Every
+# one of them is answered HERE.
+#
+# Answering them locally is not merely convenient. The upstream reply would name
+# the PLATFORM'S subscription account — its uuid, its email, its org — to a
+# sandbox running someone else's code, whichever pool that sandbox runs on. One
+# echo of an identity that has already left the building is not recoverable.
+#
+# The table is the contract: a path, a status and the fields the client must
+# find. Tests assert it entry by entry, and a boot that asks for a path absent
+# from it is a boot that reached upstream — which is what the acceptance run
+# watches for.
+
+_PROFILE = "/api/oauth/profile"
+_SETTINGS = "/api/claude_code/settings"
+_POLICY = "/api/claude_code/policy_limits"
+# Feature evaluation. Cheese supplies its own flags; the three below are what
+# turn on the remote-control bridge the platform drives every session through.
+_FLAGS_PREFIX = "/api/eval/"
+# Telemetry. RC payloads carry control-session identifiers, so neither they nor
+# an upstream credential may cross this boundary.
+_TELEMETRY_PREFIX = "/api/event_logging/"
+TELEMETRY_HOSTS = frozenset({"api.statsig.com", "statsig.anthropic.com"})
+
+RC_FLAGS = {
+    "tengu_ccr_bridge": True,
+    "tengu_ccr_v2_bridge_create_cli": True,
+    "tengu_ccr_v2_session_crud_cli": True,
+}
+
+
+@dataclass(frozen=True)
+class Answer:
+    """One row of the table: what the proxy sends back, and nothing upstream."""
+
+    status: int
+    body: bytes
+
+
+def control_answer(host: str, path: str, project: str, topic: str) -> Answer | None:
+    """The proxy's own answer for a non-model endpoint, or None to forward.
+
+    ``project``/``topic`` are the VERIFIED place from the caller's scoped token:
+    the identity Cheese asserts is Cheese's own, never an Anthropic account's.
+    """
+    path = path.split("?", 1)[0]
+    if path == _PROFILE:
+        return Answer(
+            200,
+            json.dumps(
+                {
+                    "account": {"uuid": topic, "email": "cheese@agent.cheese.local"},
+                    "organization": {"uuid": project},
+                }
+            ).encode(),
+        )
+    if path == _SETTINGS:
+        return Answer(204, b"")
+    if path == _POLICY:
+        return Answer(
+            200,
+            json.dumps(
+                {"restrictions": {"allow_remote_control": {"allowed": True}}}
+            ).encode(),
+        )
+    if path.startswith(_FLAGS_PREFIX):
+        return Answer(
+            200,
+            json.dumps(
+                {
+                    "features": {
+                        name: {"defaultValue": value}
+                        for name, value in RC_FLAGS.items()
+                    }
+                }
+            ).encode(),
+        )
+    if path.startswith(_TELEMETRY_PREFIX) or host in TELEMETRY_HOSTS:
+        return Answer(200, b"{}")
+    return None
+
+
+class ModelRewrite:
+    """Write the admitted model name into a streamed ``/v1/messages`` body.
+
+    The launch environment names no model any more (结论 46): the binding on the
+    card is resolved at admission, and this is where the answer reaches the one
+    place either pool reads a model from. LiteLLM reads it because a subagent
+    would otherwise ask it for ``claude-3-5-haiku-*``, which it does not serve;
+    the subscription reads it because a project bound to opus would otherwise
+    run on whatever family the CLI defaults to.
+
+    Streamed, not buffered. A long turn re-POSTs its whole grown conversation
+    every time, and holding that in RAM is what OOM-killed this proxy (#654). So
+    only the head is held — until the top-level ``model`` member has gone past,
+    or ``limit`` bytes have, whichever comes first — and everything after it is
+    forwarded chunk for chunk.
+
+    Parsed, not searched. ``"model":`` also occurs inside message text, and a
+    naive first-match would rewrite a user's own words. This tracks string and
+    escape state and only accepts the member at depth 1 of the top-level object.
+    """
+
+    def __init__(self, model: str, limit: int = 1 << 16) -> None:
+        self._model = model
+        self._limit = limit
+        self._buf = b""
+        self._done = False
+        # True once the head went past without a top-level `model` member. The
+        # body is forwarded unchanged — the caller logs it, because it means the
+        # turn runs on whatever the client asked for rather than on the binding.
+        self.missed = False
+
+    def feed(self, chunk: bytes) -> bytes:
+        """One chunk in, the chunk to forward out. ``b""`` ends the stream."""
+        if self._done:
+            return chunk
+        if not chunk:
+            # End of stream with the head still held: nothing more is coming.
+            self._done = True
+            self.missed = True
+            out, self._buf = self._buf, b""
+            return out
+        self._buf += chunk
+        span = top_level_model_span(self._buf)
+        if span is not None:
+            start, end = span
+            out = self._buf[:start] + json.dumps(self._model).encode() + self._buf[end:]
+            self._done = True
+            self._buf = b""
+            return out
+        if len(self._buf) >= self._limit:
+            self._done = True
+            self.missed = True
+            out, self._buf = self._buf, b""
+            return out
+        return b""
+
+
+def top_level_model_span(data: bytes) -> tuple[int, int] | None:
+    """Byte span of the top-level ``model`` member's VALUE, once it is complete.
+
+    None means "not in this prefix yet" — either the member has not appeared or
+    its closing quote has not arrived. Depth and string state are tracked so a
+    ``"model":`` inside message text, or inside a nested object, is not it.
+    """
+    depth = 0
+    i = 0
+    n = len(data)
+    while i < n:
+        c = data[i : i + 1]
+        if c == b'"':
+            end = _string_end(data, i)
+            if end is None:
+                return None
+            if depth == 1 and data[i:end] == b'"model"':
+                j = _skip_space(data, end)
+                if j >= n or data[j : j + 1] != b":":
+                    return None
+                j = _skip_space(data, j + 1)
+                if j >= n:
+                    return None
+                if data[j : j + 1] != b'"':
+                    # A non-string value is not a model name; leave it alone.
+                    i = end
+                    continue
+                value_end = _string_end(data, j)
+                if value_end is None:
+                    return None
+                return j, value_end
+            i = end
+            continue
+        if c in (b"{", b"["):
+            depth += 1
+        elif c in (b"}", b"]"):
+            depth -= 1
+        i += 1
+    return None
+
+
+def _skip_space(data: bytes, i: int) -> int:
+    while i < len(data) and data[i : i + 1] in (b" ", b"\t", b"\r", b"\n"):
+        i += 1
+    return i
+
+
+def _string_end(data: bytes, start: int) -> int | None:
+    """Index just past the closing quote of the JSON string at ``start``."""
+    i = start + 1
+    n = len(data)
+    while i < n:
+        c = data[i : i + 1]
+        if c == b"\\":
+            i += 2
+            continue
+        if c == b'"':
+            return i + 1
+        i += 1
+    return None
