@@ -290,6 +290,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
             session.project_id,
             session.topic_id,
             None,
+            harness=session.harness,
         )
     ]
     assert len(frames) == 1
