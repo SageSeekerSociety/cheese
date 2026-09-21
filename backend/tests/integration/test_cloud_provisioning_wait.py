@@ -76,4 +76,8 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
             message = next(block for block in blocks if block.kind == BlockKind.message)
             return message.content, prompt_attempts(message), consumed_turn(message)
 
-    assert asyncio.run(_pending_accounting()) == ("不要丢掉我", 0, None)
+    # 落库时 `@芝士` 被规范成这个房间的席位 token（点名归服务端算），人写的那句
+    # 原样跟在后面 —— 这一条要的是它还在、没被任何一轮吃掉。
+    content, attempts, consumed = asyncio.run(_pending_accounting())
+    assert content.endswith(" 不要丢掉我"), content
+    assert (attempts, consumed) == (0, None)

@@ -406,8 +406,10 @@ async def test_other_teammate_message_waits_for_live_turn(
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.subscribe_messages()
+    # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
+    # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
     await broker.receive_message(
-        svc, topic_id, author="u", content="@Second Second task", summon=False
+        svc, topic_id, author="u", content="@Second Second task"
     )
     await asyncio.wait_for(waiting.wait(), 2)
     assert screen.delivered == []
