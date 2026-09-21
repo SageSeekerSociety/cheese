@@ -42,8 +42,9 @@ alive. ``interrupt`` is that missing middle.
 """
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from app.domain.agent.service import (
@@ -93,10 +94,11 @@ ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 # on the other end of it.
 UnreadProbe = Callable[[uuid.UUID], float | None]
 
-# The harnesses this deployment can run, by name. Declared here rather than
-# beside ``HARNESSES`` below because ``SessionRef`` defaults to one of them, and
-# a default spelled as a literal is the same fact written down twice. What each
-# of them can be pointed at is further down, under 「which harness」.
+# The harnesses this repository has an adapter for, by name. Declared here rather
+# than beside ``HARNESSES`` below because ``SessionRef`` defaults to one of them,
+# and a default spelled as a literal is the same fact written down twice. Which
+# of them this deployment RUNS is ``HARNESSES``, further down under 「which
+# harness」, and it is a shorter list — a name here buys no registration.
 CLAUDE_CODE = "claude-code"
 CODEX = "codex"
 PI = "pi"
@@ -182,9 +184,39 @@ class Opening:
     needs_place: bool = True
 
 
+class SubagentRequirement(StrEnum):
+    """派一条活是 agent 对骨架原生 subagent 的工具调用，不走平台（结论 43）。
+
+    平台这一侧没有「派活」的路径：agent 先开卡，再用骨架自己的工具起一条子线程，
+    hook 按线程标识归卡，结束写结论，人对卡的操作投递给父线程执行。这四条是那条
+    路成立的前提，所以它们是骨架契约的**硬性要求**，不是能力位。
+
+    能力位（``speaks_gateway`` 那几个）答的是「这个骨架做不做得到，做不到就在功能
+    矩阵里填一条差异码」；硬性要求没有那一档——答得出的才进 ``HARNESSES``，答不出
+    的留着代码不注册，矩阵里也就不占一列。``Difference`` 里因此不许有一条码描述这
+    四项中的任何一项：一条能填进来的差异码就是一个「暂缺」，而暂缺的骨架本来就不
+    该在跑。
+    """
+
+    SPAWNS_WITH_A_MODEL = "起子 agent，并指定它跑哪个模型"
+    LABELS_ITS_THREAD = "子 agent 的每个事件带可归到卡的线程标识"
+    PARENT_RETASKS_IT = "父线程能改它的指令"
+    PARENT_STOPS_IT = "父线程能停掉它"
+
+
 @runtime_checkable
 class AgentRuntime(Protocol):
-    """One harness, driven over whatever channel the compute side opened."""
+    """One harness, driven over whatever channel the compute side opened.
+
+    四条硬性要求（``SubagentRequirement``，结论 43）不是这里的第七个动词，因为平台
+    不起子 agent：它们是这个骨架的事实，各写一句「怎么做到的」，落在注册表那一条
+    （``HARNESSES[harness].subagents``）上，和 ``carries_subscription`` 那几个事实
+    同一个地方。写在这里就是同一个事实两份声明。
+
+    平台这一侧只有两个动词参与其中，而且已经在下面了：``deliver`` 把人对卡的操作
+    送进**父**会话，``interrupt`` 停的也是**父**会话——子线程的指令由起它的父线程
+    自己改，子 agent 与父进程同生同死。
+    """
 
     # WHICH harness this is — a key in ``HARNESSES``, and what an agent type's
     # ``harness`` field names. Deliberately not ``name``: the objects that
@@ -457,6 +489,13 @@ class Harness:
     # What a person would call it. Not a display concern: this is the only
     # place the name a human sees is written down.
     label: str
+    # 四条硬性要求（结论 43），每条一句「怎么做到的」，指得出代码在哪。一句「已支
+    # 持」而指不出是哪一行做的，下一个人没有办法核，也没有办法在它失效的时候发现
+    # ——和 ``capability`` 那张表里的格子同一条规矩。
+    #
+    # 值只能是一句话。``Difference`` 是 StrEnum，填进来照样是个 ``str``，所以
+    # ``__post_init__`` 认的是类型本身：硬性要求没有「这个骨架做不到」那一档。
+    subagents: Mapping[SubagentRequirement, str]
     # Does it speak the platform gateway's own shape? Then every model the
     # project can use is one it can drive, and no deployment has to list them.
     # False means it supports only what it has its own adapter for, and an
@@ -479,14 +518,59 @@ class Harness:
     # with no way back to the timeline.
     draws_on_its_screen: bool = True
 
+    def __post_init__(self) -> None:
+        """答不全四条的，根本造不出来——这就是「摘掉」的可判形式。
+
+        判在构造上而不是判在一条守卫测试上：注册表是一个字面量，一个造得出来的
+        条目总会有人写进去。
+        """
+        for requirement in SubagentRequirement:
+            answer = self.subagents.get(requirement)
+            if type(answer) is not str or not answer.strip():
+                raise ValueError(
+                    f"{self.name} 没有答「{requirement}」。这是硬性要求（结论 43）："
+                    "答得出的骨架才上注册表，答不出的留着代码不注册。"
+                    "一条差异码也不算答——硬性要求没有「暂缺」那一档。"
+                )
+
 
 HARNESSES: dict[str, Harness] = {
-    CLAUDE_CODE: Harness(CLAUDE_CODE, "Claude Code", carries_subscription=True),
-    # Both of these run a runner as the screen's program and drive the agent
-    # over RPC, so neither has a pane worth attaching to.
-    CODEX: Harness(CODEX, "Codex", speaks_gateway=False, draws_on_its_screen=False),
-    PI: Harness(PI, "pi", draws_on_its_screen=False),
+    CLAUDE_CODE: Harness(
+        CLAUDE_CODE,
+        "Claude Code",
+        subagents={
+            SubagentRequirement.SPAWNS_WITH_A_MODEL: (
+                "`Task` / `Agent` 工具起一条子线程；跑哪个模型由启动环境里那三个别"
+                "名决定（`agent/device_provider.py` 的 ANTHROPIC_DEFAULT_HAIKU / "
+                "SONNET / OPUS_MODEL），agent 在调用里选家族。"
+            ),
+            SubagentRequirement.LABELS_ITS_THREAD: (
+                "`agent/harness/claude_code/hook_events.py` 的 `SubThreads`：标识写"
+                "在起它的那段 prompt 里（`room_task/thread_label.py`），PostToolUse "
+                "的 tool_response.agentId 把它钉在这个 worker 上，此后这条子线程的"
+                "每条记录都带着它出来。"
+            ),
+            SubagentRequirement.PARENT_RETASKS_IT: (
+                "人对卡的操作投递给父线程执行：`agent/chat.py` 经 "
+                "`AgentRuntime.deliver` 送进这条会话，子线程的指令由起它的父线程自"
+                "己改——平台不认子线程，也不直接对它说话。"
+            ),
+            SubagentRequirement.PARENT_STOPS_IT: (
+                "`AgentRuntime.interrupt` 停的是父线程；一条会话就是机器上的一个 "
+                "claude 进程（`agent/harness/claude_code/hooks_substrate.py`），子线"
+                "程跑在它里面，与它同生同死。"
+            ),
+        },
+        carries_subscription=True,
+    ),
 }
+
+# Codex 与 pi 今天答不出这四条，所以不在上面（结论 43）。**这是一次产品收缩，不是
+# 一次重构副作用**：它们的适配层原样留在 `agent/harness/codex/` 与
+# `agent/harness/pi/`——契约夹具照跑、行为声明照写、pin 照被守卫管着——只是这套部
+# 署不跑它们，功能矩阵里也不占一列。两个出口里取的是这一个；另一个是给它们各写一
+# 层适配（两家上游都支持多线程），什么时候写出来、什么时候答得出四条，什么时候回
+# 到上面这张表。
 
 # 这套部署跑的骨架（结论 28）。骨架不是产品概念，不在类型上也不在实例上，所以
 # 没有第二处可以答「跑的是哪个」；P16 把这一行换成真的部署设置。

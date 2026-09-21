@@ -7,9 +7,10 @@ after the room has selected another teammate or harness.
 ``thread_label`` is the contract's answer to "whose work is this" (结论 43): a
 string the agent hands its subagent when it spawns one, which the harness then
 puts on EVERY event of that sub-thread, unchanged. The platform reads it and
-nothing else — the id a harness mints for a worker is its own business, and a
-harness that cannot carry a label through fills that cell of the matrix with a
-difference code rather than being guessed at from here. Each harness binds the
+nothing else — the id a harness mints for a worker is its own business, and
+carrying the label through is a hard requirement of the contract
+(``harness.SubagentRequirement``), so a harness that cannot do it is not one
+this deployment runs. Each harness binds the
 label to whichever field of its own records rides on a whole sub-thread rather
 than on one call; what that field is called there stays inside that harness's
 adapter, and the platform never learns the name.

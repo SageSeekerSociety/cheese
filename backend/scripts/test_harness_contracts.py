@@ -7,7 +7,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.domain.agent.capability.matrix import declarations
+from app.domain.agent.capability.matrix import written
 from app.domain.agent.harness import CLAUDE_CODE, CODEX
 from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran
 
@@ -28,7 +28,11 @@ def main() -> int:
     # constant its adapter holds. This job used to `ast`-parse one file for
     # Claude Code's pin and carry Codex's as a literal of its own, so upgrading
     # Codex meant remembering that a second copy lived in a CI script.
-    pinned = {name: d.pinned_version for name, d in declarations().items()}
+    #
+    # Every WRITTEN declaration, not only the registered ones: Codex's adapter
+    # is still here and still pinned (结论 43 took it out of the registry, not
+    # out of the tree), and this job is what holds that binary to its pin.
+    pinned = {name: d.pinned_version for name, d in written().items()}
     # The two harnesses whose pin IS an npm package. pi is not one: it is a
     # per-platform tarball off the vendor's GitHub releases, served to machines
     # by the platform itself (app/domain/machine/pi_dist.py), and its npm

@@ -15,7 +15,8 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
-from app.domain.agent.harness import CODEX, PI
+from app.domain.agent import harness as harness_module
+from app.domain.agent.harness import CODEX, PI, Harness, SubagentRequirement
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent_instance import configuration as config
 from app.domain.agent_instance.configuration import model_choices
@@ -25,9 +26,21 @@ def _offered(project_settings: dict | None = None) -> set[str]:
     return {item["id"] for item in model_choices(project_settings)}
 
 
-def _running(monkeypatch, harness: str) -> None:
-    """这套部署跑的是哪个骨架。它是部署的选择，不是谁的属性。"""
-    monkeypatch.setattr(config, "DEFAULT_HARNESS", harness)
+def _running(monkeypatch, name: str, **bits: bool) -> None:
+    """这套部署跑的是哪个骨架。它是部署的选择，不是谁的属性。
+
+    骨架当场造一个注册上去：注册表里今天只有 Claude Code（结论 43，答不出四条硬性
+    要求的骨架留着代码不注册），而下面这几条问的是「跑着一个指不到订阅、或者不说
+    网关那套话的骨架时，列出来的是哪一批」——那件事跟谁答得出四条无关。
+    """
+    stand_in = Harness(
+        name,
+        name,
+        subagents=dict.fromkeys(SubagentRequirement, "替身，见 `agent/harness/`"),
+        **bits,
+    )
+    monkeypatch.setitem(harness_module.HARNESSES, name, stand_in)
+    monkeypatch.setattr(config, "DEFAULT_HARNESS", name)
 
 
 @pytest.mark.parametrize(
@@ -108,7 +121,7 @@ def test_a_deployment_is_offered_only_what_its_harness_has_an_adapter_for(
     _gateway_reports(_routes("glm-5.2"))
     assert {"glm-5.2", "codex-fixture"} <= _offered({})
 
-    _running(monkeypatch, CODEX)
+    _running(monkeypatch, CODEX, speaks_gateway=False)
     assert _offered({}) == {"codex-fixture"}
 
 
@@ -125,7 +138,7 @@ def test_a_subscription_model_stays_with_the_harness_its_credential_is_for(
     )
     assert "sonnet" in _offered({})
 
-    _running(monkeypatch, CODEX)
+    _running(monkeypatch, CODEX, speaks_gateway=False)
     assert "sonnet" not in _offered({})
     assert "codex-fixture" in _offered({})
 

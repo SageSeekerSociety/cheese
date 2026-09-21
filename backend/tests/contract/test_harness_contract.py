@@ -210,8 +210,47 @@ def test_every_word_has_a_scenario() -> None:
 )
 def test_every_harness_this_deployment_runs_has_a_cell(scenario: dict) -> None:
     """The matrix has no blanks: a harness added to ``HARNESSES`` has to answer
-    every scenario, with its records or with a difference code."""
-    assert set(scenario["harnesses"]) == set(HARNESSES)
+    every scenario, with its records or with a difference code.
+
+    The registry is the FLOOR, not the whole list. An adapter can stay in the
+    tree without being registered (结论 43 took two of them out), and its cells
+    are worth keeping: they are what holds its translator to the same events as
+    everyone else's, which is the thing that has to be true before it can be
+    registered again.
+    """
+    assert set(HARNESSES) <= set(scenario["harnesses"])
+
+
+@pytest.mark.parametrize(
+    ("scenario", "harness"),
+    [
+        (s, h)
+        for s in _record_scenarios()
+        for h in sorted(HARNESSES)
+        if "subagent" in s["name"]
+    ],
+    ids=[
+        f"{s['name'].removesuffix('.json')}-{h}"
+        for s in _record_scenarios()
+        for h in sorted(HARNESSES)
+        if "subagent" in s["name"]
+    ],
+)
+def test_a_running_harness_answers_the_subagent_scenarios_with_records(
+    scenario: dict, harness: str
+) -> None:
+    """子线程那几条上没有差异码可填（结论 43）。
+
+    Everywhere else a cell may name a difference — 「这个骨架报不出工具失败」 is
+    a hole named rather than hidden. Not here: carrying a sub-thread's work to
+    its card is a hard requirement (``SubagentRequirement``), so a harness that
+    would answer these with a code is one this deployment must not be running,
+    and the place that says so is its absence from ``HARNESSES``.
+    """
+    assert "records" in scenario["harnesses"][harness], (
+        f"{harness} 用差异码回答了 {scenario['name']}。"
+        "这是硬性要求，没有「暂缺」那一档：要么它真的做得到，要么它不该在注册表里。"
+    )
 
 
 # --- the six verbs, played --------------------------------------------------
