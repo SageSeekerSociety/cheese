@@ -23,7 +23,6 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
-from app.domain.feedback import repositories as feedback_repo
 from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import (
     Feedback,
@@ -32,6 +31,7 @@ from app.domain.feedback.models import (
     FeedbackStatus,
     FeedbackVisibility,
 )
+from app.domain.feedback.paging import THREAD_PAGE
 from app.domain.feedback.schemas import (
     CommentCreate,
     CommentLikeOut,
@@ -278,7 +278,10 @@ async def list_feedback_comments(
     resolver: ActorResolverDep,
     after: Annotated[str | None, Query(max_length=128)] = None,
     parent_id: Annotated[uuid.UUID | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = feedback_repo.THREAD_PAGE,
+    # 默认值从 `paging.py` 拿，不从 `repositories.py`：路由 import 领域的 repository
+    # 是架构守卫挡的一件事（路由不属于任何领域，所以它串的每一层都是跨域的），而
+    # 「一页多大」正是路由和 repository 都要知道的那个数——所以它自己一个模块。
+    limit: Annotated[int, Query(ge=1, le=100)] = THREAD_PAGE,
 ) -> dict:
     """一页评论。
 

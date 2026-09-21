@@ -36,6 +36,11 @@ from app.domain.feedback.models import (
     FeedbackVisibility,
 )
 
+# 这两个数**住在 `paging.py`**（理由写在那儿：路由也要用它们，而路由不许 import
+# repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
+# 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
+from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
+
 #: 「热门」的阈值 —— 按支持数，不按浏览量。原型给过理由（「浏览是路过，支持是表态」），
 #: 这里照抄。`supports >= HOT_SUPPORTS` 且按支持数降序。
 HOT_SUPPORTS = 5
@@ -66,15 +71,6 @@ CLOSED_STATUSES: tuple[FeedbackStatus, ...] = (
     FeedbackStatus.deployed,
 )
 
-
-#: 一页取多少栋楼。**分页的单位是楼（顶层评论），不是条** —— 客户端要拿到一整栋
-#: 才画得出「回复 X」和那根缩进线，所以一页里的一栋楼连同它的回复一起给。
-THREAD_PAGE = 50
-
-#: 一栋楼一页取多少条回复。回复可以比楼多得多（一栋楼就是一场讨论），所以它自己
-#: 有个上限，「展开更多」按游标往后取下一页。真取完的话 `reply_counts` 里的总数
-#: 和手上条数相等，客户端据此知道没有下一页了。
-REPLIES_PAGE = 50
 
 #: 一次 `IN (...)` 里最多放几个值。**这不是微优化**：asyncpg 把参数个数编进 int16，
 #: 超过 32767 直接抛 `InterfaceError` —— 那是谁都过不去的 500，而且楼里评论一多，
