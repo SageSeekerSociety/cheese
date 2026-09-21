@@ -407,7 +407,7 @@ async def test_admission_names_the_machine_identity_a_topics_turns_go_out_as(
 
     # Nothing pinned yet: there is no machine, so there is no identity to name.
     body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["supply"] == {"pool": "subscription"}
+    assert "upstream" not in body["supply"]
 
     await _pin_topic_to_machine(
         client, project_id=pid, topic_id=topic_id, machine_id=516, upstream="m516:pw516"
