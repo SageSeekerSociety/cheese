@@ -395,7 +395,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const topic = await createTopic(pid, title.trim() || '新话题')
       if (epoch !== projectEpoch || projectId.value !== pid) return null
       topicRevision += 1
-      topics.value.push(topic)
+      topics.value.unshift(topic)
+      void refreshTopics()
       return topic
     } catch (e) {
       if (epoch === projectEpoch) reportError(e, '创建话题失败')

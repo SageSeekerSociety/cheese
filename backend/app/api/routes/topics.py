@@ -164,7 +164,10 @@ async def create_topic(
         parent_id=body.parent_id,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
     )
-    response = ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    service = TopicService(db)
+    relevance = await service.relevance_for_topics([topic], _viewer(actor))
+    managed = await TopicMemberService(db).managed_topic_ids([topic.id], actor.handle)
+    response = ok(_topic_out(topic, set(), {}, relevance, managed_ids=managed))
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
     await db.commit()

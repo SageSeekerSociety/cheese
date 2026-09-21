@@ -484,9 +484,9 @@ def stub_project_forge(monkeypatch, tmp_path):
         if not await test_repository(project_id, session):
             await remote_author_email(project_id, session, email, **kwargs)
 
-    async def branch_head(project_id, session, branch):
+    async def branch_head(project_id, session, branch, **kwargs):
         if not await test_repository(project_id, session):
-            return await remote_head(project_id, session, branch)
+            return await remote_head(project_id, session, branch, **kwargs)
         repo = git_store.path(project_id)
         if not repo.exists():
             return None
