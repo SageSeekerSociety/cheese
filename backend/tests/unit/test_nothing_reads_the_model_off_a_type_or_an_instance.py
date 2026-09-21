@@ -7,7 +7,9 @@
 以断言——一个字段被悄悄读回去，不会有任何一条测试变红，只会让「用哪个模型」重新
 有两个住处。能看见它的只有「全仓零读点」这一条。
 
-字段本身还在 schema 上（P15b 才删），所以这里盯的是**读点和写点**，不是字段。
+字段本身也已经不在 schema 上了（P15b），所以这里盯两样东西：**读点**——全仓再没
+有一处从一份 configuration 上取出这三样；以及**字段集合**——类型和实例各自能带
+什么是一张封闭清单，三个字段回不来，换个名字也回不来。
 """
 
 import ast
@@ -18,6 +20,7 @@ import pytest
 
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_type.library import AgentTypeDef
+from app.domain.agent_type.schemas import AgentTypeOut
 
 BACKEND = Path(__file__).resolve().parents[2]
 APP = BACKEND / "app"
@@ -69,8 +72,9 @@ def _reads_a_retired_key(tree: ast.AST) -> list[tuple[int, str]]:
 
     三种读法都认：``configuration["model"]``、``configuration.get("model")``，
     以及走 schema 的 ``AgentConfiguration.model_validate(row).model``——最后这种
-    是最可能长回来的一条，因为字段这一轮还留在 schema 上（P15b 才删）。持有它的
-    表达式先过 :func:`_holds_a_configuration`，所以起个局部名换个写法也绕不过去。
+    今天会当场 ``AttributeError``，但它写起来最像对的，所以照样是一条要拦的写
+    法。持有它的表达式先过 :func:`_holds_a_configuration`，所以起个局部名换个写
+    法也绕不过去。
     """
     aliases = _configuration_aliases(tree)
     found: list[tuple[int, str]] = []
@@ -227,16 +231,38 @@ def test_self_test_the_frontend_guard_lets_through(source: str) -> None:
     assert _frontend_reads(source) == [], f"误红：{source!r}"
 
 
-@pytest.mark.parametrize("field", RETIRED)
-def test_a_saved_configuration_never_writes_the_three_keys_back(field: str) -> None:
-    """写入端只有 ``model_dump()`` 一条。它不交出这三个键，所以 P15b 那条迁移
-    清一次就够——不会有新的行再把它们写回去。
-    """
-    written = AgentConfiguration(
-        body="角色", model="opus", harness="codex", effort="high"
-    ).model_dump()
-    assert field not in written
-    assert set(written) == {"body", "skills", "mcp_servers"}
+# --- 字段集合是封闭清单 -----------------------------------------------------
+#
+# 为什么是「等于这张清单」而不是「这三个不在里面」：一个字段可以换个名字回来
+# （``runs_on``、``thinking``），而「模型不是参与者的属性」管的是这件事本身，不
+# 是这三个拼写。清单写在这里，加一个字段就要在这里改一行并说出它凭什么是角色的
+# 一部分——这正是结论 3、28 要人停下来想的那一下。
+
+_A_ROLE = {"body", "skills", "mcp_servers"}
+
+_A_TYPE = {
+    "name",
+    "title",
+    "description",
+    "builtin",
+    "space_id",
+    "created_by",
+    "created_at",
+} | _A_ROLE
+
+
+def test_a_saved_configuration_carries_a_role_and_nothing_else() -> None:
+    assert set(AgentConfiguration.model_fields) == _A_ROLE, (
+        "一个实例存的是角色：人设、技能、外部工具。模型绑在活上（结论 3），"
+        "骨架是部署设置（结论 28）——两样都不是这张 schema 上的字段。"
+    )
+
+
+def test_a_type_carries_a_role_and_nothing_else() -> None:
+    assert set(AgentTypeOut.model_fields) == _A_TYPE, (
+        "一个类型说的是角色加它自己的出身（谁建的、哪个空间、是不是内置）。"
+        "「怎么跑」不在里面。"
+    )
 
 
 @pytest.mark.parametrize("field", RETIRED)
