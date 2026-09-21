@@ -366,6 +366,14 @@ def _task_root() -> Path:
 # prepared by the other launcher could not create a task at all.
 ENVIRONMENT_RUNNER_PATHS = (".cheese", ".claude")
 
+# 平台放在这个会话自己 home 里的那一个目录:随消息发来的附件落在
+# `~/attachments/<地址>`,`library get` 取下来的那一份也落在这里。它不是工作目录
+# ——工作目录是被托管的那个检出,平台往里写一个字节,就是别人仓库里一个他没有加过、
+# 而我们也不会去删的未跟踪文件(结论 49)。名字由 `app/domain/agent/place.py` 的
+# `STAGED_DIR` 选定,这里是它的一份抄件,`backend/tests/unit/test_footprint_root.py`
+# 把两边对住。
+STAGED_DIR = "attachments"
+
 
 def _environment_runner() -> Path | None:
     for directory in ENVIRONMENT_RUNNER_PATHS:
@@ -1780,7 +1788,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "资料库放的是用户给这个项目的文件,按他给的名字。它是项目一级的——\n"
             "另一个房间上周传的那份,你在这里也拿得到。\n\n"
-            "跟着某条消息发来的资料已经在你工作目录的 library/ 下了,不用再取。\n"
+            "跟着某条消息发来的资料不用再取:消息里给的就是它在这台机器上的\n"
+            "绝对路径,照那个路径读。\n"
             "用户提到一份你手上没有的('上周那份预算表'),先 ls 看叫什么,再 get。\n\n"
             "资料库只读:改它没有意义,要改就改出另一份,原件留在原处。"
         ),
@@ -1788,10 +1797,16 @@ def build_parser() -> argparse.ArgumentParser:
     libsub = plib.add_subparsers(dest="libcmd", required=True)
     libsub.add_parser("ls", help="列出资料库里的文件(最近给的在前)")
     plibget = libsub.add_parser(
-        "get", help="取一份到工作目录(默认 library/<名字>,和随消息发来的那份同一个位置)"
+        "get",
+        help=(
+            "取一份到自己 home 下的 ~/attachments/library/<名字>"
+            "(和随消息发来的那份同一个位置),不写进工作目录"
+        ),
     )
     plibget.add_argument("name", help="资料库里的名字,如 预算表.xlsx")
-    plibget.add_argument("--out", default=None, help="写到别处(默认 library/<名字>)")
+    plibget.add_argument(
+        "--out", default=None, help="写到别处(默认 ~/attachments/library/<名字>)"
+    )
 
     part = sub.add_parser(
         "show",
@@ -2057,7 +2072,11 @@ def main() -> None:
                 shown = f"{size / 1024:.0f}K" if size >= 1024 else f"{size}B"
                 print(f"{row['path']}\t{shown}")
         else:
-            out = a.out or f"library/{a.name}"
+            # 默认落在自己 home 下,和随消息发来的那份同一个位置;不落在工作目录
+            # ——那是被托管的检出,资料库那一份写进去就是别人仓库里一个未跟踪文件
+            # (结论 49)。`Path.home()` 按这个会话自己的 `$HOME` 解,正是执行器
+            # 落附件时用的那一个。
+            out = a.out or str(Path.home() / STAGED_DIR / "library" / a.name)
             parent = os.path.dirname(out)
             if parent:
                 os.makedirs(parent, exist_ok=True)

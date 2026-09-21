@@ -16,11 +16,11 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
-from app.domain.workspace.forge_files import ProjectFiles
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
 

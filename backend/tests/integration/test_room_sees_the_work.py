@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.workspace.forge_files import ProjectFiles
+from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import StubChannel
 from tests.delivery import delivery_task
 from tests.integration.conftest import chat_ws_url

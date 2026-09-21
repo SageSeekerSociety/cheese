@@ -123,19 +123,19 @@ def test_artifact_type_maps_to_mime(client):
 
 @pytest.mark.parametrize("size", [100, 1024 * 1024 + 1])
 def test_editing_the_same_artifact_changes_preview_version(client, size):
-    from app.domain.workspace import service as ws
+    from app.domain.library import service as library
 
     pid, tid = _topic(client)
     project, topic = uuid.UUID(pid), uuid.UUID(tid)
-    ws.write_room_file(project, topic, "report.html", b"a" * size)
+    library.write_room_file(project, topic, "report.html", b"a" * size)
     response = client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
     assert response.status_code == 200
     first = client.get(f"/topics/{tid}/preview").json()["data"]
     assert first["version"]
-    ws.write_room_file(project, topic, "report.html", b"a" * size)
+    library.write_room_file(project, topic, "report.html", b"a" * size)
     unchanged = client.get(f"/topics/{tid}/preview").json()["data"]
     assert unchanged["version"] == first["version"]
-    ws.write_room_file(project, topic, "report.html", b"b" * size)
+    library.write_room_file(project, topic, "report.html", b"b" * size)
     edited = client.get(f"/topics/{tid}/preview").json()["data"]
     assert edited["artifact_id"] == first["artifact_id"]
     assert edited["version"] != first["version"]
@@ -295,7 +295,7 @@ def _detach(topic_id: str, machine) -> None:
 def test_app_artifact_and_preview(client):
     """`cheese serve` declares a RUNNING app; the preview knocks on it live and
     hands the browser a path a browser can actually fetch."""
-    from app.domain.workspace import service as ws
+    from app.domain.library import service as library
 
     pr = client.post("/projects", json={"name": "P"})
     pid = pr.json()["data"]["id"]
@@ -337,7 +337,7 @@ def test_app_artifact_and_preview(client):
     # A later file artifact supersedes the app as the current preview.
     import uuid as _uuid
 
-    wt = ws.room_files_root(_uuid.UUID(pid), _uuid.UUID(tid))
+    wt = library.room_files_root(_uuid.UUID(pid), _uuid.UUID(tid))
     (wt / "r.html").write_text("<h1>hi</h1>")
     client.post(f"/topics/{tid}/shown", json={"path": "r.html", "as": "html"})
     d = client.get(f"/topics/{tid}/preview").json()["data"]

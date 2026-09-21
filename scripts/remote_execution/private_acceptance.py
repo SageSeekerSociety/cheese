@@ -140,17 +140,22 @@ HTTPServer(('127.0.0.1', 8765), Handler).serve_forever()
         def controls():
             import base64
 
-            client.control(
+            # Into the executor's own HOME (结论 49): a staged file is the
+            # platform's, so it goes where that executor's platform directory
+            # is, at the relative path the control was given. Asked of the
+            # container rather than written down here, because which directory
+            # that is belongs to whoever launched it.
+            home = shell("printf %s \"$HOME\"")["stdout"].strip()
+            landed = client.control(
                 {
                     "subtype": "stage_file",
-                    "path": "uploads/input.txt",
+                    "path": "attachments/input.txt",
                     "data": base64.b64encode(b"input data").decode(),
                 }
-            )
+            )["path"]
+            assert landed == f"{home}/attachments/input.txt", (landed, home)
             assert (
-                client.control(
-                    {"subtype": "read_file", "path": "/work/uploads/input.txt"}
-                )["contents"]
+                client.control({"subtype": "read_file", "path": landed})["contents"]
                 == "input data"
             )
             assert (

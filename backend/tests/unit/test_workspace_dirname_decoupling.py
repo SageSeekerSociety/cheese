@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from app.domain.workspace import service as ws
+from app.domain.repository import service as ws
 
 FROZEN = [
     ("733747a3-0000-4000-8000-000000000001", "topic_733747a3"),

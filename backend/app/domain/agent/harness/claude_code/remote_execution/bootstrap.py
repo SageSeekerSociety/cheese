@@ -26,6 +26,14 @@ VERSION = "2.1.277"
 PLATFORM_DIR = ".cheese"
 PREVIOUS_PLATFORM_DIR = ".claude"
 
+# The checkout this room's agent works in, inside the room's home. A copy of
+# `place.CHECKOUT_DIR` for the same reason as the pair above — this file is
+# exec'd on the machine out of a string — and held to it by test_footprint_root.py.
+# This is the side that CREATES the directory, so drift from the name
+# `place.write` refuses would leave the platform writing into a checkout it
+# believes it is staying out of.
+CHECKOUT_DIR = "room"
+
 
 class UpgradeDeferred(Exception):
     def __init__(self, info):
@@ -207,7 +215,7 @@ def prepared(payload, owner, verified=None, *, refresh_runtime=False):
     }
     variables = (payload.get("environment") or {}).get("variables", {})
     package_env.update({key: variables[key] for key in package_env if key in variables})
-    work = home / "room"
+    work = home / CHECKOUT_DIR
     platform_dir = home / PLATFORM_DIR
     config_dir = home / ".claude"
     platform_dir.mkdir(parents=True, exist_ok=True, mode=0o700)

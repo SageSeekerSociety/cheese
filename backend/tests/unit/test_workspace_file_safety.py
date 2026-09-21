@@ -1,6 +1,6 @@
 """File versions identify content rather than write time."""
 
-from app.domain.workspace.textfile import content_version
+from app.domain.textfile import content_version
 
 
 def test_version_identifies_content_not_the_moment_it_was_written():

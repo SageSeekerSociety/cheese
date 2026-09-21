@@ -61,9 +61,9 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
     client,
 ):
     from app.domain.project.models import Project
+    from app.domain.repository import identity
     from app.domain.review.pr_text import pr_trailers
     from app.domain.topic.models import Topic
-    from app.domain.workspace import identity
     from tests.integration.conftest import session_auth_headers
 
     project = client.post(
@@ -121,9 +121,9 @@ def test_task_author_is_the_agent_opening_work_not_the_dispatcher_or_room_defaul
 
 
 def test_historical_task_does_not_invent_an_agent_author(client):
+    from app.domain.repository import identity
     from app.domain.review.pr_text import pr_trailers
     from app.domain.topic.models import Topic
-    from app.domain.workspace import identity
 
     project = client.post("/projects", json={"name": "Old task"}).json()["data"]
     task = delivery_task(client, project["root_topic_id"], commit=False)
