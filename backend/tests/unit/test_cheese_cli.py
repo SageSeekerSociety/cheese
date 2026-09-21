@@ -634,3 +634,31 @@ def test_feedback_propose_refuses_locally_when_there_is_no_topic():
     assert plan["method"] == "POST"
     assert plan["path"] == "/topics/room/feedback-proposals"
     assert plan["body"]["title"] == "沙箱里 make 装不上依赖"
+
+
+@pytest.mark.parametrize(
+    ("delivered", "expected"),
+    [
+        (True, "便条已递给那条线程。"),
+        (False, "那条线程这会儿没有在跑的轮次,便条没人接住。"),
+    ],
+)
+def test_note_says_whether_anyone_caught_it(monkeypatch, capsys, delivered, expected):
+    """`delivered` 是这条工具的答案本身，不是一个可以丢掉的状态码。
+
+    便条直接进那条线程正在跑的那一轮，那边这一刻没在跑就没人接住。一律打「已递」
+    的话，用 Bash 调这条命令的那条线程会当作对面已经知道了往下走 —— 而那句话其实
+    掉在地上了，两边都不会有人再提起它。
+    """
+    cli = _load()
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.setattr(
+        cli.sys, "argv", ["cheese", "note", "other-thread", "看一眼 CI"]
+    )
+    monkeypatch.setattr(
+        cli, "_call", lambda *args, **kwargs: {"data": {"delivered": delivered}}
+    )
+
+    cli.main()
+
+    assert capsys.readouterr().out.strip() == expected

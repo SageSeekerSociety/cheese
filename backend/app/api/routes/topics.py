@@ -1415,8 +1415,6 @@ async def set_topic_compute_profile(
     # is selectable only when at least one project-scoped device is online.
     if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
-    if name == COMPUTE_CLOUD:
-        await MachineService(db).require_use_authority(topic.project_id, actor)
     if body.get("choice"):
         await validate_choice(db, topic.project_id, choice)
 
@@ -1445,28 +1443,18 @@ async def set_topic_compute_profile(
         call = await machine_policy_call(
             db, project=project, topic=topic, choice=choice
         )
-        verdict = (
-            # 房间跑起来之后换机器，**当场不换**（结论 23）：换过去丢掉的是这台机
-            # 器上的工作区和还没提交的改动，而那是别人的机器、别人的电（自托管的
-            # 收件人是机主本人）或者项目的钱（Cloud 的收件人是项目主人）。所以它和
-            # 撞上档位策略的那一次是同一种东西：这次调用没有发生，房间里多的是一条
-            # 给人的提议。
-            #
-            # 不走 `gate.check`，因为它答的是另一个问题（「这一档可不可以自己发
-            # 生」）—— 今天每个项目都不限档，问它只会一路放行，于是自托管换机器既
-            # 没有机主点头、也没有那句「丢了什么」。
-            gate.Proposal(
-                call=call,
-                asked_by=actor.handle,
-                content=(
-                    f"{actor.handle} 要把这个房间换到「{call.label}」上去。"
-                    "房间已经在跑，换过去会丢掉现在这台机器上的工作区和还没提交的"
-                    f"改动；这一步等 @{call.approver} 点头。"
-                ),
-            )
-            if started
-            else gate.check(call, policy, actor.handle)
-        )
+        # 先问闸门 —— 房间开没开跑都问。「超档怎么办」全仓只有 `policy/gate.py`
+        # 回答，路由自己答一遍就是第二份答案：项目把这一档的处置写成 `deny` 时，
+        # 这里要的是一次**看得见的**拒绝（`OverTier` 抛出去，不变量 I27），而不是
+        # 一条等人点头的提议 —— 提议读起来像「再等等」，拒绝说的是「这条路不通」。
+        verdict = gate.check(call, policy, actor.handle)
+        # 档内也不当场换（结论 23）：房间跑起来之后换机器，丢掉的是这台机器上的
+        # 工作区和还没提交的改动，而那是别人的机器、别人的电（自托管的收件人是机
+        # 主本人）或者项目的钱（Cloud 的收件人是项目主人）。所以档内那一档在这里
+        # 换成同一种东西：这次调用没有发生，房间里多的是一条给人的提议。超档那一
+        # 档闸门已经答过，理由更强，不覆盖它。
+        if started and isinstance(verdict, gate.Allowed):
+            verdict = gate.because_the_room_is_running(call, actor.handle)
     if isinstance(verdict, gate.Proposal):
         # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的
         # 是一条提议，下一步在 approver 手上。
@@ -1492,6 +1480,16 @@ async def set_topic_compute_profile(
                 },
             }
         )
+
+    # 到这里这次调用**真的要发生**，Cloud 花的是项目的钱，所以问一句花钱的这位有
+    # 没有这个权。它在闸门之后而不是之前：`require_use_authority` 要的是一个登录
+    # 用户（`actor.via == "token"`），而房间里跑着的那一轮拿的每一张凭据都是
+    # `via == "cheese"`（`api/auth.py`）。放在闸门之前，`cheese_machine(profile=
+    # "cloud")` 一句 401 撞死在这里，连那条「等项目主人点头」的提议都长不出来——
+    # 而那条提议正是 Cloud 这一档该有的产物（结论 23）。变成提议的那一次没有花任
+    # 何人的钱，该点头的人就是项目主人本人。
+    if name == COMPUTE_CLOUD:
+        await MachineService(db).require_use_authority(topic.project_id, actor)
 
     # A pre-turn choice has no worktree/session state yet, so it remains editable.
     # Release then bind preserves bind_topic_device's write-once contract: the bind

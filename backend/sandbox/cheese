@@ -2336,8 +2336,14 @@ def main() -> None:
         else:
             print(f"这个房间的算力现在是 {r.get('current')}。")
     elif a.cmd == "note":
-        _planned_call("cheese_note", a)
-        print("便条已递给那条线程。")
+        # `delivered` 是这条工具的答案本身,不是一个状态码:便条直接进那条线程正在
+        # 跑的那一轮,那边这一刻没在跑就没人接住。把它丢掉、一律打"已递",调用方会
+        # 当作对面已经知道了往下走,而那句话其实掉在地上了。
+        r = _planned_call("cheese_note", a).get("data") or {}
+        if r.get("delivered"):
+            print("便条已递给那条线程。")
+        else:
+            print("那条线程这会儿没有在跑的轮次,便条没人接住。")
     elif a.cmd == "deliver-at":
         r = _planned_call("cheese_deliver_at", a).get("data") or {}
         print(f"到 {r.get('at')} 会把它递给你。")

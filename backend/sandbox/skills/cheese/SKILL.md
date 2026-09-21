@@ -23,7 +23,7 @@ description: 在 CheeseX（知是）平台里接收用户消息、开始执行�
 - 用户看到的是:对话、右侧实况文档面板、决策记录、通知、里程碑。按这些表达。
 
 - **写代码、跑命令与测试**：在所选任务的工作目录中使用原生工具。交付文件提交到该任务的分支；房间实况文档按下文的版本规则保存到平台，不为记录进度而提交 `docs/topics/` 文档。临时草稿可放房间目录或临时目录，交付时显式保存到平台或任务分支。
-- **改平台状态**：聊天按上面的规则发送；下表六样是 MCP 上的工具，其余每一行都用 Bash 调 `cheese` 的子命令（对照见下文「工具」一节）。两样都没有的，用 `platform_request`，分别传入 `method`、相对 API 根路径的 `path` 和可选 JSON `body`，不拼 shell；接口不确定时，先用它读取 `GET /openapi.json` 查看对应请求结构，不猜参数。涉及本地文件、Git 和服务进程的操作用执行器里的原生工具。
+- **改平台状态**：聊天按上面的规则发送；下文「工具」一节分两张表：MCP 上的平台工具按工具签名调，`cheese` 的子命令照左列的命令行用 Bash 调。两张表都没有的，用 `platform_request`，分别传入 `method`、相对 API 根路径的 `path` 和可选 JSON `body`，不拼 shell；接口不确定时，先用它读取 `GET /openapi.json` 查看对应请求结构，不猜参数。涉及本地文件、Git 和服务进程的操作用执行器里的原生工具。
 
 ## 房间里的那个人是产品用户,不是平台运维
 
@@ -150,59 +150,68 @@ GitHub 项目直接使用原生 `gh`，Forgejo 项目直接使用原生 `fj`。�
 
 ## 工具
 
-**MCP 上只有六样**：`chat_send`、`cheese_ask`、`cheese_feedback_propose`、`cheese_machine`、`cheese_note`、`cheese_deliver_at`。它们住在你这一侧，跟平台说话不经过那台执行机——所以那台机器够不着的时候，这六样一个都不少，你照样说得了话、问得了人、报得了故障、要得到另一台机器。
+平台工具分两处，**表也分两张，因为「怎么调」不一样**。
 
-**下面表里其余每一行都是 `cheese` 这个 CLI 的一条子命令，用 Bash 调**：表里写成 `cheese_doc_set(file)` 的那一条，命令行上是 `cheese doc set report.md`，写成 `cheese_push_fix(task?)` 的是 `cheese push-fix --task <id>`（`_` 分开的要么是子命令层级、要么在命令名里是连字符，拿不准就 `cheese --help` 看一眼；参数按各自的 `--help`）。它们跟文件、命令、项目自己的 MCP 一样长在那台机器上：机器没了它们就是不可用，平台不在你这一侧给它们做替身，也不把它们搬到别处去。没有对应子命令的平台动作用 `platform_request`。
+**一、MCP 上的平台工具**（下面第一张表）：按工具签名调用，`?` 标记的参数可省略。它们住在你这一侧，跟平台说话不经过那台执行机——所以那台机器够不着的时候，这几样一个都不少，你照样说得了话、问得了人、报得了故障、要得到另一台机器。
 
-`?` 标记的参数可省略。
+**二、`cheese` 这个 CLI 的子命令**（后面两张表）：左列写的就是命令行本身，用 Bash 原样调，`<>` 是要替换的值、`[]` 里的可省略，完整参数看各自的 `--help`。它们跟文件、命令、项目自己的 MCP 一样长在那台机器上：机器没了它们就是不可用，平台不在你这一侧给它们做替身，也不把它们搬到别处去。
+
+两张表都没有的平台动作，用 `platform_request`。
+
+### MCP 上的平台工具
 
 | 工具 | 作用 |
 |---|---|
 | `chat_send(content, reply_to?, request_id?)` | 主动发送聊天消息。结果不确定时带上返回的 `request_id` 原样重试 |
-| `cheese_chat_list(topic?, task?, limit?, before?, after?, kind?, author?, json?)` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条。只读，不叫醒任何人、不标记消息已读。输出末尾带续读的调用，翻更早的照抄它 |
-| `cheese_chat_search(query, topic?, task?, limit?, before?, after?, kind?, author?, json?)` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
-| `cheese_chat_get(message_id, topic?, task?, json?, offset?, length?)` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
-| `cheese_chat_replies(message_id, topic?, task?, limit?, before?, after?, kind?, author?, json?)` | 列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 ID 再读 |
-| `cheese_doc_set(file)` | 把工作区里一个文件的内容设为本话题实况文档（整块覆盖）。调用前先 `cheese_doc_get` 记下当前版本；写入冲突时重新 get、合并再 set |
-| `cheese_doc_get()` | 返回当前实况文档。也是拿到写入权的那一步——没读过就写,只有本话题还没文档时才让你建 |
-| `cheese_title(text, task?)` | 修改房间标题；带 `task` 时修改该任务标题 |
-| `cheese_decision(text)` | 记一条关键决策到决策记录 |
-| `cheese_remember(fact, core?)` | 记入项目记忆(任何话题以后可引用)。默认是**普通记忆**:不会自动出现在你的上下文里,要用 `cheese_recall` 查。`core` 记成**核心记忆**:每轮全量注入——只给「你是谁、长期规则和目标」这种永远成立的东西用,预算很小,写多了会互相挤 |
-| `cheese_recall(query)` | 按需检索记忆(**关键词检索**,不是语义检索:把问题拆成关键词、按覆盖度排序)。**自动注入的只有核心记忆**,其余一条都不会自己出现——注入块会明说池子里还有 N 条,而那 N 条只能从这里拿。开工前、话题拐弯了、需要某条记忆的细节时,先 recall 再回答。**一次没查到不等于没有这条记忆**:换个说法、或只用其中一两个关键词再试一次 |
-| `cheese_split(title, brief?, reviewer?, base_task?)` | 创建任务、独立分支和工作目录，返回任务 id、目录和**线程标识**。交给原生后台分身时，把线程标识原样写进给它的 prompt 里：平台按它把分身干的每件事记进这条活的时间线；**不写的后果是无声的**——活看着没人做，事件全记在房间头上。简报写目标、约束和验收标准。执行者可以是人、主 agent 或原生后台分身；split 本身不启动执行者。验收人取 `reviewer` 或项目默认值；依赖未合并的任务时用 `base_task`，PR 以父任务分支为目标 |
-| `cheese_worktree(task_id)` | 准备或找回该任务的工作目录；进入返回目录后，交付动作自动识别任务 |
-| `cheese_recover(task_id)` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
-| `cheese_sync(task?, all?)` | 同步当前或指定任务；`all` 同步本房间机器上已有的任务目录 |
-| `cheese_close_task(task_id, conclusion?)` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
+| `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
 | `cheese_machine(profile, device_id?)` | 要一台机器：给这个房间要某一档算力。**房间已经跑起来之后它不当场换**——换过去会丢掉这台机器上的工作区和还没提交的改动，所以产物是一条给机主（自托管）或项目主人（Cloud）的提议，等人点头。撞上项目的档位策略时也一样：不报错、不挂着等，变成一条提议 |
 | `cheese_note(thread, content)` | 给**同一个 handle 的另一条线程**留一张便条。它直接进那条线程正在跑的那一轮，不进时间线；那边这一刻没在跑就没人接住，如实回 `delivered: false`。跟别的参与者说话走房间里的 chat，agent 对 agent 也是 |
 | `cheese_deliver_at(at, content)` | 请平台在 `at` 那个时刻把 `content` 递给你自己（ISO-8601，带时区）。到点产生的是一条投递——平台不替你想起来该干什么，想起来要设这个闹钟的是你 |
-| `cheese_ask(question, option)` | 对话里发**带按钮的选项问题**;`option` 是选项列表，用户点一下就是答案(自动带回你下一轮)。要人拍板时用它，别让人打字 |
-| `cheese_notify(title, body?, level?, kind?, to?, options?)` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options` 让人一键拍板 |
-| `cheese_accept_request(subject, deliver?, deliver_url?, artifact?, new_artifact?, about?, reviewer?, reason?, body?, task?)` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`deliver` / `deliver_url` 说清这一版交出去的是什么——工作目录里那一份文件的路径，或者一个地址，**两个都不给就是交出去这次合并本身**。交合并的**不声明产物**（交出去的是这个项目的仓库，平台自己认；传了 `artifact` / `new_artifact` 会被打回）；交文件或地址的，`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单），后者给一个名字并配 `about` 一句话说清这是什么东西、给谁的，返回里带回它的 id。`about` 沿用时可给可不给，给了就以新的为准；它在第 1 版和第 20 版都得成立，抄改动标题会被打回。`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese_describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
-| `cheese_ready(task?)` | 执行者把自己任务的 draft PR 标记为可评审；只改变 draft 状态。需要请人验收时用 `cheese_accept_request`，它也会把 draft 翻成 ready |
-| `cheese_describe(subject?, body?, task?)` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
+| `cheese_feedback_propose(title, kind?, why?, what_happened?, expectation?, repro?, evidence?, user_said, summary?, problem?, visibility?, attach_logs?, tags?, session_id?, environment?)` | 撞到平台本身的毛病时报一条——**你不是在抱怨,是在交证据**:一件事贴一两行,只写观察到的和期望的,错误原文短就照抄,根因没验证过就别写。落下的是一张**提案卡**,不是反馈:人在聊天里按「提交反馈」才算发布,所以提案之后不用等他,也别在正文里宣布你提了这件事——卡本身就是那句话。**agent 不能直接发布反馈**,这条是唯一的通道。`user_said` 必填:引用用户原话,用户没说过就照抄那句规定好的「用户没有就这个问题说过话,以上是芝士自己观察到的」。同一个话题一天最多两张;提过的、被「不用」过的会被拒(412),那不是故障也不是让你换个说法再提——别重试 |
+| `platform_request(method, path, body?)` | **原始 API 入口**。上面的工具覆盖 80% 场景,语义清晰、有校验,**优先用它们**;只有当没有对应工具时,才直接打后端。它**仍走房间已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用上面的就别用它 |
+
+### `cheese` 的子命令
+
+| 命令 | 作用 |
+|---|---|
+| `cheese chat list [--topic <房间>] [--task <活>] [--limit N] [--before 或 --after <消息 id>] [--kind <类型>] [--author <handle>] [--json]` | 读最近的聊天记录（含结构化消息和表情），默认当前房间最近 50 条。只读，不叫醒任何人、不标记消息已读。输出末尾带续读的调用，翻更早的照抄它 |
+| `cheese chat search <关键词> [--topic <房间>] [--task <活>] [--limit N] [--before 或 --after <消息 id>] [--kind <类型>] [--author <handle>] [--json]` | 按文字搜聊天记录：对正文、结构化消息信息和引用文字做不区分大小写的**字面**匹配，搜范围内全部记录。查不到就缩短关键词或换个说法，别断定没说过 |
+| `cheese chat get <消息 id> [--offset N] [--length N] [--json]` | 读一条消息的全文（任何类型，含任务卡评论和文档节点）；超长的按 `offset` 续读 |
+| `cheese chat replies <消息 id> [--limit N] [--before 或 --after <消息 id>] [--json]` | 列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 ID 再读 |
+| `cheese doc set <文件>` | 把工作区里一个文件的内容设为本话题实况文档（整块覆盖）。调用前先 `cheese doc get` 记下当前版本；写入冲突时重新 get、合并再 set |
+| `cheese doc get` | 返回当前实况文档。也是拿到写入权的那一步——没读过就写,只有本话题还没文档时才让你建 |
+| `cheese title <标题> [--task <活>]` | 修改房间标题；带 `task` 时修改该任务标题 |
+| `cheese decision <正文>` | 记一条关键决策到决策记录 |
+| `cheese remember <事实> [--core]` | 记入项目记忆(任何话题以后可引用)。默认是**普通记忆**:不会自动出现在你的上下文里,要用 `cheese recall` 查。`core` 记成**核心记忆**:每轮全量注入——只给「你是谁、长期规则和目标」这种永远成立的东西用,预算很小,写多了会互相挤 |
+| `cheese recall <关键词>` | 按需检索记忆(**关键词检索**,不是语义检索:把问题拆成关键词、按覆盖度排序)。**自动注入的只有核心记忆**,其余一条都不会自己出现——注入块会明说池子里还有 N 条,而那 N 条只能从这里拿。开工前、话题拐弯了、需要某条记忆的细节时,先 recall 再回答。**一次没查到不等于没有这条记忆**:换个说法、或只用其中一两个关键词再试一次 |
+| `cheese split <标题> [--brief <简报>] [--reviewer <handle>] [--base-task <活>]` | 创建任务、独立分支和工作目录，返回任务 id、目录和**线程标识**。交给原生后台分身时，把线程标识原样写进给它的 prompt 里：平台按它把分身干的每件事记进这条活的时间线；**不写的后果是无声的**——活看着没人做，事件全记在房间头上。简报写目标、约束和验收标准。执行者可以是人、主 agent 或原生后台分身；split 本身不启动执行者。验收人取 `reviewer` 或项目默认值；依赖未合并的任务时用 `base_task`，PR 以父任务分支为目标 |
+| `cheese worktree <任务 id>` | 准备或找回该任务的工作目录；进入返回目录后，交付动作自动识别任务 |
+| `cheese recover <任务 id>` | 将任务最近一次备份恢复到独立目录并返回该目录；保留原工作目录，备份中的未提交文件不会进入 PR |
+| `cheese sync [--task <活>] [--all]` | 同步当前或指定任务；`all` 同步本房间机器上已有的任务目录 |
+| `cheese close-task <任务 id> [--conclusion <说明>]` | 放弃或撤销任务时显式关闭；正常交付由采纳成功关闭。分身停止只更新完成说明，不代表代码已被采纳 |
+| `cheese notify --title <标题> [--body <正文>] [--level silent / light / strong] [--kind change_alert / decision_request] [--to <handle>] [--options <用竖线分隔>]` | 发通知;`level` 取 silent/light/strong，`kind` 取 change_alert/decision_request，决策请求带 `options` 让人一键拍板 |
+| `cheese accept-request [<验收人>] [<验收证据>] --subject <标题> [--deliver <文件> 或 --deliver-url <地址>] [--artifact <id> 或 --new-artifact <名字>] [--body <说明>] [--task <活>]` | 为一条任务请求验收。默认从当前任务目录识别 id；`reason` 给出验收证据。`subject` 必填，使用英文 Conventional Commits、≤72 字符、结尾无句号；`deliver` / `deliver_url` 说清这一版交出去的是什么——工作目录里那一份文件的路径，或者一个地址，**两个都不给就是交出去这次合并本身**。交合并的**不声明产物**（交出去的是这个项目的仓库，平台自己认；传了 `artifact` / `new_artifact` 会被打回）；交文件或地址的，`artifact` / `new_artifact` **必须给且只给一个**——前者沿用产物清单上已有的那一项，值是**那一项的 id**（照抄系统提示里的清单），后者给一个名字并配 `about` 一句话说清这是什么东西、给谁的，返回里带回它的 id。`about` 沿用时可给可不给，给了就以新的为准；它在第 1 版和第 20 版都得成立，抄改动标题会被打回。`body` 说明原因。卡和 PR 属于同一任务，未指定验收人时沿用派活时的人选；修订后用 `cheese describe` 修改说明。人点击采纳 PR 时合并他看到的 commit |
+| `cheese ready [--task <活>]` | 执行者把自己任务的 draft PR 标记为可评审；只改变 draft 状态。需要请人验收时用 `cheese accept-request`，它也会把 draft 翻成 ready |
+| `cheese describe [--subject <标题>] [--body <说明>] [--task <活>]` | 同步修改该任务尚未采纳的卡与 PR 的标题、正文；采纳时以卡为准 |
 
 > 递卡前按**这个仓库自己的约定**（README/CONTRIBUTING/CI 配置写的那套 lint 和测试）先把检查跑绿——决定权在 PR 上的真 CI，红着递卡就是多一个来回。
 
-| 工具 | 作用 |
+| 命令 | 作用 |
 |---|---|
-| `cheese_tell(target, message)` | 在任务时间线上留消息；不启动或唤醒执行者。任务可用 id、`<#id>` 或标题指定 |
-| `cheese_milestone(title, due?)` | 把关键节点钉成里程碑；`due` 形如 2026-06-20 |
-| `cheese_members()` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
-| `cheese_lock(kind, task?)` | 占用房间的重资源锁（`kind` 为 heavy）；装依赖、跑大型测试或启动服务前按需使用。占不到时返回持有它的任务，不自动等待 |
-| `cheese_unlock(kind, task?)` | 释放自己任务持有的锁；锁在 30 分钟后到期 |
-| `cheese_fetch(url, prompt?)` | 读取网页。原生 WebFetch 也可用；需要浏览器抓取等方式时用它。带上 `prompt` 返回提问的答案，不带则返回网页内容。抓取失败会报告失败阶段 |
-| `cheese_push_fix(task?, drop_dependency?)` | 将该任务已提交的修订立即推送到现有 PR，并刷新卡；`drop_dependency=true` 将 PR 改到项目默认分支并清除依赖和旧批准，先按上文整理和验证独立改动；CI 轮询只读提交，不替你提交工作文件 |
-| `cheese_status()` | 平台状态快照:本轮运行状态(正常运行中/接近硬顶)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先调它,别去轮询原始 API |
-| `cheese_library_ls()` | 列出资料库里的文件(用户给这个项目的文件,最近给的在前) |
-| `cheese_library_get(name, out?)` | 取一份资料到你自己 home 下的 `~/attachments/library/<名字>`——和随消息发来的那份同一个位置,不写进工作目录。用户提到一份你手上没有的就用它,别请他重传 |
-| `cheese_show(path, as_?)` | 把工作区里的一份东西摆到房间里给人看,渲染进右侧预览窗口；`as_` 取 html 或 svg。摆出来的东西留在这个房间里；人可以按「保存到资料库」把其中一份留下来供以后各房间取用 |
-| `cheese_convert(path, to, output?)` | 把文档转成另一种格式。两个用途:**老格式升级**——`.doc` / `.ppt` / `.xls` 不是 zip,这台机器读不了也写不了,要改就先升级成 `.docx` / `.pptx` / `.xlsx`,**并且明确告诉用户这是格式升级**(转出来的和原件不是同一个文件,往后发哪一份由他决定);**自己看版面**——`--to pdf` 之后用 `uv run --with pymupdf` 把某页存成图片看看,排版错了不报错、文字提取也正确,只有看一眼才发现 |
-| `cheese_recalc(path, output?)` | 重算一份 `.xlsx` 里的公式,并列出算不出来的格(按 `Sheet1!B7` 的形式)。**用程序改过表格就要调它**:写进文件的是公式本身,依赖被改单元格的那些公式存的还是旧结果,文件照样能打开、公式栏也对,只有数是错的,而且没有任何地方会报错。这台机器上没有会算公式的程序,平台那边有 |
-| `cheese_feedback_propose(title, kind?, why?, what_happened?, expectation?, repro?, evidence?, user_said, summary?, problem?, visibility?, attach_logs?, tags?, session_id?, environment?)` | 撞到平台本身的毛病时报一条——**你不是在抱怨,是在交证据**:一件事贴一两行,只写观察到的和期望的,错误原文短就照抄,根因没验证过就别写。落下的是一张**提案卡**,不是反馈:人在聊天里按「提交反馈」才算发布,所以提案之后不用等他,也别在正文里宣布你提了这件事——卡本身就是那句话。**agent 不能直接发布反馈**,这条是唯一的通道。`user_said` 必填:引用用户原话,用户没说过就照抄那句规定好的「用户没有就这个问题说过话,以上是芝士自己观察到的」。同一个话题一天最多两张;提过的、被「不用」过的会被拒(412),那不是故障也不是让你换个说法再提——别重试 |
-| `cheese_serve(port, note?)` | 把**这台机器上跑起来的应用**设为当前预览。先把 dev server 起在 `127.0.0.1` 上、后台跑(`nohup ... &`),然后把端口报上来。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**端口你自己挑,但要固定住**(`vite --strictPort`),否则 vite 在端口被占时会静默跳到下一个,你以为起好了,报上来的那个却没人应答。应用通过话题独立域名的根路径预览，资源请求和热更新保持原路径，无需为平台修改项目配置。平台会当场从自己那边敲一次这个端口,敲不通就直接拒绝——不会给用户留一个白框。**只有你报上来的这一个端口会被带出去**,这台机器上别的端口平台碰不到 |
-| `platform_request(method, path, body?)` | **原始 API 入口**。上面的工具覆盖 80% 场景,语义清晰、有校验,**优先用它们**;只有当没有对应工具时,才直接打后端。它**仍走房间已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用上面的就别用它 |
+| `cheese tell <这条活> <要说的话>` | 在任务时间线上留消息；不启动或唤醒执行者。任务可用 id、`<#id>` 或标题指定 |
+| `cheese milestone <标题> [--due 2026-06-20]` | 把关键节点钉成里程碑；`due` 形如 2026-06-20 |
+| `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
+| `cheese lock heavy [--task <活>]` | 占用房间的重资源锁（`kind` 为 heavy）；装依赖、跑大型测试或启动服务前按需使用。占不到时返回持有它的任务，不自动等待 |
+| `cheese unlock heavy [--task <活>]` | 释放自己任务持有的锁；锁在 30 分钟后到期 |
+| `cheese fetch <网址> [--prompt <问题>]` | 读取网页。原生 WebFetch 也可用；需要浏览器抓取等方式时用它。带上 `prompt` 返回提问的答案，不带则返回网页内容。抓取失败会报告失败阶段 |
+| `cheese push-fix [--task <活>] [--drop-dependency]` | 将该任务已提交的修订立即推送到现有 PR，并刷新卡；`drop_dependency=true` 将 PR 改到项目默认分支并清除依赖和旧批准，先按上文整理和验证独立改动；CI 轮询只读提交，不替你提交工作文件 |
+| `cheese status` | 平台状态快照:本轮运行状态(正常运行中/接近硬顶)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先调它,别去轮询原始 API |
+| `cheese library ls` | 列出资料库里的文件(用户给这个项目的文件,最近给的在前) |
+| `cheese library get <名字> [--out <路径>]` | 取一份资料到你自己 home 下的 `~/attachments/library/<名字>`——和随消息发来的那份同一个位置,不写进工作目录。用户提到一份你手上没有的就用它,别请他重传 |
+| `cheese show <路径> [--as html 或 svg]` | 把工作区里的一份东西摆到房间里给人看,渲染进右侧预览窗口；`as_` 取 html 或 svg。摆出来的东西留在这个房间里；人可以按「保存到资料库」把其中一份留下来供以后各房间取用 |
+| `cheese convert <路径> --to <格式> [--output <路径>]` | 把文档转成另一种格式。两个用途:**老格式升级**——`.doc` / `.ppt` / `.xls` 不是 zip,这台机器读不了也写不了,要改就先升级成 `.docx` / `.pptx` / `.xlsx`,**并且明确告诉用户这是格式升级**(转出来的和原件不是同一个文件,往后发哪一份由他决定);**自己看版面**——`--to pdf` 之后用 `uv run --with pymupdf` 把某页存成图片看看,排版错了不报错、文字提取也正确,只有看一眼才发现 |
+| `cheese recalc <路径> [--output <路径>]` | 重算一份 `.xlsx` 里的公式,并列出算不出来的格(按 `Sheet1!B7` 的形式)。**用程序改过表格就要调它**:写进文件的是公式本身,依赖被改单元格的那些公式存的还是旧结果,文件照样能打开、公式栏也对,只有数是错的,而且没有任何地方会报错。这台机器上没有会算公式的程序,平台那边有 |
+| `cheese serve <端口> [<一句话说明>]` | 把**这台机器上跑起来的应用**设为当前预览。先把 dev server 起在 `127.0.0.1` 上、后台跑(`nohup ... &`),然后把端口报上来。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**端口你自己挑,但要固定住**(`vite --strictPort`),否则 vite 在端口被占时会静默跳到下一个,你以为起好了,报上来的那个却没人应答。应用通过话题独立域名的根路径预览，资源请求和热更新保持原路径，无需为平台修改项目配置。平台会当场从自己那边敲一次这个端口,敲不通就直接拒绝——不会给用户留一个白框。**只有你报上来的这一个端口会被带出去**,这台机器上别的端口平台碰不到 |
 
 > 这些入口都使用平台提供的房间凭据，后端逐次鉴权；它们不允许提取凭据自行拼裸 HTTP 请求。`platform_request` 可读取 `/openapi.json` 查看接口定义。
 

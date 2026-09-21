@@ -463,3 +463,85 @@ def test_locked_once_topic_has_run(client):
     # Switching after the first turn is rejected — the pin is frozen.
     r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "local-docker"})
     assert r.status_code == 422
+
+
+def test_the_turn_can_ask_for_cloud_and_gets_a_proposal_not_a_401(client, monkeypatch):
+    """`cheese_machine(profile="cloud")` 说得出口 —— 收件人是项目的主人（结论 23）。
+
+    Cloud 花的是项目的钱，所以「谁有权花」这一问要的是一个登录用户；而房间里跑着
+    的那一轮拿的每一张凭据都不是登录用户的（`api/auth.py` 给它们的 `via` 是
+    `cheese`）。这一问要是排在闸门前面，这条路上的 Cloud 一档百分之百是 401，那条
+    「等项目主人点头」的提议一次也长不出来 —— 而它正是这一档该有的产物。
+
+    变成提议的那一次没有花任何人的钱：该点头的人就是项目的主人本人，他点头才是这
+    笔钱的授权。所以那一问排在闸门之后 —— 这次调用真的要发生时才问。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid)
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.example")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
+    provision = AsyncMock()
+    monkeypatch.setattr(MachineService, "provision", provision)
+    _mark_started(client, tid)
+    seat = _agent_seat(client, tid)
+
+    asked = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "cloud"},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+
+    assert asked.status_code == 200, asked.text
+    body = asked.json()["data"]
+    assert body["proposal"] is not None, body
+    assert body["proposal"]["approver"] == "andyl", body["proposal"]
+    # 这次调用没有发生：没有开机器，房间的算力也没被改写。
+    provision.assert_not_awaited()
+    assert body["current"] != "cloud", body
+
+
+def test_a_denied_tier_is_refused_out_loud_even_when_the_room_is_running(client):
+    """档位处置写成 `deny` 时，开跑的房间要的那一档拿到的是拒绝，不是提议（I27）。
+
+    提议读起来是「再等等，有人会点头」；拒绝说的是「这条路不通，换一档」。房间开
+    没开跑不改变这个答案 —— 「超档怎么办」只有 `policy/gate.py` 回答，路由不因为
+    「这一轮还要人点头」就把那一问跳过去。
+    """
+    from tests.integration.conftest import session_auth_headers
+
+    pid = _project(client)
+    tid = _topic(client, pid)
+    here, there = _project_devices(client, pid, "here", "there")
+    assert (
+        client.put(
+            f"/topics/{tid}/compute-profile",
+            json={"profile": "device", "device_id": here},
+        ).status_code
+        == 200
+    )
+    gated = client.put(
+        f"/projects/{pid}/tier-policy",
+        json={"allowed_tiers": ["included"], "over_tier": "deny"},
+        headers=session_auth_headers("andyl"),
+    )
+    assert gated.status_code == 200, gated.text
+    _mark_started(client, tid)
+    seat = _agent_seat(client, tid)
+
+    refused = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert "不在本项目允许的档位内" in refused.json()["message"], refused.text
+    assert _topic_binding(client, tid).device_id == here
