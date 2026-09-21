@@ -85,7 +85,7 @@ describe('公开首页', () => {
     expect(links).toHaveLength(3)
     for (const link of links) expect(link.getAttribute('href')).toBe('/')
     await view.router.push(links[0].getAttribute('href')!)
-    expect(view.router.currentRoute.value.name).toBe('HomeSpaces')
+    expect(view.router.currentRoute.value.name).toBe('HomeWork')
   })
 
   it('updates the introduction actions after session restoration without navigating away', async () => {
@@ -101,7 +101,7 @@ describe('公开首页', () => {
   it('shows the public homepage when a signed-out user returns from work', async () => {
     AccountService.loggedIn = true
     const view = await mount('/')
-    expect(view.router.currentRoute.value.name).toBe('HomeSpaces')
+    expect(view.router.currentRoute.value.name).toBe('HomeWork')
     AccountService.loggedIn = false
     await view.router.push('/')
     expect(view.router.currentRoute.value.path).toBe('/')

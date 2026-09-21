@@ -676,11 +676,15 @@ export type TopicSortOrder = 'asc' | 'desc'
 
 export function listTopics(
   projectId: string,
-  opts?: { sort?: TopicSortField; order?: TopicSortOrder }
+  // `activeSince` (ISO 时刻) 只留那一刻之后有动静的话题——「最近活跃的那些」。
+  // 我的工作那一页用它把每个项目的请求收在一个时间窗口里：一个项目可以有上百个
+  // 房间，全量拉回来只为了看有没有在跑，是拿一屏的时间换一个数字。
+  opts?: { sort?: TopicSortField; order?: TopicSortOrder; activeSince?: string }
 ): Promise<ListPayload<Topic>> {
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
+  if (opts?.activeSince) q.set('active_since', opts.activeSince)
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
@@ -1935,6 +1939,15 @@ export function removeProjectMember(projectId: string, handle: string): Promise<
     `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}`,
     { method: 'DELETE' }
   )
+}
+
+// 自己退出项目。路径是 `/membership` 而不是 `/members/me`：`/members/{handle}` 那条
+// 路由先注册，`me` 到了那里就是一个人的名字。同样不传 handle —— 退的恒是当前身份
+// 那个人，后端没有代退的入口（membership/services.py 的 `leave`）。
+export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/membership`, {
+    method: 'DELETE',
+  })
 }
 
 // ---- 邀请：加人这件事要两个人同意 --------------------------------------------

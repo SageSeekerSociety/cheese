@@ -49,6 +49,23 @@ OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
 
+class MachineOutOfReach(RuntimeError):
+    """够不着这件事，判得出来的那一种。
+
+    以前调用方只能比字符串（`str(exc) == MACHINE_OUT_OF_REACH`），于是它只认得
+    「执行器**答了** 502/503/504」这一档 —— 而机器真的够不着时执行器什么也不答：
+    这条连接的读超时是 660 秒，到点抛的是 `TimeoutError`；连接被拒、重试窗口耗尽
+    抛的是 `ConnectionRefusedError`。两者的 `str()` 都不是那句话，所以最该被认出
+    来的那一档反而认不出来，而那一轮余下的每一次文件与命令调用还要各等一次 660 秒。
+
+    说的还是同一句话（`str(exc)` 不变），agent 读到的东西一个字没动；多出来的只是
+    一个调用方判得动的类型。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(MACHINE_OUT_OF_REACH)
+
+
 def _retry_connect(attempt: int, deadline: float) -> bool:
     """Sleep before the next attempt, or say the window is over.
 
@@ -352,20 +369,33 @@ class RemoteClient:
                         logger.warning(
                             "executor %s -> %s: %s", method, response.status, data[:200]
                         )
-                        raise RuntimeError(
-                            MACHINE_OUT_OF_REACH
-                            if response.status in OUT_OF_REACH_STATUSES
-                            else EXECUTOR_CALL_FAILED
-                        )
+                        if response.status in OUT_OF_REACH_STATUSES:
+                            raise MachineOutOfReach
+                        raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)
-                except ConnectionRefusedError:
+                except ConnectionRefusedError as exc:
                     # Nothing was sent, so this is the one failure worth waiting
-                    # out: the platform endpoint is being replaced.
+                    # out: the platform endpoint is being replaced. Once the
+                    # window is spent, nobody is listening — that IS out of
+                    # reach, and saying so is what stops the rest of the turn
+                    # from queueing up behind the same wait.
                     connection.close()
                     self.transport.connection = None
                     if not _retry_connect(attempt, deadline):
-                        raise
+                        raise MachineOutOfReach from exc
                     attempt += 1
+                except TimeoutError as exc:
+                    # 读超时那一档（连接的 660 秒）：执行器一个字也没答。这不是
+                    # 「某次调用失败了」，是这台机器这一刻够不着 —— 而认出它来，正是
+                    # 为了让这一轮余下的文件与命令调用不必各自再等一次 660 秒。
+                    #
+                    # 只有这一种。**连接被重置不在内**：那次请求已经发出去了，执行
+                    # 器很可能已经把那次改动做完了，丢的只是应答 —— 一台答得出话的
+                    # 机器不叫够不着，把它也说成够不着，接下来一整段时间里每一次工
+                    # 具调用都会被一次丢包当掉。
+                    connection.close()
+                    self.transport.connection = None
+                    raise MachineOutOfReach from exc
                 except Exception:
                     # A lost response can follow a committed mutation. Reconnect
                     # only for the next call; never replay this one.

@@ -1,4 +1,4 @@
-// 首页这一层在手机上没有抽屉：空间和小队是顶栏里的两格分段，直接点得到。
+// 首页这一层在手机上没有抽屉：我的工作、空间、小队是顶栏里的三格分段，直接点得到。
 //
 // 它们以前只住在 HomeSidebar 那条抽屉里，而底栏已经是一层常驻 chrome —— 于是
 // 「小队」在手机上唯一的入口是左上角那个汉堡。这里测的就是那个入口回到了顶栏上，
@@ -19,6 +19,7 @@ const routes = [
     path: '/',
     component: Home,
     children: [
+      { path: 'work', name: 'HomeWork', component: { template: '<div>我的项目</div>' } },
       { path: 'spaces', name: 'HomeSpaces', component: { template: '<div>空间列表</div>' } },
       { path: 'teams', name: 'HomeTeams', component: { template: '<div>小队列表</div>' } },
     ],
@@ -54,14 +55,18 @@ async function mountAt(width: number, path: string) {
 }
 
 describe('首页外框', () => {
-  it('手机上两格分段填进顶栏那一格，点得到小队', async () => {
+  it('手机上三格分段填进顶栏那一格，点得到我的工作和小队', async () => {
     const { findByText } = await mountAt(390, '/spaces')
     const slot = document.getElementById('app-bar-slot')!
     expect(await findByText('空间列表')).toBeTruthy()
 
     // v-tabs 把每一格渲染两遍（一份用来量宽度），所以取第一个。
     const tabs = Array.from(slot.querySelectorAll('a'))
+    expect(tabs.map((a) => a.textContent?.trim())).toContain('我的工作')
     expect(tabs.map((a) => a.textContent?.trim())).toContain('小队')
+    // 手机上「换个项目」走的是这一格：底栏「工作区」那一格只落到上次打开的项目。
+    await fireEvent.click(tabs.find((a) => a.textContent?.includes('我的工作'))!)
+    expect(await findByText('我的项目')).toBeTruthy()
     await fireEvent.click(tabs.find((a) => a.textContent?.includes('小队'))!)
     expect(await findByText('小队列表')).toBeTruthy()
   })

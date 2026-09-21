@@ -9,10 +9,9 @@
     </div>
   </div>
   <v-container fluid>
-    <!-- 登录后落地的就是这一页（见 router/home.ts：`/` 把已登录的人送去
-         HomeSpaces），而这一页通篇是**别人**的空间——没有一个字说他自己的东西
-         从哪儿开。这一格只给一个项目都没有的人看；有项目的人看到的是和以前一模
-         一样的页面。 -->
+    <!-- 这一页通篇是**别人**的空间，没有一个字说他自己的东西从哪儿开——登录后
+         的首页现在是「我的工作」（/work），空间列表降级成了它顶部的一排。这一格
+         只给一个项目都没有的人看；有项目的人这一页还是原来那副样子。 -->
     <v-sheet v-if="firstRun" border rounded="lg" class="pa-4 mb-4">
       <h2 class="text-h6 font-weight-medium mb-1">从这里开始</h2>
       <p class="text-body-2 text-medium-emphasis mb-3">

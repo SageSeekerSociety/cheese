@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.harness.channel import ScreenSetupError
@@ -72,6 +73,32 @@ def _project_devices(client, pid: str, *names: str) -> list[str]:
             return device_ids
 
     return asyncio.run(_seed())
+
+
+def _project_credential(client, pid: str) -> str:
+    """这个项目自己的那张 agent 凭据 —— 到项目里哪个房间都认得。
+
+    签发本身不给角色，所以先把那位芝士加进项目成员，凭据才够得着房间：这条用例要
+    证的是「够得着也动不了」，不是「够不着」。
+    """
+    from tests.integration.conftest import session_auth_headers
+
+    rows = client.get(f"/projects/{pid}/agents").json()["data"]["data"]
+    (default,) = [row for row in rows if row["is_default"]]
+    joined = client.post(
+        f"/projects/{pid}/members",
+        json={"user_handle": default["seat_handle"]},
+        headers=session_auth_headers("andyl"),
+    )
+    assert joined.status_code == 200, joined.text
+    return mint_project_agent_credential(project_id=pid, epoch=0)
+
+
+def _agent_seat(client, tid: str) -> str:
+    rows = client.get(f"/topics/{tid}/members").json()["data"]["data"]
+    seats = [m["member_handle"] for m in rows if m["agent"]]
+    assert len(seats) == 1, seats
+    return seats[0]
 
 
 def _topic_binding(client, tid: str):
@@ -262,6 +289,84 @@ def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
     assert _topic_binding(client, tid).device_id == second
 
 
+def test_the_turn_running_in_the_room_asks_and_does_not_switch(client):
+    """`cheese_machine` 打的是这条真路由，而它换不动机器（结论 23、40）。
+
+    这个工具只会被**正在这个房间里跑的那一轮**调用，而那一刻房间必然已经开跑过。
+    所以「开跑即锁定」不能把它一起锁死：锁住它，表上就摆了一样在生产里一次也调不通
+    的工具，它拿到的回话还是「新建话题可另选算力」——而它连新建话题都做不到。
+
+    放它说得出口，不等于放它当场换：换过去丢掉的是这台机器上的工作区和还没提交的
+    改动，所以产物是一条给机主的提议，钉一动不动。
+
+    契约那一组对着一台假 HTTP 断言这次调用落在哪个地址上，答不出这里的问题：地址
+    是对的，答话是拒绝。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid)
+    here, there = _project_devices(client, pid, "here", "there")
+    assert (
+        client.put(
+            f"/topics/{tid}/compute-profile",
+            json={"profile": "device", "device_id": here},
+        ).status_code
+        == 200
+    )
+    _mark_started(client, tid)
+    seat = _agent_seat(client, tid)
+
+    # 界面上那个人：房间开跑了，这一档就定住了，连提议都没有。
+    by_a_person = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+    )
+    assert by_a_person.status_code == 422
+    assert _topic_binding(client, tid).device_id == here
+
+    # 房间里跑着的那一轮自己要另一台：说得出口，换不成，产物是一条给机主的提议。
+    by_the_turn = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+
+    assert by_the_turn.status_code == 200, by_the_turn.text
+    body = by_the_turn.json()["data"]
+    assert body["proposal"] is not None, body
+    assert "there" in body["proposal"]["content"], body["proposal"]
+    assert _topic_binding(client, tid).device_id == here, "钉被搬走了"
+    assert body["device_id"] == here
+
+
+def test_a_project_credential_cannot_move_a_room_that_is_already_running(client):
+    """项目级 agent 凭据不是「这个房间这一轮」（结论 23）。
+
+    它够得着这个项目里的每一个房间，所以拿「说话的是个 agent」当判据，等于任何一张
+    项目凭据都能动别人正跑着的房间 —— 连一条提议都不该从它这里长出来。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid)
+    here, there = _project_devices(client, pid, "here", "there")
+    client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": here},
+    )
+    _mark_started(client, tid)
+
+    refused = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+        headers={"X-Cheese-Token": _project_credential(client, pid)},
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert _topic_binding(client, tid).device_id == here
+
+
 def test_selecting_cloud_without_machine_create_authority_is_refused(
     client, monkeypatch
 ):
@@ -358,3 +463,86 @@ def test_locked_once_topic_has_run(client):
     # Switching after the first turn is rejected — the pin is frozen.
     r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "local-docker"})
     assert r.status_code == 422
+
+
+def test_the_turn_can_ask_for_cloud_and_gets_a_proposal_not_a_401(client, monkeypatch):
+    """`cheese_machine(profile="cloud")` 说得出口 —— 收件人是项目的主人（结论 23）。
+
+    Cloud 花的是项目的钱，所以「谁有权花」这一问要的是一个登录用户；而房间里跑着
+    的那一轮拿的每一张凭据都不是登录用户的（`api/auth.py` 给它们的 `via` 是
+    `cheese`）。这一问要是排在闸门前面，这条路上的 Cloud 一档百分之百是 401，那条
+    「等项目主人点头」的提议一次也长不出来 —— 而它正是这一档该有的产物。
+
+    变成提议的那一次没有花任何人的钱：该点头的人就是项目的主人本人，他点头才是这
+    笔钱的授权。所以那一问排在闸门之后 —— 这次调用真的要发生时才问。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid)
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.example")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
+    provision = AsyncMock()
+    monkeypatch.setattr(MachineService, "provision", provision)
+    _mark_started(client, tid)
+    seat = _agent_seat(client, tid)
+
+    asked = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "cloud"},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+
+    assert asked.status_code == 200, asked.text
+    body = asked.json()["data"]
+    assert body["proposal"] is not None, body
+    assert body["proposal"]["approver"] == "andyl", body["proposal"]
+    # 这次调用没有发生：没有开机器，房间自己那一列也没被写过 —— 报回来的算力仍
+    # 然是它从项目默认继承的那一份（`inherited`），不是这次要的那一档。
+    provision.assert_not_awaited()
+    assert body["inherited"] is True, body
+
+
+def test_a_denied_tier_is_refused_out_loud_even_when_the_room_is_running(client):
+    """档位处置写成 `deny` 时，开跑的房间要的那一档拿到的是拒绝，不是提议（I27）。
+
+    提议读起来是「再等等，有人会点头」；拒绝说的是「这条路不通，换一档」。房间开
+    没开跑不改变这个答案 —— 「超档怎么办」只有 `policy/gate.py` 回答，路由不因为
+    「这一轮还要人点头」就把那一问跳过去。
+    """
+    from tests.integration.conftest import session_auth_headers
+
+    pid = _project(client)
+    tid = _topic(client, pid)
+    here, there = _project_devices(client, pid, "here", "there")
+    assert (
+        client.put(
+            f"/topics/{tid}/compute-profile",
+            json={"profile": "device", "device_id": here},
+        ).status_code
+        == 200
+    )
+    gated = client.put(
+        f"/projects/{pid}/tier-policy",
+        json={"allowed_tiers": ["included"], "over_tier": "deny"},
+        headers=session_auth_headers("andyl"),
+    )
+    assert gated.status_code == 200, gated.text
+    _mark_started(client, tid)
+    seat = _agent_seat(client, tid)
+
+    refused = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": there},
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=pid, topic_id=tid, agent_handle=seat
+            )
+        },
+    )
+
+    assert refused.status_code == 422, refused.text
+    assert "不在本项目允许的档位内" in refused.json()["message"], refused.text
+    assert _topic_binding(client, tid).device_id == here

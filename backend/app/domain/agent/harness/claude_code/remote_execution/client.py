@@ -24,12 +24,20 @@ import uuid
 from pathlib import Path
 
 if __package__:
-    from app.domain.agent.executor_transport import RemoteClient
+    from app.domain.agent.executor_transport import (
+        MACHINE_OUT_OF_REACH,
+        MachineOutOfReach,
+        RemoteClient,
+    )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
-    from executor_transport import RemoteClient
+    from executor_transport import (
+        MACHINE_OUT_OF_REACH,
+        MachineOutOfReach,
+        RemoteClient,
+    )
 
 PINNED_VERSION = "2.1.277"
 NATIVE_TOOLS = (
@@ -688,61 +696,6 @@ def publish_event(config, payload):
     return output
 
 
-# Claude Code allows a server 30s to answer `tools/list` and drops it for the
-# rest of the session when the answer is late: the room then denies every file,
-# shell and chat tool with `no connected MCP tool "invoke"` until it is
-# relaunched (three hours of one room, 2026-09-17). A listing that arrives
-# without the `cheese_*` family costs a retry, so the listing answers inside a
-# budget of its own however long the executor takes.
-LISTING_DEADLINE_S = 20
-
-
-# A listing names the platform tools from what the executor answers right then,
-# so a listing taken at the wrong moment can come back without the whole
-# `cheese_*` family, and the agent is told `No such tool available:
-# mcp__native__cheese_status`. That has cost three turns (2026-09-13, -14 and
-# 2026-09-15 06:57) and every investigation ran out of evidence at the same
-# place: nothing anywhere recorded what the list had contained. Waiting for the
-# executor was tried and reverted — it delays the listing, and the first tool
-# call of a session races it (the private-chat acceptance fails that way). So
-# this says what it found and nothing else; the next short list will be a line
-# in the MCP server's log instead of a mystery.
-def _cli_tools(client):
-    """The platform tools the executor can name right now, reported either way."""
-    import threading
-
-    answer = {}
-
-    def listing():
-        try:
-            capabilities = client.call("ping", {}).get("capabilities", [])
-            tools = (
-                client.call("cli", {"method": "tools/list"})["tools"]
-                if "cli_worker" in capabilities
-                else []
-            )
-            answer["value"] = (
-                tools,
-                "" if tools else "the executor reports no CLI worker",
-            )
-        except Exception as exc:  # noqa: BLE001 — a listing must still answer
-            answer["value"] = ([], f"{type(exc).__name__}: {exc}")
-
-    worker = threading.Thread(target=listing, daemon=True)
-    worker.start()
-    worker.join(LISTING_DEADLINE_S)
-    tools, reason = answer.get(
-        "value", ([], f"the executor did not answer within {LISTING_DEADLINE_S}s")
-    )
-    print(
-        f"[cheese] native tools/list: {len(tools)} platform tools"
-        + (f" ({reason})" if reason else ""),
-        file=sys.stderr,
-        flush=True,
-    )
-    return tools
-
-
 def transport(config, target_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -762,6 +715,17 @@ def transport(config, target_path):
     active = {}
     active_lock = threading.RLock()
     cancelled = set()
+    # 地点没了，项目工具就是不可用（结论 23）——**如实标出来，不让它们各自超时**。
+    # 一次够不着的调用要走完执行器连接的读超时（660s），而 agent 手上一整轮的文件与
+    # 命令调用会一个接一个各撞一次。第一次撞上之后，余下的当场答同一句话：机器够不
+    # 着这件事第一次就问清楚了，后面每一次都是在重问。
+    #
+    # 平台工具不看这个闸：它们从会话直接打后端，本来就不经过这台机器。
+    #
+    # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
+    # 一次 502 之后机器回来了，而闸没有第二个开关。
+    unreachable_since: list[float | None] = [None]
+    RECHECK_AFTER_S = 30
 
     def cancel(request_id):
         with active_lock:
@@ -782,6 +746,26 @@ def transport(config, target_path):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    def invoke_on_the_machine(payload, args):
+        """项目工具的唯一出口 —— 机器够不着时它当场答，不去撞那条超时。"""
+        gone_for = (
+            None
+            if unreachable_since[0] is None
+            else time.monotonic() - unreachable_since[0]
+        )
+        if gone_for is not None and gone_for < RECHECK_AFTER_S:
+            return {"error": MACHINE_OUT_OF_REACH}
+        try:
+            receipt = client.call(
+                "invoke",
+                {"id": payload["id"], "tool": payload["tool"], "args": args},
+            )
+        except MachineOutOfReach:
+            unreachable_since[0] = time.monotonic()
+            raise
+        unreachable_since[0] = None
+        return receipt
+
     def handle(request):
         try:
             method = request["method"]
@@ -792,7 +776,6 @@ def transport(config, target_path):
                     "serverInfo": {"name": "cheese-native-execution", "version": "1"},
                 }
             elif method == "tools/list":
-                cli_tools = _cli_tools(client)
                 value = {
                     "tools": [
                         {
@@ -813,29 +796,6 @@ def transport(config, target_path):
                                     "session_id": {"type": "string"},
                                 },
                                 "required": ["id", "tool", "args", "session_id"],
-                            },
-                        },
-                        {
-                            "name": "chat_send",
-                            "description": (
-                                "Publish a message to the current Cheese room. "
-                                "Use for user-visible updates and replies; "
-                                "ordinary model output is not published."
-                            ),
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "content": {"type": "string"},
-                                    "reply_to": {"type": "string"},
-                                    "request_id": {
-                                        "type": "string",
-                                        "description": (
-                                            "UUID from an uncertain prior result; "
-                                            "reuse with the same content to retry."
-                                        ),
-                                    },
-                                },
-                                "required": ["content"],
                             },
                         },
                         {
@@ -871,15 +831,13 @@ def transport(config, target_path):
                             },
                         },
                     ]
-                    + cli_tools
+                    + cheese.PLATFORM_TOOLS.schemas()
                 }
             elif method == "tools/call":
                 tool = request["params"]["name"]
-                if tool not in (
-                    "invoke",
-                    "chat_send",
-                    "platform_request",
-                ) and not tool.startswith("cheese_"):
+                if tool not in ("invoke", "platform_request") and (
+                    tool not in cheese.PLATFORM_TOOLS
+                ):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
                 if tool == "chat_send":
@@ -935,36 +893,19 @@ def transport(config, target_path):
                     args = decision.get("hookSpecificOutput", {}).get(
                         "updatedInput", payload["args"]
                     )
-                    direct_cheese = tool in cheese.DIRECT_MCP_TOOLS
                     receipt = (
                         client.platform_request(args)
                         if tool == "platform_request"
                         else client.platform_request(
                             cheese.request_plan(tool, args, dict(os.environ))
                         )
-                        if direct_cheese
+                        if tool.startswith("cheese_")
                         else client.publish_message(payload, args)
                         if tool == "chat_send"
                         else client.publish_chat(payload, args)
                     )
-                    if tool.startswith("cheese_") and not direct_cheese:
-                        receipt = client.call(
-                            "invoke",
-                            {
-                                "id": payload["id"],
-                                "tool": payload["tool"],
-                                "args": args,
-                            },
-                        )
                     if receipt is None:
-                        receipt = client.call(
-                            "invoke",
-                            {
-                                "id": payload["id"],
-                                "tool": payload["tool"],
-                                "args": args,
-                            },
-                        )
+                        receipt = invoke_on_the_machine(payload, args)
                     if "error" in receipt:
                         outcome = {"deny": receipt["error"]}
                     else:

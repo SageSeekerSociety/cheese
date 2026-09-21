@@ -336,6 +336,25 @@ class ActorResolver:
             return actor
         raise AuthenticationRequiredError("需要登录或有效的沙箱 token")
 
+    def speaks_for_this_rooms_turn(self, topic_id: uuid.UUID) -> bool:
+        """这张凭据就是**这个房间这一轮**的那张令牌吗。
+
+        `Actor.via == "cheese"` 答的是另一个问题 —— 「说话的是不是一个 agent」。
+        项目级的 agent 凭据也是 `cheese`，而它够得着这个项目的每一个房间
+        （`app.main._CHEESE_WRITE_PATHS` 上那句话），全局的 sandbox token 更是谁
+        都不是。要「正在这个房间里跑的那一轮」，只能认每一轮现铸的那张 scoped
+        token：它把房间签在 `t` 上，冒不出来，也借不到别的房间去用。
+
+        `s == "project"` 那一档不算：它带着一个起始房间，可它要的正是跨房间的通
+        行，所以它不是「这个房间这一轮」。
+        """
+        if not self._cheese_token:
+            return False
+        claims = scoped_token_claims(self._cheese_token)
+        if claims is None or claims.get("s") == "project":
+            return False
+        return claims.get("t") == str(topic_id)
+
     def _reject_out_of_scope_token(
         self, *, topic_id: uuid.UUID | None, project_id: uuid.UUID | None
     ) -> None:

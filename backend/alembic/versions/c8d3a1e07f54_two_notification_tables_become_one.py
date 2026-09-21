@@ -1,7 +1,7 @@
 """two notification tables become one
 
 Revision ID: c8d3a1e07f54
-Revises: c9f41b7a2e08
+Revises: 6c3f0a1d92b7
 Create Date: 2026-09-21 10:00:00
 
 `alerts`（平台报告自己）和 `notification`（人对人）互不知道对方，于是「一个人被
@@ -30,7 +30,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c8d3a1e07f54"
-down_revision: str | Sequence[str] | None = "c9f41b7a2e08"
+down_revision: str | Sequence[str] | None = "6c3f0a1d92b7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
