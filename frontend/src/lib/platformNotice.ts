@@ -92,6 +92,7 @@ export const AGENT_STATUS_EVENTS = new Set([
   'turn_failed',
   'turn_timeout',
   'deploy_interrupted',
+  'dispatch_unknown',
   'delivery_fallback',
   'tools_recovered',
   'sandbox_rebuilt',

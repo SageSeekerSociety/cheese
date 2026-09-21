@@ -1652,8 +1652,6 @@ so check there and not in the menu, the contract or the doc**」。
 - **两张通知表并成一张**（结论 58）：`alert/` 那个包和 `alerts` 表原样还在，账本只管
   `notification/` 这一张；把 `alerts` 的行幂等地搬进 `notification` 也还没有人做，
   在那之前 `alerts` 不能 drop。
-- **平台侧的执行记录**（结论 57，6.5）：今天没有一份「发出过哪些请求、哪些结果未知」的记录，
-  所以重派之前无处可读，「结果未知」和「确定没做」在平台这一侧分不开。
 - **同 handle 便条的写侧**（读侧的通道已经有了：`chat.py:1605 notify_running_turn`）。
 - **定时投递原语**（今天由 `scheduler/` 替它做，而那是另一件事）。
 - **反馈通道**：全仓一行都没有。
