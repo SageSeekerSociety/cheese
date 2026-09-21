@@ -14,7 +14,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.db import async_session_factory
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.domain.agent import execution, private_chat
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -24,10 +24,12 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,12 @@ class CentralChannel(DeviceChannel):
         self.executor = executor
         self.name = executor.name
         self.provisions_machine = executor.provisions_machine
+        # 手是执行机的，所以这条通道的供给就是被它包住的那条通道的供给：一台机器
+        # 归哪条通道认领，说的是那台机器，不是中心会话机。
+        self.supply = executor.supply
+        # 而会话进程不在那台机器上：工具要从中心机再跳一程到执行机。把进程和工作
+        # 区放在同一台机器上的骨架（pi）挂不到这条通道上。
+        self.hands_here = False
 
     def available(self):
         return self.executor.available()
@@ -87,19 +95,18 @@ class CentralChannel(DeviceChannel):
     async def prepare_topic(self, **kwargs):
         return await self.executor.prepare_topic(**kwargs)
 
-    async def precheck(self, session: SessionRef):
-        factory = self._session_factory or async_session_factory
-        async with factory() as db:
-            await TopicService(db).get_or_404(session.topic_id)
-            # THIS conversation's session machine, not the room's: two teammates
-            # in one room hold two sessions and may sit on two machines.
-            place = await AgentSessionService(db).place(
-                session.topic_id, session.agent_handle, harness=session.harness
-            )
-        center = place.machine if place else settings.agent_session_device_id
-        if not center or not self._hub.is_online(center):
-            raise ScreenSetupError("Claude Code 中心会话机器尚未配置或未连接")
-        return await self.executor.precheck(session)
+    async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
+        if needs_place:
+            # 两条路共同的前提是会话机在线——会话本身跑在它上面。这一问只读机器，
+            # 分身留给执行机那一步解析：在这里也解析一次，就是每一轮多借一次连接、
+            # 多一次提交，而答案被丢掉。连接在这个 ``with`` 结束时就还了，不攥着
+            # 它去池里要第二条 (#1312 正是并发轮次一起开场互相等到超时)。
+            async with self._sessions() as db:
+                await self._resolve_session_host(db, session)
+            return await self.executor.precheck(session, needs_place=True)
+        # 不碰文件、不跑命令的一轮不去租手 (结论 19，不变量 I2)：分身身份租手那条
+        # 路也只从执行机之外取到，所以这一轮在所有执行机离线时照样跑得起来。
+        return await self._session_host_agent(session)
 
     async def discover(self, device_id=None):
         factory = self._session_factory or async_session_factory
@@ -187,7 +194,7 @@ class CentralChannel(DeviceChannel):
         turn_id=None,
         runtime_factory=None,
     ) -> AsyncIterator[PreparedSession]:
-        assert isinstance(precheck, tuple)
+        assert isinstance(precheck, Placement)
         project_id, topic_id = session.project_id, session.topic_id
         started_at = time.monotonic()
 
@@ -199,7 +206,7 @@ class CentralChannel(DeviceChannel):
                 (time.monotonic() - started_at) * 1000,
             )
 
-        executor_id, agent_user_id, agent_handle = precheck
+        executor_id, agent_user_id, agent_handle, rented = precheck
         factory = self._session_factory or async_session_factory
         # Short transactions with the machine work between them, not one that
         # spans it. The room's row lock used to be taken on the first read and
@@ -215,9 +222,17 @@ class CentralChannel(DeviceChannel):
         # below.
         async with factory() as db:
             room = await TopicService(db).lock_for_execution(topic_id)
+            # The machine resolver supplies a room identity; the signed launch
+            # credential names the teammate actually taking this turn.
+            # A room-scoped legacy token leaves the precheck identity intact.
+            actor = token_agent_handle(token)
+            if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+                user = await user_by_handle(db, actor)
+                if user is None:
+                    raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")
+                agent_user_id, agent_handle = user.id, user.username
             mark("room_lock")
             resource = room.resource_id or room.id
-            is_private = room.is_private
             # Where THIS conversation was, resolved from its own row. A stale
             # one — an older generation of the room, or hands that have since
             # been handed to another executor — is no place at all: this turn
@@ -228,6 +243,8 @@ class CentralChannel(DeviceChannel):
             )
         if place is not None and (
             place.resource_id != str(resource)
+            # 这一轮该落在哪台：租到手的是那双手，没租手的是这条会话自己的机器
+            # ——``precheck`` 已经解析过，两种情况给的都是这一位。
             or (place.lease or {}).get("device_id") != executor_id
         ):
             place = None
@@ -236,7 +253,9 @@ class CentralChannel(DeviceChannel):
             raise ScreenSetupError("本房间的 Claude Code 中心会话机器未连接")
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
         token = bind_resource_token(token, str(resource))
-        if place is None and launch.resume_session_id:
+        # 搬历史是把会话文件从租来的那双手搬回会话机；没租手的一轮，它们本来
+        # 就在会话机上，没有源可搬。
+        if rented and place is None and launch.resume_session_id:
             await launch.execution.transfer_history(
                 self._hub,
                 executor_id,
@@ -245,13 +264,16 @@ class CentralChannel(DeviceChannel):
                 resource,
                 launch.resume_session_id,
             )
-        if is_private:
-            target = private_chat.execution_target(
-                project_id, topic_id, resource, device_id=center
-            )
-            values.update(CHEESE_PRIVATE_CHAT="1", CHEESE_MEMORY_SCOPE="personal")
+        # 记忆算谁的，只决定记忆算谁的：它跟着 ``memory_scope`` 走，不跟着「这
+        # 一轮租没租手」走。
+        if memory_scope == "personal":
+            values["CHEESE_MEMORY_SCOPE"] = "personal"
             if owner:
                 values["CHEESE_OWNER"] = owner
+        # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区里：
+        # 一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。
+        if not rented:
+            target = private_chat.scratch_target(project_id, resource, device_id=center)
         else:
             if center == executor_id:
                 raise ScreenSetupError("项目执行机器与中心会话机器需要分别配置")

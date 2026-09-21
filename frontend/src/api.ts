@@ -13,7 +13,6 @@ import type {
   BranchProtectionRules,
   ChatAttachment,
   ComputeProfiles,
-  Contributions,
   DocumentRevision,
   EnvironmentConfig,
   EnvironmentStatus,
@@ -51,7 +50,6 @@ import type {
   ProjectEnvironmentInfo,
   ProjectInvitation,
   ProjectMemberRow,
-  ProjectOverview,
   ProjectSite,
   ProjectSiteInfo,
   ReactionAgg,
@@ -1010,11 +1008,6 @@ export function deleteOAuthConnection(userId: string, connectionId: number): Pro
   })
 }
 
-// 项目总览 / 收件箱 (eval G2/G3).
-export function getOverview(projectId: string): Promise<ProjectOverview> {
-  return request<ProjectOverview>(`/projects/${encodeURIComponent(projectId)}/overview`)
-}
-
 // The AI-workspace project for a 知是 Team (fusion P4). Null when the team has no
 // project yet — the team page uses this to show/hide its 「AI 工作台」 entry.
 export function getProjectForTeam(teamId: number): Promise<Project | null> {
@@ -1029,6 +1022,14 @@ export function getInbox(projectId: string, targetHandle: string): Promise<ListP
 
 export function markRead(alertId: string): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' })
+}
+
+// 拍板。答复之后这一条不再等人，收件箱里就没有它了。
+export function resolveAlert(alertId: string, chosen: string): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ chosen }),
+  })
 }
 
 export function sendFeedback(alertId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
@@ -1138,6 +1139,51 @@ export interface ArtifactVersion {
 
 export interface ProjectArtifactDetail extends ProjectArtifact {
   versions: ArtifactVersion[]
+}
+
+export interface ArtifactComparison {
+  kind: 'file' | 'merge' | 'link' | 'unavailable'
+  identical: boolean | null
+  note: string | null
+  files: {
+    path: string
+    diff: string | null
+    note: string | null
+    before_mode?: string | null
+    after_mode?: string | null
+    status?: string
+  }[]
+}
+
+export function compareArtifactVersions(
+  projectId: string,
+  artifactId: string,
+  before: string,
+  after: string
+): Promise<ArtifactComparison> {
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`
+  )
+}
+
+export async function artifactVersionBytes(
+  projectId: string,
+  artifactId: string,
+  cardId: string,
+  asPdf = false
+): Promise<ArrayBuffer> {
+  const response = await fetch(
+    artifactVersionFileUrl(projectId, artifactId, cardId) + (asPdf ? '?preview_pdf=true' : ''),
+    { headers: authHeaders() }
+  )
+  if (response.ok) return response.arrayBuffer()
+  let message = ''
+  try {
+    message = String((await response.json())?.message || '')
+  } catch {
+    /* Keep the HTTP error when the server sent no JSON. */
+  }
+  throw new Error(message || `未能读取这一版（HTTP ${response.status}）`)
 }
 
 export function getProjectArtifact(projectId: string, artifactId: string): Promise<ProjectArtifactDetail> {
@@ -1365,7 +1411,7 @@ export async function previewDocumentPdf(
 
 // Downloads carry the same credentials as API requests, including token-only sessions.
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
-  const res = await fetch(`${rawUrl}&download=true`, { headers: authHeaders() })
+  const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`下载失败（HTTP ${res.status}）`)
   const url = URL.createObjectURL(await res.blob())
   const link = document.createElement('a')
@@ -1902,12 +1948,6 @@ export function getCalendar(projectId: string): Promise<ListPayload<MilestoneFul
 // All milestones (any status), for showing done ones faded.
 export function listMilestones(projectId: string): Promise<ListPayload<MilestoneFull>> {
   return request<ListPayload<MilestoneFull>>(`/projects/${encodeURIComponent(projectId)}/milestones`)
-}
-
-// ---- 贡献图 (§10.1) ----
-
-export function getContributions(projectId: string): Promise<Contributions> {
-  return request<Contributions>(`/projects/${encodeURIComponent(projectId)}/contributions`)
 }
 
 // ---- 反馈 (feedback) ----

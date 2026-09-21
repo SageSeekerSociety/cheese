@@ -49,11 +49,14 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.addressing import Event
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.library import service as library
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project import artifacts
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import identity
 from app.domain.review import (
     archive,
     commit_message,
@@ -79,8 +82,6 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
-from app.domain.workspace import identity
-from app.domain.workspace import service as ws
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
@@ -428,7 +429,7 @@ async def _read_deliverable(
 
     读的是任务那棵树 —— 交付物是这条活做出来的，主干上还没有它。
     """
-    from app.domain.workspace.forge_files import ProjectFiles
+    from app.domain.repository.forge_files import ProjectFiles
 
     data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")
     if len(data) > _DELIVERABLE_MAX_BYTES:
@@ -592,7 +593,7 @@ class AcceptService:
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        from app.domain.workspace.forge_files import ProjectFiles
+        from app.domain.repository.forge_files import ProjectFiles
 
         comparison = await ProjectFiles(
             self._session, task.project_id, task.id
@@ -660,7 +661,7 @@ class AcceptService:
         )
         if snapshot is not None:
             await asyncio.to_thread(
-                ws.write_artifact_snapshot,
+                library.write_artifact_snapshot,
                 task.project_id,
                 card.id,
                 snapshot[0],
@@ -706,7 +707,10 @@ class AcceptService:
                 detail=detail or None,
                 detail_label="这次改动",
             ),
-            recipients=(card.reviewer_handle, task.reporter_handle or ""),
+            points_at=Event(
+                reviewers=(card.reviewer_handle,),
+                reporter=task.reporter_handle,
+            ),
         )
 
     async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
@@ -760,7 +764,7 @@ class AcceptService:
         Best-effort throughout: a git read that fails, or a room that won't take
         the message, must never stop someone filing a card.
         """
-        from app.domain.workspace.forge_files import ProjectFiles
+        from app.domain.repository.forge_files import ProjectFiles
 
         async def migrations(task_id: uuid.UUID) -> list[str]:
             try:
@@ -961,13 +965,17 @@ class AcceptService:
         caps = forge.capabilities if forge is not None else None
         # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
         # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
+        #
+        # 「项目有没有绑外部仓库」不在这里（不变量 I21②）。它是一个能力位，由
+        # `PlatformForge` 读去决定卡上说哪句话，说完就已经在 `declaration` 里；
+        # 再发一遍，就是把那个布尔摆到产品面前请它自己分叉，而这正是按能力分派
+        # 要取消的那件事。
         data["forge"] = (
             {
                 "kind": forge.kind.value,
                 "reports_checks": caps.reports_checks,
                 "hosts_proposals": caps.hosts_proposals,
                 "can_write_remote": caps.can_write_remote,
-                "has_external_remote": caps.has_external_remote,
                 "pushes_to_external_remote": caps.pushes_to_external_remote,
                 "identity": caps.identity.value,
                 "declaration": forge.declaration,
@@ -980,7 +988,6 @@ class AcceptService:
                 "reports_checks": False,
                 "hosts_proposals": False,
                 "can_write_remote": False,
-                "has_external_remote": False,
                 "pushes_to_external_remote": False,
                 "identity": forge_mod.ForgeIdentity.platform.value,
                 "declaration": forge_mod.FORGE_UNKNOWN_DECLARATION,
@@ -1486,18 +1493,25 @@ class AcceptService:
         return None
 
     async def _sync_dependency_target(
-        self, card: AcceptCard, status: "PullRequestStatus"
+        self,
+        card: AcceptCard,
+        status: "PullRequestStatus",
     ) -> bool:
         """Record a native PR retarget and invalidate reviews of its previous diff."""
-        from app.domain.project.forge import default_branch
-
         if card.task_id is None or not status.base_ref:
             return False
         task = await TaskService(self._session).get(card.task_id)
+        return await self._sync_task_dependency_target(task, status)
+
+    async def _sync_task_dependency_target(
+        self, task, status: "PullRequestStatus", *, drop_dependency: bool = False
+    ) -> bool:
+        from app.domain.project.forge import default_branch
+
         if (
             task is None
             or task.base_task_id is None
-            or task.base_branch == status.base_ref
+            or (task.base_branch == status.base_ref and not drop_dependency)
         ):
             return False
         if status.base_ref != await default_branch(task.project_id, self._session):
@@ -2187,12 +2201,53 @@ class AcceptService:
         await self._session.refresh(card)
         return card
 
-    async def push_fix(self, place_id: uuid.UUID) -> dict:
+    async def push_fix(
+        self, place_id: uuid.UUID, *, drop_dependency: bool = False
+    ) -> dict:
         """Observe the branch the CLI already pushed directly to the forge."""
         cards = await self._repo.list_live_for_places(
             [place_id], statuses=(AcceptStatus.pending, AcceptStatus.conflict)
         )
         cards = [c for c in cards if c.pr_number is not None]
+        if drop_dependency:
+            from app.domain.project.forge import default_branch
+            from app.domain.review import github_pr
+
+            task = await TaskService(self._session).get(place_id)
+            if task is None or task.pr_number is None:
+                raise ValidationError("任务尚无 PR，请先同步提交后再移除依赖")
+            topic = await self._topic_or_404(task.room_id)
+            for card in cards:
+                await self._pr_repo_of(card, topic)
+            publisher = await self._app_pr_client(topic)
+            if publisher is None:
+                raise ValidationError("项目的代码仓库暂时不可用，无法移除依赖")
+            base = await default_branch(task.project_id, self._session)
+            try:
+                await publisher.update_pr(task.pr_number, base=base)
+                status = await publisher.pr_status(task.pr_number)
+            except (github_pr.GitHubPrError, github_pr.GitHubPRError) as exc:
+                raise ValidationError(f"暂时无法更新 PR 的目标分支：{exc}") from exc
+            if status.base_ref != base:
+                raise ValidationError("仓库尚未确认新的目标分支，请稍后重试")
+            pushed = await self._sync_task_dependency_target(
+                task, status, drop_dependency=True
+            )
+            for card in cards:
+                if pushed or card.pr_head_sha != status.head_sha:
+                    pushed = True
+                    await self._dismiss_stale_accept(card=card, topic=topic)
+                    card.pr_head_sha = status.head_sha
+                    card.merge_state = None
+                    card.rebase_count = 0
+                    notes.clear(card)
+            await self._session.flush()
+            return {
+                "pushed": pushed,
+                "pr_number": task.pr_number,
+                "pr_url": task.pr_url,
+                "reason": "" if pushed else "任务已无依赖，PR 没有新提交",
+            }
         if not cards:
             return {"pushed": False, "reason": "这个话题手上没有骑着 PR 的验收卡"}
         card = cards[0]
@@ -2214,14 +2269,15 @@ class AcceptService:
             status = await client.pull_request_status(
                 owner=owner, repo=repo, number=card.pr_number, token=creds.read
             )
-            pushed = status.head_sha != card.pr_head_sha
+            retargeted = await self._sync_dependency_target(card, status)
+            pushed = retargeted or status.head_sha != card.pr_head_sha
             if pushed:
                 await self._dismiss_stale_accept(card=card, topic=topic)
                 card.pr_head_sha = status.head_sha
                 card.merge_state = None
                 card.rebase_count = 0
                 notes.clear(card)
-        except github_pr.GitHubPrError as exc:
+        except (github_pr.GitHubPrError, github_pr.GitHubPRError) as exc:
             # Same reasoning as the poll path: say it on the card, because the
             # person waiting is looking at the card and not at a log file.
             self._note_poll_failed(card, exc)
@@ -2587,7 +2643,7 @@ class AcceptService:
             content=content,
             meta={"source": "accept", **meta},
             author="accept",
-            recipients=(card.reviewer_handle, *also),
+            points_at=Event(reviewers=(card.reviewer_handle, *also)),
         )
 
     async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:

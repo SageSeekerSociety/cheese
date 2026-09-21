@@ -191,6 +191,100 @@ def test_a_later_version_does_not_overwrite_the_one_before_it(client):
     }
     assert bytes_by_version == {1: "第一版\n".encode(), 2: "第二版\n".encode()}
 
+    compared = client.get(
+        f"/projects/{project_id}/artifacts/{artifact_id}/compare",
+        params={
+            "before": detail["versions"][0]["card_id"],
+            "after": detail["versions"][1]["card_id"],
+        },
+    )
+    assert compared.status_code == 200, compared.text
+    result = compared.json()["data"]
+    assert result["identical"] is False
+    assert "-第一版\n" in result["files"][0]["diff"]
+    assert "+第二版\n" in result["files"][0]["diff"]
+
+
+def test_comparison_only_reads_accepted_versions_of_this_artifact(client):
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    first = _hand_over(
+        client, room_id, files={"report.txt": "original"}, deliver="report.txt"
+    )
+    first_id = first.json()["data"]["id"]
+    _accept(client, first_id)
+    second = _hand_over(
+        client,
+        room_id,
+        files={"report.txt": "unaccepted"},
+        deliver="report.txt",
+        again=True,
+    )
+    artifact_id = _artifact_id(client, project_id)
+    url = f"/projects/{project_id}/artifacts/{artifact_id}/compare"
+    assert (
+        client.get(
+            url, params={"before": first_id, "after": second.json()["data"]["id"]}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            url, params={"before": first_id, "after": str(uuid.uuid4())}
+        ).status_code
+        == 404
+    )
+    same = client.get(url, params={"before": first_id, "after": first_id})
+    assert same.status_code == 200, same.text
+    assert same.json()["data"]["identical"] is True
+    assert same.json()["data"]["files"][0]["diff"] == ""
+    other = _project(client)
+    assert (
+        client.get(
+            f"/projects/{other}/artifacts/{artifact_id}/compare",
+            params={"before": first_id, "after": first_id},
+        ).status_code
+        == 404
+    )
+
+
+def test_comparison_of_source_deliveries_uses_the_two_accepted_commits(
+    client, monkeypatch
+):
+    from app.domain.repository.forge_files import ProjectFiles
+    from app.domain.review.models import AcceptCard
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    ids, revisions = [], []
+    for again in (False, True):
+        filed = _hand_over(client, room_id, again=again)
+        card_id = filed.json()["data"]["id"]
+        _accept(client, card_id)
+        ids.append(card_id)
+
+        async def revision(card_id=card_id):
+            async with client.test_factory() as session:
+                return (await session.get(AcceptCard, uuid.UUID(card_id))).pr_head_sha
+
+        revisions.append(asyncio.run(revision()))
+
+    async def compare(self, before, after):
+        assert str(self.project_id) == project_id
+        assert (before, after) == tuple(revisions)
+        return [{"path": "report.py", "diff": "-old\n+new", "note": None}]
+
+    monkeypatch.setattr(ProjectFiles, "compare_revisions", compare)
+    # 两次交出去的都是合并，所以两版都落在项目那个仓库那一项上 —— 它跟项目同名。
+    artifact_id = _artifact_id(client, project_id, "P")
+    response = client.get(
+        f"/projects/{project_id}/artifacts/{artifact_id}/compare",
+        params={"before": ids[0], "after": ids[1]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["kind"] == "merge"
+    assert response.json()["data"]["files"][0]["diff"] == "-old\n+new"
+
 
 def test_a_version_that_lands_after_a_revoke_takes_the_number_that_freed_up(client):
     """版号是数出来的，所以撤回一次采纳，后面那几版自己往前挪。"""
@@ -251,6 +345,48 @@ def test_an_address_is_recorded_as_a_pointer_and_has_no_file(client):
     )
     # 没有文件不是「文件丢了」：交出去的是一个地址。
     assert got.status_code == 404
+
+    compared = client.get(
+        f"/projects/{project_id}/artifacts/{artifact_id}/compare",
+        params={"before": version["card_id"], "after": version["card_id"]},
+    ).json()["data"]
+    assert compared["kind"] == "link"
+    assert compared["identical"] is True
+    assert compared["note"] == "link"
+
+
+def test_office_preview_converts_the_selected_retained_file(client, monkeypatch):
+    from app.api.routes import projects
+    from app.domain.preview.office import OfficeRenderUnavailable
+
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    filed = _hand_over(
+        client, room_id, files={"report.docx": "first document"}, deliver="report.docx"
+    )
+    card_id = filed.json()["data"]["id"]
+    _accept(client, card_id)
+    artifact_id = _artifact_id(client, project_id)
+    url = f"/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file"
+
+    async def render(data, name, endpoint):
+        assert data == b"first document"
+        assert name == "report.docx"
+        return b"%PDF-preview of the first document"
+
+    monkeypatch.setattr(projects, "render_to_pdf", render)
+    preview = client.get(url, params={"preview_pdf": True})
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["content-type"] == "application/pdf"
+    assert preview.content == b"%PDF-preview of the first document"
+    assert client.get(url).content == b"first document"
+
+    async def unavailable(*args):
+        raise OfficeRenderUnavailable("文档预览服务暂时无法访问")
+
+    monkeypatch.setattr(projects, "render_to_pdf", unavailable)
+    assert client.get(url, params={"preview_pdf": True}).status_code == 503
+    assert client.get(url).content == b"first document"
 
 
 def test_handing_over_the_merge_itself_is_a_kind_of_its_own(client):

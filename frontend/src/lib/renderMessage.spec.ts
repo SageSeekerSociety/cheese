@@ -118,7 +118,7 @@ describe('historical fragmented Markdown compatibility', () => {
       id,
       topic_id: 'topic-1',
       kind: 'message',
-      author_type: 'ai',
+      author_type: 'participant',
       author: 'cheese',
       content,
       turn_id: turnId,

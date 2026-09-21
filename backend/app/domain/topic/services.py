@@ -48,6 +48,7 @@ from app.domain.identity.handles import (
 from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import service as ws
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
@@ -67,7 +68,6 @@ from app.domain.topic.repositories import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.workspace import service as ws
 
 # Titles are AI-generated (the agent names a topic via `cheese title`), never
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts

@@ -3,7 +3,7 @@
 import os
 import subprocess
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -106,6 +106,141 @@ async def test_failed_confirmation_keeps_resources_and_retries_after_restart(
     }
     assert inventory.await_count == 1
     assert action.await_args.args[3] == "remove"
+
+
+async def test_a_tidy_in_flight_keeps_the_machine_until_it_has_finished(
+    client, monkeypatch
+):
+    """回收要等的是一次**在飞的**记忆整理（不变量 I19）。
+
+    整理只有对着机器上的代码才写得出来（#1078），而回收的第一步 ``prepare`` 会
+    ``request_exit`` 加 ``stop_executor`` —— 整理断在半路，机器随后被删，那几条记忆
+    再也没有第二次机会。所以它要在动机器之前拦下来，而不是在已经停机之后。
+    """
+    from app.domain.agent.models import AgentTurn
+    from app.domain.memory.dream import open_dream
+    from app.domain.topic.models import Topic
+
+    monkeypatch.setattr(settings, "dream_enabled", True)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    action = AsyncMock()
+    monkeypatch.setattr(retire, "_device_action", action)
+    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+
+    turn_id = uuid.uuid4()
+    async with client.test_factory() as session:
+        room = await session.get(Topic, room_id)
+        session.add(
+            AgentTurn(
+                id=turn_id,
+                topic_id=room_id,
+                continuation_id=turn_id,
+                author="system",
+                content="整理中",
+                started_at=datetime.now(UTC),
+            )
+        )
+        await open_dream(
+            session, topic_id=room_id, project_id=room.project_id, turn_id=turn_id
+        )
+        await session.commit()
+
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 0,
+        "pending": 1,
+    }
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert "记忆整理" in operation.last_error
+    # 机器一根手指都没动过：拦在 ``prepare`` 之前才救得下那一轮。
+    action.assert_not_awaited()
+
+    async with client.test_factory() as session:
+        turn = await session.get(AgentTurn, turn_id)
+        turn.stopped_at = datetime.now(UTC)
+        await session.commit()
+
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 1,
+        "pending": 0,
+    }
+
+
+async def test_a_tidy_nothing_will_ever_close_does_not_hold_the_machine_forever(
+    client, monkeypatch
+):
+    """等一轮整理跑完，是有上界的。
+
+    从前终结那一轮的正是 ``prepare``（``request_exit`` + ``stop_executor`` → 机器发
+    回 Stop → ``close_for_topic`` 写上 ``stopped_at``）。这一问挪到 ``prepare``
+    之前以后，就没有东西再去终结它了：后端在整理途中重启，这一轮的 ``stopped_at``
+    留在 NULL，而孤儿清扫只要屏幕还应答就判它「还活着」，永不关闭这条区间
+    (``agent/runtime.py`` 的 ``_adopted``)。没有上界的话，device 存储、worktree、
+    machine 就一起被一条永远不会关闭的区间扣住——和这一节修掉的那个死锁同一类。
+    """
+    from app.domain.agent.models import AgentTurn
+    from app.domain.memory.dream import open_dream
+    from app.domain.topic.models import Topic
+
+    monkeypatch.setattr(settings, "dream_enabled", True)
+    room_id, _cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    action = AsyncMock()
+    monkeypatch.setattr(retire, "_device_action", action)
+    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+
+    turn_id = uuid.uuid4()
+    async with client.test_factory() as session:
+        room = await session.get(Topic, room_id)
+        session.add(
+            AgentTurn(
+                id=turn_id,
+                topic_id=room_id,
+                continuation_id=turn_id,
+                author="system",
+                content="整理中",
+                # 一轮本来就跑不了这么久：越过这条线，它没在跑，只是没人关它。
+                started_at=datetime.now(UTC)
+                - timedelta(seconds=settings.agent_turn_hard_ceiling_s + 60),
+            )
+        )
+        await open_dream(
+            session, topic_id=room_id, project_id=room.project_id, turn_id=turn_id
+        )
+        await session.commit()
+
+    await retire.sweep_retired_storage(client.test_factory)
+    # 断的是这一等放行了：``prepare`` 真的跑到了。放行之后这台机器被停掉，那条区间
+    # 才有东西去关它（``request_exit`` → Stop，或者屏幕没了以后的孤儿清扫），回收
+    # 下一轮继续走完——所以这里不断言一轮就完，断言的是它没有被扣在这一问上。
+    assert "prepare" in [call.args[3] for call in action.await_args_list]
+
+
+async def test_a_room_that_will_never_be_tidied_is_still_reclaimed(client, monkeypatch):
+    """欠一次整理和永远等不到一次整理，是两件事。
+
+    这个房间没有那一行，而且再也不会有：``idle sweep`` 明确跳过归档房间，归档房间
+    里也起不了一轮——所以**任何**归档房间都不可能在这一刻之后拿到它。把「没有那一
+    行」当成缺一张收据，回收就永远停在 ``pending``，而
+    ``_advance`` 每一轮都会重跑一遍对着机器的 ``publication`` 与 transcript 收集，
+    device 存储、worktree、machine 一样都不释放。
+    """
+    monkeypatch.setattr(settings, "dream_enabled", True)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    monkeypatch.setattr(retire, "_device_action", AsyncMock())
+    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 1,
+        "pending": 0,
+    }
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
 
 
 async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeypatch):

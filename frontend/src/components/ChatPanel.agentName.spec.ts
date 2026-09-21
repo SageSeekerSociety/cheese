@@ -38,7 +38,7 @@ function aiMsg(id: string, content = id, author: string = SEAT): Block {
     project_id: 'p1',
     topic_id: 't1',
     kind: 'message',
-    author_type: 'ai',
+    author_type: 'participant',
     author,
     content,
     reply_to: null,
@@ -107,7 +107,7 @@ describe('AI 说的话署谁的名', () => {
       if (String(args[0]).includes('/members')) await gate
       return originalFetch(...args)
     })
-    history = [{ ...aiMsg('mention-late', `<@${SEAT}> 请整理方案`), author_type: 'human', author: 'me' }]
+    history = [{ ...aiMsg('mention-late', `<@${SEAT}> 请整理方案`), author_type: 'participant', author: 'me' }]
     const { container } = render(Panel, {
       props: { topic: topicOf('t1'), showComposer: false },
       global: { plugins: [vuetify] },

@@ -1,26 +1,28 @@
-"""Local attachments, session files and retired workspace cleanup."""
+"""项目那唯一一个 git 源，以及跟着它走的那些平台侧目录。
+
+这个包里只有仓库这一侧：git 子进程、检出目录、会话 home 与 spool、退役检出的清
+理。用户给项目的资料、贴进房间的文件、发布出来的预览产物都不在这里——它们不在任
+何 git 树上，住在 :mod:`app.domain.library.service`。
+
+平台自己在这里只做检出级的操作，不写任何人的提交：干活的分身在自己的机器上
+`git commit`，再把分支推回来。
+"""
 
 import contextlib
-import hashlib
 import logging
 import os
 import re
 import shutil
 import subprocess
 import uuid
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ValidationError
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
-from app.domain.workspace import identity as identity_mod
-from app.domain.workspace.textfile import (
-    MAX_TEXT_BYTES,
-    content_version,
-    decode_text,
-)
+from app.domain.repository import identity as identity_mod
 
-logger = logging.getLogger("cheesex.workspace")
+logger = logging.getLogger("cheesex.repository")
 
 
 class GitTimeoutError(ValidationError):
@@ -218,243 +220,6 @@ def sandbox_session_dir(topic_id: uuid.UUID) -> str:
     mount. Must agree with `session_dir`'s host layout (both name the directory
     `topic_id.hex[:8]`); the session exports this as CLAUDE_CONFIG_DIR."""
     return f"{SANDBOX_SESSIONS_ROOT}/{topic_id.hex[:8]}"
-
-
-def _safe_path(repo: Path, rel: str) -> Path:
-    target = (repo / rel).resolve()
-    if repo not in target.parents and target != repo:
-        raise ValidationError("path escapes the project workspace")
-    if ".git" in target.parts:
-        raise ValidationError("cannot touch .git")
-    return target
-
-
-def _read_text_path(target: Path, path: str) -> dict:
-    if not target.is_file():
-        raise ValidationError("file not found")
-    size = target.stat().st_size
-    meta = {"path": path, "bytes": size, "binary": False, "too_large": False}
-    if size > MAX_TEXT_BYTES:
-        # Deliberately not read: the point is to not build the giant body.
-        return {**meta, "content": None, "version": None, "too_large": True}
-    data = target.read_bytes()
-    text = decode_text(data)
-    if text is None:
-        return {
-            **meta,
-            "content": None,
-            "version": content_version(data),
-            "binary": True,
-        }
-    return {**meta, "content": text, "version": content_version(data)}
-
-
-def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
-    """Room attachments and published previews have no code branch."""
-    root = (
-        Path(settings.workspace_root) / ".room-files" / str(project_id) / str(room_id)
-    )
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
-
-
-def write_room_file(
-    project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: bytes
-) -> None:
-    if path.split("/")[0] == LIBRARY_PREFIX:
-        # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
-        # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。
-        raise ValidationError(f"{LIBRARY_PREFIX}/ 留给资料库，房间文件不能写在这里")
-    target = _safe_path(room_files_root(project_id, room_id), path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-
-
-def read_room_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
-    target = _safe_path(room_files_root(project_id, room_id), path)
-    if not target.is_file():
-        raise ValidationError("file not found")
-    return target.read_bytes()
-
-
-def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
-    return _read_text_path(_safe_path(room_files_root(project_id, room_id), path), path)
-
-
-LIBRARY_PREFIX = "library"
-
-
-def library_ref(name: str) -> str:
-    """资料库里那一份在消息和工作目录里的地址。"""
-    return f"{LIBRARY_PREFIX}/{name}"
-
-
-def library_name(path: str) -> str | None:
-    """这个地址指的是资料库里哪一份,不是的话给 None。"""
-    prefix = f"{LIBRARY_PREFIX}/"
-    return path[len(prefix) :] if path.startswith(prefix) else None
-
-
-def read_attachment(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
-    """一个附件的字节:资料库里那一份,或者只属于这个房间的那一份。"""
-    name = library_name(path)
-    if name is not None:
-        return read_library_file(project_id, name)
-    return read_room_file(project_id, room_id, path)
-
-
-def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
-    """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
-    name = library_name(path)
-    if name is not None:
-        target = _safe_path(library_root(project_id), name)
-        if not target.is_file():
-            # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
-            # 地址没错，是东西不在了。
-            raise ValidationError("这份资料已经不在资料库里")
-        return _read_text_path(target, path)
-    return read_room_text_file(project_id, room_id, path)
-
-
-def library_root(project_id: uuid.UUID) -> Path:
-    root = Path(settings.workspace_root) / ".library" / str(project_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
-
-
-def _next_name(name: str, attempt: int) -> str:
-    if attempt == 1:
-        return name
-    stem, dot, ext = name.rpartition(".")
-    if not dot:
-        return f"{name}({attempt})"
-    return f"{stem}({attempt}).{ext}"
-
-
-def write_library_file(project_id: uuid.UUID, name: str, data: bytes) -> str:
-    """Keep the name the user gave it; a taken name takes the next `(n)`.
-
-    Allocating the name IS the write (`open(..., "xb")`): two uploads of the
-    same name in flight is the case this exists for, and check-then-write loses
-    one of them. Returns the name it ended up with."""
-    root = library_root(project_id)
-    for attempt in range(1, 1000):
-        candidate = _next_name(name, attempt)
-        target = _safe_path(root, candidate)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with target.open("xb") as sink:
-                sink.write(data)
-        except FileExistsError:
-            continue
-        return candidate
-    raise ValidationError(f"同名文件太多：{name}")
-
-
-def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
-    target = _safe_path(library_root(project_id), path)
-    if not target.is_file():
-        raise NotFoundError("资料库里没有这份文件")
-    return target.read_bytes()
-
-
-def delete_library_file(project_id: uuid.UUID, name: str) -> None:
-    """扔掉一份资料。
-
-    旧消息里引用它的那枚 chip 随之打不开了，这是对的：那条引用指的就是这一份，而
-    这一份没有了——在它的位置上摆一份别的东西，才是把读者读到的内容换掉。"""
-    target = _safe_path(library_root(project_id), name)
-    if not target.is_file():
-        raise NotFoundError("资料库里没有这份文件")
-    target.unlink()
-
-
-def list_library_files(project_id: uuid.UUID) -> list[dict]:
-    """Newest first: the file someone just gave the project is the one they are
-    about to reference."""
-    root = library_root(project_id)
-    files = []
-    for entry in root.rglob("*"):
-        if not entry.is_file():
-            continue
-        stat = entry.stat()
-        files.append(
-            {
-                "path": str(entry.relative_to(root)),
-                "bytes": stat.st_size,
-                "modified": stat.st_mtime,
-            }
-        )
-    files.sort(key=lambda f: f["modified"], reverse=True)
-    return files
-
-
-def artifact_snapshot_path(
-    project_id: uuid.UUID, card_id: uuid.UUID, name: str
-) -> Path:
-    """这一版交出去的那一份的位置 (#1085 结论五)。
-
-    一版是一次交付，一次交付就是一张采纳了的卡，所以快照按卡分目录：同一项产物的
-    七版互不覆盖，而撤回采纳只改卡的状态、不动字节。
-
-    在资料库旁边（`.library/` / `.artifacts/`），不在 git 里：成品是从源构建出来
-    的，进库就是把五十版 20MB 的幻灯片提交进仓库的那条老路。名字只取最后一段——
-    交付物的地址是「哪一版的那一份」，它在工作目录里的哪个子目录不是它的身份。
-    """
-    leaf = Path(name).name
-    if not leaf or leaf in {".", ".."}:
-        raise ValidationError(f"这不是一个文件名：{name}")
-    root = Path(settings.workspace_root) / ".artifacts" / str(project_id)
-    return (root / str(card_id) / leaf).resolve()
-
-
-def write_artifact_snapshot(
-    project_id: uuid.UUID, card_id: uuid.UUID, name: str, data: bytes
-) -> None:
-    target = artifact_snapshot_path(project_id, card_id, name)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-
-
-def read_artifact_snapshot(
-    project_id: uuid.UUID, card_id: uuid.UUID, name: str
-) -> bytes:
-    target = artifact_snapshot_path(project_id, card_id, name)
-    if not target.is_file():
-        # 交付物落地之前递的那些卡：清单上有这一版，字节从来没有过。说清是哪一
-        # 种，别让它读起来像文件丢了。
-        raise NotFoundError("这一版没有留存文件")
-    return target.read_bytes()
-
-
-def read_preview_file(
-    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str, relative: str
-) -> bytes:
-    """Read web assets only inside the explicitly selected artifact's directory."""
-    parts = relative.split("/")
-    if not relative or any(
-        not part or part.startswith(".") or "\\" in part or "\x00" in part
-        for part in parts
-    ):
-        raise ValidationError("preview path unavailable")
-    tree = room_files_root(project_id, topic_id)
-    directory = _safe_path(tree, str(PurePosixPath(entry).parent))
-    target = _safe_path(directory, relative)
-    return read_room_file(project_id, topic_id, str(target.relative_to(tree)))
-
-
-def preview_file_version(
-    project_id: uuid.UUID, topic_id: uuid.UUID, entry: str
-) -> str | None:
-    """Track HTML edits without loading a large artifact into the editor API."""
-    target = _safe_path(room_files_root(project_id, topic_id), entry)
-    try:
-        with target.open("rb") as source:
-            return hashlib.file_digest(source, "sha256").hexdigest()[:16]
-    except OSError:
-        # The metadata still names a missing/unreadable artifact; the file API
-        # supplies its existing detailed error state to the preview panel.
-        return None
 
 
 def remove_worktree(project_id: uuid.UUID, wt: Path) -> bool:

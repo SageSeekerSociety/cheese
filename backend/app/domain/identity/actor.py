@@ -1,8 +1,15 @@
 """The actor seam: turn a request's credentials into WHO is acting.
 
-Humans and agents resolve to the *same* ``Actor`` shape so domain services never
-branch on ``if is_agent`` (fusion-design §2). Resolution order (fusion-design §4:
-"actor 在信任边界注入,永不从 body 读"):
+Humans and agents resolve to the *same* ``Actor``, and it carries no field that
+says which kind it is. The shape used to say that and then hand out the hook
+anyway — an ``is_agent`` flag resolved here and read eight routes away, where
+whoever read it was deciding authorization, a recipient or a signature from the
+KIND of the participant rather than from what it holds. A participant is a
+handle; what it may do in a room is its seat (``topic_memberships``), and
+whether a handle carries an agent-binding is derived where that is genuinely
+the question (``IdentityService.is_agent``) rather than travelled along.
+
+Resolution order (fusion-design §4: "actor 在信任边界注入,永不从 body 读"):
 
 1. **Human session token** (``Authorization: Bearer`` / WS ``?token=``) — the
    verified handle, `via="token"`.
@@ -23,7 +30,6 @@ from dataclasses import dataclass
 # Adapters injected at the trust boundary.
 TokenVerifier = Callable[[str], "TokenIdentity | None"]  # bearer/query token → identity
 CheeseVerifier = Callable[[], Awaitable[bool]]  # X-Cheese-Token valid for THIS route?
-AgentDeriver = Callable[[str], Awaitable[bool]]  # handle → carries an agent-binding?
 
 
 @dataclass(frozen=True)
@@ -45,7 +51,6 @@ class Actor:
 
     handle: str
     user_id: int | None
-    is_agent: bool
     via: str  # "token" | "cheese" | "handle"
 
     @property
@@ -61,7 +66,6 @@ async def resolve_actor(
     bearer_token: str | None,
     verify_token: TokenVerifier,
     cheese_valid: CheeseVerifier,
-    is_agent: AgentDeriver,
     cheese_handle: str,
     fallback_handle: str | None,
 ) -> Actor | None:
@@ -75,7 +79,6 @@ async def resolve_actor(
             return Actor(
                 handle=identity.handle,
                 user_id=identity.user_id,
-                is_agent=await is_agent(identity.handle),
                 via="token",
             )
     # 2. Agent scoped token → the cheese agent-user.
@@ -83,7 +86,6 @@ async def resolve_actor(
         return Actor(
             handle=cheese_handle,
             user_id=None,
-            is_agent=True,
             via="cheese",
         )
     # 3. Phase-0 fallback: trust the passed handle (deprecated).
@@ -93,6 +95,5 @@ async def resolve_actor(
     return Actor(
         handle=handle,
         user_id=None,
-        is_agent=await is_agent(handle),
         via="handle",
     )

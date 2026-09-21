@@ -402,7 +402,7 @@ async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     authority = AsyncMock()
     monkeypatch.setattr(service, "require_use_authority", authority)
-    actor = Actor(handle="owner", user_id=1, is_agent=False, via="token")
+    actor = Actor(handle="owner", user_id=1, via="token")
 
     first = await service.ensure_topic_machine(topic.id, actor=actor)
     second = await service.ensure_topic_machine(topic.id)
@@ -490,7 +490,7 @@ async def test_topic_machines_share_the_team_quota(monkeypatch):
     monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
     monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
     monkeypatch.setattr(service, "require_use_authority", AsyncMock())
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
 
     for topic_id in list(topics)[:2]:
         await service.ensure_topic_machine(topic_id, actor=actor)

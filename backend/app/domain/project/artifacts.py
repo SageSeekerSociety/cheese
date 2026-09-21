@@ -456,6 +456,7 @@ class ArtifactVersion:
     kind: str | None
     filename: str | None
     url: str | None
+    revision: str | None
 
 
 async def versions(
@@ -480,6 +481,7 @@ async def versions(
             kind=card.deliverable_kind.value if card.deliverable_kind else None,
             filename=card.deliverable_name,
             url=card.deliverable_url,
+            revision=card.pr_head_sha,
         )
         for number, card in enumerate(found.scalars().all(), start=1)
     ]

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import device_provider
+from app.domain.agent import device_provider, place
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -126,7 +126,10 @@ class FakeHub:
 
     async def put_file(self, device_id, sid, path, data, timeout=30):
         self.files.append((sid, path, data))
-        return {"ok": True}
+        # A real machine answers with where the file actually landed, because
+        # only it can expand its own `$HOME`. The mention the agent gets is
+        # that answer, so a fake that withholds it tests a prompt nobody sends.
+        return {"ok": True, "path": "/home/owner/" + path.removeprefix("$HOME/")}
 
     async def viewer_input(self, device_id, sid, data: bytes) -> None:
         self.keys.append((sid, data))
@@ -225,7 +228,7 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
 
     monkeypatch.setattr(
-        "app.domain.agent.device_provider.ws.read_room_file",
+        "app.domain.agent.device_provider.library.read_room_file",
         lambda project, room, path: b"exact-image-bytes",
     )
 
@@ -242,8 +245,15 @@ async def test_every_device_image_is_staged_before_rendezvous_prompt(
     # 所以等到提示词就意味着两件都做完了。
     assert await _reached(lambda: bool(hub.prompts))
 
-    assert hub.files == [("s1", path, b"exact-image-bytes")]
-    assert hub.prompts == [[f"[u] sent an image\n\n@{path}"]]
+    # 落在会话 home 里，不在检出目录里（结论 49，不变量 I21b）：从前它落在屏幕的
+    # 工作目录下，于是每张图都在别人的仓库里留下一个未跟踪文件。
+    home = device_provider.device_home_dir(project_id, topic_id)
+    staged = f"{home}/attachments/{path}"
+    assert hub.files == [("s1", staged, b"exact-image-bytes")]
+    assert f"/{place.CHECKOUT_DIR}/" not in staged.removeprefix("$HOME/")
+    # @ 的是机器答回来的那个绝对路径，不是后端猜的。
+    landed = "/home/owner/" + staged.removeprefix("$HOME/")
+    assert hub.prompts == [[f"[u] sent an image\n\n@{landed}"]]
     router.push(
         str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
     )

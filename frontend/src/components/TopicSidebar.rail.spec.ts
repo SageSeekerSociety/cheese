@@ -136,8 +136,8 @@ describe('C1 置顶导航组', () => {
   it('侧栏上常驻的只有每天都用的那两样：全局和资料库', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
-    // 看板不在这里——它就是首页，项目名那一行点下去就到。总览、日历、成员、
-    // 导出与发布一年点几次，收进了项目名旁边那个菜单。
+    // 看板不在这里——它就是首页，项目名那一行点下去就到。日历和成员一年点几次，
+    // 收进了项目名旁边那个菜单。
     expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库'])
   })
 
@@ -256,7 +256,7 @@ describe('行左边那一个槽', () => {
     const row = topicRowFor(container, 'a')
     expect(row.querySelector('.mdi-message-text-outline')).toBeNull()
     expect(row.querySelector('.row-glyph')).toBeNull()
-    // 置顶行的图标留着：# / 总览 / 日历 三个各不相同，是能区分行的信息
+    // 置顶行的图标留着：# 和资料库两个各不相同，是能区分行的信息
     expect(container.querySelector('.pinned-row .row-glyph')).not.toBeNull()
   })
 

@@ -13,16 +13,20 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { setLocale } from '../i18n'
+
 import ProjectArtifactView from './ProjectArtifactView.vue'
 
 vi.mock('../api', () => ({
   getProjectArtifact: vi.fn(),
   downloadFile: vi.fn(),
+  compareArtifactVersions: vi.fn(),
+  artifactVersionBytes: vi.fn(),
   artifactVersionFileUrl: (projectId: string, artifactId: string, cardId: string) =>
     `/api/projects/${projectId}/artifacts/${artifactId}/versions/${cardId}/file`,
 }))
 
-const { downloadFile, getProjectArtifact } = await import('../api')
+const { downloadFile, getProjectArtifact, compareArtifactVersions, artifactVersionBytes } = await import('../api')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -62,9 +66,17 @@ function detail(versions: ArtifactVersion[]) {
 }
 
 beforeEach(() => {
+  setLocale('zh-CN')
   vi.clearAllMocks()
   vi.mocked(getProjectArtifact).mockResolvedValue(detail([FILE_VERSION, LINK_VERSION]))
   vi.mocked(downloadFile).mockResolvedValue(undefined)
+  vi.mocked(compareArtifactVersions).mockResolvedValue({
+    kind: 'unavailable',
+    identical: null,
+    note: 'unavailable',
+    files: [],
+  })
+  vi.mocked(artifactVersionBytes).mockResolvedValue(new ArrayBuffer(0))
 })
 
 function mount() {
@@ -75,6 +87,58 @@ function mount() {
 }
 
 describe('一项产物', () => {
+  it('默认比较最近两次交付，改选版本时不把旧差异显示在新标题下', async () => {
+    const versions = [1, 2, 3].map((number) => ({
+      ...FILE_VERSION,
+      filename: 'report.txt',
+      number,
+      card_id: `c${number}`,
+    }))
+    vi.mocked(getProjectArtifact).mockResolvedValue(detail(versions))
+    vi.mocked(compareArtifactVersions).mockResolvedValueOnce({
+      kind: 'file',
+      identical: false,
+      note: null,
+      files: [{ path: 'report.txt', diff: '-旧正文\n+新正文', note: null }],
+    })
+    const { getByLabelText, container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('+新正文'))
+    expect(compareArtifactVersions).toHaveBeenCalledWith('p1', 'a1', 'c2', 'c3')
+    let finish!: (value: Awaited<ReturnType<typeof compareArtifactVersions>>) => void
+    vi.mocked(compareArtifactVersions).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await fireEvent.update(getByLabelText('基准版本'), 'c1')
+    expect(container.textContent).not.toContain('+新正文')
+    await fireEvent.update(getByLabelText('对比版本'), 'c1')
+    finish({
+      kind: 'file',
+      identical: false,
+      note: null,
+      files: [{ path: 'report.txt', diff: '+过期响应', note: null }],
+    })
+    await waitFor(() => expect(container.textContent).toContain('请选择两个不同的版本'))
+    expect(container.textContent).not.toContain('+过期响应')
+  })
+
+  it('二进制交付显示比较限制，并读取所选版本的留存文件', async () => {
+    vi.mocked(getProjectArtifact).mockResolvedValue(
+      detail([FILE_VERSION, { ...FILE_VERSION, number: 2, card_id: 'c2' }])
+    )
+    vi.mocked(compareArtifactVersions).mockResolvedValue({
+      kind: 'file',
+      identical: false,
+      note: null,
+      files: [{ path: '结题报告.pdf', diff: null, note: 'binary' }],
+    })
+    const { container } = mount()
+    await waitFor(() => expect(container.textContent).toContain('此格式不提供逐行差异'))
+    await waitFor(() => expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c1', false))
+    expect(artifactVersionBytes).toHaveBeenCalledWith('p1', 'a1', 'c2', false)
+  })
   it('名字、当前是第几版，以及每一版各自一行', async () => {
     const { container } = mount()
 

@@ -3,8 +3,8 @@
 两条验收（PLAN P18）：
 
 * 同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话拿到各自的——
-  后者在改动之前会撞上「执行机器与本房间已经记录的位置不一致」直接报错，因为整个
-  房间只有一条 ``topics.session_placement``。
+  后者在改动之前会撞上「执行机器与本房间已经记录的位置不一致」直接报错，因为位置
+  记在房间上，一个房间只有一条。
 * 把一条会话搬到另一台会话机，下一轮它仍然引用得上上一轮自己说过的话：续接凭证
   和位置是会话行上的两样东西，换机器动的是后者。
 """
@@ -22,6 +22,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent_session.services import AgentSessionService
 
@@ -69,7 +70,7 @@ async def _open(central, project, topic, agent, executor, *, resume=None):
         token=mint_scoped_token(project_id=str(project), topic_id=str(topic)),
         env={},
         launch=ClaudeLaunch("System", resume_session_id=resume),
-        precheck=(executor, 1, agent),
+        precheck=Placement(executor, 1, agent, rented=True),
     )
 
 

@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.device_hub import HubScreen, device_hub
 from app.domain.feedback.models import Feedback
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from tests.integration.conftest import session_auth_headers
 
 #: A handle the tests put in the admin allow-list. Deliberately not a real member
@@ -819,20 +819,21 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
 # --- agent 与提案卡 ---------------------------------------------------------
 
 
-def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch):
+def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
     """§4.3's second gate, and why it has to be in the route body.
 
     `/admin/*` is not in `_CHEESE_WRITE_PATHS`, and that table is a whitelist —
     nothing in the middleware looks at this prefix, so the refusal has to be
     written here or it does not exist. The handle below is **on the platform
-    admin list**, so the allow-list is not what refuses it; the question being
-    asked is 「是不是人」.
+    admin list**, so the allow-list is not what refuses it.
 
-    A device screen's token is the reachable way in: it resolves to its
-    agent-as-user on any path, unlike a per-turn `cheese` credential, which the
-    resolver refuses when there is no project to scope it to. The same handle
-    asked as a *person* is the control — it is allowed through, which is what says
-    the refusal is about being an agent.
+    What refuses it here is the credential. The same handle arrives twice: once
+    on its own session token and once on a device screen's token, a per-screen
+    capability that resolves on any path (unlike a per-turn `cheese` credential,
+    which the resolver refuses when there is no project to scope it to). One
+    handle, two credentials, two answers — 「管理动作由本人在自己的会话里做」.
+    The handle itself carries no agent-binding, which is what makes this half
+    about the credential alone; the binding half is the test below.
     """
     agent = "agent-on-the-list"
     monkeypatch.setattr(settings, "feedback_admin_handles", [agent])
@@ -845,7 +846,8 @@ def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch)
             "/admin/feedback", headers={"X-Cheese-Screen": screen.token}
         )
         assert refused.status_code == 403, refused.text
-        assert "agent" in refused.json()["message"]
+        # 拒的是凭证，说出口的也得是凭证——写「agent 不能」会把「按种类拒」重新钉回来。
+        assert "凭证" in refused.json()["message"]
 
         # A write route too: every handler in the module goes through one helper,
         # and this is what says the helper is actually on them.
@@ -857,6 +859,34 @@ def test_an_agent_handle_on_the_admin_list_is_still_refused(client, monkeypatch)
         assert wrote.status_code == 403, wrote.text
     finally:
         _unregister(screen)
+
+
+def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkeypatch):
+    """§4.3's other half: 「管理动作 agent 不能做」, asked of the participant.
+
+    The allow-list is a list of handles and nothing stops an agent's from being
+    on it, so this is the case where the credential says nothing: a session
+    token, no scope, nothing unattended about it. What refuses the call is the
+    agent-binding the handle carries, read where the question is being asked
+    rather than travelled in on the actor.
+    """
+    project = _project(client, REPORTER)
+    made = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    )
+    assert made.status_code == 200, made.text
+    agent = agent_instance_handle(made.json()["data"]["id"])
+    monkeypatch.setattr(settings, "feedback_admin_handles", [agent, REPORTER])
+
+    refused = client.get("/admin/feedback", headers=session_auth_headers(agent))
+    assert refused.status_code == 403, refused.text
+    assert "agent" in refused.json()["message"]
+
+    # The control: a person on the same list gets in, so what refused the call
+    # above is the binding and not the list.
+    allowed = client.get("/admin/feedback", headers=session_auth_headers(REPORTER))
+    assert allowed.status_code == 200, allowed.text
 
 
 def test_sending_the_same_card_twice_files_one_report(client):

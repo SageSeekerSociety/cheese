@@ -1,5 +1,6 @@
 """Project routes."""
 
+import asyncio
 import logging
 import uuid
 from dataclasses import asdict
@@ -24,6 +25,7 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    SystemBusyError,
     ValidationError,
 )
 from app.domain.agent.chat import ChatService
@@ -60,12 +62,19 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
+from app.domain.identity.handles import ANONYMOUS_HANDLE, agent_instance_handle
+from app.domain.library import service as library
 from app.domain.machine.limits import get_machine_limit
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
+from app.domain.preview.office import (
+    OfficeRenderFailed,
+    OfficeRenderUnavailable,
+    is_renderable,
+    render_to_pdf,
+)
 from app.domain.project import artifacts
 from app.domain.project.models import Project, ProjectRole
 from app.domain.project.protection import (
@@ -86,33 +95,17 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
+from app.domain.textfile import compare_bytes
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.projects")
-
-
-def _is_a_real_person(handle: str | None) -> bool:
-    """Could this handle ever match a human account?
-
-    `anonymous` is what an unidentified caller resolves to: nobody, so no owner.
-    An agent handle is somebody, and can hold a project role like anybody else —
-    it is excluded here only because this answers "is there a person to name in
-    the log", and naming 芝士 as the person answers nothing.
-
-    Advisory only — this decides whether to LOG, never whether to allow. That
-    is why `looks_like_agent_handle` is fair game here despite its docstring
-    forbidding it in authorization: nothing downstream branches on the answer.
-    """
-    return (
-        bool(handle) and handle != "anonymous" and not looks_like_agent_handle(handle)
-    )
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -148,18 +141,24 @@ async def create_project(
     owner_handle = body.owner_handle or (
         who.handle if who.authenticated and who.handle else None
     )
-    if not _is_a_real_person(owner_handle):
+    if not owner_handle or owner_handle == ANONYMOUS_HANDLE:
         # Silence is how this got expensive (#315). A project whose owner is not
         # a real person can be repaired — PUT /{id}/owner exists now — but
         # nothing else in the system will ever mention it: all seven readers of
         # the field fall back to `lead` without erroring, so the gap surfaces
         # only as "why can only one person do anything here", six days later.
         #
-        # The check is "a real person", not "not empty", because the empty case
+        # The check covers `anonymous` as well as empty, because the empty case
         # is no longer the one that happens. `resolve()` hands back the literal
         # handle `anonymous` rather than nothing, so an unidentified creator now
         # produces a *populated* owner column that still matches no user — the
         # same collapse onto `lead`, wearing a value.
+        #
+        # It does NOT ask whether the owner is a person. An agent instance is a
+        # participant and holds a project role like anybody else, so a handle
+        # that names one is an owner this log has nothing to warn about; reading
+        # the handle's SHAPE to decide otherwise was the platform guessing at a
+        # participant's kind from its name.
         logger.warning(
             "project created without a real owner name=%r owner=%r",
             body.name,
@@ -469,7 +468,7 @@ async def library_file_raw(
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
     name = _library_path(path)
-    data = ws.read_library_file(project_id, name)
+    data = library.read_library_file(project_id, name)
     filename = quote(name.rsplit("/", 1)[-1], safe="")
     return Response(
         content=data,
@@ -515,7 +514,7 @@ async def list_library(
     room that has never seen that file."""
     await ProjectService(db).get_or_404(project_id)
     await _project_reader(db, resolver, project_id, topic)
-    files = ws.list_library_files(project_id)
+    files = library.list_library_files(project_id)
     return ok(page(files, len(files)))
 
 
@@ -591,6 +590,61 @@ async def read_artifact(
     )
 
 
+@router.get("/{project_id}/artifacts/{artifact_id}/compare")
+async def compare_artifact_versions(
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    before: uuid.UUID,
+    after: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: str = "",
+) -> dict:
+    await ProjectService(db).get_or_404(project_id)
+    await _project_reader(db, resolver, project_id, topic)
+    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    history = {v.card_id: v for v in await artifacts.versions(db, artifact_id)}
+    if before not in history or after not in history:
+        raise NotFoundError("这一项没有所选的交付版本")
+    left, right = history[before], history[after]
+    result = {
+        "kind": "unavailable",
+        "identical": None,
+        "files": [],
+        "note": "unavailable",
+    }
+    if left.kind == right.kind == "file" and left.filename and right.filename:
+        old = library.read_artifact_snapshot(project_id, before, left.filename)
+        new = library.read_artifact_snapshot(project_id, after, right.filename)
+        comparison = await asyncio.to_thread(
+            compare_bytes, old, new, left.filename, right.filename
+        )
+        result = {
+            "kind": "file",
+            "identical": comparison["identical"],
+            "files": [{"path": right.filename, **comparison}],
+            "note": None,
+        }
+    elif left.kind == right.kind == "merge" and left.revision and right.revision:
+        changes = await ProjectFiles(db, project_id, None).compare_revisions(
+            left.revision, right.revision
+        )
+        result = {
+            "kind": "merge",
+            "identical": not changes,
+            "files": changes,
+            "note": "source",
+        }
+    elif left.kind == right.kind == "link":
+        result = {
+            "kind": "link",
+            "identical": left.url == right.url,
+            "files": [],
+            "note": "link",
+        }
+    return ok(result)
+
+
 @router.get("/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file")
 async def download_artifact_version(
     project_id: uuid.UUID,
@@ -599,6 +653,7 @@ async def download_artifact_version(
     db: DbSession,
     resolver: ActorResolverDep,
     topic: str = "",
+    preview_pdf: bool = False,
 ) -> Response:
     """这一版交出去的那一份字节 (#1085 结论五)。
 
@@ -617,11 +672,24 @@ async def download_artifact_version(
     if version.kind != "file" or not version.filename:
         # 交出去的是一个地址、或者一次合并：没有可下载的文件，而这不是缺东西。
         raise NotFoundError("这一版交出去的不是一份文件")
-    data = ws.read_artifact_snapshot(project_id, card_id, version.filename)
+    data = library.read_artifact_snapshot(project_id, card_id, version.filename)
+    if preview_pdf:
+        if len(data) > 10 * 1024 * 1024:
+            raise ValidationError("文件超过 10 MB，无法生成预览")
+        if not is_renderable(version.filename):
+            raise ValidationError("这个格式不能转换为预览")
+        try:
+            data = await render_to_pdf(
+                data, version.filename, settings.office_render_endpoint
+            )
+        except OfficeRenderUnavailable as exc:
+            raise SystemBusyError(str(exc)) from exc
+        except OfficeRenderFailed as exc:
+            raise ValidationError(str(exc)) from exc
     filename = quote(version.filename, safe="")
     return Response(
         content=data,
-        media_type="application/octet-stream",
+        media_type="application/pdf" if preview_pdf else "application/octet-stream",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
             "X-Content-Type-Options": "nosniff",
@@ -722,7 +790,7 @@ async def delete_library_file(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    ws.delete_library_file(project_id, _library_path(path))
+    library.delete_library_file(project_id, _library_path(path))
     return ok({"deleted": True})
 
 
@@ -865,9 +933,12 @@ async def _agent_memory_scope(
     place, actor = caller
     project = await ProjectService(db).get_or_404(project_id)
     agents = AgentInstanceService(db)
-    agent = await agents.for_seat_handle(
-        project, actor.handle if actor.is_agent else None
-    )
+    # The seat handle answers for itself: `for_seat_handle` matches it against
+    # the project's saved teammates and returns None for a person, the shared
+    # `cheese` seat and a room-derived one. Pre-filtering by "is the caller an
+    # agent" asked a second, coarser question whose only effect was to skip a
+    # lookup that already says no.
+    agent = await agents.for_seat_handle(project, actor.handle)
     if agent is None:
         agent = await agents.for_topic(place.room, project)
     return memory_pool(project_id, agent)
@@ -1057,7 +1128,7 @@ async def get_project_forge(
 async def get_forge_attribution(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.workspace.identity import requester_credit_enabled
+    from app.domain.repository.identity import requester_credit_enabled
 
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)

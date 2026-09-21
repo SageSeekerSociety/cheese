@@ -427,6 +427,12 @@ async def retarget_completed_dependencies(
                         else "保留现有工作，检查本任务依赖了哪些尚未交付的修改。"
                         "根据任务要求决定移除依赖、独立实现或报告无法继续的原因；"
                         "不要把驳回或关闭当作代码已经合并，也不要自动关闭子任务。"
+                        "决定移除依赖时，在本任务分支上，以项目默认分支为基线"
+                        "重新整理本任务独有的提交，"
+                        "验证差异不包含被驳回的改动，再执行 "
+                        "cheese push-fix --drop-dependency。"
+                        "它会更新现有 PR 的目标分支、清除任务依赖和旧批准；"
+                        "不要重复递卡或自行合并。"
                     )
                     + "行动前重新读取任务状态；任务已关闭时不要继续修改。"
                 )
@@ -543,9 +549,9 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     upstream, and — the ordinary case, on every tick — a branch with nothing on
     it. A newly created task has no changes to review until its first commit.
     """
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
 
     project_id = task.project_id
     client = await proposal_client(project_id, session)
@@ -618,10 +624,10 @@ async def _pr_text(
     验收卡即合并本 PR" — is gone. It described the platform's workflow to people
     who were already inside it, while the reviewer opening the PR on GitHub
     wanted to know what changed and why."""
+    from app.domain.repository import identity
     from app.domain.review import pr_text
     from app.domain.review.repositories import AcceptCardRepository
     from app.domain.room_task.place import PlaceResolver
-    from app.domain.workspace import identity
 
     place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)

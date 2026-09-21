@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock
 
 from app.domain.project import forge
 from app.domain.project.models import Project
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.pr_publish import retarget_completed_dependencies
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind
-from app.domain.workspace.forge_files import ProjectFiles
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
 from tests.support import git_store

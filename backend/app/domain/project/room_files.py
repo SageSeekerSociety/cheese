@@ -32,7 +32,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.workspace import service as ws
+from app.domain.library import service as library
 
 
 async def save_to_library(
@@ -51,8 +51,8 @@ async def save_to_library(
     leaf = PurePosixPath(path).name
     if not leaf:
         raise ValidationError("这不是房间里的一份文件")
-    data = await asyncio.to_thread(ws.read_room_file, project_id, room_id, path)
-    name = await asyncio.to_thread(ws.write_library_file, project_id, leaf, data)
+    data = await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
+    name = await asyncio.to_thread(library.write_library_file, project_id, leaf, data)
     await announce(
         session,
         place_id=room_id,
