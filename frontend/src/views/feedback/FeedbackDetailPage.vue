@@ -155,7 +155,8 @@ async function share() {
         <v-icon size="28" class="mb-2">mdi-lock-outline</v-icon>
         <div class="t-body mb-1">这条反馈打不开</div>
         <div class="t-meta mb-3">
-          它可能不存在，也可能只有提交它的人和管理员能看到 —— 私密反馈对其他人就是这样，链接也一样打不开
+          它可能不存在，也可能只有提交它的人、平台管理员、以及提出它时在那个房间里的人能看到 ——
+          私密反馈对其他人就是这样，链接也一样打不开
         </div>
         <v-btn variant="text" color="secondary" size="small" @click="router.push('/feedback')">回到反馈中心</v-btn>
       </div>
@@ -175,7 +176,11 @@ async function share() {
             <span class="chip-neutral">{{ KIND_LABEL[item.kind] }}</span>
             <!-- 私密在详情页比在列表里更要说清楚：读的人可能正是从别处点进来的，
                  他需要一眼知道这条没有公开。中性色，和卡片上同一个呈现。 -->
-            <span v-if="isPrivate" class="chip-neutral" title="私密反馈：只有你和管理员能看到，其他人看不到它">
+            <span
+              v-if="isPrivate"
+              class="chip-neutral"
+              title="私密反馈：只有你、平台管理员、以及提出它时在那个房间里的人能看到，其他人看不到它"
+            >
               <v-icon size="12">mdi-lock-outline</v-icon>私密
             </span>
             <span v-if="item.security" class="chip-neutral">

@@ -91,7 +91,7 @@ function onSubmitted(id: string) {
       </div>
 
       <p v-if="!store.mineLoading" class="t-meta fb-foot">
-        办完的反馈（已修复、已上线）留在列表里，但不再接受支持；私密的那几种只有你和管理员看得到
+        办完的反馈（已修复、已上线）留在列表里，但不再接受支持；私密的那几种只有你、平台管理员、以及提出它时在那个房间里的人看得到
       </p>
     </div>
 

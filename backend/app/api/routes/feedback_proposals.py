@@ -197,18 +197,20 @@ async def accept_feedback_proposal(
         row = await service.visible_row(already, handle=actor.handle, is_admin=is_admin)
         view = await service.detail_of(row, handle=actor.handle, is_admin=is_admin)
         return ok(view.model_dump(mode="json"))
-    # The topic and project come from the URL, not from the body: this endpoint
-    # is defined as "send the card in THIS topic", and letting the body name a
-    # different one would make the quota and the authorization describe two
-    # different places.
+    # The topic and project come from the URL, not from the body — the body has
+    # no such fields (`FeedbackCreate`). This endpoint is defined as "send the
+    # card in THIS topic", and a body that could name a different one would make
+    # the quota, the authorization and 「提出它的那个房间」 describe three
+    # different places while only the first two are checked.
     row = await service.create(
-        body.model_copy(
-            update={"topic_id": place.room_id, "project_id": place.project_id}
-        ),
+        body,
         actor_handle=actor.handle,
         actor_user_id=actor.user_id,
         proposal=proposal_rules.AcceptedProposal(
-            payload=payload, author_handle=block.author
+            payload=payload,
+            author_handle=block.author,
+            topic_id=place.room_id,
+            project_id=place.project_id,
         ),
     )
     # Written before the commit, so the card's record and the feedback it names are
