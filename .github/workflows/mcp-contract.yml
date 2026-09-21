@@ -8,13 +8,7 @@ name: MCP serve contract
 # here instead of being discovered during an upgrade.
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'scripts/remote_execution/mcp_contract.py'
-      - 'scripts/remote_execution/package.json'
-      - 'backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py'
-      - '.github/workflows/mcp-contract.yml'
+  workflow_call:
   schedule:
     # Anthropic publishes most days; a morning report is soon enough to learn
     # about a broken behaviour before an upgrade is what someone is debugging.
@@ -64,7 +58,7 @@ jobs:
     # The next upgrade, checked before it is what we are debugging. Deliberately
     # not run on pull requests: a build Anthropic published this morning is not
     # a reason to hold up somebody's merge.
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # `uv sync` on the shared pool takes 9-14 minutes under contention (measured
     # 2026-09-19, 11 runs queued) and job setup another 2-4. A budget sized for

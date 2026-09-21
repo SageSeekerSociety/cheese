@@ -8,14 +8,7 @@ on:
       - 'frontend/**'
       - 'e2e/**'
       - '.github/workflows/e2e.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - 'frontend/**'
-      - 'e2e/**'
-      - '.github/workflows/e2e.yml'
-
+  workflow_call:
 # Superseded runs must not occupy the finite self-hosted capacity (three
 # cheese-ci slots, one per pool machine). test.yml and build.yml already do
 # this; e2e.yml was the one workflow still missing it — any backend/frontend
