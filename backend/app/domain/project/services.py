@@ -287,11 +287,8 @@ class ProjectService:
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
         agents = AgentInstanceService(self._session)
-        agent = await agents.for_project(project)
-        if protocol.default_role and agent.type_name is None:
-            instance = await agents.get_in_project(
-                project_id=project.id, instance_id=agent.instance_id
-            )
+        instance = await agents.materialize_default(project)
+        if protocol.default_role and instance.type_name is None:
             await agents.set_type(instance, protocol.default_role)
             await self._session.flush()
         grants = await self._grants.list_for_project(project.id)
