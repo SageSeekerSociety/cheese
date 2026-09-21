@@ -1,13 +1,15 @@
 /**
- * 直接打开 `/admin/feedback`（刷新、或者别人发来的链接）必须拉列表。
+ * `/admin/feedback` 这一页进来自动拉列表。
  *
- * 「我是不是管理员」由服务端答（`GET /feedback/meta` 的 `is_admin`）。上一版
- * `onMounted` 没 `await store.loadMeta()`，于是紧接着那行 `if (store.isAdmin)` 读到的
- * 永远是「还不是管理员」，列表**一次都不拉** —— 页面画出来的是那句「你的账号不在
- * 管理员名单里」，一个管理员看到这句话，比一张空表更难查。
+ * 权限门**已经搬到外壳** `views/admin/AdminLayout.vue`：谁能进这块后台、以及 meta
+ * 还在飞的那一帧画什么，现在都归它管，那三条用例跟着搬到了
+ * `views/admin/AdminLayout.spec.ts`（原是这里的「要等 meta 回来才决定拉不拉列表」
+ * 与「meta 还在飞的时候不画假话」）。**门在壳上，页上只有内容** —— 两处都判定一次
+ * 的代价是两处会漂开，而漂开的表现是「同一个链接，一个人看到表格，另一个人看到
+ * 一句拒绝」，两边各自都觉得自己对。
  *
- * 从反馈中心点进来反而正常（那边已经把 meta 拉过了），所以这一组把 meta 的响应**拖慢**
- * 一拍：只有 await 过的实现才过得去。
+ * 这里留着的是页面自己的那一条：进来的第一件事就是拉数据。少掉它，人打开后台看到的
+ * 是一张空表，而一张空表和「后台里没东西」长得一模一样。
  */
 import type { Component } from 'vue'
 
@@ -19,14 +21,12 @@ import { render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getFeedbackMeta = vi.fn()
 const listAdminFeedback = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    getFeedbackMeta: (...a: unknown[]) => getFeedbackMeta(...a),
     listAdminFeedback: (...a: unknown[]) => listAdminFeedback(...a),
   }
 })
@@ -64,47 +64,16 @@ function mountPage() {
 }
 
 beforeEach(() => {
-  getFeedbackMeta.mockReset()
   listAdminFeedback.mockReset()
 })
 
-describe('冷启动打开管理端', () => {
-  it('要等 meta 回来才决定拉不拉列表', async () => {
-    // 慢一拍：不 await 的实现在这一拍里已经把 isAdmin 读成 false 了。
-    getFeedbackMeta.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve({ is_admin: true, hot_supports: 5 }), 20))
-    )
+describe('打开管理端反馈页', () => {
+  it('进来就拉列表，不用等任何人先说什么', async () => {
     listAdminFeedback.mockResolvedValue({ data: [ROW], total: 1, counts: {} })
-
-    const { findByText, queryByText } = mountPage()
-
-    expect(await findByText('导出报表偶发 502')).toBeTruthy()
-    expect(listAdminFeedback).toHaveBeenCalled()
-    expect(queryByText('这一页是管理员后台')).toBeNull()
-  })
-
-  it('不是管理员就停在门口，不发那次必然全 403 的请求', async () => {
-    getFeedbackMeta.mockResolvedValue({ is_admin: false, hot_supports: 5 })
 
     const { findByText } = mountPage()
 
-    expect(await findByText('这一页是管理员后台')).toBeTruthy()
-    expect(listAdminFeedback).not.toHaveBeenCalled()
-  })
-
-  it('meta 还在飞的时候，不画「你不在名单里」这句假话', async () => {
-    // await 只解决了「拉不拉列表」，解决不了这一帧画什么：这段时间里 isAdmin 是
-    // false，两段式的模板会先给一个真管理员看「你的账号不在管理员名单里」。
-    getFeedbackMeta.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve({ is_admin: true, hot_supports: 5 }), 20))
-    )
-    listAdminFeedback.mockResolvedValue({ data: [ROW], total: 1, counts: {} })
-
-    const { findByText, queryByText } = mountPage()
-
-    expect(await findByText('正在确认权限…')).toBeTruthy()
-    expect(queryByText('这一页是管理员后台')).toBeNull()
-    // 结论到了之后，画的是表格。
     expect(await findByText('导出报表偶发 502')).toBeTruthy()
+    expect(listAdminFeedback).toHaveBeenCalled()
   })
 })

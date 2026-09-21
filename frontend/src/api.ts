@@ -2185,6 +2185,66 @@ export function createAdminFeedbackNote(feedbackId: string, body: string): Promi
 
 export type { FeedbackNote }
 
+/* ---- 平台管理员名单 (`/admin/admins`) ----
+ *
+ * 「谁算平台管理员」是**服务端**的一个判据（配置里的根名单 ∪ 这张表），客户端只画。
+ * 名单分两份给，因为两份在页面上的操作权不一样：`root` 来自部署配置、删不掉，`added`
+ * 是页面上加的、每行都有删除按钮。分组规则不在这里再定一份 —— 接口给的就是两块。 */
+
+/** 页面上加进名单的一行。`added_by_handle` 是快照：加人的那个人注销之后，这一行
+ *  仍然要说得出是谁加的。 */
+export interface PlatformAdminRow {
+  handle: string
+  added_by_handle: string
+  created_at: string
+}
+
+export interface PlatformAdminsPayload {
+  /** 部署配置里那份。列得出来，删不掉。 */
+  root: string[]
+  added: PlatformAdminRow[]
+}
+
+export function listPlatformAdmins(): Promise<PlatformAdminsPayload> {
+  return request<PlatformAdminsPayload>('/admin/admins')
+}
+
+/** 「加一个人」那个选择器的候选：按 handle 或昵称搜账号。
+ *
+ *  单开一条而不是复用用户目录接口：那条只在它取回的那一页里过滤（这个部署上账号
+ *  上千，搜昵称十有八九回空），而这里「搜不到」是要么换个说法要么这个人没有账号。
+ *  `already_admin` 里的人照常返回 —— 选择器要把他们画成已选中，而不是「搜不到」。 */
+export interface AdminCandidate {
+  handle: string
+  nickname: string
+  /** 没挑过头像的人是 null（和反馈卡片、聊天区名册同一条判据），界面画彩色首字母。 */
+  avatar_id: number | null
+  already_admin: boolean
+}
+
+export function searchAdminCandidates(q: string, limit = 20): Promise<{ items: AdminCandidate[] }> {
+  return request<{ items: AdminCandidate[] }>(
+    `/admin/users?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`
+  )
+}
+
+/** 加一个人。回的是**更新后的整份名单**（`created` 说明这次是真加了还是他本来就在）：
+ *  加完之后页面上两块都可能变，让客户端自己再拉一次中间那一下页面是旧的。 */
+export function addPlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { created: boolean }> {
+  return request<PlatformAdminsPayload & { created: boolean }>('/admin/admins', {
+    method: 'POST',
+    body: JSON.stringify({ handle }),
+  })
+}
+
+/** 从名单里移出一个人，同样回整份（`removed` 说这次有没有真删掉一行 —— 删一个不在
+ *  名单里的人不是错误，他的目的已经成立了）。根管理员到这里会拿到 409。 */
+export function removePlatformAdmin(handle: string): Promise<PlatformAdminsPayload & { removed: boolean }> {
+  return request<PlatformAdminsPayload & { removed: boolean }>(`/admin/admins/${encodeURIComponent(handle)}`, {
+    method: 'DELETE',
+  })
+}
+
 /* ---- 提案卡：agent 举手，人决定 (`/topics/{id}/feedback-proposals`) ---- */
 
 /** 这个话题里**还活着**的提案卡，最新的一张在前。

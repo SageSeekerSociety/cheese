@@ -8,7 +8,7 @@ import { api, login } from './helpers';
 // 而不是 value，这些在两边都绿的情况下依然能让用户点着点着撞墙。这条用例只做一件
 // 事：像人一样点一遍，任何一步和预期不符就红。
 //
-// 管理端那条要求后端把 alice 放进管理员名单（`FEEDBACK_ADMIN_HANDLES`，见
+// 管理端那条要求后端把 alice 放进管理员名单（`PLATFORM_ADMIN_HANDLES`，见
 // playwright.config.ts 里后端 webServer 的 env）。没有它，`/admin/feedback` 只会
 // 回 403，用例红在「这一页是管理员后台」的闸门那一步，而不是红在要验的东西上。
 
