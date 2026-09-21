@@ -31,6 +31,7 @@ on:
       - 'frontend/**'
       - 'deploy/**'
       - '.claude/scripts/**'
+      - '.pre-commit-config.yaml'
       - '.github/workflows/**'
   workflow_call:
 permissions:
