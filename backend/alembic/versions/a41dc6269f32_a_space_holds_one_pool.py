@@ -26,7 +26,7 @@ the ledger) plus one index for the Space-level read, which is how a teacher's
 "what is left in this pool" query finds the row.
 
 Revision ID: a41dc6269f32
-Revises: 2895c4967ca4
+Revises: d3b8f1c72a94
 """
 
 from collections.abc import Sequence
@@ -36,7 +36,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a41dc6269f32"
-down_revision: str | Sequence[str] | None = "2895c4967ca4"
+down_revision: str | Sequence[str] | None = "d3b8f1c72a94"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
