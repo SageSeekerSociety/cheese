@@ -10,8 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
 
-from app.domain.notification.dedup import NotificationDedupResult
 from app.domain.notification.events import NotificationTriggerEvent
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
@@ -19,7 +19,7 @@ from app.domain.notification.handlers import (
     NotificationEventHandler,
     RedisEmailQueueNotificationHandler,
 )
-from app.domain.notification.models import NotificationType
+from app.domain.notification.models import Notification, NotificationType
 
 NOW = datetime(2025, 6, 1, 12, 0, 0)
 
@@ -29,57 +29,75 @@ NOW = datetime(2025, 6, 1, 12, 0, 0)
 # ---------------------------------------------------------------------------
 
 
+async def _inbox(session, receiver_id: int) -> list[Notification]:
+    rows = await session.scalars(
+        select(Notification).where(Notification.receiver_id == receiver_id)
+    )
+    return list(rows)
+
+
 class TestInAppNotificationHandler:
     @pytest.mark.anyio
-    async def test_send_batch_empty(self):
-        session = AsyncMock()
-        handler = InAppNotificationHandler(session)
+    async def test_send_batch_creates_notifications(self, db_factory):
+        async with db_factory() as session:
+            await InAppNotificationHandler(session).send_batch(
+                [
+                    NotificationDelivery(
+                        recipient_id=10,
+                        type=NotificationType.MENTION,
+                        payload={"actor": {"id": "1", "type": "user"}},
+                    ),
+                    NotificationDelivery(
+                        recipient_id=20,
+                        type=NotificationType.REPLY,
+                        payload={"actor": {"id": "2", "type": "user"}},
+                    ),
+                ]
+            )
 
-        await handler.send_batch([])
-        session.flush.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_send_batch_creates_notifications(self):
-        session = AsyncMock()
-        session.add_all = MagicMock()
-        handler = InAppNotificationHandler(session)
-
-        deliveries = [
-            NotificationDelivery(
-                recipient_id=10,
-                type=NotificationType.MENTION,
-                payload={"actor": {"id": "1", "type": "user"}},
-            ),
-            NotificationDelivery(
-                recipient_id=20,
-                type=NotificationType.REPLY,
-                payload={"actor": {"id": "2", "type": "user"}},
-            ),
-        ]
-        await handler.send_batch(deliveries)
-        session.add_all.assert_called_once()
-        notifications = session.add_all.call_args[0][0]
-        assert len(notifications) == 2
-        assert notifications[0].receiver_id == 10
-        assert notifications[1].receiver_id == 20
+            (mention,) = await _inbox(session, 10)
+            (reply,) = await _inbox(session, 20)
+            assert mention.type == NotificationType.MENTION
+            assert mention.metadata_payload == {"actor": {"id": "1", "type": "user"}}
+            assert reply.type == NotificationType.REPLY
 
     @pytest.mark.anyio
-    async def test_send_batch_skips_aggregated_finalization(self):
-        session = AsyncMock()
-        session.add_all = MagicMock()
-        handler = InAppNotificationHandler(session)
+    async def test_send_batch_skips_aggregated_finalization(self, db_factory):
+        """聚合窗口收口的那一条在库里已经有行了，收口只翻标志位，不再写一行。"""
+        async with db_factory() as session:
+            await InAppNotificationHandler(session).send_batch(
+                [
+                    NotificationDelivery(
+                        recipient_id=10,
+                        type=NotificationType.REACTION,
+                        payload={},
+                        is_aggregated_finalization=True,
+                    ),
+                ]
+            )
 
-        deliveries = [
-            NotificationDelivery(
+            assert await _inbox(session, 10) == []
+
+    @pytest.mark.anyio
+    async def test_the_same_delivery_key_lands_once(self, db_factory):
+        """同一笔投递发两遍 —— 收件人手里只有一条。
+
+        这是「发出之后、回写确认之前崩掉」那一档的唯一保障：补发会把同一笔再发一
+        遍，而账本那一行看起来仍然没发出去。
+        """
+        async with db_factory() as session:
+            handler = InAppNotificationHandler(session)
+            delivery = NotificationDelivery(
                 recipient_id=10,
-                type=NotificationType.REACTION,
-                payload={},
-                is_aggregated_finalization=True,
-            ),
-        ]
-        await handler.send_batch(deliveries)
-        # No notifications to persist since all are finalization
-        session.add_all.assert_not_called()
+                type=NotificationType.ROOM_NOTICE,
+                payload={"content": "卡递上来了"},
+                delivery_key="event-1:alice",
+            )
+
+            await handler.send_batch([delivery])
+            await handler.send_batch([delivery])
+
+            assert len(await _inbox(session, 10)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +199,6 @@ class TestNotificationEventHandler:
     def _make_handler(
         self,
         session=None,
-        deduplicator=None,
         channel_handlers=None,
     ):
         session = session or AsyncMock()
@@ -195,7 +212,6 @@ class TestNotificationEventHandler:
         session.begin_nested = MagicMock(return_value=nested_cm)
         return NotificationEventHandler(
             session,
-            deduplicator=deduplicator,
             channel_handlers=channel_handlers,
         )
 
@@ -216,48 +232,6 @@ class TestNotificationEventHandler:
         deliveries = mock_channel.send_batch.call_args[0][0]
         recipient_ids = {d.recipient_id for d in deliveries}
         assert recipient_ids == {10, 20}
-
-    @pytest.mark.anyio
-    async def test_handle_with_dedup_skip(self):
-        dedup = AsyncMock()
-        dedup.should_process.return_value = NotificationDedupResult(
-            should_process=False, cache_key="test_key"
-        )
-        mock_channel = AsyncMock()
-        mock_channel.name = "test"
-        handler = self._make_handler(
-            deduplicator=dedup, channel_handlers=[mock_channel]
-        )
-
-        event = NotificationTriggerEvent(
-            source="test",
-            recipient_ids={10},
-            type=NotificationType.MENTION,
-            payload={},
-        )
-        await handler.handle(event)
-        mock_channel.send_batch.assert_not_awaited()
-
-    @pytest.mark.anyio
-    async def test_handle_with_dedup_process(self):
-        dedup = AsyncMock()
-        dedup.should_process.return_value = NotificationDedupResult(
-            should_process=True, cache_key="test_key"
-        )
-        mock_channel = AsyncMock()
-        mock_channel.name = "test"
-        handler = self._make_handler(
-            deduplicator=dedup, channel_handlers=[mock_channel]
-        )
-
-        event = NotificationTriggerEvent(
-            source="test",
-            recipient_ids={10},
-            type=NotificationType.MENTION,
-            payload={},
-        )
-        await handler.handle(event)
-        mock_channel.send_batch.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_handle_aggregatable_creates_new_notification(self):
