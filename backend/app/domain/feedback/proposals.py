@@ -44,16 +44,26 @@ from app.domain.feedback.schemas import FeedbackProposalIn
 
 @dataclass(frozen=True)
 class AcceptedProposal:
-    """A proposal card, plus who wrote it — the two things `POST /feedback`
-    needs and must not take from the request body.
+    """A proposal card, plus who wrote it and where — the four things
+    `FeedbackService.create` needs and must not take from the request body.
 
     `author_handle` comes off the block (`Block.author`), so the agent that
     proposed it is the author and the person who pressed send is only the
     submitter. A client cannot name either one.
+
+    `topic_id` / `project_id` come off the accept endpoint's own URL. They are
+    here rather than in `FeedbackCreate` because `topic_id` is the
+    authorization key of 「提出它的那个房间」 (结论 47, `FeedbackService.may_see`):
+    a room the sender names is a room the sender can name wrong, and the one
+    that must be recorded is the room whose people already watched this being
+    written. Sending a card is the only path that has such a room, which is why
+    it is also the only path that sets these.
     """
 
     payload: dict[str, Any]
     author_handle: str
+    topic_id: uuid.UUID
+    project_id: uuid.UUID
 
 
 #: 「发生了什么」和「怎么复现」两段进指纹。其余字段都是措辞，措辞会变，问题不会。

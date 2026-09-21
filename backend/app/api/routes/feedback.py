@@ -9,8 +9,9 @@
 在数字身份那一层被当成访客）。要 `require_auth_user` 就会把第二种挡在门外，而
 harness 正是用第二种在敲门。`/awaiting-me` 是同一个先例。
 
-访客能读公开列表，写操作要身份。私密条目的可见性并集（管理员 ∪ 提交者本人）在
-`services.FeedbackService.may_see`，不在这一层 —— 路由拿不到判断权，就不会漏。
+访客能读公开列表，写操作要身份。私密条目的可见性并集（管理员 ∪ 提交者本人 ∪ 提出它
+的那个房间当时的成员、且今天还读得到那个房间）在 `services.FeedbackService.may_see`，
+不在这一层 —— 路由拿不到判断权，就不会漏。
 """
 
 import uuid
@@ -231,9 +232,9 @@ async def create_feedback(
 ) -> dict:
     """提一条反馈。
 
-    `visibility` 是提交者的选择，只在这一次决定：私密条目只有管理员和提交者本人
-    看得见（并集在 `services.may_see`），而管理员**没有**把它改公开的入口 ——
-    那是唯一一个本人无法撤销的改动，所以不给。
+    `visibility` 是提交者的选择，只在这一次决定：私密条目只有管理员、提交者本人、以及
+    提出它的那个房间当时的成员看得见（并集在 `services.may_see`），而管理员**没有**
+    把它改公开的入口 —— 那是唯一一个本人无法撤销的改动，所以不给。
 
     agent **不能**走这条路：`services.create` 会拒（§5.2）。agent 的入口是
     `cheese feedback propose`，它落的是一张提案卡，由人在卡上按发送 ——

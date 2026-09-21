@@ -27,13 +27,7 @@ on:
       - 'cli/**'
       - 'backend/tests/fixtures/wire/**'
       - '.github/workflows/cli.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'cli/**'
-      - 'backend/tests/fixtures/wire/**'
-      - '.github/workflows/cli.yml'
-
+  workflow_call:
 permissions:
   contents: read
 

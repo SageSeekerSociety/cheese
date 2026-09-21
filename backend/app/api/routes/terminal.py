@@ -61,7 +61,11 @@ async def _screen_is_watchable(db: AsyncSession, room_id: uuid.UUID) -> bool:
     """
     name = await AgentSessionService(db).harness_in_room(room_id)
     harness = HARNESSES.get(harness_name(name))
-    return harness is None or harness.draws_on_its_screen
+    # 名字不在注册表里，答的就是 False。那是一条旧会话行，写着一个这套部署已经不
+    # 跑的骨架（结论 43 摘掉过两个），它的屏里有什么谁也说不上来——而答 True 的代
+    # 价是把一块黑屏摆到人脸前，还顺手收走 施工记录。没跑过的房间不走这条：它没
+    # 有会话行，``harness_name(None)`` 给的是这套部署跑的那个。
+    return harness is not None and harness.draws_on_its_screen
 
 
 @router.get("/{topic_id}/terminal")
