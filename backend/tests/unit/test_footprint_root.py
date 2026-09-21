@@ -79,7 +79,10 @@ def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():
     assert bootstrap.CHECKOUT_DIR == CHECKOUT_DIR
     assert session_transfer.CHECKOUT_DIR == CHECKOUT_DIR
     project, room = uuid.uuid4(), uuid.uuid4()
-    assert device_provider.device_work_dir(project, room).endswith(f"/{CHECKOUT_DIR}")
+    channel = device_provider.DeviceChannel(hub=None)
+    assert channel._work_dir(project, room) == (
+        f"{device_provider.device_home_dir(project, room)}/{CHECKOUT_DIR}"
+    )
 
 
 def test_the_connector_uninstalls_the_root_the_platform_writes():
