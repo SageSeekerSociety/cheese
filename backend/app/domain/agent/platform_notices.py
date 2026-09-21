@@ -142,6 +142,8 @@ EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
 EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
 #: 一次调用撞上项目的档位策略，变成了给人的一条提议（`domain/policy/gate.py`）。
 EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
+#: 到点了 —— 这一轮是这条线程自己当初请平台在这个时刻递给它的（结论 17）。
+EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -193,6 +195,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPENDENCY_CLOSED,
         EVENT_DEPENDENCY_REJECTED,
         EVENT_POLICY_PROPOSAL,
+        EVENT_TIMED_DELIVERY,
     }
 )
 

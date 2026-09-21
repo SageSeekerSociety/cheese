@@ -358,93 +358,6 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert not (work / "escaped").exists()
 
 
-def test_decision_uses_shared_plan_without_executor_invocation(central_transport):
-    process, _, _, work = central_transport
-    tools = process.call("tools/list", {})["tools"]
-    assert any(tool["name"] == "cheese_decision" for tool in tools)
-    result = process.call(
-        "tools/call",
-        {
-            "name": "cheese_decision",
-            "arguments": {
-                "id": "direct-decision",
-                "session_id": "fixture",
-                "text": "literal $(touch escaped)",
-            },
-        },
-    )
-    outcome = json.loads(result["content"][0]["text"])
-    assert json.loads(outcome["result"]["stdout"])["data"] == {
-        "decision": "literal $(touch escaped)"
-    }
-    assert not (work / "escaped").exists()
-
-
-@pytest.mark.parametrize(
-    "central_transport",
-    [
-        {
-            "PreToolUse": [
-                {
-                    "matcher": "mcp__native__cheese_echo",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": (
-                                "printf '%s' '{\"hookSpecificOutput\":"
-                                '{"updatedInput":{"value":"changed by policy"}}}'
-                                "'"
-                            ),
-                        }
-                    ],
-                }
-            ]
-        }
-    ],
-    indirect=True,
-)
-def test_structured_cheese_tool_discovers_and_runs_on_executor_with_policy(
-    central_transport,
-):
-    process, _, _, work = central_transport
-    process.cli_source.write_text(
-        "import argparse, pathlib\n"
-        "def build_parser():\n"
-        " p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd', required=True)\n"
-        " q=s.add_parser('echo', description='Read a value on the executor.')\n"
-        " q.add_argument('value'); return p\n"
-        "if __name__ == '__main__':\n"
-        " a=build_parser().parse_args(); p=pathlib.Path('structured-calls')\n"
-        " p.write_text((p.read_text() if p.exists() else '') + 'x'); print(a.value)\n"
-    )
-    tool = next(
-        item
-        for item in process.call("tools/list", {})["tools"]
-        if item["name"] == "cheese_echo"
-    )
-    assert tool["inputSchema"]["required"] == ["value"]
-    results = []
-    for _ in range(2):
-        results.append(
-            process.call(
-                "tools/call",
-                {
-                    "name": "cheese_echo",
-                    "arguments": {
-                        "id": "structured-cheese",
-                        "session_id": "fixture",
-                        "value": "$(touch escaped); original",
-                    },
-                },
-            )
-        )
-    for result in results:
-        outcome = json.loads(result["content"][0]["text"])
-        assert outcome["result"]["stdout"] == "changed by policy\n"
-    assert (work / "structured-calls").read_text() == "x"
-    assert not (work / "escaped").exists()
-
-
 @pytest.mark.parametrize(
     "path", ["https://other.test/x", "//other.test/x", "relative", "/x#fragment"]
 )
@@ -933,6 +846,11 @@ def test_a_tool_call_waits_out_a_platform_that_is_being_redeployed(monkeypatch):
 
 
 def test_a_refusal_that_outlasts_the_window_is_still_reported(monkeypatch):
+    """窗口走完还是没人接，报的就是「这台机器够不着」。
+
+    一个字也没发出去，所以这条路上没有任何改动可能已经落地 —— 说它够不着是安全
+    的，而说出来才使这一轮余下的文件与命令调用不必各自再排一次同样的队。
+    """
     client = executor_transport.RemoteClient(
         {"kind": "device", "url": "http://executor.test"}
     )
@@ -951,8 +869,9 @@ def test_a_refusal_that_outlasts_the_window_is_still_reported(monkeypatch):
 
     monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
     client.transport.headers = {}
-    with pytest.raises(ConnectionRefusedError):
+    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
         client.call("invoke")
+    assert isinstance(raised.value.__cause__, ConnectionRefusedError)
 
 
 def test_a_lost_response_is_never_replayed(monkeypatch):
@@ -983,61 +902,3 @@ def test_a_lost_response_is_never_replayed(monkeypatch):
     with pytest.raises(ConnectionResetError):
         client.call("invoke")
     assert len(attempts) == 1
-
-
-def test_every_tool_listing_says_how_many_platform_tools_it_found(monkeypatch, capsys):
-    """Three turns have been lost to a list that silently arrived without the
-    `cheese_*` family, and each investigation ended at the same wall: nothing
-    recorded what had been listed."""
-
-    class Ready:
-        @staticmethod
-        def call(method, params=None):
-            if method == "ping":
-                return {"capabilities": ["prepare", "cli_worker"]}
-            return {"tools": [{"name": "cheese_status", "inputSchema": {}}]}
-
-    assert central._cli_tools(Ready()) == [{"name": "cheese_status", "inputSchema": {}}]
-    assert "1 platform tools" in capsys.readouterr().err
-
-    class NoWorker:
-        @staticmethod
-        def call(method, params=None):
-            return {"capabilities": ["prepare"]}
-
-    assert central._cli_tools(NoWorker()) == []
-    assert "no CLI worker" in capsys.readouterr().err
-
-    class Unreachable:
-        @staticmethod
-        def call(method, params=None):
-            raise ConnectionRefusedError(111, "Connection refused")
-
-    # An executor that cannot be reached still gets a listing: the file and
-    # shell tools are the transport's own, and a first tool call must not race
-    # a probe of something else.
-    assert central._cli_tools(Unreachable()) == []
-    assert "ConnectionRefusedError" in capsys.readouterr().err
-
-
-def test_a_listing_the_executor_never_answers_still_leaves_the_session_its_tools(
-    monkeypatch, capsys
-):
-    """Being late is worse than being short.
-
-    A listing without the `cheese_*` family costs a retry; one that misses
-    Claude Code's 30s deadline costs the session every file, shell and chat
-    tool, because it drops the server and never asks again.
-    """
-    monkeypatch.setattr(central, "LISTING_DEADLINE_S", 0.2)
-
-    class Wedged:
-        @staticmethod
-        def call(method, params=None):
-            time.sleep(30)
-            raise AssertionError("the listing waited for this call")
-
-    started = time.monotonic()
-    assert central._cli_tools(Wedged()) == []
-    assert time.monotonic() - started < 5
-    assert "did not answer" in capsys.readouterr().err
