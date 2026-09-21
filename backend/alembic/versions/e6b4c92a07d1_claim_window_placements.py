@@ -12,8 +12,9 @@ connection owner 的镜像（`deploy-docker.sh` 逐字「leaving device connecti
 `topics.session_placement`：列在这里掉，它服务的每一条房间命令都会报
 `column topics.session_placement does not exist`，#1240 那次三小时、1218 次失败就是
 这个形状。顺序是这一条先上线 → dispatch「Release device connection owner」
-（environment=dev，ref=main）→ 再发一条只做 `DROP COLUMN` 的迁移。那一条落地之前
-把这段回填再跑一遍，接住这中间又写下来的位置。
+（environment=dev，ref=main）→ 再发一条只做 `DROP COLUMN` 的迁移。这一条之后这一列
+零写：新镜像全仓没有写点，旧镜像的 owner 只挂 `connector` 与 `execution` 两个路由，
+两个都只读它。所以 `DROP COLUMN` 那一条不必再补跑这段回填。
 """
 
 from collections.abc import Sequence
