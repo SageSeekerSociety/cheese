@@ -74,7 +74,7 @@ for target in "${targets[@]}"; do
     log "item=$target status=fail reason=private-build-path"
     exit 1
   fi
-  tar -czf "$result.part" LICENSE-APACHE LICENSE-MIT -C "target/$target/release" fj
+  COPYFILE_DISABLE=1 tar -czf "$result.part" LICENSE-APACHE LICENSE-MIT -C "target/$target/release" fj
   mv "$result.part" "$result"
   (cd "$artifacts" && shasum -a 256 "$(basename "$result")") > "$result.sha256"
   log "item=$target status=done artifact=$result"

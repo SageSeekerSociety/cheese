@@ -74,14 +74,14 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
     # scripts/build-forge-cli.sh applies the merged-status localization fix.
     ("fj", "darwin-arm64"): Artifact(
         f"{_FJ_BASE}/fj-{FJ_VERSION}-aarch64-apple-darwin.tar.gz",
-        "ad2417988cd247aae548d9402c23848de5823b1a2ae4b42059dd271dade9be36",
-        9139710,
+        "190d36a0e4eb1005ac50b60bc48121dd426f29eab884618ee175dce960c6b6fc",
+        9139626,
         ".tar.gz",
     ),
     ("fj", "darwin-x64"): Artifact(
         f"{_FJ_BASE}/fj-{FJ_VERSION}-x86_64-apple-darwin.tar.gz",
-        "a491ad2b029d1821690e9d1a5bba62e01fd02b80ec4c023b98a59307f24668fc",
-        9231710,
+        "cc8471533caa2758f771cd4e9e973804ab07c9f87ddec8e52c3932c2bde582b1",
+        9231619,
         ".tar.gz",
     ),
     ("gh", "linux-x64"): Artifact(
