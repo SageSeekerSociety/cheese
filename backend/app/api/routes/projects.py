@@ -848,6 +848,7 @@ async def list_project_tasks(
                 card,
                 beats.get(task.id),
                 room_screen_live=live_rooms[task.room_id],
+                worker_live=chat.worker_live(task.room_id, task.subagent_id),
                 awaiting_answer=task.id in asked,
             ),
             now=now,

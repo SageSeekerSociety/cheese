@@ -39,7 +39,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
+from app.domain.room_task.binding import catalog_id, resolve
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 
@@ -56,6 +58,11 @@ if TYPE_CHECKING:
 #: 为什么不能拿 `Task.last_turn_at` 当信号：它只在**认领分身**那一刻盖一次，之后
 #: 不再刷新，所以按它算，宽限期必须长过最长的一条活。它只作兜底 —— 一条刚被认领、
 #: 还没来得及说第一句话的活，靠的是它。
+#:
+#: 这个数只在**没人知道那个分身还在不在**的时候说话。知道的时候听知道的
+#: （`TaskFacts.worker_live`）：一个闷头干了四十分钟、一个 block 都没吐的分身，和
+#: 一个同样安静的死分身，在时间戳上长得一模一样 —— 只拿时间戳当裁判，前者就会被
+#: 误报成失联。安静不是证据，缺席才是。
 LOST_SIGNAL_AFTER = timedelta(minutes=10)
 
 
@@ -182,6 +189,11 @@ class TaskFacts:
     #: 是跑轮次的进程当下的事实（`ChatService.has_live_screen`），不是一列时间戳，
     #: 所以它得从外面喂进来（这一层不碰 I/O）。
     room_screen_live: bool = True
+    #: 那个分身此刻还在不在做（`ChatService.worker_live`）。True = 跑轮次的进程报过
+    #: 它还在做，False = 那个进程报过它收工了，None = 关于它一个字都没有过。
+    #: 和 `room_screen_live` 一样是进程当下的事实，不是库里的一列，所以也从外面喂
+    #: 进来。它比 `last_signal_at` 强：一个埋头干了四十分钟的分身本来就不该有 block。
+    worker_live: bool | None = None
     #: 分身已经交回过一句结论（`Task.conclusion`）。它是干完了在等房间收卡，
     #: 不是断了 —— 但它也可能只是把一条长命令停在后台就先交了一次话，所以这一位
     #: 只用来解释安静，从不用来说这条活结束了。
@@ -224,6 +236,7 @@ def facts_for_task(
     last_block_at: datetime | None = None,
     *,
     room_screen_live: bool = True,
+    worker_live: bool | None = None,
     awaiting_answer: bool = False,
 ) -> TaskFacts:
     """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
@@ -240,6 +253,7 @@ def facts_for_task(
         card=facts_for_card(card),
         has_worker=bool(task.subagent_id),
         room_screen_live=room_screen_live,
+        worker_live=worker_live,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
     )
@@ -259,6 +273,43 @@ def facts_for_room(
         card=facts_for_card(card),
         awaiting_answer=awaiting_answer,
     )
+
+
+def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> str:
+    """卡上写哪个模型。
+
+    **花过就写它真花的那个** —— `spent` 是 `usage` 里这条活最后一行的 `model`，
+    也就是钱实际花在谁身上。一分钱还没花过的卡没有这个事实，才退回它绑的那个
+    （`binding.resolve`），那是它下一轮会用的。
+
+    这两个都不是存下来的状态：`tasks` 上没有一列记「显示什么」，也不会有。一列
+    这样的状态要靠每一次真实用量去刷新它，而它对不上的那一天，卡上写着 A、账单
+    上是 B，没有任何地方能说出是谁写错的。和这一层其余所有显示状态同一条规矩
+    —— 读的时候从已有事实算。
+
+    **绑坏了的照原样写出来，不在这里拒绝。** 一条活可以绑上一个项目后来用不了的
+    模型 —— 项目把供给从订阅改成网关，或者运维从目录里摘掉一个型号，都会让先前
+    绑上去的那批活解析不出来。这一屏是整个房间的看板，也是唯一能看见、进而改掉
+    这条绑定的地方：在这里抛出去，坏掉的不是那一张卡，是这个房间的所有卡一起读
+    不出来，连带把改回来的入口也关上。拒绝留在执行路径上（`binding.resolve` 自己，
+    I27）。
+
+    **花过和没花过，写出来的得是同一套词。** 目录里订阅模型的 id 是 `sonnet`，
+    用量行里记的是真发出去的 `claude-sonnet-5`；两头各吐各的，同一张卡、同一个
+    模型，在第一次请求之后换了个名字，用户读到的是「模型被换了」。所以 `spent`
+    先过一遍目录反查（`binding.catalog_id`），认得出就写目录里那个 id。认不出来
+    才照原样写：上游给回一个目录里没有的名字，写它真花在谁身上仍然比写一个猜出
+    来的短名诚实。
+
+    `spent` 和 `choices` 都从外面喂进来，和 `awaiting_answer` 一样：一个要查库，
+    一个按项目算一次就够，而这一层不碰 I/O（见模块开头）。
+    """
+    if spent:
+        return catalog_id(spent, choices) or spent
+    try:
+        return resolve(task, choices).model
+    except ValidationError:
+        return (task.model or "").strip()
 
 
 # —— 卡 ————————————————————————————————————————————————————————
@@ -358,7 +409,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         return _show(NeedsYou.awaiting_answer)
 
     # 有分身在做这条活。它住在**房间的**会话里，所以「它还在不在」有两个答案，
-    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。
+    # 先问屏幕：房间的屏幕没了，它一定也没了 —— 而它自己不会来说一声。屏幕还在，
+    # 再问跑轮次的进程：这些子 agent 的生死它看得见（`_worker_alive`）。
     #
     # 已经交回过结论的不算在内：那是干完了在等房间收卡，不是还在做。
     worker_on_it = (
@@ -366,7 +418,7 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         and facts.status == TaskStatus.open
         and not facts.has_conclusion
     )
-    alive = facts.room_screen_live and not _lost_signal(facts.last_signal_at, now=now)
+    alive = facts.room_screen_live and _worker_alive(facts, now=now)
     # 规矩 2：在跑压过纸面。
     if worker_on_it and alive:
         return _show(Building.running)
@@ -387,6 +439,26 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     if facts.status == TaskStatus.closed:
         return _show(Done.closed)
     return _show(Building.idle)
+
+
+def _worker_alive(facts: TaskFacts, *, now: datetime) -> bool:
+    """那个分身现在还在不在做？
+
+    先问知道这件事的人。跑轮次的进程看着这些子 agent 出生和收工，它说还在做，
+    那就是在跑 —— 不用等这个分身再吐一个 block 来证明自己没死。现场本来就是
+    稀疏的：一个分身埋头跑四十分钟长命令、一条 block 都不落，是完全正常的干法
+    （实测：真实会话里就是这么干的），而这四十分钟里它的时间戳和死掉一模一样。
+    拿时间戳当唯一裁判，沉默就被当成了死。
+
+    它说收工了，那就是收工了 —— 这是**缺席**的证据，不是沉默的推论，所以这里
+    立刻算失联，不用等宽限期。
+
+    关于它一个字都没有过（None），才退回时间戳那条老规矩：没有证据不能读成
+    一切正常。
+    """
+    if facts.worker_live is not None:
+        return facts.worker_live
+    return not _lost_signal(facts.last_signal_at, now=now)
 
 
 def _lost_signal(last_signal_at: datetime | None, *, now: datetime) -> bool:

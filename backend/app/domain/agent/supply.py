@@ -6,9 +6,9 @@ through. It has to decide, per request, where that request actually goes:
   subscription  the Claude subscription, reached through ccproxy's egress
   gateway       an API-key pool (Zhipu / DeepSeek), reached through LiteLLM
 
-The backend chooses the route from the agent model signed into its session
-credential. A project supply setting chooses the default model and remains the
-route for older credentials without a model claim. Admission also supplies the
+The backend chooses the route at admission, from the model binding this request
+runs under (`room_task/binding.py`): a project supply setting picks the default
+model, and the model picks the pool that serves it. Admission also supplies the
 central account identity for profile queries, independently of inference supply.
 
 Kept pure (no DB, no HTTP) so both the endpoint and its tests can call it with a

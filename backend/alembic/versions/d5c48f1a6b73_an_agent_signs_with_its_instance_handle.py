@@ -1,7 +1,7 @@
 """房间攒下的那些记忆，重键到 agent 自己名下
 
 Revision ID: d5c48f1a6b73
-Revises: 2895c4967ca4
+Revises: d3b8f1c72a94
 Create Date: 2026-09-21 10:00:00
 
 记忆以前按房间记：一间房的芝士写进 ``agent_project`` 池，scope_id 是
@@ -59,7 +59,7 @@ from pathlib import Path
 from alembic import op
 
 revision: str = "d5c48f1a6b73"
-down_revision: str | Sequence[str] | None = "2895c4967ca4"
+down_revision: str | Sequence[str] | None = "d3b8f1c72a94"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
