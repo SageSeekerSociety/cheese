@@ -46,6 +46,27 @@ def compare_bytes(before: bytes, after: bytes, left: str, right: str) -> dict:
             "diff": None,
             "note": "binary",
         }
+    return text_comparison(old, new, left, right, identical=identical)
+
+
+def text_comparison(
+    old: str,
+    new: str,
+    left: str,
+    right: str,
+    *,
+    identical: bool,
+    note: str | None = None,
+) -> dict:
+    """The unified diff of two texts, in the panel's read shape.
+
+    Split out of `compare_bytes` because not every comparable text arrives as
+    the file's own bytes: a `.docx` is a zip, and what two versions of it differ
+    by is a difference in words, read out of the package elsewhere (see
+    `domain.documents.text`). `identical` and `note` are the caller's to pass —
+    it is the side that knows what it compared, and a note saying so is the
+    difference between "these versions are the same" and "their words are".
+    """
     # Keep line endings: a final newline is part of the delivered content too.
     lines = unified_diff(
         old.splitlines(keepends=True),
@@ -57,7 +78,7 @@ def compare_bytes(before: bytes, after: bytes, left: str, right: str) -> dict:
         line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
         for line in lines
     )
-    return {"identical": identical, "diff": diff, "note": None}
+    return {"identical": identical, "diff": diff, "note": note}
 
 
 # A NUL in the first block is the classic binary signal, and cheap to check
