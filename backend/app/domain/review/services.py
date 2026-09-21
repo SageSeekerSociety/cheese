@@ -934,7 +934,12 @@ class AcceptService:
             else {
                 "id": str(declared.id),
                 "name": declared.name,
-                "version": declared.version,
+                # 这张卡自己是第几版。`ArtifactSummary.version` 数的是已采纳的卡
+                # （`artifacts._claims`），所以还没采纳的这一张要自己加上一版：人
+                # 正在决定的是「这一版要不要成为《报告》的当前版本」，卡上写着前
+                # 一版的号码等于把他要定的那件事写错。
+                "version": declared.version
+                + (0 if card.status is AcceptStatus.accepted else 1),
             }
         )
         # 这一版交出去的是什么。卡面上要有它，因为验收的人要审的正是这一份：文件

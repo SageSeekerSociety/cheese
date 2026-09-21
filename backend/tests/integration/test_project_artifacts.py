@@ -117,8 +117,10 @@ def test_declaring_a_new_artifact_puts_it_on_the_list(client):
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["artifact"]["name"] == "结题报告"
-    assert r.json()["data"]["artifact"]["version"] == 0
-    # 还没落地，但有人正在交付它 —— 清单上点得到，版本是 0。
+    # 卡上写的是这张卡自己那一版：采纳它，《结题报告》就有了第 1 版。清单上那一行
+    # 仍然是 0 —— 那说的是「这一项已经交出去过几次」，现在还是零次。两个数答的是
+    # 两个问题，卡面要答的是人正在定的那个。
+    assert r.json()["data"]["artifact"]["version"] == 1
     assert _manifest(client, pid) == [("结题报告", 0)]
 
 

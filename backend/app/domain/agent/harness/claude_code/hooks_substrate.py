@@ -48,6 +48,7 @@ from app.domain.agent.harness import (
 )
 from app.domain.agent.harness.channel import (
     Channel,
+    Placement,
     PromptSocketUnavailable,
     ScreenSetupError,
 )
@@ -669,6 +670,13 @@ class SpoolBacklog:
 
     def forget(self, *, older_than_s: float) -> None:
         expire_log(self._session, older_than_s=older_than_s)
+
+
+def _resolved_agent(precheck: object) -> str | None:
+    """Which agent the machine resolver already resolved for this room, if it
+    resolved one. The base channel places nothing and answers nothing, and then
+    the caller's own ``agent_handle`` is the only answer there is."""
+    return precheck.agent_handle if isinstance(precheck, Placement) else None
 
 
 class ClaudeCodeRuntime:
@@ -1476,7 +1484,12 @@ class ClaudeCodeRuntime:
             topic_id=str(session.topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
             access_scope="project",
-            agent_handle=opening.agent_handle,
+            # WHO acts with it. The caller pins a teammate when a message named
+            # one; unnamed, it is the agent the machine resolver already
+            # resolved for this room — the same answer the codex and pi channels
+            # mint with. The room itself never answers: it may seat several
+            # agents, and a name signed into a token cannot be taken back.
+            agent_handle=opening.agent_handle or _resolved_agent(precheck),
         )
         screen = await self._channel.ensure_ready(
             session=session,
@@ -1663,7 +1676,9 @@ class ClaudeCodeRuntime:
             topic_id=str(topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
             access_scope="project",
-            agent_handle=agent_handle,
+            # Same rule as `ensure` above: the caller's teammate, else the one
+            # the precheck resolved for this room.
+            agent_handle=agent_handle or _resolved_agent(precheck),
         )
         attribution: WorkAttribution | None = None
         try:
