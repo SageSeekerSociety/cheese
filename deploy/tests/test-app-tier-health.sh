@@ -12,22 +12,19 @@ export BACKEND_ENV_FILE="$forge_test_env"
 export FORGE_EVENTS_ENV_FILE="$forge_test_env.events"
 export FORGEJO_URL=https://cheese.example/forge/
 
-# deploy-docker.sh CREATES the openviking memory dir (it must exist before the
+# deploy-docker.sh CREATES the claude binary cache (it must exist before the
 # bind mount, or docker makes it root-owned and the backend cannot write it).
 # Its default is a real path on the dev box, which a CI runner has neither
 # reason nor permission to create — so every deploy in this file gets one
 # inside the test tree. Exported once rather than per case: a future test that
 # forgets it would not fail here, it would fail on someone's machine.
-export VIKING_HOST_PATH="$ROOT/.tmp/viking-$$"
-# The claude binary cache is the same shape: created by the deploy so the
-# backend can write it, defaulting to a dev-box path CI cannot create.
 export CLAUDE_CACHE_HOST_PATH="$ROOT/.tmp/claude-cache-$$"
 # And the pi build cache beside it.
 export PI_CACHE_HOST_PATH="$ROOT/.tmp/pi-cache-$$"
 # And the transcript archives, once more the same shape.
 export TRANSCRIPTS_HOST_PATH="$ROOT/.tmp/transcripts-$$"
 export APPHOME_HOST_PATH="$ROOT/.tmp/apphome-$$"
-trap 'rm -rf "$ROOT/.tmp/viking-$$" "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
+trap 'rm -rf "$ROOT/.tmp/claude-cache-$$" "$ROOT/.tmp/pi-cache-$$" "$ROOT/.tmp/transcripts-$$" "$ROOT/.tmp/apphome-$$"; rm -f "$forge_test_env" "$FORGE_EVENTS_ENV_FILE"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -826,7 +823,6 @@ ownership_run() {
     WORKSPACES_HOST_PATH="$run_dir/workspaces" \
     UPLOADS_HOST_PATH="$run_dir/uploads" \
     APPHOME_HOST_PATH="$run_dir/apphome" \
-    VIKING_HOST_PATH="$run_dir/viking" \
     CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
     PI_CACHE_HOST_PATH="$run_dir/pi-cache" \
     TRANSCRIPTS_HOST_PATH="$run_dir/transcripts" \
@@ -844,8 +840,8 @@ new_ownership_run_dir() {
   mkdir -p "$ROOT/.tmp"
   local dir
   dir="$(mktemp -d "$ROOT/.tmp/ownership-order.XXXXXX")"
-  # viking is deliberately NOT created: the deploy script makes it, and these
-  # tests are the only place that would notice if it stopped.
+  # claude-cache is deliberately NOT created: the deploy script makes it, and
+  # these tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
   : > "$dir/docker.log"
   printf '%s' "$dir"
@@ -901,7 +897,6 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   for dir in workspaces uploads apphome; do : > "$run_dir/$dir/.cheese-uid-1000"; done
   # Made by the deploy script, so it has to be marked after the fact — an
   # unmarked path would make this "nothing moved" scenario move something.
-  mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
   mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
   mkdir -p "$run_dir/pi-cache"; : > "$run_dir/pi-cache/.cheese-uid-1000"
   mkdir -p "$run_dir/transcripts"; : > "$run_dir/transcripts/.cheese-uid-1000"

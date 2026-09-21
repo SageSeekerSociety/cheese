@@ -415,9 +415,8 @@ class TopicMemberService:
         identity back into the audit trail.
 
         Several agents seated: the project's default answers for the room when
-        it is one of them — the room-scoped credentials and the room's own
-        pass (memory dream, git identity) all mean the same one — else the
-        first on the roster.
+        it is one of them — the room-scoped credentials and the room's own git
+        identity all mean the same one — else the first on the roster.
 
         Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
         the room's (threads do not have one), but the fallback has to stay the

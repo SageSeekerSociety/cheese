@@ -20,9 +20,6 @@ __pycache__/
 .cheesed-workspaces/
 .testmondata
 
-# OpenViking embedded memory store (local data + generated ov.conf with keys)
-.viking/
-
 # Raw Claude session files uploaded from device homes (settings.transcripts_dir)
 .transcripts/
 
