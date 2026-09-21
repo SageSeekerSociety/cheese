@@ -385,7 +385,14 @@ async function share() {
 
 <style scoped>
 .fb-page {
-  padding: 16px 16px 48px;
+  /* 底内边距是 0，**别再往回加**：这一页最后一样东西是那个黏底部的评论框，
+     而 `sticky` 量的是滚动容器**内容盒**的下沿，不是它的边框盒 —— 多出来的
+     底内边距会变成框下面的一条带子，评论从那里往上滚、从框底下露出来（实测
+     48px 的底内边距就是 48px 高的一条，半行评论卡在输入框下面）。这一页末尾
+     的留白改由评论框自己的下内边距给（见 `.fb-composer`），所以「黏住时」和
+     「滚到底时」长得一模一样，不会到最后突然往下挪一截。
+     列表那几页没有黏住的东西，它们的 48px 照旧。 */
+  padding: 16px 16px 0;
 }
 .fb-page__inner {
   margin: 0 auto;
@@ -485,21 +492,19 @@ async function share() {
  * 和 ChatPanel 里那个输入区同一个办法。
  *
  * `.fb-page` 才是这一页的滚动容器（页根自己领滚动，见 scroll.spec.ts），
- * 所以 `bottom: 0` 贴的是它的下沿，也就是屏幕上那一沿。 */
+ * 所以 `bottom: 0` 贴的是它内容盒的下沿。
+ *
+ * **窄屏底下那条一级导航不用管**：`v-bottom-navigation` 会把自己注册成一个底部
+ * 布局项，`v-main` 因此拿到 `padding-bottom`，滚动容器本来就在它上面 —— 再自己
+ * 让开 56px 反而会在框底下留出一条能把评论露出来的带子。 */
 .fb-composer {
   position: sticky;
   bottom: 0;
   z-index: 2;
   margin-top: 12px;
-  padding: 8px 0 12px;
+  /* 下内边距就是这一页末尾的留白（`.fb-page` 那 48px 挪到这儿了）。 */
+  padding: 8px 0 16px;
   background: var(--canvas);
-}
-/* 窄屏底下还压着那条 56px 的一级导航（反馈这几条路由没设 hideTabs），
-   底条要落在它上面 —— 直接 `bottom: 0` 会被导航吃掉。 */
-@media (max-width: 959.98px) {
-  .fb-composer {
-    bottom: calc(56px + env(safe-area-inset-bottom));
-  }
 }
 /* 收起态。圆角和描边跟展开后的 v-textarea 同一套（那件组件的全局默认就是
    outlined + rounded lg），所以点开那一下框不会「换一件衣服」。 */
