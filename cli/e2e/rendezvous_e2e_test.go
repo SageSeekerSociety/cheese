@@ -143,43 +143,137 @@ func (f *rvFixture) userTurns(needle string) int {
 // that had been delivered. A conversation request is the one that offers the
 // model its tools, so that is the distinguishing mark.
 func (f *rvFixture) lastModelRequest() (string, error) {
-	req, err := http.NewRequest(http.MethodPut,
-		f.apiBase+"/mockserver/retrieve?type=requests&format=json", nil)
+	recorded, err := f.retrieve("type=requests")
 	if err != nil {
 		return "", err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(resp.Body); err != nil {
-		return "", err
-	}
-	var recorded []struct {
-		Path string          `json:"path"`
-		Body json.RawMessage `json:"body"`
-	}
-	if err := json.Unmarshal(buf.Bytes(), &recorded); err != nil {
-		return "", fmt.Errorf("decode recorded requests: %w", err)
 	}
 	last := ""
 	for _, r := range recorded {
 		if !strings.Contains(r.Path, "/v1/messages") {
 			continue
 		}
-		var body struct {
-			JSON struct {
-				Tools []json.RawMessage `json:"tools"`
-			} `json:"json"`
-		}
-		if json.Unmarshal(r.Body, &body) != nil || len(body.JSON.Tools) == 0 {
+		if len(r.conversationBody()) == 0 {
 			continue
 		}
 		last = string(r.Body)
 	}
 	return last, nil
+}
+
+// lastConversationBody is the same request's body as JSON of its own — the
+// object Claude Code posted, member order preserved, rather than MockServer's
+// envelope around it.
+func (f *rvFixture) lastConversationBody() ([]byte, error) {
+	recorded, err := f.retrieve("type=requests")
+	if err != nil {
+		return nil, err
+	}
+	var last []byte
+	for _, r := range recorded {
+		if !strings.Contains(r.Path, "/v1/messages") {
+			continue
+		}
+		if body := r.conversationBody(); len(body) > 0 {
+			last = body
+		}
+	}
+	if last == nil {
+		return nil, fmt.Errorf("the mock recorded no conversation request")
+	}
+	return last, nil
+}
+
+// recordedExchanges pairs every request the mock saw with the status it
+// answered — including the ones no expectation matched, which are exactly the
+// paths the proxy's answer table would have to grow a row for.
+func (f *rvFixture) recordedExchanges() ([]recordedExchange, error) {
+	req, err := http.NewRequest(http.MethodPut,
+		f.apiBase+"/mockserver/retrieve?type=request_responses&format=json", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		return nil, err
+	}
+	var pairs []struct {
+		Request struct {
+			Method string `json:"method"`
+			Path   string `json:"path"`
+		} `json:"httpRequest"`
+		Response struct {
+			StatusCode int `json:"statusCode"`
+		} `json:"httpResponse"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &pairs); err != nil {
+		return nil, fmt.Errorf("decode recorded request/response pairs: %w", err)
+	}
+	out := make([]recordedExchange, 0, len(pairs))
+	for _, p := range pairs {
+		out = append(out, recordedExchange{
+			method: p.Request.Method,
+			path:   p.Request.Path,
+			status: p.Response.StatusCode,
+		})
+	}
+	return out, nil
+}
+
+type recordedExchange struct {
+	method string
+	path   string
+	status int
+}
+
+type recordedRequest struct {
+	Path string          `json:"path"`
+	Body json.RawMessage `json:"body"`
+}
+
+// conversationBody returns the posted object when this request was a
+// CONVERSATION request, and nothing when it was one of Claude Code's own side
+// requests (a session title, which offers the model no tools at all).
+func (r recordedRequest) conversationBody() []byte {
+	var body struct {
+		JSON json.RawMessage `json:"json"`
+	}
+	if json.Unmarshal(r.Body, &body) != nil || len(body.JSON) == 0 {
+		return nil
+	}
+	var offered struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if json.Unmarshal(body.JSON, &offered) != nil || len(offered.Tools) == 0 {
+		return nil
+	}
+	return body.JSON
+}
+
+func (f *rvFixture) retrieve(query string) ([]recordedRequest, error) {
+	req, err := http.NewRequest(http.MethodPut,
+		f.apiBase+"/mockserver/retrieve?"+query+"&format=json", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		return nil, err
+	}
+	var recorded []recordedRequest
+	if err := json.Unmarshal(buf.Bytes(), &recorded); err != nil {
+		return nil, fmt.Errorf("decode recorded requests: %w", err)
+	}
+	return recorded, nil
 }
 
 // transcriptHits is kept for diagnostics only — see dumpTranscript.

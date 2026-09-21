@@ -20,8 +20,8 @@ from dataclasses import dataclass
 SUBSCRIPTION = "subscription"
 GATEWAY = "gateway"
 
-# project.settings key. Absent = follow the deployment default, which keeps
-# every existing project on exactly the supply it has today.
+# project.settings key. Absent = the subscription, which is the shape every
+# machine is launched in.
 SUPPLY_KEY = "supply"
 
 _VALID = frozenset({SUBSCRIPTION, GATEWAY})
@@ -42,15 +42,19 @@ class Supply:
     key: str | None = None
 
 
-def resolve_pool(settings: dict | None, *, subscription_enabled: bool) -> str:
+def resolve_pool(settings: dict | None) -> str:
     """The pool a project runs on.
 
     An explicit ``settings["supply"]`` wins; anything unrecognised falls back to
-    the deployment default rather than failing the turn — a typo in a settings
-    blob must not take a project offline, and the default is always a pool that
-    works on this deployment.
+    the subscription rather than failing the turn — a typo in a settings blob
+    must not take a project offline.
+
+    The default is not a deployment switch. Every machine is launched in the
+    subscription shape and every request is routed at admission (结论 46), so
+    "which pool does this deployment have" is not a question any more: it has
+    both, and the answer per request comes from the model.
     """
     chosen = (settings or {}).get(SUPPLY_KEY)
     if isinstance(chosen, str) and chosen in _VALID:
         return chosen
-    return SUBSCRIPTION if subscription_enabled else GATEWAY
+    return SUBSCRIPTION

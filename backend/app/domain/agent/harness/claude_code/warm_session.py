@@ -300,8 +300,6 @@ def bind(
             "--append-system-prompt-file",
             str(prompt_file),
         ]
-        if environment.get("CLAUDE_MODEL"):
-            argv.extend(["--model", environment["CLAUDE_MODEL"]])
         if environment.get("CHEESE_REMOTE_CONTROL") == "1":
             argv.extend(["--remote-control", "Cheese"])
         resume_id = environment.get("CHEESE_RESUME_SESSION") or session_id

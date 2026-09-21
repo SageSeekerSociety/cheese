@@ -1,25 +1,19 @@
-"""Which model provider a turn talks to, expressed as environment.
+"""How a machine reaches a model, expressed as environment.
 
-Claude Code has two independent knobs, and picking a provider means choosing
-which one to use — they are not interchangeable:
+There is one shape (结论 46). Claude Code keeps ``ANTHROPIC_BASE_URL`` unset and
+travels through the metering proxy on ``HTTPS_PROXY``; the proxy asks the
+backend per request whether that request goes to the subscription pool or is
+rewritten to the API-key gateway.
 
-  ANTHROPIC_BASE_URL   where the request goes
-  HTTPS_PROXY          how it gets there
+Pointing ``ANTHROPIC_BASE_URL`` at a gateway instead would re-originate the call
+from our own HTTP client: a different user agent, header shape and rhythm — a
+fingerprint the provider can act on, and on the subscription the account at risk
+is a person's. So the transport does not vary with the pool, and the pool is not
+a property of the machine at all.
 
-An API-key provider (Zhipu, DeepSeek) is served by pointing BASE_URL at our
-gateway. We re-originate the request there, which is fine: against an API key we
-*are* a legitimate API client.
-
-A subscription cannot be served that way. Its legitimacy rests on the client
-being Claude Code itself, so re-originating the call from our own HTTP client
-changes the user agent, the header shape and the request rhythm — a fingerprint
-the provider can act on, and the account at risk is a person's. The subscription
-therefore keeps BASE_URL untouched and travels through the metering proxy.
-The proxy streams model bodies and replaces authentication headers. RC-enabled
-sessions additionally route control traffic to Cheese; see docs/remote-control.md.
-
-Both remain observable. The difference is only where the observation sits — a
-client we control, or a proxy the traffic passes through.
+The proxy streams model bodies, replaces authentication headers and writes the
+resolved model name into the request body. RC-enabled sessions additionally
+route control traffic to Cheese; see docs/remote-control.md.
 """
 
 from dataclasses import dataclass
@@ -41,33 +35,6 @@ class ProviderChoice:
 
     name: str
     env: dict[str, str]
-
-
-def api_key_provider(gateway_base: str, key: str, model: str) -> ProviderChoice:
-    """Zhipu / DeepSeek and anything else reached with a key we hold.
-
-    ``key`` must be the machine's own scoped cheese token, never the upstream
-    provider key, and ``gateway_base`` the backend's /api/llm route rather than
-    the gateway itself. The backend swaps in the project's virtual key on the
-    way through.
-
-    A machine used to receive the raw provider key in its environment, in plain
-    sight of anyone on that host, and its spend landed in the invoice under one
-    undifferentiated key. Keeping the credential on the box makes attribution
-    structural rather than a promise the machine has to keep.
-    """
-    return ProviderChoice(
-        name="gateway",
-        env={
-            "ANTHROPIC_BASE_URL": gateway_base,
-            "ANTHROPIC_AUTH_TOKEN": key,
-            "CLAUDE_MODEL": model,
-            # WebFetch resolves haiku separately from the main/worker aliases.
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
-            "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
-        },
-    )
 
 
 def subscription_provider(
@@ -156,22 +123,6 @@ def subscription_provider(
         attr = f"{project_id}/{topic_id}" if topic_id else project_id
         env["ANTHROPIC_CUSTOM_HEADERS"] = f"x-cheese-attr: {attr}"
     return ProviderChoice(name="subscription", env=env)
-
-
-def choose(
-    *,
-    prefer_subscription: bool,
-    gateway_base: str,
-    gateway_key: str,
-    model: str,
-    ca_path: str,
-) -> ProviderChoice:
-    """Pick one. Falling back from the subscription to a key-based provider is
-    intentional and safe — the reverse never happens implicitly, because sending
-    subscription traffic through our own client is the thing being avoided."""
-    if prefer_subscription and ca_path:
-        return subscription_provider(ca_path=ca_path)
-    return api_key_provider(gateway_base, gateway_key, model)
 
 
 @dataclass(frozen=True)
