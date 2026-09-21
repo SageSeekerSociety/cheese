@@ -1,7 +1,7 @@
 """local_fs: 本机目录授权 — grants on a user's own machine, and their audit
 
 Revision ID: d5b2c8f41a37
-Revises: b7c3f2a91e04
+Revises: d7b3f0a9c651
 Create Date: 2026-09-19
 
 Two tables. ``local_directory_grant`` is the authorisation itself: one directory
@@ -25,7 +25,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d5b2c8f41a37"
-down_revision: str | Sequence[str] | None = "b7c3f2a91e04"
+down_revision: str | Sequence[str] | None = "d7b3f0a9c651"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
