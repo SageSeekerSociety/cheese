@@ -5,6 +5,9 @@
 `dispatch()` 返回 False**，两档形状不同、救法也不同：一个渠道都没收下的靠补发；站内
 信已经收下、这一批却没算送到的靠去重键。两档在生产里都是无声的 —— 一条通知没到或者
 到了两遍，没有任何报错。
+
+两档都由**收不下的渠道**造出来（`tests/support/failing_channels.py`），不是由一本会
+抛异常的账本：产品里 `dispatch()` 从不往外抛，账本看见的只有 False。
 """
 
 import uuid
@@ -24,7 +27,12 @@ from app.domain.notification.handlers import (
 )
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.user.models import User
-from tests.support.failing_ledger import FailingLedger, FakeClock
+from tests.support.failing_channels import (
+    FakeClock,
+    RefusingChannel,
+    channels_refuse,
+    mailbox_took_it_but_not_counted,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -85,21 +93,12 @@ class _RecordingChannel:
         self.handed.extend(d.delivery_key for d in deliveries)
 
 
-class _FailingChannel:
-    """一个怎么都收不下的渠道。"""
-
-    name = "failing"
-
-    async def send_batch(self, deliveries: list[NotificationDelivery]) -> None:
-        raise RuntimeError("这个渠道收不下")
-
-
 async def _ledger_rows(session) -> list[Delivery]:
     rows = await session.scalars(select(Delivery).order_by(Delivery.recorded_at))
     return list(rows)
 
 
-async def test_a_delivery_no_channel_took_is_resent_once(db_factory):
+async def test_a_delivery_no_channel_took_is_resent_once(db_factory, monkeypatch):
     """①渠道没全收下：补发把它补出去，而且只补一次。
 
     以前这一档是静默丢失 —— 渠道那边抛的异常被吞掉，没有任何一行记着这条通知本该
@@ -107,16 +106,19 @@ async def test_a_delivery_no_channel_took_is_resent_once(db_factory):
     """
     clock = FakeClock(EVENT_AT)
     event = _event()
+    monkeypatch.setattr(
+        ledger_module, "build_notification_event_handler", channels_refuse
+    )
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        ledger = FailingLedger(session, now=clock, channels_refuse=True)
-        await ledger.deliver(event, _addressed("alice"))
+        await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
 
         assert await _inbox(session, alice) == []
         (row,) = await _ledger_rows(session)
         assert row.sent_at is None  # 记下来了，没送到
+        assert row.attempts == 1  # 首发这一次也算一次尝试
 
     clock.advance(seconds=3600)
     async with db_factory() as session:  # 下一轮补发
@@ -130,7 +132,7 @@ async def test_a_delivery_no_channel_took_is_resent_once(db_factory):
         assert len(await _inbox(session, alice)) == 1
 
 
-async def test_a_delivery_the_mailbox_took_is_not_sent_twice(db_factory):
+async def test_a_delivery_the_mailbox_took_is_not_sent_twice(db_factory, monkeypatch):
     """②站内信收下了、这一批却没算送到：补发不能让他收到第二条。
 
     分辨不出来的正是这一档 —— 「站内信已经写进去了、只是这一批没算数」和「根本没
@@ -139,12 +141,15 @@ async def test_a_delivery_the_mailbox_took_is_not_sent_twice(db_factory):
     """
     clock = FakeClock(EVENT_AT)
     event = _event()
+    monkeypatch.setattr(
+        ledger_module,
+        "build_notification_event_handler",
+        mailbox_took_it_but_not_counted,
+    )
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        await FailingLedger(session, now=clock, not_counted_as_sent=True).deliver(
-            event, _addressed("alice")
-        )
+        await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
 
         assert len(await _inbox(session, alice)) == 1
@@ -209,7 +214,9 @@ async def test_the_dedup_key_follows_the_event_not_the_attempt(db_factory):
         assert row.dedup_key == f"{event_id}:alice"
 
 
-async def test_a_resend_uses_the_roster_from_when_the_event_happened(db_factory):
+async def test_a_resend_uses_the_roster_from_when_the_event_happened(
+    db_factory, monkeypatch
+):
     """⑤补发时名册按事件发生的时刻取。
 
     补发可能发生在几分钟后，也可能在一次重启之后。那时候再按 handle 查一遍名册，
@@ -217,12 +224,13 @@ async def test_a_resend_uses_the_roster_from_when_the_event_happened(db_factory)
     """
     clock = FakeClock(EVENT_AT)
     event = _event()
+    monkeypatch.setattr(
+        ledger_module, "build_notification_event_handler", channels_refuse
+    )
 
     async with db_factory() as session:
         alice_then = await _user(session, "alice")
-        await FailingLedger(session, now=clock, channels_refuse=True).deliver(
-            event, _addressed("alice")
-        )
+        await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
 
     async with db_factory() as session:
@@ -260,9 +268,14 @@ async def test_a_resend_does_not_queue_the_email_and_push_again(
     queue = _RecordingChannel()
 
     def _all_channels(session) -> NotificationEventHandler:
+        # 最后那个渠道收不下，于是这一批没算送到 —— 补发一定会再来一次。
         return NotificationEventHandler(
             session=session,
-            channel_handlers=[InAppNotificationHandler(session=session), queue],
+            channel_handlers=[
+                InAppNotificationHandler(session=session),
+                queue,
+                RefusingChannel(),
+            ],
         )
 
     monkeypatch.setattr(
@@ -271,10 +284,7 @@ async def test_a_resend_does_not_queue_the_email_and_push_again(
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        # 站内信收下了，这一批却没算送到 —— 补发一定会再来一次。
-        await FailingLedger(session, now=clock, not_counted_as_sent=True).deliver(
-            event, _addressed("alice")
-        )
+        await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
 
     assert len(queue.handed) == 1
@@ -294,22 +304,24 @@ async def test_a_delivery_that_never_goes_out_stops_being_retried(
     """⑦补发有上限：一行始终发不出去的投递不是一台定时机器。
 
     到顶之后那一行留在账本里 —— `sent_at` 仍是 NULL，`attempts` 到顶，补发不再扫
-    它。查得到、能人工看，但不会每分钟再试一遍。
+    它。查得到、能人工看，但不会每分钟再试一遍。首发没送出去也算一次，所以这里只
+    补发 `MAX_ATTEMPTS - 1` 轮就到顶。
     """
     clock = FakeClock(EVENT_AT)
     event = _event()
+    monkeypatch.setattr(
+        ledger_module, "build_notification_event_handler", channels_refuse
+    )
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        await FailingLedger(session, now=clock, channels_refuse=True).deliver(
-            event, _addressed("alice")
-        )
+        await Ledger(session, now=clock).deliver(event, _addressed("alice"))
         await session.commit()
 
     monkeypatch.setattr(
-        ledger_module, "InAppNotificationHandler", lambda *, session: _FailingChannel()
+        ledger_module, "InAppNotificationHandler", lambda *, session: RefusingChannel()
     )
-    for _ in range(MAX_ATTEMPTS):
+    for _ in range(MAX_ATTEMPTS - 1):
         clock.advance(seconds=60)
         async with db_factory() as session:
             assert await Ledger(session, now=clock).resend_unsent() == 0

@@ -8,8 +8,9 @@
 
 不变量 I11 的「只有一处发通知」是**目标，不是现状**：社交那一侧还有 8 处直接调
 `notification/publisher.py` 的 `publish_notification_event`（`discussion/services.py`
-一处、`team/membership_services.py` 七处），它们不走账本，随 P27 迁进来。在那之前，
-这里说的「唯一」只管房间里这条线。
+一处、`team/membership_services.py` 七处）。它们不走账本 —— 既不记账也不去重：同一
+条社交通知重复触发就落两行，没送到也没有任何一行记着它欠着。把它们搬上账本是另一件
+还没有人做的事；在那之前，这里说的「唯一」只管房间里这条线。
 
 记录和发送不分成两个模块，因为它们是同一个事务边界：账本那一行必须和引发它的事件
 一起提交，否则「这条事件本该通知谁」这句话在崩溃之后就没人记得。分成 `ledger.py` 加
@@ -21,7 +22,8 @@
 **不是崩溃窗口。** 账本那一行、收件箱那一行、`sent_at` 的回写在**同一个事务**里：进
 程在提交之前的任何一点没了，三样一起回滚，没有半成品要补。补发要救的是另一种东西
 ——**事务照常提交，而这一批没算送到**，也就是 `dispatch()` 返回 False 的那两种形状。
-它们在生产里都不报错，所以只能靠替身造出来（`tests/support/failing_ledger.py`）。
+它们在生产里都不报错，所以只能靠替身造出来（`tests/support/failing_channels.py`，替
+身是收不下的渠道而不是会抛的账本 —— `dispatch()` 从不往外抛）。
 
 **一、渠道没全收下，站内信也没收下。** 站内信那一次写入在自己的 savepoint 里失败
 （编码、约束、会话的事务被标记成 aborted），`dispatch()` 返回 False，`sent_at` 不回
@@ -227,18 +229,18 @@ class Ledger:
     ) -> None:
         """把这些行交给 `channels`，发到了就回写 `sent_at`，没发到就记一次尝试。
 
-        一行发不出去不影响其余的，也不往上抛：账本里那一行留在「没发出去」，补发会
-        再来。往上抛会连带回滚调用方的事务，而那个事务里装着引发这条投递的事件本
-        身 —— 通知发不出去不是「这件事没发生」。
+        渠道那边出的事到不了这里：`dispatch()` 把每个渠道的异常接在各自的 savepoint
+        里，只把「有没有全收下」返回回来。所以一行发不出去不影响其余的，也不往上
+        抛 —— 那一行留在「没发出去」等补发。往上抛会连带回滚调用方的事务，而那个事
+        务里装着引发这条投递的事件本身，通知发不出去不是「这件事没发生」。
+
+        剩下会抛的只有账本自己那两笔 DB 写，它们照抛不接：能让 `flush()` 失败的东西
+        已经把整个 session 的事务在 Postgres 里作废了，接住它只是把一个提交必败的
+        session 交还给调用方，而这一行到底试了几次也没人记上。
         """
         for row in pending:
-            try:
-                if not await self._send_one(row, channels):
-                    await self._count_attempt(row)
-            except Exception:
-                logger.exception(
-                    "投递没送出去，留给补发：delivery=%s key=%s", row.id, row.dedup_key
-                )
+            if not await self._send_one(row, channels):
+                await self._count_attempt(row)
 
     async def _send_one(self, row: Pending, channels: NotificationEventHandler) -> bool:
         if not await self._dispatch(row, channels):
@@ -326,7 +328,7 @@ async def deliver(
     """走账本的唯一入口。入参是寻址结果，不是一句文案。
 
     不变量 I11 的「只有一处发通知」是目标：社交那 8 处还走
-    `publish_notification_event`，随 P27 迁进来。
+    `publish_notification_event`，既不记账也不去重。
     """
     await Ledger(session).deliver(event, addressed)
 

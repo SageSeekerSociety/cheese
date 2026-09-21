@@ -25,7 +25,8 @@ class NotificationDelivery:
     is_aggregated_finalization: bool = False
     #: 这一笔投递的身份（`delivery/ledger.py` 的去重键）。落在收件箱那一行上，所以
     #: 补发撞上唯一约束什么也不发生 —— 「恰好一次」由它保证。None = 没走账本的调用
-    #: 点（社交通知，随 P27 搬过去），那种行之间不互斥。
+    #: 点（社交那 8 处直接调 `publish_notification_event`，既不记账也不去重），那种
+    #: 行之间不互斥。
     delivery_key: str | None = None
 
 
