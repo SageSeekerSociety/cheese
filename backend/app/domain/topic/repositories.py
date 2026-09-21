@@ -377,6 +377,11 @@ class TopicRepository:
         「哪些私聊是我的」和「对面是谁」都从名册上取（结论 19）：我的那一席把房间
         选出来，另一席就是对面。两席都在同一张表上，所以这是一次自连接，不是第二
         张表。
+
+        「恰好两席」是这里的闸，和 `TopicMemberService.private_seats` 同一条：
+        「不是我」的席位不止一个，这间房就答不出对面是谁——没有这道闸，三席的房
+        间每一个「不是我」的席位各算一遍，同样的未读数翻一倍，还凭空多出一行归给
+        别人的角标。答不出就一条不报，与那个读点在同一间房上答案一致。
         """
         seats = {
             agent_instance_handle(row.id): row.handle
@@ -421,6 +426,11 @@ class TopicRepository:
             .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(True),
+                select(func.count())
+                .select_from(TopicMembership)
+                .where(TopicMembership.topic_id == Topic.id)
+                .scalar_subquery()
+                == 2,
                 Block.kind == BlockKind.message,
                 # A private room has threads too — resolving an upstream
                 # conflict opens one there — and the same rule applies: the

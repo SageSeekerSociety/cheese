@@ -97,6 +97,36 @@ def _who_answers(client, topic_id: str) -> str:
     return asyncio.run(_run())
 
 
+def _badge(client, project_id: str, user: str) -> dict:
+    """这个人的私聊角标：对面是谁 → 几条未读。"""
+    r = client.get(
+        f"/projects/{project_id}/private-unread",
+        params={"handle": user},
+        headers=session_auth_headers(user),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _seat_by_hand(client, topic_id: str, handle: str) -> None:
+    """名册上直接加一行——存量三席的私聊就是这么来的（替身还坐着，队友也坐着），
+    而从这一版起接口不再让谁加出第三席。"""
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                sa.text(
+                    "INSERT INTO topic_memberships"
+                    " (id, topic_id, member_handle, role, created_at, updated_at)"
+                    " VALUES (gen_random_uuid(), :t, :h, 'member', now(), now())"
+                ),
+                {"t": uuid.UUID(topic_id), "h": handle},
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
 def _say(client, project_id: str, topic_id: str, author: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -171,13 +201,7 @@ def test_a_dm_badge_is_keyed_by_the_other_seat(client):
     _say(client, project_id, with_person, "mentor-1")
     _say(client, project_id, with_reviewer, reviewer_seats[1])
 
-    r = client.get(
-        f"/projects/{project_id}/private-unread",
-        params={"handle": "user-1"},
-        headers=session_auth_headers("user-1"),
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["data"] == {"mentor-1": 1, "agent:reviewer": 1}
+    assert _badge(client, project_id, "user-1") == {"mentor-1": 1, "agent:reviewer": 1}
 
 
 def test_opening_the_same_dm_again_finds_it_by_its_two_seats(client):
@@ -198,7 +222,7 @@ def test_opening_the_same_dm_again_finds_it_by_its_two_seats(client):
 def test_an_old_dms_two_seats_are_backfilled(client):
     """存量私聊：名册空着、两列还在，迁移把两席补回来，这间房又答得出对面是谁。
 
-    跑的是迁移自己的 ``seat_the_two_parties``，不是照抄一份 SQL。
+    跑的是迁移自己的 ``only_the_two_parties``，不是照抄一份 SQL。
     """
     project_id = _project(client)
     _add_agent(client, project_id, "reviewer", "评审")
@@ -220,7 +244,7 @@ def test_an_old_dms_two_seats_are_backfilled(client):
             assert await members.private_seats(uuid.UUID(dm)) is None
             connection = await session.connection()
             await connection.run_sync(
-                lambda sync: _migration().seat_the_two_parties(sync.exec_driver_sql)
+                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
             )
             await session.commit()
 
@@ -233,7 +257,7 @@ def test_an_old_dms_two_seats_are_backfilled(client):
         async with client.test_factory() as session:
             connection = await session.connection()
             await connection.run_sync(
-                lambda sync: _migration().seat_the_two_parties(sync.exec_driver_sql)
+                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
             )
             await session.commit()
         async with client.test_factory() as session:
@@ -246,3 +270,62 @@ def test_an_old_dms_two_seats_are_backfilled(client):
 
     # 幂等：再跑一遍不多一行。
     assert asyncio.run(_again()) == 2
+
+
+def test_a_dm_refuses_a_third_seat(client):
+    """私聊加不进第三席：两席是它的定义，不是它的下限（结论 19）。
+
+    挡住的是「这间房还是不是私聊」这个问题本身——第三席一加，谁答它、个人记忆记在
+    谁名下、未读算给谁就都没有答案了。人多了开一间房，那间房里两位队友都坐得下。
+    """
+    project_id = _project(client)
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    writer = _add_agent(client, project_id, "writer", "写手")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+
+    refused = client.post(
+        f"/topics/{dm}/members",
+        json={"handle": writer["seat_handle"], "role": "member"},
+        headers=session_auth_headers("user-1"),
+    )
+    assert refused.status_code == 422, refused.text
+    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+
+    # 和写手的私聊是另一间房，不会撞进评审那间。
+    assert _dm(client, project_id, "user-1", agent_handle="writer") != dm
+
+
+def test_an_old_dms_extra_seats_are_unseated(client):
+    """存量三席的私聊：迁移跑完回到两席，这间房又答得出对面是谁。
+
+    迁移之前它不是私聊，角标里就不该有它——既不翻倍，也不多出一行归给别人。
+    """
+    project_id = _project(client)
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
+    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
+    _say(client, project_id, dm, reviewer["seat_handle"])
+    assert _badge(client, project_id, "user-1") == {"agent:reviewer": 1}
+
+    # e7d2b91a4c06 补上队友那一席，d5c48f1a6b73 因为房里坐着别的实例留下了替身。
+    _seat_by_hand(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
+
+    assert _seats(client, dm) is None
+    assert _badge(client, project_id, "user-1") == {}
+
+    async def _run_the_migration() -> None:
+        async with client.test_factory() as session:
+            connection = await session.connection()
+            await connection.run_sync(
+                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
+            )
+            await session.commit()
+
+    asyncio.run(_run_the_migration())
+
+    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
+    assert _badge(client, project_id, "user-1") == {"agent:reviewer": 1}
+    assert _who_answers(client, dm) == "reviewer"
+
+    # 幂等：再跑一遍不动任何一行。
+    asyncio.run(_run_the_migration())
+    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
