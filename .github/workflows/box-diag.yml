@@ -27,7 +27,10 @@ permissions:
 jobs:
   dev-box:
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 5
+    # Reading two days of the metering proxy's log is the long pole. A probe
+    # killed halfway costs another wait for the box's single runner slot, which
+    # is the expensive part of running this at all.
+    timeout-minutes: 10
     steps:
       - name: Database encoding
         run: |
@@ -162,6 +165,132 @@ jobs:
           done
           echo "===== who owns :8081 / :8091 ====="
           docker ps --format '{{.Names}}  {{.Ports}}' | grep -E '8081|8091|18081' || true
+      - name: Model gateway failures (proxy, gateway, gateway database)
+        # A model failure reaches a room as an event block carrying a status
+        # code and a request id and nothing else (`backend_log.py`). What the
+        # gateway actually answered, and whether it answers that way more often
+        # than it used to, is on THIS box in three places and readable from
+        # nowhere else: the metering proxy's log, which carries a
+        # `gateway_request_timing` line for EVERY request with its status — so a
+        # failure count has a denominator, and "more failures" can be told apart
+        # from "more traffic"; the gateway container's own log; and the gateway's
+        # database, which LiteLLM writes to for every call it serves and every
+        # call it fails (`failure_callback: ["postgres"]`).
+        #
+        # The window is printed rather than assumed. docker's json-file
+        # rotation, not `--since`, decides how far back the log actually
+        # reaches, and a before/after whose "before" starts after the change
+        # under suspicion is worse than no comparison at all. The `StartedAt`
+        # stamps are there for the same reason: the addon is mounted into a
+        # stock mitmproxy image and the gateway image is built on the box, so
+        # when each container last started is when its current code went live.
+        #
+        # Redacted on the way out — an upstream auth failure can echo a virtual
+        # key into an exception string, and a run log is readable by everyone
+        # with repo access. Request bodies and tracebacks are dropped rather
+        # than redacted: they carry prompts.
+        run: |
+          redact() { sed -E 's/sk-[A-Za-z0-9_-]{6,}/sk-REDACTED/g'; }
+          echo "===== containers: what runs, since when, how much log it keeps ====="
+          for c in cheese-metering-proxy cheese-gateway-litellm-1 cheese-gateway-litellm-db-1; do
+            docker inspect -f '{{.Name}} image={{.Config.Image}} started={{.State.StartedAt}} restarts={{.RestartCount}} log={{json .HostConfig.LogConfig}}' "$c" 2>&1 || true
+          done
+          docker image inspect -f 'gateway image built={{.Created}} tags={{.RepoTags}}' \
+            "$(docker inspect -f '{{.Config.Image}}' cheese-gateway-litellm-1 2>/dev/null)" 2>&1 || true
+
+          log="${RUNNER_TEMP:-/tmp}/metering-proxy.log"
+          docker logs --since 48h --timestamps cheese-metering-proxy 2>&1 | redact > "$log" || true
+          echo "===== proxy log: lines held, and the window they cover ====="
+          wc -l < "$log" || true
+          head -1 "$log" | cut -c1-32 || true
+          tail -1 "$log" | cut -c1-32 || true
+          echo "===== every gateway request, by hour and status ====="
+          grep -F 'gateway_request_timing' "$log" \
+            | sed -E 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}):.*"status": ?([a-z0-9]+).*/\1 status=\2/' \
+            | grep -E '^[0-9]{4}' | sort | uniq -c || true
+          echo "===== failures the proxy reported, by hour ====="
+          grep -E 'Gateway(HTTP|Stream)Error' "$log" \
+            | sed -E 's/^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}):.*(GatewayHTTPError|GatewayStreamError).*/\1 \2/' \
+            | sort | uniq -c || true
+          echo "===== the last 40 of them, verbatim ====="
+          grep -E 'Gateway(HTTP|Stream)Error' "$log" | tail -40 || true
+          echo "===== gateway container: anything that raised (6h) ====="
+          docker logs --since 6h --timestamps cheese-gateway-litellm-1 2>&1 \
+            | grep -iE 'error|exception|traceback' | tail -80 | redact || true
+          echo "===== gateway database: what failed, and how much was served ====="
+          docker exec -i cheese-gateway-litellm-db-1 \
+            psql -U litellm -d litellm -A -P pager=off 2>&1 <<'SQL' | redact || true
+          SELECT to_regclass('public."LiteLLM_ErrorLogs"') AS error_table,
+                 to_regclass('public."LiteLLM_SpendLogs"') AS spend_table;
+          SELECT column_name FROM information_schema.columns
+           WHERE table_name = 'LiteLLM_ErrorLogs' ORDER BY ordinal_position;
+          SELECT date_trunc('hour', "startTime") AS hour, count(*) AS calls
+            FROM "LiteLLM_SpendLogs" WHERE "startTime" > now() - interval '72 hours'
+           GROUP BY 1 ORDER BY 1 DESC;
+          SELECT date_trunc('hour', "startTime") AS hour, status_code, exception_type,
+                 count(*) AS failures
+            FROM "LiteLLM_ErrorLogs" WHERE "startTime" > now() - interval '72 hours'
+           GROUP BY 1, 2, 3 ORDER BY 1 DESC LIMIT 200;
+          SELECT to_jsonb(e) - 'request_kwargs' - 'traceback'
+            FROM "LiteLLM_ErrorLogs" e WHERE "startTime" > now() - interval '72 hours'
+           ORDER BY "startTime" DESC LIMIT 15;
+          SQL
+      - name: Reported model failures, as the rooms received them
+        # The other end of the same story: what the backend WROTE into rooms.
+        # `backend_log.py` keeps the reporter's `exc_type` and the gateway's
+        # `x-litellm-call-id` in the block's `meta`, and that id is what joins a
+        # room's complaint to a row in the gateway's error log above — the one
+        # link that says whether a reported 500 came from LiteLLM at all, and
+        # which upstream exception it was. No route reads these back: a block is
+        # served only inside its own topic, to people who can already open it.
+        #
+        # Ids, counts and the platform's own event line only — never a room's
+        # messages. Fixed query, no parameters, same rule as every probe here.
+        run: |
+          docker exec -i cheese-backend-1 python - 2>&1 <<'PY' || true
+          import asyncio
+          import os
+
+          import asyncpg
+
+          DSN = (
+              os.environ["DATABASE_URL"]
+              .replace("postgresql+asyncpg://", "postgresql://")
+              .replace("postgresql+psycopg2://", "postgresql://")
+          )
+          KINDS = ["GatewayHTTPError", "GatewayStreamError"]
+          BY_HOUR = (
+              "SELECT date_trunc($1::text, created_at) AS hour,"
+              " meta ->> $2::text AS exc, count(*) AS blocks"
+              " FROM blocks WHERE meta ->> $2::text = ANY($3::text[])"
+              " AND created_at > now() - make_interval(hours => 72)"
+              " GROUP BY 1, 2 ORDER BY 1 DESC"
+          )
+          ROWS = (
+              "SELECT created_at, project_id, topic_id, meta ->> $1::text AS exc,"
+              " meta ->> $2::text AS request_id, meta ->> $3::text AS burst_count,"
+              " left(content, 200) AS line"
+              " FROM blocks WHERE meta ->> $1::text = ANY($4::text[])"
+              " AND created_at > now() - make_interval(hours => 72)"
+              " ORDER BY created_at DESC LIMIT 40"
+          )
+
+
+          async def main() -> None:
+              conn = await asyncpg.connect(DSN)
+              try:
+                  print("===== reported model failures, by hour (72h) =====")
+                  for row in await conn.fetch(BY_HOUR, "hour", "exc_type", KINDS):
+                      print(dict(row))
+                  print("===== the last 40, with the gateway request id =====")
+                  for row in await conn.fetch(ROWS, "exc_type", "request_id", "count", KINDS):
+                      print(dict(row))
+              finally:
+                  await conn.close()
+
+
+          asyncio.run(main())
+          PY
       - name: Public entrypoint (cloudflared connector)
         # okcheese.com reaches this box through ONE cloudflared connector running
         # here as a systemd unit. When that connector dies the edge serves 530 to
