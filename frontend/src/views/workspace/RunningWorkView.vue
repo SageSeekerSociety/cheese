@@ -24,7 +24,6 @@ import { listProjectTasks } from '@/api'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
-import PublishedSite from '@/components/PublishedSite.vue'
 import { BOARD_COLUMNS, columnDotStyle, columnLabel, compareTasks } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { myHandle } from '@/me'
@@ -37,6 +36,8 @@ const router = useRouter()
 const store = useWorkspaceStore()
 
 const rows = ref<RoomTask[]>([])
+/** 「做出了什么」那一列有几项。列头属于这块网格，件数属于那个组件，所以它报上来。 */
+const madeCount = ref(0)
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 // 已完成折起来。板面留给还需要人看的东西，但要说得出有多少件——悄悄不显示会让人
@@ -269,43 +270,30 @@ function openTask(task: RoomTask) {
 
 <template>
   <div class="board">
-    <!-- 这一页是项目的落点，所以顶上是项目名：下面每一块各自带自己的标题，答的
-         是这个项目的几个问题——谁在等你、交出去了什么、对外的地址是哪个、现在轮到
-         谁。除了板以外，每一块在没有内容时都整个不出现：首页上的一块框出现，就意味
-         着这个项目现在真有这样东西。 -->
-    <header v-if="store.projectName" class="board__title">
-      <h1 class="t-page-title">{{ store.projectName }}</h1>
+    <!-- 这一页是项目的落点，所以顶上只有一个标题，就是项目名。板曾经在它下面另
+         起一个「看板」的二级标题——一页两个标题，而板就是这一页的主体，列头自己已
+         经说明了它是什么。统计和「只看我的」因此直接归到项目名这一行下面。 -->
+    <header class="board__title">
+      <h1 v-if="store.projectName" class="t-page-title">{{ store.projectName }}</h1>
+      <!-- 「只看我的」：一个项目上百个房间，「待处理」那一列里大部分不是等你。
+           登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
+      <button v-if="mineHandle" type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
+        <span class="board__sw" aria-hidden="true" />
+        只看我的
+      </button>
     </header>
+    <p class="board__tally t-meta c-muted">
+      <template v-if="tally.length">
+        <template v-for="(t, i) in tally" :key="t.label">
+          <span v-if="i" class="board__sep">·</span>
+          {{ t.label }} {{ t.n }}
+        </template>
+      </template>
+      <template v-else-if="!loading">暂无派出去的任务</template>
+    </p>
 
     <!-- 等你决定：芝士 问了你一句话，在等你回答。 -->
     <NeedsYou :project-id="projectId" />
-
-    <!-- 做出了什么：清单为空时它自己整个不出现（#1085 结论三）。 -->
-    <ArtifactManifest :project-id="projectId" />
-
-    <!-- 网站：发布出去的地址就是交出去的东西之一，所以它紧挨着清单。 -->
-    <PublishedSite :project-id="projectId" />
-
-    <header class="board__head">
-      <div class="board__head-row">
-        <h2 class="t-title">看板</h2>
-        <!-- 「只看我的」：一个项目上百个房间，「等你」那一列里大部分不是等你。
-             登录身份取不到时不画这个开关——按空 handle 筛只会把整块板清空。 -->
-        <button v-if="mineHandle" type="button" class="board__mine t-meta" :aria-pressed="mine" @click="toggleMine">
-          <span class="board__sw" aria-hidden="true" />
-          只看我的
-        </button>
-      </div>
-      <p class="t-meta c-muted">
-        <template v-if="tally.length">
-          <template v-for="(t, i) in tally" :key="t.label">
-            <span v-if="i" class="board__sep">·</span>
-            {{ t.label }} {{ t.n }}
-          </template>
-        </template>
-        <template v-else-if="!loading">暂无派出去的任务</template>
-      </p>
-    </header>
 
     <div v-if="errorMsg" class="pa-6 t-body c-muted">
       {{ errorMsg }}
@@ -313,8 +301,9 @@ function openTask(task: RoomTask) {
     </div>
 
     <template v-else-if="nothingYet">
-      <!-- 刚建出来的项目落在这儿时，四列空格子是它的整个第一屏。把那一屏换成
-           「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。 -->
+      <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
+           「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。产物那一列在
+           这一屏上也不画：没有派出去过一条活的项目不可能有产物。 -->
       <div class="board__start">
         <p class="t-body">这个项目还没有开始的工作</p>
         <p class="t-meta c-muted">在对话里说明你要完成什么，芝士会把它拆成具体任务</p>
@@ -390,6 +379,18 @@ function openTask(task: RoomTask) {
             </li>
           </ul>
         </section>
+
+        <!-- 做出了什么：板上最右边那一列。三列从左到右是一条流水线（施工中 → 交付
+             中 → 待处理），产物是这条流水线吐出来的东西，接在后面。它不摞在板上面
+             是因为那要占竖直高度，有几项就占多高，而这一页不滚——板会被挤没。空的
+             时候这一列留着：一列凭空消失会让整个网格错位。 -->
+        <section class="board-col board-col--made">
+          <header class="board-col__head">
+            <span class="board-col__name t-body">做出了什么</span>
+            <span class="board-col__count t-meta">{{ madeCount }}</span>
+          </header>
+          <ArtifactManifest :project-id="projectId" @count="madeCount = $event" />
+        </section>
       </div>
 
       <!-- 已完成收在底部。不是隐藏：件数写在按钮上，谁想看点开就是。 -->
@@ -423,6 +424,9 @@ function openTask(task: RoomTask) {
    `.project-shell { overflow: hidden }` 裁掉，整页没有滚动条。
    `border-box`：这一格带 16/12/12 的内边距，默认的 content-box 会让它比 `100%`
    再高出 28px，底部那一条照样被裁。 */
+/* `container-type: inline-size`：下面那几列该并排还是该换行，取决于**这一格有多
+   宽**，不是窗口有多宽 —— 左边那条项目侧栏是能拖的，谁把它拉宽到 400px，视口
+   media query 就答错了。 */
 .board {
   display: flex;
   flex-direction: column;
@@ -431,27 +435,25 @@ function openTask(task: RoomTask) {
   box-sizing: border-box;
   min-height: 0;
   padding: 16px 12px 12px;
+  container-type: inline-size;
 }
 .board__title {
   flex: 0 0 auto;
-  padding: 0 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
 }
 .board__title h1 {
   margin: 0;
 }
-.board__head {
-  flex: 0 0 auto;
-  padding: 0 10px 10px;
-}
-.board__head-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 /* 统计那一行在活到齐之前是空的，但位置得留着：一个空 <p> 高度为 0，字一出现整块
    板就往下掉一行。 */
-.board__head p {
+.board__tally {
+  flex: 0 0 auto;
   min-height: 19px;
+  margin: 2px 0 10px;
+  padding: 0 10px;
 }
 .board__sep {
   color: var(--faint);
@@ -512,13 +514,35 @@ function openTask(task: RoomTask) {
 
 /* 并排的纵向卡片流。min() 是让轨道不比容纳它的那一列更宽的那一半：光写
    minmax(260px, …) 的话 260px 是个下限，网格在一个更窄的容器里也照守，于是板横着
-   溢出而不是重排 —— main 上 #658 就是修的这个。 */
+   溢出而不是重排 —— main 上 #658 就是修的这个。
+   窄的时候（这一格 < 1000px）：三列任务照旧自动换行，而「做出了什么」跨满整行、
+   排到最上面，高度封在 132px（列头 + 三行）以内自己滚。它在窄屏上只能摞在上面，
+   但摞的是一个**常数**高度，不是「有几项就多高」。 */
 .board__cols {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
+}
+.board__cols > .board-col--made {
+  order: -1;
+  grid-column: 1 / -1;
+  max-height: 132px;
+}
+/* 够宽就并排成四列。三列任务各 240 起，产物那一列只放名字和第几版，220 够用：
+   240×3 + 220 + 10×3 = 970，所以 1000 是这条线该划的地方。 */
+@container (min-width: 1000px) {
+  .board__cols {
+    grid-template-columns: repeat(3, minmax(240px, 1fr)) minmax(220px, 0.8fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .board__cols > .board-col--made {
+    order: 0;
+    grid-column: auto;
+    max-height: none;
+  }
 }
 .board-col {
   display: flex;

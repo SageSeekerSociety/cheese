@@ -83,7 +83,7 @@ def screen_from_json(value: dict[str, Any]) -> HubScreen:
     return HubScreen(**data)
 
 
-def _device_call_failure(response: httpx.Response) -> str | None:
+def _device_call_failure(response: httpx.Response) -> DeviceCallError | None:
     try:
         error = response.json().get("error") or {}
     except ValueError:
@@ -91,7 +91,9 @@ def _device_call_failure(response: httpx.Response) -> str | None:
     if error.get("name") != "DeviceCallError":
         return None
     message = error.get("message")
-    return message if isinstance(message, str) and message else None
+    if isinstance(message, str) and message:
+        return DeviceCallError(message, failure_code=error.get("failure_code"))
+    return None
 
 
 class RemoteDeviceHub:
@@ -253,7 +255,7 @@ class RemoteDeviceHub:
             # through with its status and body intact.
             failure = _device_call_failure(response)
             if failure is not None:
-                raise DeviceCallError(failure)
+                raise failure
         if response.status_code == 504:
             # Preserve the in-process hub's timeout type across the owner boundary.
             raise TimeoutError(f"Device connection owner timed out: {response.text}")

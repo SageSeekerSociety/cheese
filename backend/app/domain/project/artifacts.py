@@ -2,9 +2,18 @@
 
 ## 一项产物的一生
 
-**生**：只有交付能创建它。建项目的时候没人说得清这个项目会产出什么（#1054 已经决
-定不在那时多问），所以清单上没有「先登记一项」这回事 —— 递卡时声明本次交付的是一
-项新东西（`claim`），那一下它才存在。
+**生**：只有交付能创建它。清单上没有「先登记一项」这回事 —— 一样东西是在第一次
+交付它的那一下才存在的，那时候才有人说得清它是什么，也才轮得到人看一眼这个名字对
+不对。
+
+怎么生出来，看这次交出去的是什么：
+
+- **交的是一次合并**（代码仓库这类项目）—— 交出去的就是这个项目的那个仓库，一个
+  项目只有一个（`ProjectForge`），所以**没有什么可判断的，平台自己认**
+  （`for_repository`）。谁都不用起名，也没人能在这里多声明一项出来。
+- **交的是一份文件或一个地址** —— 这时才真的有得选：一个项目可以既交一份报告又交
+  一个网站。所以这条路上保留「沿用一项」（`reuse`）和「声明一项新的」（`claim`）
+  这两个动作。
 
 **长**：往后每一次交付沿用同一项（`reuse`）。一版是一次交付：清单上的「第 7 版」
 就是第 7 张采纳了的、点名它的卡，所以撤回采纳那一版自己就不在了。
@@ -18,7 +27,8 @@
   人正在交，清单就没什么可说的。表里那一行留着：它是这个名字的身份，同一个名字再
   被声明时落回同一行，那一项的历史因此是连着的。
 
-**沿用和新建是两个动作，不是一个参数的两种值**，而且两者收的东西不同：沿用只认
+**沿用和新建是两个动作，不是一个参数的两种值**（只在交文件、交地址那条路上；合并
+那条路上一个都没有），而且两者收的东西不同：沿用只认
 id（`reuse`），新建才写名字（`claim`）。名字是给人读的，写错它不报错 —— `报告` 和
 `结题报告` 都是合法名字，按名字认一次手滑就在清单上多一项，而这份清单进每一轮的开
 场，错的那一项从此每轮都在场。id 错了则解析不出来或者不在清单上，两种都是当场的报
@@ -26,6 +36,27 @@ id（`reuse`），新建才写名字（`claim`）。名字是给人读的，写�
 
 **改名、合并、删除是人的动作**，因为「这两项是不是同一个东西」要人判断。改名改的是
 这一行，卡指着的是行的 id，所以改完之前的交付照样算这一项的版本。
+
+## 那一句话（`about`）
+
+清单上只有名字的时候，下一次交付判断不了「我做出来的是不是它的新一版」——《数据分
+析报告》和手上这份「期中分析.pdf」，光看名字谁也说不准。所以每一项带一句话，说清它
+是什么、给谁的。
+
+约束全部来自它唯一的用途，所以它们是可检验的，不是文风建议：
+
+1. **写这样东西本身，不写这一版。** 检验：这句话在第 1 版和第 20 版都得成立。一交
+   新版就得改的，就是写错了 —— 也正因为写对了，它不需要每一版重写；要改只有一种情
+   况，这东西真的变成了另一样东西。
+2. **得跟清单上别的项区分得开。** 检验：换到另一项头上也说得通，就是白写。
+3. **说「是什么、给谁」，不说「做了什么」。** 这一版做了什么在卡的 `change_subject`
+   上，那里已经有了。把改动标题抄进来是这里最容易犯的错，而它正是清单长成一份改动
+   列表的那条老路 —— `clean_about` 当场挡掉它。
+4. **一句话。** `ABOUT_MAX` 是硬上限。
+
+前三条机器判不了（判得了就不用人写了），所以它们写在提示词和 cheese 技能里，**连检
+验方法一起**：规则会忘，检验方法当场能自查。同一条检验对名字也成立 ——《壳（Shell）
+声明与入口渲染》过不了第 1 条。
 """
 
 import uuid
@@ -42,6 +73,10 @@ from app.domain.review.models import AcceptCard, AcceptStatus
 
 #: 名字的长度上限，与 `ProjectArtifact.name` 这一列一致。
 NAME_MAX = 200
+
+#: 那一句话的长度上限，与 `ProjectArtifact.about` 这一列一致。一句话就是一句话：
+#: 上限本身就是约束，没有它这里会长出小作文，而小作文没人读。
+ABOUT_MAX = 80
 
 #: 还在飞的卡：等人验收、等闸门、卡在冲突上。它声明的那一项已经算在清单上 ——
 #: 有人正在交付它。与 `review/services.py` 的 `_BLOCKED_BY_CARD_MESSAGES` 同一批
@@ -60,7 +95,7 @@ _WRAPPERS = (("《", "》"), ("“", "”"), ("「", "」"), ("'", "'"), ('"', '
 
 @dataclass(frozen=True, slots=True)
 class ArtifactSummary:
-    """清单上的一行：真名、当前版本、最近更新。"""
+    """清单上的一行：真名、那一句话、当前版本、最近更新。"""
 
     id: uuid.UUID
     name: str
@@ -68,6 +103,10 @@ class ArtifactSummary:
     version: int
     #: 最近一次交付被采纳的时刻；一次都还没有时为空。
     delivered_at: datetime | None
+    #: 这是什么东西、给谁的（见模块开头）。没人写过时是空串。
+    about: str = ""
+    #: 这一项就是项目那个仓库。合并型的交付落在它身上，不用谁声明。
+    delivers_repository: bool = False
 
 
 def _unwrap(name: str) -> str:
@@ -96,6 +135,86 @@ def clean_name(raw: str | None) -> str:
     if len(name) > NAME_MAX:
         raise ValidationError(f"产物的名字最长 {NAME_MAX} 个字")
     return name
+
+
+def clean_about(raw: str | None, *, subject: str | None = None) -> str:
+    """那一句话 —— 这是什么东西、给谁的（约束见模块开头）。
+
+    这里只挡机器判得了的两条：太长，和「把改动标题抄过来」。另外三条要人读了才知
+    道，它们在提示词和 cheese 技能里，连检验方法一起给。
+
+    抄改动标题这一条单独挡，是因为它不是随便一种写错：清单长成一份改动列表就是这
+    么长出来的，而那正是这套东西要治的病。按归一化后比（去掉首尾空白、把中间的空
+    白压成一个），不然一个尾随空格就绕过去了。
+    """
+    about = " ".join((raw or "").split())
+    if not about:
+        return ""
+    if len(about) > ABOUT_MAX:
+        raise ValidationError(
+            f"这一句话最长 {ABOUT_MAX} 个字，现在有 {len(about)} 个。"
+            "它说的是这样东西本身（是什么、给谁的），不是这一版的说明。"
+        )
+    if subject is not None and about == " ".join(subject.split()):
+        raise ValidationError(
+            "这一句话和本次改动的标题一模一样。标题说的是这一版做了什么（卡上已经"
+            "有了），这一句话说的是这样东西本身 —— 它在第 1 版和第 20 版都得成立。"
+        )
+    return about
+
+
+async def for_repository(
+    session: AsyncSession, *, project_id: uuid.UUID, project_name: str
+) -> ProjectArtifact:
+    """项目那个仓库这一项 —— 合并型的交付交出去的就是它。
+
+    **这里没有判断，所以不问任何人。** 一个项目只有一个仓库（`ProjectForge`），
+    而一次合并交出去的就是那个仓库往前走一步。此前这个问题是在递卡时问 agent 的，
+    而 agent 的视野只有自己那一条分支：五条分支并行，就是五个人各自正确地回答
+    「这是一样新东西」，清单于是长成一份改动列表。
+
+    认的是 `delivers_repository` 这一位，不是名字：人随时会把它改成想要的名字，按
+    名字找的话改完名的下一次合并就再长出一行 —— 正是要治的那个病。
+
+    第一次合并交付时把它建出来，名字先用项目名（起得不对就改名，改名是无损的：卡
+    指着行的 id，之前的版本照样算在它名下）。项目名已经被清单上另一项占着时，认下
+    那一项：在一个代码项目里，一个跟项目同名的产物就是有人手工做了这件事。
+    """
+    found = await session.execute(
+        select(ProjectArtifact)
+        .where(
+            ProjectArtifact.project_id == project_id,
+            ProjectArtifact.delivers_repository.is_(True),
+        )
+        # 取最早的那一行而不是要求「有且只有一行」：一个项目只该有一项为真，但如
+        # 果哪天有两项，该发生的是这次交付照常落在先来的那一项上，而不是这个项目
+        # 从此一次也交付不出去。
+        .order_by(ProjectArtifact.created_at)
+    )
+    existing = found.scalars().first()
+    if existing is not None:
+        return existing
+    # 名字取项目名，但取不出名字也不能让这次交付递不上去：起名是可以事后改的，
+    # 交付这一刻错过了就没了。
+    clean = clean_name(project_name if " ".join(project_name.split()) else "这个项目")
+    taken = await _by_name(session, project_id=project_id, name=clean)
+    if taken is not None:
+        taken.delivers_repository = True
+        await session.flush()
+        return taken
+    row = ProjectArtifact(project_id=project_id, name=clean, delivers_repository=True)
+    try:
+        async with session.begin_nested():
+            session.add(row)
+    except IntegrityError:
+        # 同一个项目的另一条交付在这两句之间把它建出来了。认领它。
+        raced = await _by_name(session, project_id=project_id, name=clean)
+        if raced is None:
+            raise
+        raced.delivers_repository = True
+        await session.flush()
+        return raced
+    return row
 
 
 async def reuse(
@@ -130,14 +249,26 @@ async def reuse(
 
 
 async def claim(
-    session: AsyncSession, *, project_id: uuid.UUID, name: str
+    session: AsyncSession, *, project_id: uuid.UUID, name: str, about: str
 ) -> ProjectArtifact:
     """声明这次交付做出了一样清单上还没有的东西。
+
+    只有交文件、交地址的交付走得到这里：合并交出去的是项目那个仓库，平台自己认
+    （`for_repository`），没有什么可声明的。
 
     名字已经在清单上就报错：这是「新建」这个动作唯一能替人挡住的事 —— 它挡不住
     「《报告》其实就是《结题报告》」（那要人看），但挡得住「明明是同一项却又声明
     了一次新的」。
+
+    那一句话在这里是必填的：新建是唯一一次非写不可的时机 —— 此后每一版都不必重写
+    （写对了的那句话不会过期），而清单上一项没有它，下一次交付就又只能看着名字猜。
     """
+    if not about:
+        raise ValidationError(
+            "新声明一项产物要用一句话说清它是什么、给谁的 —— 清单上只有名字的话，"
+            "下一次交付判断不了「我做的是不是它的新一版」。写这样东西本身，不写这"
+            "一版做了什么：这句话在第 1 版和第 20 版都得成立。"
+        )
     clean = clean_name(name)
     listed = await list_for_project(session, project_id)
     if any(row.name == clean for row in listed):
@@ -149,8 +280,10 @@ async def claim(
     if found is not None:
         # 这个名字此前被声明过，但那次交付没落地，所以它不在清单上。落回同一行：
         # 同一个名字是同一项，它的历史因此是连着的。
+        found.about = about
+        await session.flush()
         return found
-    row = ProjectArtifact(project_id=project_id, name=clean)
+    row = ProjectArtifact(project_id=project_id, name=clean, about=about)
     try:
         async with session.begin_nested():
             session.add(row)
@@ -161,6 +294,22 @@ async def claim(
             raise
         return raced
     return row
+
+
+async def describe(
+    session: AsyncSession, artifact: ProjectArtifact, *, about: str
+) -> ProjectArtifact:
+    """把那一句话换成新的 —— 空的表示这次不改。
+
+    每一版都重写是白费力气：写对了的那句话说的是这样东西本身，交一版新的不会让它
+    变得不对。所以沿用一项时它是可给可不给的，给了就以新的为准 —— 该改的那一种情
+    况是这东西真的变成了另一样东西，那时候写的人正好就在现场。
+    """
+    if not about or about == artifact.about:
+        return artifact
+    artifact.about = about
+    await session.flush()
+    return artifact
 
 
 async def get_or_404(
@@ -252,7 +401,12 @@ async def list_for_project(
     )
     return [
         ArtifactSummary(
-            id=row.id, name=row.name, version=landed, delivered_at=delivered_at
+            id=row.id,
+            name=row.name,
+            version=landed,
+            delivered_at=delivered_at,
+            about=row.about,
+            delivers_repository=row.delivers_repository,
         )
         for row, landed, live, delivered_at in rows
         if landed or live
@@ -278,6 +432,8 @@ async def summary(
         name=artifact.name,
         version=landed,
         delivered_at=delivered_at,
+        about=artifact.about,
+        delivers_repository=artifact.delivers_repository,
     )
 
 

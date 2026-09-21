@@ -101,7 +101,6 @@ from app.domain.agent_instance.configuration import (
     validate_configuration,
 )
 from app.domain.agent_instance.services import (
-    IMPLICIT_DEFAULT,
     AgentInstanceService,
     ResolvedAgent,
     legacy_topic_pool,
@@ -2219,12 +2218,10 @@ class ChatService:
                     return None
                 topic = place.room
                 project = await ProjectRepository(session).get(project_id)
+                if project is None:
+                    return None
                 agents = AgentInstanceService(session)
-                agent = (
-                    await agents.for_topic(topic, project)
-                    if project is not None
-                    else IMPLICIT_DEFAULT
-                )
+                agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
                 is_private = topic.is_private
@@ -2604,7 +2601,7 @@ class ChatService:
                     topic_id=landed.topic_id,
                     task_id=landed.task_id,
                     author=state.acting_agent,
-                    author_type=AuthorType.system,
+                    author_type=AuthorType.platform,
                     content=f"芝士 {_ACTION_LABEL[resource]}",
                     kind=BlockKind.event,
                     turn_id=state.work_id,
@@ -2721,11 +2718,9 @@ class ChatService:
                     return payloads, anchor.id, block_ids, True
             created_blocks: list[Block] = []
             project = await ProjectRepository(session).get(topic.project_id)
-            agent = (
-                await AgentInstanceService(session).recipient_for_topic(topic, project)
-                if project is not None
-                else IMPLICIT_DEFAULT
-            )
+            if project is None:
+                raise NotFoundError("Project not found")
+            agent = await AgentInstanceService(session).for_topic(topic, project)
             agent_handles = (
                 await TopicMemberService(session).agent_handles(topic.id)
                 if "@" in content
@@ -2747,7 +2742,7 @@ class ChatService:
                 else {}
             )
             recipient = {
-                "instance_id": str(agent.instance_id) if agent.instance_id else None,
+                "instance_id": str(agent.instance_id),
                 "handle": agent.handle,
                 "mentioned": False,
             }
@@ -2990,7 +2985,7 @@ class ChatService:
         """
         project = await ProjectRepository(session).get(topic.project_id)
         if project is None:
-            return IMPLICIT_DEFAULT
+            raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(topic, project)
 
     async def _agent_at(self, session: AsyncSession, place: Place) -> ResolvedAgent:
@@ -3003,7 +2998,7 @@ class ChatService:
         """
         project = await ProjectRepository(session).get(place.project_id)
         if project is None:
-            return IMPLICIT_DEFAULT
+            raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(place.room, project)
 
     async def _agent_memory_pool(
@@ -3059,10 +3054,9 @@ class ChatService:
         before agents had seats of their own (only its room-derived seat on the
         roster) and a private 1:1 fall through to the room's seat as before.
         """
-        if agent.instance_id is not None:
-            seat = agent_instance_handle(agent.instance_id)
-            if seat in await TopicMemberService(session).agent_handles(topic_id):
-                return seat
+        seat = agent_instance_handle(agent.instance_id)
+        if seat in await TopicMemberService(session).agent_handles(topic_id):
+            return seat
         return await self._agent_handle(session, topic_id)
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
@@ -3136,7 +3130,7 @@ class ChatService:
                 backfilled=backfilled,
                 platform_unsolicited=platform_unsolicited,
                 in_room=True,
-                author_type=AuthorType.system,
+                author_type=AuthorType.platform,
                 task_id=task_id,
             )
         meta: dict | None = (
@@ -3482,7 +3476,7 @@ class ChatService:
             # so `platform`, the same as every other line the platform says out
             # loud. Attributing it to 芝士 would make the room's history contain
             # a remark 芝士 never made.
-            content, author_type = "分身开工", AuthorType.system
+            content, author_type = "分身开工", AuthorType.platform
             meta: dict = {"event_type": "subagent_start"}
         else:
             # The closing message in full, and it IS the worker's own words. It
@@ -3628,7 +3622,7 @@ class ChatService:
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
             in_room=True,
-            author_type=AuthorType.system,  # 平台自己数出来的，不是芝士说的
+            author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
         )
 
     async def _reconcile_spool(
@@ -4255,7 +4249,7 @@ class ChatService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="system",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=text,
             kind=BlockKind.event,
             turn_id=turn_id,
@@ -4325,10 +4319,10 @@ class ChatService:
                 (addressed.meta or {}).get("agent_recipient") if addressed else None
             )
             agents = AgentInstanceService(session)
-            if recipient is None:
+            # 收件人是消息落库时记下来的。记的时候还没有实例行的那些旧消息，
+            # 「收件人是项目的芝士」和今天的解析是同一个答案。
+            if recipient is None or recipient.get("instance_id") is None:
                 agent = await self._resolved_agent(session, topic)
-            elif recipient["instance_id"] is None:
-                agent = IMPLICIT_DEFAULT
             else:
                 agent = agents.resolved(
                     await agents.get_in_project(
@@ -4407,7 +4401,12 @@ class ChatService:
                 None
                 if is_private
                 else [
-                    {"id": str(a.id), "name": a.name, "version": a.version}
+                    {
+                        "id": str(a.id),
+                        "name": a.name,
+                        "version": a.version,
+                        "about": a.about,
+                    }
                     for a in await project_artifacts.list_for_project(
                         session, topic.project_id
                     )
@@ -4532,7 +4531,7 @@ class ChatService:
                             topic_id=landed.topic_id,
                             task_id=landed.task_id,
                             author="system",
-                            author_type=AuthorType.system,
+                            author_type=AuthorType.platform,
                             content=waiting_text,
                             kind=BlockKind.event,
                             turn_id=turn_id,

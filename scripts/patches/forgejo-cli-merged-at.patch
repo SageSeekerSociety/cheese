@@ -1,0 +1,20 @@
+--- a/localization/en-US/messages.ftl
++++ b/localization/en-US/messages.ftl
+@@ -579 +579 @@
+-msg-pr-status-merged = {STYLE("bright-magenta")}Merged{STYLE("reset")} by {$merged_by} on {DATETIME($created_at, dateStyle: "long", timeStyle: "long")}
++msg-pr-status-merged = {STYLE("bright-magenta")}Merged{STYLE("reset")} by {$merged_by} on {DATETIME($merged_at, dateStyle: "long", timeStyle: "long")}
+--- a/localization/de-DE/messages.ftl
++++ b/localization/de-DE/messages.ftl
+@@ -232 +232 @@
+-msg-pr-status-merged = { STYLE("bright-magenta") }Zusammengeführt{ STYLE("reset") } von { $merged_by } am { DATETIME($created_at, dateStyle: "long", timeStyle: "long") }
++msg-pr-status-merged = { STYLE("bright-magenta") }Zusammengeführt{ STYLE("reset") } von { $merged_by } am { DATETIME($merged_at, dateStyle: "long", timeStyle: "long") }
+--- a/localization/zh-Hans/messages.ftl
++++ b/localization/zh-Hans/messages.ftl
+@@ -232 +232 @@
+-msg-pr-status-merged = { STYLE("bright-magenta") }已合并{ STYLE("reset") }，由 { $merged_by } 于 { DATETIME($created_at, dateStyle: "long", timeStyle: "long") } 操作
++msg-pr-status-merged = { STYLE("bright-magenta") }已合并{ STYLE("reset") }，由 { $merged_by } 于 { DATETIME($merged_at, dateStyle: "long", timeStyle: "long") } 操作
+--- a/localization/tok/messages.ftl
++++ b/localization/tok/messages.ftl
+@@ -207 +207 @@
+-msg-pr-status-merged = { STYLE("bright-magenta") }ante li tawa mama ona{ STYLE("reset") }. { $merged_by } li wan e ona lon tenpo { DATETIME($created_at, dateStyle: "long", timeStyle: "long") }
++msg-pr-status-merged = { STYLE("bright-magenta") }ante li tawa mama ona{ STYLE("reset") }. { $merged_by } li wan e ona lon tenpo { DATETIME($merged_at, dateStyle: "long", timeStyle: "long") }

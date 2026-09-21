@@ -88,8 +88,9 @@ export interface Topic {
 }
 
 // 一条事件的作者只有两档：一个参与者，或者平台自己。「是人还是芝士」问 `author`
-// ——见 `lib/authorship.ts`。平台那一档正在改名：行上写的今天是 `system`，后端往后
-// 两次发布改写成 `platform`，这里两个名字都得认得。
+// ——见 `lib/authorship.ts`。平台那一档正在改名，两个名字现在同时在库里：新行写的是
+// `platform`，`system` 只出现在存量行上，所以这里两个都得认得。后端还剩一次发布把
+// 那些行改写掉，届时 `system` 从这里删掉。
 export type AuthorType = 'participant' | 'platform' | 'system'
 
 // One aggregated emoji reaction group on a block (Slack-style chip):
@@ -1120,20 +1121,16 @@ export interface AgentConfiguration {
 
 export interface ProjectAgent {
   configuration: AgentConfiguration
-  // Current project rosters always return saved IDs; nullable for older clients.
-  id: string | null
+  id: string
   project_id: string
   // The memory pool key inside the project (`{project}:{handle}`).
   handle: string
   // 它坐在房间名册上时用的 handle —— 把它请进一个房间就是往名册上加这个。
-  // 旧客户端和还没保存的行没有。
-  seat_handle?: string | null
+  seat_handle: string
   type_name: string | null
   display_name: string
   // What a new topic in this project gets.
   is_default: boolean
-  // Retained for older clients; current project roster entries are always saved.
-  configured: boolean
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
@@ -1207,6 +1204,28 @@ export interface FeedbackComment {
   /** 同 `FeedbackCard.author_avatar_id`。 */
   author_avatar_id: number | null
   body: string
+  /** 这条在回答谁。**只在被回复的那条本身也是回复时才有值**，因为折到顶层这个动作
+   *  把指向弄丢了 —— 楼中楼里唯一猜不出来的信息。值为 null 有两种情形（顶层评论、
+   *  回楼主的回复），两者渲染方式相同，所以客户端不需要区分它们。
+   *  恒为 handle 而不是 id：要回答的问题只有一个「在回谁」，答案是个名字。 */
+  reply_to_handle: string | null
+  /** 点赞总数。 */
+  likes: number
+  /** **按读者**算：当前登录的人点过没有。 */
+  liked: boolean
+  /** **按读者**算：服务端说这条删得掉吗。按钮画不画由它决定，不由前端猜 ——
+   *  猜的结果是「按钮画得出来、点下去 403」。 */
+  can_delete: boolean
+  /** **服务端数得出来的**这一条（顶层评论才有意义）下面一共几条回复 —— 不是这一页
+   *  带回来几条。评论是分页取的，所以这两件事不一样，而「展开更多」该摊开手上已经
+   *  有的、还是去取下一页，全靠这个数和手上条数的比较。回复恒为 0。
+   *  少了它，客户端只能把「已经取回来的」当成全部：一栋 60 条回复的楼，界面上永远
+   *  只有前 50 条，而「展开更多」会当场消失。 */
+  reply_count: number
+  /** 这一栋楼**楼内**的下一页游标，null = 楼里的回复已经取完了。回复自己恒为 null。
+   *  不透明的字符串，和 `thread_next_cursor` 同一套：原样送回
+   *  `GET /feedback/{id}/comments?parent_id=…&after=…`，不解析、不自己拼。 */
+  replies_next_cursor: string | null
   created_at: string
 }
 
@@ -1234,7 +1253,11 @@ export interface FeedbackDetail extends FeedbackCard {
   topic_id: string | null
   project_id: string | null
   timeline: FeedbackTimelineEntry[]
+  /** 顶层评论的**第一页**，每栋楼跟着它的前若干条回复走（见 `FeedbackComment`）。 */
   thread: FeedbackComment[]
+  /** 顶层评论的下一页游标，null = 底层这一层已经取完了。和列表接口的 `page_start`
+   *  不同：这是**值承载**的不透明游标，锚点那一行在这中间被删掉也照样能接着往下走。 */
+  thread_next_cursor: string | null
   /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
   notes: FeedbackNote[]
 }
@@ -1277,6 +1300,15 @@ export interface FeedbackSupportResult {
   /** **写完之后**的计数，不是增量。 */
   count: number
   supported: boolean
+}
+
+/** 评论点赞的返回，`FeedbackSupportResult` 往下一层。字段叫 `liked` 不叫
+ *  `supported`：两件事在界面上是两种表态，共用一个词的话下一个读代码的人会以为
+ *  它们是同一条记录。 */
+export interface FeedbackCommentLikeResult {
+  /** **写完之后**的计数，不是增量。 */
+  count: number
+  liked: boolean
 }
 
 /** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */

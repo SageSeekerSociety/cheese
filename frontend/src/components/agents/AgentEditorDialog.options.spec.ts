@@ -45,8 +45,8 @@ const AGENT: ProjectAgent = {
   handle: 'reviewer',
   type_name: 'reviewer',
   display_name: '评审员',
+  seat_handle: 'cheese-a1',
   is_default: false,
-  configured: true,
   is_active: true,
 }
 

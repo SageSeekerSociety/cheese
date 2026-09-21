@@ -343,13 +343,15 @@ def approvals_required_of(project: Project | None) -> int:
     return branch_protection_of(project).approvals_required
 
 
-#: 递卡时说清这次交付动的是清单上哪一项 —— 沿用一项，或者声明一项新的
+#: 交文件、交地址的交付要说清动的是清单上哪一项 —— 沿用一项，或者声明一项新的
 #: (#1085 结论三)。两个参数而不是一个，是因为「沿用」和「新建」是两个不同的动作：
 #: 合成一个参数的话，写错的名字会被当成新建，而那是错得最安静的一种 ——
 #: `报告` 和 `结题报告` 都是合法名字，清单于是多出一项看着像重复的东西，并且从此
 #: 每一轮的开场都带着它。
+#:
+#: 合并型的交付走不到这里，见 `_ARTIFACT_ACTION_UNWANTED`。
 _ARTIFACT_ACTION_MISSING = (
-    "没说这次交付动的是哪一项产物。两种说法选一种：\n"
+    "没说这次交付动的是哪一项产物。交出去一份文件或一个地址时，两种说法选一种：\n"
     "  --artifact <清单上那一项的 id>    这次交付是那一项的新一版\n"
     "  --new-artifact '<新的真名>'       这次交付做出了一样清单上还没有的东西\n"
     "清单在系统提示的「这个项目的产物清单」里，每一项的 id 就印在名字旁边；"
@@ -361,6 +363,17 @@ _ARTIFACT_ACTION_BOTH = (
     "要么做出了一样清单上还没有的东西。"
 )
 
+#: 合并交出去的是项目那个仓库本身，而一个项目只有一个仓库 —— 没有什么可判断的，
+#: 所以这里不收声明，平台自己认得出是哪一项。
+#:
+#: 打回而不是默默忽略：一个收下了却不起作用的参数，读起来跟起了作用一模一样，而
+#: 传它的那一方正以为自己说清了一件要紧的事。
+_ARTIFACT_ACTION_UNWANTED = (
+    "合并交出去的是这个项目的仓库本身，不用声明产物 —— 平台认得出是清单上哪一项，"
+    "这次交付会成为它的新一版。--artifact / --new-artifact / --about 是交一份文件"
+    "（--deliver）或一个地址（--deliver-url）时才要说的。"
+)
+
 
 def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None:
     reuse, claim = (artifact or "").strip(), (new_artifact or "").strip()
@@ -368,6 +381,24 @@ def _one_artifact_action(artifact: str | None, new_artifact: str | None) -> None
         raise ValidationError(_ARTIFACT_ACTION_BOTH)
     if not reuse and not claim:
         raise ValidationError(_ARTIFACT_ACTION_MISSING)
+
+
+def _no_artifact_action(
+    artifact: str | None, new_artifact: str | None, about: str | None
+) -> None:
+    """合并那条路上，这三个参数一个都不收。
+
+    `about` 一起挡掉，理由和另外两个一样：那一句话是给下一次交付判断「我做出来的
+    是不是它的新一版」用的，而合并那条路上没有这个判断 —— 交出去的是这个项目的仓
+    库，它是哪一项不需要任何人读一句话才知道。收下一个不起作用的参数，读起来跟起
+    了作用一模一样。
+    """
+    if (
+        (artifact or "").strip()
+        or (new_artifact or "").strip()
+        or (about or "").strip()
+    ):
+        raise ValidationError(_ARTIFACT_ACTION_UNWANTED)
 
 
 #: 这一版交出去的是什么 (#1085 结论五)。一份文件、一个地址，或者两个都不给 ——
@@ -524,6 +555,7 @@ class AcceptService:
         change_body: str | None = None,
         artifact: str | None = None,
         new_artifact: str | None = None,
+        about: str | None = None,
         deliver: str | None = None,
         deliver_url: str | None = None,
     ) -> AcceptCard:
@@ -542,8 +574,19 @@ class AcceptService:
             raise ValidationError(str(exc)) from exc
         # 这次交付更新了哪一项产物 (#1085 结论三)。先验参数、后落行：一张递不上
         # 去的卡（分支没提交、已经有一张未决的卡）不该在清单上留下一项。
-        _one_artifact_action(artifact, new_artifact)
+        #
+        # 交出去的是什么，决定了产物还要不要声明 —— 所以先问这一句。合并交出去的
+        # 是项目那个仓库，一个项目只有一个，平台自己认得出；只有交文件、交地址才
+        # 真的有得选。
         _one_deliverable(deliver, deliver_url)
+        hands_over_repository = (
+            not (deliver or "").strip() and not (deliver_url or "").strip()
+        )
+        if hands_over_repository:
+            _no_artifact_action(artifact, new_artifact, about)
+        else:
+            _one_artifact_action(artifact, new_artifact)
+        about = artifacts.clean_about(about, subject=subject)
         existing = await self._repo.list_for_task(task.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
@@ -575,15 +618,25 @@ class AcceptService:
             else None
         )
         is_new = bool((new_artifact or "").strip())
-        declared = (
-            await artifacts.claim(
-                self._session, project_id=topic.project_id, name=new_artifact or ""
+        if hands_over_repository:
+            project = await self._projects.get(topic.project_id)
+            declared = await artifacts.for_repository(
+                self._session,
+                project_id=topic.project_id,
+                project_name=project.name if project else "项目",
             )
-            if is_new
-            else await artifacts.reuse(
+        elif is_new:
+            declared = await artifacts.claim(
+                self._session,
+                project_id=topic.project_id,
+                name=new_artifact or "",
+                about=about,
+            )
+        else:
+            declared = await artifacts.reuse(
                 self._session, project_id=topic.project_id, artifact_id=artifact or ""
             )
-        )
+            await artifacts.describe(self._session, declared, about=about)
         card = await self._repo.add(
             topic_id=topic_id,
             task_id=task.id,
@@ -594,12 +647,14 @@ class AcceptService:
             change_body=change_body or None,
             delivered_task_ids=[task.id],
             artifact_id=declared.id,
+            # 和上面那个「要不要声明产物」问的是同一句话，所以答案从同一个地方来：
+            # 两处各算一次的话，有一天它们会对不上，而对不上的那一天没有任何报错。
             deliverable_kind=(
-                DeliverableKind.file
+                DeliverableKind.merge
+                if hands_over_repository
+                else DeliverableKind.file
                 if snapshot is not None
                 else DeliverableKind.link
-                if (deliver_url or "").strip()
-                else DeliverableKind.merge
             ),
             deliverable_name=snapshot[0] if snapshot else None,
             deliverable_url=(deliver_url or "").strip() or None,
@@ -3708,7 +3763,7 @@ class AcceptService:
             topic_id=landed.topic_id,
             task_id=landed.task_id,
             author="cheese",
-            author_type=AuthorType.system,
+            author_type=AuthorType.platform,
             content=f"<@{decided_by}> 作废了这张验收卡",
             kind=BlockKind.event,
             meta={
