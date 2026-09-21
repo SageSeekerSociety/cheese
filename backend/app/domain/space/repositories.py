@@ -627,7 +627,8 @@ class SpaceMemberRepository:
             .values(deleted_at=None, updated_at=now)
         )
         result = await self._session.execute(stmt)
-        created = (result.rowcount or 0) > 0
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        created = (result.rowcount or 0) > 0  # type: ignore[attr-defined]
         # Refreshed either way: on the created path to load what the UPDATE
         # wrote, and otherwise because the row this session already holds may
         # predate another request's revive and would be returned still marked
