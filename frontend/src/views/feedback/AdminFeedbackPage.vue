@@ -18,7 +18,7 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 界面同时回答这两个问题，结果是两边都不好用。
 //
 // 「我是不是管理员」由**服务端**回答（`GET /feedback/meta` 的 `is_admin`，按
-// `settings.feedback_admin_handles` 判定）。原型上有一个可以自己拨的身份开关，
+// `settings.platform_admin_handles` 判定）。原型上有一个可以自己拨的身份开关，
 // 那个东西真接上服务端之后就没有意义了：能不能看这一页不是客户端说了算的，而且
 // 每个管理端接口自己还会再判一次 —— 前端这道判断只是为了不画一个必然全 403 的
 // 空表，不是权限边界。
@@ -50,42 +50,20 @@ function close(open: boolean) {
   if (!open) selectedId.value = null
 }
 
-onMounted(async () => {
-  // meta 决定这一页画不画。它可能已经被反馈中心拉过了，这里再调一次是幂等的，
-  // 而直接输地址进来的时候没有它就没法判断。
-  //
-  // **要等**：`loadMeta` 是网络调用，不 await 的话这一行读到的永远是「还不是管理员」，
-  // 于是直接打开/刷新 `/admin/feedback` 看到的是一张空表 —— 表格画出来了，一行没有，
-  // 而人以为「后台里没东西」。这个 bug 是预览里发现的：冷启动进来就是这样，从反馈
-  // 中心点进来反而正常（那边已经把 meta 拉过了），所以只盯着点进来的路径看不出来。
-  await store.loadMeta()
-  if (store.isAdmin) void store.loadAdmin()
+// 「我是不是管理员」**不在这里问**：外壳（`AdminLayout`）已经问过并且把整块后台挡在
+// 门后了，这一页能画出来就说明这个人过了那道门。那份三段门（还没问完 / 不是管理员 /
+// 是）连同它踩过的坑一起搬到了 `views/admin/AdminLayout.spec.ts`。
+onMounted(() => {
+  void store.loadAdmin()
 })
 </script>
 
 <template>
   <!-- 滚动归这一页自己领，理由见 FeedbackCenterPage 顶部那段注释。 -->
   <div class="fb-admin fill-height overflow-y-auto">
-    <!-- 这里要**三段**，不是两段。「我是不是管理员」在服务端，meta 没到之前
-         `isAdmin` 是 false —— 两段的话，直接打开/刷新这一页时先画出来的就是「你的
-         账号不在管理员名单里」，一个真管理员看到的第一句话是假的，然后它才变成
-         表格。await 只解决了「拉不拉列表」，解决不了这一帧画什么。 -->
-    <div v-if="!store.metaChecked" class="fb-admin__gate page-container">
-      <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-      <div class="t-body mb-1">正在确认权限…</div>
-    </div>
-
-    <div v-else-if="!store.isAdmin" class="fb-admin__gate page-container">
-      <v-icon size="28" class="mb-2">mdi-shield-account-outline</v-icon>
-      <div class="t-body mb-1">这一页是管理员后台</div>
-      <div class="t-meta mb-3">你的账号不在管理员名单里，看不到这里的反馈 —— 私密反馈和安全问题对非管理员不存在</div>
-      <v-btn variant="text" color="secondary" size="small" to="/feedback">回到反馈中心</v-btn>
-    </div>
-
-    <div v-else class="fb-admin__inner page-container--wide">
+    <div class="fb-admin__inner page-container--wide">
       <header class="fb-admin__head">
         <div>
-          <div class="t-eyebrow">管理后台</div>
           <h1 class="t-page-title">反馈管理</h1>
         </div>
         <v-spacer />
@@ -189,13 +167,6 @@ onMounted(async () => {
 .fb-admin__inner,
 .fb-admin__gate {
   margin: 0 auto;
-}
-.fb-admin__gate {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 64px 0;
-  color: var(--faint);
 }
 .fb-admin__head {
   display: flex;
