@@ -3,7 +3,7 @@
 import hashlib
 from functools import lru_cache
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The gateway mounts this whole app under `/api` and strips that one segment
@@ -17,8 +17,19 @@ GATEWAY_MOUNT = "/api"
 
 
 class Settings(BaseSettings):
+    # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
+    # it carries a `validation_alias` (so the deploy keeps working through the
+    # env-name change), and in pydantic a field with an alias is otherwise
+    # reachable ONLY by that alias — `Settings(platform_admin_handles=[...])`,
+    # which the unit tests and any in-process caller write, would be silently
+    # dropped by `extra="ignore"` and read back as the empty default. The flag
+    # is per-model, not per-field, but no other field here has an alias, so for
+    # them it changes nothing.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_by_name=True,
     )
 
     # --- Database ---
@@ -219,18 +230,37 @@ class Settings(BaseSettings):
     # Owner handles allowed to select tier=testing profiles (dogfooding only —
     # see profiles.py / review Finding 7). Comma-separated in env.
     dogfood_owner_handles: list[str] = []
-    # Handles allowed to read and route the whole feedback queue
-    # (`/admin/feedback`). JSON list in env, e.g. '["alice","bob"]'. A settings
-    # list rather than a role because no production path assigns
+    # Handles that are platform administrators — the people who read and route
+    # the whole feedback queue (`/admin/feedback`) and who manage everything else
+    # that turns out to need an admin. JSON list in env, e.g. '["alice","bob"]'.
+    # A settings list rather than a role because no production path assigns
     # `SystemRole.SUPER_ADMIN` today — a role check would evaluate to "nobody"
     # and lock the surface for everyone.
+    #
+    # This is the **root** half of the admin list: the other half is the
+    # `platform_admins` table (the 成员管理 screen), and the judge is their union
+    # (`AdminService.admin_handles`). Rows added on the page can be removed
+    # there; these cannot, because adding admins is itself an admin action — a
+    # list you can empty from the UI is a door that locks from the inside.
+    #
+    # The env name is `PLATFORM_ADMIN_HANDLES`. It used to be
+    # `FEEDBACK_ADMIN_HANDLES`, from when the only thing an admin administered
+    # was feedback; that name is still read (a deployment's env file is not
+    # something a code change can edit), so an unmigrated box keeps booting, but
+    # the new name wins when both are set. Drop the old choice once the deploy
+    # workflow and the boxes carry the new one.
     #
     # REQUIRED on a deployment: an empty list is not "no admins configured yet",
     # it is a feedback queue that accepts submissions and can never be worked —
     # and the users who submit cannot tell the difference from "nobody has
-    # picked this up yet". `_require_feedback_admins_on_deployment` fails the
+    # picked this up yet". `_require_platform_admins_on_deployment` fails the
     # boot instead. Local dev and the test suite keep the empty default.
-    feedback_admin_handles: list[str] = []
+    platform_admin_handles: list[str] = Field(
+        default=[],
+        validation_alias=AliasChoices(
+            "PLATFORM_ADMIN_HANDLES", "FEEDBACK_ADMIN_HANDLES"
+        ),
+    )
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
     # for the agent path (`cheese feedback propose`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
@@ -933,14 +963,17 @@ class Settings(BaseSettings):
         )
 
     @model_validator(mode="after")
-    def _require_feedback_admins_on_deployment(self) -> "Settings":
+    def _require_platform_admins_on_deployment(self) -> "Settings":
         """Fail the boot when a deployment has nobody who can work the queue.
 
-        ``feedback_admin_handles`` is the ONLY thing that opens
-        ``/admin/feedback``: there is no role behind it, no default member set,
-        no way to promote yourself from the UI. Empty therefore does not read as
-        "we have not got round to appointing an admin yet" — it reads, from
-        every seat in the product, as *nobody is looking at this*:
+        ``platform_admin_handles`` is the **root** admin list, and it is still
+        the only way in: no role behind it, no default member set, nothing in the
+        UI that promotes you. A deployment can now add admins from the page
+        (`platform_admins`, the 成员管理 block) — but **adding one is itself an
+        admin action**, so an empty root list is not "we have not got round to
+        appointing an admin yet". It is a deployment where nobody can ever
+        appoint one. Read from every seat in the product, it says *nobody is
+        looking at this*:
 
         - A submitter writes a report, watches its status stay at 已收录, and has
           no way to tell that apart from "someone will get to it". The feedback
@@ -950,6 +983,11 @@ class Settings(BaseSettings):
           a sentence that names the wrong problem.
         - The agent-side proposal path still spends its daily quota filing
           proposals that no one can act on.
+        - 成员管理 — the screen whose whole job is adding the next admin — is
+          admin-only too, so there is no way back in from the product at all.
+          This is why the root list is the half the page cannot delete: one
+          mis-click on a list that was the only copy would lock everyone out
+          permanently.
 
         Nothing in the running system can detect that state from the inside,
         which is why it is checked at boot (#338/#439's rule: an unset
@@ -968,17 +1006,17 @@ class Settings(BaseSettings):
         # An entry that is empty or whitespace is worse than a missing entry:
         # the list is non-empty, so this guard passes, and the handle it names is
         # one that no account can ever authenticate as.
-        blank = [h for h in self.feedback_admin_handles if not h.strip()]
+        blank = [h for h in self.platform_admin_handles if not h.strip()]
         if blank:
             raise RuntimeError(
-                "FEEDBACK_ADMIN_HANDLES contains an empty entry. Handles are "
+                "PLATFORM_ADMIN_HANDLES contains an empty entry. Handles are "
                 "matched against the account's handle exactly, so an empty "
                 "string can never match anyone — this is a list with a typo in "
                 "it, not a list with an admin in it. Set it to a JSON list of "
-                'handles, e.g. FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\'.'
+                'handles, e.g. PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\'.'
             )
 
-        if self.feedback_admin_handles:
+        if self.platform_admin_handles:
             return self
 
         if not self.deployed_via_compose and self.environment in (
@@ -988,19 +1026,22 @@ class Settings(BaseSettings):
             return self
 
         raise RuntimeError(
-            "FEEDBACK_ADMIN_HANDLES is empty on a deployment ("
+            "PLATFORM_ADMIN_HANDLES is empty on a deployment ("
             f"ENVIRONMENT reads '{self.environment}'"
             + (
                 ", started by the deploy compose file"
                 if self.deployed_via_compose
                 else ""
             )
-            + "). This is the only thing that opens /admin/feedback — with it "
-            "empty, nobody can read or route the feedback queue, and neither a "
-            "submitter nor the agent path can tell that apart from 'nobody has "
-            "picked it up yet'. The whole feedback surface looks healthy and is "
-            "write-only. Set it to the handles that should administer feedback, "
-            'as a JSON list: FEEDBACK_ADMIN_HANDLES=\'["alice","bob"]\' (see '
+            + "). This is the only thing that opens /admin/feedback — the page "
+            "itself can add admins, but only an admin can do that, so an empty "
+            "list here is a deployment nobody can get into: no one can read or "
+            "route the feedback queue, and neither a submitter nor the agent "
+            "path can tell that apart from 'nobody has picked it up yet'. The "
+            "whole feedback surface looks healthy and is write-only. Set it to "
+            "the handles that should administer feedback (they are the ones the "
+            "page cannot remove), as a JSON list: "
+            'PLATFORM_ADMIN_HANDLES=\'["alice","bob"]\' (see '
             "deploy/.env.prod.example). If you are sure nobody should administer "
             "feedback, set it to a handle you control rather than leaving it "
             "empty."
