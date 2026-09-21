@@ -197,28 +197,59 @@ def test_a_machine_and_a_model_take_the_same_road():
 
 
 def test_only_the_gate_knows_what_each_disposition_does():
-    """两个处置（`DENY` / `PROPOSE`）只有 `policy/gate.py` 认识。
+    """「超档怎么办」只有 `policy/gate.py` 回答。
 
-    别处引用其中任何一个，就是在自己回答「超档怎么办」——第二份声明，两份迟早
-    不一致。调用点问的是 `check()`，写侧校验读的是 `DISPOSITIONS` 这个封闭集合，
-    它只说「合法的处置有哪几个」，不说每一个意味着什么。
+    第二份答案有两种写法，这条守卫两种都盯：
+
+    - 把闸门的 `DENY` / `PROPOSE` 拿过去自己分支；
+    - 干脆绕过闸门，直接把项目设置里那两个键（`allowed_tiers` / `over_tier`）读出
+      来比一比。**这一种才是最顺手的**——`over_tier` 本来就是设置 JSON 里的一个字
+      符串，PUT 路由原样收发的就是它，所以 `settings.get("over_tier") == "propose"`
+      写起来比 import 一个常量还省事。
+
+    盯的不是「哪里出现过 `deny` 这个词」：`app/` 下和档位策略无关的 `deny`（Claude
+    Code 的权限决定就有好几处）不是第二份答案，误伤它们只会让人学会忽略这条守卫。
+    所以两种写法都从**闸门这一侧**认：名字要么是从 `policy.gate` 导入的，要么是那
+    两个键的字面值。写侧读 `DISPOSITIONS` 不算——那个封闭集合只说「合法的处置有哪
+    几个」，不说每一个意味着什么。
     """
     app_root = pathlib.Path(__file__).resolve().parents[2] / "app"
     gate_file = app_root / "domain" / "policy" / "gate.py"
+    gate_module = "app.domain.policy.gate"
     answers = {"DENY", "PROPOSE"}
+    keys = {ALLOWED_TIERS_KEY, OVER_TIER_KEY}
     offenders = []
     for path in app_root.rglob("*.py"):
         if path == gate_file:
             continue
+        where = path.relative_to(app_root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        # 绑到 gate 模块上的名字（`from app.domain.policy import gate`），好把
+        # `gate.PROPOSE` 和随便哪个别的 `X.PROPOSE` 分开。
+        gate_aliases = set()
         for node in ast.walk(tree):
-            named = (
-                node.id
-                if isinstance(node, ast.Name)
-                else node.attr
-                if isinstance(node, ast.Attribute)
-                else None
-            )
-            if named in answers:
-                offenders.append(f"{path.relative_to(app_root).as_posix()}:{named}")
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.module == gate_module:
+                offenders += [
+                    f"{where}:{alias.name}"
+                    for alias in node.names
+                    if alias.name in answers
+                ]
+            if node.module == "app.domain.policy":
+                gate_aliases |= {
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if alias.name == "gate"
+                }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in answers
+                and isinstance(node.value, ast.Name)
+                and node.value.id in gate_aliases
+            ):
+                offenders.append(f"{where}:{node.value.id}.{node.attr}")
+            if isinstance(node, ast.Constant) and node.value in keys:
+                offenders.append(f"{where}:{node.value!r}")
     assert offenders == [], f"这些地方自己回答了「超档怎么办」：{offenders}"

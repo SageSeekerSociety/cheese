@@ -45,7 +45,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import COMPUTE_TIERS, subscription_model_alias
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -139,7 +139,6 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.user.models import User as UserRow
 
 ACTIVITY_SKILLS = ["chat", "activity-digestion", "doc-form"]
 HEARTBEAT_SKILLS = ["heartbeat", "chat"]
@@ -667,41 +666,6 @@ def _model_policy_call(project) -> gate.Call:
         label=choices[bound.model]["label"],
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
-    )
-
-
-async def _machine_policy_call(
-    session: AsyncSession, topic, project, compute_id: str | None
-) -> "gate.Call | None":
-    """这一轮要占的那台机器，写成闸门认得的那一次调用（结论 40 后半）。
-
-    点头的人：房间点了名的那台自托管机器，点头的是**机主本人**——它花的是他的电和
-    带宽，不是项目的钱。没点名（「系统挑一台」）时平台还没挑出那一台，点头的就是
-    项目的主人，这条策略本来也是他定的。
-
-    目录不认识的池返回 `None`：那样的房间连 provider 都选不出来，下面那一步会把它
-    说出口；闸门不替它报这个错，也不拿一个猜出来的档位去比。
-    """
-    tier = COMPUTE_TIERS.get(compute_id or "")
-    if tier is None:
-        return None
-    from app.domain.agent.compute_configs import room_choice
-    from app.domain.device.wiring import sql_device_service
-
-    choice = room_choice(topic, project.settings)
-    approver = project.owner_handle or ""
-    if choice.device_id:
-        device = await sql_device_service(session).get_device(choice.device_id)
-        if device is not None:
-            owner = await session.get(UserRow, device.owner_user_id)
-            if owner is not None:
-                approver = owner.username
-    return gate.Call(
-        resource=gate.Resource.machine,
-        subject=compute_id or "",
-        label=choice.name,
-        tier=tier,
-        approver=approver,
     )
 
 
@@ -4066,6 +4030,12 @@ class ChatService:
 
         没有房间（私聊之外的平台活、项目级的调用）就落不下这条提议：提议是房间里
         的一条事件。那种情形下超档只剩拒绝这一条路，闸门照抛。
+
+        提议写在**另一个 session** 上并当场提交，是因为紧接着这一抛会把 `_assemble_
+        turn` 那条读事务整个回滚掉。那条事务在闸门之前只读，回滚掉的什么也不是；而
+        提议要是跟着回滚，结果就是谁也没被问过、下一条消息再问一遍，「等谁点头」永
+        远落不到人手上。`proposals.propose` 要的不变量是「落库之后这次调用必须中
+        止」，下一行的 `raise` 就是那一句。
         """
         verdict = gate.check(call, gate.policy_of(project_settings), actor)
         if isinstance(verdict, gate.Allowed):
@@ -4658,8 +4628,16 @@ class ChatService:
             if project is not None:
                 actor_handle = acting_agent or agent.handle
                 if needs_place:
-                    machine_call = await _machine_policy_call(
-                        session, topic, project, compute_id
+                    from app.domain.agent.compute_configs import (
+                        machine_policy_call,
+                        room_choice,
+                    )
+
+                    machine_call = await machine_policy_call(
+                        session,
+                        project=project,
+                        topic=topic,
+                        choice=room_choice(topic, project.settings),
                     )
                     if machine_call is not None:
                         await self._pass_policy_gate(

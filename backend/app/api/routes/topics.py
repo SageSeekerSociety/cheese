@@ -40,7 +40,6 @@ from app.domain.agent.harness.prompt import thread_relay_prompt, thread_upgraded
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
-    COMPUTE_TIERS,
     MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
     compute_default_name,
@@ -120,7 +119,6 @@ from app.domain.topic.schemas import (
 from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
-from app.domain.user.models import User as UserRow
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -1368,6 +1366,7 @@ async def set_topic_compute_profile(
 
     from app.domain.agent.compute_configs import (
         ComputeChoice,
+        machine_policy_call,
         room_choice,
         standard_choice,
         validate_choice,
@@ -1439,21 +1438,11 @@ async def set_topic_compute_profile(
     project = await ProjectRepository(db).get(topic.project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    approver = project.owner_handle or ""
-    if chosen_device is not None:
-        owner = await db.get(UserRow, chosen_device.owner_user_id)
-        if owner is not None:
-            approver = owner.username
-    verdict = gate.check(
-        gate.Call(
-            resource=gate.Resource.machine,
-            subject=device_id or name,
-            label=chosen_device.name if chosen_device is not None else name,
-            tier=COMPUTE_TIERS[name],
-            approver=approver,
-        ),
-        gate.policy_of(project.settings),
-        actor.handle,
+    call = await machine_policy_call(db, project=project, topic=topic, choice=choice)
+    verdict = (
+        gate.check(call, gate.policy_of(project.settings), actor.handle)
+        if call is not None
+        else None
     )
     if isinstance(verdict, gate.Proposal):
         # 这次调用没有发生：绑定不写，`topic.compute_profile` 不动。房间里多的是一

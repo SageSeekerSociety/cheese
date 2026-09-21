@@ -284,7 +284,101 @@ def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
     # 这一轮没有发生：没有请求发出去，机器也没有被绑走。
     assert stub_hooks.last_prompt is None
     assert _topic_binding(client, tid) is None
+    # 这个项目一台机器也没接，平台挑不出那一台，所以点头的是项目的主人。有机器的
+    # 情形在下面那条里——点头的是**那台机器的主人**，哪怕没人碰过选择器。
     assert _inbox(client, owner_id) != []
+
+
+def test_the_owner_of_the_machine_the_platform_would_pick_is_the_one_asked(
+    client, stub_hooks, monkeypatch
+):
+    """结论 40「要那台机器的主人点头」在默认路径上也成立。
+
+    没人打开过算力选择器的房间——绝大多数房间——平台在第一轮自己挑一台在线的项目
+    机器，而那台机器完全可能是别的成员的。被问的必须是他，不是项目的主人：花的是
+    他的电和带宽，也只有他点得了这个头。
+    """
+    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
+    project_owner_id = _seed_user(client, "andyl")
+    machine_owner_id = _seed_user(client, "xiaowang")
+    pid = _project(client)
+    tid = _topic(client, pid)
+    _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
+    # 项目默认是「自有设备 · 自动选择」：没点名任何一台，平台第一轮自己挑。
+    saved = client.put(
+        f"/projects/{pid}/compute-configs",
+        json={
+            "default": {"name": "自有设备 · 自动选择", "profile": "device"},
+            "favorites": [],
+        },
+        headers=session_auth_headers("andyl"),
+    )
+    assert saved.status_code == 200, saved.text
+    gated = client.put(
+        f"/projects/{pid}/tier-policy",
+        json={"allowed_tiers": ["included"], "over_tier": "propose"},
+        headers=session_auth_headers("andyl"),
+    )
+    assert gated.status_code == 200, gated.text
+
+    _say(client, tid)
+
+    proposals = _proposals(client, tid)
+    assert len(proposals) == 1
+    assert "小王的工作站" in proposals[0].content
+    assert "xiaowang" in proposals[0].content
+    assert _inbox(client, machine_owner_id) != []
+    assert _inbox(client, project_owner_id) == []
+    # 这次调用没有发生：机器没被绑走，也没有请求发出去。
+    assert _topic_binding(client, tid) is None
+    assert stub_hooks.last_prompt is None
+
+
+def test_the_picker_and_the_turn_ask_for_the_same_machine_once(
+    client, stub_hooks, monkeypatch
+):
+    """两条路走到同一台机器，是一条提议，不是两条。
+
+    在算力选择器里点「小王的工作站」撞上策略 → 一条提议；绑定因此没写，于是同一个
+    人回房间 @ 一句芝士，轮次组装自己解析，解析出来的还是那台机器。两处说的是同一
+    个诉求（同一个房间、同一台机器、同一档），所以房间里只该有一条「等谁点头」、
+    小王只该收到一条通知（结论 15 / I11「一次」）。
+    """
+    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
+    _seed_user(client, "andyl")
+    machine_owner_id = _seed_user(client, "xiaowang")
+    pid = _project(client)
+    tid = _topic(client, pid)
+    device_id = _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
+    saved = client.put(
+        f"/projects/{pid}/compute-configs",
+        json={
+            "default": {"name": "自有设备 · 自动选择", "profile": "device"},
+            "favorites": [],
+        },
+        headers=session_auth_headers("andyl"),
+    )
+    assert saved.status_code == 200, saved.text
+    gated = client.put(
+        f"/projects/{pid}/tier-policy",
+        json={"allowed_tiers": ["included"], "over_tier": "propose"},
+        headers=session_auth_headers("andyl"),
+    )
+    assert gated.status_code == 200, gated.text
+
+    picked = client.put(
+        f"/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": device_id},
+        headers=session_auth_headers("andyl"),
+    )
+    assert picked.status_code == 200, picked.text
+    assert picked.json()["data"]["proposal"]["approver"] == "xiaowang"
+
+    _say(client, tid)
+
+    assert len(_proposals(client, tid)) == 1
+    assert len(_inbox(client, machine_owner_id)) == 1
+    assert stub_hooks.last_prompt is None
 
 
 def test_a_turn_whose_model_is_over_tier_sends_no_request(client, stub_hooks):
