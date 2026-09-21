@@ -239,7 +239,7 @@ def _insert_block(client, project_id: str, topic_id: str, content: str) -> str:
                 project_id=uuid.UUID(project_id),
                 topic_id=uuid.UUID(topic_id),
                 kind=BlockKind.message,
-                author_type=AuthorType.human,
+                author_type=AuthorType.participant,
                 author="alice",
                 content=content,
                 refs=[],

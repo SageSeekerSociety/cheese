@@ -15,7 +15,7 @@ function evt(id: string, content: string, over: Partial<Block> & { meta?: Record
     project_id: 'p',
     topic_id: 't',
     kind: 'event',
-    author_type: 'system',
+    author_type: 'platform',
     author: 'cheese',
     content,
     reply_to: null,
@@ -39,7 +39,7 @@ describe('房间露面', () => {
   })
 
   it('没标的事件都露面——芝士写的也一样', () => {
-    expect(shown([evt('a', '分身查完了：查分页接口现状', { author_type: 'ai' })])).toEqual([
+    expect(shown([evt('a', '分身查完了：查分页接口现状', { author_type: 'participant' })])).toEqual([
       '分身查完了：查分页接口现状',
     ])
   })
@@ -48,7 +48,7 @@ describe('房间露面', () => {
     expect(
       shown([
         evt('a', '平台自己收拾干净了', { meta: { in_room: false } }),
-        evt('b', '芝士说的一句话', { author_type: 'ai', meta: { in_room: true } }),
+        evt('b', '芝士说的一句话', { author_type: 'participant', meta: { in_room: true } }),
       ])
     ).toEqual(['芝士说的一句话'])
   })
@@ -59,7 +59,7 @@ describe('房间露面', () => {
     expect(
       shown([
         evt('a', '编辑了文档'),
-        evt('b', '读了 app/x.py', { author_type: 'ai', meta: { in_room: false } }),
+        evt('b', '读了 app/x.py', { author_type: 'participant', meta: { in_room: false } }),
         evt('c', '编辑了文档'),
       ])
     ).toEqual(['编辑了文档'])

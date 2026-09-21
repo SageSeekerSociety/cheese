@@ -3,7 +3,7 @@
 `platform_notices` 定的是**说什么**：一行 `content` 加一份结构化 `meta`。这里定
 的是**怎么说出去**，两件事在一次调用里完成：
 
-1. 这句话落进房间的时间线（`kind=event, author_type=system`）；
+1. 这句话落进房间的时间线（`kind=event, author_type=platform`）；
 2. `meta.who` 是 `human` 时，同一句话投给点名的人 —— 站内通知一条，邮件队列一条。
 
 芝士自己的提问走 `notify_question`：那条消息已经在时间线上，只缺投递这一半。
@@ -66,7 +66,7 @@ async def announce(
         topic_id=landed.topic_id,
         task_id=landed.task_id,
         author=author,
-        author_type=AuthorType.system,
+        author_type=AuthorType.platform,
         content=content,
         kind=BlockKind.event,
         turn_id=turn_id,

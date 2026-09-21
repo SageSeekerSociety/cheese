@@ -38,7 +38,7 @@ function humanMsg(id: string, content: string): Block {
     project_id: 'p1',
     topic_id: 't1',
     kind: 'message',
-    author_type: 'human',
+    author_type: 'participant',
     author: 'me',
     content,
     reply_to: null,

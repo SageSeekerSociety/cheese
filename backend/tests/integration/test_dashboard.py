@@ -33,8 +33,8 @@ def test_contributions_exclude_system_blocks(client):
         "data"
     ]
     pid, root = p["id"], p["root_topic_id"]
-    _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
-    _seed_block(client, pid, root, "user-1", AuthorType.system, BlockKind.event)
+    _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
+    _seed_block(client, pid, root, "user-1", AuthorType.platform, BlockKind.event)
 
     c = client.get(f"/projects/{pid}/contributions").json()["data"]
     assert c["by_author"].get("user-1") == 1  # the system block is not counted
@@ -51,7 +51,7 @@ def test_member_summary_has_active_and_weekly(client, bearer):
         json={"user_handle": "user-1"},
         headers=bearer("user-1"),  # the project owner
     )
-    _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
+    _seed_block(client, pid, root, "user-1", AuthorType.participant, BlockKind.message)
 
     # The member page resolves the viewer like /overview does — read as user-1.
     s = client.get(

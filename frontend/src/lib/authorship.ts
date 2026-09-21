@@ -21,7 +21,7 @@ export function isAgentHandle(handle: string): boolean {
 
 /** 这条是平台自己写的（部署提醒、闸门结论、自动重发），不是谁说的话。 */
 function isPlatformBlock(b: Pick<Block, 'author_type'>): boolean {
-  return b.author_type === 'system'
+  return b.author_type === 'platform'
 }
 
 /** 这条是芝士说的话。 */
