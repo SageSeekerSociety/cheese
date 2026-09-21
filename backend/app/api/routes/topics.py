@@ -2395,7 +2395,7 @@ async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
         raise ValidationError(
             "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
             "用 cheese serve <端口> 登记（它会把通道带起来）；"
-            "要给人看结果也可以用 cheese_show 点名一个文件——网页、图片，"
+            "要给人看结果也可以用 cheese show 点名一个文件——网页、图片，"
             "或报告、表格这类文档。"
         )
     if not await preview_hub.probe(topic_id):
