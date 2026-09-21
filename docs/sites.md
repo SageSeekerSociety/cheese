@@ -1,8 +1,10 @@
 # Project sites
 
-The project navigation contains **导出与发布**. Project owners, project leads and
-team administrators can publish; project and team members can open the published
-Site. Its access does not become public when it is published.
+The project's home page carries a **网站** section next to 做出了什么, and it
+appears once the project has a published Site or an accepted revision holding one.
+Project owners, project leads and team administrators can publish; project and
+team members can open the published Site. Its access does not become public when
+it is published.
 
 ## Topic previews
 

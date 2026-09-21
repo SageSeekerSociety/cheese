@@ -29,6 +29,7 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/auth"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
+	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
@@ -382,7 +383,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			if err != nil {
 				return fmt.Errorf("locate home directory: %w", err)
 			}
-			footprint := filepath.Join(home, footprintRoot)
+			footprint := filepath.Join(home, place.Root)
 			warnScreens(*cfgPath)
 			// Said before it happens, because it is the part nobody expects. The
 			// service and the binary are ours and nobody misses them; the
@@ -449,21 +450,6 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 	return uninstall
 }
 
-// footprintRoot is the directory under the user's home that the platform writes
-// everything into: session homes, worktrees, the shared package store, the
-// executor and its helpers, the launch scripts. The backend chooses the name in
-// `backend/app/domain/agent/place.py`; this is a copy because nothing Python is
-// importable from here, and `backend/tests/unit/test_footprint_root.py` fails if
-// the two ever disagree.
-//
-// One directory, and it stays one. `place.py` also names `.claude`, and that is
-// the platform's older directory INSIDE a session home — the session homes are
-// already under this root, so they go with it. The `~/.claude` next to this one
-// belongs to whoever owns the machine: their Claude Code credentials, settings
-// and every transcript they have. An uninstall that reached for it would delete
-// work the platform never wrote and cannot give back.
-const footprintRoot = ".cheese"
-
 // removeFootprint deletes everything `cheese` leaves on a machine: this
 // installation's own config, and the root every room was written under.
 //
@@ -473,7 +459,7 @@ const footprintRoot = ".cheese"
 // a machine whose owner had just been told cheese was gone, with nothing left
 // installed that knew how to find them.
 func removeFootprint(configDir, home string) error {
-	for _, directory := range []string{configDir, filepath.Join(home, footprintRoot)} {
+	for _, directory := range []string{configDir, filepath.Join(home, place.Root)} {
 		if err := os.RemoveAll(directory); err != nil {
 			return fmt.Errorf("remove %s: %w", directory, err)
 		}

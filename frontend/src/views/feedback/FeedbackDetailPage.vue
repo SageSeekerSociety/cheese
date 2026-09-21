@@ -124,7 +124,12 @@ async function share() {
                头像是这一页最大的一处（28px）：详情页是唯一一处读者真的会停下来看
                「这是谁提的」的地方，列表里那个 18px 的在这里就太小了。 -->
           <div class="t-meta mb-1 d-flex align-center ga-2">
-            <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="28" />
+            <FeedbackAuthorAvatar
+              :handle="item.author_handle"
+              :is-agent="item.author_is_agent"
+              :avatar-id="item.author_avatar_id"
+              :size="28"
+            />
             <span>{{ item.display_id }} · {{ item.author_handle }} · {{ relTime(item.created_at) }}</span>
           </div>
           <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，

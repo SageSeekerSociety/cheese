@@ -126,7 +126,7 @@ describe('chat recovery after history errors', () => {
           project_id: 'p',
           topic_id: 't',
           kind: 'message',
-          author_type: 'human',
+          author_type: 'participant',
           author: 'u',
           content: sent.content,
           meta: { client_id: sent.client_id },

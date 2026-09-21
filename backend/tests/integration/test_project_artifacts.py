@@ -7,9 +7,21 @@
 
 import uuid
 
+import pytest
+
 from app.core.sandbox_auth import mint_scoped_token
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept_pr import (
+    _give_card_a_pr,
+    _rendered_head,
+    app_world,  # noqa: F401
+)
+
+
+@pytest.fixture(autouse=True)
+def remote_delivery(client, request):
+    client.artifact_forge = request.getfixturevalue("app_world")
 
 
 def _project(client) -> str:
@@ -31,11 +43,20 @@ def _file_card(client, room_id: str, **artifact):
         "reviewer_handle": "alice",
         **artifact,
     }
-    return client.post(
+    response = client.post(
         f"/topics/{room_id}/tasks/{delivery_task_id(client, room_id)}/accept-card",
         headers=delivery_headers(client, room_id),
         json=body,
     )
+    if response.status_code == 200:
+        _give_card_a_pr(
+            client,
+            client.artifact_forge,
+            room_id,
+            response.json()["data"]["id"],
+            number=100 + len(client.artifact_forge["fake"].prs),
+        )
+    return response
 
 
 def _manifest_rows(client, project_id: str) -> list[dict]:
@@ -51,7 +72,7 @@ def _manifest(client, project_id: str) -> list[tuple[str, int]]:
 def _decide(client, card_id: str, action: str):
     return client.post(
         f"/accept-cards/{card_id}/{action}",
-        json={"decided_by": "alice"},
+        json={"decided_by": "alice", "head_sha": _rendered_head(client, card_id)},
         headers=session_auth_headers("alice"),
     )
 

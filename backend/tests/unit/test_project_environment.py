@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from app.domain.agent import environment_runner
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import Placement
 from app.domain.project.environment import EnvironmentConfig
 
 
@@ -539,7 +540,7 @@ async def test_channels_ignore_old_failure_but_wait_for_new_attempt(
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert read.await_count == 4
@@ -595,7 +596,7 @@ async def test_reconnect_uses_initial_environment_read_until_next_poll(monkeypat
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert read.await_count == 2
@@ -633,7 +634,7 @@ async def test_ready_environment_is_rechecked_only_after_screen_replacement(
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     if replacement and next_state == "failed":
         with pytest.raises(device_provider.EnvironmentPreparationError):
@@ -669,7 +670,7 @@ async def test_fast_environment_is_observed_without_two_second_wait(monkeypatch)
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert time.monotonic() - started < 1
@@ -713,7 +714,7 @@ async def test_long_environment_returns_to_low_frequency_checks(monkeypatch):
         owner=None,
         turn_id=None,
         launch=None,
-        precheck=("machine", 1, "agent"),
+        precheck=Placement("machine", 1, "agent", rented=True),
     )
     assert actual is screen
     assert 14 <= clock.seconds < 16

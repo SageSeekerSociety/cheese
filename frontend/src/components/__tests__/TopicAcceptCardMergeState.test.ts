@@ -73,11 +73,10 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     approvals_required: 1,
     pr_number: null,
     forge: {
-      kind: 'platform',
+      kind: 'forgejo',
       reports_checks: false,
       hosts_proposals: false,
       can_write_remote: false,
-      has_external_remote: false,
       pushes_to_external_remote: false,
       identity: 'platform',
       declaration: 'ℹ️ 本项目未接外部仓库：采纳即合并进平台仓库的 main（无提案页、无外部 CI）',
@@ -101,7 +100,6 @@ function githubCard(over: Partial<AcceptCard>): AcceptCard {
       reports_checks: true,
       hosts_proposals: true,
       can_write_remote: true,
-      has_external_remote: true,
       pushes_to_external_remote: true,
       identity: 'user',
       declaration: '',
@@ -141,6 +139,22 @@ beforeEach(() => {
 })
 
 describe('合的是人看到的那个 commit', () => {
+  it('等待另一条任务时不提供人工放行', async () => {
+    const detail = '等「调整接口」先被采纳，或由芝士调整这条活后重新递交'
+    const { container } = await mountWith([
+      githubCard({
+        merge_state: mergeState({
+          state: 'blocked',
+          who: 'agent',
+          reasons: [{ kind: 'dependency', checks: [], detail }],
+        }),
+      }),
+    ])
+    expect(container.textContent).toContain(detail)
+    expect(acceptButton(container).disabled).toBe(true)
+    expect(container.textContent).not.toContain('人工放行并合并')
+  })
+
   it('a linked project without a PR offers creation instead of a clean acceptance', async () => {
     const pending = githubCard({
       pr_number: null,
@@ -324,7 +338,6 @@ describe('平台 lane：采纳纯粹是人的判断', () => {
           reports_checks: false,
           hosts_proposals: false,
           can_write_remote: false,
-          has_external_remote: false,
           pushes_to_external_remote: false,
           identity: 'platform',
           declaration: 'ℹ️ 暂时读不出这个项目的托管方：采纳先等一下，稍后重试',

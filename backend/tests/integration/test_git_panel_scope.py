@@ -13,9 +13,9 @@ import uuid
 
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
-from app.domain.workspace import service as ws
 from tests.delivery import delivery_task, delivery_task_id
 from tests.machine_work import machine_commits
+from tests.support import git_store
 
 _MSG = "chore: land the branch under test\n\nRequested-by: alice"
 
@@ -35,7 +35,18 @@ def _turn(
     client, pid: uuid.UUID, tid: uuid.UUID, path: str, content: str, msg: str
 ) -> None:
     """A turn's edits, committed and pushed by the machine that made them."""
-    machine_commits(pid, delivery_task_id(client, tid), {path: content}, msg)
+    task_id = delivery_task_id(client, tid)
+    machine_commits(pid, task_id, {path: content}, msg)
+
+    async def published():
+        from app.domain.room_task.models import Task
+
+        async with client.test_factory() as session:
+            task = await session.get(Task, task_id)
+            task.pr_number = int(task.id.hex[:6], 16)
+            await session.commit()
+
+    asyncio.run(published())
 
 
 def _log(client, pid, topic=None) -> list[dict]:
@@ -55,6 +66,7 @@ def _diff(client, pid, topic=None) -> str:
         if topic
         else {}
     )
+    params["source"] = "committed"
     return client.get(
         f"/projects/{pid}/git/diff", params=params, headers=_owner(client)
     ).json()["data"]["diff"]
@@ -107,10 +119,7 @@ def test_topic_log_excludes_other_topics_commits(client):
     pid = _mkproject(client)
     mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
     _turn(client, pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
-    assert (
-        ws.merge_topic(pid, delivery_task_id(client, theirs), message=_MSG)["merged"]
-        is True
-    )
+    assert git_store.merge_task(pid, delivery_task_id(client, theirs), message=_MSG)
     _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
     messages = [c["message"] for c in _log(client, pid, topic=mine)]
@@ -124,10 +133,7 @@ def test_topic_with_no_commits_shows_none_not_the_projects(client):
     pid = _mkproject(client)
     busy, fresh = _mktopic(client, pid), _mktopic(client, pid)
     _turn(client, pid, busy, "busy.py", "z = 3\n", "主干上的提交")
-    assert (
-        ws.merge_topic(pid, delivery_task_id(client, busy), message=_MSG)["merged"]
-        is True
-    )
+    assert git_store.merge_task(pid, delivery_task_id(client, busy), message=_MSG)
 
     assert _log(client, pid, topic=fresh) == []
     assert _diff(client, pid, topic=fresh) == ""
@@ -153,10 +159,7 @@ def test_work_summary_excludes_other_topics_work(client):
     pid = _mkproject(client)
     mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
     _turn(client, pid, theirs, "theirs.py", "x = 1\n", "别的话题的提交")
-    assert (
-        ws.merge_topic(pid, delivery_task_id(client, theirs), message=_MSG)["merged"]
-        is True
-    )
+    assert git_store.merge_task(pid, delivery_task_id(client, theirs), message=_MSG)
     _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
     assert _summary(client, pid, mine)["changed_files"] == ["mine.py"]
@@ -188,9 +191,6 @@ def test_project_log_still_available_without_a_topic(client):
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
     _turn(client, pid, tid, "c.py", "w = 4\n", "会被采纳的提交")
-    assert (
-        ws.merge_topic(pid, delivery_task_id(client, tid), message=_MSG)["merged"]
-        is True
-    )
+    assert git_store.merge_task(pid, delivery_task_id(client, tid), message=_MSG)
 
     assert len(_log(client, pid)) >= 1

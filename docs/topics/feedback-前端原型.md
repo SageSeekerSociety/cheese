@@ -2,7 +2,7 @@
 
 ## 目标
 
-做一套「反馈」功能：**界面**（反馈中心、单条详情、管理员处理台、设计页）、**后端**（三条路由 + 七张表）、以及**每个 harness 主动提反馈的通道**。
+做一套「反馈」功能：**界面**（反馈中心、单条详情、我的反馈、管理员处理台）、**后端**（三条路由 + 七张表）、以及**每个 harness 主动提反馈的通道**。
 
 顺序是先在话题里把界面口径和产品判断定完，再照一份能照着实现的方案稿落代码。标题里的「原型」是起点：界面先是可点的原型（不是稿图），确认信息结构和操作合适之后才接真接口——现在接上了，所以这份文档覆盖的是整套功能，不只是原型。
 
@@ -10,14 +10,14 @@
 
 - 代码：PR [#1222](https://github.com/SageSeekerSociety/cheese/pull/1222)，前后端在**同一个 PR**里。
 - 设计依据：<&docs/topics/反馈功能后端设计-方案稿.md>，代码里每一个判断都能在这里找到出处。
-- 设计页的两张图：<&frontend/src/lib/feedbackDiagram.ts> 是唯一数据源。
+- 表与关系、数据流两张图：写在下面「表与关系 / 数据流」一节里（原来是一个 `/design/feedback` 页面，已删）。
 
 ## 现状（2026-09-19）
 
 功能已经实现并推上 PR #1222，**待人工验收**（验收人 wangchangxin）。这一轮推的是新提交，上一轮没有有效批准，所以没有需要作废的批准。
 
 - **后端**：七张新表，迁移 `backend/alembic/versions/b7c2e91f4a03_feedback.py`；三条路由 `/api/feedback`、`/api/admin/feedback`、`/api/topics/{id}/feedback-proposals`；域层在 `backend/app/domain/feedback/`（models / repositories / services / schemas / proposals）。私有反馈的可见性是**读时收窄**：`services.may_see` 一处决定谁能看，仓储层不回答策略问题。
-- **前端**：五个页面读真接口（反馈中心、反馈详情、**我的反馈**、管理后台、数据与架构）。`stores/feedback.ts` 调 API，上一版那个内存 mock（`lib/feedbackMock.ts`）已经删掉——界面不再是「照着自己编的数据画」。
+- **前端**：四个页面读真接口（反馈中心、反馈详情、**我的反馈**、管理后台）。`stores/feedback.ts` 调 API，上一版那个内存 mock（`lib/feedbackMock.ts`）已经删掉——界面不再是「照着自己编的数据画」。
 - **CLI**：`cheese feedback propose` 进了 argparse 树，三个 harness 同时就有了这个工具（见下）。
 - **合并了 main 的 35 个提交**。合并带出一处**语义**冲突，已修：main 的 `f3a8c5d2e917` 把 agent 身份从「由话题派生」改成「属于 agent 自己」（`agent_instance_handle`），而我的测试原本按话题算 handle 再断言卡片的作者。现在改成从卡片上读作者，断言「是 agent、且不是提单的人」——身份不由反馈代码算。
 - **状态收敛成四级**：`received → in_progress → resolved → deployed`（已收录 / 处理中 / 已修复 / 已上线）。写稿时是五级（`triaging` / `planned` 也在内），验收时看界面发现「评估中」和「处理中」在人眼里是同一件事、「计划中」说不清是谁在动；同时把「修复」和「上线」拆成两档——改完和上线是两件事，同名会让提交者以为自己这边马上就能用了。口径与代价见 <&docs/topics/反馈功能后端设计-方案稿.md> §2.5。
@@ -31,7 +31,7 @@
 - 卡片直接复用 <&frontend/src/components/feedback/FeedbackCard.vue>：同一条反馈在两页上长得一样，支持按钮也照用（store 的 `_find` / `_patch` 覆盖了 `mineItems`，漏掉的表现是按钮点下去没反应、连错误都不报）。
 - 入口在反馈中心页头「我的反馈」。四种状态（加载中 / 有内容 / 一条没有 / 拉失败）各画各的：拉失败不会说成「你还没有提过反馈」。
 
-**看界面**：预览是开着的，形态是**真页面 + 假数据**。预览通道上没有后端，所以我在预览入口的 `fetch` 那一层接上了假数据（<&frontend/src/proto-feedback-fixtures.ts>），页面本身一行都没改、走的是真接口。页面可交互：能点进详情、能切管理端四栏、能筛选搜索、能在「表与关系」和「数据流」两张图之间切。打包脚本是 <&pack-feedback-prototype.py>，改完页面重跑即可。
+**看界面**：预览是开着的，形态是**真页面 + 假数据**。预览通道上没有后端，所以我在预览入口的 `fetch` 那一层接上了假数据（<&frontend/src/proto-feedback-fixtures.ts>），页面本身一行都没改、走的是真接口。页面可交互：能点进详情、能进「我的反馈」、能切管理端四栏、能筛选、能搜索。打包脚本是 <&pack-feedback-prototype.py>，改完页面重跑即可。
 
 ## 界面打磨时定下的（之后改界面要沿用）
 
@@ -41,12 +41,110 @@
 - 管理员表格用 `:deep()` 选择器压过 Vuetify 自带的 th/td 规则，不写 `!important`。
 - 顺手修了一个仓库级 bug：`color="primary"` 的禁用按钮因为 `.bg-primary` 带了 `!important`，看起来仍然可点，而 `pointer-events: none` 又把点击吞掉。修在 `frontend/src/style.css`，对所有实心按钮生效。
 
-## 设计页里的两张图
+## 表与关系 / 数据流
 
-图是**按真表画的**，不是示意：`frontend/src/lib/feedbackDiagram.ts` 是唯一数据源，`ErDiagram.vue` / `ArchDiagram.vue` 只负责画。改了表或改了链路就改这一处；`diagramSpec.spec.ts` 用测试守住几条硬约束（新表必须有连线、每层不超过六个节点、边上的文字要短——都是会被撑破或盖住的量）。
+这两张图原先是一个页面（`/design/feedback`，页头叫「数据与架构」）。**页面删了，图挪到这里**：那一页是给自己核对实现用的，而它挂在应用里，用户会当成一个功能点进去，然后看到一屏看不懂的表名。图留在文档里有同样的核对作用，还不会被当成承诺。
 
-- **数据关系**：新建七张表——六张挂在 `feedback` 上，拒绝记忆挂在话题上。话题与项目是**真外键**（可空，删掉只把指针置空），会话只存 id 快照；**虚线表示没有真外键**。
-- **数据流**：六条泳道（提交方 / 本地草稿 / 上报契约 / 平台服务端 / 存储 / 界面）。两条提交通道最后都落到 `feedback` 表：人直接写，agent 先成为提案卡、由人在卡上按发送。
+删掉的还有画图那几个文件（`views/feedback/FeedbackDesignPage.vue`、`components/diagram/`、`lib/feedbackDiagram.ts`、`lib/diagramSpec.ts`）。代价说明白：图不再是「改了代码就会一起改」的东西了——**列清单以 <&backend/app/domain/feedback/models.py> 为准**，下面只留判断（哪张表为什么这样开、哪条链为什么绕），那些是代码里读不出来的。
+
+**表与关系**：新建七张表——六张挂在 `feedback` 上，拒绝记忆挂在话题上；另有三张既有表被牵动。实线 = 有真外键，虚线 = 只存快照、不建外键。
+
+```mermaid
+erDiagram
+    topics ||--o{ feedback : "上下文"
+    projects ||--o{ feedback : "上下文"
+    agent_sessions ||..o{ feedback : "会话快照, 无外键"
+    feedback ||--o{ feedback_supports : "支持"
+    feedback ||--o{ feedback_comments : "评论"
+    feedback_comments ||--o{ feedback_comments : "回复"
+    feedback ||--o{ feedback_timeline : "状态事件"
+    feedback ||--o{ feedback_notes : "备注"
+    topics ||--o{ feedback_proposal_dismissals : "拒绝记忆"
+    feedback ||..o{ feedback_read_states : "未读游标, 无外键"
+```
+
+几条从代码里读不出来的判断：
+
+- **话题与项目是真外键**（可空，`SET NULL`）：删话题不会删反馈，只把指针置空。但删话题**会**删掉那条话题的拒绝记忆（那张表是 `CASCADE`）。
+- **会话只存 id 快照**（`session_id` 是 `String(64)`，刻意不建外键）：会话删了，反馈要留下。
+- **`author_is_agent` 与 `submitted_by_handle` 是两个人**：agent 发现、人按下提交。可见性查询要同时算 `author_handle` 与 `submitted_by_handle` 就是这个原因。
+- **`security` 不是第二个开关**，是 `private` 之下的一层读时收窄。索引 `(visibility, security, created_at)` 就是为这次收窄建的。
+- **`tags` 是 JSON 列，不建标签表**；`deleted_at` 留着，但**还没有端点会写它**。
+- **`feedback_notes` 不把备注写成主表的字符串列**——两个管理员在同一行上互相覆盖。
+- **`feedback_read_states` 是一人一条游标**，不是逐条已读表：未读 = 「比我上次读的时间更新的动静」。
+- **`feedback_comments` 只有两层**：`parent_id` 只指顶层评论，回复的回复由服务端改挂到它所在的顶层评论上。
+- **`feedback_proposal_dismissals` 的指纹不是 block id**：换个说法把同一件事提上来，人不想再看第二遍。
+- **既有表 `alerts` 没有用它**：它的 `project_id` 非空，而反馈没有项目。巡检的问题走它，反馈走 `feedback`。
+
+**数据流**：六条泳道。两条提交通道最后都落到 `feedback` 表——人直接写，agent 先成为提案卡、由人在卡上按提交。
+
+```mermaid
+flowchart LR
+    subgraph L1["提交方"]
+        cc["Claude Code<br/>SendFeedback 提草稿"]
+        agent["芝士会话内反馈卡<br/>轮次里主动调工具"]
+        manual["用户手动提交<br/>反馈中心的提交抽屉"]
+        other["其他 harness<br/>同一个 cheese 子命令"]
+        patrol["无屏巡检轮次<br/>走告警, 不给工具"]
+    end
+    subgraph L2["本地草稿"]
+        ccq["草稿队列<br/>每会话最多 3 张"]
+        ccr["审阅卡片<br/>1 审阅 2 发送 0 忽略"]
+    end
+    subgraph L3["上报契约"]
+        propose["反馈提案工具<br/>cheese_feedback_propose"]
+        render["渲染提案卡<br/>一条消息块, 不是旁白"]
+        submit["统一提交管道<br/>POST /feedback"]
+    end
+    subgraph L4["平台服务端"]
+        auth["鉴权<br/>两族凭据都认的 Actor"]
+        quota["每日配额<br/>每话题 2 条, 可配置"]
+        dedup["指纹去重<br/>发生了什么 + 怎么复现"]
+        api_u["用户侧 API<br/>列表 · 详情 · 评论"]
+        api_a["管理侧 API<br/>白名单才进得来"]
+        meta["元数据接口<br/>GET /feedback/meta"]
+    end
+    subgraph L5["存储"]
+        store["反馈主表与子表<br/>PostgreSQL, 单 head"]
+        unread["未读游标<br/>一人一条, 全库"]
+        dismiss["拒绝记忆<br/>按话题 + 指纹"]
+        alertsx["既有 alerts<br/>巡检的问题走它"]
+    end
+    subgraph L6["界面"]
+        center["反馈中心<br/>4 个 Tab + 未读"]
+        detail["反馈详情<br/>支持 · 评论 · 时间线"]
+        drawer["提交抽屉<br/>唯一的手动写入口"]
+        card_ui["会话内反馈卡<br/>挂在对话流里"]
+        admin["管理后台<br/>同一 SPA, 仅管理员"]
+    end
+
+    cc -->|进本地队列| ccq
+    ccq -->|出示卡片| ccr
+    ccr -->|人确认后送出| submit
+    manual -->|同一条管道| submit
+    agent -->|主动调用| propose
+    other -->|同一个工具| propose
+    patrol -->|走告警| alertsx
+    propose -->|过闸| quota
+    quota -->|查指纹| dedup
+    dedup -->|渲染成卡| render
+    render -->|挂到对话流| card_ui
+    card_ui -->|点采纳| drawer
+    drawer -->|人按下提交| submit
+    submit -->|鉴权| auth
+    auth -->|放行| api_u
+    api_u -->|写入| store
+    api_a -->|改状态| store
+    store -->|推游标| unread
+    store -->|记指纹| dismiss
+    unread -->|未读计数| center
+    center -->|列表查询| api_u
+    detail -->|详情与评论| api_u
+    drawer -->|提交| api_u
+    admin -->|管理操作| api_a
+    meta -->|词表与阈值| center
+    meta -->|是不是管理员| admin
+```
 
 ## 三条产品判断（需求方答复 + 落代码时取的默认值）
 

@@ -77,7 +77,12 @@ const PRIVATE_HINT = '私密反馈：只有你和管理员能看到，其他人�
       <p class="fb-card__summary">{{ item.summary }}</p>
       <div class="d-flex align-center flex-wrap ga-3">
         <span class="t-meta d-inline-flex align-center ga-1">
-          <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="18" />
+          <FeedbackAuthorAvatar
+            :handle="item.author_handle"
+            :is-agent="item.author_is_agent"
+            :avatar-id="item.author_avatar_id"
+            :size="18"
+          />
           {{ item.author_handle }} · {{ relTime(item.created_at) }}
         </span>
         <!-- 中性色，不是警告色：私密是一个事实（这条只有我和管理员能看见），不是一件

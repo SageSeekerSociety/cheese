@@ -7,9 +7,9 @@ import pytest
 from app.core.config import settings
 from app.core.tokens import verify_session_token
 from app.domain.site.hosting import content_origin, mint_site_token
-from app.domain.workspace import service as ws
 from tests.integration.conftest import session_auth_headers, session_token
 from tests.machine_work import declare_task, machine_commits
+from tests.support import git_store
 
 
 @pytest.fixture
@@ -39,9 +39,9 @@ def published(client, monkeypatch, tmp_path):
             "web/guide/style.css": "body { color: blue }",
         },
     )
-    assert ws.merge_topic(
+    assert git_store.merge_task(
         project, topic, message="feat: publish test site\n\nRequested-by: alice"
-    )["merged"]
+    )
     source = client.get(f"/projects/{project}/site", headers=auth).json()["data"]
     response = client.post(
         f"/projects/{project}/site",

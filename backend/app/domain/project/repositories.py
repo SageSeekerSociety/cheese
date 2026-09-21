@@ -10,6 +10,7 @@ from app.domain.avatars.models import Avatar
 from app.domain.project.models import (
     AiMode,
     Project,
+    ProjectForge,
     ProjectGitInstallation,
     ProjectMember,
 )
@@ -361,6 +362,19 @@ class ProjectGitInstallationRepository:
             )
 
         existing = await self.get_by_project(project_id)
+        forge = await self._session.scalar(
+            select(ProjectForge).where(ProjectForge.project_id == project_id)
+        )
+        if forge is None:
+            forge = ProjectForge(project_id=project_id)
+            self._session.add(forge)
+        elif forge.kind == "forgejo":
+            raise ConflictError("这个项目已有代码仓库；跨托管服务迁移尚未开放")
+        forge.kind = "github_app"
+        forge.repo = repo
+        forge.url = f"https://github.com/{repo}.git"
+        forge.api_url = "https://api.github.com"
+        forge.default_branch = ""  # Resolved from the provider, never assumed main.
         if existing is not None:
             existing.installation_id = installation_id
             existing.repo = repo

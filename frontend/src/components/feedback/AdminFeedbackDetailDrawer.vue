@@ -156,7 +156,12 @@ async function assign() {
         </div>
 
         <div class="t-meta mb-4 d-flex align-center ga-2">
-          <FeedbackAuthorAvatar :handle="item.author_handle" :is-agent="item.author_is_agent" :size="24" />
+          <FeedbackAuthorAvatar
+            :handle="item.author_handle"
+            :is-agent="item.author_is_agent"
+            :avatar-id="item.author_avatar_id"
+            :size="24"
+          />
           <span>
             {{ item.author_handle }} · {{ relTime(item.created_at) }} · 支持 {{ item.supports }} · 评论
             {{ item.comments }}
@@ -235,7 +240,7 @@ async function assign() {
                  `_require_admin`，而它第一步就是拒绝 agent 身份（agent 不能执行管理
                  动作）。这不是「一般是人」，是链路上没有 agent 能写进来的口子。 -->
             <div class="t-meta d-flex align-center ga-2">
-              <FeedbackAuthorAvatar :handle="note.author_handle" :size="20" />
+              <FeedbackAuthorAvatar :handle="note.author_handle" :avatar-id="note.author_avatar_id" :size="20" />
               <span>{{ note.author_handle }} · {{ relTime(note.created_at) }}</span>
             </div>
             <p class="t-body fb-text">{{ note.body }}</p>

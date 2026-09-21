@@ -24,10 +24,11 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
+from app.domain.memory.dream import latest_dream
+from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.topic.retire")
 
@@ -99,6 +100,65 @@ print(json.dumps(collect_transcripts(script, values, flush=True)))
     if result.get("exit") != 0 or result.get("truncated"):
         raise RuntimeError("final transcript collection or confirmation failed")
     return json.loads(result.get("stdout") or "[]")
+
+
+async def _memory_tidy_has_finished(session: AsyncSession, topic_id: uuid.UUID) -> bool:
+    """记忆整理跑完了没有——回收前要等的就是这一件事。
+
+    整理要对着机器上的代码重写自己那几条记忆，所以只有那台机器还在的时候跑得成
+    （#1078）。而下面第一件事就是 ``prepare``：它 ``request_exit`` 加
+    ``stop_executor``，一跑在飞的整理就断在半路，机器随后被删，那几条记忆再也没有
+    第二次机会。所以这一问必须在动这台机器**之前**。
+
+    **只有「正在跑」才算没跑完。** 缺一次从来没发起过的整理不算——等在这里不会让
+    它发生：``consolidate_idle_device_screens`` 明确跳过归档房间
+    (``scheduler/service.py``)，而归档房间里连一轮都起不来（``chat.py`` 直接
+    ``ValidationError("房间已归档")``）。把那种情况也算成缺，回收就会永远停在一张
+    不可能出现的收据上，而 ``_advance`` 每一轮都要重跑一遍 ``publication`` 与
+    ``_flush_transcripts`` 这些对着机器的远程调用。要让「每个房间回收前都整理过」
+    成真，唯一的位置是归档**之前**，不是这里。
+
+    「这个房间值不值得整理」不在这里判。那条判据是调度器的
+    (``_start_dream_if_worthwhile``)，在这里抄一份，唯一的作用是挑一条日志的级别，
+    而调度器那条改了形状的那天，这一份不会跟着改，于是它记下的话开始骗人。
+
+    **这一等有上界。** 从前终结那一轮的正是下面的 ``prepare``——它
+    ``request_exit`` 加 ``stop_executor``，机器上的会话结束后发回 Stop，
+    ``close_for_topic`` 才写上 ``stopped_at``。这一问挪到 ``prepare`` 之前以后，
+    没有任何东西再去终结那一轮：后端在一次整理途中重启，``stopped_at`` 就一直是
+    NULL，而孤儿清扫只要屏幕还应答就判它「还活着」，永不关闭这条区间
+    (``agent/runtime.py`` 的 ``_adopted``)。所以这里不问「关没关」问到底，越过一轮
+    本来就跑不了这么久的上限 (``agent_turn_hard_ceiling_s``) 就按跑完处理——等下去
+    换不来那张收据，只会把这台机器连同它的存储和工作区一起扣住。
+    """
+    if not settings.dream_enabled:
+        return True
+    dream = await latest_dream(session, topic_id)
+    if dream is None:
+        logger.info(
+            "房间 %s 回收前没有整理过记忆：归档之后已经没有地方能跑它了",
+            topic_id,
+        )
+        return True
+    if dream.turn_id is None:
+        return True
+    started_at = await session.scalar(
+        select(AgentTurn.started_at)
+        .where(AgentTurn.id == dream.turn_id, AgentTurn.stopped_at.is_(None))
+        .limit(1)
+    )
+    if started_at is None:
+        return True
+    running_s = (datetime.now(UTC) - started_at).total_seconds()
+    if running_s > settings.agent_turn_hard_ceiling_s:
+        logger.warning(
+            "房间 %s 的记忆整理挂了 %.0f 秒还没关闭，按跑完处理继续回收："
+            "这一轮多半是后端重启时留下的，不会再有东西去关它",
+            topic_id,
+            running_s,
+        )
+        return True
+    return False
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
@@ -415,6 +475,12 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             for entry in operation.resources
         )
         try:
+            # 回收前要拿回来的东西里，只有这一件必须在动这台机器**之前**问：一次在
+            # 飞的记忆整理，下面第一行 ``prepare`` 就会把它掐断（不变量 I19）。另外
+            # 两件——transcript 落库、没推上去的工作——就是下面那两段本身，它们都
+            # 抛异常，所以走完即是拿到。
+            if not await _memory_tidy_has_finished(session, operation.topic_id):
+                raise RuntimeError("记忆整理还在跑：这台机器要留到它跑完")
             for entry in operation.resources:
                 if entry["kind"] == "device":
                     await _device_action(
