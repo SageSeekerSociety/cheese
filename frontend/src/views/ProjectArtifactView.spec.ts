@@ -58,6 +58,7 @@ function detail(versions: ArtifactVersion[]) {
   return {
     id: 'a1',
     name: '结题报告',
+    about: '交给甲方的最终报告',
     version: versions.length,
     delivered_at: '2026-09-19T10:00:00Z',
     versions,

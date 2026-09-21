@@ -4401,7 +4401,12 @@ class ChatService:
                 None
                 if is_private
                 else [
-                    {"id": str(a.id), "name": a.name, "version": a.version}
+                    {
+                        "id": str(a.id),
+                        "name": a.name,
+                        "version": a.version,
+                        "about": a.about,
+                    }
                     for a in await project_artifacts.list_for_project(
                         session, topic.project_id
                     )
