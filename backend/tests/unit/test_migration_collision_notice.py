@@ -40,6 +40,7 @@ def _service(
     explode: bool = False,
 ) -> AcceptService:
     service = AcceptService.__new__(AcceptService)  # no session needed
+    service._session = None
 
     async def list_live_in_project(project_id, *, statuses):
         # Undecided cards only. A card already rejected/accepted cannot collide
@@ -60,16 +61,21 @@ def _service(
         )
     )
 
-    def added(project_id, topic_id):
+    async def comparison(files):
         if explode:
-            raise RuntimeError("git is unavailable in this sandbox")
-        return added_by_topic.get(topic_id, [])
+            raise RuntimeError("forge is unavailable")
+        return {
+            "files": [
+                {"filename": path, "status": "added"}
+                for path in added_by_topic.get(files.task_id, [])
+            ]
+        }
 
     # Via monkeypatch, not a bare assignment: this patches a module OTHER tests
     # in the same process import, and an unrestored stub there is the "a batch
     # of tests you never touched went red" failure in .claude/rules.
     monkeypatch.setattr(
-        "app.domain.workspace.service.topic_added_files", added, raising=True
+        "app.domain.workspace.forge_files.ProjectFiles.comparison", comparison
     )
     return service
 

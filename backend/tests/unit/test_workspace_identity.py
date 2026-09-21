@@ -10,6 +10,46 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import identity
 
 
+@pytest.fixture(autouse=True)
+def attribution_policy(monkeypatch):
+    from app.domain.project.repositories import ProjectRepository
+
+    # Existing contribution-role cases explicitly opt out of automatic credit.
+    project = SimpleNamespace(settings={"forge_requester_coauthor": False})
+
+    async def get(_self, _project_id):
+        return project
+
+    monkeypatch.setattr(ProjectRepository, "get", get)
+    return project
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "default,override,credited",
+    [
+        (True, None, True),
+        (False, None, False),
+        (True, False, False),
+        (False, True, True),
+    ],
+)
+async def test_requester_credit_obeys_project_override_and_deployment_default(
+    monkeypatch, attribution_policy, default, override, credited
+):
+    monkeypatch.setattr(identity.settings, "forge_attribution_default", default)
+    attribution_policy.settings = {"forge_requester_coauthor": override}
+    _roster_owner(monkeypatch, "alice")
+    _connected(monkeypatch, {"alice": ("42", "alice")})
+    who = await identity.attribution(None, _topic("alice"))
+    assert bool(who.coauthors) is credited
+    if credited:
+        assert who.coauthors == (
+            identity.GitIdentity("alice", "42+alice@users.noreply.github.com"),
+        )
+    assert who.author.name != "alice"
+
+
 def _ids() -> tuple[uuid.UUID, uuid.UUID]:
     return uuid.uuid4(), uuid.uuid4()
 
@@ -65,6 +105,7 @@ def _topic(
         project_id=uuid.uuid4(),
         created_by=created_by,
         parent_id=parent_id,
+        title="Test room",
     )
 
 

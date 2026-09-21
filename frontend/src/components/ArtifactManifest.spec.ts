@@ -4,6 +4,8 @@
  * 清单由交付长出来，所以这一块只在真有东西可摆时出现；上面能做的三件事都是人的
  * 判断（改名、合并、删除），芝士 做不了。
  */
+import { defineComponent, h } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -24,6 +26,20 @@ const { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, rena
 )
 
 const vuetify = createVuetify({ components, directives })
+
+// 一行产物点进去是它自己那一页，所以这里要一个真路由：没有它，那一行渲染成一个
+// 解析不出来的 router-link，测到的「名字在不在」就与「点得进去」无关了。
+const router = createRouter({
+  history: createMemoryHistory(),
+  routes: [
+    { path: '/', name: 'home', component: defineComponent({ setup: () => () => h('div') }) },
+    {
+      path: '/projects/:projectId/artifacts/:artifactId',
+      name: 'project-artifact',
+      component: defineComponent({ setup: () => () => h('div') }),
+    },
+  ],
+})
 
 afterEach(cleanup)
 
@@ -60,7 +76,7 @@ beforeEach(() => {
 })
 
 function mount() {
-  return render(ArtifactManifest, { props: { projectId: 'p1' }, global: { plugins: [vuetify] } })
+  return render(ArtifactManifest, { props: { projectId: 'p1' }, global: { plugins: [vuetify, router] } })
 }
 
 function menuItem(title: string): HTMLElement | undefined {
@@ -90,6 +106,14 @@ describe('做出了什么', () => {
     expect(text).toContain('第 3 版')
     expect(text).toContain('项目官网')
     expect(text).toContain('尚未交付')
+  })
+
+  it('一行点进去是这一项自己那一页', async () => {
+    const { container } = mount()
+
+    await waitFor(() => expect(container.textContent).toContain('结题报告'))
+    const link = Array.from(container.querySelectorAll('a')).find((a) => a.textContent?.trim() === '结题报告')
+    expect(link?.getAttribute('href')).toBe('/projects/p1/artifacts/a1')
   })
 
   it('清单为空时整块不出现——那时人要看的是下面那块板', async () => {

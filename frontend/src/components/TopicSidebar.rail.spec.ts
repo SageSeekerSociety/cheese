@@ -133,41 +133,39 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('全局 / 总览 / 看板 / 日历 / 资料库 / AI 队友 / 成员 是与话题行同语法的列表行，不再是 pills', () => {
+  it('侧栏上常驻的只有每天都用的那两样：全局和资料库', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
-    expect(titlesIn(container, '.pinned-row')).toEqual([
-      '全局',
-      '总览',
-      '看板',
-      '日历',
-      '资料库',
-      '导出与发布',
-      'AI 队友',
-      '成员',
-    ])
+    // 看板不在这里——它就是首页，项目名那一行点下去就到。总览、日历、成员、
+    // 导出与发布一年点几次，收进了项目名旁边那个菜单。
+    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '资料库'])
   })
 
-  it('点项目名不打开任何房间——它开的是项目菜单', async () => {
+  it('点项目名回项目首页，不打开任何房间', async () => {
     const onSelectTopic = vi.fn()
+    const push = vi.spyOn(router, 'push').mockResolvedValue(undefined)
     const { container } = mount({ onSelectTopic })
-    const name = container.querySelector('.rail-header__name') as HTMLElement
+    const name = container.querySelector('.rail-header__home') as HTMLElement
     expect(name.textContent?.trim()).toBe('P1')
+
     await fireEvent.click(name)
+
+    // 首页就是看板那一页（《项目名》/ 做出了什么 / 看板），项目名点下去就到。
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({ name: 'workspace-running' }))
     expect(onSelectTopic).not.toHaveBeenCalled()
+    push.mockRestore()
   })
 
-  it('整个项目头是菜单入口，而且键盘够得着', () => {
+  it('名字和菜单是两个按钮，两个都够得着', () => {
     const { container } = mount()
-    const header = container.querySelector('.rail-header') as HTMLElement
-    // 整块可点就得整块可聚焦：activator 必须是真按钮，不是挂了 click 的 div
-    expect(header.tagName).toBe('BUTTON')
-    expect(header.getAttribute('type')).toBe('button')
-    // 名字长在这块里面，所以点名字就是点菜单
-    expect(container.querySelector('.rail-header__name')?.closest('button')).toBe(header)
-    // 右边的图标只是"这里能展开"的指示，不再是唯一能点的靶子
-    expect(header.querySelector('.mdi-chevron-down')).not.toBeNull()
-    expect(header.querySelector('.v-btn')).toBeNull()
+    const home = container.querySelector('.rail-header__home') as HTMLElement
+    const more = container.querySelector('.rail-header__more') as HTMLElement
+    // 最常做的事（回首页）不该只能通过先开一个菜单达成，所以它自己是一个按钮。
+    expect(home.tagName).toBe('BUTTON')
+    expect(home.getAttribute('type')).toBe('button')
+    expect(more.tagName).toBe('BUTTON')
+    expect(more.getAttribute('type')).toBe('button')
+    expect(more.querySelector('.mdi-chevron-down')).not.toBeNull()
   })
 
   it('项目头高度走 48px 基线（.sidebar-header）', () => {
@@ -176,15 +174,14 @@ describe('C1 置顶导航组', () => {
   })
 })
 
-describe('私聊的未读落在「成员」那一行上', () => {
+describe('私聊的未读落在项目名那一行上', () => {
   // 侧栏原来有一整段私聊（芝士 + 有未读的人）。它撤掉了，名册和每个人的未读都归
-  // 成员页——但「有人找你」必须仍然在主导航上亮，否则私聊变成一个只有主动去翻才
-  // 发现的功能。所以这一组钉的是：那一段真的没了，而未读没有跟着一起没。
-  function pinnedRow(container: Element, label: string): Element {
-    const row = Array.from(container.querySelectorAll('.pinned-row')).find(
-      (el) => el.querySelector('.v-list-item-title')?.textContent?.trim() === label
-    )
-    if (!row) throw new Error(`没有找到置顶行: ${label}`)
+  // 成员页；成员那一行后来也进了菜单——但「有人找你」必须仍然在主导航上亮，否则
+  // 私聊变成一个只有主动去翻才发现的功能。所以这一组钉的是：那一段真的没了，而
+  // 未读没有跟着一起没，它跟着菜单入口走。
+  function header(container: Element): Element {
+    const row = container.querySelector('.rail-header')
+    if (!row) throw new Error('没有找到项目头')
     return row
   }
 
@@ -195,19 +192,19 @@ describe('私聊的未读落在「成员」那一行上', () => {
     expect(titlesIn(container, '.pinned-row')).not.toContain('芝士')
   })
 
-  it('有人私聊你 → 「成员」那一行上亮一个数，是所有私聊未读的总和', () => {
+  it('有人私聊你 → 项目名那一行上亮一个数，是所有私聊未读的总和', () => {
     const { container } = mount({ privateUnreadMap: { cheese: 1, zhang: 2, li: 3 } })
-    expect(pinnedRow(container, '成员').querySelector('.unread-badge')?.textContent?.trim()).toBe('6')
+    expect(header(container).querySelector('.unread-badge')?.textContent?.trim()).toBe('6')
   })
 
   it('没有未读就不亮——徽标不是常驻装饰', () => {
     const { container } = mount()
-    expect(pinnedRow(container, '成员').querySelector('.unread-badge')).toBeNull()
+    expect(header(container).querySelector('.unread-badge')).toBeNull()
   })
 
-  it('话题的未读不会漏到「成员」那一行上——两种未读不是一回事', () => {
+  it('话题的未读不会漏到项目名那一行上——两种未读不是一回事', () => {
     const { container } = mount({ unreadMap: { a: 4 } })
-    expect(pinnedRow(container, '成员').querySelector('.unread-badge')).toBeNull()
+    expect(header(container).querySelector('.unread-badge')).toBeNull()
   })
 })
 

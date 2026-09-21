@@ -110,11 +110,19 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '资料库', hideTabs: true, backTo: 'workspace-project' },
     },
     {
-      name: 'project-agents',
-      path: 'agents',
-      component: () => import('@/views/ProjectAgentsView.vue'),
+      // 清单上的一项产物。项目级，和资料库并列：交付它的那个房间可能已经归档，
+      // 而这一项还在，后面每一次交付都算它的新一版。
+      name: 'project-artifact',
+      path: 'artifacts/:artifactId',
+      component: () => import('@/views/ProjectArtifactView.vue'),
       props: true,
-      meta: { title: 'AI 队友', backTo: 'workspace-project' },
+      meta: { title: '产物', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
+      // AI 队友回到了项目设置里：队友的角色设定和模型本来就是这个项目的设置，而
+      // 设置页原本只有仓库那几块，对没绑仓库的项目是空的。发出去的旧链接照旧能用。
+      path: 'agents',
+      redirect: (to) => ({ name: 'project-settings', params: { projectId: to.params.projectId } }),
     },
     {
       name: 'project-settings',

@@ -18,9 +18,9 @@ here is one question the owner asks, answered by the fewest columns that answer
 it; a column dropped from anywhere else in those tables cannot reach it.
 
 `app/api/routes/execution.py` asks its one question through this module too.
-What is NOT covered yet: the device row itself (`DeviceService.verify_token`)
-and project/topic membership, which still load their models through
-repositories shared with the business backend.
+Device authentication, transcript authorization and viewer membership also
+read only the fields needed for those decisions. Changes to these fields still
+require a coordinated owner release; unrelated columns do not.
 
 Outliving the app cuts the other way as well: a release that moves a read onto
 a shape only the new backend writes leaves THIS process reading the old one
@@ -37,9 +37,72 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
-from app.domain.project.models import Project
+from app.domain.device.models import DeviceRow, DeviceTopicRow, HostedDeviceRow
+from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.project.models import Project, ProjectMember
 from app.domain.room_task.models import Task
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicMembership
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceIdentity:
+    device_id: str
+    name: str
+
+
+async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity | None:
+    if not token:
+        return None
+    row = (
+        await session.execute(
+            select(DeviceRow.device_id, DeviceRow.name).where(DeviceRow.token == token)
+        )
+    ).one_or_none()
+    return DeviceIdentity(row.device_id, row.name) if row is not None else None
+
+
+async def device_ran_place(
+    session: AsyncSession, device_id: str, project_id: uuid.UUID, place_id: uuid.UUID
+) -> bool:
+    pinned = await session.scalar(
+        select(DeviceTopicRow.device_id).where(DeviceTopicRow.topic_id == place_id)
+    )
+    if pinned is not None:
+        return pinned == device_id
+    hosted = await session.scalar(
+        select(HostedDeviceRow.device_id).where(HostedDeviceRow.device_id == device_id)
+    )
+    if hosted is None:
+        return False
+    return device_id in await SqlDeviceRepository(session).device_ids_by_project(
+        project_id
+    )
+
+
+async def project_member(
+    session: AsyncSession, project_id: uuid.UUID, handle: str
+) -> bool:
+    return (
+        await session.scalar(
+            select(ProjectMember.project_id).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_handle == handle,
+            )
+        )
+        is not None
+    )
+
+
+async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) -> bool:
+    return (
+        await session.scalar(
+            select(TopicMembership.topic_id).where(
+                TopicMembership.topic_id == topic_id,
+                TopicMembership.member_handle == handle,
+            )
+        )
+        is not None
+    )
 
 
 @dataclass(frozen=True, slots=True)

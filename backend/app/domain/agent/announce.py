@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_HUMAN
+from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.notification.models import NotificationType
@@ -55,9 +56,15 @@ async def announce(
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:
         return None
-    block = await BlockRepository(session).add(
+    landed = landing(
+        EventAbout.room,
         project_id=place.project_id,
-        topic_id=place.room_id,
+        room_id=place.room_id,
+    )
+    block = await BlockRepository(session).add(
+        project_id=landed.project_id,
+        topic_id=landed.topic_id,
+        task_id=landed.task_id,
         author=author,
         author_type=AuthorType.system,
         content=content,

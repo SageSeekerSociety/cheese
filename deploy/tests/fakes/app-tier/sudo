@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" != -n ] || shift
+# Host installation is outside this fake deployment's filesystem.
+if [ "${1:-}" = install ]; then
+  exit 0
+fi
+exec "$@"

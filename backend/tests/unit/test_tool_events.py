@@ -150,7 +150,7 @@ def test_format_tool_event_translates_pis_tools_too():
 def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():
     # pi 没有平台工具，它的平台动作全部是 shell 里的 cheese CLI —— 认不出这个
     # 房间的 shell 工具，整轮现场就没有一个琥珀点。
-    assert _is_platform_tool("bash", {"command": "cheese artifact output/x.docx"})
+    assert _is_platform_tool("bash", {"command": "cheese show output/x.docx"})
     assert not _is_platform_tool("bash", {"command": "echo cheese"})
 
 

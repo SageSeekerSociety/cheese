@@ -47,7 +47,9 @@ def _scheduler(client, tmp_path) -> SchedulerService:
 async def _idle_topic(factory, *, blocks: int = 25):
     """A topic with a real history, last touched a month ago."""
     async with factory() as session:
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await ProjectService(session).create(
+            name="P", owner_handle="u", forge_kind="github_app"
+        )
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )

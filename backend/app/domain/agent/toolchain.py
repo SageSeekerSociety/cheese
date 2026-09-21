@@ -33,6 +33,8 @@ from dataclasses import dataclass
 TYPST_VERSION = "0.15.1"
 PANDOC_VERSION = "3.11"
 UV_VERSION = "0.12.15"
+FJ_VERSION = "0.6.0"
+GH_VERSION = "2.62.0"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -41,6 +43,11 @@ _SERIF_COMMIT = "9b0f1436e455d902de067a2501422e5dc71ad16b"
 _TYPST_BASE = f"https://github.com/typst/typst/releases/download/v{TYPST_VERSION}"
 _PANDOC_BASE = f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}"
 _UV_BASE = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}"
+_GH_BASE = f"https://github.com/cli/cli/releases/download/v{GH_VERSION}"
+_FJ_MAC_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    "forgejo-cli-v0.6.0-cheese.1"
+)
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
 #: Platform strings are OURS, matching what the launcher computes on the machine
@@ -64,6 +71,55 @@ class Artifact:
 
 
 ARTIFACTS: dict[tuple[str, str], Artifact] = {
+    # Upstream has no macOS archives; scripts/build-forge-cli.sh builds these.
+    ("fj", "darwin-arm64"): Artifact(
+        f"{_FJ_MAC_BASE}/fj-0.6.0-aarch64-apple-darwin.tar.gz",
+        "58d721ad1b4f990734d46c5f3fd13993f60fa3c07b408167978328f797f8ab96",
+        9143322,
+        ".tar.gz",
+    ),
+    ("fj", "darwin-x64"): Artifact(
+        f"{_FJ_MAC_BASE}/fj-0.6.0-x86_64-apple-darwin.tar.gz",
+        "6139a457467e0e37faca5163b669f9a2ef52ac73ca3f91d586bb1d46f4ab05ed",
+        9227205,
+        ".tar.gz",
+    ),
+    ("gh", "linux-x64"): Artifact(
+        f"{_GH_BASE}/gh_{GH_VERSION}_linux_amd64.tar.gz",
+        "41c8b0698ad3003cb5c44bde672a1ffd5f818595abd80162fbf8cc999418446a",
+        13065800,
+        ".tar.gz",
+    ),
+    ("gh", "linux-arm64"): Artifact(
+        f"{_GH_BASE}/gh_{GH_VERSION}_linux_arm64.tar.gz",
+        "a165413209aab98bfb1db9629b97bc9c59778d38bb7378a33a0363cf822e7965",
+        12118266,
+        ".tar.gz",
+    ),
+    ("gh", "darwin-x64"): Artifact(
+        f"{_GH_BASE}/gh_{GH_VERSION}_macOS_amd64.zip",
+        "cd547c05c175a79e5af6f95ba4881a11ca550c0ff37a63f234bc5c79a58435d5",
+        13725376,
+        ".zip",
+    ),
+    ("gh", "darwin-arm64"): Artifact(
+        f"{_GH_BASE}/gh_{GH_VERSION}_macOS_arm64.zip",
+        "fdb77f31b8a6dd23c3fd858758d692a45f7fc76383e37d475bdcae038df92afc",
+        12793347,
+        ".zip",
+    ),
+    ("fj", "linux-arm64"): Artifact(
+        f"https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v{FJ_VERSION}/forgejo-cli-aarch64-linux.tar.gz",
+        "f427e0f94e2bf6f4b44bff17020706915bccfe7abb7ad9b9cbb74cc1aa2dd7b5",
+        9680784,
+        ".tar.gz",
+    ),
+    ("fj", "linux-x64"): Artifact(
+        f"https://codeberg.org/forgejo-contrib/forgejo-cli/releases/download/v{FJ_VERSION}/forgejo-cli-x86_64-linux.tar.gz",
+        "ea559da5449b6dd7e0dd9f7ea51c906b575696f782edd606b52adcf773602742",
+        7752840,
+        ".tar.gz",
+    ),
     ("typst", "linux-x64"): Artifact(
         f"{_TYPST_BASE}/typst-x86_64-unknown-linux-musl.tar.xz",
         "a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c",

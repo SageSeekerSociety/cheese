@@ -1469,8 +1469,6 @@ class DeviceChannel(Channel):
             project_id=str(project_id),
             topic_id=str(topic_id),
             agent_handle=agent_handle,
-            # Every device owns its checkout and syncs through authenticated git.
-            git_remote=f"{api_base}/projects/{project_id}/git",
             execution_target=execution_target,
             remote_control=model_env.get("CHEESE_REMOTE_CONTROL") == "1",
             ca_pem=ca_pem,
@@ -1486,7 +1484,6 @@ class DeviceChannel(Channel):
         if execution_target is not None:
             # The assigned executor already owns the checkout and its environment.
             for name in (
-                "CHEESE_GIT_REMOTE",
                 "CHEESE_GIT_BRANCH",
                 "CHEESE_BRANCH_URL",
                 "CHEESE_ENVIRONMENT",
@@ -1724,39 +1721,45 @@ class DeviceChannel(Channel):
             from app.core.db import async_session_factory
 
             factory = self._session_factory or async_session_factory
+            # Read which generation of the room this is, then let the connection
+            # go: nothing below writes, and every path into `ensure_ready` runs
+            # under ChatService's per-topic lock (`_prompt_lock`), so the row
+            # lock serialized nothing this process was not serializing already.
+            # Held across the device work it cost a pool connection, and the
+            # room's own row, for as long as starting an agent on a remote
+            # machine takes — which queued every writer of that row (a title, an
+            # archive, a read mark) behind it, each holding a connection of its
+            # own until the start finished.
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
-                # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
-                # 性容器，开在会话自己的机器上，不是一个地点 (结论 19)。做这个选
-                # 择的是「租到手没有」，不是「这间房是不是私聊」。
-                if not rented:
-                    from app.domain.agent.private_chat import scratch_target
+            env = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource_id)}
+            # 这一轮没租手，所以它跑在这条会话自己的草稿区里：一个有界的一次
+            # 性容器，开在会话自己的机器上，不是一个地点 (结论 19)。做这个选
+            # 择的是「租到手没有」，不是「这间房是不是私聊」。
+            if not rented:
+                from app.domain.agent.private_chat import scratch_target
 
-                    env["CHEESE_EXECUTION_TARGET"] = json.dumps(
-                        scratch_target(project_id, resource_id, device_id=device_id)
-                    )
-                before = (
-                    await environment_status(
-                        self._hub, device_id, project_id, resource_id
-                    )
-                    if prepares_environment
-                    else {}
+                env["CHEESE_EXECUTION_TARGET"] = json.dumps(
+                    scratch_target(project_id, resource_id, device_id=device_id)
                 )
-                prior_screen = self._existing_screen(device_id, topic_id, resource_id)
-                screen = await self._ensure_screen(
-                    device_id=device_id,
-                    agent_user_id=agent_user_id,
-                    agent_handle=agent_handle,
-                    project_id=project_id,
-                    topic_id=topic_id,
-                    token=token,
-                    env=env,
-                    launch=launch,
-                    environment_before=before,
-                )
-                await room_session.commit()
+            before = (
+                await environment_status(self._hub, device_id, project_id, resource_id)
+                if prepares_environment
+                else {}
+            )
+            prior_screen = self._existing_screen(device_id, topic_id, resource_id)
+            screen = await self._ensure_screen(
+                device_id=device_id,
+                agent_user_id=agent_user_id,
+                agent_handle=agent_handle,
+                project_id=project_id,
+                topic_id=topic_id,
+                token=token,
+                env=env,
+                launch=launch,
+                environment_before=before,
+            )
             self._subscription_devices[topic_id] = device_id
             if prepares_environment:
                 # A process started before this feature keeps its environment

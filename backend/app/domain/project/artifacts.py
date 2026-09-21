@@ -281,6 +281,54 @@ async def summary(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ArtifactVersion:
+    """这一项产物的第 N 版 —— 就是第 N 张采纳了的卡 (#1085 结论五)。
+
+    版号不在任何一张表上：按采纳时间排开数下来就是它。所以撤回一次采纳，它后面那
+    几版的号自己往前挪，而不需要有谁记得去改。
+    """
+
+    number: int
+    card_id: uuid.UUID
+    #: 这次交付改了什么 —— 卡上那句 Conventional Commit 标题。
+    subject: str | None
+    delivered_at: datetime | None
+    decided_by: str | None
+    #: 交出去的是什么形态：file / link / merge，或者 None —— 交付物落地之前递的那
+    #: 几张卡没有这个字段，那几版没有可下载的东西。
+    kind: str | None
+    filename: str | None
+    url: str | None
+
+
+async def versions(
+    session: AsyncSession, artifact_id: uuid.UUID
+) -> list[ArtifactVersion]:
+    """这一项交付过的每一版，第一版在前。"""
+    found = await session.execute(
+        select(AcceptCard)
+        .where(
+            AcceptCard.artifact_id == artifact_id,
+            AcceptCard.status == AcceptStatus.accepted,
+        )
+        .order_by(AcceptCard.decided_at, AcceptCard.created_at)
+    )
+    return [
+        ArtifactVersion(
+            number=number,
+            card_id=card.id,
+            subject=card.change_subject,
+            delivered_at=card.decided_at,
+            decided_by=card.decided_by,
+            kind=card.deliverable_kind.value if card.deliverable_kind else None,
+            filename=card.deliverable_name,
+            url=card.deliverable_url,
+        )
+        for number, card in enumerate(found.scalars().all(), start=1)
+    ]
+
+
 def _claims():
     """每一项产物被声明的情况：落地了几次、有没有人正在交付、最近一次是什么时候。
 

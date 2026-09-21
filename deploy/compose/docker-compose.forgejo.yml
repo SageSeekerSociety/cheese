@@ -1,0 +1,44 @@
+# Layer onto the app compose file for each deployment's repository service.
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:15.0.9-rootless
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES: "127.0.0.0/8,::1/128"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      # Accounts are provisioned by Cheese; agent addresses have no inbox.
+      FORGEJO__service__REGISTER_EMAIL_CONFIRM: "false"
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: "true"
+      FORGEJO__server__ROOT_URL: ${FORGEJO_URL:?public URL including the /forge/ prefix}
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__oauth2__ACCESS_TOKEN_EXPIRATION_TIME: "3600"
+      FORGEJO__webhook__ALLOWED_HOST_LIST: ${FORGEJO_WEBHOOK_HOSTS:?event relay hostname}
+    ports:
+      - "127.0.0.1:${FORGEJO_PORT:-3300}:3000"
+    volumes:
+      - forgejo_data:/var/lib/gitea
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
+    logging:
+      driver: ${FORGEJO_LOG_DRIVER:-journald}
+
+  backend:
+    environment:
+      - FORGEJO_URL=${FORGEJO_URL:?public URL including the /forge/ prefix}
+      - FORGEJO_API_URL=http://forgejo:3000/api/v1
+
+  frontend:
+    environment:
+      - FORGEJO_UPSTREAM=forgejo:3000
+      - FORGE_EVENTS_UPSTREAM=${FORGE_EVENTS_UPSTREAM:-backend:8081}
+
+volumes:
+  forgejo_data:

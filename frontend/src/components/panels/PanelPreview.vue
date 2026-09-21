@@ -21,6 +21,7 @@ import { postPreviewSession } from '../../lib/previewSession'
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
+import RoomOutputs from './preview/RoomOutputs.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -578,6 +579,10 @@ watch(
       <div>暂无预览</div>
       <div class="text-caption mt-1">芝士做出网页、图表等可看的成果时，会放到这里。</div>
     </div>
+
+    <!-- 这个房间里摆出来过的东西，以及把其中一份留进资料库的那个动作 (#1085 结
+         论四)。上面那块预览只看得到最后一样，而那个动作只有人能按。 -->
+    <RoomOutputs :topic-id="topicId" />
   </div>
 </template>
 
