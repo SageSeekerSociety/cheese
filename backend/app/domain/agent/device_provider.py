@@ -180,19 +180,19 @@ async def resolve_pinned_device(
     # does; a machine judged dead is named in the room (``agent.host_failure``)
     # and waited for, because a pin that can quietly change is the original drift
     # bug.
-    healthy = await service.healthy_devices_for_project(project_id, is_online)
-    for device in healthy:
-        # The same fact the market catalogue publishes as `default=True`, read from
-        # one place so the picker can never advertise a 档 the resolver does not
-        # bind. Today that resolves to `host`, because `isolated` has no transport;
-        # when #358 step 2 supplies one, this and the catalogue move together.
-        await service.bind_topic_device(
-            topic_id,
-            device.device_id,
-            visibility=await service.binding_visibility(device.device_id),
-        )
-        return device.device_id
-    return None
+    device = await service.first_healthy_device(project_id, is_online)
+    if device is None:
+        return None
+    # The same fact the market catalogue publishes as `default=True`, read from
+    # one place so the picker can never advertise a 档 the resolver does not
+    # bind. Today that resolves to `host`, because `isolated` has no transport;
+    # when #358 step 2 supplies one, this and the catalogue move together.
+    await service.bind_topic_device(
+        topic_id,
+        device.device_id,
+        visibility=await service.binding_visibility(device.device_id),
+    )
+    return device.device_id
 
 
 # Addresses that only mean something ON the box. Routing the box's own turns

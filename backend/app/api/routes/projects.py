@@ -39,11 +39,12 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
+    COMPUTE_TIERS,
     compute_default_name,
     compute_selectable,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.configuration import AgentConfiguration
+from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
@@ -67,6 +68,7 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.membership.services import MemberService
 from app.domain.memory.models import MemoryScope
+from app.domain.policy import gate
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -348,7 +350,7 @@ async def create_project_agent(
 
 @router.get("/{project_id}/agent-options")
 async def project_agent_options(project_id: uuid.UUID, db: DbSession) -> dict:
-    from app.domain.agent_instance.configuration import harness_choices, model_choices
+    from app.domain.agent_instance.configuration import harness_choices
 
     project = await ProjectService(db).get_or_404(project_id)
     choices = model_choices(project.settings)
@@ -1185,6 +1187,69 @@ async def save_compute_configs(
     project.settings = values
     await db.flush()
     return ok(body.model_dump())
+
+
+# --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
+
+
+@router.get("/{project_id}/tier-policy")
+async def get_tier_policy(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这个项目允许哪几档资源自己发生，以及超档怎么办。
+
+    `tiers` 一并给出目录里现在存在的档位，所以调用方不必自己维护一份档位表——
+    那正是闸门拒绝按型号列白名单的同一个理由（`domain/policy/gate.py`）。
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    project = await ProjectService(db).get_or_404(project_id)
+    policy = gate.policy_of(project.settings)
+    return ok(
+        {
+            gate.ALLOWED_TIERS_KEY: (
+                None if policy.allowed_tiers is None else sorted(policy.allowed_tiers)
+            ),
+            gate.OVER_TIER_KEY: policy.over_tier,
+            "tiers": sorted(
+                {choice["tier"] for choice in model_choices(project.settings)}
+                | set(COMPUTE_TIERS.values())
+            ),
+        }
+    )
+
+
+@router.put("/{project_id}/tier-policy")
+async def set_tier_policy(
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """改档位策略。只有项目管理者能改——它决定谁的点头才能放行一次调用。
+
+    `allowed_tiers` 传 `null` 是不限档（默认），传一个列表是只有这几档可以自己
+    发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
+    档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
+    """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await MemberService(db).require_manager(project_id, actor)
+    project = await ProjectService(db).get_or_404(project_id)
+    values = dict(project.settings or {})
+    if gate.ALLOWED_TIERS_KEY in body:
+        tiers = body.get(gate.ALLOWED_TIERS_KEY)
+        if tiers is None:
+            values.pop(gate.ALLOWED_TIERS_KEY, None)
+        elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
+            values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
+        else:
+            raise ValidationError("allowed_tiers 必须是字符串数组或 null")
+    if gate.OVER_TIER_KEY in body:
+        disposition = body.get(gate.OVER_TIER_KEY)
+        if disposition not in gate.DISPOSITIONS:
+            raise ValidationError(f"over_tier 只能是 {sorted(gate.DISPOSITIONS)} 之一")
+        values[gate.OVER_TIER_KEY] = disposition
+    project.settings = values
+    await db.flush()
+    return await get_tier_policy(project_id, db, resolver)
 
 
 @router.get("/{project_id}/compute-profiles")

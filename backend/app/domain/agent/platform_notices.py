@@ -131,6 +131,8 @@ EVENT_PR_CONFLICT: Final = "pr_conflict"
 # A parent task closed; its dependants need the executor to inspect their base.
 EVENT_DEPENDENCY_CLOSED: Final = "dependency_closed"
 EVENT_DEPENDENCY_REJECTED: Final = "dependency_rejected"
+#: 一次调用撞上项目的档位策略，变成了给人的一条提议（`domain/policy/gate.py`）。
+EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -177,6 +179,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_PR_CONFLICT,
         EVENT_DEPENDENCY_CLOSED,
         EVENT_DEPENDENCY_REJECTED,
+        EVENT_POLICY_PROPOSAL,
     }
 )
 

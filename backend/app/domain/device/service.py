@@ -429,6 +429,20 @@ class DeviceService:
         now = self._now()
         return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
 
+    async def first_healthy_device(
+        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
+    ) -> Device | None:
+        """「系统挑一台」会挑中的那一台 —— 只读，不写绑定。
+
+        两处要知道它：`agent/device_provider.py` 的 `resolve_pinned_device` 紧接着
+        就把它绑给房间；`agent/compute_configs.py` 的 `machine_policy_call` 在**占
+        用之前**要问「这一轮会占谁的机器」，好把提议发给那台机器的主人（结论 40）。
+        闸门调不了 `resolve_pinned_device`——它会把绑定写下去，而撞上策略的调用必须
+        一台机器也没占。挑的规则在这里一处，写绑定的只在那一处。
+        """
+        healthy = await self.healthy_devices_for_project(project_id, is_online)
+        return healthy[0] if healthy else None
+
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
         if device is None:

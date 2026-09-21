@@ -24,7 +24,11 @@ from app.domain.agent.harness import (
     harness_name,
     known_harness,
 )
-from app.domain.agent.market import subscription_model_ids, subscription_model_listings
+from app.domain.agent.market import (
+    TIER_INCLUDED,
+    subscription_model_ids,
+    subscription_model_listings,
+)
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
 
 
@@ -73,6 +77,12 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "description": "平台模型池",
             "default": not subscription_default and item.id == settings.agent_model,
             "supply": GATEWAY,
+            # The pool's models are 档位 `included`: the gateway only offers what
+            # it can bill (`gateway_catalog.offerable`), and what they cost the
+            # project is already capped by the project key's `max_budget`. The
+            # tiers a policy gates on are about spend a budget does NOT cap —
+            # subscription quota, and a machine that belongs to somebody else.
+            "tier": TIER_INCLUDED,
         }
         for item in gateway_catalog.offerable()
     )
@@ -94,6 +104,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "description": "平台模型池",
                 "default": False,
                 "supply": GATEWAY,
+                "tier": TIER_INCLUDED,
             }
         )
     return choices
