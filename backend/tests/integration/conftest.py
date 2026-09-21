@@ -89,9 +89,9 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
 
 
 def room_agent_seat(client, topic_id) -> str:
-    """The seat of the one agent seated in this room — the identity a
-    room-scoped credential (a token or a screen naming the room's stand-in)
-    acts as, and the author of everything the room's agent writes."""
+    """The seat of the one agent seated in this room — the identity a per-turn
+    credential that pinned no teammate acts as, and the author of everything
+    the room's agent writes. The roster is asked, never the room's id."""
     rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
     seats = [m["member_handle"] for m in rows if m["agent"]]
     assert len(seats) == 1, seats

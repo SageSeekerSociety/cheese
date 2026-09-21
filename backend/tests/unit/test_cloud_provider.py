@@ -130,7 +130,7 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
     monkeypatch.setattr(
         "app.domain.agent.cloud_provider.IdentityService",
         lambda _session: SimpleNamespace(
-            ensure_topic_agent_user=AsyncMock(
+            ensure_room_agent_user=AsyncMock(
                 return_value=SimpleNamespace(id=7, username="cheese-room")
             )
         ),

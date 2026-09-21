@@ -21,7 +21,6 @@ from app.domain.identity.handles import (
     CHEESE_NAME,
     UNRESOLVED_AGENT_HANDLE,
     agent_instance_handle,
-    topic_agent_handle,
 )
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
@@ -53,22 +52,6 @@ class ResolvedAgent:
 def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:
     """The pool this agent's memory lives in, inside this project."""
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
-
-
-def legacy_topic_pool(
-    project_id: uuid.UUID, topic_id: uuid.UUID
-) -> tuple[MemoryScope, str]:
-    """The pool a room's 分身 wrote to while memory was keyed by topic.
-
-    Nothing new lands here — writes go to the agent's own pool — but a room that
-    accumulated facts under its per-topic handle must keep reading them, or the
-    day this shipped is the day 芝士 forgot everything it had learned in that
-    room. Not migrated on purpose: merging the pools is a separate piece of work
-    that has to wait for injection to stop being a flat 50-fact dump.
-    """
-    return MemoryScope.agent_project, agent_project_scope_id(
-        project_id, topic_agent_handle(topic_id)
-    )
 
 
 class AgentInstanceService:

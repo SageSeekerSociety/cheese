@@ -75,7 +75,6 @@ from app.domain.device.supply import (
     has_runnable_transport,
 )
 from app.domain.device.wiring import sql_device_service
-from app.domain.identity.handles import topic_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.library import service as library
 from app.domain.topic.services import TopicService
@@ -658,7 +657,7 @@ class DeviceChannel(Channel):
                 ]
                 identity: tuple = ()
                 if entries:
-                    agent = await IdentityService(session).ensure_topic_agent_user(
+                    agent = await IdentityService(session).ensure_room_agent_user(
                         topic_id
                     )
                     identity = (agent.id, agent.username)
@@ -758,10 +757,11 @@ class DeviceChannel(Channel):
             )
             if device_id is None:
                 return None
-            # The screen acts as THIS topic's 分身 (its own agent-user), so a turn
-            # run on a self-hosted box is attributable to the same identity as one
-            # run locally — the device stays pure compute either way.
-            agent = await IdentityService(session).ensure_topic_agent_user(topic_id)
+            # The screen acts as the agent that answers this room (its own
+            # agent-user), so a turn run on a self-hosted box is attributable to the
+            # same identity as one run locally — the device stays pure compute
+            # either way.
+            agent = await IdentityService(session).ensure_room_agent_user(topic_id)
             # Persist the pin created above (first turn) before the turn proceeds, so a
             # concurrent/next turn sees the same device.
             await session.commit()
@@ -1022,22 +1022,10 @@ class DeviceChannel(Channel):
             return False
         from app.domain.agent.remote_control import store
 
-        agent_handle = screen.agent_handle
-        if screen.topic_id is not None and agent_handle == topic_agent_handle(
-            screen.topic_id
-        ):
-            # RC launch credentials resolve a room stand-in to its seated agent.
-            # A surviving screen still records the stand-in it was born with.
-            from app.core.db import async_session_factory
-            from app.domain.topic_membership.services import TopicMemberService
-
-            factory = self._session_factory or async_session_factory
-            async with factory() as db:
-                agent_handle = await TopicMemberService(db).resolve_agent_handle(
-                    screen.topic_id
-                )
+        # A screen is launched as one named agent and records it, so this is
+        # the agent whose control session to look for — no second answer.
         control = store()
-        session = await control.current(str(screen.topic_id), agent_handle)
+        session = await control.current(str(screen.topic_id), screen.agent_handle)
         if not session or session["status"] != "active":
             raise ScreenSetupError(
                 "Resident release requires the active native control session"
@@ -1357,10 +1345,8 @@ class DeviceChannel(Channel):
                 ttl_s=SESSION_TOKEN_TTL_S,
                 remote_control=True,
                 resource_id=str(resource_id),
-                # WHO acts with it. The launcher has known this all along and
-                # let the minter fall back to a handle derived from the room —
-                # which is the one thing a room cannot answer once it may seat
-                # more than one agent.
+                # WHO acts with it — a room cannot answer that once it may seat
+                # more than one agent, so the launcher, which knows, says it.
                 agent_handle=agent_handle,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
@@ -1684,7 +1670,7 @@ class DeviceChannel(Channel):
         from app.domain.project.services import ProjectService
 
         if not session.agent_handle:
-            return await IdentityService(db).ensure_topic_agent_user(session.topic_id)
+            return await IdentityService(db).ensure_room_agent_user(session.topic_id)
         project = await ProjectService(db).get_or_404(session.project_id)
         agents = AgentInstanceService(db)
         instance = await agents.for_handle(project, session.agent_handle)
@@ -1694,10 +1680,10 @@ class DeviceChannel(Channel):
         return user
 
     async def _session_host_agent(self, session: SessionRef) -> Placement:
-        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上这个
-        房间的 分身。
+        """不租手的一轮落在哪 (结论 19，不变量 I2)：这条会话自己的机器，加上答
+        这间房的那个 agent。
 
-        分身不是从执行机上取的，所以所有工作机离线时它照样答得出来。三条通道问的
+        身份不是从执行机上取的，所以所有工作机离线时它照样答得出来。三条通道问的
         是同一个问题，答案就只有这一份。
         """
         async with self._sessions() as db:
@@ -1781,11 +1767,11 @@ class DeviceChannel(Channel):
             async with factory() as room_session:
                 room = await TopicService(room_session).lock_for_execution(topic_id)
                 resource_id = room.resource_id or room.id
-                # Use the same actor for Git and tools, including a non-default
-                # teammate whose identity differs from the machine precheck.
-                # A room-scoped legacy token keeps the precheck identity.
+                # Use the same actor for the repository and for tools, including
+                # a non-default teammate whose identity differs from the machine
+                # precheck. A token that names nobody keeps the precheck identity.
                 actor = token_agent_handle(token)
-                if actor and actor not in (agent_handle, topic_agent_handle(topic_id)):
+                if actor and actor != agent_handle:
                     user = await user_by_handle(room_session, actor)
                     if user is None:
                         raise ScreenSetupError("本轮 agent 身份不存在，无法启动执行机")

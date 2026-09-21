@@ -46,7 +46,7 @@ async def test_invited_teammate_is_the_startup_identity(
     hub = SimpleNamespace(is_online=lambda host: host in {"center", "executor"})
     device = DeviceChannel(hub=hub, session_factory=client.test_factory)
     async with client.test_factory() as db:
-        default = await IdentityService(db).ensure_topic_agent_user(room_id)
+        default = await IdentityService(db).ensure_room_agent_user(room_id)
         default_id, default_handle = default.id, default.username
         await db.commit()
     device._resolve_device_agent = AsyncMock(
