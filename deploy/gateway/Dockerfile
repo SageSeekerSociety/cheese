@@ -1,5 +1,7 @@
 FROM ghcr.io/berriai/litellm@sha256:d1fc1c122e2c1a0cec2b00540b220ff0d2682842758eb8bc64e373a1aedfec7e
 
+LABEL org.opencontainers.image.title="Cheese LLM gateway"
+
 # Resolve the pinned telemetry wrapper before request-time auth uses it.
 ENV LITELLM_WORKER_STARTUP_HOOKS=litellm.llms:load_guardrail_translation_mappings,litellm.anthropic_beta_headers_manager:reload_beta_headers_config,litellm.integrations.otel.runtime:_otel_runtime
 
