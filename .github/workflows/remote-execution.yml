@@ -53,9 +53,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      # setup-uv otherwise puts the cache in runner temp, which is cleared after each job.
+      - name: Use the persistent uv cache
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a
         with:
           version: '0.12.1'
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          enable-cache: false
       - name: Load the runner Rust toolchain
         run: |
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -156,9 +161,14 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      # setup-uv otherwise puts the cache in runner temp, which is cleared after each job.
+      - name: Use the persistent uv cache
+        run: echo "UV_SHARED_CACHE=$HOME/.cache/uv" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: '0.12.1'
+          cache-local-path: ${{ env.UV_SHARED_CACHE }}
+          enable-cache: false
       - name: Install terminal test dependencies
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"

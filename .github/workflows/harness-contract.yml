@@ -30,6 +30,10 @@ jobs:
       - uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
+          prune-cache: false
       - name: Install Python and dependencies
         run: |
           uv python install 3.13
