@@ -795,11 +795,16 @@ def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_p
 def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
     monkeypatch, tmp_path
 ):
-    """Claude Code calls some endpoints with no Authorization at all
-    (`/api/event_logging/v2/batch` among them). "No credential" is not "someone
-    else's credential": refusing those broke telemetry for every CONNECT caller
-    whose project owns no machine — seen on dev as a burst of 503s from a
-    project that has none. Such a request takes the ordinary swap path."""
+    """Claude Code calls some endpoints with no Authorization at all. "No
+    credential" is not "someone else's credential": reading an absent bearer as
+    a foreign one refused every CONNECT caller whose project owns no machine —
+    seen on dev as a burst of 503s from a project that has none. Such a request
+    takes the ordinary swap path.
+
+    Shown on a turn rather than on the telemetry call that produced the
+    incident: telemetry is answered from the table now, before `_attribution`
+    is consulted at all, so that path can no longer demonstrate the rule it
+    taught us."""
     secret = "s3cr3t"
     mod = _load_addon(
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
@@ -809,11 +814,10 @@ def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
     )
     flow = _machine_flow(conn="c1")
     del flow.request.headers["authorization"]
-    flow.request.path = "/api/event_logging/v2/batch"
 
     asyncio.run(mod.requestheaders(flow))
 
-    assert flow.response is None, "telemetry must not be refused"
+    assert flow.response is None, "a bearer-less caller must not be refused"
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
 
 
