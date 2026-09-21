@@ -307,7 +307,7 @@ export type WsServerFrame =
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
   // block; the client must not double-show it as a floating banner.
-  | { type: 'error'; message: string; persisted?: boolean; code?: string }
+  | { type: 'error'; message: string; persisted?: boolean; code?: string; client_id?: string }
   | { type: 'done' }
   | { type: 'turn_started'; turn_id: string }
   | { type: 'turn_finished'; turn_id: string }

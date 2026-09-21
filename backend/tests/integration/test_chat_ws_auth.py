@@ -177,3 +177,34 @@ def test_a_peer_that_drops_under_a_send_ends_the_socket_quietly(client, monkeypa
         # re-raises whatever the handler raised, which must be nothing.
         ws.send_json({"type": "ping"})
     assert _blocks(client, tid) == []
+
+
+@pytest.mark.parametrize("failure", ["business", "unexpected"])
+def test_message_failure_identifies_the_message_and_keeps_socket_usable(
+    client, monkeypatch, failure
+):
+    from app.core.errors import ForbiddenError
+    from app.domain.agent.runtime import InProcessBroker
+
+    _, tid = _project_topic(client, owner="alice")
+
+    async def fail(*args, **kwargs):
+        if failure == "business":
+            raise ForbiddenError("房间已关闭")
+        raise RuntimeError("private diagnostic")
+
+    monkeypatch.setattr(InProcessBroker, "receive_message", fail)
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "hello", "client_id": "pending-1"})
+        frame = ws.receive_json()
+        while frame["type"] != "error":
+            frame = ws.receive_json()
+        assert frame["client_id"] == "pending-1"
+        assert frame["code"] == (
+            "ForbiddenError" if failure == "business" else "message_receive_failed"
+        )
+        assert "private diagnostic" not in frame["message"]
+        if failure == "business":
+            assert frame["message"] == "房间已关闭"
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json()["type"] == "pong"

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.db import SessionFactory
+from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
 from app.domain.agent.forgejo_tokens import ForgejoTokens
@@ -108,20 +108,30 @@ async def repository_data(
     path: str = "",
     *,
     diff: bool = False,
+    release_session: bool = False,
 ) -> Any:
     binding = await binding_for_project(project_id, session)
     tokens = await tokens_for_project(project_id, session)
     if binding is None or tokens is None:
         raise GatewayUnavailableError("项目的代码仓库或凭据不可用")
+    if release_session:
+        await release_read_session(session)
     token, _ = await tokens.installation_token()
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.get(
-            f"{binding.api_url.rstrip('/')}/repos/{binding.repo}{path}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github.diff" if diff else "application/json",
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{binding.api_url.rstrip('/')}/repos/{binding.repo}{path}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github.diff"
+                    if diff
+                    else "application/json",
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise GatewayUnavailableError("代码仓库响应超时，请稍后重试") from exc
+    except httpx.RequestError as exc:
+        raise GatewayUnavailableError("暂时无法连接代码仓库，请稍后重试") from exc
     if response.status_code == 404:
         return None
     if response.is_error:
@@ -131,7 +141,13 @@ async def repository_data(
     return response.text if diff else response.json()
 
 
-async def branch_head(project_id: uuid.UUID, session: AsyncSession, branch: str):
+async def branch_head(
+    project_id: uuid.UUID,
+    session: AsyncSession,
+    branch: str,
+    *,
+    release_session: bool = False,
+):
     data = await repository_data(
         project_id, session, f"/branches/{quote(branch, safe='')}"
     )
