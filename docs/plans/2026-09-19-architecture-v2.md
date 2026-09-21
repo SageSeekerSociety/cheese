@@ -1644,9 +1644,9 @@ so check there and not in the menu, the contract or the doc**」。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
 - **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。
-- **两张通知表并成一张**（结论 58）：`alert/` 那个包和 `alerts` 表原样还在，账本只管
-  `notification/` 这一张；把 `alerts` 的行幂等地搬进 `notification` 也还没有人做，
-  在那之前 `alerts` 不能 drop。
+- **`alerts` 这张表本身**：`alert/` 那个包已经并进 `notification/`，行也幂等地搬过去了，
+  但表和表里的数据还留着 —— 换镜像那段窗口里旧镜像还在往它里面写，得由 drop 它的那条
+  迁移在删表之前把搬家原样再跑一遍。
 - **同 handle 便条的写侧**（读侧的通道已经有了：`chat.py:1605 notify_running_turn`）。
 - **定时投递原语**（今天由 `scheduler/` 替它做，而那是另一件事）。
 - **反馈通道**：全仓一行都没有。

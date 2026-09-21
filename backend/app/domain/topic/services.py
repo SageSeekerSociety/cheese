@@ -28,7 +28,6 @@ from app.domain.agent_instance.services import (
     ResolvedAgent,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.services import AlertService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.block.models import (
@@ -45,6 +44,7 @@ from app.domain.identity.handles import (
     names_a_person,
 )
 from app.domain.membership.services import MemberService
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
@@ -225,7 +225,7 @@ class TopicService:
         # asks each through its own service — the roster, the accept cards and
         # the @-notifications each decide for themselves what "mine" means.
         self._cards = AcceptService(session)
-        self._alerts = AlertService(session)
+        self._notifications = ProjectNotificationService(session)
 
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         """Return one topic for cross-domain service callers."""
@@ -478,7 +478,7 @@ class TopicService:
         topic_ids = [t.id for t in topics]
         roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
         cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        mentions = await self._alerts.mention_topic_ids(topic_ids, viewer_handle)
+        mentions = await self._notifications.mention_topic_ids(topic_ids, viewer_handle)
         relevance: dict[uuid.UUID, TopicRelevance] = {}
         for topic in topics:
             awaits = cards.get(topic.id, False) or mentions.get(topic.id, False)

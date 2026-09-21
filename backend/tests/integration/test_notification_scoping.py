@@ -4,6 +4,9 @@ Dogfooding an agent onto the platform surfaced the opposite: the project
 notification endpoints treated ``target_handle`` as an optional filter, so a
 caller who omitted it read everyone's mail — and ``read-all`` cleared everyone's
 unread state. These tests pin the recipient to whoever is calling.
+
+一条通知只对一个人：广播在写入时就展开成名册上一人一行，所以「我看得见哪些」是
+一句相等，没有第二档要每一处读各自记得。
 """
 
 import asyncio
@@ -44,11 +47,24 @@ def _notify(
         },
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    rows = r.json()["data"]["data"]
+    # 点名给一个人的写进去就是一行；这个 helper 只被那一种用。
+    assert len(rows) == 1, rows
+    return rows[0]
 
 
 def _titles(response) -> list[str]:
     return [n["title"] for n in response.json()["data"]["data"]]
+
+
+def _broadcast(client, project_id: str, title: str, **kwargs) -> list[dict]:
+    """没有收件人的那一条 —— 它在写入时展开成名册上一人一行。"""
+    r = client.post(
+        f"/projects/{project_id}/alerts",
+        json={"level": "light", "kind": "change_alert", "title": title, **kwargs},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
 
 
 def _unread(client, project_id: str, handle: str) -> int:
@@ -62,9 +78,11 @@ def _unread(client, project_id: str, handle: str) -> int:
 
 def test_list_serves_the_caller_their_own_mail_and_broadcasts(client):
     pid = _project(client)
+    _add_member(client, pid, "alice")
+    _add_member(client, pid, "bob")
     _notify(client, pid, "给alice", target="alice")
     _notify(client, pid, "给bob", target="bob")
-    _notify(client, pid, "全体注意")
+    _broadcast(client, pid, "全体注意")
 
     r = client.get(f"/projects/{pid}/alerts", headers=session_auth_headers("alice"))
     assert r.status_code == 200
@@ -110,7 +128,7 @@ def test_read_all_leaves_other_peoples_notifications_unread(client):
     still_unread = client.get(
         f"/projects/{pid}/alerts", headers=session_auth_headers("bob")
     )
-    assert [n["read_at"] for n in still_unread.json()["data"]["data"]] == [None]
+    assert [n["read"] for n in still_unread.json()["data"]["data"]] == [False]
     assert still_unread.json()["data"]["data"][0]["id"] == bobs["id"]
 
 
@@ -143,13 +161,20 @@ def test_unread_count_and_inbox_default_to_the_caller(client):
     assert _titles(r) == ["alice拍板"]
 
 
-def test_an_unidentified_caller_sees_broadcasts_only(client):
+def test_an_unidentified_caller_has_no_mailbox_at_all(client):
+    """报不出身份就没有收件箱。
+
+    以前这里看得到广播 —— 那是一行 `target_handle IS NULL` 的记录，谁读都算数。
+    一条通知只对一个人之后，广播在写入时就落进名册上每个人各自的那一行，匿名的
+    调用者不在任何一行上。
+    """
     pid = _project(client)
+    _add_member(client, pid, "alice")
     _notify(client, pid, "给alice", target="alice")
-    _notify(client, pid, "全体注意")
+    _broadcast(client, pid, "全体注意")
 
     r = client.get(f"/projects/{pid}/alerts")
-    assert _titles(r) == ["全体注意"]
+    assert _titles(r) == []
 
 
 # ---- Naming a handle is an assertion, never an identity -----------------------
@@ -162,7 +187,7 @@ def test_an_unidentified_caller_sees_broadcasts_only(client):
 def test_tokenless_caller_naming_someone_else_is_refused(client):
     pid = _project(client)
     _notify(client, pid, "给bob", target="bob")
-    _notify(client, pid, "全体注意")
+    _broadcast(client, pid, "全体注意")
 
     for path in (
         f"/projects/{pid}/alerts",
@@ -195,7 +220,8 @@ def test_bad_token_is_refused_even_without_naming_anyone(client):
     """A presented-but-invalid credential is an error, not anonymous browsing —
     silent downgrade is exactly what made the header strippable."""
     pid = _project(client)
-    _notify(client, pid, "全体注意")
+    _add_member(client, pid, "alice")
+    _broadcast(client, pid, "全体注意")
 
     r = client.get(
         f"/projects/{pid}/alerts",
@@ -263,7 +289,9 @@ def _decision(client, project_id: str, title: str, target: str) -> dict:
         },
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]
+    rows = r.json()["data"]["data"]
+    assert len(rows) == 1, rows
+    return rows[0]
 
 
 def test_notification_actions_require_a_verified_caller(client):
@@ -285,8 +313,8 @@ def test_notification_actions_require_a_verified_caller(client):
     mine = client.get(
         f"/projects/{pid}/alerts", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
-    assert [(x["read_at"], x["resolved_at"], x["feedback"]) for x in mine] == [
-        (None, None, None)
+    assert [(x["read"], x["resolved_at"], x["feedback"]) for x in mine] == [
+        (False, None, None)
     ]
 
 
@@ -320,7 +348,7 @@ def test_resolve_attributes_the_decision_to_the_verified_caller(client):
             "payload": {"options": ["A", "B"]},
         },
     )
-    n = r.json()["data"]
+    n = r.json()["data"]["data"][0]
 
     # The body claims mallory decided; the block must carry alice.
     r = client.post(
@@ -397,7 +425,7 @@ def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
     _add_member(client, pid, "bob")
     _add_member(client, pid, "alice")
     _notify(client, pid, "bob拍板", target="bob", kind="decision_request")
-    _notify(client, pid, "谁来都行", kind="decision_request")
+    _broadcast(client, pid, "谁来都行", kind="decision_request", level="strong")
 
     # Anonymous → 401, and nothing of bob's leaks.
     r = client.get(f"/projects/{pid}/members/bob/summary")
@@ -510,7 +538,7 @@ def test_creating_with_a_bearer_alone_works(client):
         headers={"X-Cheese-Token": "", **session_auth_headers("alice")},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["title"] == "人发的"
+    assert [row["title"] for row in r.json()["data"]["data"]] == ["人发的"]
 
 
 def test_creating_with_a_scoped_token_works(client):

@@ -103,8 +103,6 @@ from app.domain.agent_instance.services import (
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.models import AlertKind, AlertLevel
-from app.domain.alert.services import AlertService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -130,6 +128,8 @@ from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationLevel, NotificationType
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
@@ -4521,14 +4521,14 @@ class ChatService:
         # Nobody needs a notification for their own message.
         targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
-            notifs = AlertService(session)
+            notifs = ProjectNotificationService(session)
             preview = markdown_preview(text, 200)
             who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
-                    level=AlertLevel.strong,
-                    kind=AlertKind.mention,
+                    level=NotificationLevel.strong,
+                    kind=NotificationType.MENTION,
                     title=f"{who} 在「{topic.title}」@了你",
                     body=preview,
                     target_handle=h,

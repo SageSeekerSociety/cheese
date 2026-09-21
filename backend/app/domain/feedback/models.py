@@ -247,7 +247,7 @@ class Feedback(UuidPk, Timestamps, Base):
 
     # MVP stores tags as a JSON list rather than a `feedback_tags` table
     # (方案稿 §8.8): the prototype has a list of strings and no filtering yet.
-    # Same shape as `Alert.payload` / `TopicProgress.items` / `Block.meta`.
+    # Same shape as `TopicProgress.items` / `Block.meta`.
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     deleted_at: Mapped[datetime | None] = mapped_column(
@@ -458,12 +458,11 @@ class FeedbackNote(UuidPk, Base):
 class FeedbackReadState(UuidPk, Timestamps, Base):
     """Per-user read cursor over feedback activity (方案稿 §6.2(b)).
 
-    Feedback deliberately does NOT go into `alerts`: `Alert.project_id` is NOT
-    NULL and feedback is about the platform, not about a project — so the
-    nullability would have to be relaxed on a table that is the root of the
-    whole inbox semantics. A cursor is the cheaper half of that trade, and it
-    has a precedent one domain over (`TopicReadState`: 「cheap to bump, cheap to
-    count against」).
+    Feedback deliberately does NOT go into the project inbox: a row there is
+    addressed to one person inside one project, and feedback is about the
+    platform rather than about a project. A cursor is the cheaper half of that
+    trade, and it has a precedent one domain over (`TopicReadState`: 「cheap to
+    bump, cheap to count against」).
 
     One global row per person, not one per item: the bell asks 「我的反馈有没有
     新动静」, which is answerable by counting events newer than this cursor on the

@@ -15,12 +15,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.domain.alert.repositories import AlertRepository
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationType
+from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.topic.models import TopicStatus
@@ -33,7 +34,7 @@ class DashboardService:
         self._projects = ProjectRepository(session)
         self._topics = TopicRepository(session)
         self._milestones = MilestoneRepository(session)
-        self._notifs = AlertRepository(session)
+        self._notifs = NotificationRepository(session)
         self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
 
@@ -150,19 +151,24 @@ class DashboardService:
                 )
             )
         ) or 0
-        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
+        inbox = await self._notifs.list_inbox(project_id, recipient_handle=viewer)
         return {
             "handle": user_handle,
             "role": member.role.value if member else None,
             "topics_started": started,
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
+            # 读的是**看的人**自己的收件箱，一条别人的信也不经过这里。以前这
+            # 行下面还有一道过滤：广播是一行谁都看得见的记录，所以看别人的页面时
+            # 要把它从「点名给我的」里挑出来。广播现在在写入时就一人一行，交集自
+            # 己成立了。
             "waiting_on_you": [
-                {"id": str(n.id), "title": n.title, "kind": n.kind.value}
+                {
+                    "id": str(n.id),
+                    "title": n.title,
+                    "kind": NotificationType(n.type).value,
+                }
                 for n in inbox
-                # viewer's slice ∩ this member's: their own mail when they are
-                # looking at their own page, broadcasts for anybody else.
-                if n.target_handle in (None, user_handle)
             ],
         }
 
