@@ -3,15 +3,13 @@
 一间私聊就是项目内名册两席的房间。所以「对面是谁」只有名册一个出处：谁答这间房、
 个人记忆记在谁名下、未读按谁归类、再打开是不是同一间，四个问题问的都是这两席。
 
-每个用例都先把 ``topics.private_owner`` / ``private_peer`` 两列清空再断言。那两列记
-的正是同一件事，记在了第二个地方；清空它们，剩下的行为就只能是名册答出来的。P13 会
-把两列删掉，到那时这些用例一个字都不用改。
+名册是唯一的出处：同一件事没有第二个地方记着，所以这里的每一条断言都只能是名册答
+出来的。存量私聊怎么收成两席，在
+``test_a_dms_two_seats_live_only_on_the_roster.py``。
 """
 
 import asyncio
-import importlib.util
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 
@@ -21,26 +19,6 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.integration.conftest import session_auth_headers
-
-_VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
-_MIGRATION = _VERSIONS / "f1a9c3e07b42_a_private_chats_two_seats_live_in_the_roster.py"
-_STAND_INS = _VERSIONS / "d5c48f1a6b73_an_agent_signs_with_its_instance_handle.py"
-
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _migration():
-    return _load("_two_seats", _MIGRATION)
-
-
-def _stand_ins():
-    return _load("_agent_signs", _STAND_INS)
 
 
 def _project(client) -> str:
@@ -63,23 +41,6 @@ def _dm(client, project_id: str, user: str, **params) -> str:
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
-
-
-def _forget_the_columns(client, topic_id: str) -> None:
-    """把两列清空。P13 会把它们删掉，这里先让它们说不出话。"""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            await session.execute(
-                sa.text(
-                    "UPDATE topics SET private_owner=NULL, private_peer=NULL"
-                    " WHERE id=:t"
-                ),
-                {"t": uuid.UUID(topic_id)},
-            )
-            await session.commit()
-
-    asyncio.run(_run())
 
 
 def _seats(client, topic_id: str) -> tuple[str, str] | None:
@@ -132,84 +93,6 @@ def _seat_by_hand(client, topic_id: str, handle: str) -> None:
     asyncio.run(_run())
 
 
-def _unseat_by_hand(client, topic_id: str, handle: str) -> None:
-    """名册上直接删一行。撤席位就是撤授权，换队友就是这么换的。"""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            await session.execute(
-                sa.text(
-                    "DELETE FROM topic_memberships"
-                    " WHERE topic_id=:t AND member_handle=:h"
-                ),
-                {"t": uuid.UUID(topic_id), "h": handle},
-            )
-            await session.commit()
-
-    asyncio.run(_run())
-
-
-def _stale_peer_column(client, topic_id: str, handle: str) -> None:
-    """把 ``private_peer`` 写成名册以外的人。存量私聊里两列和名册对不上，
-    长的就是这个样子。"""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            await session.execute(
-                sa.text("UPDATE topics SET private_peer=:h WHERE id=:t"),
-                {"t": uuid.UUID(topic_id), "h": handle},
-            )
-            await session.commit()
-
-    asyncio.run(_run())
-
-
-def _roster(client, topic_id: str) -> set[str]:
-    """名册上现在坐着谁。"""
-
-    async def _run() -> set[str]:
-        async with client.test_factory() as session:
-            rows = await session.execute(
-                sa.text(
-                    "SELECT member_handle FROM topic_memberships WHERE topic_id=:t"
-                ),
-                {"t": uuid.UUID(topic_id)},
-            )
-            return {row[0] for row in rows}
-
-    return asyncio.run(_run())
-
-
-def _retire_the_stand_ins(client) -> None:
-    """``d5c48f1a6b73`` 的替身退役那一段，原样跑一遍：调的是它自己的
-    ``retire_stand_ins``。存量私聊今天的形状是这一条留下来的，照着手拼一个形状就
-    可能拼出一个数据里根本不存在的样子，再拿它去证明迁移。"""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _stand_ins().retire_stand_ins(sync.exec_driver_sql)
-            )
-            await session.commit()
-
-    asyncio.run(_run())
-
-
-def _run_the_migration(client) -> None:
-    """跑迁移自己的 ``only_the_two_parties``，不是照抄一份 SQL。"""
-
-    async def _run() -> None:
-        async with client.test_factory() as session:
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
-            )
-            await session.commit()
-
-    asyncio.run(_run())
-
-
 def _say(client, project_id: str, topic_id: str, author: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -229,15 +112,10 @@ def _say(client, project_id: str, topic_id: str, author: str) -> None:
 def test_a_dm_names_its_teammate_from_the_roster(client):
     """合同：私聊的名册恰好两席，「谁被点名」由此推出。"""
     project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
+    reviewer = _add_agent(client, project_id, "reviewer", "评审")
     dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    seats = _seats(client, dm)
-    assert seats is not None
-    reviewer_seat = seats[1]
 
-    _forget_the_columns(client, dm)
-
-    assert _seats(client, dm) == ("user-1", reviewer_seat)
+    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
     assert _who_answers(client, dm) == "reviewer"
 
 
@@ -245,7 +123,6 @@ def test_personal_memory_in_a_dm_is_authorized_by_the_two_seats(client):
     """个人记忆只在当事人自己的私聊里读写。当事人是谁，名册说了算。"""
     project_id = _project(client)
     dm = _dm(client, project_id, "user-1")
-    _forget_the_columns(client, dm)
 
     mine = client.post(
         f"/projects/{project_id}/memory",
@@ -278,8 +155,6 @@ def test_a_dm_badge_is_keyed_by_the_other_seat(client):
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
     reviewer_seats = _seats(client, with_reviewer)
     assert reviewer_seats is not None
-    _forget_the_columns(client, with_person)
-    _forget_the_columns(client, with_reviewer)
 
     _say(client, project_id, with_person, "mentor-1")
     _say(client, project_id, with_reviewer, reviewer_seats[1])
@@ -288,71 +163,16 @@ def test_a_dm_badge_is_keyed_by_the_other_seat(client):
 
 
 def test_opening_the_same_dm_again_finds_it_by_its_two_seats(client):
-    """再打开是同一间房，认的是两席，不是那两列。"""
+    """再打开是同一间房，认的是名册上的两席。"""
     project_id = _project(client)
     _add_agent(client, project_id, "reviewer", "评审")
     with_reviewer = _dm(client, project_id, "user-1", agent_handle="reviewer")
     with_person = _dm(client, project_id, "user-1", peer_handle="mentor-1")
-    _forget_the_columns(client, with_reviewer)
-    _forget_the_columns(client, with_person)
 
     assert _dm(client, project_id, "user-1", agent_handle="reviewer") == with_reviewer
     # 人对人的那间两边都找得到，谁先开的不影响。
     assert _dm(client, project_id, "mentor-1", peer_handle="user-1") == with_person
     assert with_reviewer != with_person
-
-
-def test_an_old_dms_two_seats_are_backfilled(client):
-    """存量私聊：名册空着、两列还在，迁移把两席补回来，这间房又答得出对面是谁。
-
-    跑的是迁移自己的 ``only_the_two_parties``，不是照抄一份 SQL。
-    """
-    project_id = _project(client)
-    _add_agent(client, project_id, "reviewer", "评审")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    seats = _seats(client, dm)
-    assert seats is not None
-    reviewer_seat = seats[1]
-
-    async def _age_and_backfill() -> None:
-        async with client.test_factory() as session:
-            # 名册还没有这间房的时候建的私聊：两列有值，席位一行没有。
-            await session.execute(
-                sa.text("DELETE FROM topic_memberships WHERE topic_id=:t"),
-                {"t": uuid.UUID(dm)},
-            )
-            await session.commit()
-        async with client.test_factory() as session:
-            members = TopicMemberService(session)
-            assert await members.private_seats(uuid.UUID(dm)) is None
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
-            )
-            await session.commit()
-
-    asyncio.run(_age_and_backfill())
-
-    assert _seats(client, dm) == ("user-1", reviewer_seat)
-    assert _who_answers(client, dm) == "reviewer"
-
-    async def _again() -> int:
-        async with client.test_factory() as session:
-            connection = await session.connection()
-            await connection.run_sync(
-                lambda sync: _migration().only_the_two_parties(sync.exec_driver_sql)
-            )
-            await session.commit()
-        async with client.test_factory() as session:
-            return int(
-                await session.scalar(
-                    sa.text("SELECT count(*) FROM topic_memberships WHERE topic_id=:t"),
-                    {"t": uuid.UUID(dm)},
-                )
-            )
-
-    # 幂等：再跑一遍不多一行。
-    assert asyncio.run(_again()) == 2
 
 
 def test_reopening_a_dm_whose_roster_grew_finds_the_same_room(client):
@@ -392,101 +212,3 @@ def test_a_pairs_own_dm_wins_over_a_room_that_grew_into_the_pair(client):
     _seat_by_hand(client, with_reviewer, "mentor-1")
 
     assert _dm(client, project_id, "user-1", peer_handle="mentor-1") == with_mentor
-
-
-def test_an_old_dms_extra_seats_are_unseated(client):
-    """存量私聊：迁移跑完回到两席，这间房又答得出对面是谁。
-
-    形状不手拼，让 ``d5c48f1a6b73`` 自己跑出来：房里坐着评审，它说不出替身站的是
-    哪一个，于是留下替身、又照样补上项目芝士那一席，四席就是这么来的。手拼一个
-    三席的样子，拼出来的可能是数据里根本不存在的形状，用例绿而存量坏。
-
-    迁移之前它不是私聊，角标里就不该有它：既不翻倍，也不多出一行归给别人。
-    """
-    project_id = _project(client)
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    _say(client, project_id, dm, reviewer["seat_handle"])
-    assert _badge(client, project_id, "user-1") == {"agent:reviewer": 1}
-
-    # 队友有自己的席位之前，私聊名册上坐的是房间派生的那个替身。
-    stand_in = f"cheese-{uuid.UUID(dm).hex[:12]}"
-    _seat_by_hand(client, dm, stand_in)
-    _retire_the_stand_ins(client)
-
-    roster = _roster(client, dm)
-    assert stand_in in roster, "房里坐着评审，d5c48f1a6b73 留下了替身"
-    assert len(roster) == 4, f"[人, 队友, 替身, 项目芝士] 四席，实际 {roster}"
-    assert _seats(client, dm) is None
-    assert _badge(client, project_id, "user-1") == {}
-
-    _run_the_migration(client)
-
-    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
-    assert _badge(client, project_id, "user-1") == {"agent:reviewer": 1}
-    assert _who_answers(client, dm) == "reviewer"
-
-    # 幂等：再跑一遍不动任何一行。
-    _run_the_migration(client)
-    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
-
-
-def test_an_old_dm_gets_its_human_back_after_the_extra_seats_go(client):
-    """人那一席从来没写过的存量私聊：多出来的席位拿掉之后，补种这一步还得跑得到。
-
-    补种的闸是「名册还不到两席」，所以它数的必须是删完之后的名册。反过来跑，这间
-    房在删之前是三席，闸把它挡在外面，删完只剩队友一位，人再也补不回来。
-    """
-    project_id = _project(client)
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-    # 名册还没有人这一席的年代建的私聊，人只在 ``private_owner`` 那一列里。
-    _unseat_by_hand(client, dm, "user-1")
-    _seat_by_hand(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
-    _retire_the_stand_ins(client)
-
-    _run_the_migration(client)
-
-    assert _seats(client, dm) == ("user-1", reviewer["seat_handle"])
-    assert _who_answers(client, dm) == "reviewer"
-
-
-def test_a_swapped_teammate_is_not_seated_back_by_the_migration(client):
-    """换过队友的私聊：迁移不把撤掉的那一席补回来，也不把在用的那一席删掉。
-
-    席位就是授权（``holds_an_agent_seat``），而加席位、换席位、撤席位改的只有名册
-    那一份。两列停在上一个队友身上的时候，对的是名册。
-    """
-    project_id = _project(client)
-    reviewer = _add_agent(client, project_id, "reviewer", "评审")
-    writer = _add_agent(client, project_id, "writer", "写手")
-    dm = _dm(client, project_id, "user-1", agent_handle="reviewer")
-
-    # 评审那一席被撤掉，换成写手；``private_peer`` 还停在评审身上。
-    _unseat_by_hand(client, dm, reviewer["seat_handle"])
-    _seat_by_hand(client, dm, writer["seat_handle"])
-    assert _seats(client, dm) == ("user-1", writer["seat_handle"])
-
-    _run_the_migration(client)
-
-    assert _seats(client, dm) == ("user-1", writer["seat_handle"])
-    assert _who_answers(client, dm) == "writer"
-
-
-def test_a_retired_stand_in_is_not_seated_back_by_the_migration(client):
-    """替身退役过的私聊：迁移不把它种回名册，也不挤掉项目芝士那一席。
-
-    ``e7d2b91a4c06`` 的第三种情况把房间派生的替身写进了 ``private_peer``（当时
-    项目还没有默认芝士），而 ``d5c48f1a6b73`` 后来补上项目芝士的席位、退役了替身。
-    照两列判就会把那条迁移整个倒过来。
-    """
-    project_id = _project(client)
-    dm = _dm(client, project_id, "user-1")
-    seated = _seats(client, dm)
-    assert seated is not None
-    _stale_peer_column(client, dm, f"cheese-{uuid.UUID(dm).hex[:12]}")
-
-    _run_the_migration(client)
-
-    assert _seats(client, dm) == seated
-    assert _who_answers(client, dm) == "cheese"

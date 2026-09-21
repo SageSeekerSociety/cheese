@@ -169,8 +169,6 @@ class _HookWorkState:
     topic_refs: list[dict]
     continuation_id: uuid.UUID | None
     route: str
-    is_private: bool
-    private_owner: str | None
     acting_agent: str
     # Attribution and memory part ways here, deliberately: `acting_agent` is
     # the seat of the agent that ran this turn (who did it), while the pool
@@ -236,7 +234,6 @@ class _TurnContext:
     agent_pool: tuple[MemoryScope, str] | None
     role: str | None
     roster: list[dict]
-    is_private: bool
     private_owner: str | None
     untitled: bool
 
@@ -257,7 +254,7 @@ class _TurnContext:
     doc_text: str | None
     memories: RecallResult
     prior_progress: list[dict]
-    topic_stage: TopicStage | None
+    topic_stage: TopicStage
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -2345,8 +2342,6 @@ class ChatService:
                 agent = await agents.for_topic(topic, project)
                 agent_pool = memory_pool(topic.project_id, agent)
                 acting_agent = await self._agent_handle(session, topic_id)
-                is_private = topic.is_private
-                private_owner = await self._private_owner(session, topic)
             await get_work_runner().open_turn_the_session_started(
                 self, topic_id, turn_id, author=acting_agent
             )
@@ -2373,8 +2368,6 @@ class ChatService:
             # turn closes next, which is exactly what happened before any of
             # this existed.
             route=self._session_route.get(topic_id, "native"),
-            is_private=is_private,
-            private_owner=private_owner,
             acting_agent=acting_agent,
             agent_pool=agent_pool,
             user_text="",
@@ -2897,11 +2890,10 @@ class ChatService:
                 # @handle / @话题名" is canonicalized into the structured token
                 # (<@alice> / <#id>) BEFORE the block is stored, so it renders
                 # as a clickable chip instead of leaking raw "@Alice" text.
-                # Private topics have no roster to resolve against (and expose
-                # no member list), so they store the content verbatim.
+                # 两席的房间没有名册可以解析（也不暴露成员列表），原样存下来。
                 roster = (
                     []
-                    if topic.is_private or "@" not in content
+                    if "@" not in content or await self._private_owner(session, topic)
                     else await ProjectRepository(session).list_members(topic.project_id)
                 )
                 # Use the same room seat and display name as the mention picker,
@@ -3191,6 +3183,12 @@ class ChatService:
 
         个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
         一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
+
+        **这是 `is_private` 在这个文件里的两个读点之一**：「这间房是不是两席的私
+        聊，人是谁」。轮次里凡是要这个答案的地方都问它，而不是各自再问一遍那个
+        布尔——同一件事问两遍，两遍的判据就会各自漂移。另一个读点是
+        `_assemble_turn` 里的 `needs_place`：这一轮不租地点，只有会话自己那块
+        64 MiB 草稿区。
         """
         if not topic.is_private:
             return None
@@ -3344,7 +3342,7 @@ class ChatService:
                 # as a non-member while silently dropping its notification.
                 roster = (
                     []
-                    if topic is None or topic.is_private
+                    if topic is None or await self._private_owner(session, topic)
                     else await ProjectRepository(session).list_members(project_id)
                 )
             text = _expand_mention_names(text, roster, topic_refs)
@@ -3813,7 +3811,7 @@ class ChatService:
                 # like for like — see `_canon`.
                 roster = (
                     []
-                    if topic is None or topic.is_private
+                    if topic is None or await self._private_owner(session, topic)
                     else await ProjectRepository(session).list_members(project_id)
                 )
                 topic_refs, _ = _topic_ref_lists(
@@ -4572,14 +4570,21 @@ class ChatService:
                 if b.kind == BlockKind.attachment and b.content
             ]
 
-            is_private = topic.is_private
-            # 这一轮走不走「不占机器」那条路。私聊默认走，走不通再退回机器。
+            # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
+            # 方，问的都是下面两个答案之一，不再各自问一遍那个布尔。
+            #
+            # 一、名册上那两席，人是哪一位。
             private_owner = await self._private_owner(session, topic)
+            # 二、这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：不碰仓库
+            # 文件、不跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出
+            # 来。私聊是今天唯一这样的一轮——它桌上只有对话、记忆和平台工具，加上
+            # 会话自己那块 64 MiB 草稿区（不是一个地点，随会话生灭）。
+            needs_place = not topic.is_private
             acting_agent = await self._acting_handle(session, topic.id, agent)
-            doc_root = None if is_private else await blocks.doc_root(place.room_id)
+            doc_root = await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
-            if is_private and private_owner:
+            if private_owner:
                 # Private chat: the owner's cross-project personal memory.
                 memories = await recall_pools(
                     memory, [(MemoryScope.user, private_owner)]
@@ -4597,27 +4602,26 @@ class ChatService:
             wanted_harness = DEFAULT_HARNESS
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
+            # 两席的房间里没有第三个人可点名，名册也就不进提示词——`[]` 和
+            # 「没有名册这回事」在下游是两种情况（见 `_HookWorkState.roster`）。
             roster = (
-                [] if is_private else await projects_repo.list_members(topic.project_id)
+                []
+                if private_owner
+                else await projects_repo.list_members(topic.project_id)
             )
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；
             # `topic_refs_for_prompt` 只是**渲染**进 system prompt 的子集。
-            topic_refs = []
-            topic_refs_for_prompt = []
-            if not is_private:
-                topic_refs, topic_refs_for_prompt = _topic_ref_lists(
-                    await topics.list_for_project(topic.project_id),
-                    exclude_id=topic.id,
-                )
-            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。私聊里不交付，所以
-            # 那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，前者要说话
-            # （第一次交付只能新建），后者一个字都不说，所以这里给的是 None 而不是 []。
+            topic_refs, topic_refs_for_prompt = _topic_ref_lists(
+                await topics.list_for_project(topic.project_id),
+                exclude_id=topic.id,
+            )
+            # 产物清单：交付时点名用的那几个名字 (#1085 结论三)。不租地点的一轮里
+            # 没有交付，那里连这一段都不该有；空清单和「没有清单这回事」是两种情况，
+            # 前者要说话（第一次交付只能新建），后者一个字都不说，所以给的是 None。
             artifact_refs = (
-                None
-                if is_private
-                else [
+                [
                     {
                         "id": str(a.id),
                         "name": a.name,
@@ -4628,6 +4632,8 @@ class ChatService:
                         session, topic.project_id
                     )
                 ]
+                if needs_place
+                else None
             )
             project_id = topic.project_id
             # This agent's conversation here, not just any: a room may host
@@ -4642,7 +4648,7 @@ class ChatService:
                 session_agent.handle,
                 harness=DEFAULT_HARNESS,
             )
-            untitled = not is_private and topic.title == PLACEHOLDER_TITLE
+            untitled = topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
@@ -4653,30 +4659,18 @@ class ChatService:
             # Read for the stage derivation below, and for nothing else: what
             # the cards SAY is `cheese_status`'s answer, and restating it in a
             # prompt only froze one turn's copy of it into the whole session.
-            open_cards = []
-            if not is_private:
-                open_cards = [
-                    c
-                    for c in await AcceptCardRepository(session).list_for_topic(
-                        topic_id
-                    )
-                    if c.status in _OPEN_CARD_STATUSES
-                ]
+            open_cards = [
+                c
+                for c in await AcceptCardRepository(session).list_for_topic(topic_id)
+                if c.status in _OPEN_CARD_STATUSES
+            ]
             # 按阶段渐进式披露: which段 of the flow this topic is in. Derived
             # entirely from facts already in hand (kind/status + the open cards
             # just queried above for 盲飞防护) — no extra query.
-            topic_stage = (
-                None
-                if is_private
-                else resolve_stage(
-                    finished=topic.status == TopicStatus.archived,
-                    card_statuses=[c.status for c in open_cards],
-                )
+            topic_stage = resolve_stage(
+                finished=topic.status == TopicStatus.archived,
+                card_statuses=[c.status for c in open_cards],
             )
-            # 这一轮要不要一双手？(结论 19，不变量 I2) 会话先于地点：不碰仓库文件、
-            # 不跑项目命令的一轮不去租手，所以它在所有执行机离线时也答得出来。私聊
-            # 是今天唯一这样的一轮——它桌上只有对话、记忆和平台工具。
-            needs_place = not is_private
             # Resolve the room choice, then the explicit project default.
             phases_ms["metadata"] = (time.monotonic() - started) * 1000
             compute_id = _resolve_compute_id(
@@ -4895,7 +4889,6 @@ class ChatService:
             agent=agent,
             agent_pool=agent_pool,
             doc_text=doc_text,
-            is_private=is_private,
             memories=memories,
             pending_ids=pending_ids,
             notice_ids=[b.id for b in notices],
@@ -4963,7 +4956,6 @@ class ChatService:
         acting_agent = prepared.acting_agent
         agent_pool = prepared.agent_pool
         doc_text = prepared.doc_text
-        is_private = prepared.is_private
         memories = prepared.memories
         needs_place = prepared.needs_place
         pending_ids = prepared.pending_ids
@@ -4994,10 +4986,12 @@ class ChatService:
         # 私聊是名册两席的房间（结论 19），所以它先拿房间那份发布契约，
         # private-chat 只补私聊独有的那几条。替换会让私聊成为全仓唯一一间
         # 系统提示词里没有 chat_send 的房间：终端里答完而没有发布，房间是空的。
+        # 补的那几条说的正是「这一轮没有地点，只有会话自己那块草稿区」，所以
+        # 它跟着 `needs_place` 走，而不是再问一遍这间房是不是私聊。
         skills = (
-            "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
-            if is_private
-            else self._skills
+            self._skills
+            if needs_place
+            else "\n\n---\n\n".join([self._skills, load_skills(PRIVATE_SKILLS)])
         )
         system_prompt = build_system_prompt(
             self._base_prompt,
@@ -5015,11 +5009,7 @@ class ChatService:
                 progress=prior_progress,
                 sandbox=_sandbox_limits(provider),
             ),
-            stage_guide=(
-                load_scenario(stage_scenario(topic_stage))
-                if topic_stage is not None
-                else None
-            ),
+            stage_guide=load_scenario(stage_scenario(topic_stage)),
         )
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
@@ -5145,8 +5135,6 @@ class ChatService:
                     topic_refs=topic_refs,
                     continuation_id=continuation_id,
                     route=route,
-                    is_private=is_private,
-                    private_owner=private_owner,
                     acting_agent=acting_agent,
                     agent_pool=agent_pool,
                     user_text=prompt_text,
@@ -5184,8 +5172,8 @@ class ChatService:
                 Opening(
                     system_prompt=system_prompt,
                     resume_token=resume_session_id,
-                    memory_scope="personal" if is_private else None,
-                    owner=private_owner if is_private else None,
+                    memory_scope="personal" if private_owner else None,
+                    owner=private_owner,
                     model=model_kwargs.get("model"),
                     env=model_kwargs.get("env"),
                     agent_handle=acting_agent,
