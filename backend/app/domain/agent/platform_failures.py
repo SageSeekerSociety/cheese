@@ -31,18 +31,6 @@ SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE = "subscription_credential_expired"
 PROMPT_UNDELIVERED_CODE = "prompt_undelivered"
 TURN_TIMEOUT_CODE = "turn_timeout"
 
-# 手够不着时 agent 读到的那一句（结论 23）。三句能力话，没有一个平台内部术语，也
-# 没有一个裸 HTTP 状态码：一个状态码告诉它的是「有东西坏了」，而它需要知道的是这
-# 一轮里还剩哪些通路。
-#
-# 它在这里，紧挨着 DEVICE_OFFLINE_MESSAGE，因为这两句是同一件事的两个时刻——一个
-# 在轮次开始前，一个在轮次中途。机器上跑的那份执行器传输层带一份自己的拷贝（它在
-# 那台机器上运行，我们的东西一样都 import 不到），两份由
-# ``tests/unit/test_out_of_reach.py`` 钉在一起。
-MACHINE_OUT_OF_REACH = (
-    "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
-)
-
 # The platform's OWN wording for the two failures the hooks substrate raises by
 # itself: "the prompt never reached the claude session" and "this turn hit its
 # ceiling". They live HERE, next to the classifier that recognises them, for the

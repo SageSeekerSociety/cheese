@@ -332,9 +332,13 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
             no_progress_s=settings.agent_no_progress_s,
         )
 
-    # 这个池今天装的都是同一种传输：一条到某台机器的连接器链路。**这是类型，不是
-    # 判断**——「这条通道上挂不挂得住 pi」在下面问能力位，因为那是一个会变的事实，
-    # 而 `CloudChannel` 是不是 `DeviceChannel` 不是。
+    # 进这张表的每一条通道，下面都要被 `CentralChannel` 包一次、可能再被
+    # `PiChannel` 包一次，而这两个包装读的是设备传输自己的 `_hub` 与
+    # `_session_factory`。所以 `DeviceChannel` 在这里不是一条判断，是那两个包装本来
+    # 就要的东西写出来：原来标成 `Channel` 的那个签名兑现不了——真递一条别的
+    # `Channel` 进来，`CentralChannel(c)` 当场 AttributeError。
+    #
+    # 「这条通道上挂不挂得住 pi」是另一回事，在下面问能力位：那是一个会变的事实。
     channels: list[DeviceChannel] = [DeviceChannel()]
     if cloud_channel is not None:
         channels.append(cloud_channel)
@@ -365,7 +369,8 @@ def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputeP
     # 条通道都继承 `DeviceChannel`，它恒为真——**今天它排除的是空集**，换成能力位
     # 也不会少挂一个 backend。换的是判据的形状：pi 挂不挂得住，取决于手在不在跑会
     # 话的那台机器上（一个会变的事实），不取决于通道的类（一个不会变的事实）。多
-    # 一条手在别处的通道进这个池的那天，这里不需要跟着改。
+    # 一条手在别处的通道进这个池的那天，它声明 `hands_here = False` 就够，这一行不
+    # 用跟着改——`tests/unit/test_compute_pool.py` 的 `Elsewhere` 钉的就是这一句。
     backends.extend(
         PiRuntime(
             PiChannel(c),

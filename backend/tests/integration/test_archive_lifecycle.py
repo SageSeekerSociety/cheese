@@ -168,13 +168,63 @@ async def test_a_tidy_in_flight_keeps_the_machine_until_it_has_finished(
     }
 
 
+async def test_a_tidy_nothing_will_ever_close_does_not_hold_the_machine_forever(
+    client, monkeypatch
+):
+    """等一轮整理跑完，是有上界的。
+
+    从前终结那一轮的正是 ``prepare``（``request_exit`` + ``stop_executor`` → 机器发
+    回 Stop → ``close_for_topic`` 写上 ``stopped_at``）。这一问挪到 ``prepare``
+    之前以后，就没有东西再去终结它了：后端在整理途中重启，这一轮的 ``stopped_at``
+    留在 NULL，而孤儿清扫只要屏幕还应答就判它「还活着」，永不关闭这条区间
+    (``agent/runtime.py`` 的 ``_adopted``)。没有上界的话，device 存储、worktree、
+    machine 就一起被一条永远不会关闭的区间扣住——和这一节修掉的那个死锁同一类。
+    """
+    from app.domain.agent.models import AgentTurn
+    from app.domain.memory.dream import open_dream
+    from app.domain.topic.models import Topic
+
+    monkeypatch.setattr(settings, "dream_enabled", True)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    monkeypatch.setattr(retire, "_device_action", AsyncMock())
+    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+
+    turn_id = uuid.uuid4()
+    async with client.test_factory() as session:
+        room = await session.get(Topic, room_id)
+        session.add(
+            AgentTurn(
+                id=turn_id,
+                topic_id=room_id,
+                continuation_id=turn_id,
+                author="system",
+                content="整理中",
+                # 一轮本来就跑不了这么久：越过这条线，它没在跑，只是没人关它。
+                started_at=datetime.now(UTC)
+                - timedelta(seconds=settings.agent_turn_hard_ceiling_s + 60),
+            )
+        )
+        await open_dream(
+            session, topic_id=room_id, project_id=room.project_id, turn_id=turn_id
+        )
+        await session.commit()
+
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 1,
+        "pending": 0,
+    }
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
+
+
 async def test_a_room_that_will_never_be_tidied_is_still_reclaimed(client, monkeypatch):
     """欠一次整理和永远等不到一次整理，是两件事。
 
-    这个房间一条 block 都没有，所以它连一次整理都不值得
-    (``dream_min_blocks``)，也就永远不会有那一行。更硬的是：``idle sweep`` 明确跳过
-    归档房间，归档房间里也起不了一轮——所以**任何**归档房间都不可能在这一刻之后拿
-    到它。把「没有那一行」当成缺一张收据，回收就永远停在 ``pending``，而
+    这个房间没有那一行，而且再也不会有：``idle sweep`` 明确跳过归档房间，归档房间
+    里也起不了一轮——所以**任何**归档房间都不可能在这一刻之后拿到它。把「没有那一
+    行」当成缺一张收据，回收就永远停在 ``pending``，而
     ``_advance`` 每一轮都会重跑一遍对着机器的 ``publication`` 与 transcript 收集，
     device 存储、worktree、machine 一样都不释放。
     """

@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -20,7 +20,6 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir, list_device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import Block
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -119,36 +118,47 @@ async def _memory_tidy_has_finished(session: AsyncSession, topic_id: uuid.UUID) 
     ``_flush_transcripts`` 这些对着机器的远程调用。要让「每个房间回收前都整理过」
     成真，唯一的位置是归档**之前**，不是这里。
 
-    房间里的 block 少于 ``dream_min_blocks`` 时连一次整理都不该有：那是调度器自己
-    对「值不值得花一轮」的判据 (``_start_dream_if_worthwhile``)，两边读同一个设置，
-    不然这里会为一个永远不值得整理的房间记一条它永远看不懂的告警。
+    「这个房间值不值得整理」不在这里判。那条判据是调度器的
+    (``_start_dream_if_worthwhile``)，在这里抄一份，唯一的作用是挑一条日志的级别，
+    而调度器那条改了形状的那天，这一份不会跟着改，于是它记下的话开始骗人。
+
+    **这一等有上界。** 从前终结那一轮的正是下面的 ``prepare``——它
+    ``request_exit`` 加 ``stop_executor``，机器上的会话结束后发回 Stop，
+    ``close_for_topic`` 才写上 ``stopped_at``。这一问挪到 ``prepare`` 之前以后，
+    没有任何东西再去终结那一轮：后端在一次整理途中重启，``stopped_at`` 就一直是
+    NULL，而孤儿清扫只要屏幕还应答就判它「还活着」，永不关闭这条区间
+    (``agent/runtime.py`` 的 ``_adopted``)。所以这里不问「关没关」问到底，越过一轮
+    本来就跑不了这么久的上限 (``agent_turn_hard_ceiling_s``) 就按跑完处理——等下去
+    换不来那张收据，只会把这台机器连同它的存储和工作区一起扣住。
     """
     if not settings.dream_enabled:
         return True
     dream = await latest_dream(session, topic_id)
     if dream is None:
-        blocks = (
-            await session.scalar(
-                select(func.count())
-                .select_from(Block)
-                .where(Block.topic_id == topic_id)
-            )
-            or 0
+        logger.info(
+            "房间 %s 回收前没有整理过记忆：归档之后已经没有地方能跑它了",
+            topic_id,
         )
-        if blocks >= settings.dream_min_blocks:
-            logger.warning(
-                "房间 %s 回收前没有整理过记忆：归档之后已经没有地方能跑它了",
-                topic_id,
-            )
         return True
     if dream.turn_id is None:
         return True
-    running = await session.scalar(
-        select(AgentTurn.id)
+    started_at = await session.scalar(
+        select(AgentTurn.started_at)
         .where(AgentTurn.id == dream.turn_id, AgentTurn.stopped_at.is_(None))
         .limit(1)
     )
-    return running is None
+    if started_at is None:
+        return True
+    running_s = (datetime.now(UTC) - started_at).total_seconds()
+    if running_s > settings.agent_turn_hard_ceiling_s:
+        logger.warning(
+            "房间 %s 的记忆整理挂了 %.0f 秒还没关闭，按跑完处理继续回收："
+            "这一轮多半是后端重启时留下的，不会再有东西去关它",
+            topic_id,
+            running_s,
+        )
+        return True
+    return False
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:

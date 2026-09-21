@@ -1,9 +1,8 @@
 """What the agent reads when a call to its hands does not come back 200.
 
-One sentence, chosen by the platform, carried in two copies — the backend's and
-the one shipped onto the machine — because the shipped half runs beside the
-room's own files with nothing of ours importable. And it is one sentence for one
-situation: 够不着 is a claim about the machine, not a synonym for 非 200.
+One sentence, declared once, in the file that both the backend imports and the
+machine runs a shipped copy of. And it is one sentence for one situation: 够不着
+is a claim about the machine, not a synonym for 非 200.
 
 结论 23。不变量 I25。
 """
@@ -13,19 +12,7 @@ import re
 
 import pytest
 
-from app.domain.agent import executor_transport, platform_failures
-
-
-def test_the_shipped_transport_carries_the_sentence_the_platform_chose():
-    """机器上那份传输层带的是同一句话，不是一个状态码。
-
-    它在那台机器上运行，我们的东西一样都 import 不到，所以它带一份拷贝。拷贝漂了
-    不会有任何东西失败：agent 照样读到一句话，只不过那句话不再告诉它这一轮还剩哪些
-    通路，而是告诉它有个数字。
-    """
-    assert executor_transport.MACHINE_OUT_OF_REACH == (
-        platform_failures.MACHINE_OUT_OF_REACH
-    )
+from app.domain.agent import executor_transport
 
 
 def failing_client(monkeypatch, tmp_path, status):
@@ -80,7 +67,7 @@ def test_what_the_agent_reads_when_its_hands_are_out_of_reach_has_no_status_code
     said = str(raised.value)
     assert not re.search(r"\b[1-5][0-9][0-9]\b", said)
     assert "HTTP" not in said
-    assert said == platform_failures.MACHINE_OUT_OF_REACH
+    assert said == executor_transport.MACHINE_OUT_OF_REACH
 
 
 def test_a_handler_that_threw_does_not_get_reported_as_the_machine_being_gone(
@@ -98,7 +85,7 @@ def test_a_handler_that_threw_does_not_get_reported_as_the_machine_being_gone(
         client.call("context_fs")
 
     said = str(raised.value)
-    assert said != platform_failures.MACHINE_OUT_OF_REACH
+    assert said != executor_transport.MACHINE_OUT_OF_REACH
     assert said == executor_transport.EXECUTOR_CALL_FAILED
     # 同样不给它一个裸数字去追。
     assert not re.search(r"\b[1-5][0-9][0-9]\b", said)

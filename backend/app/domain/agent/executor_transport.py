@@ -24,17 +24,15 @@ CONNECT_RETRY_MAX_DELAY_S = 5
 
 logger = logging.getLogger(__name__)
 
-# What the agent reads when its hands cannot be reached. A COPY of
-# `platform_failures.MACHINE_OUT_OF_REACH`, not a second answer: this file is
-# shipped to the machine and run beside the room's own files with nothing of
-# ours importable, so it carries the sentence.
-# `tests/unit/test_out_of_reach.py` holds the two together.
+# 手够不着时 agent 读到的那一句（结论 23）。它的家就在这里：这个文件既是后端
+# import 的那一份（`private_chat.py`、`codex/tools.py` 走的都是它），又是原样发到机
+# 器上、在那边没有任何我们的东西可 import 地跑起来的那一份
+# (`remote_execution/release.py`)。所以这句话只有一处声明，没有第二份要同步。
 #
-# What it replaced was `f"Executor HTTP request failed: {status}"`. A status
-# code tells the agent that something broke; what it needs in that turn is which
-# ways out it still has, and a bare number sends it hunting for a bug in its own
-# tool call. The platform's own Chinese body and its `X-Device-Id` header were
-# already being dropped on the floor here.
+# 一句能力话，没有平台内部术语，也没有裸 HTTP 状态码：状态码告诉 agent 的是「有东
+# 西坏了」，而它这一轮需要知道的是还剩哪些通路。它替掉的是
+# `f"Executor HTTP request failed: {status}"`——一个裸数字会把它送回自己的工具调用
+# 里找 bug，而后端本来写好的中文 body 和 `X-Device-Id` 头在这条路上早就全丢了。
 MACHINE_OUT_OF_REACH = (
     "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
 )
