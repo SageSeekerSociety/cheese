@@ -14,9 +14,14 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
     is_global_sandbox_token,
@@ -33,8 +38,9 @@ from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
-from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.task.repositories import TaskRepository
+from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import TopicRole
 from app.domain.topic.repositories import TopicRepository
@@ -459,7 +465,15 @@ class ActorResolver:
         )
 
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
-        """Require a verified participant with project membership."""
+        """Require a verified participant with project membership.
+
+        A project that is not there is 404, not 403: the id is a UUID and
+        answering "you are not a member of it" about a project that does not
+        exist is a claim the guard cannot support. Not-found used to be what
+        every one of these routes answered, and the two are told apart by
+        looking — membership first, so a member's own request pays no extra
+        read.
+        """
         if not settings.authz_enforce_topic_access:
             return
         self.reject_failed_credential(actor)
@@ -469,8 +483,49 @@ class ActorResolver:
             raise AuthenticationRequiredError("Login required to access a project")
         if await self._is_project_member(project_id, actor.handle):
             return
+        if await ProjectRepository(self._session).get(project_id) is None:
+            raise NotFoundError("项目不存在")
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError("你不是这个项目的成员，无权查看")
+
+    async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
+        """Require a verified caller who may see this 赛题.
+
+        ``GET /projects/by-task/{task_id}`` is the 赛题 page asking what already
+        exists for a task, and every row it answers with carries a project id, a
+        name and an owner handle. The task id is a small integer, so "what
+        exists for task 42" is not public information - it is the directory the
+        rest of the project routes take their ids from. The judgment is
+        ``TaskVisibilityService``, the same one the task page itself uses,
+        rather than a second copy of it here.
+
+        A task that does not exist is let through: the route answers an empty
+        page for it either way, and a 403 there would turn this into a probe
+        for which task ids are real.
+        """
+        if not settings.authz_enforce_topic_access:
+            return
+        self.reject_failed_credential(actor)
+        if not actor.authenticated:
+            if is_global_sandbox_token(self._cheese_token):
+                return  # Trusted development credential; anonymous access stays denied.
+            raise AuthenticationRequiredError("Login required to access a task")
+        task = await TaskRepository(self._session).get_by_id(task_id)
+        if task is None:
+            return
+        user_id = actor.user_id
+        if user_id is None:
+            # A handle-only session token carries no int user id, and task
+            # visibility is keyed by one - see ``_is_team_member`` above for the
+            # same resolution.
+            user = await UserRepository(self._session).get_by_username(actor.handle)
+            user_id = user.id if user is not None else None
+        if user_id is not None and await TaskVisibilityService(
+            self._session
+        ).can_view_task(task=task, user_id=user_id):
+            return
+        _log.info("task_access_denied", handle=actor.handle, task=task_id)
+        raise ForbiddenError("你不是这道赛题的相关人员，无权查看")
 
     async def authorize_team(self, actor: Actor, *, team_id: int) -> None:
         """Require a verified member of this team.
@@ -514,26 +569,11 @@ class ActorResolver:
         accepted a team invitation minutes earlier got 200 on
         ``/projects/{id}`` and 403 on ``/topics?project_id=``.
 
-        Team membership is keyed by user id while every other authorization key
-        is the handle string (see ``_recover_numeric_handle``), so the handle is
-        resolved to its user here rather than trusting ``actor.user_id`` — a
-        session token carries none."""
-        if await MemberRepository(self._session).get(
-            project_id=project_id, user_handle=handle
-        ):
-            return True
-        project = await ProjectRepository(self._session).get(project_id)
-        if project is None:
-            return False
-        if project.owner_handle == handle:
-            return True
-        if project.team_id is None:
-            return False
-        user = await UserRepository(self._session).get_by_username(handle)
-        if user is None:
-            return False
-        return await TeamRepository(self._session).is_team_member(
-            project.team_id, user.id
+        The claim set itself now lives in ``app.auth.project_access`` so that
+        every route reading a project's conversations asks the same question —
+        this method is the in-request form of it."""
+        return await may_read_project(
+            self._session, project_id=project_id, handle=handle
         )
 
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
