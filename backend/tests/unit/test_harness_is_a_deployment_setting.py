@@ -19,6 +19,12 @@ from app.domain.agent.harness import (
     deployment_harness,
     harness_for,
 )
+from tests.support.stand_in_harness import registered
+
+# 部署设置要指向一个有适配层、而且这套部署注册了的骨架；注册表今天只有 Claude
+# Code——默认那个，指向它证明不了「设置赢了默认」。所以下面凡是要一个第二名字的
+# 地方，先把 Codex 注册成替身。`harness_for` 那条不用：项目设置只认「有适配层」，
+# 没注册的骨架是轮次开始时在房间里说出来的事，不是配置错误。
 
 
 def test_a_deployment_that_says_nothing_runs_one_the_registry_knows() -> None:
@@ -27,6 +33,7 @@ def test_a_deployment_that_says_nothing_runs_one_the_registry_knows() -> None:
 
 
 def test_the_deployment_setting_is_what_runs(monkeypatch) -> None:
+    registered(monkeypatch, CODEX)
     monkeypatch.setattr(settings, "agent_harness", CODEX)
     assert deployment_harness() == CODEX
 
@@ -40,6 +47,7 @@ def test_a_project_can_run_something_else(monkeypatch) -> None:
 def test_a_project_that_says_nothing_runs_the_deployment_s(
     monkeypatch, said_nothing
 ) -> None:
+    registered(monkeypatch, CODEX)
     monkeypatch.setattr(settings, "agent_harness", CODEX)
     assert harness_for(said_nothing) == CODEX
 

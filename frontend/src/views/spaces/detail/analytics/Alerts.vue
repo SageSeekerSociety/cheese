@@ -30,7 +30,7 @@
       v-else-if="!loading"
       icon="mdi-bell-off-outline"
       title="暂无告警"
-      text="当前空间在这一时间窗口内没有需要关注的治理告警。"
+      text="当前题目板在这一时间窗口内没有需要关注的治理告警。"
     />
   </div>
 </template>

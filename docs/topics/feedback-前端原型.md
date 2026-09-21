@@ -148,8 +148,8 @@ flowchart LR
 
 ## 三条产品判断（需求方答复 + 落代码时取的默认值）
 
-- **私密反馈，提交者本人可见**。可见的人是「提交者本人 + 平台管理员」；查询同时算 `author_handle` 与 `submitted_by_handle`，因为 agent 提案、人确认提交的那一类两者不同。
-- **反馈中心是平台共享的，不以组织（Space）为单位**。「公开」= 对所有登录用户公开；`project_id`/`topic_id` 只是**出处**，不是可见性范围。
+- **私密反馈，提交者本人可见**。可见的人是「提交者本人 + 平台管理员 + 提出它时在那个房间里、且今天还读得到那个房间的人」（结论 47，见方案稿 §4.3）；查询同时算 `author_handle` 与 `submitted_by_handle`，因为 agent 提案、人确认提交的那一类两者不同。
+- **反馈中心是平台共享的，不以组织（Space）为单位**。「公开」= 对所有登录用户公开；`project_id` 只是**出处**，不是可见性范围。`topic_id` 两样都是：它既是出处，也是上面那一档的授权键——所以它不由客户端填，由发送提案卡的那个端点从 URL 解出来。
 - **默认不展示已解决的 bug**，取窄读法：**只沉底已解决的 bug**，已解决的 suggestion 不沉。
 - **§8.1 谁算平台管理员** → `settings.feedback_admin_handles` 白名单（照 `dogfood_owner_handles` 的先例）。不点亮 `SystemRole.SUPER_ADMIN`，那要动 1.0 的权限框架。
 - **§8.3 `security` 与 `visibility`** → `security` 是 `private` 之下的一层**读时收窄**，不覆写提交者自己选的 `visibility`。

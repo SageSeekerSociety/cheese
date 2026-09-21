@@ -67,6 +67,25 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     return min_val + (uuid.uuid4().int % span)
 
 
+def create_approved_space(client, **kwargs):
+    """Provision an approved space for tests of tasks and space management."""
+    from app.core.config import settings
+
+    response = client.post("/spaces", **kwargs)
+    if response.status_code != 201:
+        return response
+    space_id = response.json()["data"]["space"]["id"]
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "platform_admin_handles", ["space-fixture-reviewer"])
+        reviewed = client.post(
+            f"/admin/spaces/{space_id}/review",
+            json={"approved": True},
+            headers=session_auth_headers("space-fixture-reviewer"),
+        )
+        assert reviewed.status_code == 200, reviewed.text
+    return response
+
+
 def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-scoped session token — the ONLY sanctioned way for a test to
     mint one.

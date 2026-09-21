@@ -23,7 +23,7 @@ const props = defineProps<{
 const spaceStore = useSpaceStore()
 const { currentSpace } = storeToRefs(spaceStore)
 
-const spaceName = computed(() => currentSpace.value?.name || '当前空间')
+const spaceName = computed(() => currentSpace.value?.name || '当前题目板')
 const rangeLabel = computed(() => `${props.filters.from} 至 ${props.filters.to}`)
 const approvalLabel = computed(() => {
   if (props.filters.taskApproved === 'ALL') return '统计全部题目'

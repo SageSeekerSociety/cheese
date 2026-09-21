@@ -104,8 +104,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
-- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写主人个人记忆。
-- **记忆注入**：每轮把项目记忆（私聊则个人记忆）+ 实况文档拼进 system prompt。🟡 会话收尾**自动提取**记忆未做；项目话题里加载**成员个人记忆**未做。
+- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写这位芝士**对主人的看法**（池键 `<项目>:<agent handle>:<人>`，属于这个项目里的这个实例，不跨项目）。
+- **记忆注入**：每轮把这位芝士在这个项目里的池 + 它对在场每个人的池 + 实况文档拼进 system prompt（池清单见 `memory/pools.py::pools_for_turn`）。读哪几个池只看这一轮谁在场，不看房间是什么类型——私聊不是特例。🟡 会话收尾**自动提取**记忆未做。
 - **巡检（本体心跳）**：已退役。`POST /api/projects/{id}/heartbeat` 2026-08-12 摘掉（`app/api/routes/activities.py` 留成一个空 router，原因写在原地；`tests/contract/test_parked_bypass_turns.py` 守着它别被挂回来），定时 tick 那一侧跟着 scheduler 包一起删掉（§3.8）。它回来的时候是一份 skill，不是一个钟。
 
 ### 3.3 话题升级 / 拆分 / 回流  ✅ 主干 / 🟡 活引用回写
@@ -137,19 +137,18 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **实现**：`AcceptService`（`backend/app/domain/review/services.py`）；接口 `POST /api/topics/{id}/accept-card`、`/api/accept-cards/{id}/{accept|reject|reassign|revoke}`；前端 `WorkspaceView` 合并框。
 - 🟡 剩余：合并冲突时仍归档(产物未入 main)、`reviewer_role` 只认 `mentor`。（「采纳直接合 main 未走父分支」那条已经不成立：一件活的结论被采信时，提交折进它所在房间的分支，见 `conclusion/services.py::fold_into_room`。）
 
-### 3.6 记忆（项目 / 个人）  ✅ 基础 / 🟡
+### 3.6 记忆（项目 / 关于某个人）  ✅
 
-- **行为**：项目记忆（章程/决策/进展，任何话题可引用）+ 个人记忆（跨项目，记录"芝士眼中的 TA"）。私聊里 `remember` 写个人记忆。
-- **实现**：`MemoryEntry`（scope=project/user）、`DbMemoryStore`（`backend/app/domain/memory/`）。
-- 🟡 剩余：项目话题里给个人记忆。
+- **行为**：项目记忆（章程/决策/进展，任何话题可引用）+ 关于某个人的记忆（"这位芝士眼中的 TA"，属于某个项目里的某位芝士，不跨项目）。私聊里 `remember` 写的就是这一份；在场的人各读一份，任何房间都读得到。
+- **实现**：`MemoryEntry`（scope=project/user/agent_project）、`DbMemoryStore`（`backend/app/domain/memory/`）；`user` 池的 scope_id 由 `memory/models.py::user_scope_id` 拼，跨项目读不到靠的就是别的项目的键在这里拼不出来。
 
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
-- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）对所有人可见。
+- **行为**：通知分 `silent`/`light`/`strong` 三级；铃铛**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）在写入时展开成名册上一人一行 —— 说了房间就是房间的名册，没说房间就是项目名册加项目主人，agent 不在里面；展开成零行（名册上只剩 agent）直接报错，不静默丢掉。
 - **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
-- **分级限流**：每话题每天 ≤2 轻 / 每周 ≤1 强（`NotificationRepository.over_quota`）；**决策/验收请求永不被限流丢弃**（Batch J）。
-- **实现**：`AlertService`（`backend/app/domain/alert/`）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`。前端 `components/NeedsYou.vue`。
+- **分级限流**：今天没有分级限流在起作用，没有通知因为超额被丢掉。反馈提案卡有自己的配额（`settings.feedback_proposals_per_topic_per_day`）。
+- **实现**：`ProjectNotificationService`（`backend/app/domain/notification/`，与人对人的通知同住 `notification` 一张表）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`，通知 id 是 bigint。前端 `components/NeedsYou.vue`。
 
 ### 3.8 里程碑 / 日历  ✅ / 🟡
 
@@ -183,7 +182,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **行为**：平台自带反馈系统，人和芝士都走同一条链路。
   - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 我的 / 待处理…），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
   - **芝士主动提**：芝士在话题里干完活，可以直接把一条反馈**作为提案卡**发进对话流（`cheese feedback propose`）。卡上最显眼的是**「你当时说的」**（引用用户原话，或明说「用户没有就这个问题说过话」），下面才是判断依据 / 发生了什么 / 复现 / 证据；用户点**采纳**才真的建出反馈（提交者=点的人，作者=卡上的芝士），点**不用**按**指纹**记一条 dismissal，同一指纹不再出现。每话题每天限 2 条（`settings.feedback_proposals_per_topic_per_day`），超了回 412 并说明是三道限流里的哪一道。
-  - **可见性**：`public` / `private`。私密条目只有提交者本人和平台管理员看得到，列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
+  - **可见性**：`public` / `private`。私密条目只有提交者本人、平台管理员、以及「提出它时在那个房间里、且今天还读得到那个房间」的人看得到（结论 47 的三档；房间来源只有发送提案卡那条路留得下，`topic_id` 不是请求体字段），列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
   - **互动**：评论（可删自己的）、支持（一人一次，可取消）。
   - **管理端**（`/admin/feedback`）：改状态 / 优先级、指派负责人、标安全（`security` 是 `private` 之下的**读时收窄**——公开条目一旦标上，读路径也按私密鉴权）、加备注（只增不改）。管理端**没有**「转为公开」按钮：可见性由提交者定，管理员不能替他把私密的东西亮出来。
   - **默认筛选**：已解决的 **bug** 沉底不展示，其他类型的已解决项照常显示。
@@ -207,7 +206,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 - ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)、反馈（中心/详情/我的反馈/管理端 + 芝士提案卡 + 指纹去重与每日配额）。
 - ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = git worktree（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
-- 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取/个人记忆入项目话题、总览风险板块、改文档对话事件、资源包发放。
+- 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取、总览风险板块、改文档对话事件、资源包发放。
 - ⛔ **依赖外部基础设施**：会议 ASR。
 
 > 剩余项的精确清单见 spec-align 复审 backlog（`tmp_review/backlog2.md`，工作区临时文件）。开发/测试/UI 迭代流程见 `docs/workflows.md`。

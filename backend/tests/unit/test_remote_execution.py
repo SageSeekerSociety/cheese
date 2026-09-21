@@ -36,8 +36,8 @@ runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 
-def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
-    source = (
+def _proxy_source() -> str:
+    return (
         (RUNTIME.parent / "proxy.js")
         .read_text()
         .replace(
@@ -51,7 +51,25 @@ def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
             ),
         )
     )
-    program = """
+
+
+def _run_proxy(program: str) -> None:
+    subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            program,
+            base64.b64encode(_proxy_source().encode()).decode(),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
+    _run_proxy("""
         import assert from 'node:assert/strict';
         const url = 'data:text/javascript;base64,' + process.argv[1];
         const {register} = await import(url);
@@ -74,19 +92,49 @@ def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
           id: 'read', tool: 'Read', args: {file_path: '/work/image.png'},
           session_id: 'session',
         }});
+    """)
+
+
+def test_a_task_stop_the_executor_does_not_own_goes_back_to_the_harness():
+    """父线程停掉一条子线程，那一手是 harness 自己的（结论 43）。
+
+    `TaskStop` 的 id 有两个主人：执行机上后台跑着的那条命令，和这条会话里起着的
+    一条子线程。转给执行器的那条路只认前者，所以在房间里一律转过去，等于父线程
+    停不掉任何一条子线程——拿回来的是执行器的「不认识这条任务」。
+
+    负向对照在同一条测试里：执行器认得的那个 id 照旧转过去，不许一起放手。
     """
-    subprocess.run(
-        [
-            "node",
-            "--input-type=module",
-            "-e",
-            program,
-            base64.b64encode(source.encode()).decode(),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const known = 'cheese-task-00112233445566aa';
+        const api = {
+          session: {id: async () => 'session'},
+          mcp: {call: async (server, tool, args) => {
+            const outcome = args.args.task_id === known
+              ? {result: {message: 'Remote process group stopped'}}
+              : {deny: 'Unknown remote task'};
+            return {content: [{type: 'text', text: JSON.stringify(outcome)}]};
+          }},
+        };
+        let handed_back = false;
+        const next = async () => {handed_back = true; return 'next'};
+
+        const mine = await handlers['tool.call'](api, {
+          tool: 'TaskStop', tool_use_id: 'a', task_id: known,
+        }, next);
+        assert.equal(handed_back, false);
+        assert.deepEqual(mine, {result: {message: 'Remote process group stopped'}});
+
+        const worker = await handlers['tool.call'](api, {
+          tool: 'TaskStop', tool_use_id: 'b', task_id: 'reviewer',
+        }, next);
+        assert.equal(handed_back, true);
+        assert.equal(worker, 'next');
+    """)
 
 
 @pytest.mark.parametrize("exit_contents", ["", "0", "7"])

@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, unique_int
+from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
 class TestSpaceIntegration:
@@ -13,8 +13,8 @@ class TestSpaceIntegration:
         )
         suffix = unique_int(10000000, 99999999)
         space_name = f"Test Space ({suffix})"
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": space_name,
                 "intro": "This is a test space.",
@@ -54,8 +54,8 @@ class TestSpaceIntegration:
         )
         suffix = unique_int(10000000, 99999999)
         space_name = f"Test Space ({suffix})"
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": space_name,
                 "intro": "This is a test space.",
@@ -91,8 +91,8 @@ class TestSpaceIntegration:
     ):
         creator = setup_space["creator"]
         space_name = setup_space["space_name"]
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": space_name,
                 "intro": "Another space",
@@ -172,8 +172,8 @@ class TestSpaceEnumeration:
         )
         for i in range(3):
             suffix = unique_int(10000000, 99999999)
-            api_client.post(
-                "/spaces",
+            create_approved_space(
+                api_client,
                 json={
                     "name": f"Enum Space ({suffix}) {i}",
                     "intro": "Test",
@@ -201,8 +201,8 @@ class TestSpaceEnumeration:
         )
         for i in range(5):
             suffix = unique_int(10000000, 99999999)
-            api_client.post(
-                "/spaces",
+            create_approved_space(
+                api_client,
                 json={
                     "name": f"Page Space ({suffix}) {i}",
                     "intro": "Test",
@@ -231,8 +231,8 @@ class TestSpaceCategories:
             api_client, creator.username, creator.password
         )
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Category Space ({suffix})",
                 "intro": "Test",
@@ -479,8 +479,8 @@ class TestSpacePermissions:
         other = user_client.create_user()
         other.token = user_client.login(api_client, other.username, other.password)
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Permission Space ({suffix})",
                 "intro": "Test",
@@ -539,8 +539,8 @@ class TestSpaceAdmins:
             api_client, new_owner.username, new_owner.password
         )
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"Admin Space ({suffix})",
                 "intro": "Test",
@@ -666,8 +666,8 @@ class TestSpaceDomainGroups:
         owner = user_client.create_user()
         owner.token = user_client.login(api_client, owner.username, owner.password)
         suffix = unique_int(10000000, 99999999)
-        resp = api_client.post(
-            "/spaces",
+        resp = create_approved_space(
+            api_client,
             json={
                 "name": f"DG Space ({suffix})",
                 "intro": "Domain group test",

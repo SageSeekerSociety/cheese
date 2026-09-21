@@ -2,7 +2,7 @@
   <v-sheet flat rounded="lg" class="member-page">
     <div class="member-page__hero">
       <div>
-        <h1 class="member-page__title">我参与的赛题</h1>
+        <h1 class="member-page__title">我参与的题目</h1>
       </div>
 
       <v-btn
@@ -11,7 +11,7 @@
         prepend-icon="mdi-compass-outline"
         :to="{ name: 'SpacesDetailTasksList', params: { spaceId } }"
       >
-        去看全部赛题
+        去看全部题目
       </v-btn>
     </div>
 
@@ -128,7 +128,7 @@
         <v-empty-state
           icon="mdi-account-check-outline"
           title="还没有参与记录"
-          text="你在这个空间里还没有参与任何赛题，可以先去全部赛题里挑一个开始。"
+          text="你在这个题目板里还没有参与任何题目，可以先去全部题目里挑一个开始。"
         />
         <div class="empty-actions">
           <v-btn
@@ -137,7 +137,7 @@
             prepend-icon="mdi-compass-outline"
             :to="{ name: 'SpacesDetailTasksList', params: { spaceId } }"
           >
-            去看全部赛题
+            去看全部题目
           </v-btn>
         </div>
       </template>
@@ -289,7 +289,7 @@ const loadParticipations = async () => {
     participations.value = data.participations
   } catch (error) {
     console.error('load my participations failed', error)
-    toast.error('加载我参与的赛题失败')
+    toast.error('加载我参与的题目失败')
   } finally {
     listLoading.value = false
   }

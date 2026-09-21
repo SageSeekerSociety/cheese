@@ -57,7 +57,7 @@
             <v-icon color="primary" class="mt-1">mdi-check-circle</v-icon>
             <div>
               <div class="font-weight-medium">可重复提交</div>
-              <div class="text-medium-emphasis">该赛题允许您多次提交作品，系统将保存所有提交记录</div>
+              <div class="text-medium-emphasis">该题目允许您多次提交作品，系统将保存所有提交记录</div>
             </div>
           </div>
 

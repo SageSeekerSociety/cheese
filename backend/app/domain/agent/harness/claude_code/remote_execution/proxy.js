@@ -40,6 +40,11 @@ export function register(on) {
         });
         if (response.isError) return { deny: JSON.stringify(response.content) };
         const outcome = JSON.parse(response.content[0].text);
+        // 一个 TaskStop 的 id 有两个主人：执行机上后台跑着的那条命令，和这条会话
+        // 里起着的一条子线程。执行器只认前者——它答「不认识」的那个 id 就是后者，
+        // 让回给 harness 自己停（结论 43「父线程能停掉它」）。判据是执行器认不认
+        // 得，不是 id 长什么样：两种 id 都是机器自己发的，长得一样。
+        if (tool === "TaskStop" && outcome.deny === "Unknown remote task") return next();
         if (outcome.result?.type === "image") {
           outcome.result.file.base64 = response.content.find(block => block.type === "image").source.data;
         }

@@ -147,7 +147,7 @@ export function useTaskData() {
         }
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : '加载赛题信息失败'
+      error.value = err instanceof Error ? err.message : '加载题目信息失败'
       console.error('Failed to load task:', err)
     } finally {
       loading.value = false
