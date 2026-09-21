@@ -45,10 +45,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import (
-    subscription_model_alias,
-    subscription_model_listings,
-)
+from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -96,10 +93,6 @@ from app.domain.agent.tool_preview import (
     tool_preview,
     work_subpath,
 )
-from app.domain.agent_instance.configuration import (
-    AgentConfiguration,
-    validate_configuration,
-)
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -137,6 +130,7 @@ from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import binding
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -3927,10 +3921,14 @@ class ChatService:
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
     ) -> tuple[dict, str]:
-        """Resolve a turn's explicit agent model, model environment and usage route.
+        """Resolve a turn's model, model environment and usage route.
+
+        Which model comes from the binding of the work this turn belongs to —
+        and a room's main thread is not a piece of work, so it always gets the
+        project default (`room_task/binding.py`).
 
         Machine providers assemble their own scoped credentials. Other providers
-        retain their gateway/profile transport, with the agent's saved model.
+        retain their gateway/profile transport, carrying that resolved model.
         The optional snapshots keep model, role and author consistent within a turn.
 
         ``provider=None`` means there is no machine in this turn at all (私聊 走
@@ -3962,24 +3960,41 @@ class ChatService:
                     if topic
                     else await agents.for_project(project)
                 )
-            config = AgentConfiguration.model_validate(agent.configuration)
-            validate_configuration(config, project.settings)
-            supply = (
-                SUBSCRIPTION
-                if config.model in {item.id for item in subscription_model_listings()}
-                else "gateway"
-            )
+        # 用哪个模型，问这条活要 —— 而一个房间的主线不是一条活，所以它拿到的永远
+        # 是项目默认（`room_task/binding.py`，结论 3）。以前这里读的是这个 agent
+        # 存着的 `configuration.model`，那等于「换模型就再建一个 agent」；模型是
+        # 工作占用的资源，不是参与者的属性。
+        #
+        # 主线永远走默认还有第二个理由：一轮一换模型就是一轮一丢 prompt 缓存，
+        # 而主线正是最长、最吃缓存的那条对话。
+        bound = binding.resolve(None, binding.catalog(project.settings))
+        supply = bound.supply
         model = (
-            subscription_model_alias(config.model)
+            subscription_model_alias(bound.model)
             if supply == SUBSCRIPTION
-            else config.model
+            else bound.model
         )
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
+            #
+            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
+            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
+            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
+            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
+            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
+            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
+            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
+            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
+            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
             (
                 json.dumps(
-                    {"agent": agent.configuration, "git_author": acting_agent},
+                    {
+                        "agent": agent.configuration,
+                        "git_author": acting_agent,
+                        "model": model,
+                        "supply": supply,
+                    },
                     sort_keys=True,
                 )
                 + ":explicit-chat-v3-native-skills"
