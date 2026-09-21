@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
@@ -49,6 +49,9 @@ class CloudChannel(DeviceChannel):
     """
 
     name = "cloud"
+    # 平台开的机器：平台有权销毁它，也停得了它——租约的第三态（休眠）只有这一档给
+    # 得出 (结论 39)。同一台物理 VM 由人自己接进来时是 self_hosted，入口决定待遇。
+    supply = Supply.cloud
     provisions_machine = True
     # 要手要不到的那一句。要不要手、要不到就停，那条分支在基类上只有一份 —— 这
     # 条通道改的只有供给和这一句话。
@@ -74,12 +77,6 @@ class CloudChannel(DeviceChannel):
 
     def available(self) -> bool:
         return self._configured
-
-    def owns(self, supply: Supply) -> bool:
-        """The machines this channel listens to are the ones the platform
-        opened. Inverting the base channel's answer is the whole of it — see
-        ``DeviceChannel.discover`` for what a topic recovered by both costs."""
-        return supply is Supply.cloud
 
     async def prepare_topic(
         self,
@@ -124,7 +121,9 @@ class CloudChannel(DeviceChannel):
                 )
             if binding is None:
                 await devices.bind_topic_device(
-                    topic_id, lease.device_id, visibility=Visibility.host
+                    topic_id,
+                    lease.device_id,
+                    visibility=await devices.binding_visibility(lease.device_id),
                 )
             # 这个房间的 agent 身份：它的会话就是以这个身份记录和恢复的 (#660)。
             agent = await IdentityService(session).ensure_topic_agent_user(topic_id)

@@ -270,6 +270,31 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     assert backend.provisions_machine is True
 
 
+def test_pi_is_wired_onto_places_whose_hands_are_the_session_machine():
+    """pi 挂在哪一条通道上，由地点的能力位说，不由通道的类说。
+
+    pi 的进程和它的工作区在同一台机器上——没有第二台机器要指派，也没有执行器要把
+    工具转过去。问这件事只有一种问法：这个地点的手在不在跑会话的那台机器上。
+
+    按类问过一次，问出来的是恒真：``CloudChannel`` 和 ``CentralChannel`` 都继承
+    ``DeviceChannel``，于是那条 ``isinstance`` 读起来像一条排除规则，实际一条都没
+    排除——包括手根本不在会话机上、工具要再跳一程到执行机的那一条。
+    """
+    from app.domain.agent.central_provider import CentralChannel
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.device_provider import DeviceChannel
+    from app.domain.agent.harness import CLAUDE_CODE, PI
+
+    hands_elsewhere = CentralChannel(DeviceChannel())
+    hands_elsewhere.name = "elsewhere"
+    pool = build_compute_pool(cloud_channel=hands_elsewhere)
+
+    assert pool.has("elsewhere")
+    assert pool.select(provider_id="elsewhere", harness=CLAUDE_CODE) is not None
+    assert pool.select(provider_id="elsewhere", harness=PI) is None
+    assert pool.select(provider_id="device", harness=PI) is not None
+
+
 def test_resolve_compute_id_uses_room_then_explicit_project_default():
     from app.domain.agent.chat import _resolve_compute_id
     from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs

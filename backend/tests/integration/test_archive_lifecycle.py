@@ -108,6 +108,46 @@ async def test_failed_confirmation_keeps_resources_and_retries_after_restart(
     assert action.await_args.args[3] == "remove"
 
 
+async def test_a_room_is_not_reclaimed_until_the_third_receipt_is_in(
+    client, monkeypatch
+):
+    """回收前三张收据，一张不齐就停在原地并说明理由（不变量 I19）。
+
+    前两张这条路上本来就取：每个资源交回 transcript，每一棵检出过「没有没推上去的
+    东西」那一关。第三张是记忆整理——只有那台机器上才有代码可以对照，所以它必须在删
+    之前跑过；机器一删就再也补不回来，而房间看起来一切正常地消失了。
+    """
+    from app.domain.memory.dream import open_dream
+    from app.domain.topic.models import Topic
+
+    monkeypatch.setattr(settings, "dream_enabled", True)
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    monkeypatch.setattr(retire, "_device_action", AsyncMock())
+    monkeypatch.setattr(retire, "_flush_transcripts", AsyncMock(return_value=[]))
+
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 0,
+        "pending": 1,
+    }
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert operation.state == "pending"
+        assert "记忆整理" in operation.last_error
+
+    async with client.test_factory() as session:
+        room = await session.get(Topic, room_id)
+        await open_dream(session, topic_id=room_id, project_id=room.project_id)
+        await session.commit()
+
+    # 收据齐了，同一次回收接着走完——收据是「发生过的事」的凭据，不是一次重试。
+    assert await retire.sweep_retired_storage(client.test_factory) == {
+        "completed": 1,
+        "pending": 0,
+    }
+
+
 async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeypatch):
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     monkeypatch.setattr(

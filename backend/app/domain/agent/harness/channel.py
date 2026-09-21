@@ -4,9 +4,11 @@ import asyncio
 import uuid
 from typing import NamedTuple, Protocol
 
+from app.domain.agent import place
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.launch import MachinePlan
 from app.domain.agent.platform_failures import TURN_TIMEOUT_MESSAGE
+from app.domain.device.supply import Supply
 
 
 class ActivityClock(Protocol):
@@ -129,6 +131,34 @@ class Channel:
     # word these however it likes.
     needs_topic_message: str = "本轮需要话题上下文"
     timeout_message: str = TURN_TIMEOUT_MESSAGE
+
+    # --- 地点：这条通道租出来的那双手 (结论 24、60) ---------------------------
+    #
+    # 两个物理事实，能力位从它们推出来 (`place.capabilities_of`)，上游读能力位。
+    # 直接声明一张能力表的话，它会退化成「写它那天恰好有这个本事的通道」的清单，
+    # 而继承一份表的子类会连那张过期的清单一起继承走——`compute.py` 里那条恒为真
+    # 的 `isinstance(c, DeviceChannel)` 就是这么来的。
+
+    #: 这台机器是谁开的：平台开的 → 平台有权销毁它、也停得了它；人接入的 → 平台
+    #: 只能停止使用。销毁权与第三态（休眠）都只从这一位推出来。
+    supply: Supply = Supply.self_hosted
+
+    #: 这条通道上的手，是不是就是跑会话进程的那台机器。False 表示工具要再跳一程
+    #: 到执行机上去——进程和工作区不在一起的骨架才需要那一跳。
+    hands_here: bool = True
+
+    def capabilities(self) -> frozenset[str]:
+        """这个地点给得出什么——`place.Place` 的那一问。"""
+        return place.capabilities_of(self.supply, hands_here=self.hands_here)
+
+    def owns(self, supply: Supply) -> bool:
+        """一台这样进来的机器，是不是这条通道该认领的。
+
+        两条通道把话题绑进同一张表，所以一条绑定不说是谁做的——机器说，而供给正是
+        分开它们的那根轴。这里读的是同一位 `supply`，不是各通道自己写一条反过来的
+        判断：反着写的那一条，在轴上多一个取值的那天就是错的。
+        """
+        return supply is self.supply
 
     def available(self) -> bool:
         return True

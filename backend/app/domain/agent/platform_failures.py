@@ -30,6 +30,27 @@ HOST_UNREACHABLE_CODE = "host_unreachable"
 SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE = "subscription_credential_expired"
 PROMPT_UNDELIVERED_CODE = "prompt_undelivered"
 TURN_TIMEOUT_CODE = "turn_timeout"
+LEASE_EXPIRED_CODE = "lease_expired"
+
+# 手够不着时 agent 读到的那一句（结论 23）。三句能力话，没有一个平台内部术语，也
+# 没有一个裸 HTTP 状态码：一个状态码告诉它的是「有东西坏了」，而它需要知道的是这
+# 一轮里还剩哪些通路。
+#
+# 它在这里，紧挨着 DEVICE_OFFLINE_MESSAGE，因为这两句是同一件事的两个时刻——一个
+# 在轮次开始前，一个在轮次中途。机器上跑的那份执行器传输层带一份自己的拷贝（它在
+# 那台机器上运行，我们的东西一样都 import 不到），两份由
+# ``tests/unit/test_lease.py`` 钉在一起。
+MACHINE_OUT_OF_REACH = (
+    "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
+)
+
+# 租期到了那一句——同族，同样只说事实和还剩什么通路。多出来的半句是它独有的：
+# 平台不会因为到期替它换一台（结论 55）。不写这半句，agent 会以为等一等就有新机
+# 器来，而那是没有的机制。
+LEASE_EXPIRED_MESSAGE = (
+    "这双手的租期到了：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
+    "要接着做就自己要一台机器——平台不会替你换。"
+)
 
 # The platform's OWN wording for the two failures the hooks substrate raises by
 # itself: "the prompt never reached the claude session" and "this turn hit its
@@ -224,6 +245,22 @@ TURN_TIMEOUT = PlatformFailure(
 )
 
 
+LEASE_EXPIRED = PlatformFailure(
+    code=LEASE_EXPIRED_CODE,
+    title="这双手的租期到了",
+    content="这一轮的机器租期已到：文件和命令这一轮用不了，对话照常。",
+    detail=(
+        "租期到了是一条送到芝士面前的事实，不是平台替它做的决定——"
+        "平台不会因为到期就替它换一台机器，也不会自动重跑这一轮。"
+        "已提交并推上去的改动都还在。要接着做，让芝士自己要一台机器。"
+    ),
+    retryable=True,
+    # 期限是租约的属性，不是机器的毛病：一台机器上的租约到期，说明不了这台机器
+    # 有任何问题，把它算进机器健康账等于用计时器隔离好机器。
+    host_scoped=False,
+)
+
+
 # Every classification this module can return. Keep new failures in this tuple —
 # ``HOST_SCOPED_CODES`` is derived from it, so a failure left out silently opts
 # itself out of the machine-health accounting.
@@ -234,6 +271,7 @@ ALL_FAILURES = (
     WORKSPACE_VCS_PERMS,
     PROMPT_UNDELIVERED,
     TURN_TIMEOUT,
+    LEASE_EXPIRED,
 )
 
 # Failure codes that indict the MACHINE rather than the turn. The turn layer reads

@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.domain.agent.harness import AgentRuntime, runtime_for
 
 if TYPE_CHECKING:
+    from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import (
         ActivityConsumer,
         Backlog,
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
         SessionRef,
         UnreadProbe,
     )
-    from app.domain.agent.harness.channel import Channel
 
 
 class ComputeProvider(Protocol):
@@ -290,7 +290,7 @@ class ComputePool:
         return self._backends.get((machine, harness_name(harness)))
 
 
-def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
+def build_compute_pool(cloud_channel: "DeviceChannel | None" = None) -> ComputePool:
     """Build the ComputePool from settings.
 
     Every machine here belongs to someone a person can name: the device
@@ -306,6 +306,7 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     executor falls back to. The default now comes from `compute_default_name`,
     the same answer the catalogue marks 默认.
     """
+    from app.domain.agent import place
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness.channel import Channel
@@ -331,7 +332,10 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             no_progress_s=settings.agent_no_progress_s,
         )
 
-    channels: list[Channel] = [DeviceChannel()]
+    # 这个池今天装的都是同一种传输：一条到某台机器的连接器链路。**这是类型，不是
+    # 判断**——「这条通道上挂不挂得住 pi」在下面问能力位，因为那是一个会变的事实，
+    # 而 `CloudChannel` 是不是 `DeviceChannel` 不是。
+    channels: list[DeviceChannel] = [DeviceChannel()]
     if cloud_channel is not None:
         channels.append(cloud_channel)
     # The default has to name a machine THIS pool actually holds — the pool
@@ -355,12 +359,17 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     # pi is the one backend NOT wrapped in CentralChannel: it runs on the
     # machine that holds the workspace, so there is no second machine to assign
     # and no executor to route its tools through. See pi/channel.py.
+    #
+    # 所以这里问的是地点的能力位 `HANDS_HERE`，不是通道的类。按类问过一次：
+    # `isinstance(c, DeviceChannel)` 读起来像一条排除规则，而 `CloudChannel` 与
+    # `CentralChannel` 都继承 `DeviceChannel`，它恒为真——什么都没排除，包括那条
+    # 手根本不在会话机上的中心通道。
     backends.extend(
         PiRuntime(
             PiChannel(c),
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
         for c in channels
-        if isinstance(c, DeviceChannel)
+        if place.HANDS_HERE in c.capabilities()
     )
     return ComputePool(backends, default_name)

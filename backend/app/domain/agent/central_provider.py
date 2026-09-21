@@ -26,6 +26,10 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.launch import LaunchPlan
+
+# 名字而不是模块：本文件里 ``place`` 是一个局部变量（这条会话解析出来的地点），
+# import 整个模块会在函数里被它盖掉。
+from app.domain.agent.place import Lease, LeaseState
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.topic.services import TopicService
@@ -82,6 +86,12 @@ class CentralChannel(DeviceChannel):
         self.executor = executor
         self.name = executor.name
         self.provisions_machine = executor.provisions_machine
+        # 手是执行机的，所以这条通道的供给就是被它包住的那条通道的供给——销毁权、
+        # 休眠这两件事说的都是那台机器，不是中心会话机。
+        self.supply = executor.supply
+        # 而会话进程不在那台机器上：工具要从中心机再跳一程到执行机。把进程和工作
+        # 区放在同一台机器上的骨架（pi）挂不到这条通道上。
+        self.hands_here = False
 
     def available(self):
         return self.executor.available()
@@ -389,7 +399,20 @@ class CentralChannel(DeviceChannel):
                 topic_id=topic_id,
                 agent_handle=session.agent_handle,
                 harness=session.harness,
-                work_lease=target,
+                # 租到手的一轮，这一行是一份租约，所以它带着自己的状态和期限出发
+                # （在用 / 休眠 / 已归还，结论 24、39）。没租手的一轮写下的是这条
+                # 会话自己的草稿区，不是一个地点（结论 19）——给它盖一个「在用」的
+                # 租约章，回收路径就会去向一台根本没租过的机器要三张收据。
+                work_lease=(
+                    Lease(
+                        machine=target["device_id"],
+                        resource_id=target["resource_id"],
+                        state=LeaseState.in_use,
+                        expires_at=None,
+                    ).into(target)
+                    if rented
+                    else target
+                ),
                 runtime_location=location,
             )
             await db.commit()

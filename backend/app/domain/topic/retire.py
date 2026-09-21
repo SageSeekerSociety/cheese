@@ -19,11 +19,15 @@ from app.domain.agent import event_drain, resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir, list_device_storage
 from app.domain.agent.models import AgentTurn
+
+# 名字而不是模块：本文件里 ``place`` 是一个局部变量（一条会话解析出来的地点）。
+from app.domain.agent.place import LeaseState, Receipts, receipts_ready
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
+from app.domain.memory.dream import latest_dream
 from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
@@ -99,6 +103,22 @@ print(json.dumps(collect_transcripts(script, values, flush=True)))
     if result.get("exit") != 0 or result.get("truncated"):
         raise RuntimeError("final transcript collection or confirmation failed")
     return json.loads(result.get("stdout") or "[]")
+
+
+async def _memory_is_tidied(session: AsyncSession, topic_id: uuid.UUID) -> bool:
+    """记忆整理这一张收据：跑过没有。
+
+    时机是硬的——整理要对着机器上的代码重写自己那几条记忆，所以只有那台机器还在的
+    时候跑得成（#1078）。机器一删，这张收据就再也补不回来，这正是它要卡在回收之前
+    的理由。
+
+    部署根本不做记忆整理时，没有一次整理可以等：收据说的是「该发生的事发生了」，而
+    这里没有该发生的事。写成无条件等待的话，每一个归档房间都会永远停在一张永远不会
+    出现的收据上。
+    """
+    if not settings.dream_enabled:
+        return True
+    return await latest_dream(session, topic_id) is not None
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
@@ -474,6 +494,28 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                     await asyncio.to_thread(
                         resource_cleanup.check_published, path, canonical=True
                     )
+            # 归还前的三张收据（不变量 I19）。归档是今天唯一走完整条归还的回收路
+            # 径，所以它是这个闸门的第一个调用者——但闸门在 ``place`` 上而不是在这
+            # 里，因为 Cloud 释放、容器回收、会话机 drain 要的是同一句话，而休眠要
+            # 的是「一张都不取」。两件事没有分开的那些年，每一次闲置停机都得跑一遍
+            # 记忆整理。
+            #
+            # 前两张的取证就是上面两段：每个 device 资源都把 transcript 交回来了，
+            # 每一棵检出都过了「没有没推上去的东西」那一关（两者都是抛异常的，所以
+            # 走到这里本身就是凭据）。第三张只能在这里之前拿到——机器一删，就再也
+            # 没有代码可以对着整理了。
+            receipts = Receipts(
+                transcript_stored=all(
+                    "transcripts" in entry
+                    for entry in resources
+                    if entry["kind"] == "device"
+                ),
+                memory_tidied=await _memory_is_tidied(session, operation.topic_id),
+                work_published=True,
+            )
+            ready, why = receipts_ready(LeaseState.returned, receipts)
+            if not ready:
+                raise RuntimeError(why)
             for entry in resources:
                 if entry["kind"] == "worktree":
                     parking_started = True

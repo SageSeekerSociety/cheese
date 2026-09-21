@@ -21,6 +21,21 @@ from urllib.parse import unquote, urlsplit
 CONNECT_RETRY_WINDOW_S = 180
 CONNECT_RETRY_MAX_DELAY_S = 5
 
+# What the agent reads when its hands cannot be reached. A COPY of
+# `platform_failures.MACHINE_OUT_OF_REACH`, not a second answer: this file is
+# shipped to the machine and run beside the room's own files with nothing of
+# ours importable, so it carries the sentence. `tests/unit/test_lease.py` holds
+# the two together.
+#
+# What it replaced was `f"Executor HTTP request failed: {status}"`. A status
+# code tells the agent that something broke; what it needs in that turn is which
+# ways out it still has, and a bare number sends it hunting for a bug in its own
+# tool call. The platform's own Chinese body and its `X-Device-Id` header were
+# already being dropped on the floor here.
+MACHINE_OUT_OF_REACH = (
+    "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
+)
+
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
     """Sleep before the next attempt, or say the window is over.
@@ -320,9 +335,7 @@ class RemoteClient:
                     response = connection.getresponse()
                     data = response.read()
                     if response.status != 200:
-                        raise RuntimeError(
-                            f"Executor HTTP request failed: {response.status}"
-                        )
+                        raise RuntimeError(MACHINE_OUT_OF_REACH)
                     return json.loads(data)
                 except ConnectionRefusedError:
                     # Nothing was sent, so this is the one failure worth waiting
