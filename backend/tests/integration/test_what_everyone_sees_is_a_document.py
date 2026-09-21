@@ -184,16 +184,20 @@ def test_a_fact_the_repo_already_carries_still_goes_into_the_document(
     """repo 里写着，不是不让所有人知道的理由。
 
     「只记 repo 里查不到的」是记忆那一侧的判据（结论 61）——记忆是一份会过期的副
-    本。文档不是副本，它是人和所有芝士共看的那一份状态，而项目用什么技术栈、分工
-    写在哪个文件里，正是它该说的话。两条一起测：同一条事实，记忆那一路拒，文档这
-    一路收。
+    本。文档不是副本，它是人和所有芝士共看的那一份状态，而项目定了什么、谁负责什
+    么写在哪个文件里，正是它该说的话。两条一起测：同一条事实，记忆那一路拒，文档
+    这一路收。
     """
     project_id, topic_id = _project_and_room(client)
     overview = _overview_room(client, project_id)
-    fact = "本项目后端用 FastAPI 和 PostgreSQL"
+    fact = "前端构建用 pnpm，不要用 npm"
     _checkout_holding(
         monkeypatch,
-        {"path": "README.md", "line": 4, "text": "后端用 FastAPI 和 PostgreSQL。"},
+        {
+            "path": "docs/frontend.md",
+            "line": 12,
+            "text": "前端构建用 pnpm，不要用 npm。",
+        },
     )
 
     refused = client.post(
