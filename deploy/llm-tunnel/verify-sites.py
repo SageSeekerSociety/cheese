@@ -57,6 +57,8 @@ def main():
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         source = (HERE / "nginx.conf").read_text()
+        # Distribution builds may default to a root-owned absolute access log.
+        source = source.replace("http {", "http {\n  access_log off;")
         source = source.replace("/etc/nginx/active", str(active))
         source = source.replace("listen 8081;", f"listen 127.0.0.1:{port};")
         source = source.replace("127.0.0.1:8091", f"127.0.0.1:{terminator.server_port}")
