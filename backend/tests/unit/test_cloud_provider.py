@@ -43,7 +43,7 @@ class _Hub:
 
 async def test_running_machine_waits_until_ai_and_connector_are_ready():
     topic_id, project_id = uuid.uuid4(), uuid.uuid4()
-    actor = Actor("owner", 1, False, "token")
+    actor = Actor("owner", 1, "token")
     provisioning = CloudLease(
         project_id=project_id,
         device_id="cloud-1",
@@ -144,10 +144,10 @@ async def test_a_ready_cloud_machine_gets_through_precheck(monkeypatch):
     )
 
     resolved = await provider.precheck(
-        SessionRef(project_id, topic_id, "ada", "claude-code")
+        SessionRef(project_id, topic_id, "ada", "claude-code"), needs_place=True
     )
 
-    assert resolved == ("own-cloud", 7, "cheese-room")
+    assert resolved == ("own-cloud", 7, "cheese-room", True)
     devices.bind_topic_device.assert_awaited_once()
 
 

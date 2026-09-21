@@ -33,7 +33,6 @@ from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
-from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
@@ -89,7 +88,6 @@ class ActorResolver:
         # screen's token (``X-Cheese-Screen``). It makes the call act as the screen's
         # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
         self._screen_token = screen_token
-        self._identity = IdentityService(session)
         self._credentials = ProjectAgentCredentialService(session)
 
     async def resolve(
@@ -175,14 +173,11 @@ class ActorResolver:
             bearer_token=self._bearer,
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
-            is_agent=self._identity.is_agent,
             cheese_handle=agent_handle or UNRESOLVED_AGENT_HANDLE,
             fallback_handle=fallback_handle,
         )
         if actor is None:
-            actor = Actor(
-                handle="anonymous", user_id=None, is_agent=False, via="handle"
-            )
+            actor = Actor(handle="anonymous", user_id=None, via="handle")
         if (
             self._cheese_token
             and not is_global_sandbox_token(self._cheese_token)
@@ -190,7 +185,13 @@ class ActorResolver:
         ):
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
         actor = await self._recover_numeric_handle(actor)
-        if actor.authenticated and actor.user_id is None and actor.is_agent:
+        # An authenticated actor whose credential carried no int PK: look the
+        # row up by handle, because int-keyed rows (device.owner_user_id) cannot
+        # be bound without it. Asked of every such actor rather than only of the
+        # agents — the caller's KIND was never what made the id missing (a
+        # legacy cheesex token puts the handle in ``sub`` and carries no id
+        # either), so branching on it just left those callers unbound.
+        if actor.authenticated and actor.user_id is None:
             user = await UserRepository(self._session).get_by_username(actor.handle)
             if user is not None:
                 actor = replace(actor, user_id=user.id)
@@ -210,9 +211,7 @@ class ActorResolver:
                             seated
                         )
                         handle, user_id = seated, user.id if user else None
-                return Actor(
-                    handle=handle, user_id=user_id, is_agent=True, via="cheese"
-                )
+                return Actor(handle=handle, user_id=user_id, via="cheese")
         if actor.via == "handle" and actor.handle != "anonymous":
             _log.info("actor_handle_fallback", handle=actor.handle)
         return actor

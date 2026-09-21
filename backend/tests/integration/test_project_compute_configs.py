@@ -182,7 +182,7 @@ def test_team_member_uses_cloud_but_cannot_edit_project_defaults(client, monkeyp
     async def provision():
         async with client.test_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
-                uuid.UUID(tid), actor=Actor("config_member", member_id, False, "token")
+                uuid.UUID(tid), actor=Actor("config_member", member_id, "token")
             )
             await session.commit()
             return machine

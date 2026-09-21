@@ -711,7 +711,7 @@ async def say_on_task(
     await get_broker().publish(
         str(task.id), {"type": "assistant_block", "block": payload}
     )
-    if not actor.is_agent:
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         runner.submit(
             chat,
             place.room_id,
@@ -1117,7 +1117,7 @@ async def add_comment(
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
 
-    if not actor.is_agent:
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         where = f"「{quote[:80]}」" if quote else "整篇"
         said = f"在实况文档 {where} 处评论：{content}"
         runner.submit(
@@ -1449,11 +1449,16 @@ async def publish_chat_message(
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
-    if not actor.authenticated or not actor.is_agent:
+    if not actor.authenticated:
         raise ForbiddenError("An authenticated agent must publish this message")
+    # 先授权，再问席位。两道都是 403，顺序不改任何调用者看到的结果；改的是代价：
+    # 席位那一问要读花名册、把 handle 换成用户行、再查 agent 绑定，而这条路由是
+    # 每条消息都走的。没权限进这个房间的调用者不必先替我们付这几次查询。
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
+    if not await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
+        raise ForbiddenError("An authenticated agent must publish this message")
     content = body.content.strip()
     if not content:
         raise ValidationError("content must not be blank")
@@ -1520,7 +1525,10 @@ async def ask_options(
     # 不再答「没有待读的东西」，白开一轮，而那一轮的 prompt 里躺着芝士刚问出口的这道
     # 题，它对着自己的问题再答一遍。人在房间里问出的那种照旧是一条待读输入。
     if actor.authenticated:
-        author, asked_by_agent = actor.handle, actor.is_agent
+        author = actor.handle
+        asked_by_agent = await TopicMemberService(db).holds_an_agent_seat(
+            place.room, author
+        )
     else:
         author = await TopicMemberService(db).resolve_agent_handle(
             topic_id, room_id=place.room_id
