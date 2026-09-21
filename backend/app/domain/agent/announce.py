@@ -126,7 +126,7 @@ async def notify_question(
     session: AsyncSession,
     *,
     place: Place,
-    block_id: uuid.UUID,
+    block: Block,
     question: str,
     asker: str,
     asked: str | None,
@@ -149,7 +149,7 @@ async def notify_question(
         DeliveryEvent(
             # 这条事件的身份就是那条提问消息 —— 去重键跟着它走，所以同一个问题被
             # 算第二遍也只打扰他一次。
-            id=block_id,
+            id=block.id,
             type=NotificationType.CHEESE_QUESTION,
             payload={
                 "projectId": str(place.project_id),
@@ -159,8 +159,11 @@ async def notify_question(
                 "asker": asker,
                 # 提问固定在对话末尾（本轮停在它这里），所以进入房间即可看到 ——
                 # 这个 id 留给「定位到该条消息」用，当前不依赖它也能找到。
-                "blockId": str(block_id),
+                "blockId": str(block.id),
             },
+            # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
+            # id，就是为了这个时刻拿得到。
+            occurred_at=block.created_at,
         ),
         address(Event(asked=asked), Hand.participant),
     )

@@ -16,7 +16,7 @@ Redis 一重启就没了，Redis 连不上时直接放行。所以「已经算�
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Uuid
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,12 +27,20 @@ from app.domain.common import UuidPk
 class Delivery(UuidPk, Base):
     __tablename__ = "deliveries"
     __table_args__ = (
-        # 补发扫的就是这一条：还没发出去的，按写入顺序。
-        Index("idx_deliveries_unsent", "sent_at", "recorded_at"),
+        # 补发扫的就是这一条：还没发出去的，按写入顺序。**部分索引**：这张表每发一
+        # 条通知就插一行，而其中绝大多数下一刻就 `sent_at` 非空了 —— 把它们也索引
+        # 进来，等于把写放大挂在通知的热路径上，换来的是一份没人查的条目。
+        Index(
+            "idx_deliveries_unsent",
+            "recorded_at",
+            postgresql_where=text("sent_at IS NULL"),
+        ),
     )
 
-    #: 引发这条投递的那条事件。去重键跟着它走，所以同一条事件重算多少遍都指回这里。
-    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    #: 引发这条投递的那条事件。去重键跟着它走，所以同一条事件重算多少遍都指回这
+    #: 里。**没有索引**：没有一处按它查，留着这一列是为了事后取证 —— 「这条 block
+    #: 当时通知了谁」在生产上是手查，不是热路径。
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     #: 收件人的 handle —— 寻址给出的就是它。
     recipient_handle: Mapped[str] = mapped_column(String(64))
     #: 他的站内信收件箱。**在事件发生的时刻解析好存下来**：补发是在事后发生的，那时

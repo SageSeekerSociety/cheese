@@ -1,8 +1,10 @@
-"""投递账本：两个崩溃点上各崩一次，收件人手里仍然恰好一条（结论 58）。
+"""投递账本：这一批没算送到的两档上各出一次事，收件人手里仍然恰好一条（结论 58）。
 
-这里测的全部是「中间断掉之后还剩什么」。断点有两个，救法不一样：账本那一行已经和
-事件一起提交、通知还没发出去，靠补发；通知已经写进收件箱、确认还没回写，靠去重键。
-两个点在生产里都是无声的 —— 一条通知没到，没有任何报错。
+留下「账本里有行、`sent_at` 是 NULL」的不是崩溃 —— 那一行、收件箱那一行和 `sent_at`
+的回写在同一个事务里，提交之前没了就一起回滚。真正会留下它的是**事务照常提交而
+`dispatch()` 返回 False**，两档形状不同、救法也不同：一个渠道都没收下的靠补发；站内
+信已经收下、这一批却没算送到的靠去重键。两档在生产里都是无声的 —— 一条通知没到或者
+到了两遍，没有任何报错。
 """
 
 import uuid
@@ -22,7 +24,7 @@ from app.domain.notification.handlers import (
 )
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.user.models import User
-from tests.support.crashing_ledger import CrashingLedger, FakeClock
+from tests.support.failing_ledger import FailingLedger, FakeClock
 
 pytestmark = pytest.mark.anyio
 
@@ -97,8 +99,8 @@ async def _ledger_rows(session) -> list[Delivery]:
     return list(rows)
 
 
-async def test_a_crash_after_recording_is_resent_once_on_restart(db_factory):
-    """①落库后崩：重启补发，而且只发一次。
+async def test_a_delivery_no_channel_took_is_resent_once(db_factory):
+    """①渠道没全收下：补发把它补出去，而且只补一次。
 
     以前这一档是静默丢失 —— 渠道那边抛的异常被吞掉，没有任何一行记着这条通知本该
     发出去，所以没有人能再把它发出去。
@@ -108,7 +110,7 @@ async def test_a_crash_after_recording_is_resent_once_on_restart(db_factory):
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        ledger = CrashingLedger(session, now=clock, after_record=True)
+        ledger = FailingLedger(session, now=clock, channels_refuse=True)
         await ledger.deliver(event, _addressed("alice"))
         await session.commit()
 
@@ -117,7 +119,7 @@ async def test_a_crash_after_recording_is_resent_once_on_restart(db_factory):
         assert row.sent_at is None  # 记下来了，没送到
 
     clock.advance(seconds=3600)
-    async with db_factory() as session:  # 重启
+    async with db_factory() as session:  # 下一轮补发
         assert await Ledger(session, now=clock).resend_unsent() == 1
         await session.commit()
         assert len(await _inbox(session, alice)) == 1
@@ -128,18 +130,19 @@ async def test_a_crash_after_recording_is_resent_once_on_restart(db_factory):
         assert len(await _inbox(session, alice)) == 1
 
 
-async def test_a_crash_after_sending_does_not_send_twice(db_factory):
-    """②发出后崩：账本里那一行看起来没发出去，补发不能让他收到第二条。
+async def test_a_delivery_the_mailbox_took_is_not_sent_twice(db_factory):
+    """②站内信收下了、这一批却没算送到：补发不能让他收到第二条。
 
-    分辨不出来的正是这一档 —— 「已经发了、确认没写回」和「根本没发」在账本里长得
-    一模一样。所以恰好一次由去重键保证，不由顺序保证。
+    分辨不出来的正是这一档 —— 「站内信已经写进去了、只是这一批没算数」和「根本没
+    发」在账本里长得一模一样。所以恰好一次由去重键保证，不由发送顺序保证：这里删掉
+    `notification.delivery_key` 的唯一约束，收件箱里立刻变成两条。
     """
     clock = FakeClock(EVENT_AT)
     event = _event()
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        await CrashingLedger(session, now=clock, after_dispatch=True).deliver(
+        await FailingLedger(session, now=clock, not_counted_as_sent=True).deliver(
             event, _addressed("alice")
         )
         await session.commit()
@@ -149,7 +152,7 @@ async def test_a_crash_after_sending_does_not_send_twice(db_factory):
         assert row.sent_at is None
 
     clock.advance(seconds=3600)
-    async with db_factory() as session:  # 重启后补发
+    async with db_factory() as session:  # 下一轮补发
         await Ledger(session, now=clock).resend_unsent()
         await session.commit()
 
@@ -217,7 +220,7 @@ async def test_a_resend_uses_the_roster_from_when_the_event_happened(db_factory)
 
     async with db_factory() as session:
         alice_then = await _user(session, "alice")
-        await CrashingLedger(session, now=clock, after_record=True).deliver(
+        await FailingLedger(session, now=clock, channels_refuse=True).deliver(
             event, _addressed("alice")
         )
         await session.commit()
@@ -268,8 +271,8 @@ async def test_a_resend_does_not_queue_the_email_and_push_again(
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        # 发出去了，`sent_at` 还没回写就崩 —— 补发一定会再来一次。
-        await CrashingLedger(session, now=clock, after_dispatch=True).deliver(
+        # 站内信收下了，这一批却没算送到 —— 补发一定会再来一次。
+        await FailingLedger(session, now=clock, not_counted_as_sent=True).deliver(
             event, _addressed("alice")
         )
         await session.commit()
@@ -298,7 +301,7 @@ async def test_a_delivery_that_never_goes_out_stops_being_retried(
 
     async with db_factory() as session:
         alice = await _user(session, "alice")
-        await CrashingLedger(session, now=clock, after_record=True).deliver(
+        await FailingLedger(session, now=clock, channels_refuse=True).deliver(
             event, _addressed("alice")
         )
         await session.commit()

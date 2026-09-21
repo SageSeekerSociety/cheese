@@ -1,7 +1,7 @@
 """a delivery is a row before it is a send
 
 Revision ID: e3a7c15d80b4
-Revises: c1a7e05d4b83
+Revises: b4d1a70c9e52
 Create Date: 2026-09-20 23:10:00
 
 投递账本（结论 58）。没送到的投递以前没有任何一行记着它本该发出去 —— 去重住在一个
@@ -9,8 +9,9 @@ Create Date: 2026-09-20 23:10:00
 起。`deliveries` 是那份记录：谁该收到、凭哪个去重键、写下来的时刻、发出去的时刻。
 
 `notification.delivery_key` 是同一个键落在收件箱那一行上。它必须在收件箱这一侧，因
-为「发出之后、回写确认之前崩掉」那一档在账本里看起来和「根本没发」一模一样：补发再
-发一遍，插入撞上这个唯一约束，收件人手里仍然只有一条。
+为「站内信已经收下、这一批却没算送到」那一档（排在站内信后面的渠道抛了，整批
+`dispatch()` 返回 False）在账本里看起来和「根本没发」一模一样：补发再发一遍，插入撞
+上这个唯一约束，收件人手里仍然只有一条。
 
 NULL 允许且互不排斥（Postgres 的唯一索引不认为两个 NULL 相等）：还没走账本的那些调
 用点照旧每次都插入，这一列对它们是空的。
@@ -24,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "e3a7c15d80b4"
-down_revision: str | Sequence[str] | None = "c1a7e05d4b83"
+down_revision: str | Sequence[str] | None = "b4d1a70c9e52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -46,8 +47,16 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dedup_key"),
     )
-    op.create_index("ix_deliveries_event_id", "deliveries", ["event_id"])
-    op.create_index("idx_deliveries_unsent", "deliveries", ["sent_at", "recorded_at"])
+    # 补发查的是 `sent_at IS NULL AND attempts < N ORDER BY recorded_at`，全表只有
+    # 这一处读。部分索引只收还没送出去的那些：这张表每发一条通知插一行，把已经送到
+    # 的也索引进去就是把写放大挂在通知的热路径上。`event_id` 不建索引 —— 没有一处
+    # 按它查，那一列留着做事后取证。
+    op.create_index(
+        "idx_deliveries_unsent",
+        "deliveries",
+        ["recorded_at"],
+        postgresql_where=sa.text("sent_at IS NULL"),
+    )
     op.add_column(
         "notification",
         sa.Column("delivery_key", sa.String(length=160), nullable=True),
@@ -61,5 +70,4 @@ def downgrade() -> None:
     op.drop_constraint("uq_notification_delivery_key", "notification", type_="unique")
     op.drop_column("notification", "delivery_key")
     op.drop_index("idx_deliveries_unsent", table_name="deliveries")
-    op.drop_index("ix_deliveries_event_id", table_name="deliveries")
     op.drop_table("deliveries")

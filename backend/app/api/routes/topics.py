@@ -1554,7 +1554,7 @@ async def ask_options(
     await notify_question(
         db,
         place=place,
-        block_id=blk.id,
+        block=blk,
         question=question,
         asker=blk.author,
         asked=None if waiting_for == "system" else waiting_for,

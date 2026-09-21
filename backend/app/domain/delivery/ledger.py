@@ -2,30 +2,43 @@
 
 ## 为什么记与发是同一个模块
 
-`deliver()` 是全仓唯一一处发通知的入口，它的入参是寻址结果（`Addressed`），不是一
-句文案 —— 谁该收到已经由 `delivery/addressing.py` 那个纯函数答完了，这里只负责让那
-个答案真的到达。
+`deliver()` 是**走账本的唯一入口**，它的入参是寻址结果（`Addressed`），不是一句文
+案 —— 谁该收到已经由 `delivery/addressing.py` 那个纯函数答完了，这里只负责让那个答
+案真的到达。
+
+不变量 I11 的「只有一处发通知」是**目标，不是现状**：社交那一侧还有 8 处直接调
+`notification/publisher.py` 的 `publish_notification_event`（`discussion/services.py`
+一处、`team/membership_services.py` 七处），它们不走账本，随 P27 迁进来。在那之前，
+这里说的「唯一」只管房间里这条线。
 
 记录和发送不分成两个模块，因为它们是同一个事务边界：账本那一行必须和引发它的事件
 一起提交，否则「这条事件本该通知谁」这句话在崩溃之后就没人记得。分成 `ledger.py` 加
 一个 `send.py`，就等于把同一个事务的两半放进两个文件，而它们之间那一步顺序正是这件
 事的全部难点。
 
-## 两个崩溃点
+## 两档「行在、`sent_at` 是 NULL」
 
-一次投递有两处可以断在中间，两处的救法不一样：
+**不是崩溃窗口。** 账本那一行、收件箱那一行、`sent_at` 的回写在**同一个事务**里：进
+程在提交之前的任何一点没了，三样一起回滚，没有半成品要补。补发要救的是另一种东西
+——**事务照常提交，而这一批没算送到**，也就是 `dispatch()` 返回 False 的那两种形状。
+它们在生产里都不报错，所以只能靠替身造出来（`tests/support/failing_ledger.py`）。
 
-**写入之后、发出之前。** 账本那一行已经和事件一起提交了，通知还没发。这一档靠补发
-救：`resend_unsent()` 扫 `sent_at IS NULL` 的行，重新发一遍。这也是渠道发送失败时
-走的那条路 —— 发送抛异常不往上抛，那一行就留在「没发出去」，由补发接手。以前这一
-档是静默丢失：`NotificationEventHandler.dispatch` 吞掉异常，而没有任何一行记着它本
-该发出去。
+**一、渠道没全收下，站内信也没收下。** 站内信那一次写入在自己的 savepoint 里失败
+（编码、约束、会话的事务被标记成 aborted），`dispatch()` 返回 False，`sent_at` 不回
+写。收件箱里什么都没有，账本上那一行是这件事仅剩的记录。这一档靠补发救：
+`resend_unsent()` 扫 `sent_at IS NULL` 的行，重新发一遍。以前这一档是静默丢失：
+`NotificationEventHandler.dispatch` 吞掉异常，而没有任何一行记着它本该发出去。
 
-**发出之后、回写之前。** 通知已经写进收件箱，`sent_at` 还没写回就崩了。这一档不能
-靠账本自己认出来（账本里它还是「没发出去」），靠的是**去重键落在收件箱那一行上**：
-补发再发一次，插入撞上 `notification.delivery_key` 的唯一约束，什么也不发生，然后
-把 `sent_at` 补上。所以「恰好一次」是由去重键保证的，不是由「先发还是先回写」的顺序
-保证的 —— 两种顺序都有一个崩得掉的窗口。
+**二、站内信收下了，但这一批没算送到。** 站内信的 savepoint 提交了，排在它后面的渠
+道抛了出来（比如浏览器推送的 `push_text` 撞上一份对不上的 payload），整批
+`dispatch()` 于是返回 False，`sent_at` 同样不回写。账本上它和第一档长得一模一样，认
+不出来 —— 所以补发照样会再发一遍，而**去重键落在收件箱那一行上**：插入撞上
+`notification.delivery_key` 的唯一约束，什么也不发生，然后把 `sent_at` 补上。那条唯
+一约束就是为这一档存在的：删掉它，这一档立刻变成收件人手里的第二条通知。
+
+**账本兜不住的那一笔。** 邮件和推送把东西 rpush 进 Redis 是这条链路上唯一真正非事务
+的副作用，而它发生在调用方 commit 之前。调用方的事务随后回滚，队列里那一条已经出去
+了：账本既不记它，也不补偿它。账本管的是站内信这一份。
 
 ## 补发只重投站内信这一个渠道
 
@@ -36,9 +49,9 @@
 定时发信机。
 
 队列那两个渠道也不需要账本替它们重投：它们各自的 drain 有 claim/ack、`max_retries`
-和死信队列，排进队列之后的送达由它们自己负责到底。代价说清楚：进程在记账之后、发
-送之前整个没了（那一批渠道一个都没跑过），补发只救得回站内信那一条，这一次的邮件
-和推送不会再补。站内信是收件人一定看得到的那一份，另外两个是它的扩音器。
+和死信队列，排进队列之后的送达由它们自己负责到底。代价说清楚：上面第一档里连站内信
+都没收下的时候，补发只救得回站内信那一条，这一次的邮件和推送不会再补。站内信是收件
+人一定看得到的那一份，另外两个是它的扩音器。
 
 ## 试到第几次为止
 
@@ -71,7 +84,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
@@ -113,7 +126,9 @@ class DeliveryEvent:
     id: uuid.UUID
     type: NotificationType
     payload: dict
-    occurred_at: datetime = field(default_factory=_utcnow)
+    #: **必填**。给它一个「现在」的默认值，等于让每个调用点都可以不声不响地把投递的
+    #: 时刻当成事件的时刻，而这个字段整条设计都在说那两个不是一回事。
+    occurred_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,19 +158,19 @@ class Ledger:
     ) -> None:
         self._session = session
         self._now = now
-        self._channels = build_notification_event_handler(session)
-        #: 补发只走这一个渠道，见模块说明「补发只重投站内信这一个渠道」。
-        self._mailbox_only = NotificationEventHandler(
-            session=session,
-            channel_handlers=[InAppNotificationHandler(session=session)],
-        )
 
     async def deliver(self, event: DeliveryEvent, addressed: Addressed) -> None:
-        """把这条事件送给它点到的那些人 —— 全仓唯一一处发通知。
+        """把这条事件送给它点到的那些人 —— 走账本的唯一入口。
 
         先记账再发送：中间任何一步没走完，账本里那一行都还在，补发会接着做完。
+
+        一个人都没记下就不建渠道 —— 「谁也没点到」是常态（平台自己在处理的那些提示
+        一条都不发），那种调用不该顺手拉起一整套渠道对象。
         """
-        await self.send(await self.record(event, addressed), self._channels)
+        pending = await self.record(event, addressed)
+        if not pending:
+            return
+        await self.send(pending, build_notification_event_handler(self._session))
 
     async def record(self, event: DeliveryEvent, addressed: Addressed) -> list[Pending]:
         """把寻址结果落成账本上的行，返回这一次新记下的、还没发的那些。
@@ -282,6 +297,13 @@ class Ledger:
                 .limit(limit)
             )
         ).all()
+        if not rows:
+            return 0
+        # 补发只走这一个渠道，见模块说明「补发只重投站内信这一个渠道」。
+        mailbox_only = NotificationEventHandler(
+            session=self._session,
+            channel_handlers=[InAppNotificationHandler(session=self._session)],
+        )
         await self.send(
             [
                 Pending(
@@ -293,7 +315,7 @@ class Ledger:
                 )
                 for row in rows
             ],
-            self._mailbox_only,
+            mailbox_only,
         )
         return sum(1 for row in rows if row.sent_at is not None)
 
@@ -301,15 +323,19 @@ class Ledger:
 async def deliver(
     session: AsyncSession, event: DeliveryEvent, addressed: Addressed
 ) -> None:
-    """全仓唯一一处发通知。入参是寻址结果，不是一句文案（不变量 I11）。"""
+    """走账本的唯一入口。入参是寻址结果，不是一句文案。
+
+    不变量 I11 的「只有一处发通知」是目标：社交那 8 处还走
+    `publish_notification_event`，随 P27 迁进来。
+    """
     await Ledger(session).deliver(event, addressed)
 
 
 async def resend_unsent_deliveries(sessions: SessionFactory) -> dict[str, int]:
     """定时补发 —— 账本上没有哪一行能自己发出去。
 
-    这是「写入之后崩」那一档唯一的出路：那一行已经和事件一起提交了，发送这一半没
-    人再碰它。不跑这个 job，账本就只是一份丢失记录，而不是一次补救。
+    这是第一档（渠道没收下）唯一的出路：那一行已经和事件一起提交了，而发送这一半
+    没有任何人会再碰它。不跑这个 job，账本就只是一份丢失记录，而不是一次补救。
     """
     async with sessions() as session:
         resent = await Ledger(session).resend_unsent()
