@@ -93,6 +93,11 @@ class FakeChat:
     async def merge_into_running_turn(self, *args, **kwargs):
         return None
 
+    async def wait_for_recipient(self, topic_id, recipient):
+        """这个收件人身上没有正在跑的一轮可以等 —— 除非哪个用例说有。"""
+        del topic_id, recipient
+        return False
+
     async def converse(self, **kwargs):
         self.converse_calls.append(kwargs)
         if not kwargs.get("summon", True):
@@ -394,7 +399,11 @@ async def test_unknown_policy_admits_ungated(db_factory):
     runner, _ = _runner()
 
     runner.submit(
-        chat, await a_topic(db_factory), author="u", content="<@cheese-seat> hi"
+        chat,
+        await a_topic(db_factory),
+        author="u",
+        content="hi",
+        addressed=addressed_to_agent("cheese-seat"),
     )
     await _until(lambda: chat.running == 1)
     chat.release.set()
@@ -434,7 +443,7 @@ async def test_received_message_lands_before_credit_refusal():
     # One receive operation, no post-only second pass and no model turn.
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["received"] is True
-    assert chat.converse_calls[0]["content"] == "这条必须先落库"
+    assert chat.converse_calls[0]["content"] == "<@cheese-seat> 这条必须先落库"
     assert "summon" not in chat.converse_calls[0]
 
 
