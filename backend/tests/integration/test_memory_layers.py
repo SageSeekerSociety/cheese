@@ -78,16 +78,16 @@ def test_core_comes_back_whole_and_never_competes_as_a_fact(
         for fact in ("部署脚本在 deploy.sh", "前端构建用 pnpm"):
             await store.remember(MemoryScope.project, pool, fact)
 
-        assert await store.recall_core(MemoryScope.project, pool) == [
-            "你是芝士",
-            "回答先给结论",
-        ]
+        # The whole pool is 4 facts; the core layer is the 2 of them that
+        # injection carries, oldest first.
+        assert await store.core_and_counts([(MemoryScope.project, pool)]) == {
+            (MemoryScope.project, pool): (4, ["你是芝士", "回答先给结论"])
+        }
         # Ordinary facts are in the pool's size and nowhere else: what injection
         # carries is the core layer, and the rest is reached with `search`.
         got = await recall_pools(store, [(MemoryScope.project, pool)])
         assert got.facts == ["你是芝士", "回答先给结论"]
         assert got.omitted == 2
-        assert await store.count(MemoryScope.project, pool) == 4
 
     _portal.call(_run)
 
