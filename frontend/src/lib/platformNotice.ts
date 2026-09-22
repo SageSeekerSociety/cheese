@@ -87,6 +87,7 @@ const WHO_LABEL: Record<WhoTag, string> = {
 // instead names the next responder, so it cannot decide the message's identity.
 export const AGENT_STATUS_EVENTS = new Set([
   'cloud_provisioning',
+  'cloud_startup',
   'machine_provisioning',
   'turn_queued',
   'turn_failed',
@@ -302,7 +303,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   const error = backendErrorPresentation(block)
   if (error) return { mode: 'backend-error', error }
 
-  if (str(m?.event_type) === 'cloud_provisioning') {
+  if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) {
     const latest = run[run.length - 1] ?? block
     const state = str(meta(latest)?.state)
     return {
@@ -335,7 +336,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
 function foldKey(block: Block): string | null {
   const m = meta(block)
   // Cloud lifecycle updates share one row even when the final event has no detail.
-  if (str(m?.event_type) === 'cloud_provisioning') return 'cloud_provisioning'
+  if (['cloud_provisioning', 'cloud_startup'].includes(str(m?.event_type))) return 'cloud_provisioning'
   // 只有「折叠行」这一档参与按类别折叠：它有展开区，能把被折进来的每一条原文都
   // 摆出来。事故卡和后端报错各自只有一份正文/traceback，折进去就真丢了；而老事件
   // 压根没有 event_type，误折会把两件不同的事说成一件。
@@ -366,6 +367,7 @@ export interface NoticeRow {
  */
 export function collapseNotices(blocks: Block[]): NoticeRow[] {
   const rows: NoticeRow[] = []
+  let cloud: NoticeRow | undefined
   for (const block of blocks) {
     // 露不露面先问，再问它是什么 —— 这一格从来就不是事件专有的（见 showsInRoom
     // 的注释：它单独立一格，正是因为「谁写的」和「露不露面」是两个问题）。放在
@@ -378,6 +380,16 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       continue
     }
     if (str(meta(block)?.event_type) === 'frontend_error') continue
+
+    if (['cloud_startup', 'cloud_provisioning'].includes(str(meta(block)?.event_type))) {
+      if (cloud) cloud.run.push(block)
+      else {
+        cloud = { block, run: [block], notice: null }
+        rows.push(cloud)
+      }
+      if (['ready', 'failed'].includes(str(meta(block)?.state))) cloud = undefined
+      continue
+    }
 
     const prev = rows[rows.length - 1]
     const prevBlock = prev?.block

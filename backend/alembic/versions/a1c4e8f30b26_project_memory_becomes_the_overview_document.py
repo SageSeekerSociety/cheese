@@ -1,7 +1,7 @@
 """项目记忆池那批行，搬进项目总览的实况文档
 
 Revision ID: a1c4e8f30b26
-Revises: d3f0a91c7b45
+Revises: a9c4e7f12b60
 Create Date: 2026-09-21 18:00:00
 
 没有项目记忆池（结论 7）：人和 agent 共同看的只能是文档。``scope='project'`` 的行
@@ -43,7 +43,7 @@ from alembic import op
 logger = logging.getLogger("alembic.project_memory_becomes_the_overview_document")
 
 revision: str = "a1c4e8f30b26"
-down_revision: str | Sequence[str] | None = "d3f0a91c7b45"
+down_revision: str | Sequence[str] | None = "a9c4e7f12b60"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

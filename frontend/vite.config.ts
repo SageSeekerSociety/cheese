@@ -470,6 +470,69 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, 'scripts/**'],
   },
   optimizeDeps: {
-    include: ['editorjs-parser'],
+    // **每一个新组件第一次上屏时都会被现学现卖**：`vite-plugin-vuetify` 的 autoImport
+    // 生成的是 `vuetify/components/VXxx` 这种深路径，而深路径是按需预打包的 —— 冷启动
+    // 那一次扫不到它，直到某个页面真的渲染出这个组件，vite 才补齐预打包并**整页重载**。
+    // 人工开发时看见的是一次闪动，e2e 里看见的是「Execution context was destroyed」：
+    // 界面刚渲染到一半，页面被换掉了。它只在冷启动的第一轮出现，而 CI 每一轮都是冷的
+    // （`node_modules/.vite` 不在 pnpm store 里），于是**每次跑 e2e 都在赌同一件事**。
+    //
+    // 列在这里的会被启动时一次性打进去，之后不再有中途补打包。原生标签（`<v-combobox>`）
+    // 由插件转成下面这些模块，所以新加组件时要照着补一行；漏了不会坏，只是回到上面那种
+    // 冷启动重载。
+    //
+    // 重新生成这份清单：冷启动一次、把用到的页面都点一遍，然后
+    // `ls node_modules/.vite/deps | grep '^vuetify'`（下划线是路径分隔符）。
+    include: [
+      'editorjs-parser',
+      'vuetify/components/VAlert',
+      'vuetify/components/VApp',
+      'vuetify/components/VAppBar',
+      'vuetify/components/VAutocomplete',
+      'vuetify/components/VAvatar',
+      'vuetify/components/VBadge',
+      'vuetify/components/VBottomNavigation',
+      'vuetify/components/VBtn',
+      'vuetify/components/VBtnToggle',
+      'vuetify/components/VCard',
+      'vuetify/components/VCheckbox',
+      'vuetify/components/VChip',
+      'vuetify/components/VCombobox',
+      'vuetify/components/VDefaultsProvider',
+      'vuetify/components/VDialog',
+      'vuetify/components/VDivider',
+      'vuetify/components/VEmptyState',
+      'vuetify/components/VForm',
+      'vuetify/components/VGrid',
+      'vuetify/components/VIcon',
+      'vuetify/components/VImg',
+      'vuetify/components/VList',
+      'vuetify/components/VMain',
+      'vuetify/components/VMenu',
+      'vuetify/components/VNavigationDrawer',
+      'vuetify/components/VProgressCircular',
+      'vuetify/components/VProgressLinear',
+      'vuetify/components/VRadio',
+      'vuetify/components/VRadioGroup',
+      'vuetify/components/VSelect',
+      'vuetify/components/VSheet',
+      'vuetify/components/VSnackbar',
+      'vuetify/components/VSwitch',
+      'vuetify/components/VSystemBar',
+      'vuetify/components/VTabs',
+      'vuetify/components/VTextField',
+      'vuetify/components/VTextarea',
+      'vuetify/components/VTooltip',
+      'vuetify/components/transitions',
+      // 目录入口（插件也会引它们）与 labs：
+      'vuetify',
+      'vuetify-pro-tiptap',
+      'vuetify-sonner',
+      'vuetify/components',
+      'vuetify/directives',
+      'vuetify/iconsets/mdi',
+      'vuetify/labs/VDateInput',
+      'vuetify/locale',
+    ],
   },
 })

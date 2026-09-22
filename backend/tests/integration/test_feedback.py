@@ -15,12 +15,10 @@
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
@@ -1500,6 +1498,63 @@ def test_the_unread_cursor_counts_activity_and_clears_when_read(client):
     assert cleared < after
 
 
+def test_the_unread_number_counts_only_what_the_list_would_show(client, as_admin):
+    """数字和列表答的是同一个问题，所以走的是同一处收窄。
+
+    「我的反馈」把 指派给我的 那一条胳膊 AND 上 `visible_to`：被派活是工作，不是
+    权限。未读计数以前没有收窄，于是「一条私密反馈指派给了一个非管理员」的后果就是
+    铃铛上多一个数——而这个数指着一条列表会滤掉、详情接口回 404 的反馈。读不到就清
+    不掉，所以它是一个永远亮着、又永远点不出东西的角标。
+
+    钉住它是因为这条胳膊除了列表只有这一个读者，两处漂开时没有别的地方会说话。用例
+    本身要防的还有一个反向的错法：收窄的判据如果写成「调用方传进来的 `is_admin`」，
+    铃铛轮询的 `/feedback/counts` 上没有身份、也不传这一位，于是管理员会因为这次收窄
+    反过来丢掉自己的未读数——最后一段就是钉这个的。
+    """
+    private = _report(
+        client, REPORTER, title="指给非管理员的私密", visibility="private"
+    )
+    public = _report(client, REPORTER, title="指给同一个人的公开")
+    for row in (private, public):
+        r = client.patch(
+            f"/admin/feedback/{row['id']}",
+            json={"assignee_handle": STRANGER},
+            headers=session_auth_headers(as_admin),
+        )
+        assert r.status_code == 200, r.text
+
+    headers = session_auth_headers(STRANGER)
+    client.post("/feedback/read", headers=headers)
+
+    # 私密那条上的活动：列表会滤掉它，所以数字也不该看见。
+    _comment(client, REPORTER, private["id"], "补充一下复现步骤")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] == 0
+
+    # 同一个人的同一条胳膊上，公开的那条照旧算数——上面那个 0 不是「这个人没有
+    # 身份」或者「计数根本没在跑」。
+    _comment(client, REPORTER, public["id"], "这条也补一句")
+    assert client.get("/feedback/counts", headers=headers).json()["data"]["unread"] >= 1
+
+    # 数字和列表一致：列表是这条胳膊的另一个读者。
+    mine = {card["id"] for card in _mine(client, STRANGER)}
+    assert private["id"] not in mine
+    assert public["id"] in mine
+
+    # 管理员反过来不能被这次收窄伤到：他看得见私密，所以同一条反馈改派给他，
+    # 数字照旧有。
+    r = client.patch(
+        f"/admin/feedback/{private['id']}",
+        json={"assignee_handle": as_admin},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+    _comment(client, REPORTER, private["id"], "管理员也在看")
+    admin = client.get(
+        "/feedback/counts", headers=session_auth_headers(as_admin)
+    ).json()["data"]
+    assert admin["unread"] >= 1
+
+
 def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
     anon = client.get("/feedback/meta").json()["data"]
     assert anon["is_admin"] is False
@@ -1515,7 +1570,12 @@ def test_meta_reports_the_vocabulary_and_my_admin_flag(client, as_admin):
         "resolved",
         "deployed",
     ]
-    assert anon["hot_supports"] == 5
+    # 「热门」的规则是**三个**数一起下发的，不是一个门槛：客户端要把这一栏说给人听
+    # （「两周前的一票算今天半票 · 至少 5 条」）。只发一个 `hot_supports` 时那句话
+    # 说不出来，而这一栏的排序就成了一件读者无法解释的事。
+    assert anon["hot_score"] == 2.0
+    assert anon["hot_half_life_days"] == 14.0
+    assert anon["hot_min_items"] == 5
 
     mine = client.get("/feedback/meta", headers=session_auth_headers(as_admin)).json()[
         "data"
@@ -1722,15 +1782,17 @@ def test_unassigned_is_the_admin_queues_number_and_appears_nowhere_else(
 def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     """The number on a tab and the rows behind it are one query's answer.
 
-    `hot` means 「支持数 ≥ 5」, and it does not sink resolved *suggestions* — only
+    `hot` means 「热度 ≥ 2 分」, and it does not sink resolved *suggestions* — only
     resolved bugs sink (§8.23). The count used a bare `status != resolved`, so a
     resolved suggestion was in the list and not in the number, and the tab read
     「4」 over five cards. One predicate, or the two drift.
     """
     idea = _report(client, REPORTER, title="已实现的建议", kind="suggestion")
-    # The threshold the UI reads, not a 5 typed twice.
-    hot_supports = client.get("/feedback/meta").json()["data"]["hot_supports"]
-    for n in range(hot_supports):
+    # The rule the UI reads, not a number typed twice. 今天的一票就是一分，所以「够线」
+    # 需要的票数正好是 `hot_score` 向上取整 —— 但这里不去算它，直接给足：这条用例问的
+    # 是「数字和行对不对得上」，不是「门槛是多少」。
+    hot_score = client.get("/feedback/meta").json()["data"]["hot_score"]
+    for n in range(int(hot_score) + 1):
         r = client.post(
             f"/feedback/{idea['id']}/supports",
             headers=session_auth_headers(f"fb-supporter-{n}"),
@@ -1748,9 +1810,150 @@ def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     assert page["counts"]["hot"] == len(page["data"])
 
 
-def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
-    client, db_session: AsyncSession, _portal: BlockingPortal
-):
+def _backdate(client, days: int, *feedback_ids: str) -> None:
+    """把几条反馈按到 ``days`` 天前 —— 在 **`client` 那个 app 真正读的库**里。
+
+    不能用 `db_session`：那个夹具绑的是 `settings.database_url`（集成库），而 `client`
+    绑的是 `TEST_DATABASE_URL`（客户端库）—— **是两个库**。所以「用 `db_session` 把一行
+    改老、再用 `client` 读回来」改的是一份没有任何请求会看到的拷贝：改动静静地落空，而
+    用例通过还是失败取决于它本来要钉的那个顺序之外的东西。（本文件里原来那条并列排序的
+    用例就是这么写的，它的 docstring 只说到「这条断言本身不足以证明 tiebreak 在」，
+    没说到底为什么。）
+
+    `client.test_factory` 是那个正确的把手，`client` 夹具把它挂在 client 上就是给这种
+    用例用的。`asyncio.run` + `NullPool` 是夹具自己建库时的同一套办法：每次一个新的
+    连接、一个新的循环，不跟 TestClient 那个循环共用 asyncpg 连接（连接是绑循环的）。
+    """
+    ids = [uuid.UUID(x) for x in feedback_ids]
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback)
+                .where(Feedback.id.in_(ids))
+                .values(created_at=datetime.now(UTC) - timedelta(days=days))
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
+def test_a_stale_pile_loses_the_hot_tab_to_a_fresh_one(client):
+    """「热门」读的是此刻。第一版没有时间因素，于是它读的是「曾经」。
+
+    `supports >= 5` 是一个**累计**量：一条三个月前攒够票的反馈从此常驻这一栏，而这一栏
+    的名字承诺的是现在。一条不再更新的榜单最坏的地方不是排序差，是**读者看不出它已经
+    停止更新** —— 他以为自己看到的是这个平台此刻最热的东西。
+
+    两条路摆在一起：旧的攒了 6 票、放在 90 天前；新的五条各有 1 票、放在今天。按累计数
+    排老的赢（6 > 1）；按热度排老的只有 `6 × 0.5^6.43 ≈ 0.07` 分，而五条新的各 1 分。
+    **「热门」里应该是那五条只有 1 票的。**
+
+    这一条同时压着两件事：衰减在起作用，以及「补足」那一段在起作用 —— 五条新的都没够
+    2 分那条线，它们出现在这里是因为这一栏被补到了 `hot_min_items` 条。
+    """
+    stale = _report(client, REPORTER, title="三个月前大家都在喊的那条")
+    for n in range(6):
+        r = client.post(
+            f"/feedback/{stale['id']}/supports",
+            headers=session_auth_headers(f"fb-decay-{n}"),
+        )
+        assert r.status_code == 200, r.text
+    fresh = [
+        _report(client, f"fb-fresh-{n}", title=f"今天刚提的第 {n} 条") for n in range(5)
+    ]
+    for n, card in enumerate(fresh):
+        r = client.post(
+            f"/feedback/{card['id']}/supports",
+            headers=session_auth_headers(f"fb-decay-fresh-{n}"),
+        )
+        assert r.status_code == 200, r.text
+
+    _backdate(client, 90, stale["id"])
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    shown = {card["id"] for card in page["data"]}
+    assert stale["id"] not in shown, "90 天前的 6 票不该压过今天的 1 票"
+    assert shown == {card["id"] for card in fresh}
+    assert page["counts"]["hot"] == len(page["data"])
+
+
+def test_the_hot_tab_orders_by_heat_and_not_by_raw_supports(client):
+    """判据用哪个分，排序就得用哪个分 —— 否则上一行那句人话当场被推翻。
+
+    有衰减之后「支持数」和「热度」不是一回事了。这里两条：一条今天的 3 票（3.0 分），
+    一条 60 天前的 10 票（`10 × 0.5^4.29 ≈ 0.51` 分）。按支持数排，旧的在前；按热度排，
+    新的在前。这一栏的判据是热度，排序也必须是热度，不然「两周前的 4 票和今天的 2 票
+    一样热」这句话在这一栏里读起来是错的。
+    """
+    old_pile = _report(client, REPORTER, title="两个月前攒的十票")
+    for n in range(10):
+        client.post(
+            f"/feedback/{old_pile['id']}/supports",
+            headers=session_auth_headers(f"fb-order-old-{n}"),
+        )
+    fresh = _report(client, STRANGER, title="今天刚攒的三票")
+    for n in range(3):
+        client.post(
+            f"/feedback/{fresh['id']}/supports",
+            headers=session_auth_headers(f"fb-order-new-{n}"),
+        )
+
+    _backdate(client, 60, old_pile["id"])
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [fresh["id"], old_pile["id"]]
+
+
+def test_the_hot_tab_has_something_in_it_on_a_young_board(client):
+    """门槛是**稳态标定**，而新板子不在稳态。
+
+    5 票这个量级是按一个已经跑起来的平台定的，可平台头一两个月到不了 —— 需求方问的正是
+    这件事。一栏空的「热门」教给读者的是**这一栏坏了**，而它在开板后的整段时间里都会是
+    空的。一条 0 票的新反馈当然算不上「热门」，但**什么都不显示**更差：这一栏至少应该是
+    「现在最值得看的几条」，即使排序还没有东西越过那条线。
+
+    数字和行来自同一个子查询。补足这一段最容易在这里出岔子：只数够线的会印 0，而这一栏
+    明明开着一条。
+    """
+    only = _report(client, REPORTER, title="开板第一条")
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [only["id"]]
+    assert page["counts"]["hot"] == 1
+
+
+def test_the_hot_floor_picks_from_the_rows_the_tab_would_show(client):
+    """补足要在**这一栏自己那批行**里挑，不是在整个表里挑。
+
+    这里的五条私密各 9 票、一条公开的 0 票。补足的窗口如果不受可见性约束，被选中的正好
+    是那五条私密 —— 于是这一栏补足出来的五条全是**它自己不会显示的行**，公开那条一条都
+    没补上，**「热门」当场变成空的**：补足那一段是为了「新板子上这一栏也要有东西」，而
+    算错集合之后它连这个都做不到。
+
+    （实测确认过的失败形态就是这个，不是「私密反馈漏出来」：外层那句 `PUBLIC_ONLY` 早就
+    把它们挡住了，所以泄露这条路上本来就有一道闸。真正没有闸的是**补足的窗口**——它算的
+    是「哪些行分高」，而它该算的是「这一栏里哪些行分高」。）
+
+    所以这条用例要的不是「私密的不出现」（`PUBLIC_ONLY` 保证了），而是**它们连补足那段
+    都进不去** —— 那一段是新加的，而新加的那一段是唯一没有闸的地方。
+    """
+    public = _report(client, REPORTER, title="公开的，还没人理")
+    for n in range(5):
+        hidden = _report(
+            client, f"fb-hidden-{n}", title=f"私密的第 {n} 条", visibility="private"
+        )
+        for m in range(9):
+            client.post(
+                f"/feedback/{hidden['id']}/supports",
+                headers=session_auth_headers(f"fb-hidden-{n}-{m}"),
+            )
+
+    page = client.get("/feedback", params={"tab": "hot"}).json()["data"]
+    assert [card["id"] for card in page["data"]] == [public["id"]]
+    assert page["counts"]["hot"] == 1
+
+
+def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(client):
     """An ordering two rows can tie on is not an ordering.
 
     `sort=supports` ordered by `count(supports) DESC, created_at DESC` and stopped
@@ -1772,12 +1975,13 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
     newer = _report(client, REPORTER, title="后建的")
 
     async def _pin_both_to_one_instant() -> None:
-        await db_session.execute(
-            update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
-        )
-        await db_session.flush()
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback).values(created_at=datetime(2026, 1, 1, tzinfo=UTC))
+            )
+            await session.commit()
 
-    _portal.call(_pin_both_to_one_instant)
+    asyncio.run(_pin_both_to_one_instant())
 
     def page(start: int) -> list[dict]:
         r = client.get(
@@ -1790,6 +1994,82 @@ def test_rows_that_tie_on_the_sort_key_still_come_back_in_one_order(
     assert [card["id"] for card in page(0)] == [newer["id"]]
     # …and paging sees each of them once, in the one order it just promised.
     assert [card["id"] for card in page(1)] == [older["id"]]
+
+
+def _admin_cards(client, handle: str, **params) -> list[dict]:
+    r = client.get(
+        "/admin/feedback", params=params, headers=session_auth_headers(handle)
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_the_admin_queue_orders_by_the_sort_it_was_asked_for(client, as_admin):
+    """管理端的「最新 / 最热」是两个真会换位置的顺序。
+
+    这一条钉的是一个**看不见**的坏法：路由和仓储都收 `sort`，中间的服务层把它
+    写死成 `new`，于是排序控件按下去、高亮也换、请求也发了，列表一动不动 ——
+    而每一层单看都对，界面上没有任何东西报错。
+
+    所以这里要求的不是「两种 sort 返回的列表不同」（那样一个随机的顺序也能过），
+    而是**同一个两行的清单在两种 sort 下给出相反的第一行**：先提的那条赢在支持
+    数上，后提的那条赢在时间上。谁被写死成另一个，两行里必有一行对不上。
+    """
+    early = _report(client, REPORTER, title="提得早，大家都在撞")
+    for n in range(3):
+        r = client.post(
+            f"/feedback/{early['id']}/supports",
+            headers=session_auth_headers(f"fb-sort-{n}"),
+        )
+        assert r.status_code == 200, r.text
+    late = _report(client, STRANGER, title="刚提的，还没人理")
+
+    newest_first = [card["id"] for card in _admin_cards(client, ADMIN, sort="new")]
+    most_supported_first = [
+        card["id"] for card in _admin_cards(client, ADMIN, sort="supports")
+    ]
+
+    # 默认与显式传 `new` 是同一个东西 —— 控件没动的时候发出去的就是这一份。
+    assert [card["id"] for card in _admin_cards(client, ADMIN)] == newest_first
+
+    assert newest_first[:2] == [late["id"], early["id"]]
+    assert most_supported_first[:2] == [early["id"], late["id"]]
+
+
+def test_the_admin_queue_refuses_an_ordering_it_does_not_have(client, as_admin):
+    """不认识的 `sort` 报 400，而不是悄悄退回 `new`。
+
+    和 `tab` 同一条规矩，但这里更咬人：客户端写的是 `hottest`、拿到的是
+    `new`，读的人会把页面顶部当成「支持最多的几条」—— 排序**就是**这一页的答案，
+    换一种排法等于用同一个标题回答了另一个问题，而屏幕上没有一处看得出来。
+    """
+    r = client.get(
+        "/admin/feedback",
+        params={"sort": "hottest"},
+        headers=session_auth_headers(ADMIN),
+    )
+    assert r.status_code == 400, r.text
+    assert "hottest" in r.text
+
+
+def test_the_public_route_still_forgives_an_unknown_sort(client, as_admin):
+    """公开那条路**不**报错，这是有意留下的不对称，别顺手统一掉。
+
+    公开列表不接受用户输入的排序：`sort` 只有 `hot` 那一栏隐含的 `supports`，
+    以及默认的 `new`，都是服务端自己填的。所以一个不认识的词到那里只可能是旧
+    客户端留下的，答成最新-first 不会把谁骗到 —— 而管理端那个顺序是**画在屏幕
+    上的一个控件**，同一个词在那边就有意义了。
+
+    真正要挡住的是 `_list_stmt` 从「任何不是 supports 的都当 new」变成「不认识的
+    就不排序」（那会变成数据库的任意顺序）。这里顺带把这条总函数性也钉住。
+    """
+    _report(client, REPORTER, title="先提的")
+    late = _report(client, REPORTER, title="后提的")
+
+    r = client.get("/feedback", params={"sort": "hottest"})
+    assert r.status_code == 200, r.text
+    cards = r.json()["data"]["data"]
+    assert [card["id"] for card in cards][0] == late["id"]
 
 
 # --- agent 与提案卡 ---------------------------------------------------------
@@ -2138,6 +2418,35 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
         headers=session_auth_headers(ADMIN),
     ).json()["data"]["data"]
     assert {card["id"] for card in listed} == {mine["id"]}
+
+
+def test_a_wildcard_in_the_search_box_is_a_character_not_syntax(client):
+    """`%` 和 `_` 是读者打进去的字，不是 `LIKE` 的语法。
+
+    这两个字符在 `LIKE` 里是通配符，而搜索框收到的永远是**字面量**。不转义的
+    后果不会报错、也不会看起来像坏了：`%` 变成「任意长的一串」，于是搜一个百分号
+    得到整个列表；`_` 变成「任意一个字符」，于是搜一个下划线得到一堆根本不含它的
+    行。两种都是**看起来成功了的错误答案**，所以没有人会把它当 bug 报上来——只能
+    在这里钉住。
+
+    反斜杠是转义字符本身，必须第一个换，否则读者打的那个反斜杠会把后面的字符
+    再变成语法一次。
+    """
+    percent = _report(client, REPORTER, title="导入进度停在 99%", problem="一直不动")
+    underscore = _report(client, REPORTER, title="导出_csv_挂了", problem="点了没反应")
+    plain = _report(client, REPORTER, title="深色模式对比度不够", problem="看不太清")
+
+    def ids(**params: str) -> set[str]:
+        return {card["id"] for card in _cards(client, REPORTER, **params)}
+
+    assert ids(q="%") == {percent["id"]}, "搜一个百分号不该把整个列表倒出来"
+    assert ids(q="_") == {underscore["id"]}, "搜一个下划线不该匹配任意字符"
+    assert plain["id"] not in ids(q="_")
+    # 转义之后，带着通配符的正常词照旧搜得到，而且只搜得到真正含它的那条。
+    assert ids(q="99%") == {percent["id"]}
+    assert ids(q="_csv_") == {underscore["id"]}
+    # 反斜杠本身：读者打一个，不该把它后面的字符变成语法。
+    assert ids(q="\\") == set()
 
 
 # --- 成员管理：名单两份来源、加进去的人当场生效、根删不掉 --------------------

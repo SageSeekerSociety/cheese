@@ -1,0 +1,202 @@
+{
+  "queue": {
+    "label": "反馈队列",
+    "tab": {
+      "all": "全部"
+    },
+    "search": {
+      "placeholder": "搜索反馈",
+      "scope": "只搜标题、摘要、正文、提交人"
+    },
+    "view": {
+      "list": "列表",
+      "table": "表格"
+    },
+    "refresh": "刷新",
+    "unread": "{n} 未读",
+    "foot": {
+      "rows": "{n} 行",
+      "end": "已到底"
+    },
+    "pager": {
+      "prev": "上一页",
+      "next": "下一页"
+    },
+    "empty": {
+      "title": "暂无反馈",
+      "desc": "还没有人提交反馈。反馈提交后会出现在这条队列里。"
+    },
+    "error": {
+      "title": "队列加载失败",
+      "desc": "检查网络后重试。",
+      "retry": "重试"
+    },
+    "filtered": {
+      "title": "没有符合条件的反馈",
+      "desc": "换一个关键词，或点「全部」清除筛选。",
+      "clear": "清除筛选"
+    },
+    "col": {
+      "title": "标题",
+      "assignee": "指派",
+      "updated": "更新",
+      "next": "下一步"
+    },
+    "advance": {
+      "inProgress": "开始处理",
+      "resolved": "标记已修复",
+      "deployed": "标记已上线"
+    },
+    "supports": "支持 {n}"
+  },
+  "queueDetail": {
+    "back": "返回",
+    "triage": "分诊",
+    "expand": "展开",
+    "collapse": "收起",
+    "status": "状态",
+    "assign": "指派",
+    "assignTo": "指派给",
+    "priority": "优先级",
+    "priorityValue": "优先级{label}",
+    "author": "提交人",
+    "created": "提交时间",
+    "lastActivity": "最后活动",
+    "source": "来源",
+    "kind": "类型",
+    "timeline": "时间线",
+    "comments": "评论",
+    "unassigned": "未指派",
+    "problem": "正文",
+    "why": "为什么需要",
+    "expectation": "期望方案",
+    "context": "现场",
+    "repro": "复现步骤",
+    "evidence": "证据",
+    "logs": "日志",
+    "sessionInfo": "会话信息",
+    "session": "会话",
+    "environment": "环境",
+    "discussion": "讨论",
+    "noReplies": "还没有人回复。",
+    "security": "安全问题",
+    "securityHint": "标成安全问题之后，这条对同事不可见，只有提交者和你这个管理员能看到；读的人打开它只会看到「打不开」。",
+    "securityMark": "标成安全问题",
+    "notes": "内部备注",
+    "notesHint": "只有管理员看得到，提交者看不到。加进去就留下，不能改也不能删。",
+    "noNotes": "还没有备注",
+    "notePlaceholder": "写点什么给下一个接手的人",
+    "submitNote": "提交备注"
+  },
+  "table": {
+    "label": "反馈列表",
+    "empty": {
+      "title": "暂无反馈",
+      "desc": "还没有人提交反馈。"
+    },
+    "col": {
+      "id": "ID",
+      "title": "标题",
+      "user": "用户",
+      "source": "来源",
+      "kind": "类型",
+      "priority": "优先级",
+      "status": "状态",
+      "supports": "支持",
+      "comments": "评论",
+      "assignee": "指派",
+      "updated": "更新"
+    },
+    "error": {
+      "title": "表格加载失败",
+      "desc": "检查网络后重试。",
+      "retry": "重试"
+    },
+    "filtered": {
+      "title": "没有符合条件的反馈",
+      "desc": "换一个关键词，或点「全部」清除筛选。",
+      "clear": "清除筛选"
+    }
+  },
+  "dashboard": {
+    "title": "看板",
+    "window": "过去 7 天",
+    "kpi": {
+      "untriaged": "待分诊",
+      "inProgress": "进行中",
+      "resolved7d": "7 日解决",
+      "deployed7d": "7 日上线",
+      "created7d": "7 日新增",
+      "resolvedTotal": "已解决累计",
+      "deployedTotal": "已上线累计",
+      "all": "全部反馈",
+      "hot": "热门",
+      "unread": "未读",
+      "noSeries": "暂无来源"
+    },
+    "chart": {
+      "title": "每天新增 / 每天解决",
+      "created": "新增",
+      "resolved": "解决"
+    },
+    "list": {
+      "title": "需处理 · {count}"
+    },
+    "cost": {
+      "label": "成本（过去 7 天）",
+      "value": "合计 {calls} 次调用 · {usd} · 不按天拆分"
+    },
+    "empty": {
+      "title": "暂无数据",
+      "desc": "平台还没有产生反馈。"
+    },
+    "error": {
+      "title": "看板加载失败",
+      "desc": "检查网络后重试。"
+    },
+    "partial": {
+      "title": "成本数据暂不可用",
+      "desc": "用量接口未返回。其余数字不受影响。",
+      "hint": "用量接口未返回"
+    }
+  },
+  "chart": {
+    "dataTable": "查看数据表",
+    "date": "日期"
+  },
+  "numberList": {
+    "viewAll": "查看全部"
+  },
+  "center": {
+    "empty": {
+      "title": "暂无反馈",
+      "desc": "你提交的反馈会出现在这里。"
+    },
+    "error": {
+      "title": "反馈加载失败",
+      "desc": "检查网络后重试。"
+    },
+    "search": {
+      "title": "没有匹配的反馈",
+      "desc": "换一个关键词。搜索只覆盖标题、摘要、正文、提交人。"
+    }
+  },
+  "detail": {
+    "missing": {
+      "title": "这条反馈不存在",
+      "desc": "它可能已被删除，也可能只有提交它的人、平台管理员、以及提出它时在那个房间里的人能看到。"
+    },
+    "error": {
+      "title": "详情加载失败",
+      "desc": "检查网络后重试。"
+    },
+    "comments": {
+      "title": "暂无评论",
+      "desc": "还没有人回复。"
+    }
+  },
+  "undo": {
+    "message": "已改为「{status}」",
+    "action": "撤销"
+  }
+}

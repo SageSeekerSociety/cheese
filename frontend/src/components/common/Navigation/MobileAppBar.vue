@@ -30,7 +30,20 @@
       <!-- 反馈入口：桌面上在 AppBar 右侧，手机上顶栏只有这一条，同一个入口得
            在这儿也有一份。和桌面同样只挂在一级目的地上——页面栈里那几层右边
            是这一页自己的操作。 -->
-      <v-btn v-if="!backTo" to="/feedback" variant="text" size="small" class="feedback-entry">反馈</v-btn>
+      <v-btn
+        v-if="!backTo"
+        to="/feedback"
+        variant="outlined"
+        color="on-surface-variant"
+        size="small"
+        class="feedback-entry"
+        aria-label="反馈"
+      >
+        <template #prepend>
+          <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
+        </template>
+        反馈
+      </v-btn>
 
       <!-- 用户头像菜单：只在一级目的地上。页面栈里的那几层（有 ← 的）右边留给
            这一页自己的操作——个人项在那儿既不相关，也挤掉了标题的宽度 (§3.4)。 -->

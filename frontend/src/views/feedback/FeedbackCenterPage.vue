@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
 import SubmitFeedbackDrawer from '@/components/feedback/SubmitFeedbackDrawer.vue'
+import { t } from '@/i18n'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 反馈中心首页 (/feedback)。
@@ -64,6 +65,34 @@ function onSubmitted(id: string) {
 /** 空列表有三种，说的话不一样：「一条都没有」「筛选之后没有」「没拉到」。
  *  把它们合成一句「暂无反馈」的话，最后一种会看着像平台真的没有反馈。 */
 const hasFilter = computed(() => !!store.query.trim() || store.tab !== 'all')
+
+/** 三选一。文案本身在 i18n 目录里（两种语言逐条对齐），这里只做**选择** ——
+ *  判据是「为什么会空」，不是「有没有筛选」：拉挂了的时候筛选是一个还不成立的前提，
+ *  所以失败排在最前。
+ *  ⚠️ 搜索无结果和一条都没有**必须是两句**（§9.4）：搜索只覆盖标题、摘要、正文、
+ *  提交人四个字段，用户在标签里找一条查不到时，缺的正是「我搜的东西本来就不在里面」
+ *  这句话 —— 合成一句「暂无反馈」，他会以为那条反馈被删了。 */
+const emptyState = computed(() => {
+  if (store.error) {
+    return {
+      icon: 'mdi-alert-circle-outline',
+      title: t('feedback.center.error.title'),
+      desc: t('feedback.center.error.desc'),
+    }
+  }
+  if (hasFilter.value) {
+    return {
+      icon: 'mdi-comment-search-outline',
+      title: t('feedback.center.search.title'),
+      desc: t('feedback.center.search.desc'),
+    }
+  }
+  return {
+    icon: 'mdi-comment-outline',
+    title: t('feedback.center.empty.title'),
+    desc: t('feedback.center.empty.desc'),
+  }
+})
 
 function clearFilters() {
   store.tab = 'all'
@@ -128,6 +157,20 @@ function clearFilters() {
         </v-tab>
       </v-tabs>
 
+      <!-- 「热门」凭什么这么排，是这一页唯一一处读者猜不出来的规则：它看着像按支持数
+           排，其实是按「支持数按半衰期折过的分数」排 —— 一条二十个支持的老反馈排在一条
+           今天刚爆的上面，不解释一句就只是「这个排序坏了」。
+           三个数都由服务端随 `meta` 发下来，这里只负责把它们说成人话：前端自己再算一遍
+           的话（哪怕只是把 2 写死在这句话里），改阈值就要改两处，而两处漂开的表现是
+           「说明和实际排序对不上」，页面上看不出任何异常。
+           加载中不藏它：这句话说的是这一栏的规则，不是这一栏的结果，跟着骨架一起闪一下
+           反倒是多一次闪动。 -->
+      <p v-if="store.tab === 'hot'" class="t-meta fb-hot-note">
+        按支持数算，但越新的越算数：今天 2 个支持，和
+        {{ store.hotHalfLifeDays }} 天前的 4 个一样重。够 {{ store.hotThreshold }} 分、又还没办完的 进这一栏；够线的不足
+        {{ store.hotMinItems }} 条时按分数补齐，所以刚开板也不会空着。
+      </p>
+
       <!-- 骨架**不放进 .fb-list**：那一层是 gap 8 的 flex 列，而骨架的行自带 8px
            下边距（它得能单独用在任何地方），两处一叠就是 16px，到货那一刻列表会
            往上收一截 —— 骨架存在的意义正是不让这件事发生。 -->
@@ -147,25 +190,58 @@ function clearFilters() {
         {{ store.error }}
       </v-alert>
 
-      <LoadingSkeleton v-if="store.loading" variant="feedback" :rows="6" />
+      <!-- 骨架画 3 张卡（§9.4），不是 6 行：这一页的「一行」是一张 132px 的卡，
+           6 张会把首屏占满、下面一半全是灰块，而第一屏真正该看见的是内容。 -->
+      <LoadingSkeleton v-if="store.loading" variant="feedback" :rows="3" />
 
       <div v-else class="fb-list">
         <!-- 打开详情那条链接在卡片自己身上（`router-link`），这里不再接一个
              `@open` 去 push —— 那就又回到「只有鼠标够得着」了，见 FeedbackCard.vue。 -->
         <FeedbackCard v-for="item in store.items" :key="item.id" :item="item" />
         <div v-if="!store.items.length" class="fb-empty">
-          <v-icon size="28" class="mb-2">
-            {{ store.error ? 'mdi-alert-circle-outline' : 'mdi-comment-search-outline' }}
-          </v-icon>
-          <div class="t-body">
-            {{ store.error ? store.error : hasFilter ? '暂无匹配的反馈' : '暂无反馈' }}
-          </div>
-          <v-btn v-if="store.error" variant="text" color="secondary" size="small" @click="store.loadList()">
+          <v-icon size="28" class="fb-empty__icon">{{ emptyState.icon }}</v-icon>
+          <div class="fb-empty__title">{{ emptyState.title }}</div>
+          <p class="fb-empty__desc">{{ emptyState.desc }}</p>
+          <!-- 服务端那句话照直画出来：上面那句说的是「这类事现在是什么样」，
+               这一句说的是「这一次为什么没成」—— 两句不是一回事，少一句就只剩
+               「检查网络后重试」，而失败可能压根不是网络（比如没有权限）。 -->
+          <p v-if="store.error" class="fb-empty__raw t-meta-read">{{ store.error }}</p>
+          <v-btn
+            v-if="store.error"
+            variant="text"
+            color="secondary"
+            size="small"
+            class="fb-empty__action"
+            @click="store.loadList()"
+          >
             重试
           </v-btn>
-          <v-btn v-else-if="hasFilter" variant="text" color="secondary" size="small" @click="clearFilters">
+          <v-btn
+            v-else-if="hasFilter"
+            variant="text"
+            color="secondary"
+            size="small"
+            class="fb-empty__action"
+            @click="clearFilters"
+          >
             清除筛选
           </v-btn>
+        </div>
+
+        <!-- 翻页那一行只在**真的还有下一页**时出现（`listHasMore` 比的是手上条数和
+             服务端报的总数）。到底了不画「已到底」：那一行字只是在告诉读者「这个按钮
+             你按不了了」，而没按过的人看到它只会以为自己漏看了什么。 -->
+        <div v-if="store.listHasMore" class="fb-more">
+          <v-btn
+            variant="outlined"
+            color="secondary"
+            size="small"
+            :loading="store.loadingMore"
+            @click="store.loadMoreList()"
+          >
+            加载更多
+          </v-btn>
+          <span class="t-meta"> 已显示 {{ store.items.length }} / 共 {{ store.total }} 条 </span>
         </div>
       </div>
 
@@ -223,17 +299,68 @@ function clearFilters() {
 .fb-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* 卡片之间 16px（§4.3）：8px 的时候相邻两张卡的下沿和上沿只差一线之隔，
+     而这两张卡的描边本来就一样重，一屏十几张看上去像一整块被横线划开的表 ——
+     卡片是「一条一条」的，行距得让这件事看得见。 */
+  gap: 16px;
 }
 .fb-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
+  max-width: 320px;
+  margin: 0 auto;
   padding: 48px 0;
-  color: var(--faint);
+  gap: 8px;
+}
+/* 空态那一块的字号分两档（§9.2）：主文案 15/--lh-15/600/--ink 是「现在这样」，
+   副文案 13/--lh-13/--muted 是「接下来怎么办」。别把两句话并成一句 —— 并了之后
+   要么主文案被副文案拖成一条说明，要么副文案被抬成标题，两种都读不出主次。
+   这一块整体不用 --faint：它是要人读的（AA 4.5:1），--faint 在浅色主题下
+   四种底色上都到不了 3:1（见 style.css 的 .t-meta-read）。 */
+.fb-empty__icon {
+  color: var(--muted);
+}
+.fb-empty__title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
+  text-align: center;
+}
+.fb-empty__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  text-align: center;
+}
+.fb-empty__raw {
+  margin: 0;
+  text-align: center;
+}
+.fb-empty__action {
+  margin-top: 4px;
+}
+/* 热门那一栏的规则说明：Tab 那条底线之后 12px，往下和列表也是 12px。
+   不给底色、不加图标 —— 它是这一栏的注脚，不是警告，抬成一块提示框会让人以为
+   热门这一栏出了什么问题。 */
+.fb-hot-note {
+  margin: 0 0 12px;
+  line-height: var(--lh-14-loose);
+}
+/* 翻页那一行：按钮和计数在同一条中线上，两者之间 12px。 */
+.fb-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 4px;
 }
 .fb-foot {
   margin: 24px 0 0;
-  line-height: 1.7;
+  /* 用 token 而不是 1.7：这一档的领值只有 --lh-* 这一份来源，手写的倍数在两个
+     主题、两种语言里都不会跟着别处一起调。 */
+  line-height: var(--lh-14-loose);
 }
 </style>

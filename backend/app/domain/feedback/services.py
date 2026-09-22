@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,6 +71,13 @@ ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
 
 #: The public tabs, in the order the tab bar draws them.
 PUBLIC_TABS: tuple[str, ...] = ("all", "hot", "active", "resolved")
+
+#: The two orderings any list can be asked for. `new` is the default everywhere;
+#: `supports` is what the public `hot` tab implies and what the admin console's
+#: 最新/最热 toggle asks for by name. One tuple because the serializer
+#: (`_list_stmt`) has exactly two branches: a third name here would be a value
+#: that silently means `new`.
+SORTS: tuple[str, ...] = ("new", "supports")
 
 #: Movement order shown by the status ladder. One rung per thing the person who
 #: filed it can see happen: 收录 → 处理 → 解决 → 部署. `resolved` and `deployed`
@@ -222,13 +229,32 @@ class FeedbackService:
         tab: str,
         assignee: str | None,
         q: str | None,
+        sort: str = "new",
         limit: int,
         offset: int,
+        since: datetime | None = None,
+        resolved_since: datetime | None = None,
+        deployed_since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         if tab not in ADMIN_TABS:
             raise BadRequestError(f"未知的管理视图：{tab}")
+        if sort not in SORTS:
+            # Refused rather than coerced to `new`, same reasoning as `tab` above
+            # and it bites harder here: a client asking for `hottest` and getting
+            # `new` reads the top of the page as "the most supported reports".
+            # The ordering is the answer, so answering in a different order is
+            # answering a different question under the same heading.
+            raise BadRequestError(f"未知的排序：{sort}")
         return await self._repo.list_admin(
-            tab=tab, assignee=assignee, q=q, limit=limit, offset=offset
+            tab=tab,
+            assignee=assignee,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+            since=since,
+            resolved_since=resolved_since,
+            deployed_since=deployed_since,
         )
 
     async def list_mine(
@@ -277,6 +303,9 @@ class FeedbackService:
         unresolved row nobody has picked up, private and security included, so
         answering it to an anonymous caller would publish a number that describes
         rows they cannot open. It rides on `/admin/feedback` and nowhere else.
+
+        `deployed` rides along from `public_counts` — a separate number beside
+        `resolved`, which keeps meaning 修复 + 上线 as a pair. See `_tab_where`.
         """
         counts = await self._repo.public_counts()
         if is_admin:
@@ -284,10 +313,40 @@ class FeedbackService:
         if handle:
             state = await self._repo.get_read_state(handle)
             since = state.last_read_at if state else None
-            counts["unread"] = await self._repo.count_activity_since([handle], since)
+            # 这里**再问一次** `is_admin`，而不是用调用方传进来的那一位。
+            #
+            # 「指派给我的」那条胳膊要靠它收窄（见 `count_activity_since`），而
+            # 收窄必须知道这个人是不是管理员：管理员对任何一行都不收窄，非管理员
+            # 只能看见公开的。铃铛轮询的那条路（`GET /feedback/counts`）没有身份、
+            # 也不该给 `unassigned`，所以它调的 `counts(handle=…)` 里 `is_admin`
+            # 永远是默认的 False —— 只信那一位的话，管理员会因为这次收窄反过来丢掉
+            # 自己的未读数。两处对同一个人的判断，宁可多一次（实例上已经 memo 过，
+            # `list_related_to` 在同一个请求里问的是同一份）。
+            counts["unread"] = await self._repo.count_activity_since(
+                [handle], since, is_admin=is_admin or await self.is_admin(handle)
+            )
         else:
             counts["unread"] = 0
         return counts
+
+    # --- 平台看板的两个时间读 -------------------------------------------------
+    #
+    # 谁要看这两条折线（现在是 `platform_stats`）都得从这道门走：窗口读的判据
+    # ——「到过」问的是时间线而不是列、同一个状态可以有多行所以数的是
+    # `distinct feedback_id`——都写在仓储的 docstring 里，调用点自己拼一遍
+    # `select` 就是各自重答一遍，而两处答出两个口径时两边看着都「对」。
+
+    async def created_series(
+        self, *, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内按 UTC 的天新建的反馈数，稀疏；补 0 由调用方做。"""
+        return await self._repo.created_series(since=since, until=until)
+
+    async def reached_series(
+        self, *, status: FeedbackStatus, since: datetime, until: datetime
+    ) -> dict[date, int]:
+        """窗口内「到过」这个状态的反馈数，稀疏；`resolved` / `deployed` 各一条。"""
+        return await self._repo.reached_series(status=status, since=since, until=until)
 
     async def support_counts(self, ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         return await self._repo.supports_counts(ids)

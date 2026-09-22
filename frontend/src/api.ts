@@ -2098,16 +2098,25 @@ export function markFeedbackRead(): Promise<{ last_read_at: string }> {
 }
 
 export interface FeedbackListQuery {
+  /** 一页几条。**必填**，不是有默认值的可选项：列表的翻页边界是拿「手上这一页满没
+   *  满」算的（`stores/feedback.ts` 的 `adminHasNext`），而后端的默认值是 20 ——
+   *  漏传时两边对同一个问题的答案不一样，症状是每一页都短一截、而且第二页永远取不到，
+   *  一点都不像报错。 */
+  pageSize: number
   tab?: string
   q?: string
   sort?: string
   pageStart?: number
-  pageSize?: number
+  /** 三段日期窗口。**只有管理端那条列表吃它们** —— 用户侧没有「点一个数字看那一段」
+   *  的入口，映射写进 `listAdminFeedback` 而不是在这里的每一个函数里。 */
+  since?: string
+  resolvedSince?: string
+  deployedSince?: string
 }
 
 /** 公开列表。`tab` 不认识时后端回 400 而不是悄悄退回 `all` —— 猜错栏位会让人
  *  以为「这条反馈不见了」。所以调用方传的 tab 必须来自 `getFeedbackMeta().tabs`。 */
-export function listFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+export function listFeedback(query: FeedbackListQuery): Promise<FeedbackListPayload> {
   return request<FeedbackListPayload>(
     `/feedback${feedbackQuery({
       tab: query.tab,
@@ -2120,7 +2129,7 @@ export function listFeedback(query: FeedbackListQuery = {}): Promise<FeedbackLis
 }
 
 /** 「我的反馈」：我提的 + 我替谁提的 + 指派给我的。访客拿空列表，不是 401。 */
-export function listMyFeedback(query: FeedbackListQuery = {}): Promise<FeedbackListPayload> {
+export function listMyFeedback(query: FeedbackListQuery): Promise<FeedbackListPayload> {
   return request<FeedbackListPayload>(
     `/feedback/mine${feedbackQuery({ page_start: query.pageStart, page_size: query.pageSize })}`
   )
@@ -2209,20 +2218,49 @@ export function unlikeFeedbackComment(feedbackId: string, commentId: string): Pr
 
 /* ---- 管理端 (`/admin/feedback`) ---- */
 
-export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string } = {}): Promise<FeedbackListPayload> {
+export function listAdminFeedback(query: FeedbackListQuery & { assignee?: string }): Promise<FeedbackListPayload> {
   return request<FeedbackListPayload>(
     `/admin/feedback${feedbackQuery({
       tab: query.tab,
       assignee: query.assignee,
       q: query.q,
+      sort: query.sort,
       page_start: query.pageStart,
       page_size: query.pageSize,
+      since: query.since,
+      resolved_since: query.resolvedSince,
+      deployed_since: query.deployedSince,
     })}`
   )
 }
 
 export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`)
+}
+
+/** 看板的汇总：四个总数、按天的两条曲线、以及成本合计。
+ *
+ *  **单开一条接口**，不是拿列表在前端数出来：看板要的是 7 天的聚合，而列表回的是
+ *  「这一栏的第一页」。在前端数，就是把筛选和分页各抄第二份 —— 数出来的数字和它
+ *  旁边那一栏会停在某个边界上对不上，而两边各自看着都对。
+ *
+ *  **这条路径必须在 `/{feedback_id}` 之前注册**：`stats` 不是一个 uuid，后注册的话
+ *  它会被那条动态段先吃掉，症状是 422 而不是 404 —— 报错指向的地方和原因差很远。
+ */
+export interface AdminFeedbackStats {
+  /** 窗口天数。回显回来，页面不用自己记着问的是几天。 */
+  days: number
+  totals: { untriaged: number; in_progress: number; resolved: number; deployed: number }
+  /** 按天两条曲线，长度恒等于 `days`、最早在前。缺口由服务端补零。 */
+  series: { date: string; created: number; resolved: number }[]
+  /** 用量那本账不在反馈域里，拿不到就是 null —— 页面把那张卡降级，不带走整页。 */
+  cost: { calls: number; usd: number } | null
+}
+
+/** `days` 默认 7（就是看板上那句「过去 7 天」）。窗口是**页面**问的问题，所以由
+ *  调用方给，不写死在这里。 */
+export function getAdminFeedbackStats(opts?: { days?: number }): Promise<AdminFeedbackStats> {
+  return request<AdminFeedbackStats>(`/admin/feedback/stats${feedbackQuery({ days: opts?.days ?? 7 })}`)
 }
 
 /** 改了哪几项就传哪几项，`undefined` 表示「别动它」。**没有 visibility**：

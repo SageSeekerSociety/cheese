@@ -16,7 +16,9 @@ from app.main import app
 from tests.integration.conftest import chat_ws_url
 
 
-def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_path):
+def test_cloud_boot_preserves_pending_input_and_prompt_accounting(
+    client, tmp_path, monkeypatch
+):
     project_id = client.post("/projects", json={"name": "Cloud wait"}).json()["data"][
         "id"
     ]
@@ -81,3 +83,19 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
     content, attempts, consumed = asyncio.run(_pending_accounting())
     assert content.endswith(" 不要丢掉我"), content
     assert (attempts, consumed) == (0, None)
+
+    from app.domain.machine import progress
+
+    monkeypatch.setattr(progress, "async_session_factory", client.test_factory)
+
+    async def observe_startup():
+        await progress.startup_progress(uuid.UUID(topic_id), "正在下载连接器")
+        async with client.test_factory() as session:
+            blocks = await BlockRepository(session).list_for_topic(uuid.UUID(topic_id))
+            assert any(block.content == "正在下载连接器" for block in blocks)
+        # Progress must not clear the watermark that resumes the held message.
+        assert await override().cloud_waiting_topics([uuid.UUID(topic_id)]) == [
+            uuid.UUID(topic_id)
+        ]
+
+    asyncio.run(observe_startup())

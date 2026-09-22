@@ -40,11 +40,7 @@ LABELS="cheese-ci"
 ./config.sh --unattended --url "$REPO_URL" --token "$TOKEN" \
   --name "$NAME" --labels "$LABELS" --replace 2>&1 | tail -3
 
-# Cache downloaded action archives across jobs. Without this the runner pulls
-# every action's tarball from codeload.github.com on EVERY job; with three
-# runners behind one exit IP a busy afternoon trips GitHub's anonymous rate
-# limit and jobs die at checkout with 429 before running anything (#562,
-# 2026-08-17 — the main source of that day's "randomly red" CI).
+# The runner only reads prepopulated archives; maintenance fills them from pinned revisions.
 mkdir -p "$ROOT/action-archive-cache"
 grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null || \
   echo "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=$ROOT/action-archive-cache" >> .env
