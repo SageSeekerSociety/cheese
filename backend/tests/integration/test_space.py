@@ -1,6 +1,12 @@
-import pytest
-from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
+import pytest
+from anyio.from_thread import BlockingPortal
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.shell.service import resolve_shell
+from app.domain.space.models import SpaceCategory
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 
@@ -162,6 +168,58 @@ class TestSpaceIntegration:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
         assert resp.status_code == 404
+
+
+class TestNewBoardOpensAsACourse:
+    """建出来就是课程空间：默认分组已经带上课程壳，不再是一个空白版。
+
+    The assertion runs the whole path a student's project actually walks —
+    the created row, the 机构协议 chain, the catalog — rather than reading the
+    column back, because the column is not what the user sees.
+    """
+
+    def test_a_project_under_a_new_board_runs_the_course_shell(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session: AsyncSession,
+        _portal: BlockingPortal,
+    ):
+        creator = user_client.create_user()
+        creator.token = user_client.login(
+            api_client, creator.username, creator.password
+        )
+        resp = api_client.post(
+            "/spaces",
+            json={"name": f"Course ({unique_int(10000000, 99999999)})"},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert resp.status_code == 201, resp.text
+        space = resp.json()["data"]["space"]
+        space_id = space["id"]
+        category_id = space["defaultCategoryId"]
+        assert category_id is not None
+
+        async def _shell_name() -> str:
+            category = await db_session.get(SpaceCategory, category_id)
+            assert category is not None and category.space_id == space_id
+            return resolve_shell(
+                project=_project_row(),
+                task=_task_row(),
+                category=category,
+            ).name
+
+        assert _portal.call(_shell_name) == "course-student"
+
+
+def _project_row():
+    return SimpleNamespace(
+        id="probe", settings=None, external_task_id=1, created_at=None
+    )
+
+
+def _task_row():
+    return SimpleNamespace(protocol_override=None)
 
 
 class TestSpaceEnumeration:

@@ -9,7 +9,9 @@
     "visibility": "审核通过后，题目板会出现在探索列表中。",
     "cancel": "取消",
     "submit": "提交审核",
-    "failed": "创建失败，请重试。"
+    "failed": "创建失败，请重试。",
+    "courseTemplateTag": "默认课程模板",
+    "courseTemplate": "建出来就是课程空间——默认课程模板，不用挑模板。建版的人就是这个版的教师 + 创建者。"
   },
   "review": {
     "applicant": "申请人",
@@ -298,7 +300,7 @@
     "createFailed": "生成邀请码失败",
     "createdTitle": "这是你的邀请码",
     "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个题目版。",
-    "gotIt": "知道了"
+    "openCourse": "进入课程"
   },
   "index": {
     "searchPlaceholder": "搜索题目板",

@@ -1,21 +1,25 @@
 """机构协议 (spec §4.2) — what a 赛题 offers and what it requires in return.
 
-An institution publishes a 项目集/活动 (`space_categories`: 创研课 2026 秋,
-黑客松第三期) holding 赛题 (`task`). Linking a project to a 赛题 accepts a
-protocol: the institution provides a 资源包 (compute credits, a default expert
-role), the project accepts 条件 (e.g. 结题答辩 must be accepted by a mentor).
+An institution publishes a 题目板 (`space`, a course / an activity) whose
+题目分组 (`space_categories`: 作业, 实验, 小测) hold 题目 (`task`). Linking a
+project to a 题目 accepts a protocol: the institution provides a 资源包 (compute
+credits, a default expert role), the project accepts 条件 (e.g. 结题答辩 must be
+accepted by a mentor).
 
-**Where the protocol lives (#370, decided 2026-08-17).** On the 项目集, with an
-optional per-赛题 override — option (c). The reason is the real usage: 创研课 has
-twenty 赛题 and one set of terms, so a teacher configures it once. Putting it
-only on the 赛题 would mean twenty copies to keep in step; putting it only on the
-项目集 would leave no way to say "this one 赛题 gets more compute". The override
+**Where the protocol lives (#370, decided 2026-08-17).** On the 题目分组, with
+an optional per-题目 override — option (c). The reason is the real usage: 作业
+has twenty 题目 and one set of terms, so a teacher configures it once. Putting it
+only on the 题目 would mean twenty copies to keep in step; putting it only on the
+分组 would leave no way to say "this one 题目 gets more compute". The override
 is a whole-key replacement, not a deep merge — a half-inherited resource pack is
 harder to reason about than either source alone.
 
 This replaces the cheesex `task_templates` table, which held these same four
 fields for a parallel 题目 hierarchy nobody could create from the UI. The 知是
 side already had the levels; it was missing only the protocol.
+
+Prose elsewhere still calls the 题目分组 a 项目集 — the name this level carried
+when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
 """
 
 from dataclasses import dataclass, field

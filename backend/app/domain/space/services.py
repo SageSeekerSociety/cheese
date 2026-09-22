@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.shell.catalog import DEFAULT_CATEGORY_SHELL_NAME
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -169,12 +170,17 @@ class SpaceService:
             visible_task_limit=visible_task_limit,
         )
 
-        # Default category "General"
+        # Default category "General". It declares the course 壳: a 题目板 is a
+        # course now, so a new one opens as the course template rather than a
+        # blank board. The 壳 is a DEFAULT on the one protocol chain — a 题目
+        # may replace it and a project's own settings outrank both — and the
+        # name comes from the catalog so no 壳 is named twice.
         default_category = await self._category_repo.create_category(
             space_id=space.id,
             name="General",
             description="Auto generated default category",
             display_order=0,
+            shell=DEFAULT_CATEGORY_SHELL_NAME,
         )
         space.default_category_id = default_category.id
         await self._repo.save(space)

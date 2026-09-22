@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.domain.shell.catalog import DEFAULT_CATEGORY_SHELL_NAME
 from app.domain.space.models import SpaceAdminRole
 from app.domain.space.services import SpaceService
 
@@ -280,6 +281,7 @@ class TestCreateSpace:
             name="General",
             description="Auto generated default category",
             display_order=0,
+            shell=DEFAULT_CATEGORY_SHELL_NAME,
         )
         repo.save.assert_awaited_once_with(space)
         admin_repo.add_admin.assert_awaited_once_with(
