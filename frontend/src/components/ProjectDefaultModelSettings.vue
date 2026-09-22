@@ -18,12 +18,15 @@ const busy = ref(false)
 // 本地编辑态：用户在下拉里选了一个值但还没保存。null = 清掉显式设置（回落部署默认）。
 const draft = ref<string | null | undefined>(undefined)
 
-const effective = computed(() => {
-  // 还没拉到数据
-  if (!state.value) return null
-  // 用户改过 draft，以 draft 为准；否则以服务端的 model（显式设的）或 deployment_default
-  if (draft.value !== undefined) return draft.value
-  return state.value.model ?? state.value.deployment_default
+const effective = computed({
+  get() {
+    if (!state.value) return null
+    const model = draft.value !== undefined ? draft.value : state.value.model
+    return model ?? state.value.deployment_default
+  },
+  set(model: string | null) {
+    draft.value = model
+  },
 })
 
 const dirty = computed(() => {
