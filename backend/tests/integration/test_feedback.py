@@ -2678,6 +2678,7 @@ def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
     assert _add_admin(client, by=as_admin, target="fb-peng").status_code == 200
     assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True
 
+
 # --- 删掉一条反馈 -------------------------------------------------------------
 
 
@@ -2787,4 +2788,3 @@ def test_an_unauthenticated_delete_is_refused(client):
     """没登录的人连「能不能删」都不该问出来（401，不是 403）。"""
     row = _report(client, REPORTER, body="按钮点了没反应")
     assert client.delete(f"/feedback/{row['id']}").status_code == 401
-
