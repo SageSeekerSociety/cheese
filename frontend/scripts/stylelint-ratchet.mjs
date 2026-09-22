@@ -24,6 +24,7 @@ import {
   compare,
   formatReport,
   parseStylelintReport,
+  syntaxErrors,
   tightenedBaseline,
   violationDetails,
 } from './stylelint-ratchet-core.mjs'
@@ -78,6 +79,17 @@ try {
 }
 
 const toRelativePath = (source) => relative(ROOT, source)
+
+// Before counting anything: a file stylelint could not parse counts as zero
+// violations, which looks like progress. Stop here instead — and stop on
+// --update too, or the unreadable file gets frozen in at its fake zero.
+const broken = syntaxErrors(report, toRelativePath)
+if (broken.length) {
+  console.error('stylelint could not parse these files:')
+  console.error(broken.join('\n'))
+  process.exit(2)
+}
+
 const current = parseStylelintReport(report, toRelativePath)
 
 const baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')).files ?? {} : {}
