@@ -468,6 +468,22 @@ export default defineConfig({
     // the whole run on them with "No test suite found" — node:test registers its
     // cases through `node:test`, which vitest's collector never sees.
     exclude: [...configDefaults.exclude, 'scripts/**'],
+    // 并发度不跟着核数走。默认是「可用并行度 - 1」，在一台 384 核的共享开发机上
+    // 那是三百多个 fork，每一个都要自己把 Vuetify 和它的 SCSS 编一遍——彼此抢
+    // CPU，还和机器上别人的活抢。实测一轮里 transform 累计 367 秒、collect 累计
+    // 1907 秒，而墙上时间只有 24 秒，绝大部分花在编译上而不是跑断言，超时也从这里
+    // 来。这个上限对小机器无害（它本来就开不到 8 个），对大机器是实打实的提速。
+    // 上下限必须一起给：两个下限都默认跟着核数走，只压上限的话 vitest 会拿
+    // min=383 / max=8 去构造 worker 池，Tinypool 直接抛 RangeError，一个用例都跑
+    // 不起来。`forks` 是 vitest 2 的默认池，`threads` 一并写上，免得哪天换池子
+    // 这条静默失效。
+    // 16 是量出来的：这台机器上 8 / 16 / 32 / 不限分别是 37.4 / 29.1 / 25.3 /
+    // 24.5 秒，而 collect 累计是 142 / 257 / 461 / 1908 秒。过了 16 再加只换回来
+    // 几秒墙上时间，代价是成倍的总开销，不限则会超时。
+    poolOptions: {
+      forks: { minForks: 1, maxForks: 16 },
+      threads: { minThreads: 1, maxThreads: 16 },
+    },
   },
   optimizeDeps: {
     // **每一个新组件第一次上屏时都会被现学现卖**：`vite-plugin-vuetify` 的 autoImport
