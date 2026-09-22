@@ -1916,22 +1916,8 @@ class ChatService:
 
     async def cloud_waiting_topics(self, topic_ids: list[uuid.UUID]) -> list[uuid.UUID]:
         """Topics whose latest durable Cloud lifecycle event is still waiting."""
-        waiting: list[uuid.UUID] = []
         async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            for topic_id in topic_ids:
-                history = await blocks.list_for_topic(topic_id)
-                cloud_events = [
-                    block
-                    for block in history
-                    if (block.meta or {}).get("event_type") == "cloud_provisioning"
-                ]
-                if (
-                    cloud_events
-                    and (cloud_events[-1].meta or {}).get("state") == "waiting"
-                ):
-                    waiting.append(topic_id)
-        return waiting
+            return await cloud_waiting_topics(session, topic_ids)
 
     async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
         """Admission facts the AgentWorkRunner gates on BEFORE running a turn
@@ -5644,3 +5630,20 @@ class ChatService:
             await session.commit()
 
         return {"summary": final_text}
+
+
+async def cloud_waiting_topics(
+    session: AsyncSession, topic_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    waiting: list[uuid.UUID] = []
+    blocks = BlockRepository(session)
+    for topic_id in topic_ids:
+        history = await blocks.list_for_topic(topic_id)
+        events = [
+            b
+            for b in history
+            if (b.meta or {}).get("event_type") == "cloud_provisioning"
+        ]
+        if events and (events[-1].meta or {}).get("state") == "waiting":
+            waiting.append(topic_id)
+    return waiting

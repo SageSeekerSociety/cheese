@@ -873,6 +873,16 @@ export function deleteProjectMachine(
   })
 }
 
+export function changeProjectMachinePower(
+  projectId: string,
+  machineId: string,
+  operation: 'suspend' | 'resume'
+): Promise<import('./cx_types').ProjectMachine> {
+  return request(`/projects/${encodeURIComponent(projectId)}/machines/${encodeURIComponent(machineId)}/${operation}`, {
+    method: 'POST',
+  })
+}
+
 // 会话级算力 (v4): a topic's own compute选择, switchable until its first turn.
 export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
   return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)

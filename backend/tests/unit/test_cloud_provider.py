@@ -70,7 +70,7 @@ async def test_running_machine_waits_until_ai_and_connector_are_ready():
     )
 
     assert ready is False
-    assert "正在创建" in message
+    assert "正在准备" in message
     ensure.assert_awaited_once_with(topic_id, actor)
 
     ready, _ = await provider.prepare_topic(

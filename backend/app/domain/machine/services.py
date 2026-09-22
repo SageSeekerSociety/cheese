@@ -459,6 +459,8 @@ class MachineService:
                 await self._session.refresh(existing)
             if _still_moving(existing) or _stale(existing):
                 await self.refresh(existing)
+            if existing.status == MachineStatus.suspended:
+                await self.resume(existing)
             if existing.status not in GONE:
                 return existing
             await self.forget(existing)
@@ -718,6 +720,30 @@ class MachineService:
             machine, status=MachineStatus.deleting, ip=None
         )
 
+    async def suspend(self, machine: ProjectMachine) -> ProjectMachine:
+        if machine.machine_id is None or machine.released_at is not None:
+            raise ValidationError("machine is not available to suspend")
+        if await self._repo.has_active_turn(machine):
+            raise ConflictError("机器上仍有 agent 任务运行，请等待任务结束后休眠")
+        remote = await self._client.suspend_machine(machine.machine_id)
+        return await self._repo.set_state(
+            machine,
+            status=_as_status(remote.get("status")),
+            ip=remote.get("ip"),
+            seen_at=datetime.now(UTC),
+        )
+
+    async def resume(self, machine: ProjectMachine) -> ProjectMachine:
+        if machine.machine_id is None or machine.released_at is not None:
+            raise ValidationError("machine is not available to resume")
+        remote = await self._client.resume_machine(machine.machine_id)
+        return await self._repo.set_state(
+            machine,
+            status=_as_status(remote.get("status")),
+            ip=remote.get("ip"),
+            seen_at=datetime.now(UTC),
+        )
+
     # --- enrollment: making the machine an agent host -------------------
 
     async def enroll(self, machine: ProjectMachine) -> ProjectMachine:
@@ -873,7 +899,16 @@ class MachineService:
         machines = await self._repo.list_unsettled(limit)
         for machine in machines:
             try:
-                await self.refresh(machine)
+                if machine.status != MachineStatus.suspended:
+                    await self.refresh(machine)
+                if (
+                    machine.status == MachineStatus.suspended
+                    and machine.topic_id is not None
+                ):
+                    from app.domain.agent.chat import cloud_waiting_topics
+
+                    if await cloud_waiting_topics(self._session, [machine.topic_id]):
+                        await self.resume(machine)
             except MicroCloudError:
                 # An unreachable provider is not this sweep's problem to solve;
                 # the next tick tries again, and `refresh` records the attempt.
