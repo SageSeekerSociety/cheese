@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
@@ -400,7 +401,12 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
     its profile/gateway routing rather than fall through with no env at all and
     run on the backend process's own inherited credentials."""
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
@@ -427,7 +433,12 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     meter while its traffic went through the proxy — counted once in each.
     """
     fake = FakeGateway()
-    svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    svc, factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+        assert project is not None
+        project.settings = {**(project.settings or {}), "supply": "subscription"}
+        await session.commit()
 
     device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
     cloud_kwargs, cloud_route = await svc._model_kwargs(pid, _leases_a_machine())
@@ -478,7 +489,7 @@ async def test_a_turn_runs_as_its_agent_and_an_ongoing_turn_keeps_its_snapshot(
     # 换的是角色，不是模型：一个房间的主线永远走项目默认，谁来答都一样（结论 3）。
     # 这三行在这个测试里的用处正是说明「agent 变了，模型不变」。
     assert current["model"] == following["model"] == default["model"]
-    assert default["model"] == "claude-sonnet-5"
+    assert default["model"] == settings.agent_model
     assert (
         current["env"]["CHEESE_AGENT_CONFIG"] != following["env"]["CHEESE_AGENT_CONFIG"]
     )

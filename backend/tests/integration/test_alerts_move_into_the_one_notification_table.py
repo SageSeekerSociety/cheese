@@ -38,20 +38,20 @@ _MIGRATION = (
 AGENT = "cheese-0123456789ab"
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("_mig_two_tables_one", _MIGRATION)
+def _load(migration: Path = _MIGRATION):
+    spec = importlib.util.spec_from_file_location(f"_mig_{migration.stem}", migration)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def _upgrade(client) -> None:
+def _upgrade(client, migration: Path = _MIGRATION) -> None:
     """把迁移的 `upgrade()` 跑一遍，跟 `alembic upgrade head` 同一条路。"""
 
     def _apply(conn) -> None:
         with Operations.context(MigrationContext.configure(conn)):
-            _load().upgrade()
+            _load(migration).upgrade()
 
     async def _run() -> None:
         async with client.test_factory() as s:
@@ -104,8 +104,52 @@ def _join(client, pid: str | None, tid: str | None, *handles: str) -> None:
     asyncio.run(_run())
 
 
+#: 退役中的那张表，被删掉时的形状（`cf93e4735e4a` 建的 `notifications`，
+#: `b5d90a17c3e2` 改的名，`b21d83d491c7` 加的 `resolved_at`）。
+#:
+#: 库跑到 head 就已经没有它了 —— `d3f0a91c7b45` 把它删了 —— 而这个文件和
+#: `test_the_alerts_table_goes.py` 要的正是「它还在的那一刻」，所以测试自己把它
+#: 立起来。等级和类别那两列在库里是 `native_enum=False` 的 varchar，没有 CHECK
+#: （见 `docs/topics/反馈功能后端设计-方案稿.md` §6.1）。
+ALERTS_TABLE = """
+CREATE TABLE IF NOT EXISTS alerts (
+    id uuid PRIMARY KEY,
+    project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    topic_id uuid REFERENCES topics(id) ON DELETE CASCADE,
+    level varchar(16) NOT NULL,
+    kind varchar(16) NOT NULL,
+    target_handle varchar(64),
+    title varchar(300) NOT NULL,
+    body text NOT NULL,
+    payload json NOT NULL,
+    read_at timestamptz,
+    resolved_at timestamptz,
+    feedback varchar(8),
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL
+)
+"""
+
+
+def create_alerts_table(client) -> None:
+    """把退役中的 `alerts` 立起来，并清空它。
+
+    这个套件的 `test_factory` 是真提交（只有每个请求那一层在事务里），所以上一个
+    用例铺的行会留到下一个 —— 而核对那一步扫的是整张表。每个用例从空表开始。
+    """
+
+    async def _run() -> None:
+        async with client.test_factory() as s:
+            await s.execute(text(ALERTS_TABLE))
+            await s.execute(text("DELETE FROM alerts"))
+            await s.commit()
+
+    asyncio.run(_run())
+
+
 def _room(client) -> tuple[str, str]:
     """一个项目 + 一个房间，名册上是 alice、bob 和一个 agent。"""
+    create_alerts_table(client)
     pid = client.post("/projects", json={"name": "并表"}).json()["data"]["id"]
     tid = client.post(
         "/topics", json={"project_id": pid, "title": "房间", "created_by": "alice"}

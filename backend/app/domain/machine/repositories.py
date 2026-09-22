@@ -356,7 +356,6 @@ class ProjectMachineRepository:
             select(AgentSession.runtime_location)
             .where(
                 AgentSession.topic_id == place_id,
-                AgentSession.task_id.is_(None),
                 AgentSession.runtime_location.is_not(None),
             )
             .order_by(AgentSession.placed_at.desc(), AgentSession.id)

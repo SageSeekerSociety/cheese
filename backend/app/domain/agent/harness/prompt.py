@@ -14,6 +14,18 @@ def chipify_paths(fact: str) -> str:
     return _BARE_PATH_RE.sub(r"<&\1>", fact)
 
 
+#: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
+#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的那台机器上，子 agent 与
+#: 起它的进程同生同死，机器一回收就只剩分支上已经推走的东西，而恢复的办法是从分支
+#: 重派一次（结论 43）。只 commit 不 push 的活过不了这台机器。
+ALWAYS_PUSH = (
+    "## 随时 push（所有 agent，主 agent 也一样）\n"
+    "干活期间**随时 push**，不要攒到交付那一下才推。你的工作树在这台机器上，而机器"
+    "随时可能被回收；接着干下去的办法是从分支上重来一次，所以没推上去的改动，到不了"
+    "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
+)
+
+
 def build_system_prompt(
     base: str,
     skills: str,
@@ -44,6 +56,7 @@ def build_system_prompt(
             "这条优先于「先回应，再干活」：起标题只是一次工具调用，几乎不花时间。"
             "（只起一次，定了别反复改。）"
         )
+    parts.append(ALWAYS_PUSH)
     if role:
         parts.append(f"## 你的专家角色\n{role}")
     if skills:

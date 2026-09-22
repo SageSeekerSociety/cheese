@@ -21,18 +21,16 @@ def test_an_explicit_setting_wins():
     assert resolve_pool({"supply": SUBSCRIPTION}) == SUBSCRIPTION
 
 
-def test_a_project_that_says_nothing_runs_on_the_subscription():
-    """A machine is launched in the subscription shape and nothing else, so a
-    project that has never chosen runs on the pool that shape reaches first."""
-    assert resolve_pool(None) == SUBSCRIPTION
-    assert resolve_pool({}) == SUBSCRIPTION
-    assert resolve_pool({"other": "x"}) == SUBSCRIPTION
+def test_a_project_that_says_nothing_runs_on_the_gateway():
+    assert resolve_pool(None) == GATEWAY
+    assert resolve_pool({}) == GATEWAY
+    assert resolve_pool({"other": "x"}) == GATEWAY
 
 
 def test_an_unrecognised_value_falls_back_rather_than_failing():
     """A typo in a settings blob must not take a project offline."""
     for junk in ("gatway", "", None, 5, ["gateway"]):
-        assert resolve_pool({"supply": junk}) == SUBSCRIPTION
+        assert resolve_pool({"supply": junk}) == GATEWAY
 
 
 # —— 守卫：「这一轮走哪条供给」全仓只有一处回答 ————————————————————

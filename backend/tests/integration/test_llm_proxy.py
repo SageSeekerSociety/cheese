@@ -288,26 +288,26 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     token = mint_scoped_token(project_id=pid)
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Default: the deployment's own supply, and no key travels for it — the
-    # subscription credential lives on the proxy, never in a control-plane body.
+    monkeypatch.setattr(app_settings, "agent_model", "deepseek-flash")
+    # An unset project uses the configured default for inference, even though
+    # the client was bootstrapped with subscription-shaped credentials.
     body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["supply"]["pool"] == "subscription"
+    assert body["supply"]["pool"] == "gateway"
     # And which model, because the launch environment names none: the binding
     # resolved here is what the proxy writes into the request body.
-    assert body["supply"]["model"] == "claude-sonnet-5"
+    assert body["supply"]["model"] == "deepseek-flash"
     assert body["allow"] is True
+    assert body["supply"].get("key") is None
 
     async with client.test_factory() as session:
         project = await ProjectRepository(session).get(uuid.UUID(pid))
         assert project is not None
-        project.settings = {"supply": "gateway"}
+        project.settings = {"supply": "subscription"}
         await session.commit()
 
     body = client.post("/llm/admission", headers=headers).json()["data"]
-    assert body["supply"]["pool"] == "gateway"
-    assert body["supply"]["model"] == app_settings.agent_model
-    # No gateway configured in this harness → no key. The proxy refuses on an
-    # empty key rather than serving the project from a pool it did not choose.
+    assert body["supply"]["pool"] == "subscription"
+    assert body["supply"]["model"] == "claude-sonnet-5"
     assert body["supply"].get("key") is None
 
 

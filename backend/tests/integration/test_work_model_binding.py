@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.core.config import settings
+from app.domain.agent import gateway_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
@@ -32,6 +34,14 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
 from tests.unit.test_device_provider import ReuseGateHub
+
+
+@pytest.fixture(autouse=True)
+def configured_default(monkeypatch):
+    monkeypatch.setattr(settings, "agent_model", "deepseek-flash")
+    gateway_catalog.reset()
+    yield
+    gateway_catalog.reset()
 
 
 def _on_a_machine() -> ClaudeCodeRuntime:
@@ -95,7 +105,7 @@ async def test_the_rooms_main_line_runs_on_the_project_default(client, tmp_path)
         ids["project"], _on_a_machine(), ids["room"]
     )
 
-    assert kwargs["model"] == "claude-sonnet-5"
+    assert kwargs["model"] == "deepseek-flash"
 
 
 @pytest.mark.anyio
@@ -133,7 +143,7 @@ async def test_editing_the_agent_does_not_move_the_rooms_main_line(client, tmp_p
         ids["project"], _on_a_machine(), ids["room"]
     )
 
-    assert in_flight["model"] == "claude-sonnet-5"
+    assert in_flight["model"] == "deepseek-flash"
     assert later["model"] == in_flight["model"]
 
 
@@ -212,12 +222,12 @@ async def test_rebinding_a_work_shows_on_the_next_read_of_its_card(client, tmp_p
         ids["project"], _on_a_machine(), ids["room"]
     )
 
-    assert _card(client, ids)["model"] == "sonnet"
+    assert _card(client, ids)["model"] == "deepseek-flash"
 
     await _rebind(client, ids, "opus")
 
     assert _card(client, ids)["model"] == "opus"
-    assert in_flight["model"] == "claude-sonnet-5"
+    assert in_flight["model"] == "deepseek-flash"
 
 
 @pytest.mark.anyio
@@ -240,7 +250,7 @@ async def test_one_broken_binding_does_not_take_the_rooms_whole_board_down(clien
     board = client.get(f"/topics/{ids['room']}/tasks")
     assert board.status_code == 200, board.text
     shown = {item["title"]: item["model"] for item in board.json()["data"]["data"]}
-    assert shown == {"一条活": "no-such-model", "另一条活": "sonnet"}
+    assert shown == {"一条活": "no-such-model", "另一条活": "deepseek-flash"}
 
     assert _card(client, ids)["model"] == "no-such-model"
 
@@ -295,6 +305,7 @@ async def test_spending_does_not_change_the_word_the_card_uses_for_one_model(cli
     用量的 model）两种写法都满足，所以只有这一条能把它钉住。
     """
     ids = await _room(client)
+    await _rebind(client, ids, "sonnet")
     before = _card(client, ids)["model"]
 
     async with client.test_factory() as session:
