@@ -108,6 +108,7 @@ import AgentNoticeFrame from './AgentNoticeFrame.vue'
 import AttachmentImage from './AttachmentImage.vue'
 import AttachmentTile from './AttachmentTile.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
+import CloudStartupStatus from './CloudStartupStatus.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
 import TimelineMark from './TimelineMark.vue'
 
@@ -2058,7 +2059,7 @@ onBeforeUnmount(() => {
             {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
           </div>
 
-          <template v-for="({ block: m, notice }, i) in rows" :key="m.id">
+          <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
                哪条是今天的——这条线是唯一说得出「那是上周」的东西。 -->
             <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
@@ -2189,15 +2190,7 @@ onBeforeUnmount(() => {
                   <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
                 </div>
               </details>
-              <details v-else-if="notice?.mode === 'agent-status'" class="cloud-status" data-testid="platform-notice">
-                <summary>{{ notice.line }}</summary>
-                <div class="agent-status-history">
-                  <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
-                    <div>{{ occ.line }}</div>
-                    <div v-if="occ.detail" class="agent-status-detail">{{ occ.detail }}</div>
-                  </div>
-                </div>
-              </details>
+              <CloudStartupStatus v-else-if="notice?.mode === 'agent-status'" :events="run" />
               <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
                什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
                条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
@@ -3268,18 +3261,6 @@ details.sys-row > summary::-webkit-details-marker {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
-}
-.cloud-status summary {
-  cursor: pointer;
-}
-.agent-status-history {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-}
-.agent-status-detail {
-  margin-top: 3px;
-  color: var(--muted);
 }
 /* ---- 分栏气泡 (2026-09-09, <@符露夀> 定) ----
    一条消息是一个气泡，我说的靠右、别人和芝士靠左。三件事一起说明「是不是我」：
