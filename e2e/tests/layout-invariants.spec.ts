@@ -144,22 +144,21 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     expect(await fieldDefects(dialog)).toEqual([]);
   });
 
-  test('反馈中心 · 提交反馈抽屉', async ({ page }) => {
+  test('反馈中心 · 提交反馈页', async ({ page }) => {
     await login(page);
     await page.goto('/feedback');
-    await page.getByRole('button', { name: '提交反馈' }).first().click();
 
-    // 抽屉是 `temporary` 的：关着的时候它**根本不在 DOM 里**，所以 `.fb-drawer`
-    // 出现就等于「这一屏来了」。等的是里面那个字段真的画出来，不是抽屉的容器：
-    // 容器一挂上就有坐标，字段还在后面几帧里。
-    //
-    // 范围只取抽屉，不取 `body`：这一页的工具行上还有一个搜索框，喂给
-    // `fieldDefects` 会把两处不相干的字段放在一起比，而它们本来就不在一个平面
-    // 上（一个是页面正文，一个是浮层）。
-    const drawer = page.locator('.fb-drawer');
-    await drawer.waitFor();
-    await expect(drawer.getByLabel('标题', { exact: true })).toBeVisible();
-    expect(await fieldDefects(drawer)).toEqual([]);
+    // 提交是一条**真路由**（`/feedback/new`），不是浮层：页头那颗渲染成链接。
+    await page.getByRole('link', { name: '提交反馈' }).first().click();
+    await expect(page).toHaveURL(/\/feedback\/new$/);
+
+    // 范围取表单本身（`.sb-form`），不取 `body`：这一页的页头和底下那条说明都不是
+    // 字段，喂给 `fieldDefects` 会把不相干的东西放在一起比。等的是表单真的画出来，
+    // 不是地址变了 —— 地址先变、字段在后几帧里。
+    const form = page.locator('.sb-form');
+    await form.waitFor();
+    await expect(form.getByLabel(/^标题/)).toBeVisible();
+    expect(await fieldDefects(form)).toEqual([]);
   });
 
   test('管理后台 · 反馈队列里打开一条', async ({ page }) => {

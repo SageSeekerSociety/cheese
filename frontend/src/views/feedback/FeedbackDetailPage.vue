@@ -204,7 +204,13 @@ async function share() {
       <!-- 断点走 CSS 媒体查询（≥1280 双栏），不再经 `useDisplay()`：同一档宽度在
            JS 和 CSS 里各写一遍，两边迟早会分家，而这一页的版式本来就全靠 CSS。 -->
       <div class="fb-layout">
-        <main class="fb-main">
+        <!-- 页头（标题 / 状态与标签 / 作者）**单独成一块**，不在 `main` 里面。
+             这不是拆得更整齐，是为了手机上能把它排在「进展」前面：进展住在那张
+             `aside` 里，而纯 CSS 挪不动 aside —— 只要标题烙在 main 内部，`order` 就只能
+             把整块 aside 提到标题**之上**，那比不改还糟。
+             窄屏的顺序因此是「页头 → 进展/计数/来源 → 正文 → 评论区」，宽屏（≥1280）
+             用 grid-area 把 aside 拉回右栏，屏幕上和改动前一样。 -->
+        <div class="fb-head">
           <h1 class="t-page-title fb-title">{{ item.title }}</h1>
 
           <div class="d-flex align-center flex-wrap ga-2 mb-2">
@@ -242,9 +248,10 @@ async function share() {
           </div>
           <!-- 提案卡发出来的那条有两个名字：agent 找出来的、人发出去的。两个都写，
                因为「这是谁提的」在这条路径上有两个都对但不同的答案。 -->
-          <div v-if="item.submitted_by_handle" class="t-meta mb-4">由 {{ item.submitted_by_handle }} 提交</div>
-          <div v-else class="mb-4" />
+          <div v-if="item.submitted_by_handle" class="t-meta">由 {{ item.submitted_by_handle }} 提交</div>
+        </div>
 
+        <main class="fb-main">
           <section v-if="item.problem" class="fb-section">
             <div class="t-eyebrow mb-1">问题描述</div>
             <p class="t-reading fb-text">{{ item.problem }}</p>
@@ -509,22 +516,57 @@ async function share() {
    那段平板宽度 —— 整栏铺满时一行排到 60 个汉字以上，回行就找不到下一行的开头了。
    右栏一起锁是为了两块共用同一条左沿，不然右栏会比正文宽出去一截。
    手机上本来就没有 660 宽，这条是空操作。 */
+.fb-head,
 .fb-main,
 .fb-aside {
+  /* 长 handle 没有空格，不写这条会把轨道撑宽、整页可以横向拖。 */
+  min-width: 0;
   max-width: var(--page-w-read);
   justify-self: center;
+}
+/* 一栏这一档（<1280）的阅读顺序：**页头 → 进展 → 正文 → 评论**。
+   手机上「走到哪一步」原先排在整条评论区之后 —— 要读完所有评论才看得到自己关心的
+   那条走到哪了，而它恰好是「我要不要支持」的依据。改的是顺序，不是内容。 */
+@media (max-width: 1279.98px) {
+  .fb-head {
+    order: 1;
+  }
+  .fb-aside {
+    order: 2;
+  }
+  .fb-main {
+    order: 3;
+  }
 }
 @media (min-width: 1280px) {
   .fb-layout {
     grid-template-columns: minmax(0, var(--page-w-read)) 280px;
+    /* 页头和正文同住左列、右栏跨两行 —— 和改动前屏幕上看到的一样。 */
+    grid-template-areas:
+      'head aside'
+      'main aside';
     justify-content: space-between;
     gap: 32px;
   }
   /* 两栏这一档，轨道本身已经是那两个宽度（正文正好 --page-w-read），上面那条上限
-     留给一栏那一档就好 —— 不留神会把右栏也压成 660 的宽度。 */
+     留给一栏那一档就好 —— 不留神会把右栏也压成 660 的宽度。
+     `justify-self: stretch` 也是给这一档的：上面那条 `center` 是为一栏那一档写的
+     （把锁了 660 的正文居中），在网格里留着它会让页头在自己的轨道里居中 —— 而页头
+     比轨道窄，于是它和正文的左沿差出一百多像素（真浏览器里量到的就是这一条）。 */
+  .fb-head,
   .fb-main,
   .fb-aside {
     max-width: none;
+    justify-self: stretch;
+  }
+  .fb-head {
+    grid-area: head;
+  }
+  .fb-main {
+    grid-area: main;
+  }
+  .fb-aside {
+    grid-area: aside;
   }
 }
 .fb-title {
