@@ -131,6 +131,47 @@ async def test_concurrent_uploads_and_failure_leave_client_usable(monkeypatch):
     ("error", "failures", "expected_attempts"),
     [("IncompleteBody", 1, 2), ("IncompleteBody", 99, 3), ("AccessDenied", 99, 1)],
 )
+async def test_small_upload_retries_incomplete_body_without_changing_bytes(
+    error, failures, expected_attempts
+):
+    content = b"transcript chunk\x00" * 100
+    bodies = []
+
+    async def handle(request):
+        bodies.append(await request.read())
+        if len(bodies) <= failures:
+            return web.Response(
+                status=400,
+                text=f"<Error><Code>{error}</Code></Error>",
+                content_type="application/xml",
+            )
+        return web.Response(headers={"ETag": '"stored"'})
+
+    app = web.Application()
+    app.router.add_put("/{path:.*}", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    endpoint = f"http://127.0.0.1:{runner.addresses[0][1]}"
+    try:
+        if failures == 1:
+            await backend(endpoint).upload(io.BytesIO(content), "chunk", "text/plain")
+        else:
+            with pytest.raises(ClientError) as failure:
+                await backend(endpoint).upload(
+                    io.BytesIO(content), "chunk", "text/plain"
+                )
+            assert failure.value.response["Error"]["Code"] == error
+        assert bodies == [content] * expected_attempts
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("error", "failures", "expected_attempts"),
+    [("IncompleteBody", 1, 2), ("IncompleteBody", 99, 3), ("AccessDenied", 99, 1)],
+)
 async def test_multipart_upload_retries_incomplete_parts_only(
     error, failures, expected_attempts
 ):

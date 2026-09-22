@@ -27,15 +27,15 @@ class _S3Connections:
 _s3_connections: _S3Connections | None = None
 
 
-def _retry_incomplete_s3_part(response, attempts: int, **_) -> float | None:
-    # S3 can reject a truncated part with HTTP 400, outside the SDK's default retries.
+def _retry_incomplete_s3_upload(response, attempts: int, **_) -> float | None:
+    # S3 can reject a truncated upload with HTTP 400, outside SDK default retries.
     if (
         response is not None
         and response[1].get("Error", {}).get("Code") == "IncompleteBody"
         and attempts < 3
     ):
         logging.getLogger(__name__).warning(
-            "Retrying incomplete S3 upload part after attempt %s", attempts
+            "Retrying incomplete S3 upload after attempt %s", attempts
         )
         return float(attempts)
     return None
@@ -181,7 +181,10 @@ class S3StorageBackend(StorageBackend):
             # aioboto3 inherits boto3's synchronous client typing.
             session: Any = aioboto3.Session()
             session.events.register(
-                "needs-retry.s3.UploadPart", _retry_incomplete_s3_part
+                "needs-retry.s3.UploadPart", _retry_incomplete_s3_upload
+            )
+            session.events.register(
+                "needs-retry.s3.PutObject", _retry_incomplete_s3_upload
             )
             return session.client("s3", **kwargs)
 

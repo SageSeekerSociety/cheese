@@ -3878,7 +3878,7 @@ class ChatService:
         event_count = 0
         try:
             session_ref = SessionRef(project_id, topic_id, harness=harness)
-            backlog = self._compute.backlog(session_ref)
+            backlog = await asyncio.to_thread(self._compute.backlog, session_ref)
             spooled = backlog.unread()
             event_count = len(spooled)
             phases_ms["read"] = (time.monotonic() - started) * 1000
@@ -4129,7 +4129,8 @@ class ChatService:
                     break
                 backlog.landed(through=event.key)
             phases_ms["cursor"] = (time.monotonic() - started) * 1000
-            backlog.forget(older_than_s=_SPOOL_RETENTION_S)
+            # Retention scans the whole on-disk log, even for one new event.
+            await asyncio.to_thread(backlog.forget, older_than_s=_SPOOL_RETENTION_S)
             phases_ms["retention"] = (time.monotonic() - started) * 1000
             if recovered:
                 logger.info(
