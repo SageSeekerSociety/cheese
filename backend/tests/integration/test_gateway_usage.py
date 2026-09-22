@@ -169,7 +169,10 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(client, tmp_path)
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
 
     assert route == "native"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
 
 
 @pytest.mark.anyio
@@ -387,7 +390,10 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
     assert route == "gateway"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
 
@@ -410,7 +416,10 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
     assert route == "subscription"
-    assert set(kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert kwargs["model"] == "claude-sonnet-5"
 
     kwargs, route = await svc._model_kwargs(pid, _in_this_process())
@@ -446,7 +455,10 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
     assert cloud_route == device_route == "subscription"
     assert cloud_kwargs == device_kwargs
     assert cloud_kwargs["model"] == "claude-sonnet-5"
-    assert set(cloud_kwargs["env"]) == {"CHEESE_AGENT_CONFIG"}
+    assert set(cloud_kwargs["env"]) == {
+        "CHEESE_AGENT_CONFIG",
+        "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
+    }
     assert fake.minted == []  # no gateway key is minted for either
 
 
