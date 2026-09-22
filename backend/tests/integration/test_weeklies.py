@@ -63,7 +63,8 @@ def test_a_report_from_another_project_is_not_listed_here(client):
     mine = _make_project(client)
     theirs = _make_project(client)
     room = _make_topic(client, theirs, "房")
-    assert client.post(f"/topics/{room}/weekly", json={"body": "他们的"}).status_code == 200
+    posted = client.post(f"/topics/{room}/weekly", json={"body": "他们的"})
+    assert posted.status_code == 200
     assert _weeklies(client, mine) == []
     assert len(_weeklies(client, theirs)) == 1
 
@@ -71,7 +72,8 @@ def test_a_report_from_another_project_is_not_listed_here(client):
 def test_the_window_defaults_to_the_week_ending_now(client):
     project = _make_project(client)
     room = _make_topic(client, project, "房")
-    assert client.post(f"/topics/{room}/weekly", json={"body": "这周没动静。"}).status_code == 200
+    posted = client.post(f"/topics/{room}/weekly", json={"body": "这周没动静。"})
+    assert posted.status_code == 200
     meta = _weeklies(client, project)[0]["meta"]
     since = datetime.fromisoformat(meta["since"])
     until = datetime.fromisoformat(meta["until"])
