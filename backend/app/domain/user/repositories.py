@@ -179,6 +179,30 @@ class UserRepository:
         agents, humans = (await self._session.execute(stmt)).one()
         return {"humans": int(humans or 0), "agents": int(agents or 0)}
 
+    async def accounts_series_by_kind(
+        self, *, since: datetime, until: datetime
+    ) -> dict[str, dict[date, int]]:
+        """窗口内按 **UTC 的天**新增的账号数，真人 / agent 各一条；稀疏，补 0 由
+        调用方做。和 `count_accounts_by_kind` 同一个判据（`agent_bindings`）。"""
+        agent = exists().where(AgentBinding.user_id == User.id)
+        day = utc_day(User.created_at)
+        stmt = (
+            select(day.label("day"), agent.label("is_agent"), func.count(User.id))
+            .where(
+                User.deleted_at.is_(None),
+                User.created_at >= since,
+                User.created_at < until,
+            )
+            .group_by(day, agent)
+            .order_by(day)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        out: dict[str, dict[date, int]] = {"humans": {}, "agents": {}}
+        for row in rows:
+            key = "agents" if row[1] else "humans"
+            out[key][row[0].date()] = int(row[2])
+        return out
+
     async def accounts_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:

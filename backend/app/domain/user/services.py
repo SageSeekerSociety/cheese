@@ -150,6 +150,12 @@ class AccountService:
         """窗口内按 UTC 的天新增的账号数，稀疏；补 0 由调用方做。"""
         return await self._repo.accounts_series(since=since, until=until)
 
+    async def accounts_series_by_kind(
+        self, *, since: datetime, until: datetime
+    ) -> dict[str, dict[date, int]]:
+        """同 `accounts_series`，但真人 / agent 各一条。"""
+        return await self._repo.accounts_series_by_kind(since=since, until=until)
+
 
 class UserProfileService:
     """Profile update operations."""

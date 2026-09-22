@@ -134,6 +134,7 @@ class PlatformStatsService:
         """
         since, until, buckets = utc_day_window(days)
         created = await self._users.accounts_series(since=since, until=until)
+        by_kind = await self._users.accounts_series_by_kind(since=since, until=until)
         admins = await AdminService(self._session).admin_handles()
         kinds = await self._users.count_accounts_by_kind()
         return {
@@ -144,9 +145,20 @@ class PlatformStatsService:
                 "admins": len(admins),
                 # 真人 / agent 的拆分。判据是 `agent_bindings`，和
                 # `IdentityService.is_agent` 同一份 —— 见 `count_accounts_by_kind`。
+                # `total` / `new` / `series.created` 仍是**和**：拆分是附加列，不是
+                # 把老口径改写成只数真人。
                 "humans": kinds["humans"],
                 "agents": kinds["agents"],
-                "series": dense_series(buckets, {"created": created}),
+                "new_humans": sum(by_kind["humans"].values()),
+                "new_agents": sum(by_kind["agents"].values()),
+                "series": dense_series(
+                    buckets,
+                    {
+                        "created": created,
+                        "human_created": by_kind["humans"],
+                        "agent_created": by_kind["agents"],
+                    },
+                ),
             },
             "machines": await self._machines.counts(),
             # 「平台现在健康吗」——和上面两组的差别是**这一刻**的，不是存量也不是

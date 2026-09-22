@@ -2395,10 +2395,13 @@ export interface StatsPlatform {
     total: number
     new: number
     admins: number
-    /** 真人 / agent 的拆分。判据是 `agent_bindings`，和后端 `IdentityService.is_agent` 同一份。 */
+    /** 真人 / agent 的拆分。判据是 `agent_bindings`，和后端 `IdentityService.is_agent` 同一份。
+     *  `total`/`new`/`series[].created` 仍是和，拆分是附加列。 */
     humans: number
     agents: number
-    series: { date: string; created: number }[]
+    new_humans: number
+    new_agents: number
+    series: { date: string; created: number; human_created: number; agent_created: number }[]
   }
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
   /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
