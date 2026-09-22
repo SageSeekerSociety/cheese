@@ -1,6 +1,7 @@
 """Exercise connector output limits and executor mutation receipts together."""
 
 import asyncio
+import base64
 import io
 import json
 import os
@@ -275,6 +276,10 @@ def central_transport(executor, tmp_path, request):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 publications.append(payload)
                 result = {"data": {"content": payload["content"]}}
+            elif self.path == "/topics/fixture/shown":
+                assert self.headers["X-Cheese-Turn"] == "fixture-turn"
+                platform_calls.append(payload)
+                result = {"data": {"content": payload.get("path"), "ok": True}}
             else:
                 result = runtime.request(state, payload["method"], payload["params"])
             if drop:
@@ -396,6 +401,159 @@ def test_platform_mcp_preserves_backend_permission_failure(central_transport):
             },
         )
     assert len(clients) == 1
+
+
+def test_send_user_file_publishes_the_bytes_on_the_rooms_own_shown_route(central_transport):
+    """A `SendUserFile` the plugin already read must land where this room shows
+    what 芝士 points at — `POST /topics/{id}/shown`, the route `cheese show`
+    publishes through — and answer the caller with the attachments it promised.
+    """
+    process, _, _, _ = central_transport
+    raw = b"%PDF-1.4 report"
+    result = process.call(
+        "tools/call",
+        {
+            "name": "send_user_file",
+            "arguments": {
+                "id": "delivered",
+                "session_id": "fixture",
+                "files": [
+                    {
+                        "path": "docs/report.pdf",
+                        "name": "report.pdf",
+                        "data_b64": base64.b64encode(raw).decode("ascii"),
+                    }
+                ],
+                "caption": "the failing case is row 42",
+                "status": "normal",
+                "display": "render",
+            },
+        },
+    )
+    value = json.loads(result["content"][0]["text"])["result"]
+    assert value["attachments"] == [
+        {
+            "path": "docs/report.pdf",
+            "size": len(raw),
+            "isImage": False,
+            "media_type": "application/pdf",
+            "pathValidated": True,
+        }
+    ]
+    assert value["caption"] == "the failing case is row 42"
+    assert value["display"] == "render"
+    shown = [call for call in process.platform_calls if "content_b64" in call]
+    assert shown == [
+        {
+            "path": "docs/report.pdf",
+            "as": "pdf",
+            "content_b64": base64.b64encode(raw).decode("ascii"),
+        }
+    ]
+    assert [note["content"] for note in process.publications] == [
+        "the failing case is row 42"
+    ]
+
+
+def test_send_user_file_reads_a_file_the_plugin_host_never_saw(central_transport):
+    """The plugin reads through `$.fs`, which is capped and is not where a
+    private container keeps its files. A path that arrives without bytes is read
+    off the executor instead — the same machine every other project file call
+    goes to.
+    """
+    process, _, _, work = central_transport
+    (work / "shot.png").write_bytes(b"\x89PNG-shot")
+    result = process.call(
+        "tools/call",
+        {
+            "name": "send_user_file",
+            "arguments": {
+                "id": "machine-read",
+                "session_id": "fixture",
+                "files": [{"path": str(work / "shot.png"), "name": "shot.png"}],
+                "status": "proactive",
+            },
+        },
+    )
+    value = json.loads(result["content"][0]["text"])["result"]
+    assert value["attachments"][0]["path"] == "shot.png"
+    assert value["attachments"][0]["isImage"] is True
+    assert "upload_error" not in value["attachments"][0]
+    shown = process.platform_calls[-1]
+    assert shown["path"] == "shot.png"
+    assert shown["as"] == "png"
+    assert base64.b64decode(shown["content_b64"]) == b"\x89PNG-shot"
+
+
+def test_send_user_file_reports_what_it_could_not_deliver_without_lying(central_transport):
+    """One bad file must not take the good ones down with it, and a failure is
+    reported in the entry it belongs to — never a success the room never sees.
+    """
+    process, _, _, work = central_transport
+    (work / "good.md").write_text("# ok\n")
+    result = process.call(
+        "tools/call",
+        {
+            "name": "send_user_file",
+            "arguments": {
+                "id": "partial",
+                "session_id": "fixture",
+                "files": [
+                    {"path": "missing.bin", "name": "missing.bin"},
+                    {"path": "good.md", "name": "good.md"},
+                    {
+                        "path": "huge.bin",
+                        "name": "huge.bin",
+                        "upload_error": "file is over the 10MB limit",
+                    },
+                ],
+                "status": "normal",
+            },
+        },
+    )
+    value = json.loads(result["content"][0]["text"])["result"]
+    missing, good, huge = value["attachments"]
+    assert "upload_error" in missing
+    assert "upload_error" not in good
+    assert good["path"] == "good.md"
+    assert huge["upload_error"] == "file is over the 10MB limit"
+    assert [call["path"] for call in process.platform_calls if "as" in call] == [
+        "good.md"
+    ]
+    assert process.publications == []
+
+
+def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside_it():
+    """`POST /topics/{id}/shown` takes a workspace-relative pointer and refuses
+    an absolute one; a file the agent left in `/tmp` still has to arrive, under
+    the name this room already gives a paste with no name of its own.
+    """
+    config = {"workspace": "/work", "central_workspace": "/center"}
+    assert central.send_user_file_paths("docs/report.pdf", config) == (
+        "/work/docs/report.pdf",
+        "docs/report.pdf",
+    )
+    assert central.send_user_file_paths("/work/shot.png", config) == (
+        "/work/shot.png",
+        "shot.png",
+    )
+    # The model is told the executor's paths; the plugin host sees the mount.
+    assert central.send_user_file_paths("/center/shot.png", config) == (
+        "/work/shot.png",
+        "shot.png",
+    )
+    machine, rel = central.send_user_file_paths("/tmp/scratch.bin", config)
+    assert machine == "/tmp/scratch.bin"
+    assert rel.startswith("uploads/") and rel.endswith("/scratch.bin")
+    _, escaped = central.send_user_file_paths("/work/../etc/passwd", config)
+    assert escaped.startswith("uploads/")
+    assert central.send_user_file_body("report.pdf", b"%PDF") == {
+        "as": "pdf",
+        "content_b64": base64.b64encode(b"%PDF").decode("ascii"),
+    }
+    # An extension the room has no kind for is not silently typed as something
+    # it is not beyond the fallback the room already applies to every caller.
+    assert central.send_user_file_body("archive.zip", b"PK")["as"] == "html"
 
 
 @pytest.mark.parametrize(

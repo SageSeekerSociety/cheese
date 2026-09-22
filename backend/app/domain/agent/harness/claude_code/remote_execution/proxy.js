@@ -13,6 +13,64 @@ function remotePath(path) {
     : path;
 }
 
+// The model is told the executor's spelling of every path (prompt.section
+// rewrites them), while $.fs sees this host — where a forwarded workspace sits
+// at central_workspace. Try both so a SendUserFile path works whichever
+// spelling the model used, and whichever side of the mount the name resolves on.
+function localPaths(path) {
+  const seen = [path];
+  const root = execution.central_workspace;
+  const remote = execution.workspace;
+  if (path === remote || path.startsWith(remote + "/")) {
+    seen.push(root + path.slice(remote.length));
+  } else if (!path.startsWith("/") && root) {
+    seen.push(root + "/" + path);
+  }
+  return seen;
+}
+
+const SEND_USER_FILE_MAX_BYTES = 10 * 1024 * 1024;
+
+async function sendUserFile($, tool_use_id, args) {
+  const files = [];
+  for (const entry of args.files || []) {
+    const path = typeof entry === "string" ? entry : String(entry);
+    const name = path.replace(/\\/g, "/").split("/").pop() || "file";
+    let data_b64;
+    let upload_error;
+    for (const candidate of localPaths(path)) {
+      try {
+        const stat = await $.fs.stat({ path: candidate, resolve: false });
+        if (stat.kind !== "file") continue;
+        if (stat.size > SEND_USER_FILE_MAX_BYTES) {
+          upload_error = `file is over the ${SEND_USER_FILE_MAX_BYTES / (1024 * 1024)}MB limit`;
+          break;
+        }
+        data_b64 = (await $.fs.read({ path: candidate, as: "bytes" })).base64;
+        break;
+      } catch (error) {
+        // $.fs.read refuses anything over its own transfer cap; the transport
+        // still reads that file from the executor and applies the real limit.
+        if (String(error).includes("byte limit")) break;
+      }
+    }
+    files.push({
+      path,
+      name,
+      ...(data_b64 === undefined ? {} : { data_b64 }),
+      ...(upload_error === undefined ? {} : { upload_error }),
+    });
+  }
+  const response = await $.mcp.call("native", "send_user_file", {
+    ...args,
+    files,
+    id: tool_use_id,
+    session_id: await $.session.id(),
+  });
+  if (response.isError) return { deny: JSON.stringify(response.content) };
+  return JSON.parse(response.content[0].text);
+}
+
 export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
@@ -51,6 +109,18 @@ export function register(on) {
         return outcome;
       } catch (error) {
         return { deny: "Remote execution failed: " + String(error) };
+      }
+    }
+    // SendUserFile is the build's own upload of a local file to whoever is
+    // watching. Left alone it POSTs to Anthropic's /api/oauth/file_upload,
+    // which this deployment's scoped token cannot authenticate — the tool
+    // reports 401 and the room never sees the file. Deliver through the room's
+    // own route instead, so the caller gets the result shape it expects.
+    if (tool === "SendUserFile") {
+      try {
+        return await sendUserFile($, tool_use_id, args);
+      } catch (error) {
+        return { deny: "Cheese delivery failed: " + String(error) };
       }
     }
     for (const server of execution.mcp_servers || []) {
