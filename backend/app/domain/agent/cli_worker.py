@@ -55,12 +55,12 @@ def _schema(action):
     return value
 
 
-def _leaf_commands(parser, prefix=()):
+def _leaf_commands(parser, prefix=(), ancestors=()):
     subparsers = next(
         (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None
     )
     if subparsers is None:
-        yield prefix, parser
+        yield prefix, ancestors, parser
         return
     seen = set()
     for name, child in subparsers.choices.items():
@@ -68,18 +68,24 @@ def _leaf_commands(parser, prefix=()):
         if id(child) in seen:
             continue
         seen.add(id(child))
-        yield from _leaf_commands(child, (*prefix, name))
+        yield from _leaf_commands(child, (*prefix, name), (*ancestors, parser))
 
 
 def _tool_name(command):
     return "cheese_" + "_".join(part.replace("-", "_") for part in command)
 
 
+def _description(ancestors, leaf):
+    body = leaf.description or leaf.format_usage().strip()
+    context = [parser.description for parser in ancestors if parser.description]
+    return "\n\n".join((*context, body)) if context else body
+
+
 def _tools(parser):
     if parser is None:
         raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
     tools = []
-    for command, leaf in _leaf_commands(parser):
+    for command, ancestors, leaf in _leaf_commands(parser):
         properties = {}
         required = []
         for action in leaf._actions:
@@ -95,7 +101,7 @@ def _tools(parser):
         tools.append(
             {
                 "name": _tool_name(command),
-                "description": leaf.description or leaf.format_usage().strip(),
+                "description": _description(ancestors, leaf),
                 "inputSchema": schema,
             }
         )
@@ -105,7 +111,7 @@ def _tools(parser):
 def _command(parser, tool, arguments):
     if parser is None:
         raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
-    for command, leaf in _leaf_commands(parser):
+    for command, _, leaf in _leaf_commands(parser):
         if _tool_name(command) != tool:
             continue
         option_argv: list[str] = []
