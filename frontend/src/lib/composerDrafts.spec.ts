@@ -6,7 +6,14 @@ import type { Block, ChatAttachment } from '@/cx_types'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { clearComposerDrafts, forgetComposerDraft, loadComposerDraft, saveComposerDraft } from './composerDrafts'
+import {
+  clearComposerDrafts,
+  forgetComposerDraft,
+  loadComposerDraft,
+  loadComposerMemory,
+  saveComposerDraft,
+  saveComposerMemory,
+} from './composerDrafts'
 
 const HOUR = 60 * 60 * 1000
 const DAY = 24 * HOUR
@@ -27,6 +34,7 @@ function storedKeys(): string[] {
 
 beforeEach(() => {
   localStorage.clear()
+  clearComposerDrafts()
 })
 
 describe('写进去读得回来', () => {
@@ -136,5 +144,38 @@ describe('清理', () => {
     expect(loadComposerDraft('t1')).toBeNull()
     expect(loadComposerDraft('t2')).toBeNull()
     expect(storedKeys()).toEqual(['accessToken', 'user'])
+  })
+
+  // 换账号不刷新页面（SPA），所以只清磁盘等于没清：内存那层排在磁盘前面被读，
+  // 上一个人的半句话、回复目标、已传好的附件和没送出去的消息会原样出现在下一个
+  // 人的输入框里。这条盯的就是「两层都清干净了」。
+  it('换人登录时内存里那层也要抹掉，连没送出去的消息一起', () => {
+    saveComposerMemory('t1', {
+      draft: '上一个人的半句话',
+      reply: blockOf('m1'),
+      atts: [att('a.png')],
+      outbox: [{ clientId: 'c1', content: '没送出去的那条', state: 'queued' }],
+    })
+
+    clearComposerDrafts()
+
+    expect(loadComposerMemory('t1')).toBeUndefined()
+  })
+
+  // 磁盘那层判空会顺手调 forgetComposerDraft。要是那个函数连内存一起清，消息一
+  // 发出去（正文空了、发件箱还压着）发件箱就没了，重试入口跟着消失。
+  it('清掉磁盘上那份，不会带走还没送出去的消息', () => {
+    saveComposerMemory('t1', {
+      draft: '',
+      reply: null,
+      atts: [],
+      outbox: [{ clientId: 'c1', content: '正在等回声', state: 'sending' }],
+    })
+    saveComposerDraft('t1', { draft: '', reply: null, atts: [] })
+
+    forgetComposerDraft('t1')
+
+    expect(loadComposerDraft('t1')).toBeNull()
+    expect(loadComposerMemory('t1')?.outbox).toHaveLength(1)
   })
 })

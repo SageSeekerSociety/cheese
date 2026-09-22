@@ -12,36 +12,14 @@ const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
 const BOTTOM_THRESHOLD = 80
 
 // 每话题草稿 (飞书语义): what you had typed, who you were replying to, and the
-// images waiting to go — all belong to the topic they were composed in. Module
-// scope so they survive this component unmounting, same as scrollMemory.
+// images waiting to go — all belong to the topic they were composed in.
 //
 // 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
 // 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
 // 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
 //
-// 这份内存镜像**不是持久的那一份**：service worker 更新触发的刷新没有卸载、没有
-// 切话题，这个 Map 连同页面一起没了。所以同一份内容还写进 localStorage
-// (lib/composerDrafts.ts)，刷新后由 restoreComposer 接回来；内存里这份仍然是
-// 权威——它连发件箱都带着，而发件箱故意不落盘。
-interface ComposerDraft {
-  draft: string
-  reply: Block | null
-  atts: ChatAttachment[]
-  /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
-  outbox: Outgoing[]
-}
-const composerMemory = new Map<string, ComposerDraft>()
-
-/** 发件箱里一条还没落库的消息。 */
-interface Outgoing {
-  clientId: string
-  content: string
-  replyTo?: string
-  atts?: ChatAttachment[]
-  /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
-  state: 'queued' | 'sending' | 'failed'
-  error?: string
-}
+// 存在哪、分几层、谁清它，全在 lib/composerDrafts.ts —— 这里只有调用。那个 Map
+// 一度住在这个文件里，于是同一个概念有两套规则，换账号只清掉了其中一套。
 </script>
 
 <script setup lang="ts">
@@ -60,7 +38,7 @@ import type {
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
-import type { StoredComposerDraft } from '../lib/composerDrafts'
+import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/composerDrafts'
 
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -86,7 +64,7 @@ import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { forgetComposerDraft, loadComposerDraft, saveComposerDraft } from '../lib/composerDrafts'
+import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
@@ -1784,36 +1762,32 @@ function sendDraft(opts?: { summon?: boolean }) {
 // "just a preference" — each field names something in the topic being left
 // (a block to reply to, files already uploaded to that topic's worktree).
 function rememberComposer(topicId: string) {
-  const hasContent =
-    !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
-  if (!hasContent) {
-    composerMemory.delete(topicId)
-    forgetComposerDraft(topicId)
-  } else {
-    composerMemory.set(topicId, {
-      draft: draft.value,
-      reply: replyTarget.value,
-      atts: uploaded(pendingAtts.value),
-      outbox: outbox.value.slice(),
-    })
-    // 同一份内容落到磁盘上（发件箱除外，见 lib/composerDrafts.ts 的解释）。
-    saveComposerDraft(topicId, {
-      draft: draft.value,
-      reply: replyTarget.value,
-      atts: uploaded(pendingAtts.value),
-    })
-  }
+  // 两层各写一次，都不在这里判空——两层的「空」本来就不是同一个定义（内存那层还
+  // 管着发件箱），各自判各自的。在这里判一次再分发，等于替它们决定，而那个判据
+  // 只可能对其中一层是对的。
+  saveComposerMemory(topicId, {
+    draft: draft.value,
+    reply: replyTarget.value,
+    atts: uploaded(pendingAtts.value),
+    outbox: outbox.value.slice(),
+  })
+  // 落到磁盘上的那份不含发件箱，见 lib/composerDrafts.ts 的解释。
+  saveComposerDraft(topicId, {
+    draft: draft.value,
+    reply: replyTarget.value,
+    atts: uploaded(pendingAtts.value),
+  })
 }
 
 /** 落盘的那份没有发件箱（它不跨刷新，也不该跨）。 */
-function asComposerDraft(stored: StoredComposerDraft | null): ComposerDraft | undefined {
+function asComposerDraft(stored: StoredComposerDraft | null): ComposerMemory | undefined {
   return stored ? { draft: stored.draft, reply: stored.reply, atts: stored.atts, outbox: [] } : undefined
 }
 
 function restoreComposer(topicId: string | undefined) {
   // 内存里那一份优先：它带着发件箱。只有它不在时（刚刷新过、刚开机）才回落到
   // 磁盘上那份。
-  const saved = topicId ? composerMemory.get(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
+  const saved = topicId ? loadComposerMemory(topicId) ?? asComposerDraft(loadComposerDraft(topicId)) : undefined
   draft.value = saved?.draft ?? ''
   replyTarget.value = saved?.reply ?? null
   pendingAtts.value = saved?.atts ?? []
