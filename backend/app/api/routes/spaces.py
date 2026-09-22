@@ -19,6 +19,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.shell.catalog import is_course_shell
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
@@ -520,9 +521,13 @@ async def _build_full_space_payload(
 ) -> dict:
     """Build a Space response dict that matches the frontend Space type.
 
-    Always includes `admins` (hydrated) and `classificationTopics` so that any
-    GET/POST/PATCH response is interchangeable from the frontend's perspective
-    (its store overwrites local state with the response payload).
+    Always includes `admins` (hydrated), `classificationTopics` and `isCourse` so
+    that any GET/POST/PATCH response is interchangeable from the frontend's
+    perspective (its store overwrites local state with the response payload).
+    `isCourse` belongs here for a reason the other two do not have: the frontend
+    picks the *landing* from it (course home vs. problem list) the moment a board
+    is created or joined, so a response that omitted it would send a brand-new
+    course to the problem list.
     """
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
@@ -532,6 +537,8 @@ async def _build_full_space_payload(
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    # 这块板是不是一门课：由它默认分组声明的壳算（`app.domain.shell.catalog`）。
+    space_data["isCourse"] = await service.is_course(space_id=space.id)
     return space_data
 
 
@@ -565,36 +572,9 @@ async def get_space(
     if queryMyRank:
         my_rank = await service.get_user_rank(space_id, viewer_id)
 
-    # Include admins with user info
-    admin_relations = await service.list_admins(space_id)
-    user_repo = UserRepository(session=db)
-    profile_repo = UserProfileRepository(session=db)
-    admins_list = []
-    for rel in admin_relations:
-        user = await user_repo.get_by_id(rel.user_id)
-        profile = (
-            await profile_repo.get_profile_by_user_id(rel.user_id) if user else None
-        )
-        user_info = (
-            {
-                "id": user.id,
-                "username": user.username,
-                "nickname": profile.nickname if profile else user.username,
-                "avatarId": profile.avatar_id if profile else None,
-                "intro": profile.intro if profile else "",
-            }
-            if user
-            else {"id": rel.user_id, "username": "unknown"}
-        )
-        admins_list.append(_admin_to_api_model(rel, user_info))
-
-    space_data = _space_to_api_model(space)
-    space_data["admins"] = admins_list
-    # Frontend's stores/space.ts always passes queryClassificationTopics=true
-    # and reads space.classificationTopics directly. Always populate it (cheap)
-    # so callers that forget the flag still get a sensible value.
-    topics = await service.list_classification_topics(space_id)
-    space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    # admins / classificationTopics / isCourse 都由这一个构建器给齐：前端拿到任何
+    # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
+    space_data = await _build_full_space_payload(space, service=service, db=db)
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
 
     data: dict = {
@@ -633,6 +613,9 @@ async def get_spaces(
 
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
+    # 这一页里哪些板是课程：一问拿全页，别一行一次往返（见
+    # `SpaceRepository.default_category_shells`）。
+    course_shells = await service.default_category_shells(space_ids=space_ids)
 
     items: list[dict] = []
     for s in spaces:
@@ -663,6 +646,7 @@ async def get_spaces(
         dto["classificationTopics"] = [
             {"id": t.id, "name": t.name} for t in topics_by_space.get(s.id, [])
         ]
+        dto["isCourse"] = is_course_shell(course_shells.get(s.id))
 
         items.append(dto)
 
