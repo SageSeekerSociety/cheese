@@ -147,12 +147,17 @@ function fmtDate(d: string | null): string {
 }
 
 // 一份周报讲的那一周。窗口是它的身份：并排摆着的几份周报，是这一行把它们分开的。
+//
+// 按 UTC 读：窗口是**这段时间的标签**，不是某个时刻。用本地时区渲染的话，同一个
+// 窗口在西半球会整体前移一天（8月31日 00:00Z 在 PDT 是 8月30日），而写它的人按
+// 日期想事情。生产端把不带时区的日期按 UTC 读（见 `_parse_moment`），这里按 UTC
+// 显示，两边就一直是同一个日子。
 function fmtDay(iso: unknown): string {
   if (typeof iso !== 'string' || !iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
-  const ymd = `${d.getMonth() + 1}月${d.getDate()}日`
-  return d.getFullYear() === new Date().getFullYear() ? ymd : `${d.getFullYear()}年${ymd}`
+  const ymd = `${d.getUTCMonth() + 1}月${d.getUTCDate()}日`
+  return d.getUTCFullYear() === new Date().getUTCFullYear() ? ymd : `${d.getUTCFullYear()}年${ymd}`
 }
 function weeklyWindow(w: Block): string {
   const since = fmtDay(w.meta?.since)
@@ -320,9 +325,7 @@ function topicTo(topicId: string | null | undefined) {
                由芝士写，所以要说清的是**怎么让它写**，不是它已经在写了。 -->
           <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
             <div>暂无周报</div>
-            <div class="text-caption mt-1">
-              在项目房间里 @ 芝士，说「写一份这周的项目周报」，它写完会记到这里
-            </div>
+            <div class="text-caption mt-1">在项目房间里 @ 芝士，说「写一份这周的项目周报」，它写完会记到这里</div>
             <v-btn
               v-if="rootTopicId"
               :to="topicTo(rootTopicId)"
