@@ -467,6 +467,14 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     assert row["count"] >= 1
     assert set(row) >= {"method", "route", "status", "count", "p50", "p95", "p99"}
 
+    # **数值**也要看一眼，不能只看「有这个键」。这一条是补的：`quantile` 曾经把
+    # 逐桶的计数当成累加的，于是样本落在两个以上桶里的路由 p95 永远返回最后一个桶的
+    # 上界 —— 也就是每条接口都报 10 秒 —— 而这一条用例当时只断言形状，一路绿着过去。
+    # 这里的请求是本机打本机，界取得很宽（5 秒），它拦不住较真，但拦得住「返回了桶的
+    # 上界」这一类。数值本身由 `test_core_utils` 那条按已知分布断言。
+    assert row["p50"] is not None and 0 <= row["p50"] < 5000
+    assert row["p95"] is not None and 0 <= row["p95"] < 5000
+
     # 路由模板：至少有一条带参数的路由是 `{...}` 而不是一个真 uuid。这条用例自己
     # 打的都是固定路径，所以另发一条带 id 的（404 也算流量，中间件照样记）。
     client.get("/feedback/00000000-0000-4000-8000-000000000000")
@@ -476,3 +484,21 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     routes = [row["route"] for row in again.json()["data"]["routes"]]
     assert any("{" in route for route in routes), routes
     assert not any("0000-4000-8000" in route for route in routes), routes
+
+    # **没进路由表的那些路径也只能占一个标签**。它们不是用户流量，是扫描器和拼错的
+    # 地址 —— 路径由外面随手写，按原始路径打标签等于让公网决定这个进程内存里长多少
+    # 条时间序列。上面那条带上 uuid 的走的是**匹配上的**路由（`/feedback/{id}` 存在），
+    # 所以这一条另打几条**谁也匹配不上**的。
+    for word in ("zzz-one", "zzz-two", "zzz-three"):
+        assert client.get(f"/{word}/inspect.php").status_code == 404
+    after = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
+    labels = [row["route"] for row in after.json()["data"]["routes"]]
+    assert not any("zzz" in label for label in labels), labels
+    assert labels.count("(unmatched)") <= 1, labels
+
+    # **正在处理的请求数扣掉了读它的这一条**。这条用例是串行打的，所以取快照的这一刻
+    # 除了它自己之外没有任何请求在飞 —— 报 0 才是真的 0，报 1 会让空闲的平台看着像
+    # 「有一条请求一直没处理完」。
+    assert after.json()["data"]["active_requests"] == 0
