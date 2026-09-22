@@ -243,12 +243,31 @@
     "createFailed": "Could not create the invite code",
     "createdTitle": "Here is your invite code",
     "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this board.",
-    "openCourse": "Open the course"
+    "openCourse": "Open the course",
+    "courseLinkTitle": "Course link",
+    "courseLinkHelp": "Send this link to the group: a student who opens it signs in, joins this course, gets his own project, and lands in the course. It decides only which screen he arrives on, never what he may see afterwards.",
+    "courseLinkCopy": "Copy link",
+    "courseLinkCopied": "Link copied",
+    "courseLinkFailed": "Could not read the course link"
   },
   "index": {
     "sortOptions": {
       "newest": "Newest",
       "hot": "Hot"
     }
+  },
+  "joinCourse": {
+    "title": "Join the course",
+    "joining": "Adding you to this course…",
+    "failedTitle": "This link does not work",
+    "failed": "This link cannot be used — it may have expired or run out of uses. Ask your teacher for another one.",
+    "joinedTitle": "You are in this course",
+    "noProject": "The teacher has just set the course up and published nothing yet. Your project arrives with the first thing they publish.",
+    "retry": "Try again",
+    "enterCourse": "Enter the course",
+    "teamTitle": "Find teammates?",
+    "teamBody": "This course can be done alone or in a group of two or three. You can skip this now and change it later.",
+    "teamLater": "On my own for now",
+    "teamNow": "Look at the groups"
   }
 }
