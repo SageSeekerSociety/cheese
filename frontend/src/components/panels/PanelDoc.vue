@@ -1429,29 +1429,59 @@ onBeforeUnmount(() => {
         </span>
         <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
 
+        <!-- 只读和源码是两种「这一格现在不照常」的状态：开着的时候写在这一条上，点它
+             就回去。平常用不上，进去的入口在 ⋯ 里。 -->
         <v-btn
-          v-if="!editingBlocked"
+          v-if="!editable && !editingBlocked"
           size="small"
           variant="text"
-          class="me-1 c-muted"
-          :disabled="sourceMode"
+          color="medium-emphasis"
+          class="me-1"
+          title="回到编辑"
           @click="toggleEditable"
         >
-          {{ editable ? '只读' : '编辑' }}
+          只读
         </v-btn>
-        <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
-             syntax the visual editor can't fully represent (军规 1)。手机上不提供，
-             见 editingBlocked。 -->
         <v-btn
-          v-if="mdAndUp"
+          v-if="sourceMode"
           size="small"
           variant="text"
-          :class="sourceMode ? 'tool-btn--active' : 'c-muted'"
-          title="源码模式（直接编辑 markdown 原文）"
+          class="me-1 tool-btn--active"
+          title="退出源码模式"
           @click="toggleSourceMode"
         >
           源码
         </v-btn>
+        <v-menu v-if="!editingBlocked || mdAndUp" location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <v-btn
+              v-bind="menuProps"
+              icon="mdi-dots-horizontal"
+              size="small"
+              variant="text"
+              color="medium-emphasis"
+              title="更多"
+              aria-label="更多"
+            />
+          </template>
+          <v-list density="compact" aria-label="文档选项">
+            <v-list-item
+              v-if="!editingBlocked"
+              :title="editable ? '设为只读' : '回到编辑'"
+              :disabled="sourceMode"
+              @click="toggleEditable"
+            />
+            <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
+                 syntax the visual editor can't fully represent (军规 1)。手机上不提供，
+                 见 editingBlocked。 -->
+            <v-list-item
+              v-if="mdAndUp"
+              :title="sourceMode ? '退出源码模式' : '源码模式'"
+              subtitle="直接编辑 markdown 原文"
+              @click="toggleSourceMode"
+            />
+          </v-list>
+        </v-menu>
       </div>
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
            source mode — the states they describe survive a mode switch. -->
