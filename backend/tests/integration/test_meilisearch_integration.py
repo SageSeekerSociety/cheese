@@ -25,6 +25,40 @@ if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
 
 
+def _wait_for_question_ids(
+    api_client: TestClient,
+    headers: dict[str, str],
+    expected: dict[str, int],
+    *,
+    timeout_s: float = 10,
+    sleep=time.sleep,
+) -> None:
+    """Wait until each new row is returned through the production search API."""
+    deadline = time.monotonic() + timeout_s
+    pending = dict(expected)
+    while pending:
+        for query, expected_id in list(pending.items()):
+            response = api_client.get(
+                "/questions",
+                params={"q": query, "page_size": 10},
+                headers=headers,
+            )
+            assert response.status_code == 200, response.text
+            returned = {
+                question["id"] for question in response.json()["data"]["questions"]
+            }
+            if expected_id in returned:
+                del pending[query]
+        if not pending:
+            return
+        if time.monotonic() >= deadline:
+            pytest.fail(
+                "Meilisearch did not return the newly indexed question IDs: "
+                f"{sorted(pending.values())}"
+            )
+        sleep(0.05)
+
+
 @pytest.fixture(scope="module")
 def _ensure_indices(_portal: "BlockingPortal") -> Generator[None]:
     """Point only this module at the dedicated service and configure its index."""
@@ -125,22 +159,16 @@ class TestMeilisearchQuestionSearch:
             "q3_id": q3.json()["data"].get("id")
             or q3.json()["data"].get("question", {}).get("id"),
         }
-        deadline = time.monotonic() + 10
-        while True:
-            response = api_client.get(
-                "/questions",
-                params={"q": "深度学习", "page_size": 10},
-                headers=h,
-            )
-            assert response.status_code == 200, response.text
-            if any(
-                "深度学习" in question["title"]
-                for question in response.json()["data"]["questions"]
-            ):
-                return result
-            if time.monotonic() >= deadline:
-                pytest.fail("Meilisearch did not index the created question within 10s")
-            time.sleep(0.05)
+        _wait_for_question_ids(
+            api_client,
+            h,
+            {
+                "深度学习": result["q1_id"],
+                "PostgreSQL": result["q2_id"],
+                "React Vue": result["q3_id"],
+            },
+        )
+        return result
 
     def test_chinese_keyword_search(self, search_setup: dict, api_client: TestClient):
         """Search for Chinese keywords returns relevant results."""
@@ -160,7 +188,7 @@ class TestMeilisearchQuestionSearch:
         """Meilisearch typo tolerance finds results despite typos."""
         resp = api_client.get(
             "/questions",
-            params={"q": "PostgreSQ", "page_size": 10},
+            params={"q": "PostgreSXL", "page_size": 10},
             headers=search_setup["headers"],
         )
         assert resp.status_code == 200
@@ -192,3 +220,36 @@ class TestMeilisearchQuestionSearch:
         assert resp.status_code == 200
         questions = resp.json()["data"]["questions"]
         assert questions == []
+
+
+def test_readiness_waits_for_every_new_question_id() -> None:
+    class Response:
+        status_code = 200
+        text = ""
+
+        def __init__(self, ids: list[int]) -> None:
+            self._ids = ids
+
+        def json(self) -> dict:
+            return {"data": {"questions": [{"id": value} for value in self._ids]}}
+
+    class DelayedSecondQuestion:
+        def __init__(self) -> None:
+            self.calls = {"first": 0, "second": 0}
+
+        def get(self, _path, *, params, headers):
+            del headers
+            query = params["q"]
+            self.calls[query] += 1
+            if query == "second" and self.calls[query] < 3:
+                return Response([])
+            return Response([1 if query == "first" else 2])
+
+    client = DelayedSecondQuestion()
+    _wait_for_question_ids(
+        client,  # type: ignore[arg-type]
+        {},
+        {"first": 1, "second": 2},
+        sleep=lambda _seconds: None,
+    )
+    assert client.calls == {"first": 1, "second": 3}
