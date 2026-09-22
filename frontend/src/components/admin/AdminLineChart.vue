@@ -180,7 +180,7 @@ const onClick = (event: MouseEvent): void => {
           class="alc__line"
           :d="path(s)"
           :style="{ stroke: SERIES_COLOR[s.style] }"
-          :stroke-dasharray="s.style === 'dashed' ? '4 3' : undefined"
+          :stroke-dasharray="DASH[s.style]"
         />
         <!-- 标记：实线系列是实心圆，虚线系列是空心圆（§7.5，判据见 `hollow`）。空心那
              一种用卡片的底色填，而不是 `fill: none` —— 后者会让线从洞里穿过去，看起来

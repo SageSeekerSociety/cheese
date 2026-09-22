@@ -102,6 +102,24 @@ test('顶栏的反馈入口：和语言开关同高、有一圈中性描边，�
       tag: el.tagName,
       href: el.getAttribute('href'),
       icons: el.querySelectorAll('.v-icon').length,
+      // 「那两个字放得下吗」。上面那条高度断言拦住的是「矮了一档」，拦不住
+      // 「宽度被钉死、字溢出去」—— 真发生过：`:size="24"` 对数字给的是一个**方格**
+      // （`useSize` 同时下发内联的 width 与 height），于是这颗带文字的按钮被压成
+      // 24×24，而里面的图标 + 「反馈」有 25px 宽、`overflow` 是 visible，字直接压到
+      // 右边那颗语言开关上。只量高度的话两边都是 24，一切正常。
+      contentRight: (() => {
+        const c = el.querySelector('.v-btn__content');
+        return c ? c.getBoundingClientRect().right : null;
+      })(),
+      right: el.getBoundingClientRect().right,
+      contentScrollW: (() => {
+        const c = el.querySelector('.v-btn__content');
+        return c ? c.scrollWidth : null;
+      })(),
+      contentClientW: (() => {
+        const c = el.querySelector('.v-btn__content');
+        return c ? c.clientWidth : null;
+      })(),
     };
   });
 
@@ -123,4 +141,11 @@ test('顶栏的反馈入口：和语言开关同高、有一圈中性描边，�
   // 仍然是一条真链接
   expect(box.tag).toBe('A');
   expect(box.href).toContain('/feedback');
+
+  // **那两个字在框里**。这一条是补的：上面所有断言都通过了、而按钮是个 24×24 的方格、
+  // 「反馈」两个字压在隔壁语言开关上。判据分两半 —— 内容不越出按钮右沿（+1px 亚像素
+  // 容差），以及内容在自己的盒子里没有被裁（scrollWidth ≤ clientWidth）。
+  expect(box.contentRight).not.toBeNull();
+  expect(box.contentRight as number).toBeLessThanOrEqual(box.right + 1);
+  expect(box.contentScrollW as number).toBeLessThanOrEqual((box.contentClientW as number) + 1);
 });

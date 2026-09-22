@@ -19,14 +19,7 @@
          图标用 `<template #prepend>` 显式给 14px，不用 `prepend-icon` prop——后者由
          Vuetify 按按钮尺寸推导，配 12px 文案会偏大。去掉 `title`：按钮已经有可见
          文案，那个 tooltip 只是把标签再念一遍。 -->
-    <v-btn
-      class="feedback-entry"
-      variant="outlined"
-      color="on-surface-variant"
-      :size="24"
-      to="/feedback"
-      aria-label="反馈"
-    >
+    <v-btn class="feedback-entry" variant="outlined" color="on-surface-variant" to="/feedback" aria-label="反馈">
       <template #prepend>
         <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
       </template>
@@ -191,11 +184,14 @@ onMounted(() => {
   font-size: 12px;
 }
 
-/* 和语言开关同一档尺寸：这条系统栏里的东西高度必须一致，否则整条会看起来参差。
-   高度是 `:size="24"` 给出的**内联** `height`，`min-height` 压不过它——所以原来那句
-   注释其实没成立（量出来 28 ≠ 语言开关的 24），现在由 `:size` 对齐，这里只管水平
-   内边距和字号。 */
+/* 和语言开关同一档高度：这条系统栏里的东西高度必须一致，否则整条会看起来参差。
+   高度写在这里，**不用 `:size="24"`** —— 那个 prop 对数字给的是「一个方格」：
+   `useSize` 同时下发内联的 `width` 和 `height`，于是这颗**带文字**的按钮被压成
+   24×24，而里面的「图标 + 反馈」有 25px 宽，`overflow` 又是 visible：字直接压到右边
+   那颗语言开关上（在真浏览器里量到过：按钮右沿 1346、内容右沿 1353）。语言开关是
+   `icon` 按钮，方格正是它要的；这一颗要的是「高 24、宽随内容」。 */
 .app-system-bar .feedback-entry {
+  height: 24px;
   padding: 0 10px;
   font-size: 12px;
 }

@@ -96,23 +96,32 @@ function sumOf(values: number[] | undefined): string {
 
 /* ---- 反馈那一块 ---- */
 
-const counts = computed(() => store.counts)
-
-/** 反馈的 KPI。前两张走**列表接口**的计数（`loadAdmin` 带回来的 `counts`），后两张走
- *  看板接口 —— 两个请求并发，互不依赖。 */
+/** 反馈的 KPI。**四张都走看板接口这一条**（`/admin/stats/feedback` 的 `counts`），
+ *  不再有前两张走列表接口那种混搭。
+ *
+ *  改的原因是两类错，都出在「同一个数有两个来源」上：
+ *
+ *   * 那两个计数（`unassigned` / `active`）在**列表接口**那一趟里也回，而列表那一趟
+ *     失败时它的初值是全 0 的实体对象（不是 null）—— `num()` 拦不住，于是「队列加载
+ *     失败」会被画成「待分诊 0、进行中 0」，还带着能点进队列的链接。
+ *   * 一行的四张卡有两套加载态（`adminLoading` / `statsLoading`）、两个失败原因，而
+ *     它们说的是同一件事：这一栏现在什么样。
+ *
+ *  两个端点的这两个数是**同一个来源**（都走 `FeedbackService.counts`，管理端列表那条
+ *  路由在 `routes/admin_feedback.py` 里就是这么取的），所以换过来数不变、含义不变。 */
 const feedbackKpis = computed(() => [
   {
     key: 'untriaged',
     label: t('feedback.dashboard.kpi.untriaged'),
-    value: num(counts.value.unassigned),
-    loading: store.adminLoading,
+    value: num(feedback.value?.counts.unassigned),
+    loading: store.statsLoading,
     to: queue({ assigned: 'none' }),
   },
   {
     key: 'inProgress',
     label: t('feedback.dashboard.kpi.inProgress'),
-    value: num(counts.value.active),
-    loading: store.adminLoading,
+    value: num(feedback.value?.counts.active),
+    loading: store.statsLoading,
     to: queue({ status: 'in_progress' }),
   },
   {
@@ -182,14 +191,14 @@ const usageKpis = computed(() => [
     key: 'tokens',
     label: t('feedback.dashboard.usage.tokens'),
     value: num(usage.value?.totals.tokens),
-    loading: store.statsLoading && store.statsKind === 'usage',
+    loading: store.statsLoading,
     to: queue(),
   },
   {
     key: 'calls',
     label: t('feedback.dashboard.usage.calls'),
     value: num(usage.value?.totals.calls),
-    loading: store.statsLoading && store.statsKind === 'usage',
+    loading: store.statsLoading,
     to: queue(),
   },
 ])
@@ -235,19 +244,19 @@ const peopleKpis = computed(() => [
     key: 'accounts',
     label: t('feedback.dashboard.people.total'),
     value: num(platform.value?.people.total),
-    loading: store.statsLoading && store.statsKind === 'platform',
+    loading: store.statsLoading,
   },
   {
     key: 'new',
     label: t('feedback.dashboard.people.new'),
     value: num(platform.value?.people.new),
-    loading: store.statsLoading && store.statsKind === 'platform',
+    loading: store.statsLoading,
   },
   {
     key: 'admins',
     label: t('feedback.dashboard.people.admins'),
     value: num(platform.value?.people.admins),
-    loading: store.statsLoading && store.statsKind === 'platform',
+    loading: store.statsLoading,
   },
 ])
 
@@ -402,10 +411,17 @@ onMounted(() => {
         <div class="ad__cost" :class="{ 'ad__cost--partial': !store.statsLoading && !usage }">
           <span class="ad__cost-label t-meta-read">{{ t('feedback.dashboard.cost.label') }}</span>
           <v-skeleton-loader v-if="store.statsLoading" type="text" class="ad__cost-skel" />
-          <span v-else-if="usage" class="ad__cost-value t-meta-read t-num">{{ costText }}</span>
-          <!-- 自己占一整行（`flex: 1 0 100%`）：它是上面那个金额的**脚注**，横着挤在
-               同一行里会被读成同一个句子的一部分。 -->
-          <span v-if="usage && unpricedText" class="ad__cost-unpriced t-meta-read">{{ unpricedText }}</span>
+          <!-- 「拿到了」这一支是一个 `<template>`，不是一颗 `<span>`：脚注要挂在**同一个
+               分支**里。分开写的话（先一颗 `v-else-if="usage"` 的 span、再一颗独立的
+               `v-if="usage && unpricedText"`）下面那个 `v-else` 会认到脚注那颗头上 ——
+               于是 `unpriced_tokens = 0` 时（窗口里一条用量行都没有就是这个数）页面会
+               同时画出真金额和「成本数据未取到 ?」，把「都有单价」说成「没拿到」。 -->
+          <template v-else-if="usage">
+            <span class="ad__cost-value t-meta-read t-num">{{ costText }}</span>
+            <!-- 自己占一整行（`flex: 1 0 100%`）：它是上面那个金额的**脚注**，横着挤在
+                 同一行里会被读成同一个句子的一部分。 -->
+            <span v-if="unpricedText" class="ad__cost-unpriced t-meta-read">{{ unpricedText }}</span>
+          </template>
           <!-- §9.3 第 4 态：这一趟没拿到就说没拿到，别拿 0 冒充读数。 -->
           <template v-else>
             <span class="ad__cost-value t-meta-read">{{ t('feedback.dashboard.partial.title') }}</span>
