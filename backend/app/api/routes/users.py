@@ -3795,7 +3795,29 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
 async def _oauth_login_redirect(
     auth_service, user_id: int, provider_id: str, **extra: str | None
 ) -> RedirectResponse:
-    """Issue tokens for a resolved OAuth login and land on the success page."""
+    """Issue tokens for a resolved OAuth login and land on the success page.
+
+    An account with 2FA gets a 2FA ticket and the verify page instead, exactly
+    as a password login would: the provider stands in for the password only.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.login_security import TOTPService
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        requires_2fa = await TOTPService(redis).is_2fa_enabled(user_id)
+    finally:
+        await redis.aclose()
+    if requires_2fa:
+        return RedirectResponse(
+            _oauth_frontend_url(
+                settings.frontend_2fa_verify_path,
+                token=await _issue_2fa_pending_token(user_id),
+            ),
+            status_code=302,
+        )
+
     user_obj, _profile = await auth_service.get_user_with_profile(user_id)
     access_token_jwt = create_access_token(user_id, handle=user_obj.username)
     refresh_token = create_refresh_token(user_id)

@@ -23,8 +23,12 @@ from app.domain.oauth.services import OAuthUserInfo
 
 @pytest.fixture(autouse=True)
 def _no_redis(monkeypatch):
-    """The decision-page token is reserved in Redis; stand it in."""
+    """These handlers touch Redis for 2FA and single-use state; stand it in."""
     monkeypatch.setattr("app.core.single_use_state.reserve", AsyncMock())
+    monkeypatch.setattr(
+        "app.domain.user.login_security.TOTPService.is_2fa_enabled",
+        AsyncMock(return_value=False),
+    )
 
 
 def _fake_user(user_id: int, email: str, *, hashed_password: str | None = "$2b$fake"):

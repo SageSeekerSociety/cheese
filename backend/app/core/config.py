@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     frontend_oauth_error_path: str = "/account/oauth/error"
     frontend_oauth_verify_path: str = "/account/oauth/verify"
     frontend_oauth_complete_path: str = "/account/oauth/complete"
+    frontend_2fa_verify_path: str = "/account/verify-2fa"
     require_invite_code: bool = False
     jwt_secret: str = "dev-secret"
     access_token_expires_seconds: int = 15 * 60

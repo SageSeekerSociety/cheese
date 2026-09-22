@@ -3,9 +3,10 @@
 creation and binding — everything downstream of the provider callback, which
 is the part that needs no live OAuth provider."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from urllib.parse import parse_qs, urlparse
 
+import pyotp
 import pytest
 from fastapi.testclient import TestClient
 
@@ -34,6 +35,48 @@ def state_token(_portal) -> StateToken:
     return issue
 
 
+@pytest.fixture
+def totp_users(user_client: UserCreator) -> Generator[UserCreator]:
+    """``user_client`` that also removes the 2FA state its users leave behind.
+
+    TOTP secrets live in Redis and do not roll back with the per-test DB
+    transaction, while user ids restart with each session's fresh DB — a stale
+    secret would demand 2FA from an unrelated future test user.
+    """
+    created: list[CreatedUser] = []
+    original = user_client.create_user
+
+    def create_user(*args, **kwargs) -> CreatedUser:
+        user = original(*args, **kwargs)
+        created.append(user)
+        return user
+
+    user_client.create_user = create_user  # type: ignore[method-assign]
+    yield user_client
+
+    import redis
+
+    from app.domain.user.login_security import (
+        TOTP_ALWAYS_PREFIX,
+        TOTP_BACKUP_PREFIX,
+        TOTP_SECRET_PREFIX,
+    )
+
+    r = redis.Redis.from_url(settings.redis_url)
+    for user in created:
+        r.delete(
+            *(
+                f"{prefix}{user.user_id}"
+                for prefix in (
+                    TOTP_SECRET_PREFIX,
+                    TOTP_BACKUP_PREFIX,
+                    TOTP_ALWAYS_PREFIX,
+                )
+            )
+        )
+    r.close()
+
+
 def _loc(resp) -> str:
     assert resp.status_code == 302, f"expected 302, got {resp.status_code}: {resp.text}"
     return resp.headers["location"]
@@ -56,6 +99,21 @@ def _login(client: TestClient, user: CreatedUser, password: str | None = None):
         "/users/auth/login",
         json={"username": user.username, "password": password or user.password},
     )
+
+
+def _enable_2fa(client: TestClient, user: CreatedUser) -> str:
+    resp = _login(client, user)
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['data']['accessToken']}"}
+    init = client.post(f"/users/{user.user_id}/2fa/enable", headers=headers, json={})
+    secret = init.json()["data"]["secret"]
+    confirm = client.post(
+        f"/users/{user.user_id}/2fa/enable",
+        headers=headers,
+        json={"secret": secret, "code": pyotp.TOTP(secret).now()},
+    )
+    assert confirm.status_code == 200, confirm.text
+    return secret
 
 
 def _seed_pending(portal, session_id: str, data: dict) -> None:
@@ -318,6 +376,101 @@ class TestBindingSharesTheLoginBudget:
             follow_redirects=False,
         )
         assert _q(_loc(resp))["error_code"] == "TOO_MANY_ATTEMPTS"
+
+
+class TestOAuthRespectsTwoFactor:
+    """Signing in through a provider replaces the password step only."""
+
+    def _assert_2fa_ticket(self, client: TestClient, resp, secret: str) -> None:
+        loc = _loc(resp)
+        assert loc.startswith(f"{settings.frontend_url}/account/verify-2fa?")
+        assert "REFRESH_TOKEN" not in resp.headers.get("set-cookie", "")
+        done = client.post(
+            "/users/auth/verify-2fa",
+            json={"temp_token": _q(loc)["token"], "code": pyotp.TOTP(secret).now()},
+        )
+        assert done.status_code == 200, done.text
+        assert done.json()["data"]["accessToken"]
+
+    def test_binding_a_2fa_account_asks_for_the_second_factor(
+        self, api_client: TestClient, totp_users: UserCreator, state_token: StateToken
+    ):
+        user = totp_users.create_user()
+        secret = _enable_2fa(api_client, user)
+
+        resp = _bind(
+            api_client,
+            state_token(id=f"uid-2fa-bind-{user.user_id}"),
+            user.username,
+            user.password,
+        )
+        self._assert_2fa_ticket(api_client, resp, secret)
+
+    def test_verify_page_asks_a_2fa_account_for_the_second_factor(
+        self, api_client: TestClient, totp_users: UserCreator, _portal
+    ):
+        user = totp_users.create_user()
+        secret = _enable_2fa(api_client, user)
+        session_id = f"oauth_password_2fa_{user.user_id}"
+        _seed_pending(
+            _portal,
+            session_id,
+            {
+                "type": "password",
+                "providerId": "ruc",
+                "userInfo": {"id": f"uid-2fa-verify-{user.user_id}"},
+                "userId": user.user_id,
+                "username": user.username,
+            },
+        )
+        resp = api_client.post(
+            "/users/auth/oauth/verify",
+            json={"sessionId": session_id, "password": user.password},
+            follow_redirects=False,
+        )
+        self._assert_2fa_ticket(api_client, resp, secret)
+
+    def test_signing_in_with_a_linked_provider_asks_for_the_second_factor(
+        self,
+        api_client: TestClient,
+        totp_users: UserCreator,
+        state_token: StateToken,
+        monkeypatch,
+    ):
+        from app.domain.oauth.services import GitHubProvider, OAuthUserInfo
+
+        monkeypatch.setattr(settings, "oauth_enabled_providers", "github")
+        monkeypatch.setattr(settings, "oauth_github_client_id", "test-client-id")
+        monkeypatch.setattr(settings, "oauth_github_client_secret", "test-secret")
+        monkeypatch.setattr(
+            settings, "oauth_github_redirect_url", "https://example.com/cb"
+        )
+
+        async def fake_exchange_code(self, code):
+            return {"access_token": "gh-token"}
+
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(id="gh-2fa-uid", email=None, name="G")
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+
+        user = totp_users.create_user()
+        linked = _bind(
+            api_client,
+            state_token("github", id="gh-2fa-uid"),
+            user.username,
+            user.password,
+        )
+        assert _q(_loc(linked))["bound"] == "true"
+        secret = _enable_2fa(api_client, user)
+
+        resp = api_client.get(
+            "/users/auth/oauth/callback/github",
+            params={"code": "c", "state": "s"},
+            follow_redirects=False,
+        )
+        self._assert_2fa_ticket(api_client, resp, secret)
 
 
 class TestOAuthVerifyPending:
