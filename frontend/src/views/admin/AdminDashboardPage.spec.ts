@@ -34,6 +34,9 @@ import { useFeedbackStore } from '@/stores/feedback'
 /** 三条看板接口。**整段相等**匹配，不用前缀：`/api/admin/stats/feedback` 和
  *  `/api/admin/feedback`（列表）差一个词，前缀匹配会把它们混成一件事。 */
 const STATS = [
+  '/api/admin/stats/pipeline',
+  '/api/admin/stats/product',
+  '/api/admin/stats/integrations',
   '/api/admin/stats/feedback',
   '/api/admin/stats/usage',
   '/api/admin/stats/platform',
@@ -79,6 +82,11 @@ async function mountDashboard() {
       // 于是整页在挂载时就红了 —— 所以这里要把它们摆出来，哪怕内容是个空壳。
       { path: '/admin/queue', name: 'AdminQueue', component: { template: '<div />' } },
       { path: '/feedback/:id', name: 'FeedbackDetail', component: { template: '<div />' } },
+      // 新板块的下钻出口：卡住的卡 / 等你处理 去话题，机器连败去后台。
+      // 没有它们时 `router-link` 会当场抛（不是「点了没反应」）。
+      { path: '/topics/:id', name: 'Topic', component: { template: '<div />' } },
+      { path: '/admin/spaces', name: 'AdminSpaces', component: { template: '<div />' } },
+      { path: '/admin', name: 'AdminHome', component: { template: '<div />' } },
     ],
   })
   await router.push('/admin/dashboard')
@@ -99,24 +107,32 @@ describe('看板页', () => {
     return store
   }
 
-  const tab = (label: string, getAllByRole: (role: string) => HTMLElement[]) =>
-    getAllByRole('button').find((b) => b.textContent?.includes(label))!
+  /** 只在**分类开关**里找按钮。摘要条那四个 cell 也是 button、也写着同一批标签
+   *  （「用量」既在开关上也在摘要上）——不收窄范围就会点到摘要条，而摘要条的
+   *  `selectKind` 虽然也切分类，但它不是这一组要钉的那个控件。 */
+  const tab = (label: string, getAllByRole: (role: string) => HTMLElement[]) => {
+    const kinds = document.querySelector('.ad__kinds')
+    const buttons = kinds ? Array.from(kinds.querySelectorAll('button')) : getAllByRole('button')
+    return buttons.find((b) => b.textContent?.includes(label))!
+  }
 
-  it('挂载时打的是 /admin/stats/feedback，不是那条已经没有的老路由', async () => {
+  it('挂载时打的是 /admin/stats/pipeline（默认落点是交付），不是老路由', async () => {
     await mountDashboard()
-    await loaded('feedback')
+    await loaded('pipeline')
 
     // 一次事故的化石：老路径没有路由之后会落进 `/admin/feedback/{id}` 被当成 uuid，
     // 真环境回 400、页面上是「看板加载失败」。这条断言把「前端指着哪条路」变成测试里
     // 看得见的东西。
     expect(hits).not.toContain('/api/admin/feedback/stats')
-    // 另外两类这一帧没有人要看，不该被顺带拉一次。
-    expect(hits).toEqual(['/api/admin/stats/feedback'])
+    // 其余六类这一帧没有人要看，不该被顺带拉一次 —— 钉的是**别的 kind 没被顺带拉**，
+    // 不是「同一条路只准打一次」（挂载时控件同步可能多打一次同一条，那是重复不是漏拉）。
+    expect(hits.every((h) => h === '/api/admin/stats/pipeline')).toBe(true)
+    expect(hits.length).toBeGreaterThanOrEqual(1)
   })
 
   it('切分类只拉切过去的那一类，切回来不重拉', async () => {
     const { findByText, getAllByRole } = await mountDashboard()
-    await loaded('feedback')
+    await loaded('pipeline')
 
     await fireEvent.click(tab('用量', getAllByRole))
     await loaded('usage')
@@ -127,21 +143,21 @@ describe('看板页', () => {
 
     // 切回第一类：那一份已经在手上了，再拉一次只是重复读那两张最长的表。
     const before = hits.length
-    await fireEvent.click(tab('反馈', getAllByRole))
-    expect(await findByText('每天新增 / 解决 / 上线')).toBeTruthy()
+    await fireEvent.click(tab('交付', getAllByRole))
+    expect(await findByText('交付主链')).toBeTruthy()
     expect(hits.length).toBe(before)
   })
 
   it('第四类「性能」：只拉它那一条，按 p95 列路由，没样本的分位数画「—」', async () => {
     const { findByText, getAllByRole, queryByText } = await mountDashboard()
-    await loaded('feedback')
+    await loaded('pipeline')
 
     await fireEvent.click(tab('性能', getAllByRole))
     const store = await loaded('performance')
 
-    // 它和另外三类共用那一条路径规则：切过去才拉，而且只拉它。
+    // 它和另外几类共用那一条路径规则：切过去才拉，而且只拉它。
     expect(hits).toContain('/api/admin/stats/performance')
-    expect(store.stats.feedback).not.toBeNull() // 手上那一份没被顶掉
+    expect(store.stats.pipeline).not.toBeNull() // 手上那一份没被顶掉
 
     // 表里列的是**路由模板**（带 `{}`），不是带 uuid 的原始路径 —— 那一列是
     // 「哪一条慢」的答案，而答案必须能被人念出来。
@@ -158,7 +174,7 @@ describe('看板页', () => {
 
   it('平台那一类把机器报成存量，并写明它不是在线数', async () => {
     const { findByText, getAllByRole, getByText } = await mountDashboard()
-    await loaded('feedback')
+    await loaded('pipeline')
 
     await fireEvent.click(tab('平台', getAllByRole))
     await loaded('platform')

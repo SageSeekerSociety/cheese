@@ -135,16 +135,14 @@
       "created7d": "7 日新增",
       "unread": "未读",
       "urgent": "其中 {n} 条是无人认领的急件",
-      "urgentShort": "急件 {n}"
+      "urgentShort": "急件 {n}",
+      "untriagedShort": "待分诊 {n}"
     },
     "chart": {
       "title": "每天新增 / 解决 / 上线",
       "created": "新增",
       "resolved": "解决",
       "deployed": "上线"
-    },
-    "list": {
-      "title": "需处理 · {count}"
     },
     "cost": {
       "kpi": "成本",
@@ -159,17 +157,11 @@
       "title": "看板加载失败",
       "desc": "检查网络后重试。"
     },
-    "tab": {
-      "feedback": "反馈",
-      "usage": "用量",
-      "platform": "平台",
-      "performance": "性能"
-    },
     "perf": {
       "active": "正在处理",
       "uptime": "进程已运行",
       "lag": "事件循环滞后",
-      "routes": "在采的路由",
+      "routes": "有样本的路由",
       "routesTruncated": "{shown} / 共 {total} 条",
       "durationMinutes": "{n} 分钟",
       "durationHours": "{h} 小时 {m} 分",
@@ -179,7 +171,9 @@
         "count": "次数"
       },
       "note": "接口耗时按路由统计，数在进程内存里：只有此刻的、重启就清零，而且只覆盖这一个进程（业务 API）。要「过去一周怎么变的」得另做——原料在请求日志里。",
-      "slowest": "最慢那条 p95"
+      "slowest": "最慢那条 p95",
+      "routesOf": "有样本 {shown} / 共 {total}",
+      "routesNote": "分母是这个 app 注册的全部路由，分子是重启以来被访问过、留下样本的那些。少不代表路由少 —— 没被访问过的路由这里根本不出现。"
     },
     "usage": {
       "tokens": "窗口内 token",
@@ -235,6 +229,170 @@
       "note": "这一刻的状态，和上面的存量/窗口不是一回事。判据与 /health/detailed 同源。",
       "healthy": "正常",
       "degraded": "降级"
+    },
+    "tab": {
+      "feedback": "反馈",
+      "usage": "用量",
+      "platform": "平台",
+      "performance": "性能",
+      "pipeline": "交付",
+      "product": "产品",
+      "integrations": "集成"
+    },
+    "spine": {
+      "title": "交付主链",
+      "note": "四站是不同卡在不同时刻的通过量，不是同一批样本的漏斗。合并那一站只算骑 PR 的卡 —— 无 PR 的卡 pr_merged_at 永远是空。机器闸门已退役，不在链条上（#296）。"
+    },
+    "dwell": {
+      "minutes": "分",
+      "hours": "小时",
+      "days": "天"
+    },
+    "list": {
+      "title": "需处理 · {count}",
+      "all": "全部 {n} 件"
+    },
+    "pipeline": {
+      "title": "交付管线",
+      "kpi": {
+        "live": "还在走",
+        "stuck": "卡住了",
+        "dwell": "递卡到决议",
+        "needsYou": "等你处理",
+        "needsYouShort": "等你 {n}"
+      },
+      "station": {
+        "filed": "建卡",
+        "decided": "决议",
+        "merged": "合并",
+        "archived": "归档"
+      },
+      "stuck": {
+        "title": "卡住的卡",
+        "empty": "没有卡住的事",
+        "note": "「卡住」的判据是 note_code 属于停住集合，不是 note 文案 —— 新加的码默认是 info，漏进集合就永远安静。"
+      },
+      "needs": {
+        "title": "等你处理",
+        "empty": "没有等你的事",
+        "note": "三个理由是 delivery/addressing.py 的封闭集合（验收人 / 报告人 / 被点名），不发明第四个。",
+        "task": "任务",
+        "room": "房间"
+      },
+      "failures": {
+        "title": "轮次失败",
+        "note": "结构化来源是 blocks.meta 的 code，不是 agent_turns —— 那张表没有失败列。额度拒答另算：credits_refused_at 是唯一可靠来源。"
+      },
+      "code": {
+        "turn_timeout": "轮次超时",
+        "prompt_undelivered": "消息没送到",
+        "host_unreachable": "机器离线",
+        "storage_exhausted": "磁盘满",
+        "runtime_image_missing": "镜像缺失",
+        "subscription_credential_expired": "订阅凭据过期",
+        "workspace_vcs_perms": "工作区权限",
+        "other": "其它"
+      },
+      "host": {
+        "title": "机器连败",
+        "empty": "没有连败的机器",
+        "note": "只保留当前连败 —— 成功一次就删行，答不了「上周隔离过几台」。"
+      },
+      "backlog": {
+        "note": "积压是存量。非终态的卡会堵死整间房的重新递卡，所以「还在走」不只是排队慢。"
+      },
+      "age": {
+        "minutes": "{n} 分",
+        "hours": "{h} 小时",
+        "days": "{d} 天"
+      }
+    },
+    "product": {
+      "title": "产品健康",
+      "northStar": "本周验收通过的成果",
+      "northStarNote": "按 decided_at 计入。decided_at 是最后一次决议的时刻，revoke 会覆写它 —— 先采纳后撤销的卡会丢掉采纳那一刻。",
+      "rejection": {
+        "title": "递卡走到了哪",
+        "note": "打回 = 驳回 + 闸门红/没跑成 + 冲突 + 人工作废。撤销（真反悔）不算打回 —— 混进来会让打回率变成「一切不成功的比例」。分母是窗口内创建的卡（含还在走的）。",
+        "rejected": "人驳回",
+        "voided": "人工作废",
+        "revoked": "采纳后撤销",
+        "gate": "闸门红/没跑成",
+        "conflict": "合并冲突",
+        "live": "还在走"
+      },
+      "usefulness": {
+        "title": "主动消息有用吗",
+        "up": "有用",
+        "down": "没用",
+        "unrated": "读了没评",
+        "unread": "没读",
+        "note": "反馈只存在于通知上。房间里的主动消息大多落在 block 上，而 platform/cheese 的发言故意不投递收件人 —— 少了这句，「有用率 90%」会被读成「芝士说的话 90% 有用」。"
+      },
+      "unavailable": {
+        "title": "今天算不出来",
+        "note": "这两条没有数据源。放一个数字上去就只能是编的。",
+        "summon": "{'@'}芝士后的验收通过率：agent_turns 没有 summon 标记，accept_cards 也没有来源轮次，两者之间没有外键。",
+        "churn": "额度耗尽后的流失：compute_grants 没有 exhausted_at，user 没有 last_login。"
+      },
+      "northStarShort": "本周 {n}"
+    },
+    "integrations": {
+      "title": "集成与凭据",
+      "oauth": {
+        "title": "OAuth 凭据",
+        "total": "连接总数",
+        "expired": "已过期",
+        "expiring": "7 日内到期",
+        "noRefresh": "没有 refresh_token",
+        "note": "「没有 refresh_token」和「过期」不是一件事：过期的还能刷，没有 refresh 的到期那天就永远接不上了。token_expires 是写死的过期时刻，不是「刚刚用失败了」。"
+      },
+      "passkey": {
+        "title": "Passkey 覆盖",
+        "note": "分母是全部未删账号，不是活跃账号（user 没有 last_login）。TOTP 的开关住在 Redis，不在库里 —— 所以这里报的是 passkey，不是「2FA 覆盖率」。"
+      },
+      "delivery": {
+        "title": "投递账本",
+        "unsent": "还会补发",
+        "dead": "死信",
+        "note": "两档必须分开：前者补发扫描还会再试，后者试满次数后已放弃。合成一个「未送达」会让有救的和没救的看起来一样。",
+        "deadShort": "死信 {n}"
+      },
+      "unavailable": {
+        "title": "今天查不到",
+        "note": "这些要先加埋点。放一个 0 上去等于说「查过了、确实没有」。",
+        "githubAppPermissionGaps": "GitHub App 权限缺口：granted_permissions() 的结果只活在进程内存 10 分钟，没有落库。",
+        "githubAppMintFailureRate": "GitHub App 铸币失败率：现在只写日志，没有计数。",
+        "loginLockoutStockAndRate": "登录锁定历史：login_security 的限流器是 Redis 键，没有历史。",
+        "meteringPostFreeze": "计量落账冻结：admission 传输失败是放行的，日志之外无痕迹。"
+      }
+    },
+    "credits": {
+      "title": "额度燃尽",
+      "exhausted": "已耗尽",
+      "low": "快烧完",
+      "unlimited": "不限量",
+      "burn": "燃烧速率",
+      "eta": "预计用尽",
+      "note": "「已耗尽 / 快烧完 / 不限量」是三个互斥集合 —— unlimited 是**没有 grant**，不是额度用完了。燃烧速率从 resource_usage 推（compute_grants 没有扣减账本），不是余额差分。预计用尽是线性外推，unlimited 与零燃烧都画破折号。"
+    },
+    "extras": {
+      "disk": {
+        "title": "磁盘（这台后端）",
+        "note": "只覆盖后端这台机器的 workspace_root。远端设备和云主机各有各的盘，这里看不见。"
+      },
+      "preview": {
+        "title": "预览连接",
+        "note": "进程内存，重启即清零。这是「这个进程里的预览连接」，不是「全平台」。"
+      },
+      "machines": {
+        "title": "机器普查",
+        "note": "数的是四张台账里的行与状态分布，**不是容器数** —— 一房一容器还没有 transport，今天不存在一份可以数的容器清单。"
+      }
+    },
+    "reliability": {
+      "title": "投递与事件",
+      "note": "投递账本是存量积压，不是失败率。spool 未读是**上界**（读不等于消费），而且只看得见后端这张盘上的 spool。"
     }
   },
   "chart": {

@@ -36,13 +36,14 @@
         "failed": "Not accepted",
         "success": "Accepted",
         "unknown": "In progress"
-      }
+      },
+      "week": "Week {week}",
+      "due": "Due {date}",
+      "noDue": "No deadline",
+      "openWork": "Open this week's assignment",
+      "nothingToHandIn": "Nothing to hand in this week"
     },
     "stage": {
-      "units": {
-        "title": "Units",
-        "body": "This screen is the course timeline: weekly units with slides, assignments and quizzes, arranged and published by the teacher. The course-units task fills it in."
-      },
       "assignments": {
         "title": "Assignments",
         "body": "This screen collects work and reviews it: the teacher sees submissions waiting, the student sees what is due this week. The assignments task fills it in."
@@ -82,6 +83,45 @@
       "nameLabel": "Group name",
       "cancel": "Cancel",
       "confirmCreate": "Create"
+    },
+    "units": {
+      "title": "Teaching units",
+      "add": "Add a unit",
+      "weekShort": "Week {week}",
+      "empty": "No units yet. A course is a sequence of weeks: add one, say what it teaches and whether anything is due, and publish it when that week arrives.",
+      "draft": "Not published",
+      "published": "Published",
+      "publish": "Publish",
+      "unpublish": "Take it back",
+      "noAssignment": "Nothing to hand in this week",
+      "assignment": "Due this week: {name}",
+      "assignmentUnknown": "Due this week: problem #{id}",
+      "due": "Due {date}",
+      "noDue": "No deadline",
+      "deleteTitle": "Delete this unit",
+      "deleteConfirm": "Delete week {week}, “{title}”?",
+      "loadFailed": "Could not read this course's units.",
+      "saveFailed": "That did not save. Try again.",
+      "form": {
+        "createTitle": "Add a teaching unit",
+        "editTitle": "Edit this unit",
+        "week": "Week",
+        "weekHint": "Weeks start at 1.",
+        "title": "What this week teaches",
+        "titleHint": "One line — this is what students see.",
+        "summary": "Notes",
+        "summaryHint": "Optional. The points of the week, or something to remind students of.",
+        "assignment": "What is handed in this week",
+        "assignmentHint": "Pick a problem of this board; a lecture-only week picks none.",
+        "noAssignment": "No assignment",
+        "dueAt": "Deadline",
+        "dueAtHint": "Optional. Empty means no deadline.",
+        "publishNow": "Publish it now",
+        "publishNowHint": "Unchecked it stays a draft until that week arrives — students cannot see an unpublished unit.",
+        "required": "A week number and a title are both needed.",
+        "save": "Save",
+        "cancel": "Cancel"
+      }
     }
   },
   "create": {
