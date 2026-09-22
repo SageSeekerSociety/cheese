@@ -39,6 +39,13 @@ class RequiredCITest(unittest.TestCase):
         selected = gate.select(["backend/tests/fixtures/wire/frame.json"])
         self.assertTrue(selected["backend"] and selected["cli"])
 
+    def test_backend_hook_edits_run_the_hooks_that_consume_them(self):
+        self.assertTrue(gate.select([".pre-commit-config.yaml"])["backend"])
+
+    def test_shared_package_installer_runs_its_consumers(self):
+        selected = gate.select([".github/scripts/ensure-apt.sh"])
+        self.assertTrue(selected["backend"] and selected["deploy"])
+
     def needs(self):
         selected = gate.select(["backend/app/api/rooms.py"])
         return {

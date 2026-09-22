@@ -26,7 +26,6 @@ from app.domain.agent.service import AgentMessage, AgentResult
 
 
 @pytest.mark.anyio
-@pytest.mark.skipif(shutil.which("codex") is None, reason="Codex binary required")
 @pytest.mark.parametrize("attempt_host_write", [False, True])
 async def test_standalone_owner_survives_client_disconnect(
     tmp_path, attempt_host_write

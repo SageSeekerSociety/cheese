@@ -6,13 +6,15 @@ name: Backend Test
 # pair use (deploy/ci-runner/resident-services.sh), so the test settings do not
 # depend on which kind of runner they land on. Only jobs that need the dev
 # box's own images or a real device stay on the self-hosted pool (e2e,
-# remote-execution, build).
+# remote-execution).
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
       - 'deploy/metering-proxy/**'
+      - '.pre-commit-config.yaml'
+      - '.github/scripts/ensure-apt.sh'
       - '.github/workflows/test.yml'
   workflow_call:
 # Least privilege: none of these jobs write anything back to GitHub, so the
@@ -65,7 +67,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --frozen --all-extras
 
       # The same hooks a developer's commit runs, read from
       # .pre-commit-config.yaml. Before this, CI and the local gate were two
@@ -78,6 +80,20 @@ jobs:
           uvx pre-commit run --all-files --show-diff-on-failure ruff
           uvx pre-commit run --all-files --show-diff-on-failure ruff-format
           uvx pre-commit run --all-files pyright
+
+      - name: Independently collect every required backend case
+        run: >-
+          uv run python -m pytest tests/ --collect-only -q
+          --ignore=tests/forgejo -k 'not kotlin'
+          -p scripts.ci_shard
+          --ci-selection-output="$RUNNER_TEMP/backend-expected"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-expected-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-expected/
+          if-no-files-found: error
+          retention-days: 14
 
   # The one piece of backend code that is not Python: the extension a pi room
   # gives its agent. It runs inside pi on a session machine, so the only thing
@@ -131,7 +147,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --frozen --all-extras
 
       - name: Report Cargo target cache size
         run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
@@ -147,9 +163,19 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    # Shared by the three layer steps at the bottom of this job. DATABASE_URL
-    # and TEST_PG_BASE are not here: the slot step writes them to $GITHUB_ENV so
-    # two runs on one machine get their own databases.
+    name: ${{ matrix.layer }} (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {layer: pure, shard: '0/1', floor: 4000, timeout: 5}
+          - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
+          - {layer: integration, shard: '0/4', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '2/4', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '3/4', floor: 2400, timeout: 15}
+          - {layer: search, shard: '0/1', floor: 4, timeout: 5}
+    # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
       JWT_SECRET: test-secret
@@ -161,6 +187,8 @@ jobs:
       # present (AgentProfile.available = bool(auth_token)); the market test
       # asserts availability. Dummy token — no real calls are made.
       ANTHROPIC_AUTH_TOKEN: test-token
+      CHEESEX_TEST_MEILISEARCH_URL: ${{ matrix.layer == 'search' && 'http://localhost:7700' || '' }}
+      CHEESEX_TEST_MEILISEARCH_API_KEY: cheese-ci-search-key
     services:
       # The same images the cheese-ci pool's resident pair run
       # (deploy/ci-runner/resident-services.sh), on the same host ports, so the
@@ -182,28 +210,21 @@ jobs:
         options: >-
           --health-cmd "valkey-cli ping" --health-interval 10s
           --health-timeout 5s --health-retries 5
-    # A hang detector, not a performance budget, and the outer one: the three
-    # layer steps at the bottom carry their own (5 + 5 + 25 = 35), and a
-    # per-layer ceiling only ever fires if the job can still be alive when it
-    # does — so this is their sum plus 5 minutes for everything above them,
-    # which takes about 1m40s (containers, uv sync, migrations, sandbox image,
-    # the pinned claude build). Set it below that sum and the job kills itself
-    # first, which is the "something hung, no idea where" report the split was
-    # made to stop. A healthy run takes 15-17 minutes. What reaches this ceiling
-    # rather than a layer's is a hang in the setup steps, which have none of
-    # their own; either way the run reports as a failure with no test results.
-    timeout-minutes: 40
+      meilisearch:
+        image: ${{ matrix.layer == 'search' && 'mirror.gcr.io/getmeili/meilisearch:v1.54.0@sha256:0bf32debcbfa8ba4e418679025f4935884972171513c92f0584689ff994a61df' || '' }}
+        env:
+          MEILI_MASTER_KEY: cheese-ci-search-key
+          MEILI_NO_ANALYTICS: 'true'
+        ports:
+          - 7700:7700
+    # Each runner has its own services and xdist workers. This ceiling detects
+    # hangs; the artifact timings measure whether the feedback budget is met.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # Postgres and Valkey are resident on the machine (deploy/ci-runner/
-      # resident-services.sh), not service containers of this job. A job's own
-      # containers bind host 5432/6379 and bring a 3 GB tmpfs each, so two jobs
-      # on one machine collided on the port and did not fit in 8 GB of RAM —
-      # which is why a pool machine could only run one job at a time.
-      #
-      # What keeps two concurrent runs apart is the slot, declared by the
-      # machine's runner configuration. Unset is the only slot, as on a laptop.
+      # Hosted matrix runners have isolated service containers. Keep the slot
+      # namespace for reproductions on a machine shared by multiple test runs.
       - name: Scope this run to its runner slot
         run: |
           slot="${CHEESE_CI_SLOT:-0}"
@@ -224,9 +245,9 @@ jobs:
       - name: Set the Cargo target directory
         run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/test" >> "$GITHUB_ENV"
 
-      - name: Ensure the worktree retirement dependency
+      - name: Ensure required test tools
         run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh lsof tmux zsh
 
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
@@ -246,7 +267,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --frozen --all-extras
 
       - name: Report Cargo target cache size
         run: du -sh "$CARGO_TARGET_DIR" 2>/dev/null || echo "(no cache dir yet)"
@@ -255,6 +276,7 @@ jobs:
       # bring this database into being by being new. Empty every run on purpose:
       # what the step below proves is that the migrations apply from nothing.
       - name: Give this run an empty database
+        if: matrix.layer != 'pure'
         env:
           PGPASSWORD: postgres
         run: |
@@ -266,21 +288,8 @@ jobs:
 
       # DATABASE_URL comes from the slot step above.
       - name: Run database migrations
+        if: matrix.layer != 'pure'
         run: uv run alembic upgrade head
-
-      # The sandbox test runs `docker run python:3.12-slim`. On the self-hosted
-      # runner that image is nobody's dependency between test runs, so the
-      # deploy's `docker image prune -af` reclaims it — and the box cannot reach
-      # Docker Hub to re-pull (auth.docker.io closes the connection), leaving
-      # `docker run` to fail with exit 125 and the suite red for a reason that
-      # has nothing to do with the change under test. Ensure it from the mirror
-      # the box CAN reach, and keep the plain tag the code asks for.
-      - name: Ensure the sandbox test base image
-        run: |
-          if ! docker image inspect python:3.12-slim >/dev/null 2>&1; then
-            docker pull mirror.gcr.io/library/python:3.12-slim
-            docker tag mirror.gcr.io/library/python:3.12-slim python:3.12-slim
-          fi
 
       # tests/pinned_claude.py: every command an executor runs goes through the
       # pinned build's `mcp serve`, so the remote-execution tests need the
@@ -289,136 +298,93 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: backend/app/domain/agent/harness/claude_code/remote_execution/client.py
-      - name: Install the pinned Claude Code build
+          cache-dependency-path: |
+            backend/app/domain/agent/harness/claude_code/remote_execution/client.py
+            backend/app/domain/agent/harness/codex/**
+      - name: Install pinned harness binaries
         run: |
-          version="$(python3 - <<'PY'
-          import ast, pathlib
-          src = pathlib.Path("app/domain/agent/harness/claude_code/remote_execution/client.py").read_text()
-          print(next(ast.literal_eval(n.value) for n in ast.parse(src).body
-                     if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "PINNED_VERSION" for t in n.targets)))
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
           PY
           )"
-          npm install --prefix "$RUNNER_TEMP/claude-tools" --no-audit --no-fund "@anthropic-ai/claude-code@$version"
-          echo "CHEESE_TEST_CLAUDE=$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/claude-tools/node_modules/.bin/claude" --version
-      # One pytest per layer, in series, instead of one over the whole tree.
-      # `tests/` as a single step reported 6838 tests as one number: nothing in
-      # it said whether the pure tests — which need no Postgres and no app —
-      # were fast or had quietly grown a database, and a wedge anywhere cost the
-      # job's whole ceiling to find. Three steps put a name and a ceiling on
-      # each layer, and the split loses nothing: the markers are derived at
-      # collection (backend/tests/conftest.py), every test carries exactly one
-      # or the collection fails, so the three steps run the same set of tests
-      # the one step ran.
-      #
-      # `timeout-minutes` here are hang detectors per layer, not the budgets the
-      # layers are meant to hit (30s / 3m / 6m). Those need more runners than
-      # this pool has — eight xdist workers means eight pairs of databases and
-      # twice the Postgres connections, which is what the box cannot currently
-      # give — so setting them as ceilings today would turn a healthy run red.
-      # They are sized off what each layer takes on this pool (1m50s / 30s /
-      # 12m) with room for a slow machine, and their sum plus setup is the job's
-      # own `timeout-minutes` above — a detector that cannot fire before the job
-      # dies detects nothing.
-      #
-      # Contract and integration run even after an earlier layer failed
-      # (`if: ${{ !cancelled() }}`; the job is red all the same). One pytest over
-      # the tree listed every failure in one report, and three steps that stop
-      # at the first red would have made that two or three pushes to see. The
-      # count guard between them is the one step that does stop: it reads the
-      # junit the pure step writes, and a pure step that hung wrote none.
-      #
-      # `worksteal` rather than the default `load` scheduler: `load` hands a
-      # worker its next batch and cannot take it back, so when the run winds
-      # down one worker ends up holding several slow tests and chews them
-      # serially while the rest idle. That tail is measurable — a single
-      # 72-test chunk has taken over five minutes on a run that passed — and
-      # it is what puts a ~14-minute suite within reach of the job ceiling.
-      # `worksteal` lets an idle worker take work back off a busy one, which is
-      # exactly that failure and no other.
-      #
-      # `--durations` because nobody can currently say WHICH tests make this
-      # suite slow: the log is progress dots, and a dot costs the same
-      # whether it took 3ms or 40s. This prints the twenty worst on every
-      # run, so the question stops being re-asked from zero.
+          # Package names and versions come only from checked-in declarations.
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+          tools="$RUNNER_TEMP/harness-tools/node_modules/.bin"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          "$tools/claude" --version
+          "$tools/codex" --version
 
-      # No database in this step's environment, on purpose. What makes a test
-      # pure is that it reaches for neither Postgres nor the app, and the
-      # collection hook derives that from the fixture closure — a static read,
-      # which cannot see a test that opens a connection by hand. Pointing the
-      # two URLs at a port nothing listens on is the part that does see it:
-      # such a test fails here, in the layer it broke, instead of passing
-      # because the integration step's Postgres happened to be up on the same
-      # machine. Set on the command rather than in `env:` because the slot step
-      # above writes both names to $GITHUB_ENV, and one assignment in front of
-      # the command wins over that without depending on which layer of the
-      # runner's env merge is documented to.
-      - name: Run the pure layer
-        timeout-minutes: 5
+      - name: Wait for the search test service
+        if: matrix.layer == 'search'
+        timeout-minutes: 2
+        run: curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 2 http://localhost:7700/health
+
+      - name: Run the selected layer partition
+        timeout-minutes: ${{ matrix.timeout }}
+        env:
+          TEST_LAYER: ${{ matrix.layer }}
+          TEST_SHARD: ${{ matrix.shard }}
         run: |
-          TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1 \
-          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here \
-          uv run pytest tests/ -m pure -n "$CHEESE_CI_TEST_WORKERS" \
-            --dist worksteal --tb=short -k "not kotlin" --durations=20 \
-            --junitxml="$RUNNER_TEMP/pure.xml"
+          mkdir -p "$RUNNER_TEMP/backend-results"
+          if [ "$TEST_LAYER" = pure ]; then
+            export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
+            export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
+          fi
+          # Real search owns a separate serial runner and index. The four cases
+          # previously skipped without a service must pass there on every run.
+          if [ "$TEST_LAYER" = search ]; then
+            selection=(tests/integration/test_meilisearch_integration.py -m integration)
+            workers=0
+          else
+            selection=(tests/ -m "$TEST_LAYER" -k 'not kotlin and not meilisearch_integration')
+            workers="$CHEESE_CI_TEST_WORKERS"
+          fi
+          uv run python -m pytest "${selection[@]}" --ignore=tests/forgejo -n "$workers" \
+            -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
+            --ci-selection-output="$RUNNER_TEMP/backend-results" \
+            --dist worksteal --tb=short --durations=30 \
+            --junitxml="$RUNNER_TEMP/backend-results/results.xml"
 
-      # A green pure step does not say the layer still holds its tests. The
-      # layer is derived from the fixture closure, so the day a unit test grows
-      # a database it is reclassified into the integration step without a word:
-      # this step runs fewer tests and passes. That is the same thing one
-      # number over the whole tree could not tell you, absorbed rather than
-      # merely unreported — so the count is asserted, not admired.
-      #
-      # 4438 today, floor 4000. The gap has to clear the largest thing anyone
-      # deletes in one go, or the guard fires on ordinary work and the fix is to
-      # edit this constant — which teaches everyone to edit it. The largest file
-      # in this layer holds 99 tests (tests/unit/test_user_services.py) and 34
-      # files hold 38 or more, so 438 of headroom covers deleting any of them,
-      # several at once. What it does not cover is a tenth of the layer going
-      # missing, which is the shape of the failure this step is here for: the
-      # collection hook breaking, or a fixture growing a database under it and
-      # taking every test that uses it into the integration step.
-      - name: The pure layer still holds its tests
-        run: |
-          python3 - "$RUNNER_TEMP/pure.xml" <<'PY'
-          import sys, xml.etree.ElementTree as ET
-
-          floor = 4000
-          ran = sum(int(s.get("tests", 0))
-                    for s in ET.parse(sys.argv[1]).getroot().iter("testsuite"))
-          print(f"pure layer: {ran} tests, floor {floor}")
-          if ran < floor:
-              sys.exit(
-                  f"the pure layer ran {ran} tests, under the floor of {floor}"
-                  " — tests have left this layer. If that was deliberate,"
-                  " lower the floor in this step in the same commit."
-              )
-          PY
-
-      - name: Run the contract layer
+      - name: Verify the partition ran without skips
         if: ${{ !cancelled() }}
-        timeout-minutes: 5
+        env:
+          LAYER_FLOOR: ${{ matrix.floor }}
         run: >-
-          uv run pytest tests/ -m contract -n "$CHEESE_CI_TEST_WORKERS"
-          --dist worksteal --tb=short -k "not kotlin" --durations=20
+          uv run python -m scripts.assert_suite_ran
+          "$RUNNER_TEMP/backend-results/results.xml"
+          --at-least "$LAYER_FLOOR"
+          --selection-dir "$RUNNER_TEMP/backend-results"
 
-      - name: Run the integration layer
+      - name: Preserve test results and selection
         if: ${{ !cancelled() }}
-        timeout-minutes: 25
-        run: >-
-          uv run pytest tests/ -m integration -n "$CHEESE_CI_TEST_WORKERS"
-          --dist worksteal --tb=short -k "not kotlin" --durations=20
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-${{ matrix.layer }}-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend-results/
+          if-no-files-found: error
+          retention-days: 14
 
-      # Volumes nothing references still accumulate here — 57 of them reached
-      # 19GB once and filled the disk mid-run ("No space left on device" from
-      # asyncpg). They used to come from this job's own postgres container,
-      # which no longer exists; what is left over now is whatever a killed job
-      # or a pulled image dropped. Only volumes no container references are
-      # touched, so neither the machine's resident pair nor a live deployment
-      # is ever in scope.
-      - name: Reclaim volumes nothing references
-        if: always()
+  test-complete:
+    name: Backend coverage complete
+    needs: [lint, test]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: backend-*
+          path: ${{ runner.temp }}/backend-artifacts
+      - name: Compare executed partitions with independent collection
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+          PLAN_ARTIFACT: backend-expected
         run: |
-          docker volume prune -f >/dev/null 2>&1 || true
-          df -h / | tail -1
+          python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan "$PLAN_ARTIFACT"
+          test "$TEST_RESULT" = success

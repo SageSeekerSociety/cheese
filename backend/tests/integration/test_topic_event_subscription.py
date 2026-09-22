@@ -779,6 +779,63 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     await provider._close_topic(topic_id)
 
 
+async def test_live_hook_arriving_during_reconnect_is_not_replayed_twice(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A reconnect pauses consumption while it builds the spool replay.
+
+    The hook endpoint can deliver the same event after the subscription exists
+    but before replay starts. The live copy is then ahead of the replay copy in
+    the queue; the room must still show one reply, and the spool must be fully
+    consumed. The opposite arrival order has separate provider coverage.
+    """
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    message = {
+        "hook_event_name": "MessageDisplay",
+        "delta": "重连期间只说一次",
+        "_eid": "live-before-replay-message",
+    }
+    stop = {
+        "hook_event_name": "Stop",
+        "last_assistant_message": "重连期间只说一次",
+        "session_id": "session-live-before-replay",
+        "_eid": "live-before-replay-stop",
+    }
+    spool = ws.spool_dir(project_id, topic_id)
+    event_spool.append(spool, message["_eid"], message)
+    event_spool.append(spool, stop["_eid"], stop)
+
+    router = HookRouter()
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=router
+    )
+    _service = ChatService(
+        session_factory=factory,
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+
+    recovered = await provider.recover()
+    assert len(recovered) == 1
+    assert router.push(str(topic_id), dict(message))
+    assert router.push(str(topic_id), dict(stop))
+    await provider.replay(recovered[0], known_texts=set())
+
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    replies = [
+        block
+        for block in blocks
+        if block.content == "重连期间只说一次" and (block.meta or {}).get("progress")
+    ]
+    assert len(replies) == 1
+    assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
+    await provider._close_topic(topic_id)
+
+
 async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     client, tmp_path, monkeypatch
 ) -> None:

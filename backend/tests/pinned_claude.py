@@ -8,11 +8,11 @@ gets past the first `Bash`.
 import os
 import shutil
 
-import pytest
-
 
 def claude_binary():
     claude = os.environ.get("CHEESE_TEST_CLAUDE") or shutil.which("claude")
     if not claude:
-        pytest.skip("Install the pinned Claude Code build before running these")
+        raise RuntimeError(
+            "CHEESE_TEST_CLAUDE must point to the pinned Claude Code build"
+        )
     return claude
