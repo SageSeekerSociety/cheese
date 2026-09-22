@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.knowledge.repositories import KnowledgeRepository
-from app.domain.materials.repositories import MaterialRepository
+from app.domain.knowledge.services import KnowledgeService
+from app.domain.materials.services import MaterialService
 from app.domain.project.models import Project
 from app.domain.space.models import SpaceCategory
 from app.domain.task.models import Task
@@ -76,8 +76,12 @@ async def for_project(
     teaching = resolve(category=category, task=task, project=project).teaching
     if teaching.is_empty:
         return None
-    materials = await MaterialRepository(session).list_by_ids(teaching.material_ids)
-    knowledge = await KnowledgeRepository(session).get_by_ids(teaching.knowledge_ids)
+    materials = await MaterialService.for_lookup(session).get_many(
+        teaching.material_ids
+    )
+    knowledge = await KnowledgeService.for_lookup(session).get_many(
+        teaching.knowledge_ids
+    )
     return TeachingContext(
         course=category.name if category is not None else None,
         teaching=teaching,
