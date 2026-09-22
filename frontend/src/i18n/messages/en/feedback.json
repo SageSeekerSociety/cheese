@@ -125,14 +125,8 @@
       "untriaged": "Untriaged",
       "inProgress": "In progress",
       "resolved7d": "Resolved · 7d",
-      "deployed7d": "Shipped · 7d",
       "created7d": "New · 7d",
-      "resolvedTotal": "Resolved · all time",
-      "deployedTotal": "Shipped · all time",
-      "all": "All feedback",
-      "hot": "Hot",
-      "unread": "Unread",
-      "noSeries": "no source yet"
+      "unread": "Unread"
     },
     "chart": {
       "title": "New / resolved per day",
@@ -156,8 +150,32 @@
     },
     "partial": {
       "title": "Cost data is unavailable",
-      "desc": "The usage endpoint didn't respond. The other numbers are unaffected.",
       "hint": "The usage endpoint didn't respond"
+    },
+    "tab": {
+      "feedback": "Feedback",
+      "usage": "Usage",
+      "platform": "Platform"
+    },
+    "usage": {
+      "tokens": "Tokens · window",
+      "calls": "Calls · window",
+      "chart": "Tokens per day",
+      "top": "Top projects by tokens"
+    },
+    "people": {
+      "total": "Accounts",
+      "new": "New · 7d",
+      "admins": "Platform admins",
+      "chart": "New accounts per day"
+    },
+    "machines": {
+      "title": "Machines (stock)",
+      "devices": "Devices",
+      "hosted": "Hosted devices",
+      "warm": "Warm machines",
+      "project": "Project machines",
+      "note": "These four are stock counts from four ledgers, not live online counts — online state lives in process memory and has no column in the database."
     }
   },
   "chart": {
