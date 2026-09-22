@@ -22,6 +22,7 @@ from app.db.session import get_db
 from app.domain.shell.catalog import is_course_shell
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
+from app.domain.space.course_roster_service import CourseRosterService
 from app.domain.space.learning_service import SpaceLearningService
 from app.domain.space.member_participating_service import (
     SpaceMemberParticipatingService,
@@ -513,6 +514,69 @@ async def _hydrate_members(
     return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
 
+async def _build_course_roster_payload(
+    *,
+    space_id: int,
+    service: SpaceService,
+    db,
+) -> dict:
+    """这门课的人与组：结构来自 `CourseRosterService`，人味在这里补。
+
+    拼「学生 → 他的项目 → 他的组」要人的 handle（项目记的是 `owner_handle`），
+    而 handle 在 user 领域 —— 所以那一跳留在这边用现成的 `_hydrate_people` 走完，
+    领域里那份服务只给平表。
+
+    管理员不算学生：教师名单（`space.admins`）与成员表是两件事，一位老师也可以
+    是成员，但他出现在「学生与分组」里只会让人数说谎。
+    """
+    roster = await CourseRosterService(db).roster(space_id)
+    admin_ids = {rel.user_id for rel in await service.list_admins(space_id)}
+    student_ids = [uid for uid in roster["memberUserIds"] if uid not in admin_ids]
+    team_member_ids = [uid for team in roster["teams"] for uid in team["memberUserIds"]]
+    people = await _hydrate_people(
+        list(dict.fromkeys([*student_ids, *team_member_ids])),
+        user_repo=UserRepository(session=db),
+        profile_repo=UserProfileRepository(session=db),
+    )
+
+    projects_by_handle: dict[str, list[dict]] = {}
+    for project in roster["projects"]:
+        handle = project["ownerHandle"]
+        if handle:
+            projects_by_handle.setdefault(handle, []).append(project)
+
+    students = []
+    for user_id in student_ids:
+        person = people[user_id]
+        projects = projects_by_handle.get(person.get("username", ""), [])
+        students.append(
+            {
+                "user": person,
+                "projects": [
+                    {"id": p["id"], "name": p["name"], "teamId": p["teamId"]}
+                    for p in projects
+                ],
+                "teamIds": sorted(
+                    {p["teamId"] for p in projects if p["teamId"] is not None}
+                ),
+            }
+        )
+
+    return {
+        "students": students,
+        "teams": [
+            {
+                "id": team["id"],
+                "name": team["name"],
+                "members": [
+                    people[uid] for uid in team["memberUserIds"] if uid in people
+                ],
+            }
+            for team in roster["teams"]
+        ],
+    }
+
+
 async def _build_full_space_payload(
     space: Space,
     *,
@@ -812,6 +876,27 @@ async def list_space_members(
         profile_repo=UserProfileRepository(session=db),
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
+
+
+@router.get(
+    "/{spaceId}/course/roster",
+    summary="Course Roster (teachers)",
+)
+async def get_course_roster(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: SpaceService = Depends(get_space_service),
+    db=Depends(get_db),
+) -> dict:
+    """这门课的人与组 —— 教师版面的「学生与分组」那一屏。
+
+    只对本版管理员开门：它把全班的人、各自的项目与分组列在一张表上，那不是学生
+    之间该互相看到的东西。判据是 ``_ensure_space_admin``（与打分、发题、读项目
+    对话同一个答案），门外人先按可见性答 404，不做存在性确认。
+    """
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    data = await _build_course_roster_payload(space_id=space_id, service=service, db=db)
+    return {"code": 200, "message": "OK", "data": data}
 
 
 @router.post(

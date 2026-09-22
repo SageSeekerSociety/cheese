@@ -266,6 +266,26 @@ class ProjectRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_space(self, space_id: int) -> list[Project]:
+        """Every project anchored on a 赛题 published under this Space.
+
+        ``list_ids_for_space_tasks`` next door is the id-only twin (机构看板).
+        A course needs the rows themselves — who each one belongs to and which
+        team it is — so this is the same join returning the projects.
+        """
+        from app.domain.task.models import Task
+
+        stmt = (
+            select(Project)
+            .where(
+                Project.external_task_id.in_(
+                    select(Task.id).where(Task.space_id == space_id)
+                )
+            )
+            .order_by(Project.created_at.asc(), Project.id.asc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_external_task(self, task_id: int) -> list[Project]:
         """Every project created from this 赛题 — the way back the link exists for."""
         result = await self._session.execute(

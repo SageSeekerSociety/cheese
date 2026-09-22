@@ -228,6 +228,15 @@ class ProjectService:
     async def list_all(self) -> tuple[list[Project], int]:
         return await self._repo.list_all(), await self._repo.count()
 
+    async def list_for_space(self, space_id: int) -> list[Project]:
+        """Every project anchored on a 赛题 of this 题目版 — a course's students.
+
+        The roster and the acceptance queue both need the whole class at once;
+        going through this method keeps the project repository inside the
+        project domain (architecture guard).
+        """
+        return await self._repo.list_for_space(space_id)
+
     async def list_for_team(self, team_id: int) -> list[Project]:
         """A team's 项目 page. For a personal team this also folds in the owner's
         legacy team-less projects (rows created before 项目归团队), newest first."""
