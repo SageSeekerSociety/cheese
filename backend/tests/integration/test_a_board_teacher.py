@@ -392,3 +392,152 @@ def test_an_outsider_still_gets_404_not_403(
         headers=_auth(outsider_token),
     )
     assert resp.status_code == 404, resp.text
+
+
+# --- 5. 教师对一道题的其余能力 ------------------------------------------------
+#
+# 发布与评审之外，「老师对这门课里的这道题能做的事」还有一整套：管报名、看名单、
+# 看提交、看未过审的草稿、重提审核、编辑/删除题目。它们从前各写了一遍「出题者」，
+# 教师那一半时有时无；现在全部问 ``may_teach_task``，与打分、发题同一个判据。
+
+
+def test_a_board_admin_manages_participants_and_reads_submissions(
+    api_client: TestClient, user_client: UserCreator
+):
+    """管报名、看名单、看提交：教师做得到，普通学生做不到。"""
+    s = _submission_ready(api_client, user_client)
+    task_id = s["task_id"]
+    membership_id = s["membership_id"]
+
+    # 名单与提交列表 —— 教师视角。
+    assert (
+        api_client.get(
+            f"/tasks/{task_id}/participants", headers=_auth(s["teacher_token"])
+        ).status_code
+        == 200
+    )
+    assert (
+        api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers=_auth(s["teacher_token"]),
+        ).status_code
+        == 200
+    )
+    # 管报名：批准这个学生。
+    approved = api_client.patch(
+        f"/tasks/{task_id}/participants/{membership_id}",
+        json={"approved": "APPROVED"},
+        headers=_auth(s["teacher_token"]),
+    )
+    assert approved.status_code == 200, approved.text
+
+    # 另一个只是成员的学生：同两条路都关着。
+    peer = user_client.create_user()
+    peer_token = _login(user_client, api_client, peer)
+    assert _make_member(api_client, s, peer.user_id).status_code == 201
+    assert (
+        api_client.get(
+            f"/tasks/{task_id}/participants", headers=_auth(peer_token)
+        ).status_code
+        == 403
+    )
+    assert (
+        api_client.get(
+            f"/tasks/{task_id}/participants/{membership_id}/submissions",
+            headers=_auth(peer_token),
+        ).status_code
+        == 403
+    )
+
+
+def test_a_board_admin_sees_an_unapproved_task_and_can_resubmit(
+    api_client: TestClient, user_client: UserCreator
+):
+    """未过审的题在老师手上是草稿（看得见、能重提），在学生手上该不存在。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="还没过审的题")  # approved = NONE
+
+    teacher = user_client.create_user()
+    teacher_token = _login(user_client, api_client, teacher)
+    assert _make_admin(api_client, board, teacher.user_id).status_code == 201
+
+    assert (
+        api_client.get(f"/tasks/{task_id}", headers=_auth(teacher_token)).status_code
+        == 200
+    )
+
+    student = user_client.create_user()
+    student_token = _login(user_client, api_client, student)
+    assert _make_member(api_client, board, student.user_id).status_code == 201
+    assert (
+        api_client.get(f"/tasks/{task_id}", headers=_auth(student_token)).status_code
+        == 403
+    )
+
+    # 创建者（也是管理员）驳回它，教师重提。
+    rejected = api_client.patch(
+        f"/tasks/{task_id}",
+        json={"approved": "DISAPPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert (
+        api_client.post(
+            f"/tasks/{task_id}/resubmit", headers=_auth(teacher_token)
+        ).status_code
+        == 200
+    )
+
+    # 学生重提另一道被驳回的题 —— 403。
+    other = _create_task(api_client, board, name="另一道被驳回的题")
+    api_client.patch(
+        f"/tasks/{other}",
+        json={"approved": "DISAPPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert (
+        api_client.post(
+            f"/tasks/{other}/resubmit", headers=_auth(student_token)
+        ).status_code
+        == 403
+    )
+
+
+# --- 6. 教师版面（数据分析）--------------------------------------------------
+#
+# 前端把整个「数据分析」入口挂在 isCurrentUserAtLeastAdmin 下，所以 API 也收成
+# 管理员/创建者。留住学习看板：它读学生项目里的对话，由项目级判据逐个项目过。
+
+
+def test_the_analytics_surface_is_for_the_teacher(
+    api_client: TestClient, user_client: UserCreator
+):
+    board = _new_board(user_client, api_client)
+
+    student = user_client.create_user()
+    student_token = _login(user_client, api_client, student)
+    assert _make_member(api_client, board, student.user_id).status_code == 201
+
+    for suffix in (
+        "/analytics/overview",
+        "/analytics/alerts",
+        "/analytics/publishers",
+        "/analytics/participants",
+        "/analytics/tasks",
+        "/analytics/tasks/export",
+        "/analytics/publishers/export",
+        "/analytics/participants/export",
+    ):
+        resp = api_client.get(
+            f"/spaces/{board['space_id']}{suffix}", headers=_auth(student_token)
+        )
+        assert resp.status_code == 403, (suffix, resp.status_code, resp.text)
+
+    # 创建者（管理员）自己进得去。/analytics/tasks 的默认 sortBy 是 publishedAt、
+    # 不在它自己的白名单里（与本次无关的既有限制），所以显式给一个合法排序。
+    for suffix in ("/analytics/overview", "/analytics/tasks?sortBy=createdAt"):
+        resp = api_client.get(
+            f"/spaces/{board['space_id']}{suffix}",
+            headers=_auth(board["creator_token"]),
+        )
+        assert resp.status_code == 200, (suffix, resp.status_code, resp.text)

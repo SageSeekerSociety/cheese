@@ -323,6 +323,13 @@ async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
 
     和 ``_ensure_space_visible`` 一样，判据只有一处 —— ``app.auth.space_access``
     的 ``is_space_admin``，与打分、发题、项目对话读权同一个答案。
+
+    挂在这道门上的是一整块教师版面：参与者花名册的导出与分组统计（逐人/分组地
+    解密年级、专业、班级），以及概览、题目、发布者、提醒与其导出。前端本来就把
+    整个「数据分析」入口挂在 ``isCurrentUserAtLeastAdmin`` 下面，所以这几次收窄
+    是把 API 对齐到界面已经说的那句话：这版只有教师看得到。
+    学习看板（``/analytics/learning/*``）不在此列 —— 它读的是学生项目里的对话，
+    由 ``app.auth.project_access`` 逐个项目判，两套数据、两个门。
     """
     await _ensure_space_visible(db=db, space_id=space_id, user_id=user_id)
     if not await is_space_admin(session=db, space_id=space_id, user_id=user_id):
@@ -977,7 +984,7 @@ async def get_space_task_analytics(
     db=Depends(get_db),
 ) -> dict:
     """Return per-task analytics table rows for the space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_tasks(
         space_id=space_id,
@@ -1006,7 +1013,7 @@ async def get_publishers_participation(
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers_participation(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
@@ -1061,7 +1068,7 @@ async def get_space_analytics_overview(
     db=Depends(get_db),
 ) -> dict:
     """Return KPI cards, trend data, and distribution summaries for the space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_overview(
         space_id=space_id,
@@ -1086,7 +1093,7 @@ async def get_space_analytics_alerts(
     db=Depends(get_db),
 ) -> dict:
     """Return governance alert cards for the space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_alerts(space_id=space_id)
     return {"code": 200, "message": "OK", "data": data}
@@ -1109,7 +1116,7 @@ async def get_space_analytics_publishers(
     db=Depends(get_db),
 ) -> dict:
     """Return publisher comparison table data."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers(
         space_id=space_id,
@@ -1393,7 +1400,7 @@ async def export_space_analytics_tasks(
     db=Depends(get_db),
 ) -> Response:
     """Export task analytics as CSV (16 columns, NT-aligned)."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_tasks_csv(
         space_id=space_id,
@@ -1429,7 +1436,7 @@ async def export_space_analytics_publishers(
     db=Depends(get_db),
 ) -> Response:
     """Export publisher analytics as CSV (11 columns, NT-aligned)."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     csv_text = await service.export_publishers_csv(
         space_id=space_id,

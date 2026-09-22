@@ -48,15 +48,18 @@ async def is_space_admin(
     return relation is not None
 
 
-async def may_grade_task(session: AsyncSession, *, task: Task, user_id: int) -> bool:
-    """能不能给这道题的提交打分：出题者本人，**或**这道题所在题目板的教师。
+async def may_teach_task(session: AsyncSession, *, task: Task, user_id: int) -> bool:
+    """能不能以「这门课的老师」的身份动这道题：出题者本人，**或**它所在板的教师。
 
-    两条主张是并列的，谁也不从谁推出。出题者可能不是教师（历史上没被设成管理员的
-    人也可以发过题），教师的题也可能不是他自己出的（助教给一门课里的题打分）。
+    产品那句话「只有空间管理员和空间创建者具有教师版面」，落到单道题上就是这两条
+    并列的主张，谁也不从谁推出：出题者可能不是教师（历史上没被设成管理员的人也可以
+    发过题），教师的题也可能不是他自己出的（助教给一门课里的题打分、管报名、改作业）。
     所以这里是 ``or``，删掉任一条都会挡住一个真实的人。
 
-    评审的四个接口（建/改/全量替换/删）全部调这一个函数，不许各写一遍 —— 从前它们
-    写死的是 ``task.creator_id != user_id``，正是「出题者」那一条，漏了教师。
+    一题一判据，一题一个函数：评审（建/改/全量替换/删）、替学生报名、管报名（改/删）、
+    编辑/删除题目、重提审核、看名单、看提交列表 —— 全是「老师对这道题能做的事」，
+    从前它们各写一遍 ``task.creator_id == user_id`` 或内联的
+    ``is_creator and not is_space_admin``，出题者那条有了、教师那条时有时无。
     """
     if task.creator_id is not None and task.creator_id == user_id:
         return True
