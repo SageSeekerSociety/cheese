@@ -39,11 +39,12 @@ import {
 import { uploaded, usePendingAttachments } from '../lib/attachments'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
+import { artifactKind, artifactName, askAnswered, askOptions, isImageBlock, replySnippet } from '../lib/blockDisplay'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { parseDiffLines } from '../lib/diff'
 import { expandMentions as expandMentionNames } from '../lib/expandMentions'
-import { fileIcon, fileLabel, IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
+import { fileIcon, IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
@@ -274,14 +275,6 @@ function todoIcon(status: string): string {
 
 // ---- 选项问题 (cheese ask): buttons under the message; one click answers
 // and summons 芝士 to continue. Answered state renders for everyone. ----
-function askOptions(m: Block): string[] | null {
-  const opts = (m.meta as Record<string, unknown> | null)?.options
-  return Array.isArray(opts) && opts.length ? (opts as string[]) : null
-}
-function askAnswered(m: Block): { option: string; by: string } | null {
-  const meta = m.meta as Record<string, unknown> | null
-  return meta?.answered ? { option: String(meta.answered), by: String(meta.answered_by ?? '') } : null
-}
 const askBusy = ref<string | null>(null)
 async function pickOption(m: Block, option: string) {
   if (askBusy.value) return
@@ -720,26 +713,10 @@ function showReplyCue(m: Block): boolean {
   // the implicit link to the message that triggered it — not a thread cue.
   return isPersonBlock(m) && !!parentOf(m)
 }
-function replySnippet(m: Block): string {
-  if (m.kind === 'attachment') return isImageBlock(m) ? '[图片]' : '[文件]'
-  const t = m.content.replace(/\s+/g, ' ').trim()
-  return t.length > 24 ? t.slice(0, 24) + '…' : t
-}
 
 // An image attachment block (图片输入) — drawn in place by AttachmentImage.
 // ---- 芝士摆出来的一份东西 (`cheese show` → kind=artifact) ----
-/** 卡上写的名字：路径的最后一段。整条路径是工作区里的位置，读的人用不上。 */
-function artifactName(m: Block): string {
-  return m.content.split('/').pop() || m.content
-}
-/** 「它是什么」。认不出后缀时退回一句中性的说法，而不是空着。 */
-function artifactKind(m: Block): string {
-  return fileLabel(m.content)
-}
 
-function isImageBlock(m: Block): boolean {
-  return m.kind === 'attachment' && (m.mime_type || '').startsWith('image/')
-}
 // 只给下载用：downloadFile 自己会带上 Authorization。显示图片不走这里。
 function imageUrl(m: Block): string {
   return props.topic ? attachmentRawUrl(props.topic.id, m.content) : ''
