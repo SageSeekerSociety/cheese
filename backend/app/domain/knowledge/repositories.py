@@ -66,6 +66,24 @@ class KnowledgeRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_ids(self, knowledge_ids: Sequence[int]) -> list[Knowledge]:
+        """Whatever of these ids is still readable, in the order asked for.
+
+        Same shape as `get_by_id` — a soft-deleted entry is absent, not returned
+        with a flag — because the caller lists these in a prompt and a tombstone
+        in a reading list is worse than a gap.
+        """
+        if not knowledge_ids:
+            return []
+        stmt: Select[tuple[Knowledge]] = select(Knowledge).where(
+            Knowledge.id.in_(list(knowledge_ids)),
+            Knowledge.deleted_at.is_(None),
+        )
+        found = {
+            entry.id: entry for entry in (await self._session.execute(stmt)).scalars()
+        }
+        return [found[i] for i in knowledge_ids if i in found]
+
     async def soft_delete(self, knowledge_id: int) -> bool:
         entity = await self.get_by_id(knowledge_id)
         if entity is None:
