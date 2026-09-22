@@ -207,7 +207,8 @@ function handleTurnDone() {
 // so we can't key off a tool name) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
-  else if (resource === 'accept') chatColumn.value?.reloadAccept()
+  // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
+  else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 
@@ -225,7 +226,7 @@ async function handleOpenResource(resource: string, turnId?: string) {
     focusMode.value = false
     onPanelTab('changes')
   } else if (resource === 'accept') {
-    chatColumn.value?.reloadAccept()
+    chatColumn.value?.reloadAccept(true)
   } else if (resource === 'doc') {
     // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
     // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
