@@ -21,6 +21,25 @@
 # Provider credentials stay in the gateway; callers use project-scoped keys so
 # every configured upstream is metered against the same project budget.
 model_list:
+  - model_name: mimo-v2.6-pro
+    litellm_params:
+      model: anthropic/mimo-v2.6-pro
+      api_base: https://token-plan-cn.xiaomimimo.com/anthropic
+      api_key: os.environ/MIMO_TOKEN_PLAN_API_KEY
+      # Internal budget estimates use CN API rates (RMB 3 input, 6 output,
+      # 0.025 cache read per million), divided by the existing RMB 7.1/USD.
+      # This endpoint consumes subscription Credits, not pay-as-you-go balance.
+      # https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go
+      input_cost_per_token: 0.000000422535
+      output_cost_per_token: 0.000000845070
+      cache_read_input_token_cost: 0.000000003521
+      cache_creation_input_token_cost: 0
+    model_info:
+      cheese_selectable: true
+      cheese_label: MiMo V2.6 Pro
+      supports_reasoning: true
+      supports_vision: true
+
   - model_name: kimi-k3
     litellm_params:
       model: anthropic/kimi-k3
