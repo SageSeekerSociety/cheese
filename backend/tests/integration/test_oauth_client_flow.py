@@ -51,6 +51,13 @@ def _bind(client: TestClient, token: str, username: str, password: str):
     )
 
 
+def _login(client: TestClient, user: CreatedUser, password: str | None = None):
+    return client.post(
+        "/users/auth/login",
+        json={"username": user.username, "password": password or user.password},
+    )
+
+
 def _seed_pending(portal, session_id: str, data: dict) -> None:
     from app.api.routes.users import _store_oauth_pending
 
@@ -226,13 +233,13 @@ class TestOAuthBindPassword:
         )
         assert _q(_loc(resp))["error_code"] == "INVALID_CREDENTIALS"
 
-    def test_bind_rejects_unknown_user(
+    def test_unknown_user_is_answered_like_a_wrong_password(
         self, api_client: TestClient, state_token: StateToken
     ):
         resp = _bind(
             api_client, state_token(id="uid-bind-nouser"), "no_such_user_xyz", "x"
         )
-        assert _q(_loc(resp))["error_code"] == "USER_NOT_FOUND"
+        assert _q(_loc(resp))["error_code"] == "INVALID_CREDENTIALS"
 
     def test_state_token_binds_only_once(
         self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
@@ -256,6 +263,61 @@ class TestOAuthBindPassword:
 
         retry = _bind(api_client, token, user.username, user.password)
         assert _q(_loc(retry))["error_code"] == "TOKEN_EXPIRED"
+
+
+class TestBindingSharesTheLoginBudget:
+    def test_login_lockout_blocks_binding(
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
+    ):
+        user = user_client.create_user()
+        for _ in range(5):
+            _login(api_client, user, "wrong-password")
+
+        resp = _bind(
+            api_client, state_token(id="uid-locked-1"), user.username, user.password
+        )
+        assert _q(_loc(resp))["error_code"] == "TOO_MANY_ATTEMPTS"
+
+    def test_failed_bindings_lock_the_login(
+        self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
+    ):
+        user = user_client.create_user()
+        for i in range(5):
+            _bind(
+                api_client, state_token(id=f"uid-locked-2-{i}"), user.username, "wrong"
+            )
+
+        assert _login(api_client, user).status_code == 403
+        resp = _bind(
+            api_client, state_token(id="uid-locked-2-x"), user.username, user.password
+        )
+        assert _q(_loc(resp))["error_code"] == "TOO_MANY_ATTEMPTS"
+
+    def test_verify_page_draws_on_the_same_budget(
+        self, api_client: TestClient, user_client: UserCreator, _portal
+    ):
+        user = user_client.create_user()
+        for _ in range(5):
+            _login(api_client, user, "wrong-password")
+
+        session_id = f"oauth_password_locked_{user.user_id}"
+        _seed_pending(
+            _portal,
+            session_id,
+            {
+                "type": "password",
+                "providerId": "ruc",
+                "userInfo": {"id": f"uid-verify-locked-{user.user_id}"},
+                "userId": user.user_id,
+                "username": user.username,
+            },
+        )
+        resp = api_client.post(
+            "/users/auth/oauth/verify",
+            json={"sessionId": session_id, "password": user.password},
+            follow_redirects=False,
+        )
+        assert _q(_loc(resp))["error_code"] == "TOO_MANY_ATTEMPTS"
 
 
 class TestOAuthVerifyPending:
@@ -361,7 +423,7 @@ class TestOAuthSrpBind:
             api_client.post("/users/oauth/bind/srp/init", json=body).status_code == 401
         )
 
-    def test_init_rejects_non_srp_and_unknown_users(
+    def test_init_answers_unknown_and_non_srp_users_alike(
         self, api_client: TestClient, user_client: UserCreator, state_token: StateToken
     ):
         legacy = user_client.create_user()  # bcrypt legacy user
@@ -372,7 +434,6 @@ class TestOAuthSrpBind:
                 "username": legacy.username,
             },
         )
-        assert not_srp.status_code == 400
         unknown = api_client.post(
             "/users/oauth/bind/srp/init",
             json={
@@ -380,7 +441,8 @@ class TestOAuthSrpBind:
                 "username": "no_such_user_xyz",
             },
         )
-        assert unknown.status_code == 404
+        assert not_srp.status_code == unknown.status_code == 401
+        assert not_srp.json()["message"] == unknown.json()["message"]
 
     def test_init_rejects_bad_token(self, api_client: TestClient):
         resp = api_client.post(

@@ -3679,6 +3679,45 @@ async def _redeem_oauth_state_token(jti: str) -> bool:
         return False
 
 
+async def _spend_oauth_password_attempt(username: str) -> bool:
+    """Charge one attempt to ``username``'s login budget before a credential
+    check. False when the budget is spent and the request must be refused.
+
+    The same counter password and SRP login use, so proving a password through
+    an OAuth binding page cannot bypass a login lockout.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.login_security import LoginRateLimiter
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        limiter = LoginRateLimiter(redis)
+        if await limiter.is_locked_out(username):
+            return False
+        return await limiter.consume_attempt(username) is not None
+    finally:
+        await redis.aclose()
+
+
+async def _clear_oauth_password_attempts(username: str) -> None:
+    from redis.asyncio import Redis as AsyncRedis
+
+    from app.domain.user.login_security import LoginRateLimiter
+
+    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+    try:
+        await LoginRateLimiter(redis).clear_attempts(username)
+    finally:
+        await redis.aclose()
+
+
+def _oauth_too_many_attempts_redirect() -> RedirectResponse:
+    return _oauth_error_redirect(
+        "TOO_MANY_ATTEMPTS", "Too many failed attempts. Try again later"
+    )
+
+
 def _oauth_user_info_dict(user_info) -> dict:
     return {
         "id": user_info.id,
@@ -4008,6 +4047,8 @@ async def oauth_verify_conflict(
         return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
 
     user_id = int(pending["userId"])
+    if not await _spend_oauth_password_attempt(pending["username"]):
+        return _oauth_too_many_attempts_redirect()
     try:
         if pending["type"] == "password":
             password = payload.get("password") or ""
@@ -4035,6 +4076,7 @@ async def oauth_verify_conflict(
                     "INVALID_SRP_PROOF", "Security verification failed"
                 )
 
+        await _clear_oauth_password_attempts(pending["username"])
         return await _complete_oauth_binding(
             auth_service=auth_service,
             oauth_service=oauth_service,
@@ -4137,20 +4179,26 @@ async def oauth_bind_user(
     if not await _redeem_oauth_state_token(jti):
         return _oauth_error_redirect("TOKEN_EXPIRED", "Session expired")
 
-    user = await auth_service._user_repo.get_by_username(username)
-    if user is None:
-        return _oauth_error_redirect("USER_NOT_FOUND", "User not found")
-    hashed = user.hashed_password or ""
-    if hashed.startswith("SRP:") or not hashed:
-        # SRP accounts must use the bind/srp/init + verify pair.
-        return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
+    if not await _spend_oauth_password_attempt(username):
+        return _oauth_too_many_attempts_redirect()
 
     import bcrypt
 
-    if not password or not await asyncio.to_thread(
-        bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
+    user = await auth_service._user_repo.get_by_username(username)
+    hashed = (user.hashed_password or "") if user is not None else ""
+    # SRP accounts must use the bind/srp/init + verify pair; they, unknown
+    # users and wrong passwords all get the same answer.
+    if (
+        user is None
+        or not hashed
+        or hashed.startswith("SRP:")
+        or not password
+        or not await asyncio.to_thread(
+            bcrypt.checkpw, password.encode("utf-8"), hashed.encode("utf-8")
+        )
     ):
         return _oauth_error_redirect("INVALID_CREDENTIALS", "Invalid credentials")
+    await _clear_oauth_password_attempts(username)
 
     try:
         return await _complete_oauth_binding(
@@ -4183,14 +4231,10 @@ async def oauth_bind_srp_init(
         raise AuthenticationRequiredError("Session expired, please try again") from None
 
     user = await auth_service._user_repo.get_by_username(username)
-    if user is None:
-        raise NotFoundError("User not found")
-    hashed = user.hashed_password or ""
-    if not hashed.startswith("SRP:"):
-        raise BadRequestError("User does not support SRP authentication")
+    hashed = (user.hashed_password or "") if user is not None else ""
     parts = hashed.split(":", 2)
-    if len(parts) != 3:
-        raise BadRequestError("User does not support SRP authentication")
+    if user is None or not hashed.startswith("SRP:") or len(parts) != 3:
+        raise AuthenticationRequiredError("Invalid username or password")
     salt, verifier = parts[1], parts[2]
 
     # Spent here rather than at verify: the pending session below is itself
@@ -4247,6 +4291,8 @@ async def oauth_bind_srp_verify(
     pending = await _pop_oauth_pending(sessionId)
     if not pending or pending.get("type") != "srp_bind":
         return _oauth_error_redirect("SESSION_EXPIRED", "OAuth session expired")
+    if not await _spend_oauth_password_attempt(pending["username"]):
+        return _oauth_too_many_attempts_redirect()
 
     success, _proof = _srp_verify_session(
         server_secret_hex=pending["serverSecret"],
@@ -4260,6 +4306,7 @@ async def oauth_bind_srp_verify(
         return _oauth_error_redirect(
             "INVALID_SRP_PROOF", "Security verification failed"
         )
+    await _clear_oauth_password_attempts(pending["username"])
 
     try:
         return await _complete_oauth_binding(
