@@ -1,4 +1,5 @@
 import type { DomainGroup, Space, SpaceCategory, SpaceInviteCode, SpaceMember, Topic } from '@/types'
+import type { Quiz, QuizQuestion } from './types'
 import type {
   AnalyticsApproveType,
   AnalyticsCompletionType,
@@ -7,11 +8,17 @@ import type {
   AnalyticsSortOrder,
   GetSpacesResponseData,
   GetTeachingUnitsResponseData,
+  PatchQuizAnswerRequestData,
+  PatchQuizQuestionRequestData,
+  PatchQuizRequestData,
   PatchSpaceAdminRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
   PatchSpaceRequestData,
   PatchTeachingUnitRequestData,
+  PostQuizAttemptRequestData,
+  PostQuizQuestionRequestData,
+  PostQuizRequestData,
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
@@ -33,6 +40,7 @@ import type {
   SpaceMyPublishedTasks,
   SpaceMyPublishingOverview,
   SpaceTaskAnalytics,
+  TeachingQuizData,
   TeachingUnit,
 } from './types'
 
@@ -446,5 +454,81 @@ export namespace SpacesApi {
     NewApiInstance.request({
       url: `/spaces/${spaceId}/units/${unitId}`,
       method: 'DELETE',
+    })
+
+  export const getUnitQuiz = (spaceId: number, unitId: number) =>
+    NewApiInstance.request<TeachingQuizData>({
+      url: `/spaces/${spaceId}/units/${unitId}/quiz`,
+      method: 'GET',
+    })
+
+  export const getQuiz = (spaceId: number, quizId: number) =>
+    NewApiInstance.request<TeachingQuizData>({
+      url: `/spaces/${spaceId}/quizzes/${quizId}`,
+      method: 'GET',
+    })
+
+  export const createQuiz = (spaceId: number, unitId: number, data: PostQuizRequestData) =>
+    NewApiInstance.request<{ quiz: Quiz }>({
+      url: `/spaces/${spaceId}/units/${unitId}/quiz`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateQuiz = (spaceId: number, quizId: number, data: PatchQuizRequestData) =>
+    NewApiInstance.request<{ quiz: Quiz }>({
+      url: `/spaces/${spaceId}/quizzes/${quizId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteQuiz = (spaceId: number, quizId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/quizzes/${quizId}`,
+      method: 'DELETE',
+    })
+
+  export const addQuizQuestion = (spaceId: number, quizId: number, data: PostQuizQuestionRequestData) =>
+    NewApiInstance.request<{ question: QuizQuestion }>({
+      url: `/spaces/${spaceId}/quizzes/${quizId}/questions`,
+      method: 'POST',
+      data,
+    })
+
+  export const updateQuizQuestion = (
+    spaceId: number,
+    quizId: number,
+    questionId: number,
+    data: PatchQuizQuestionRequestData
+  ) =>
+    NewApiInstance.request<{ question: QuizQuestion }>({
+      url: `/spaces/${spaceId}/quizzes/${quizId}/questions/${questionId}`,
+      method: 'PATCH',
+      data,
+    })
+
+  export const deleteQuizQuestion = (spaceId: number, quizId: number, questionId: number) =>
+    NewApiInstance.request({
+      url: `/spaces/${spaceId}/quizzes/${quizId}/questions/${questionId}`,
+      method: 'DELETE',
+    })
+
+  export const submitQuizAttempt = (spaceId: number, quizId: number, data: PostQuizAttemptRequestData) =>
+    NewApiInstance.request<TeachingQuizData>({
+      url: `/spaces/${spaceId}/quizzes/${quizId}/my-attempt`,
+      method: 'PUT',
+      data,
+    })
+
+  export const gradeQuizAnswer = (
+    spaceId: number,
+    quizId: number,
+    answerId: number,
+    data: PatchQuizAnswerRequestData
+  ) =>
+    NewApiInstance.request<{ answer: unknown }>({
+      url: `/spaces/${spaceId}/quizzes/${quizId}/answers/${answerId}`,
+      method: 'PATCH',
+      data,
     })
 }
