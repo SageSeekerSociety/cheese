@@ -1285,3 +1285,47 @@ class TestEmailVerificationService:
 
         with pytest.raises(BadRequestError, match="Please wait"):
             await svc.send_verification_code(email)
+
+    @pytest.mark.anyio
+    async def test_a_failed_send_is_reported_and_can_be_retried_at_once(
+        self, redis, email
+    ) -> None:
+        from app.core.errors import SystemBusyError
+
+        failing = self._service(redis, _Outbox(delivers=False))
+        with pytest.raises(SystemBusyError):
+            await failing.send_verification_code(email)
+
+        outbox = _Outbox()
+        working = self._service(redis, outbox)
+        await working.send_verification_code(email)
+        assert await working.verify_code(email, outbox.last_code()) is True
+
+    @pytest.mark.anyio
+    async def test_the_code_from_a_failed_send_is_not_accepted(
+        self, redis, email
+    ) -> None:
+        from app.core.errors import SystemBusyError
+
+        outbox = _Outbox(delivers=False)
+        svc = self._service(redis, outbox)
+        with pytest.raises(SystemBusyError):
+            await svc.send_verification_code(email)
+
+        assert await svc.verify_code(email, outbox.last_code()) is False
+
+    @pytest.mark.anyio
+    async def test_without_mail_configured_the_request_still_succeeds(
+        self, redis, email
+    ) -> None:
+        """Local development runs without mail; registration must keep working
+        there, so the code is kept and nothing is reported as failed."""
+        outbox = _Outbox(configured=False)
+        svc = self._service(redis, outbox)
+
+        await svc.send_verification_code(email)
+
+        assert outbox.sent == []
+        # The code exists: a second request meets the resend cooldown.
+        with pytest.raises(BadRequestError, match="Please wait"):
+            await svc.send_verification_code(email)

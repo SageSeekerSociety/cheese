@@ -30,6 +30,10 @@ class EmailSender:
         self._use_ssl = use_ssl if use_ssl is not None else settings.email_smtp_ssl
         self._use_tls = use_tls
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._host and self._from_address)
+
     async def send(
         self,
         *,
@@ -38,7 +42,7 @@ class EmailSender:
         body_html: str,
         body_text: str | None = None,
     ) -> bool:
-        if not self._host or not self._from_address:
+        if not self.is_configured:
             logger.warning("Email not configured, skipping send to %s", to)
             return False
 

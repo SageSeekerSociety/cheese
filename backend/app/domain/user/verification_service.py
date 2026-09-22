@@ -5,7 +5,7 @@ import string
 from redis.asyncio import Redis
 
 from app.core.email import get_email_sender
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, SystemBusyError
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class EmailVerificationService:
         self._redis = redis
         self._sender = get_email_sender()
 
-    async def send_verification_code(self, email: str) -> bool:
+    async def send_verification_code(self, email: str) -> None:
         code = generate_verification_code()
         key = f"{VERIFICATION_CODE_PREFIX}{email}"
 
@@ -75,21 +75,29 @@ class EmailVerificationService:
         """
         body_text = f"Your Cheese verification code is: {code}\nThis code will expire in 10 minutes."  # noqa: E501
 
-        success = await self._sender.send(
+        if not self._sender.is_configured:
+            # A deployment without mail (local development) keeps the code in
+            # Redis and carries on, so registration stays usable there.
+            logger.warning(
+                "Email not configured; verification code for %s was not sent", email
+            )
+            return
+
+        sent = await self._sender.send(
             to=email,
             subject=subject,
             body_html=body_html,
             body_text=body_text,
         )
-
-        if success:
-            logger.info("Verification code sent to %s", email)
-        else:
-            logger.warning(
-                "Failed to send verification code to %s (email not configured)", email
+        if not sent:
+            # Nobody received this code, so it must not hold the resend
+            # cooldown either.
+            await self._redis.delete(key)
+            raise SystemBusyError(
+                "Failed to send the verification email. Please try again"
             )
 
-        return True
+        logger.info("Verification code sent to %s", email)
 
     async def verify_code(self, email: str, code: str) -> bool:
         """Consume the code on a match. Each miss counts against the code, and

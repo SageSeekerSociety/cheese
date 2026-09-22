@@ -1241,7 +1241,8 @@ async def send_register_email_code(
     """Send email verification code for registration.
 
     Uses Redis for code storage (10 min TTL) and sends via configured SMTP.
-    Falls back to success response if email not configured (for dev).
+    Answers success without sending if email is not configured (for dev); a
+    configured sender that fails is a 503 and leaves no code behind.
     Any valid email address is accepted.
     """
     import re

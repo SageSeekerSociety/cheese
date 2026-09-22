@@ -97,6 +97,20 @@ def _registration(email: str, code: str, password: str = "abc123456Test!") -> di
 
 
 class TestRegistrationEmailCode:
+    def test_a_failed_send_is_an_error_and_can_be_retried_at_once(
+        self, api_client: TestClient, outbox: _Outbox
+    ):
+        email = f"reg-{uuid.uuid4().hex[:12]}@example.com"
+
+        outbox.delivers = False
+        failed = api_client.post("/users/verify/email", json={"email": email})
+        assert failed.status_code == 503, failed.text
+
+        outbox.delivers = True
+        retried = api_client.post("/users/verify/email", json={"email": email})
+        assert retried.status_code == 200, retried.text
+        assert len(outbox.sent) == 2
+
     def test_five_wrong_codes_void_the_right_one(
         self, api_client: TestClient, outbox: _Outbox
     ):
