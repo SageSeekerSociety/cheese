@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, true, update
+from sqlalchemy import Select, and_, exists, func, or_, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -357,15 +357,45 @@ def matching(q: str) -> Any:
     Backslash goes first: it is the escape character, so a reader who typed one
     would otherwise escape whatever follows it and turn a literal into syntax a
     second way.
+
+    **Each word is its own term, and the terms are ANDed.** One pattern over the
+    whole query means 「导出 报表」 only finds a row where those two words are
+    adjacent with that exact space — so the reader who names two things they
+    remember gets *nothing*, while a reader who happens to remember one of them
+    gets their row. That is backwards: the more you remember, the fewer results.
+    Terms are ANDed rather than ORed because a second word is a further
+    restriction, not an alternative (「导出 报表」 is not 「导出」 or 「报表」).
+
+    Recall, not ranking: the rows come back in the tab's order, not by how well
+    each one matches. Relevance ranking is a different and larger thing — it
+    needs a text index (`pg_search` is in the image, unused) and a maintenance
+    story for a table that also takes status updates.
     """
-    literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{literal}%"
-    return or_(
-        Feedback.title.ilike(pattern, escape="\\"),
-        Feedback.summary.ilike(pattern, escape="\\"),
-        Feedback.problem.ilike(pattern, escape="\\"),
-        Feedback.author_handle.ilike(pattern, escape="\\"),
+    columns = (
+        Feedback.title,
+        Feedback.summary,
+        Feedback.problem,
+        Feedback.author_handle,
     )
+    terms = q.split()
+    if not terms:
+        # Whitespace is not a search: it must not be read as 「find rows with a
+        # space in them」 (what the single-pattern version did) nor as nothing at
+        # all (an empty AND would match every row and silently drop the filter
+        # the caller thinks it applied).
+        return true()
+    return and_(
+        *[
+            or_(*[column.ilike(_like_pattern(term), escape="\\") for column in columns])
+            for term in terms
+        ]
+    )
+
+
+def _like_pattern(term: str) -> str:
+    """One search term, as a `LIKE` pattern with its own syntax escaped."""
+    literal = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{literal}%"
 
 
 class FeedbackRepository:
@@ -373,6 +403,38 @@ class FeedbackRepository:
         self._session = session
 
     # --- 主表 ---------------------------------------------------------------
+
+    async def lock_author(self, handle: str) -> None:
+        """Serialize one author's publishes, for the length of this transaction.
+
+        The daily cap below is a read-then-insert, so without this two requests
+        that arrive together both read a count below the cap and both insert —
+        the cap fails exactly when it is doing its job, which is the one moment
+        it has to hold. A lock is the same answer `proposals.py` gives its own
+        cap, and for the same reason: it covers the window that needs covering
+        and nothing longer, and dying mid-transaction releases it.
+
+        Namespaced with a string so two features cannot collide on the hash of
+        one handle.
+        """
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"feedback-reports:{handle}"},
+        )
+
+    async def count_author_since(self, handle: str, since: datetime) -> int:
+        """How many reports this person has filed since a moment.
+
+        Counts what they WROTE, not what they sent: `author_handle` is the same
+        column the cap's message names, and on the direct path the author is the
+        caller. Deleted rows count too — the cap is about how much somebody is
+        producing, and deleting a report is not a way to buy more quota.
+        """
+        stmt = select(func.count(Feedback.id)).where(
+            Feedback.author_handle == handle,
+            Feedback.created_at >= since,
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
 
     async def add(
         self,
