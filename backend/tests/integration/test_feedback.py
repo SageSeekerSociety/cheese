@@ -2852,3 +2852,74 @@ def test_an_unknown_status_or_kind_is_refused_rather_than_ignored(client):
     assert client.get("/feedback", params={"kind": "complaint"}).status_code == 400
     assert client.get("/feedback", params={"status": "received"}).status_code == 200
     assert client.get("/feedback", params={"kind": "bug"}).status_code == 200
+
+
+# --- 提交侧的每日上限 -------------------------------------------------------
+
+
+def _submit(client, handle: str, title: str):
+    """发一条，**不**断言成功——上限用例要的就是被拒的那一次。"""
+    return client.post(
+        "/feedback", json={"title": title}, headers=session_auth_headers(handle)
+    )
+
+
+def test_an_author_runs_out_of_reports_for_the_day(client, monkeypatch):
+    """同一个人发到上限之后被拒，而且是 412。
+
+    这是「防刷」那一半：管理员的删除是**事后清理**，一条一条按；在那之前，能
+    直接写进公开列表的人没有任何上限。412 而不是 429，因为它和提案那三道限流
+    对客户端说的是同一句话——**别重试**（`Retry-After` 不存在，客户端也不该
+    等到某个时刻再撞一次）。
+    """
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 3)
+    for n in range(3):
+        assert _submit(client, REPORTER, f"第 {n} 个不同的问题").status_code == 200
+
+    over = _submit(client, REPORTER, "第 4 个问题")
+    assert over.status_code == 412, over.text
+    # 那句话要说清楚是哪条限制、以及上限是多少 —— 这是一条会打在人脸上的拒绝。
+    message = over.json()["message"]
+    assert "3" in message and "上限" in message, message
+
+
+def test_the_cap_is_per_person_not_global(client, monkeypatch):
+    """一个人的上限不是另一个人的。反过来的写法（一张平台级的表）会让第一个
+    把当天额度用完的人顺手把所有人关掉。"""
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    assert _submit(client, REPORTER, "我的第一条").status_code == 200
+    assert _submit(client, REPORTER, "我的第二条").status_code == 412
+    assert _submit(client, STRANGER, "另一个人的第一条").status_code == 200
+
+
+def test_deleting_a_report_does_not_buy_quota(client, monkeypatch):
+    """删掉不能把额度换回来。
+
+    上限算的是**产出**，不是「现存几条」。否则刷屏的写法就是发一条删一条，
+    而这条路上删的正好是它自己的——那正是要防的那个人能自己按的按钮。
+    """
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    row = _report(client, REPORTER, title="先发一条再删掉")
+    assert _delete(client, row["id"], REPORTER).status_code == 200
+    assert _submit(client, REPORTER, "删完之后再发一条").status_code == 412
+
+
+def test_the_cap_counts_a_rolling_day_not_a_calendar_one(client, monkeypatch):
+    """窗口是滚动的 24 小时。自然日会在午夜清零，于是紧挨着午夜的两分钟里能发
+    两倍的量——和提案那条上限同一个理由，也同一个写法。"""
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    assert _submit(client, REPORTER, "第一条").status_code == 200
+
+    # 把那条的 created_at 往回拨 25 小时：它落到窗口外面，额度就回来了。
+    # 直接改那一行而不是等 24 小时 —— 「一天」是窗口的宽度，不是这段测试要睡多久。
+    async def _backdate() -> None:
+        async with client.test_factory() as s:
+            await s.execute(
+                update(Feedback)
+                .where(Feedback.author_handle == REPORTER)
+                .values(created_at=datetime.now(UTC) - timedelta(hours=25))
+            )
+            await s.commit()
+
+    asyncio.run(_backdate())
+    assert _submit(client, REPORTER, "一天之后再发一条").status_code == 200

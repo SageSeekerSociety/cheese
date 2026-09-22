@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, true, update
+from sqlalchemy import Select, and_, exists, func, or_, select, text, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -373,6 +373,38 @@ class FeedbackRepository:
         self._session = session
 
     # --- 主表 ---------------------------------------------------------------
+
+    async def lock_author(self, handle: str) -> None:
+        """Serialize one author's publishes, for the length of this transaction.
+
+        The daily cap below is a read-then-insert, so without this two requests
+        that arrive together both read a count below the cap and both insert —
+        the cap fails exactly when it is doing its job, which is the one moment
+        it has to hold. A lock is the same answer `proposals.py` gives its own
+        cap, and for the same reason: it covers the window that needs covering
+        and nothing longer, and dying mid-transaction releases it.
+
+        Namespaced with a string so two features cannot collide on the hash of
+        one handle.
+        """
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"feedback-reports:{handle}"},
+        )
+
+    async def count_author_since(self, handle: str, since: datetime) -> int:
+        """How many reports this person has filed since a moment.
+
+        Counts what they WROTE, not what they sent: `author_handle` is the same
+        column the cap's message names, and on the direct path the author is the
+        caller. Deleted rows count too — the cap is about how much somebody is
+        producing, and deleting a report is not a way to buy more quota.
+        """
+        stmt = select(func.count(Feedback.id)).where(
+            Feedback.author_handle == handle,
+            Feedback.created_at >= since,
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
 
     async def add(
         self,
