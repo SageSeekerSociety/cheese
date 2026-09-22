@@ -25,15 +25,15 @@ impl SrpInteger {
         }
     }
 
+    /// Parse whole bytes of hex. The hashes feed each value back through its
+    /// byte form, so anything that is not whole bytes is refused here rather
+    /// than left to fail there.
     pub fn from_hex(hex: &str) -> Result<Self, String> {
-        let cleaned_hex = hex.trim().replace(' ', "").replace('\n', "");
-        match BigUint::parse_bytes(cleaned_hex.as_bytes(), 16) {
-            Some(value) => Ok(Self {
-                value: value.into(),
-                hex_length: Some(cleaned_hex.len()),
-            }),
-            None => Err(format!("Invalid hex string: {}", hex)),
+        let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex string: {e}"))?;
+        if bytes.is_empty() {
+            return Err("Invalid hex string: empty".to_string());
         }
+        Ok(Self::from_bytes(&bytes))
     }
 
     pub fn to_hex(&self) -> String {

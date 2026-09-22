@@ -29,15 +29,9 @@ from app.common.auth import (
     create_refresh_token,
     decode_token,
 )
-
-# srp re-exports from the compiled Rust extension srp_rs, which pyright can't
-# introspect; the symbols exist at runtime (see app/common/srp.py).
-from app.common.srp import (
-    generate_server_ephemeral as _srp_generate_ephemeral,  # type: ignore[attr-defined]
-)
-from app.common.srp import (
-    verify_session as _srp_verify_session,  # type: ignore[attr-defined]
-)
+from app.common.srp import generate_server_ephemeral as _srp_generate_ephemeral
+from app.common.srp import is_srp_hex
+from app.common.srp import verify_session as _srp_verify_session
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -347,6 +341,12 @@ async def _spend_2fa_attempt(
 
     for limiter in limiters:
         await limiter.clear_attempts(subject)
+
+
+def _require_srp_hex(salt: str | None, verifier: str | None) -> None:
+    """Refuse SRP credentials that login could never read back."""
+    if not (is_srp_hex(salt or "") and is_srp_hex(verifier or "")):
+        raise BadRequestError("srpSalt and srpVerifier must be hex")
 
 
 async def _spend_sudo_password_attempt(
@@ -1361,6 +1361,8 @@ async def register_user(
 
     if not has_srp and not has_password:
         raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+    if has_srp:
+        _require_srp_hex(srp_salt, srp_verifier)
 
     if has_password:
         password_pattern = (
@@ -1764,7 +1766,10 @@ async def srp_login_init(
         raise AuthenticationRequiredError("Invalid username or password")
     stored_salt, stored_verifier = parts[1], parts[2]
 
-    server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
+    try:
+        server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
+    except ValueError:
+        raise AuthenticationRequiredError("Invalid username or password") from None
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
     try:
@@ -1834,7 +1839,7 @@ async def srp_login_verify(
 
         srp_key = f"srp:login:{username}"
         server_secret = await redis.get(srp_key)
-        if not server_secret:
+        if not isinstance(server_secret, str) or not server_secret:
             raise AuthenticationRequiredError(
                 "SRP session expired, please reinitialize"
             )
@@ -2226,7 +2231,12 @@ async def sudo_auth(
 
             if not client_ephemeral and not client_proof:
                 # SRP Step 1: Generate server ephemeral and store session state
-                server_public, server_secret = _srp_generate_ephemeral(stored_verifier)
+                try:
+                    server_public, server_secret = _srp_generate_ephemeral(
+                        stored_verifier
+                    )
+                except ValueError:
+                    raise AuthenticationRequiredError("Corrupted SRP data") from None
 
                 # Store server secret in Redis (expires in 5 minutes)
                 await redis.setex(srp_key, 300, server_secret)
@@ -2247,7 +2257,7 @@ async def sudo_auth(
                 )
 
             stored_secret = await redis.get(srp_key)
-            if not stored_secret:
+            if not isinstance(stored_secret, str) or not stored_secret:
                 raise AuthenticationRequiredError(
                     "SRP session expired, please reinitialize"
                 )
@@ -2779,6 +2789,8 @@ async def recover_password_verify(
 
     if not has_password and not has_srp:
         raise BadRequestError("Either password or srpSalt/srpVerifier is required")
+    if has_srp:
+        _require_srp_hex(srp_salt, srp_verifier)
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -4051,6 +4063,12 @@ async def oauth_create_user(
         return _oauth_error_redirect(
             "INVALID_SRP_CREDENTIALS", "Missing SRP credentials"
         )
+    if passwordMode == "srp" and not (
+        is_srp_hex(srpSalt or "") and is_srp_hex(srpVerifier or "")
+    ):
+        return _oauth_error_redirect(
+            "INVALID_SRP_CREDENTIALS", "Malformed SRP credentials"
+        )
     if is_reserved_username(username):
         # Ahead of the try/except below on purpose: that block catches
         # Exception broadly and answers with a generic "creation failed" plus an
@@ -4163,7 +4181,10 @@ async def oauth_bind_srp_init(
     import secrets as _secrets
     import time as _time
 
-    server_public, server_secret = _srp_generate_ephemeral(verifier)
+    try:
+        server_public, server_secret = _srp_generate_ephemeral(verifier)
+    except ValueError:
+        raise BadRequestError("User does not support SRP authentication") from None
     session_id = (
         f"oauth_srp_{provider_id}_{user_info.get('id')}_"
         f"{int(_time.time() * 1000)}_{_secrets.token_hex(4)}"

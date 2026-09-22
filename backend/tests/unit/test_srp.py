@@ -7,7 +7,10 @@ as the secure-remote-password JS library to verify compatibility.
 import hashlib
 import os
 
+import pytest
+
 from srp_rs import generate_server_ephemeral, verify_session
+from tests.support import srp_vectors as js
 
 # ---- Minimal SrpInteger that matches Rust/JS hex_length semantics ----
 
@@ -229,3 +232,25 @@ class TestSrpFullFlow:
 
         success, _ = verify_session(server_sec, A_hex, salt, username, verifier, M1_hex)
         assert success is True
+
+
+MALFORMED_HEX = ["abc", "zz", "", "0g", " 00"]
+
+
+class TestMalformedHex:
+    @pytest.mark.parametrize("bad", MALFORMED_HEX)
+    def test_ephemeral_rejects_malformed_verifier(self, bad: str) -> None:
+        with pytest.raises(ValueError):
+            generate_server_ephemeral(bad)
+
+    @pytest.mark.parametrize("bad", MALFORMED_HEX)
+    def test_verify_rejects_malformed_client_values(self, bad: str) -> None:
+        with pytest.raises(ValueError):
+            verify_session(js.B_SECRET, bad, js.SALT, js.USERNAME, js.VERIFIER, js.M1)
+        with pytest.raises(ValueError):
+            verify_session(js.B_SECRET, js.A, js.SALT, js.USERNAME, js.VERIFIER, bad)
+
+    @pytest.mark.parametrize("bad", MALFORMED_HEX)
+    def test_verify_rejects_malformed_stored_salt(self, bad: str) -> None:
+        with pytest.raises(ValueError):
+            verify_session(js.B_SECRET, js.A, bad, js.USERNAME, js.VERIFIER, js.M1)
