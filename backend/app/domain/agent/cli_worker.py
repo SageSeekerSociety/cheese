@@ -75,7 +75,11 @@ def _tool_name(command):
     return "cheese_" + "_".join(part.replace("-", "_") for part in command)
 
 
-def _description(ancestors, leaf, join):
+def _default_join(*parts: str) -> str:
+    return "\n\n".join(p for p in parts if p)
+
+
+def _description(ancestors, leaf, join=_default_join):
     body = leaf.description or leaf.format_usage().strip()
     # ancestors[0] is the program root. Its description is how to read the CLI
     # as a whole, not any one tool's 什么时候该用 — threading it in buries every
@@ -84,7 +88,7 @@ def _description(ancestors, leaf, join):
     return join(*context, body) if context else body
 
 
-def _tools(parser, join):
+def _tools(parser, join=_default_join):
     if parser is None:
         raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
     tools = []
