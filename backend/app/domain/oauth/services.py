@@ -132,20 +132,28 @@ class GitHubProvider(OAuthProvider):
             resp.raise_for_status()
             data = resp.json()
 
-            email = data.get("email")
-            if not email:
-                email_resp = await client.get(
-                    "https://api.github.com/user/emails",
-                    headers={
-                        "Authorization": f"Bearer {access_token}",
-                        "Accept": "application/vnd.github+json",
-                    },
+            # `/user`'s `email` is the public profile email, which GitHub does
+            # not require to be verified. Only a verified primary address from
+            # `/user/emails` is adopted; anything else counts as no email.
+            email = None
+            email_resp = await client.get(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+            if email_resp.status_code == 200:
+                primary = next(
+                    (
+                        e
+                        for e in email_resp.json()
+                        if e.get("primary") and e.get("verified") is True
+                    ),
+                    None,
                 )
-                if email_resp.status_code == 200:
-                    emails = email_resp.json()
-                    primary = next((e for e in emails if e.get("primary")), None)
-                    if primary:
-                        email = primary.get("email")
+                if primary:
+                    email = primary.get("email")
 
             return OAuthUserInfo(
                 id=str(data["id"]),
@@ -194,13 +202,13 @@ class GoogleProvider(OAuthProvider):
             resp.raise_for_status()
             data = resp.json()
 
+            # An address Google has not verified counts as no email.
+            email = data.get("email") if data.get("verified_email") is True else None
             return OAuthUserInfo(
                 id=data["id"],
-                email=data.get("email"),
+                email=email,
                 name=data.get("name"),
-                username=data.get("email", "").split("@")[0]
-                if data.get("email")
-                else None,
+                username=email.split("@")[0] if email else None,
             )
 
 
@@ -246,6 +254,9 @@ class RUCProvider(OAuthProvider):
             primary = next((p for p in profiles if p.get("isprimary") is True), {})
             student_no = primary.get("stno") or profile.get("name")
 
+            # No verification flag to check: the account and its profile are
+            # issued by the university's identity system rather than entered
+            # by the user at sign-up, so the email is the institution's record.
             return OAuthUserInfo(
                 id=str(uid),
                 email=profile.get("email") or None,
