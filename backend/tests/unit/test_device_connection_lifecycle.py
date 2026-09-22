@@ -4,6 +4,7 @@ import asyncio
 import gc
 import json
 import uuid
+import weakref
 
 import httpx
 import pytest
@@ -19,6 +20,84 @@ from tests.support import wire
 @pytest.fixture(autouse=True)
 def connection_owner_role(monkeypatch) -> None:
     monkeypatch.setattr(settings, "device_connection_owner", True)
+
+
+@pytest.mark.anyio
+async def test_inventory_poll_results_are_released_after_delivery(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    monkeypatch.setattr(device_connection_app, "_executor_calls", {})
+    monkeypatch.setattr(device_connection_app, "_release_draining", False)
+    retained = []
+
+    class Inventory(dict):
+        pass
+
+    async def inventory(**kwargs):
+        result = Inventory(tasks=[{"task_id": "finished", "status": "completed"}])
+        retained.append(weakref.ref(result))
+        return result
+
+    monkeypatch.setattr(device_hub, "call_executor", inventory)
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    async with httpx.AsyncClient(
+        base_url="http://owner",
+        transport=transport,
+        headers={"X-Device-Connection-Secret": "test-owner-secret"},
+    ) as client:
+        for index in range(8):
+            response = await client.post(
+                "/internal/device-connection/call/call_executor",
+                json={
+                    "device_id": "machine",
+                    "state": "/room/executor",
+                    "method": "control",
+                    "params": {"subtype": "background_tasks"},
+                    "trace_id": f"inventory-{index}",
+                },
+            )
+            assert response.status_code == 200
+            assert response.json()["result"]["tasks"][0]["status"] == "completed"
+    await asyncio.sleep(0)
+    gc.collect()
+    assert len(retained) == 8
+    assert all(result() is None for result in retained)
+
+
+@pytest.mark.anyio
+async def test_backgrounding_a_tool_keeps_its_replay_result(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    monkeypatch.setattr(device_connection_app, "_executor_calls", {})
+    monkeypatch.setattr(device_connection_app, "_release_draining", False)
+    calls = 0
+
+    async def release_tool(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {"tasks": [{"task_id": "running", "status": "running"}]}
+
+    monkeypatch.setattr(device_hub, "call_executor", release_tool)
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    async with httpx.AsyncClient(
+        base_url="http://owner",
+        transport=transport,
+        headers={"X-Device-Connection-Secret": "test-owner-secret"},
+    ) as client:
+        payload = {
+            "device_id": "machine",
+            "state": "/room/executor",
+            "method": "control",
+            "params": {"subtype": "background_tasks", "tool_use_id": "tool-1"},
+            "trace_id": "background-once",
+        }
+        first = await client.post(
+            "/internal/device-connection/call/call_executor", json=payload
+        )
+        replay = await client.post(
+            "/internal/device-connection/call/call_executor", json=payload
+        )
+        assert first.status_code == replay.status_code == 200
+        assert first.json() == replay.json()
+        assert calls == 1
 
 
 @pytest.mark.anyio

@@ -1,16 +1,7 @@
-"""守卫：产品代码里没有一处读写项目记忆池（结论 7，不变量 I15①）。
+"""Shared project facts belong to documents; the retired scope cannot be used.
 
-人和 agent 共同看的只能是文档。这一档还留在枚举里，只因为库里那批旧行要landing
-两次才敢删（迁移 `a1c4e8f30b26` 搬、P36b 核对后删）——而枚举里留着一个名字，下
-一个人写下 `MemoryScope.project` 时什么也不会响：那次写入会安静地落进一个没有任
-何读者的池子，而他以为自己让所有人都看到了。现在它会响。
-
-扫的是 `backend/app`，产品代码那一份。`backend/alembic` 不扫：迁移是已经发生过的
-历史，而那批行的 scope 正是它要点名的东西。`backend/tests` 也不扫：store 那一层是
-按 (scope, scope_id) 存取的通用代码，用哪个档位当键与这条守卫无关。
-
-这是一条静态测试——被守的东西本身就是源码树的一个性质，属于 CLAUDE.md「测行为、
-不读源码」的那条例外（同 `test_author_type_two_values.py`）。
+Historical migrations name the old database value directly. Runtime code and
+tests must use the remaining instance-owned pools.
 """
 
 import ast
@@ -34,11 +25,7 @@ def _sources() -> list[tuple[pathlib.Path, str]]:
 
 
 def _reads_the_retired_pool(tree: ast.AST) -> list[int]:
-    """`MemoryScope.project` 出现的每一行。
-
-    取属性就是要拿它当一个池的键用——读也好写也好，两边都是这条守卫要拦的。
-    枚举自己那一行不会命中：``project = "project"`` 是一次赋值，不是属性访问。
-    """
+    """Find attribute accesses to the retired scope."""
     return sorted(
         {
             node.lineno
@@ -51,12 +38,8 @@ def _reads_the_retired_pool(tree: ast.AST) -> list[int]:
     )
 
 
-def test_the_pool_is_still_in_the_enum_until_its_rows_have_landed_twice() -> None:
-    """这一档要等它的行在文档里核对过才离场，所以现在还必须在。
-
-    提前删掉，库里那批行一取就是 ``LookupError``，而它们不可再生（结论 61）。
-    """
-    assert RETIRED in {member.value for member in MemoryScope}
+def test_the_project_pool_is_not_a_memory_scope() -> None:
+    assert RETIRED not in {member.value for member in MemoryScope}
 
 
 def test_no_product_code_reads_or_writes_the_project_pool() -> None:

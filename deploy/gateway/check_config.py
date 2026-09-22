@@ -95,6 +95,26 @@ def main() -> None:
             assert "thinking" not in payload, payload
             assert payload["messages"] == messages, payload
             assert payload["tools"] == tools and payload["stream"] is True, payload
+    # MiMo accepts enabled thinking; the adapter must translate adaptive callers
+    # while preserving the image and tool history used by the coding agent.
+    mimo_payload = AnthropicMessagesConfig().transform_anthropic_messages_request(
+        model="mimo-v2.6-pro",
+        messages=copy.deepcopy(messages),
+        anthropic_messages_optional_request_params={
+            "max_tokens": 4096,
+            "stream": True,
+            "tools": copy.deepcopy(tools),
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+        },
+        litellm_params={},
+        headers={},
+    )
+    assert mimo_payload["thinking"]["type"] == "enabled", mimo_payload
+    assert 0 < mimo_payload["thinking"]["budget_tokens"] < 4096, mimo_payload
+    assert "output_config" not in mimo_payload, mimo_payload
+    assert mimo_payload["messages"] == messages, mimo_payload
+    assert mimo_payload["tools"] == tools and mimo_payload["stream"] is True
     # Every model offered to people must be billable. A model whose tokens cost
     # zero is metered at zero, so the project's max_budget never trips and the
     # first sign of trouble is the invoice. Cheese drops such a model from the
@@ -216,7 +236,8 @@ def main() -> None:
         assert isclose(cost, expected, rel_tol=0.00001), (ttl, cost, expected)
         assert logging.model_call_details["response_cost"] == cost
     print(
-        "PASS: DeepSeek thinking and Kimi effort/image/tool history preserved; "
+        "PASS: DeepSeek thinking, Kimi effort, and MiMo thinking verified; "
+        "Kimi/MiMo image and tool history preserved; "
         "Kimi buffered/streamed cache costs verified; "
         f"{len(offered)} offered model(s) billable on both directions"
     )

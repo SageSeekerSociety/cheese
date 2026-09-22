@@ -70,22 +70,22 @@ def test_core_comes_back_whole_and_never_competes_as_a_fact(
         store = DbMemoryStore(db_session)
         pool = _pool()
         await store.remember(
-            MemoryScope.project, pool, "你是芝士", layer=MemoryLayer.core
+            MemoryScope.agent_project, pool, "你是芝士", layer=MemoryLayer.core
         )
         await store.remember(
-            MemoryScope.project, pool, "回答先给结论", layer=MemoryLayer.core
+            MemoryScope.agent_project, pool, "回答先给结论", layer=MemoryLayer.core
         )
         for fact in ("部署脚本在 deploy.sh", "前端构建用 pnpm"):
-            await store.remember(MemoryScope.project, pool, fact)
+            await store.remember(MemoryScope.agent_project, pool, fact)
 
         # The whole pool is 4 facts; the core layer is the 2 of them that
         # injection carries, oldest first.
-        assert await store.core_and_counts([(MemoryScope.project, pool)]) == {
-            (MemoryScope.project, pool): (4, ["你是芝士", "回答先给结论"])
+        assert await store.core_and_counts([(MemoryScope.agent_project, pool)]) == {
+            (MemoryScope.agent_project, pool): (4, ["你是芝士", "回答先给结论"])
         }
         # Ordinary facts are in the pool's size and nowhere else: what injection
         # carries is the core layer, and the rest is reached with `search`.
-        got = await recall_pools(store, [(MemoryScope.project, pool)])
+        got = await recall_pools(store, [(MemoryScope.agent_project, pool)])
         assert got.facts == ["你是芝士", "回答先给结论"]
         assert got.omitted == 2
 
@@ -102,16 +102,20 @@ def test_a_fact_injection_did_not_carry_is_still_one_search_away(
         store = DbMemoryStore(db_session)
         pool = _pool()
         answer = "新增 alembic 迁移后必须把 backend/alembic/HEAD 改成你的 revision id"
-        await store.remember(MemoryScope.project, pool, answer)
+        await store.remember(MemoryScope.agent_project, pool, answer)
         for i in range(30):
-            await store.remember(MemoryScope.project, pool, f"昨天顺手记的第 {i} 条")
+            await store.remember(
+                MemoryScope.agent_project, pool, f"昨天顺手记的第 {i} 条"
+            )
 
-        got = await recall_pools(store, [(MemoryScope.project, pool)])
+        got = await recall_pools(store, [(MemoryScope.agent_project, pool)])
         assert got.facts == []
         assert got.omitted == 31
 
         hits = await store.search(
-            MemoryScope.project, pool, "我加了一个 alembic 迁移，HEAD 冲突了怎么办"
+            MemoryScope.agent_project,
+            pool,
+            "我加了一个 alembic 迁移，HEAD 冲突了怎么办",
         )
         assert [h.as_dict()["abstract"] for h in hits][:1] == [answer]
 
@@ -128,14 +132,14 @@ def test_core_survives_a_pool_that_has_outgrown_the_prompt(
         store = DbMemoryStore(db_session)
         pool = _pool()
         await store.remember(
-            MemoryScope.project, pool, "你是芝士，说人话", layer=MemoryLayer.core
+            MemoryScope.agent_project, pool, "你是芝士，说人话", layer=MemoryLayer.core
         )
         for i in range(155):
             await store.remember(
-                MemoryScope.project, pool, f"第 {i} 条事实：" + "细节" * 110
+                MemoryScope.agent_project, pool, f"第 {i} 条事实：" + "细节" * 110
             )
 
-        got = await recall_pools(store, [(MemoryScope.project, pool)])
+        got = await recall_pools(store, [(MemoryScope.agent_project, pool)])
 
         assert got.facts == ["你是芝士，说人话"]
         assert got.core_omitted == 0

@@ -34,6 +34,7 @@ services:
       # Upstreams. Referenced by the model list in config.yaml.
       - ZHIPU_API_KEY=${ZHIPU_API_KEY:?set ZHIPU_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - MIMO_TOKEN_PLAN_API_KEY=${MIMO_TOKEN_PLAN_API_KEY:-}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:?set MOONSHOT_API_KEY}
       - STORE_MODEL_IN_DB=True
     volumes:
