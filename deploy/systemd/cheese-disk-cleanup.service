@@ -9,11 +9,19 @@ Type=oneshot
 # ones and report success. The installer writes the real user in.
 User=@CLEANUP_USER@
 Environment=HOME=@CLEANUP_HOME@
-# Skip the run entirely below this mark rather than reclaim on a healthy box:
+# Skip the run entirely below the mark rather than reclaim on a healthy box:
 # every entry deleted is one the next build pays to recreate, and a box at 40%
-# has nothing to buy with that. 75 sits under `cheesex-disk-pressure-guard`'s
-# 85% emergency brake, so the caches go before the guard has to start removing
-# sandbox containers. ExecCondition failing is a clean skip, not a failed unit.
-ExecCondition=/bin/bash -c '[ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 75 ]'
+# has nothing to buy with that. ExecCondition failing is a clean skip, not a
+# failed unit.
+#
+# The question is asked BY THE SCRIPT, not spelled out here, because it is not
+# only a question about `/`. `/tmp` is a tmpfs of its own on these boxes and it
+# is the one that fills first: on 2026-09-22 the dev box had `/` at 51% and
+# `/tmp` at 100%, every new topic's environment failed to prepare, and this unit
+# never started — the condition used to be `df /`. `--needed` asks the script's
+# own list of filesystems at the script's own mark (75, which sits under
+# `cheesex-disk-pressure-guard`'s 85% emergency brake, so the caches go before
+# the guard has to start removing sandbox containers).
+ExecCondition=/usr/local/lib/cheese/dev-box-disk-cleanup.sh --needed
 ExecStart=/bin/bash /usr/local/lib/cheese/dev-box-disk-cleanup.sh --apply
 TimeoutStartSec=900
