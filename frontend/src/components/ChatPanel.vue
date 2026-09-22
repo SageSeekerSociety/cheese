@@ -1963,7 +1963,7 @@ onBeforeUnmount(() => {
            The root topic (本体) and private chat use the plain header below. -->
       <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2 flex-wrap">
-          <span class="pr-title t-title">{{ topic.title }}</span>
+          <span class="t-title">{{ topic.title }}</span>
           <span class="pr-num t-meta">#{{ prShortId }}</span>
           <v-spacer />
           <span class="pr-state ms-1" :class="prState.cls">{{ prState.label }}</span>
@@ -1989,7 +1989,7 @@ onBeforeUnmount(() => {
           >
             {{ backLabel }}
           </v-btn>
-          <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
+          <span class="t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
           <span
             class="status-dot"
@@ -2657,7 +2657,7 @@ onBeforeUnmount(() => {
 .sys-row {
   padding: 3px 16px 3px 54px;
   font-size: 13px; /* 13px 是可读下限；平台行比正文低一档，不低于它 */
-  line-height: 1.6;
+  line-height: var(--lh-13);
   color: var(--muted);
 }
 /* 分栏之下，「谁都没说这句话」需要自己的位置：一行字的平台行居中（飞书/微信
@@ -2793,7 +2793,7 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--fill);
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: var(--lh-12);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text);
@@ -2900,7 +2900,7 @@ details.sys-row > summary::-webkit-details-marker {
   gap: 6px;
   align-items: flex-start;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: var(--lh-13);
 }
 /* 图标盒子没有文字基线，所以整行改成顶对齐，再把图标压到第一行文字的中线上
    ((13.6px × 1.5 − 14px) / 2 ≈ 3px)——否则多行标题会把图标顶到最后一行。 */
@@ -2962,7 +2962,7 @@ details.sys-row > summary::-webkit-details-marker {
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
-  line-height: 1.5;
+  line-height: var(--lh-14);
 }
 /* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
    下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
@@ -3103,7 +3103,7 @@ details.sys-row > summary::-webkit-details-marker {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 700;
   /* Theme-invariant pair (same call as the default avatar in LeftAppRail): the
      slate disc is one value in both themes, so its ink must be too. */
@@ -3155,12 +3155,12 @@ details.sys-row > summary::-webkit-details-marker {
   background: var(--accent-wash);
 }
 .mention-menu-sub {
-  font-size: 0.75rem;
+  font-size: 12px;
   color: var(--faint);
 }
 .mention-menu-hint {
   margin-left: auto;
-  font-size: 0.7rem;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -3168,9 +3168,6 @@ details.sys-row > summary::-webkit-details-marker {
 .pr-header {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-}
-.pr-title {
-  line-height: 1.3;
 }
 .pr-num {
   font-weight: 400;
@@ -3515,6 +3512,8 @@ details.sys-row > summary::-webkit-details-marker {
   border: none;
   background: none;
   border-radius: 6px;
+  /* 这个 16px 量的是一枚 emoji 字形，不是正文，所以不走字号阶梯；`line-height: 1`
+     同理——它是把字形在 28px 方格里居中的手段，不是一段话的行距。 */
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -3552,7 +3551,7 @@ details.sys-row > summary::-webkit-details-marker {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.82rem;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -3592,7 +3591,7 @@ details.sys-row > summary::-webkit-details-marker {
 }
 .rx-count {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -3619,8 +3618,12 @@ details.sys-row > summary::-webkit-details-marker {
   }
 }
 /* Rendered markdown for 芝士's replies (v-html → :deep). */
+/* 渲染出来的 markdown 走 style.css 里 .md-content 那份的行距约定（全局是 1.7），
+   不走 chrome 的 --lh-* 阶梯：这里是连续正文，而阶梯的比例（1.43）是给界面文字
+   定的，用在成段的正文上偏挤。字号折到 14px 是为了让下面那几个 em 的子元素
+   （h1/h2/h3、code）有一个干净的基数。 */
 .md-content {
-  font-size: 0.9rem;
+  font-size: 14px;
   line-height: 1.6;
 }
 .md-content :deep(p) {
