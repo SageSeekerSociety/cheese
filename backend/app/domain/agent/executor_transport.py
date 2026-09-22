@@ -50,32 +50,22 @@ OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
 
-def _device_is_offline(response, data: bytes) -> bool:
+def _device_is_offline(response) -> bool:
     """Whether this answer says the hands are gone rather than one call went wrong.
 
     The canonical rule is ``device_hub_rpc.py:245-247``'s: on 409, and only
-    there, ``X-Device-Id`` is the signal. Both producers of an offline answer
-    set it — ``core/errors._handle_device_offline`` (``DeviceOffline`` /
-    ``DeviceUnreachable``, which serialize under that one name) and
-    ``device_connection_app.call``. A ``ConflictError`` ("Execution generation
-    is no longer current") is also 409 and is NOT out of reach: the machine is
-    fine, only the lease is stale. Lumping both into ``EXECUTOR_CALL_FAILED``
-    ("机器还在") is what made a dead websocket look like a retryable one-call
-    failure while chat and platform tools kept working.
+    there, ``X-Device-Id`` is the signal. The one producer of an offline answer
+    this call path can receive is ``core/errors._handle_device_offline``
+    (``DeviceOffline`` / ``DeviceUnreachable``, which serialize under that one
+    name). ``device_connection_app.call``'s header-only 409 is not one this
+    classifier reads: its sole client is ``DeviceHubRPC._call_owner``, which
+    already classifies it before any answer is re-emitted. A ``ConflictError``
+    ("Execution generation is no longer current") is also 409 and is NOT out of
+    reach: the machine is fine, only the lease is stale. Lumping both into
+    ``EXECUTOR_CALL_FAILED`` ("机器还在") is what made a dead websocket look like
+    a retryable one-call failure while chat and platform tools kept working.
     """
-    if response.status != 409:
-        return False
-    if response.getheader("X-Device-Id") is not None:
-        return True
-    # The header alone is canonical (device_hub_rpc.py:245-247); the body is
-    # belt-and-braces for a hop that strips it. ``name`` lives under ``error``
-    # in every envelope our handlers emit (core/errors.py).
-    try:
-        body = json.loads(data)
-    except (ValueError, UnicodeDecodeError):
-        return False
-    error = body.get("error") if isinstance(body, dict) else None
-    return isinstance(error, dict) and error.get("name") == "DeviceOffline"
+    return response.status == 409 and response.getheader("X-Device-Id") is not None
 
 
 class MachineOutOfReach(RuntimeError):
@@ -400,7 +390,7 @@ class RemoteClient:
                         )
                         if (
                             response.status in OUT_OF_REACH_STATUSES
-                            or _device_is_offline(response, data)
+                            or _device_is_offline(response)
                         ):
                             raise MachineOutOfReach
                         raise RuntimeError(EXECUTOR_CALL_FAILED)

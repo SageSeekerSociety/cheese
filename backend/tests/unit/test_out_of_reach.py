@@ -156,15 +156,20 @@ def test_a_device_offline_409_naming_the_device_is_the_machine_being_gone(
     assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
 
 
-def test_the_owners_header_only_offline_409_is_the_machine_being_gone(
+def test_a_header_only_409_names_the_device_off_the_header_alone(
     monkeypatch, tmp_path
 ):
-    """形状 (b)：属主的 409 体里没有 ``DeviceOffline``，只靠头认。
+    """头那一条短路判得出来就够了 —— 但这一档不是 ``RemoteClient.call`` 收得到的线材。
 
-    ``device_connection_app.call`` 的 ``DeviceOffline`` 出口（174-179）是
-    ``HTTPException(detail="device offline")``，经 ``http_exception_handler``
-    包出来的 ``name`` 是默认的 ``"Error"``。看体永远认不出这一档，看头才认得出
-    —— 和 ``device_hub_rpc.py:245-247`` 的判法一致。
+    ``RemoteClient.call``（kind=device）POST 的是
+    ``/topics/{topic_id}/execution/{resource_id}``（routes/execution.py:execute），
+    那条路上的离线永远是 ``_handle_device_offline`` 的完整形状：409 +
+    ``X-Device-Id`` + ``error.name=="DeviceOffline"``。只有头没有名字的那个 409
+    （``device_connection_app.py:174-179``）只从
+    ``/internal/device-connection/call/{name}`` 出，而那条路的唯一客户端
+    ``DeviceHubRPC._call_owner`` 在 ``execute()`` 有机会转手之前就已经分好类了。
+    这里钉的是头那条短路判法本身：体里两层都没有 ``DeviceOffline`` 也照样认得出，
+    因为信号只有那个头（``device_hub_rpc.py:245-247``）。
     """
     client = failing_client(
         monkeypatch, tmp_path, 409, body=_owner_offline_body(), device_id="abcd1234"
@@ -176,14 +181,15 @@ def test_the_owners_header_only_offline_409_is_the_machine_being_gone(
     assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
 
 
-def test_a_device_offline_body_that_lost_its_header_is_still_the_machine_being_gone(
+def test_a_device_offline_body_that_lost_its_header_is_not_read_as_offline(
     monkeypatch, tmp_path
 ):
-    """形状 (c)：头被某一跳吃掉之后，体里的名字还得兜住。
+    """丢了头的 ``DeviceOffline`` 体不算机器没了。
 
-    规范判法是只看头（``device_hub_rpc.py:245-247``），体是 belt-and-braces：
-    以前的兜底读的是顶层 ``name``，而 ``format_error_response`` 把名字嵌在
-    ``error`` 里 —— 那个兜底从来不会亮。这里没有头，走的就是兜底那条路。
+    规范判法（``device_hub_rpc.py:245-247``）只认 ``X-Device-Id`` 那一个信号，
+    合同测试也是这么故意拒掉一个丢了头的 409 的
+    （``test_peer_states.test_a_409_that_is_not_the_owners_offline_is_not_read_as_one``）：
+    没有头就点不出是哪台机器没了，拿体去凑会把一个说不清归属的 409 判成机器够不着。
     """
     client = failing_client(
         monkeypatch,
@@ -193,10 +199,11 @@ def test_a_device_offline_body_that_lost_its_header_is_still_the_machine_being_g
         device_id=None,
     )
 
-    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
+    with pytest.raises(RuntimeError) as raised:
         client.call("invoke")
 
-    assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
+    assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
+    assert str(raised.value) == executor_transport.EXECUTOR_CALL_FAILED
 
 
 def test_an_offline_shape_off_409_is_not_read_as_the_machine_being_gone(
@@ -228,8 +235,8 @@ def test_a_generation_conflict_409_is_not_the_machine_being_gone(
     """执行代际换了的那一种 409 说的不是这双手没了。
 
     ``ConflictError`` ("Execution generation is no longer current"，
-    execution.py:99) 也是 409，但它说的是租约旧了，机器本身还在。把它也说成
-    够不着，agent 会放弃这一轮全部文件与命令操作并报告机器掉线 —— 那是假话。
+    app/api/routes/execution.py:99) 也是 409，但它说的是租约旧了，机器本身还在。
+    把它也说成够不着，agent 会放弃这一轮全部文件与命令操作并报告机器掉线 —— 那是假话。
     应答体是 ``to_response_body()`` 的真实形状：``name`` 嵌在 ``error`` 里，
     叫 ``ConflictError``。
     """
