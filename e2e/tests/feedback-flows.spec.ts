@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, login } from './helpers';
+import { api, appOriginOf, isEnvironmentNoise, login } from './helpers';
 
 // 反馈的两条全流程，真的从界面走一遍：提交者提一条，管理员把它办完。
 //
@@ -45,43 +45,9 @@ test.beforeEach(({ page }) => {
 //
 // 这是环境的缺口，不是反馈这功能带来的：头像表里 2/3/4 号（猫咪/柴犬/熊猫，都是
 // predefined）有行、`uploads/avatars/` 下却没有对应文件，于是取图就是 404。浏览器
-// 一登录就替项目磁贴取这几张图——**在任何一页上都会出现，包括完全不碰反馈的页**，
-// 这一条是实测过的（登录后停 3 秒，一个反馈页面都没进，三条 404 已经在控制台里）。
-// 顺带说明：种子里只给默认头像写了文件，所以任何新部署的项目磁贴都会缺图，这是
-// 反馈之外的一个真问题，记在话题文档的待办里，没有在这条用例里顺手改。
-//
-// 放行范围写死到这个形状，不写成「忽略所有 404」：反馈自己发出的请求挂掉时仍然要红。
-const AVATAR_404 =
-  /^\[console\] Failed to load resource: the server responded with a status of 404 \(Not Found\) @ https?:\/\/[^\s]+\/api\/avatars\/\d+$/;
-
-// 第二条放行，管的是**外部源**上的资源。
-//
-// 字体（JetBrains Mono）是从 jsdelivr 取的（`src/styles/fonts.css`），CI 机器网络抖
-// 一下就是一条 `net::ERR_NETWORK_CHANGED` 的控制台 error —— 而这条检查想问的从来
-// 不是「第三方 CDN 现在可不可用」。它上次就是这么红的：一份和反馈毫无关系的字体没
-// 取到，整条反馈用例跟着红。
-//
-// **按源判，不按错误码、也不按域名判**：换一个 CDN、换一种失败码，规则照样成立；
-// 而页面自己发的请求都是同源的，一条都放不进去。
-const RESOURCE_FAILED = /^\[console\] Failed to load resource: .*? @ (\S+)$/;
-
-function isKnownEnvNoise(entry: string, appOrigin: string): boolean {
-  if (AVATAR_404.test(entry)) return true;
-  const failed = RESOURCE_FAILED.exec(entry);
-  if (!failed) return false;
-  try {
-    return new URL(failed[1]).origin !== appOrigin;
-  } catch {
-    // 取不到位置（控制台那句可能不带 URL，我们写成 `@ ?`）时不当外部源，照旧报出来。
-    return false;
-  }
-}
-
 test.afterEach(() => {
-  // 用配置里那个 baseURL 而不是当前页面的地址：它按定义就是被测应用自己的源，
-  // 用例结束时停在哪个页面都不影响这条判断。
-  const appOrigin = new URL(test.info().project.use.baseURL!).origin;
-  const ours = consoleNoise.filter((entry) => !isKnownEnvNoise(entry, appOrigin));
+  const appOrigin = appOriginOf(test.info().project.use.baseURL);
+  const ours = consoleNoise.filter((entry) => !isEnvironmentNoise(entry, appOrigin));
   expect(ours, '浏览器控制台不该有报错，也不该有没注册的组件').toEqual([]);
 });
 
