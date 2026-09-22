@@ -24,8 +24,17 @@ defineOptions({ name: 'FeedbackMinePage' })
 
 const store = useFeedbackStore()
 
-onMounted(() => {
-  void store.loadMine()
+onMounted(async () => {
+  await store.loadMine()
+  // **顺便推进已读游标**：这一页列出的正是未读计数统计的那批（我提的 + 我替谁提的 +
+  // 指派给我的），所以「打开这一页」就是「看过它们了」。顶栏那个未读点因此会在这里
+  // 消失 —— 不做这一步的话，那个点只由「打开某一条详情」推进，人看完清单它还在。
+  //
+  // 走整批的 `markRead` 而不是逐条：服务端那张账本是一根**游标**（`FeedbackReadState`，
+  // 一人一行），逐条推进本来就不成立。只在这一趟真有数时发：没未读就没有什么可推。
+  //
+  // **放在加载之后**：先有数字再推进，顺序反了的话列表还没到、点先没了。
+  if (store.counts.unread > 0) void store.markRead()
 })
 
 /** 空列表有两种，说的话不一样：「还没有」和「没拉到」。写成同一句「暂无反馈」的话，
