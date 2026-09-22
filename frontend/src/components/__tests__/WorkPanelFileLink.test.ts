@@ -261,7 +261,29 @@ describe('自由区', () => {
     expect(readPreviewFile).toHaveBeenCalledWith('topic-A', '报告.docx')
   })
 
-  it('点开的正是当前预览那一份，去预览那一格，不另开', async () => {
+  it('网页只有预览那一格画得出来：点开的是当前预览，就去那一格', async () => {
+    const { getPreview } = await import('../../api')
+    getDoc.mockResolvedValue({ content: '成品见 <&site/index.html>\n' })
+    const { container } = mountPanel()
+    await flush()
+    // 芝士是在这一轮里才摆出来的：打开房间时预览还是空的。
+    vi.mocked(getPreview).mockResolvedValue({
+      kind: 'file',
+      path: 'site/index.html',
+      mime: 'text/html',
+      url: 'https://p.example/',
+      artifact_id: 'a1',
+      version: 'v1',
+    } as Awaited<ReturnType<typeof getPreview>>)
+
+    await clickChip(container, 'site/index.html')
+
+    expect(freeTabs(container)).toEqual([])
+    expect(selectedTab(container)).toContain('预览')
+    vi.mocked(getPreview).mockResolvedValue(null)
+  })
+
+  it('能画出来的文件就算是当前预览，也开成自己的页签', async () => {
     const { getPreview } = await import('../../api')
     vi.mocked(getPreview).mockResolvedValue({
       kind: 'file',
@@ -277,8 +299,7 @@ describe('自由区', () => {
 
     await clickChip(container, '报告.docx')
 
-    expect(freeTabs(container)).toEqual([])
-    expect(selectedTab(container)).toContain('预览')
+    expect(freeTabs(container)).toEqual(['~报告.docx'])
     vi.mocked(getPreview).mockResolvedValue(null)
   })
 })
