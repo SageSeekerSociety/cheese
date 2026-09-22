@@ -32,6 +32,13 @@ class InvitationCreate(BaseModel):
     role: ProjectRole = ProjectRole.member
 
 
+class JoinLinkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    token: str
+    expires_at: datetime
+
+
 class InvitationRespond(BaseModel):
     accept: bool
 

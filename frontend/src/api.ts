@@ -83,6 +83,38 @@ export { TOPIC_TITLE_MAX_LENGTH }
 // namespace that separated them has nothing left to separate.
 export const BASE = '/api'
 
+export interface ProjectJoinLink {
+  token: string
+  expires_at: string
+}
+
+export interface ProjectJoinPreview {
+  project_id: string
+  project_name: string
+  already_member: boolean
+  expires_at: string
+}
+
+export function getProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink | null>(`/projects/${encodeURIComponent(projectId)}/join-link`)
+}
+
+export function createProjectJoinLink(projectId: string) {
+  return request<ProjectJoinLink>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'POST' })
+}
+
+export function revokeProjectJoinLink(projectId: string) {
+  return request<{ deleted: boolean }>(`/projects/${encodeURIComponent(projectId)}/join-link`, { method: 'DELETE' })
+}
+
+export function previewProjectJoinLink(token: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}`)
+}
+
+export function joinProjectByLink(token: string) {
+  return request<ProjectJoinPreview>(`/project-invites/${encodeURIComponent(token)}/join`, { method: 'POST' })
+}
+
 // Chat requests use the same access token as AccountService.
 export function authToken(): string {
   try {
