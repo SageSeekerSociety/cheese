@@ -532,17 +532,8 @@ async def get_passkey_service(
 
 async def get_oauth_service(
     db=Depends(get_db),
-):
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-
-    repo = OAuthConnectionRepository(session=db)
-    redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
-    try:
-        yield OAuthService(repo=repo, redis=redis)
-    finally:
-        await redis.aclose()
+) -> OAuthService:
+    return OAuthService(repo=OAuthConnectionRepository(session=db))
 
 
 @router.post(
