@@ -3017,8 +3017,18 @@ details.sys-row > summary::-webkit-details-marker {
   cursor: default;
   opacity: 0.5;
 }
+/* 开着的时候要一眼认得出：这条消息会真的开出一轮，和「只是说了句话」是两回事。
+   描边那一档太轻了——它和没开的状态只差一条 1px 的线，而这一行右边还站着一颗实心
+   的发送按钮，线根本抢不到注意力。所以开态是填充的，用 --accent-wash 那一档做底、
+   --accent-ink 写字（记号色 --accent 当文字在浅色下只有 2.34:1，读不动）。 */
 .summon-btn--on {
-  border-color: var(--accent);
+  border-color: transparent;
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.summon-btn--on:hover:not(:disabled) {
+  background: var(--accent-wash);
   color: var(--accent-ink);
 }
 /* 窄屏上只留那个 @ 图标：这一行右边还站着算力和发送，三个都带字就换行了。 */
