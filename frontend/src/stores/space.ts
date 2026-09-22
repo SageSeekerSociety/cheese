@@ -78,8 +78,8 @@ export const useSpaceStore = defineStore('space', () => {
       const { data } = await SpacesApi.detail(spaceId, { queryClassificationTopics: true, queryMyRank: true })
       currentSpace.value = data.space
     } catch (error) {
-      console.error('获取空间信息失败:', error)
-      toast.error('获取空间信息失败')
+      console.error('获取题目板信息失败:', error)
+      toast.error('获取题目板信息失败')
     }
   }
 
@@ -88,12 +88,12 @@ export const useSpaceStore = defineStore('space', () => {
       const response = await SpacesApi.update(spaceId, data)
       currentSpace.value = response.data.space
       if (showToast) {
-        toast.success('更新空间信息成功')
+        toast.success('更新题目板信息成功')
       }
     } catch (error) {
-      console.error('更新空间信息失败:', error)
+      console.error('更新题目板信息失败:', error)
       if (showToast) {
-        toast.error('更新空间信息失败')
+        toast.error('更新题目板信息失败')
       }
       throw error
     }

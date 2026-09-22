@@ -44,7 +44,10 @@ vi.mock('@/stores/workspace', () => ({
   }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
-vi.mock('@/api', () => ({ listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })) }))
+vi.mock('@/api', () => ({
+  listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
+  getRoomEnvironment: vi.fn(async () => ({ state: 'pending' })),
+}))
 vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))
@@ -52,9 +55,6 @@ vi.mock('@/composables/usePageTitle', () => ({
 // 三个重组件只是这一页的邻居，这份用例不关心它们画了什么。
 vi.mock('@/components/TopicHeader.vue', () => ({
   default: { name: 'TopicHeader', template: '<div />' },
-}))
-vi.mock('@/components/RoomEnvironmentStatus.vue', () => ({
-  default: { name: 'RoomEnvironmentStatus', template: '<div />' },
 }))
 vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
   default: { name: 'TopicChatColumn', template: '<div />' },
@@ -71,12 +71,15 @@ vi.mock('@/components/WorkPanel.vue', () => ({
 
 import TopicView from './TopicView.vue'
 
+import { getRoomEnvironment } from '@/api'
+
 const View = TopicView as unknown as Component
 
 beforeEach(() => {
   query = {}
   push.mockReset()
   replace.mockReset()
+  vi.mocked(getRoomEnvironment).mockClear()
 })
 
 /** 提交里那条 trailer 带的地址，原样拆成路由看到的查询串。 */
@@ -87,6 +90,15 @@ function openTheLinkFromTheCommit(url: string) {
 }
 
 describe('Cheese-Task 那条地址', () => {
+  it('leaves environment status to agent notices instead of polling a room-wide banner', async () => {
+    const { container } = openTheLinkFromTheCommit('https://cheese.example/projects/p1/topics/t1')
+
+    await waitFor(() => expect(container.querySelector('[data-testid="panel"]')).not.toBeNull())
+
+    expect(getRoomEnvironment).not.toHaveBeenCalled()
+    expect(container.textContent).not.toContain('正在准备运行环境')
+  })
+
   it('打开后停在总览那一格，并且下钻到地址点名的那条活', async () => {
     const task = '2caa58e3-77d8-4129-b20b-055a8e521828'
 

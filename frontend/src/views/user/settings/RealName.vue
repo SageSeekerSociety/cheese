@@ -25,7 +25,7 @@
         <div class="d-flex align-center">
           <v-icon icon="mdi-shield-lock-outline" color="primary" size="20" class="me-2"></v-icon>
           <span class="text-body-2"
-            >某些赛题需要实名信息用于验证身份，您的信息将<strong>安全加密</strong>，平台活动<strong
+            >某些题目需要实名信息用于验证身份，您的信息将<strong>安全加密</strong>，平台活动<strong
               >完全匿名</strong
             ></span
           >
@@ -209,7 +209,7 @@
           <div class="mb-4">
             <h3 class="text-subtitle-1 font-weight-medium mb-2">为什么需要填写实名信息？</h3>
             <p class="text-body-2">
-              某些赛题需要收集实名信息用于身份验证、评审和颁奖等环节。我们仅收集必要的学校相关信息，并确保您在平台上的活动保持匿名性。
+              某些题目需要收集实名信息用于身份验证、评审和颁奖等环节。我们仅收集必要的学校相关信息，并确保您在平台上的活动保持匿名性。
             </p>
           </div>
 
@@ -234,7 +234,7 @@
               <div class="privacy-feature-card">
                 <v-icon icon="mdi-file-document-outline" color="primary" size="24" class="mb-2"></v-icon>
                 <h3 class="text-subtitle-1 font-weight-medium mb-1">用途限制</h3>
-                <p class="text-body-2">您的实名信息仅在必要的赛题报名环节使用，不用于其他目的</p>
+                <p class="text-body-2">您的实名信息仅在必要的题目报名环节使用，不用于其他目的</p>
               </div>
             </v-col>
 
@@ -252,7 +252,7 @@
           <div class="d-flex align-start">
             <v-icon icon="mdi-information-outline" color="primary" size="20" class="me-2 mt-1"></v-icon>
             <p class="text-body-2">
-              我们的系统采用多层保护机制，在满足少数赛题对实名信息的需求的同时，确保您在平台上的隐私安全。
+              我们的系统采用多层保护机制，在满足少数题目对实名信息的需求的同时，确保您在平台上的隐私安全。
               所有对您信息的访问都会被记录，您可以随时查看这些记录。
             </p>
           </div>

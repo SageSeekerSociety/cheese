@@ -50,7 +50,7 @@
               </v-avatar>
               <div>
                 <div class="text-h5 font-weight-bold">3</div>
-                <div class="text-caption text-medium-emphasis">实名赛题数量</div>
+                <div class="text-caption text-medium-emphasis">实名题目数量</div>
               </div>
             </div>
           </v-card-text>
@@ -167,8 +167,8 @@
                   <v-icon color="primary" icon="mdi-clipboard-text-outline"></v-icon>
                 </v-avatar>
                 <div>
-                  <div class="text-subtitle-1 font-weight-medium">实名赛题</div>
-                  <div class="text-caption text-medium-emphasis">了解您参与的需要实名的赛题</div>
+                  <div class="text-subtitle-1 font-weight-medium">实名题目</div>
+                  <div class="text-caption text-medium-emphasis">了解您参与的需要实名的题目</div>
                 </div>
               </div>
             </v-card-text>
@@ -236,7 +236,7 @@ const getAccessReason = (log: UserIdentityAccessLog) => {
 
   switch (log.accessModuleType) {
     case 'TASK':
-      return '用于赛题认证'
+      return '用于题目认证'
     default:
       return '身份验证'
   }

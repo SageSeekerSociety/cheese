@@ -76,11 +76,8 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.comments.services", "app.domain.user.repositories"),
         ("app.domain.discussion.services", "app.domain.user.repositories"),
         ("app.domain.groups.services", "app.domain.user.repositories"),
-        # --- alert ---
-        ("app.domain.alert.services", "app.domain.block.repositories"),
-        ("app.domain.alert.services", "app.domain.project.repositories"),
         # --- dashboard（读模型，横跨 7 个领域聚合，单独还） ---
-        ("app.domain.dashboard.services", "app.domain.alert.repositories"),
+        ("app.domain.dashboard.services", "app.domain.notification.repositories"),
         ("app.domain.dashboard.services", "app.domain.membership.repositories"),
         ("app.domain.dashboard.services", "app.domain.milestone.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
@@ -94,6 +91,10 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
         ("app.domain.milestone.services", "app.domain.project.repositories"),
+        # --- notification（项目收件箱：写入前核项目在不在，拍板时把决定发回房间。
+        #     这两条是 alert/ 并进来时原样带过来的） ---
+        ("app.domain.notification.services", "app.domain.block.repositories"),
+        ("app.domain.notification.services", "app.domain.project.repositories"),
         ("app.domain.oauth.services", "app.domain.user.repositories"),
         # --- project ---
         # environment_recovery 走的一直是 block 领域的 service，而那个 service

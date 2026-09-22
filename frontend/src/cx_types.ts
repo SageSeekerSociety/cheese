@@ -458,20 +458,21 @@ export interface TopicMemberRow {
 
 // GET /api/projects/{id}/inbox?target_handle=
 // 等你决定的那几条：还没拍板的决策请求，加上点名给你的验收卡。
-// 字段照抄后端的 AlertOut —— 写成 `read` / `source_handle` 这类界面上顺口的名字，
-// 收到的就永远是 undefined，而界面会把它读成「一条都没读过」。
+// 字段照抄后端的 NotificationOut —— 自己另起一套界面上顺口的名字，收到的就永远是
+// undefined，而界面会把它读成「一条都没读过」。
+// `id` 是数字：两张通知表并成一张之后主键跟的是收件箱那条序列，不再是 uuid。
 export interface InboxItem {
-  id: string
-  project_id: string
+  id: number
+  project_id: string | null
   topic_id: string | null
-  level: string
+  level: string | null
   kind: string
   target_handle: string | null
   title: string
   body: string
   // 决策请求的选项放在 payload.options 里：有选项才答得了。
   payload: { options?: unknown; [key: string]: unknown }
-  read_at: string | null
+  read: boolean
   resolved_at: string | null
   feedback: 'up' | 'down' | null
   created_at: string

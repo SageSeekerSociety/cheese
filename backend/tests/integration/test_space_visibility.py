@@ -26,6 +26,7 @@ from app.domain.space.models import SpaceMember
 from app.domain.space.repositories import SpaceInviteCodeRepository
 from tests.integration.conftest import (
     UserCreator,
+    create_approved_space,
     session_auth_headers,
     unique_int,
 )
@@ -45,9 +46,15 @@ def _create_space(
     *,
     visibility: str,
 ) -> dict:
+    """A space that has cleared review: its tier is what is under test here.
+
+    Review is the other axis and it gates everyone — a PENDING space is
+    invisible however it is tiered — so these tests must start from an
+    approved one or they would be measuring the review gate instead.
+    """
     suffix = unique_int(10000000, 99999999)
-    resp = api_client.post(
-        "/spaces",
+    resp = create_approved_space(
+        api_client,
         json={
             "name": f"Visibility Space {visibility} ({suffix})",
             "intro": "Tier test.",

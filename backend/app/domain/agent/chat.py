@@ -49,7 +49,6 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
@@ -103,8 +102,6 @@ from app.domain.agent_instance.services import (
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.alert.models import AlertKind, AlertLevel
-from app.domain.alert.services import AlertService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -127,9 +124,12 @@ from app.domain.identity.handles import (
 )
 from app.domain.membership.roster import roster_rows
 from app.domain.memory.models import MemoryScope
+from app.domain.memory.pools import pools_for_turn
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
+from app.domain.notification.models import NotificationLevel, NotificationType
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project import artifacts as project_artifacts
@@ -3180,18 +3180,6 @@ class ChatService:
             raise NotFoundError("Project not found")
         return await AgentInstanceService(session).for_topic(place.room, project)
 
-    async def _agent_memory_pool(
-        self, session: AsyncSession, topic: Topic
-    ) -> tuple[MemoryScope, str]:
-        """Where the agent working in *topic* writes what it learns.
-
-        The AGENT owns the pool, not the room — a 芝士 that works in five rooms
-        of one project has one memory, which is what "the same 芝士" was
-        supposed to mean all along.
-        """
-        agent = await self._resolved_agent(session, topic)
-        return memory_pool(topic.project_id, agent)
-
     async def _recall_agent_memories(
         self,
         memory,
@@ -3202,7 +3190,10 @@ class ChatService:
     ) -> RecallResult:
         """What this 芝士 carries into every turn inside this project.
 
-        Its own pool, plus one read-only tail: the shared ``project`` pool from
+        Its own pool and one pool per person sitting with it (`pools_for_turn`
+        picks them; every key starts with this project's id, so nothing another
+        project learned about the same person is reachable from here), plus one
+        read-only tail: the shared ``project`` pool from
         before memory was split per agent at all. Writes only ever go to the
         first, so the tail does not grow — but dropping it would make the day
         this shipped look, from inside a room, exactly like amnesia. What the
@@ -3214,12 +3205,15 @@ class ChatService:
         carried, and reached with `recall`. A pool nobody is told is bigger
         than what arrived is how memory quietly stops existing.
         """
-        own = (
-            memory_pool(topic.project_id, agent)
-            if agent is not None
-            else await self._agent_memory_pool(session, topic)
+        resolved = (
+            agent if agent is not None else await self._resolved_agent(session, topic)
         )
-        pools = [own, (MemoryScope.project, str(topic.project_id))]
+        pools = pools_for_turn(
+            topic.project_id,
+            resolved.handle,
+            await TopicMemberService(session).people_handles(topic.id),
+        )
+        pools.append((MemoryScope.project, str(topic.project_id)))
         return await recall_pools(memory, pools)
 
     async def _acting_handle(
@@ -4270,24 +4264,23 @@ class ChatService:
                 # 议已经落进房间，这一轮到此为止，抛出去的是同一句话。
                 raise gate.OverTier(proposed.proposal.content)
         supply = bound.supply
-        model = (
-            subscription_model_alias(bound.model)
-            if supply == SUBSCRIPTION
-            else bound.model
-        )
+        model = bound.wire_model
         config_hash = hashlib.sha256(
             # Author identity, chat skills, and native RC arguments are installed
             # at process birth; refresh them together at the next task boundary.
             #
-            # 模型和它的池也在里面。它们是启动那一刻钉进进程的东西 —— `claude
-            # --model` 的 argv、那三个 family 别名、以及订阅形状才加的原生 RC 参
-            # 数 —— 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，
-            # 没有任何代码比 argv。模型以前住在 `agent.configuration` 里，所以它
-            # 一变这个 dict 就变；现在它来自项目设置，不放进来就等于：项目把默认
-            # 模型从网关改回订阅，屏幕却带着 `--model glm-5.2` 和三个别名继续跑，
-            # 而每个请求的准入已经解析成订阅池 —— 这个房间此后每一轮都死在
-            # 「LiteLLM 收到 claude 别名」或「订阅池收到 glm-5.2」上，直到有人手
-            # 动重启屏幕。放进来，绑定一变就在下一个 task boundary 收屏重开。
+            # 模型和它的池也在里面，而这里的 model 只为容器那条路存在：
+            # `session_launch.py` 仍然把它拼进 `claude --model` 的 argv，那是启动
+            # 那一刻钉进进程、此后没有任何代码再比对的东西，而这个哈希是唯一比较
+            # 「屏幕是不是还配得上现在的选择」的地方。device 启动环境里已经没有模型
+            # 了（结论 46）：`device_provider.py` 既不传 `--model`，也不留那三个
+            # family 别名，每个请求的模型在计量代理问准入时解析、由代理写进请求体。
+            #
+            # 代价说清楚：model 留在哈希里，意味着改项目默认模型在两条路上都要到
+            # 下一个 task boundary 收屏重开一次，哪怕 device 上的下一个请求本来就
+            # 会拿到新绑定。容器那条路必须这样 —— 不放进来就是屏幕带着
+            # `--model glm-5.2` 继续跑而准入已经解析成订阅池，此后每一轮都死在
+            # 「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
             (
                 json.dumps(
                     {
@@ -4521,14 +4514,14 @@ class ChatService:
         # Nobody needs a notification for their own message.
         targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
-            notifs = AlertService(session)
+            notifs = ProjectNotificationService(session)
             preview = markdown_preview(text, 200)
             who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
-                    level=AlertLevel.strong,
-                    kind=AlertKind.mention,
+                    level=NotificationLevel.strong,
+                    kind=NotificationType.MENTION,
                     title=f"{who} 在「{topic.title}」@了你",
                     body=preview,
                     target_handle=h,
@@ -4673,15 +4666,9 @@ class ChatService:
             doc_root = await blocks.doc_root(place.room_id)
             doc_text = doc_root.content if doc_root else None
             phases_ms["identity"] = (time.monotonic() - started) * 1000
-            if private_owner:
-                # Private chat: the owner's cross-project personal memory.
-                memories = await recall_pools(
-                    memory, [(MemoryScope.user, private_owner)]
-                )
-            else:
-                memories = await self._recall_agent_memories(
-                    memory, session, topic=topic, agent=agent
-                )
+            memories = await self._recall_agent_memories(
+                memory, session, topic=topic, agent=agent
+            )
             phases_ms["memory"] = (time.monotonic() - started) * 1000
             project = await ProjectRepository(session).get(topic.project_id)
             # Read the selected agent once so this turn's role and model agree.
@@ -4766,6 +4753,34 @@ class ChatService:
                 project.settings if project else None,
                 topic.compute_profile,
             )
+            # 先问这套部署有没有这个骨架，再过档位策略：策略那一步要解析模型，而一个
+            # 没注册的骨架一个模型都指不到（结论 43），先问它就会以「没有默认模型」
+            # 收场，房间读到的不是真正的原因。
+            provider = self._compute.select(
+                provider_id=compute_id, harness=wanted_harness
+            )
+            if provider is None:
+                # The machine is fine; what this deployment runs is not
+                # deployed on it. Say so rather than starting something else:
+                # a turn taken on another harness is a turn nobody asked for.
+                return _TurnBail(
+                    [
+                        {
+                            "type": "event_block",
+                            "block": await self._bail_notice(
+                                project_id=topic.project_id,
+                                topic_id=topic_id,
+                                turn_id=turn_id,
+                                session=session,
+                                text=(
+                                    f"本话题选的机器上没有部署 {wanted_harness}，"
+                                    "本轮没有开始。"
+                                ),
+                            ),
+                        },
+                        {"type": "done"},
+                    ]
+                )
             # 这一轮要占的两样东西 —— 哪台机器、哪个模型 —— 在这里一起过项目的档位
             # 策略（结论 3 后半、结论 40 后半）。位置是**解析之后、占用之前**：再
             # 往下就是写绑定、开机器、发请求，撞上策略的调用一旦走到那里，「这一轮
@@ -4819,31 +4834,6 @@ class ChatService:
 
                 await bind_room_device_choice(
                     session, topic, project.settings if project else None
-                )
-            provider = self._compute.select(
-                provider_id=compute_id, harness=wanted_harness
-            )
-            if provider is None:
-                # The machine is fine; what this deployment runs is not
-                # deployed on it. Say so rather than starting something else:
-                # a turn taken on another harness is a turn nobody asked for.
-                return _TurnBail(
-                    [
-                        {
-                            "type": "event_block",
-                            "block": await self._bail_notice(
-                                project_id=topic.project_id,
-                                topic_id=topic_id,
-                                turn_id=turn_id,
-                                session=session,
-                                text=(
-                                    f"本话题选的机器上没有部署 {wanted_harness}，"
-                                    "本轮没有开始。"
-                                ),
-                            ),
-                        },
-                        {"type": "done"},
-                    ]
                 )
             # 开一台机器是租手的一部分，所以不租手的一轮也不等它开完。
             if needs_place and provider.provisions_machine:

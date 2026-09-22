@@ -129,15 +129,13 @@ def test_model_names_are_never_pinned_on_the_subscription():
     assert not [k for k in choice.env if "MODEL" in k]
 
 
-def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
+def test_no_credential_file_is_ever_planted_in_the_box():
     """Hard requirement: a sandbox must not hold a valid credential. Login is via
     the CLAUDE_CODE_OAUTH_TOKEN env placeholder, so NO .credentials.json is
     written — not even a fake one (the file gets a local validation that rejected
     the placeholder, and a real token there would be the very leak we forbid)."""
-    from app.core.config import settings
     from app.domain.agent.harness.claude_code import build_session_launch
 
-    monkeypatch.setattr(settings, "subscription_enabled", True)
     launch = build_session_launch(
         config_dir="/sessions/ab12cd34",
         workdir="/topics/topic_ab12cd34",

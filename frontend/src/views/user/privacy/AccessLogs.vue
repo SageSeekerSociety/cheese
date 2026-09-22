@@ -126,7 +126,7 @@
     >
       <div class="text-subtitle-2 font-weight-medium mb-1">关于实名信息访问</div>
       <p class="text-body-2 mb-0">
-        我们严格限制对您实名信息的访问，只有在赛题认证、评优评奖等特定场景下，指定的工作人员才能查看这些信息。
+        我们严格限制对您实名信息的访问，只有在题目认证、评优评奖等特定场景下，指定的工作人员才能查看这些信息。
         所有访问都会被记录并可以在此页面查看。如果您发现任何可疑的访问记录，请立即
         <a href="#" class="text-decoration-none">联系我们</a>。
       </p>
@@ -247,7 +247,7 @@ const accessEntityText = (log: UserIdentityAccessLog) => {
 
   switch (log.accessModuleType) {
     case 'TASK':
-      return '赛题认证需要'
+      return '题目认证需要'
     default:
       return '身份验证'
   }

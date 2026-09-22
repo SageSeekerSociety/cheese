@@ -1133,7 +1133,7 @@ agent 调「开一台机器 / 换到 Cloud」，撞上项目策略（换到另�
 
 **今天只剩 @ 那一路在外面**：看板那一列和投递已经是一个入口，`delivery/addressing.py` 的
 `hand_of(column)` 与 `agent/announce.py` 的 `_HAND_OF_WHO` 把两处各自的声明翻成同一档 `Hand`，
-`address()` 给出收件人。`chat.py` 里的 @ 仍然自己发一条 `AlertKind.mention`，它随 `alert/` 整包删除一起归拢。
+`address()` 给出收件人。`chat.py` 里的 @ 仍然自己往收件箱写一行 `MENTION`，没有过 `address()`。
 
 ### 5.3 总览与调度
 
@@ -1644,9 +1644,9 @@ so check there and not in the menu, the contract or the doc**」。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
 - **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。
-- **两张通知表并成一张**（结论 58）：`alert/` 那个包和 `alerts` 表原样还在，账本只管
-  `notification/` 这一张；把 `alerts` 的行幂等地搬进 `notification` 也还没有人做，
-  在那之前 `alerts` 不能 drop。
+- **`alerts` 这张表本身**：`alert/` 那个包已经并进 `notification/`，行也幂等地搬过去了，
+  但表和表里的数据还留着 —— 换镜像那段窗口里旧镜像还在往它里面写，得由 drop 它的那条
+  迁移在删表之前把搬家原样再跑一遍。
 - **同 handle 便条的写侧**（读侧的通道已经有了：`chat.py:1605 notify_running_turn`）。
 - **定时投递原语**（今天由 `scheduler/` 替它做，而那是另一件事）。
 - **反馈通道**：全仓一行都没有。
@@ -1754,17 +1754,15 @@ so check there and not in the menu, the contract or the doc**」。
 ③ 提供不了关闭动作的项，4.3 的矩阵那一格标「暂缺」，谁都看得见。
 4.2 末尾那条「关掉这个动作在接口上不存在」由此有了落点：它是声明里的一项，不是各适配层各自记得的事。
 
-### 已定三：模型供给由后端统管，入口形态沿用 #218 已落地的两种传输（结论 46）
+### 已定三：模型供给由后端统管，入口只有 #218 已落地的计量代理一种（结论 46）
 
 [已定] 这是 2026-08-10 #218 的重申，不是新决定：后端看到每一个请求，在唯一必经点做准入、记账、拒绝；ccproxy 只是容量池。
 **入口不是一个 base URL**：订阅流量不能设 `ANTHROPIC_BASE_URL`（Claude Code 会退出订阅模式；后端若重发请求，指纹不符会触发订阅风控），
 所以它走 `HTTPS_PROXY` 的 CONNECT 到平台的透明计量代理（`deploy/metering-proxy/`），代理向后端 `/llm/admission` 问准入后**原样转发**给 ccproxy；
-API-key 供应商走 `ANTHROPIC_BASE_URL` 指向的网关（`provider_env.py` 的两组环境变量互不重叠）。一个控制点，两种传输，都不重发请求。
+API-key 供应商那一路不是第二个入口：机器不带 base URL，分流在代理里按请求答，代理按 admission 的答复把这一路改写到网关。一个控制点，一种入口，都不重发请求。
 机器上只有平台签发的、可撤销的 ccproxy 假票，真凭据既不在机器也不在后端（他 2026-08-15）。
 I27 的拒绝点就是 `/llm/admission`：卡上的模型绑定在这里解析，选不到就拒绝并说出来，不换池。
-**目标是只剩一种启动形状**（结论 46 补定）：机器永远以订阅形状起，分流发生在代理里（`deploy/metering-proxy/billing_addon.py:272 _route_to_gateway`，按 admission 的答复改写到网关，今天已在）。
-还留着的第二种形状——`device_provider.py:1421` 按 API-key 供给以 base URL 起 Claude Code——要删；它存在的唯一原因是订阅形状的启动依赖 Anthropic 的非模型端点（设置、策略、额度、事件上报）能应答，没有真订阅时会 401。
-处置是让代理自己应答这些端点（不碰 Anthropic，无风控问题），并实测 Claude Code 在固定应答下行为正常；这是这条统一上唯一未验证的事实。
+**只剩一种启动形状**（结论 46 补定）：机器永远以订阅形状起，分流发生在代理里（`deploy/metering-proxy/billing_addon.py:272 _route_to_gateway`，按 admission 的答复改写到网关，今天已在）。
 
 ### 已定四：反馈隐私部分的可见范围（结论 47）
 

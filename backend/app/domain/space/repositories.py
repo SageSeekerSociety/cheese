@@ -39,10 +39,12 @@ class SpaceRepository:
 
         There is deliberately no unfiltered variant: a caller that forgets
         the viewer would hand back another person's private space, and the
-        list page is the easiest place to never notice.
+        list page is the easiest place to never notice. A space still under
+        review is not visible however it is tiered — approval gates everyone.
         """
         stmt: Select[tuple[Space]] = select(Space).where(
             Space.deleted_at.is_(None),
+            Space.review_status == "APPROVED",
             SpaceVisibilityService.build_visibility_predicate(
                 user_id=visible_to_user_id
             ),
@@ -54,6 +56,7 @@ class SpaceRepository:
     async def count_spaces(self, *, visible_to_user_id: int) -> int:
         stmt = select(func.count(Space.id)).where(
             Space.deleted_at.is_(None),
+            Space.review_status == "APPROVED",
             SpaceVisibilityService.build_visibility_predicate(
                 user_id=visible_to_user_id
             ),

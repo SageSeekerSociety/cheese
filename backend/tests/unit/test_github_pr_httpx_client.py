@@ -322,6 +322,22 @@ async def test_check_suites_http_failure_raises_github_pr_error():
 
 def _merge_route(response: httpx.Response, seen: list[httpx.Request] | None = None):
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/graphql":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "id": "PR_7",
+                                "headRefOid": "abc",
+                                "isMergeQueueEnabled": False,
+                                "mergeQueueEntry": None,
+                            }
+                        }
+                    }
+                },
+            )
         if request.method == "PUT" and request.url.path.endswith("/merge"):
             if seen is not None:
                 seen.append(request)

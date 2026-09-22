@@ -210,7 +210,7 @@
               :label="t('tasks.form.defaultDeadline')"
               type="number"
               required
-              prefix="领取赛题后"
+              prefix="领取题目后"
               suffix="天"
               min="1"
               v-bind="defaultDeadlineProps"
@@ -316,7 +316,7 @@
             <div>
               <div class="text-subtitle-2 font-weight-medium mb-1">您已选择要求实名信息</div>
               <p class="text-body-2 mb-0">
-                • 参与者需完成实名认证方可参与此赛题<br />
+                • 参与者需完成实名认证方可参与此题目<br />
                 • 所有信息经过加密存储，访问受到严格控制<br />
                 • 系统会记录所有对实名信息的访问行为
               </p>
@@ -326,7 +326,7 @@
 
         <div v-else class="d-flex align-center mt-3">
           <v-icon color="medium-emphasis" icon="mdi-information-outline" class="mr-2"></v-icon>
-          <span class="text-body-2 text-medium-emphasis">未启用实名认证要求，参与者可匿名参与此赛题</span>
+          <span class="text-body-2 text-medium-emphasis">未启用实名认证要求，参与者可匿名参与此题目</span>
         </div>
       </v-card-text>
     </v-card>
@@ -438,7 +438,7 @@
           v-if="descriptionFormat === 'markdown'"
           v-model="markdownDescription"
           autocomplete="off"
-          label="赛题详情（Markdown 格式）"
+          label="题目详情（Markdown 格式）"
           :rows="10"
           :max-rows="30"
           rounded
@@ -507,7 +507,7 @@
 
         <v-card-text class="px-4 pb-2">
           <p class="text-subtitle-2 font-weight-medium mb-4">
-            为保护参与者隐私，我们对需要实名信息的赛题采取了多重保护措施：
+            为保护参与者隐私，我们对需要实名信息的题目采取了多重保护措施：
           </p>
 
           <!-- 信息保护卡片 -->
@@ -602,7 +602,7 @@
                       </v-avatar>
                       <div>
                         <div class="text-subtitle-2 font-weight-medium mb-1">项目认证</div>
-                        <p class="text-body-2 text-medium-emphasis mb-0">用于赛题结题后的证书发放和学分认定</p>
+                        <p class="text-body-2 text-medium-emphasis mb-0">用于题目结题后的证书发放和学分认定</p>
                       </div>
                     </div>
                   </v-card-text>
@@ -618,7 +618,7 @@
                       </v-avatar>
                       <div>
                         <div class="text-subtitle-2 font-weight-medium mb-1">评奖评优</div>
-                        <p class="text-body-2 text-medium-emphasis mb-0">用于赛题结题后的奖项评定与项目评选</p>
+                        <p class="text-body-2 text-medium-emphasis mb-0">用于题目结题后的奖项评定与项目评选</p>
                       </div>
                     </div>
                   </v-card-text>
@@ -631,7 +631,7 @@
           <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
             <div class="text-subtitle-2 font-weight-medium mb-1">合规承诺</div>
             <p class="text-body-2 mb-0">
-              作为赛题发布者，您应当严格遵守隐私保护规范，只有在必要的场景下才能查看参与者的实名信息。
+              作为题目发布者，您应当严格遵守隐私保护规范，只有在必要的场景下才能查看参与者的实名信息。
               平台会记录每次查看行为，并对滥用行为采取相应处罚。
             </p>
           </v-alert>

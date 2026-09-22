@@ -324,6 +324,27 @@ class TopicMemberService:
         )
         return [m.member_handle for m in members if m.member_handle in agents]
 
+    async def people_handles(self, topic_id: uuid.UUID) -> list[str]:
+        """Which of this topic's members are people, in roster order.
+
+        The roster minus its agents, and "is an agent" is the execution
+        binding's answer (:meth:`IdentityService.agents_among`), never what a
+        handle looks like: a project's members are free to name a teammate
+        ``cheese-abcdef123456``.
+
+        名册自己读一遍，不走 :meth:`agent_handles`：那一句会把名册再读一遍，而
+        「谁是 agent」和「谁是人」是同一个问题的两半，两边都在这一轮的路上。
+
+        Memory recall asks this: an agent reads one pool per person it is
+        sitting with (结论 54), so the list has to be the people, and it has to
+        be all of them.
+        """
+        members = await self._repo.list_for_topic(topic_id)
+        robots = await IdentityService(self._session).agents_among(
+            [m.member_handle for m in members]
+        )
+        return [m.member_handle for m in members if m.member_handle not in robots]
+
     async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
         """Does ``handle`` answer THIS room as one of its agents?
 

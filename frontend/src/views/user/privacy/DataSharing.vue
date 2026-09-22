@@ -1,17 +1,17 @@
 <template>
   <div class="realname-tasks">
     <div class="d-flex justify-space-between align-center mb-6">
-      <h2 class="text-h5 font-weight-medium mb-0">需要实名的赛题</h2>
+      <h2 class="text-h5 font-weight-medium mb-0">需要实名的题目</h2>
       <v-chip color="primary" variant="tonal" size="small" class="status-chip">
         <template #prepend>
           <v-icon icon="mdi-clipboard-check" size="small"></v-icon>
         </template>
-        3 个赛题
+        3 个题目
       </v-chip>
     </div>
 
     <p class="text-body-2 text-medium-emphasis mb-6">
-      这里列出了所有需要您提供实名信息的赛题。我们仅在您参与的特定赛题中使用您的实名信息，严格控制数据使用范围和权限。
+      这里列出了所有需要您提供实名信息的题目。我们仅在您参与的特定题目中使用您的实名信息，严格控制数据使用范围和权限。
     </p>
 
     <!-- 赛题列表 -->
@@ -60,7 +60,7 @@
               </div>
 
               <div class="task-description text-body-2 text-medium-emphasis mb-3">
-                该赛题要求参赛者设计智慧城市解决方案，需要实名信息用于证书发放和项目成果认证。
+                该题目要求参赛者设计智慧城市解决方案，需要实名信息用于证书发放和项目成果认证。
               </div>
 
               <div class="d-flex flex-wrap gap-2">
@@ -117,7 +117,7 @@
               </div>
 
               <div class="task-description text-body-2 text-medium-emphasis mb-3">
-                该赛题要求参赛者开发机器学习算法解决实际问题，需要实名信息用于学分认定和奖项发放。
+                该题目要求参赛者开发机器学习算法解决实际问题，需要实名信息用于学分认定和奖项发放。
               </div>
 
               <div class="d-flex flex-wrap gap-2">
@@ -197,9 +197,9 @@
       density="comfortable"
       icon="mdi-information-outline"
     >
-      <div class="text-subtitle-2 font-weight-medium mb-1">关于实名赛题</div>
+      <div class="text-subtitle-2 font-weight-medium mb-1">关于实名题目</div>
       <p class="text-body-2 mb-0">
-        部分赛题因认证、评奖等需要，会要求您提供实名信息。我们仅在必要范围内收集和使用这些信息，并严格控制访问权限。
+        部分题目因认证、评奖等需要，会要求您提供实名信息。我们仅在必要范围内收集和使用这些信息，并严格控制访问权限。
         您可以在<router-link :to="{ name: 'PrivacyCenterAccessLogs' }" class="text-decoration-none"
           >访问记录</router-link
         >中查看谁访问了您的实名信息。

@@ -10,7 +10,6 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import { listTopicMembers } from '@/api'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
-import RoomEnvironmentStatus from '@/components/RoomEnvironmentStatus.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { topicPhase } from '@/lib/topicState'
@@ -317,16 +316,6 @@ watch(
         :focus="focusMode"
         @toggle-focus="focusMode = !focusMode"
         @open-topic="openTopic"
-      />
-
-      <!-- 「这个房间还没准备好」——横跨四格，因为环境没起来时改动/现场/预览同样
-           都是空的，人可能正在任何一格里等。在标题**之下**：一个会消失的临时状态
-           不该把常驻的标题挤下去。总览（root）没有自己的运行环境，那里不显示。 -->
-      <RoomEnvironmentStatus
-        v-if="selectedTopic.kind !== 'root'"
-        class="env-strip"
-        :project-id="projectId"
-        :topic-id="topicId"
       />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定

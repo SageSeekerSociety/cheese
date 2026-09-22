@@ -19,6 +19,8 @@ from httpx import AsyncClient
 from app.domain.notification.models import Notification, NotificationType
 
 _AGENT_USER_ID = 1
+#: `authed_client` 就是这个人（平台 agent 用户，见 contract/conftest.py）。
+_AGENT_HANDLE = "cheese"
 
 
 async def _seed(
@@ -94,6 +96,50 @@ async def test_lifecycle_read_and_delete(authed_client: AsyncClient) -> None:
     assert resp.status_code == 404
     resp = await authed_client.get(f"/notifications/{id2}")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_a_project_notification_never_reaches_the_flat_inbox(
+    authed_client: AsyncClient,
+) -> None:
+    """项目收件箱的那一行不进知是的铃铛 —— 哪怕收件人就是这个登录用户。
+
+    两张通知表并成一张之后，房间里的一次 @ 和一封站内信是同一张表的两行。这一侧
+    渲染不了前者：它按 ``type`` 找模板，而平台报告自己的那几种（`change_alert`、
+    `decision_request`、房间里的 `MENTION`）文字在 ``title``/``body`` 上，模板要
+    的 ``payload`` 里空空如也 —— 铃铛里会多出一排读不出内容的空壳，未读数照加，
+    再点一次「全部已读」，项目那边没读的也跟着被抹掉。
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    mine = await _seed(factory)
+
+    pid = await _seed_project(factory)
+    posted = await authed_client.post(
+        f"/projects/{pid}/alerts",
+        json={
+            "level": "strong",
+            "kind": "MENTION",
+            "title": "在房间里@了你",
+            "body": "看一眼",
+            "target_handle": _AGENT_HANDLE,
+        },
+    )
+    assert posted.status_code == 200, posted.text
+
+    # 铃铛里只有站内信那一条。
+    listed = await authed_client.get("/notifications", params={"pageSize": 10})
+    data = listed.json()["data"]
+    assert [n["id"] for n in data["notifications"]] == [mine]
+    assert data["page"]["total"] == 1
+    unread = await authed_client.get("/notifications/unread-count")
+    assert unread.json()["data"]["count"] == 1
+
+    # 「全部已读」也够不着它：项目那边的未读不该被这一侧一键清掉。
+    await authed_client.put("/notifications/status", json={"read": True})
+    inbox = await authed_client.get(
+        f"/projects/{pid}/alerts", params={"target_handle": _AGENT_HANDLE}
+    )
+    assert [row["read"] for row in inbox.json()["data"]["data"]] == [False]
 
 
 @pytest.mark.anyio
@@ -175,6 +221,20 @@ async def test_read_filter_and_type_filter(authed_client: AsyncClient) -> None:
         "/notifications", params={"pageSize": 10, "type": "NOPE"}
     )
     assert resp.status_code == 400
+
+
+async def _seed_project(factory) -> str:
+    """一个项目，直接落行 —— ``POST /projects`` 在这套 harness 里是 503（它要的代码
+    托管服务没配），而这个用例要的只是一个收得下通知的项目。"""
+    from app.domain.project.models import Project
+
+    async with factory() as session:
+        project = Project(name="并表", owner_handle=_AGENT_HANDLE)
+        session.add(project)
+        await session.flush()
+        project_id = str(project.id)
+        await session.commit()
+    return project_id
 
 
 async def _seed_user_with_profile(factory, nickname: str) -> int:

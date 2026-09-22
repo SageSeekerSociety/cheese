@@ -263,6 +263,14 @@ paths:
   # Space Domain
   /spaces:
     $ref: './domains/space/paths.yaml#/~1spaces'
+  /space-applications:
+    $ref: './domains/space/paths.yaml#/~1space-applications'
+  /space-applications/{spaceId}/resubmit:
+    $ref: './domains/space/paths.yaml#/~1space-applications~1{spaceId}~1resubmit'
+  /admin/spaces:
+    $ref: './domains/space/paths.yaml#/~1admin~1spaces'
+  /admin/spaces/{spaceId}/review:
+    $ref: './domains/space/paths.yaml#/~1admin~1spaces~1{spaceId}~1review'
   /spaces/{spaceId}:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}'
   /spaces/{spaceId}/categories:

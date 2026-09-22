@@ -97,7 +97,7 @@ def test_the_same_cheese_recalls_the_same_facts_after_the_rekey(
             await db_session.flush()
 
             assert set(await store.recall(scope, own)) == before
-            assert await store.count(MemoryScope.agent_project, room_pool) == 0
+            assert await store.recall(MemoryScope.agent_project, room_pool) == []
             # 隔壁项目那条既没被搬走，也没被搬进这个池。
             assert await store.recall(
                 MemoryScope.agent_project, _room_pool(other.id, room.id)

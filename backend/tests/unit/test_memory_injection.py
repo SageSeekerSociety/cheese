@@ -29,15 +29,21 @@ def _store(**pools: list[str]):
     is an ordinary fact, which injection counts and does not carry.
     """
 
-    async def recall_core(scope: MemoryScope, scope_id: str) -> list[str]:
-        return [
-            f.removeprefix("core:") for f in pools[scope_id] if f.startswith("core:")
-        ]
+    async def core_and_counts(asked):
+        return {
+            (scope, scope_id): (
+                len(pools[scope_id]),
+                [
+                    f.removeprefix("core:")
+                    for f in pools[scope_id]
+                    if f.startswith("core:")
+                ],
+            )
+            for scope, scope_id in asked
+            if scope_id in pools
+        }
 
-    async def count(scope: MemoryScope, scope_id: str) -> int:
-        return len(pools[scope_id])
-
-    return SimpleNamespace(recall_core=recall_core, count=count)
+    return SimpleNamespace(core_and_counts=core_and_counts)
 
 
 # --- core: in every turn, whatever the turn is about ----------------------

@@ -947,18 +947,22 @@ async def _authorized_place(
     return place, actor
 
 
-async def _agent_memory_scope(
+async def _calling_agent(
     db: DbSession, project_id: uuid.UUID, caller: tuple[Place, Actor] | None
-) -> tuple[MemoryScope, str] | None:
-    """Where the agent that is calling writes what it learns.
+) -> ResolvedAgent | None:
+    """Whose memory this call writes to and reads from.
 
-    Keyed by the AGENT, not by the room: a room seats any number of teammates,
-    and the one running `cheese remember` is the one on the token, so its notes
-    go to its own pool wherever it is working — the same 芝士 moving between
-    rooms keeps one pool. A token that names no saved teammate (an older one, a
-    DM's) writes as the place's default: the DM's own teammate, else the
-    project's. Returns ``None`` when no usable place was supplied, so the
-    caller falls back to the shared project pool.
+    The AGENT, not the room: a room seats any number of teammates, and the one
+    running `cheese remember` is the one on the token, so its notes go to its
+    own pool wherever it is working — the same 芝士 moving between rooms keeps
+    one pool. A token that names no saved teammate (an older one, a DM's)
+    writes as the place's default: the DM's own teammate, else the project's.
+    Returns ``None`` when no usable place was supplied, so the caller falls
+    back to the shared project pool.
+
+    The agent itself rather than a pool key, because two different pools are
+    named from it now: its own (`memory_pool`) and one per person it has
+    formed a view of (`user_scope_id`).
     """
     if caller is None:
         return None
@@ -973,7 +977,26 @@ async def _agent_memory_scope(
     agent = await agents.for_seat_handle(project, actor.handle)
     if agent is None:
         agent = await agents.for_topic(place.room, project)
-    return memory_pool(project_id, agent)
+    return agent
+
+
+async def _agent_forming_the_view(
+    db: DbSession, project: Project, agent: ResolvedAgent | None
+) -> ResolvedAgent:
+    """Which agent's view of a person this is — the caller's, else the
+    project's own 芝士.
+
+    A pool about a person has to name an instance (结论 8), and an endpoint
+    called without a place still has to name one. Every project has its own
+    芝士 (结论 4), and a project-level call is that one speaking.
+
+    Takes the caller's agent rather than resolving it again: both endpoints
+    that ask this already had to resolve it for something else on the same
+    path.
+    """
+    if agent is not None:
+        return agent
+    return await AgentInstanceService(db).for_project(project)
 
 
 async def _authorize_personal_memory_owner(
@@ -1001,15 +1024,23 @@ async def add_memory(
 ) -> dict:
     """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
-    writes that member's personal memory (private chat, spec §8.4 个人记忆跟着
-    人走). Without either it falls back to the shared project pool.
+    writes that agent's view of that person, inside this project (结论 8).
+    Without either it falls back to the shared project pool.
+
+    Before anything is stored, the fact is looked for in the live checkout: a
+    memory is for what the repo cannot tell you (结论 61), and a fact that is
+    already written in a file there is a copy that will go stale on its own.
+    The refusal names the file, because "已经写在 repo 里了" without it leaves
+    the caller nothing to do but rephrase and try again.
 
     ``layer="core"`` buys a seat in every future prompt instead of a place in
     the pool that gets retrieved on demand — see MemoryLayer."""
-    from app.domain.memory.models import MemoryLayer, MemoryScope
+    from app.domain.agent.harness import harness_for
+    from app.domain.memory.models import MemoryLayer, user_scope_id
+    from app.domain.memory.redundant import agent_checkout_search, already_in_repo
     from app.domain.memory.store import memory_store
 
-    await ProjectService(db).get_or_404(project_id)
+    project = await ProjectService(db).get_or_404(project_id)
     caller = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
@@ -1021,16 +1052,39 @@ async def add_memory(
     if raw_layer not in tuple(MemoryLayer):
         raise ValidationError("layer 只能是 core 或 fact")
     layer = MemoryLayer(raw_layer)
+    # 谁在调用，这一句就答完了：下面三处都用它——查哪条检出目录（手是这位 agent
+    # 的，不是房间的，结论 60）、这是谁对这个人形成的看法、以及写进谁的池子。
+    agent = await _calling_agent(db, project_id, caller)
+    if place is not None and agent is not None:
+        hit = await already_in_repo(
+            content,
+            agent_checkout_search(
+                db, place.room, agent.handle, harness_for(project.settings)
+            ),
+        )
+        if hit is not None:
+            raise ValidationError(
+                f"这条事实 repo 里已经写着了（{hit.path}:{hit.line}）——"
+                f"「{hit.text}」。记忆只记 repo 里查不到的东西；"
+                "要让别人看见就改那个文件，不要在这里记一份会过期的副本。"
+            )
     if (body.get("scope") or "project") == "user":
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         await _authorize_personal_memory_owner(db, place, owner)
-        await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
+        viewer = await _agent_forming_the_view(db, project, agent)
+        await memory_store(db).remember(
+            MemoryScope.user,
+            user_scope_id(project_id, viewer.handle, owner),
+            content,
+            layer=layer,
+        )
         return ok({"remembered": True, "layer": layer.value})
-    agent_scope = await _agent_memory_scope(db, project_id, caller)
-    if agent_scope is not None:
-        await memory_store(db).remember(*agent_scope, content, layer=layer)
+    if agent is not None:
+        await memory_store(db).remember(
+            *memory_pool(project_id, agent), content, layer=layer
+        )
     else:
         await memory_store(db).remember(
             MemoryScope.project, str(project_id), content, layer=layer
@@ -1045,14 +1099,16 @@ async def search_memory(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
-    with scope="user"+owner it searches that member's personal memory. This is
-    keyword matching ranked by query coverage, not semantic search — related,
-    but not the same thing, which is why the CLI never promises 语义搜索."""
-    from app.domain.memory.models import MemoryScope
+    """记忆检索 — used by the `cheese recall` CLI. Defaults to the pools this
+    turn already reads; with scope="user"+owner it searches this agent's view
+    of that one person. This is keyword matching ranked by query coverage, not
+    semantic search — related, but not the same thing, which is why the CLI
+    never promises 语义搜索."""
+    from app.domain.memory.models import user_scope_id
+    from app.domain.memory.pools import pools_for_turn
     from app.domain.memory.store import memory_store
 
-    await ProjectService(db).get_or_404(project_id)
+    project = await ProjectService(db).get_or_404(project_id)
     caller = await _authorized_place(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
@@ -1061,17 +1117,35 @@ async def search_memory(
     if not query:
         raise ValidationError("query 不能为空")
     store = memory_store(db)
+    agent = await _calling_agent(db, project_id, caller)
     if (body.get("scope") or "project") == "user":
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         await _authorize_personal_memory_owner(db, place, owner)
-        hits = await store.search(MemoryScope.user, owner, query)
+        viewer = await _agent_forming_the_view(db, project, agent)
+        hits = await store.search(
+            MemoryScope.user, user_scope_id(project_id, viewer.handle, owner), query
+        )
         return ok({"hits": [h.as_dict() for h in hits]})
-    # 芝士自己那个池，加上项目的共享池。按分数合并，不按池子首尾相接：一条事实
-    # 恰好落在哪个池里，说明不了它答这个问题答得多好，而调用方是从上往下读的。
-    agent_scope = await _agent_memory_scope(db, project_id, caller) if caller else None
-    hits = list(await store.search(*agent_scope, query)) if agent_scope else []
+    # `cheese recall` 查的就是这一轮注入时读的那几个池（`pools_for_turn`），加上
+    # 项目的共享池。两边同一份清单，否则会出现「注入里提过池子还有 N 条，recall
+    # 却查不到」——而注入那句话的全部作用就是让人来 recall。
+    #
+    # 按分数合并，不按池子首尾相接：一条事实恰好落在哪个池里，说明不了它答这个
+    # 问题答得多好，而调用方是从上往下读的。
+    pools = (
+        pools_for_turn(
+            project_id,
+            agent.handle,
+            await TopicMemberService(db).people_handles(place.room_id),
+        )
+        if agent is not None and place is not None
+        else []
+    )
+    hits: list = []
+    for scope, scope_id in pools:
+        hits.extend(await store.search(scope, scope_id, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})

@@ -437,6 +437,24 @@ def bearer() -> Callable[[str], dict[str, str]]:
 
 
 @pytest.fixture(autouse=True)
+def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
+    """A machine has one launch shape, and it reaches a model only through the
+    metering proxy — so a backend that cannot read the proxy's CA cannot open a
+    screen at all (`device_provider._read_proxy_ca`, `machine/enrollment.py`).
+
+    Autouse and here rather than in the files that noticed: opening a screen is
+    a step in tests about system prompts, enrolment, work bindings and more, and
+    a file that supplies the CA for itself leaves the next one to discover the
+    same `ScreenSetupError` from a cause its subject never mentions. The two
+    tests that are ABOUT a missing CA take it away again with their own
+    monkeypatch.
+    """
+    ca = tmp_path_factory.mktemp("meter-ca") / "proxy-ca.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n")
+    monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca))
+
+
+@pytest.fixture(autouse=True)
 def _redis_client_per_loop() -> Iterator[None]:
     """No test may inherit the redis client another test built.
 

@@ -47,24 +47,15 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     only one harness can present — and reading it off the id later would mean
     guessing.
     """
-    subscription_default = (
-        resolve_pool(
-            project_settings, subscription_enabled=settings.subscription_enabled
+    subscription_default = resolve_pool(project_settings) == SUBSCRIPTION
+    choices = [
+        dict(
+            asdict(item),
+            default=item.default and subscription_default,
+            supply=SUBSCRIPTION,
         )
-        == SUBSCRIPTION
-    ) and settings.subscription_enabled
-    choices = (
-        [
-            dict(
-                asdict(item),
-                default=item.default and subscription_default,
-                supply=SUBSCRIPTION,
-            )
-            for item in subscription_model_listings()
-        ]
-        if settings.subscription_enabled
-        else []
-    )
+        for item in subscription_model_listings()
+    ]
     # The pool's models come from the gateway, which is the only thing that
     # knows: it needs a route and a price to serve one at all, so a list kept
     # here could only ever be a second copy drifting out of step with the first.
@@ -117,15 +108,16 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     # 某个项目设置成 codex 时，轮次真跑在 codex 上，而目录会按 claude-code 的能力
     # 位筛——订阅别名是最直接的一类——于是 ``binding.resolve`` 挑得出一个 codex 指
     # 不到的模型绑上去，正好是这一筛要防的那件事。
-    running = HARNESSES[harness_for(project_settings)]
+    # 这个项目指向的骨架这套部署没注册（结论 43）时，它没有一个能用的模型：它的
+    # 轮次在开始时就会在房间里说「没有部署」，目录跟着说同一件事——空的。
+    running = HARNESSES.get(harness_for(project_settings))
+    if running is None:
+        return []
     choices = [item for item in choices if _drives(running, item)]
-    # 项目级默认模型：项目 settings 里显式写一个**目录里有的**名字，就把对应的
-    # 那条标 default=True，其余全部清掉。没写、或写了个目录里没有的名字（历史
-    # 数据），就保留上面按部署兜底算出来的 default（订阅部署→订阅 sonnet；否则
-    # →settings.agent_model）。这条是 #1365 之后主线唯一能拿到「项目想用哪个模型」
-    # 的地方——主线不是一条活，它读 binding.resolve(None, …)，后者拿 catalog 里
-    # default=True 的那条。写进来的名字不在目录里就按没设处理，而不是让目录空掉：
-    # 空目录会让 resolve 抛「没有可用的默认模型」，把一条只是配错了的项目整条堵死。
+    # An explicit, available project model overrides the pool default. Otherwise
+    # use settings.agent_model unless the project explicitly chose subscription.
+    # Unknown historical selections leave that default in place. The room's main
+    # conversation reads this same default through binding.resolve(None, ...).
     #
     # 按骨架筛之后才问，所以「目录里有」问的是筛完的目录：项目挑了一个自己这个
     # 骨架指不到的模型，就按没设处理走部署兜底，而不是把一条派出去才会失败的绑定
