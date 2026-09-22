@@ -2420,6 +2420,49 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
     assert {card["id"] for card in listed} == {mine["id"]}
 
 
+def test_a_second_word_narrows_the_search_instead_of_emptying_it(client, as_admin):
+    """两个词是**与**，不是「这两个字连在一起」。
+
+    原判据是**一个** `%整句%`，所以「导出 报表」只找得到那两个字挨着、中间正好
+    是那个空格的行 —— 记得越多，结果越少，最后什么都没有。而那正是搜索最常见的
+    用法：读者记得两件事，把它们一起打进去。
+
+    **与不是或**：第二个词是进一步收窄，不是另一个选项。「导出 报表」问的不是
+    「有导出 或 有报表」，所以只命中一个词的那条不该出现。反过来写成或的话，
+    多打一个词会把结果**变多**，那比搜不到更让人不信这一栏。
+    """
+    both = _report(
+        client, REPORTER, title="导出报表偶发 502", body="每次导出季度报表时偶发 502"
+    )
+    # 只含其中一个词，而且两个字从不挨着。
+    one = _report(
+        client, REPORTER, title="导出的按钮点了没反应", body="导出的时候页面卡住"
+    )
+    other = _report(
+        client, REPORTER, title="报表数字对不上", body="季度报表合计少了一行"
+    )
+
+    def ids(**params) -> set[str]:
+        return {row["id"] for row in _cards(client, as_admin, **params)}
+
+    # 核心这一条：两个词在正文里**不相邻**，照样找得到。
+    assert both["id"] in ids(q="导出 报表")
+    # 与：各只命中一个词的两条都不出现。
+    assert one["id"] not in ids(q="导出 报表")
+    assert other["id"] not in ids(q="导出 报表")
+    # 顺序反过来问的是同一件事。
+    assert ids(q="报表 导出") == ids(q="导出 报表")
+    # 单个词照旧，而且能同时出现标题和正文各命中的那两条。
+    assert one["id"] in ids(q="导出")
+    assert other["id"] in ids(q="报表")
+    # 多打一个词只会收窄，永远不会变多。
+    assert ids(q="导出 报表") <= ids(q="导出")
+
+    # 只打了空格不算在搜：它既不该被读成「找含空格的行」，也不该把列表清空。
+    # 搜索框里留一个空格是很常见的手滑，而那个状态下读者想看的就是全部。
+    assert ids(q="   ") == ids()
+
+
 def test_a_wildcard_in_the_search_box_is_a_character_not_syntax(client):
     """`%` 和 `_` 是读者打进去的字，不是 `LIKE` 的语法。
 

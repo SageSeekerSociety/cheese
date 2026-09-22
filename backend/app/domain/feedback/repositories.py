@@ -357,15 +357,45 @@ def matching(q: str) -> Any:
     Backslash goes first: it is the escape character, so a reader who typed one
     would otherwise escape whatever follows it and turn a literal into syntax a
     second way.
+
+    **Each word is its own term, and the terms are ANDed.** One pattern over the
+    whole query means 「导出 报表」 only finds a row where those two words are
+    adjacent with that exact space — so the reader who names two things they
+    remember gets *nothing*, while a reader who happens to remember one of them
+    gets their row. That is backwards: the more you remember, the fewer results.
+    Terms are ANDed rather than ORed because a second word is a further
+    restriction, not an alternative (「导出 报表」 is not 「导出」 or 「报表」).
+
+    Recall, not ranking: the rows come back in the tab's order, not by how well
+    each one matches. Relevance ranking is a different and larger thing — it
+    needs a text index (`pg_search` is in the image, unused) and a maintenance
+    story for a table that also takes status updates.
     """
-    literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{literal}%"
-    return or_(
-        Feedback.title.ilike(pattern, escape="\\"),
-        Feedback.summary.ilike(pattern, escape="\\"),
-        Feedback.problem.ilike(pattern, escape="\\"),
-        Feedback.author_handle.ilike(pattern, escape="\\"),
+    columns = (
+        Feedback.title,
+        Feedback.summary,
+        Feedback.problem,
+        Feedback.author_handle,
     )
+    terms = q.split()
+    if not terms:
+        # Whitespace is not a search: it must not be read as 「find rows with a
+        # space in them」 (what the single-pattern version did) nor as nothing at
+        # all (an empty AND would match every row and silently drop the filter
+        # the caller thinks it applied).
+        return true()
+    return and_(
+        *[
+            or_(*[column.ilike(_like_pattern(term), escape="\\") for column in columns])
+            for term in terms
+        ]
+    )
+
+
+def _like_pattern(term: str) -> str:
+    """One search term, as a `LIKE` pattern with its own syntax escaped."""
+    literal = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{literal}%"
 
 
 class FeedbackRepository:
