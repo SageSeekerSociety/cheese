@@ -49,6 +49,28 @@ OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
 
+def _device_is_offline(response, data: bytes) -> bool:
+    """Whether this 409 says the hands are gone rather than the generation moved.
+
+    ``DeviceOffline`` / ``DeviceUnreachable`` answer 409 with
+    ``name: "DeviceOffline"`` and an ``X-Device-Id`` header
+    (``core/errors._handle_device_offline``). A ``ConflictError`` ("Execution
+    generation is no longer current") is also 409 and is NOT out of reach —
+    the machine is fine, only the lease is stale. Lumping both into
+    ``EXECUTOR_CALL_FAILED`` ("机器还在") is what made a dead websocket look
+    like a retryable one-call failure while chat and platform tools kept
+    working.
+    """
+    getheader = getattr(response, "getheader", None)
+    if getheader is not None and getheader("X-Device-Id"):
+        return True
+    try:
+        body = json.loads(data)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(body, dict) and body.get("name") == "DeviceOffline"
+
+
 class MachineOutOfReach(RuntimeError):
     """够不着这件事，判得出来的那一种。
 
@@ -370,6 +392,13 @@ class RemoteClient:
                             "executor %s -> %s: %s", method, response.status, data[:200]
                         )
                         if response.status in OUT_OF_REACH_STATUSES:
+                            raise MachineOutOfReach
+                        # DeviceOffline answers 409, which is NOT in
+                        # OUT_OF_REACH_STATUSES: a dead websocket used to be
+                        # reported as "机器还在" (retry this one) while chat and
+                        # platform tools kept working — the exact split this
+                        # sentence exists to describe.
+                        if _device_is_offline(response, data):
                             raise MachineOutOfReach
                         raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)

@@ -91,6 +91,113 @@ def test_a_handler_that_threw_does_not_get_reported_as_the_machine_being_gone(
     assert not re.search(r"\b[1-5][0-9][0-9]\b", said)
 
 
+def test_a_device_offline_409_is_the_machine_being_gone(monkeypatch, tmp_path):
+    """链路断了答的是 409 ``DeviceOffline``，那双手就是够不着。
+
+    ``DeviceOffline`` / ``DeviceUnreachable`` 由 ``_handle_device_offline`` 以
+    409 答出（带上 ``X-Device-Id``）。以前 ``OUT_OF_REACH_STATUSES`` 只认
+    502/503/504，于是一条断掉的 websocket 被说成「机器还在，这一个可以重试」——
+    agent 照着这句话一轮一轮地重试，而对话和平台工具一直正常，正是
+    「机器够不着」那句话要描述的那一种分裂。``ConflictError``（执行代际换了）
+    也是 409，但那一种机器好好的，必须留在 ``EXECUTOR_CALL_FAILED`` 那一档。
+    """
+    token = tmp_path / "execution.token"
+    token.write_text("t")
+
+    class Response:
+        status = 409
+
+        @staticmethod
+        def read():
+            return (
+                b'{"code": 409, "message": "device abcd1234 offline",'
+                b' "name": "DeviceOffline"}'
+            )
+
+        @staticmethod
+        def getheader(name):
+            return "abcd1234" if name == "X-Device-Id" else None
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            return None
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close():
+            pass
+
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test", "token_file": str(token)}
+    )
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+
+    with pytest.raises(executor_transport.MachineOutOfReach) as raised:
+        client.call("invoke")
+
+    assert str(raised.value) == executor_transport.MACHINE_OUT_OF_REACH
+
+
+def test_a_generation_conflict_409_is_not_the_machine_being_gone(
+    monkeypatch, tmp_path
+):
+    """执行代际换了的那一种 409 说的不是这双手没了。
+
+    ``ConflictError`` ("Execution generation is no longer current") 也是 409，
+    但它说的是租约旧了，机器本身还在。把它也说成够不着，agent 会放弃这一轮全部
+    文件与命令操作并报告机器掉线 —— 那是假话。
+    """
+    token = tmp_path / "execution.token"
+    token.write_text("t")
+
+    class Response:
+        status = 409
+
+        @staticmethod
+        def read():
+            return (
+                b'{"code": 409,'
+                b' "message": "Execution generation is no longer current",'
+                b' "data": null}'
+            )
+
+        @staticmethod
+        def getheader(name):
+            return None
+
+    class Connection:
+        sock = None
+
+        def request(self, method, path, *, body, headers):
+            return None
+
+        @staticmethod
+        def getresponse():
+            return Response()
+
+        @staticmethod
+        def close():
+            pass
+
+    client = executor_transport.RemoteClient(
+        {"kind": "device", "url": "http://executor.test", "token_file": str(token)}
+    )
+    monkeypatch.setattr(client, "connection", lambda: (Connection(), "/execution"))
+    client.transport.headers = {}
+
+    with pytest.raises(RuntimeError) as raised:
+        client.call("invoke")
+
+    assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
+    assert str(raised.value) == executor_transport.EXECUTOR_CALL_FAILED
+
+
 def test_the_status_and_the_body_survive_in_the_platform_log(
     monkeypatch, tmp_path, caplog
 ):
