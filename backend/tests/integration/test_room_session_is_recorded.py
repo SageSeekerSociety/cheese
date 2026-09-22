@@ -10,11 +10,9 @@
 时拿到的 resume 指针」来钉它，因为那正是唯一用得上它的时刻。
 """
 
-import asyncio
 import uuid
 
 from app.domain.agent.chat import ChatService
-from app.domain.room_task.services import TaskService
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 
 
@@ -60,33 +58,6 @@ def _dispatched(client, room_id: str, title: str = "一件活") -> str:
     assert r.status_code == 200, r.text
     wait_work_idle()
     return r.json()["data"]["id"]
-
-
-def _worked(client, tmp_path, room_id: str, title: str = "一件活") -> str:
-    """一条派出去、并且真的跑过一轮的活。"""
-    thread = _dispatched(client, room_id, title)
-    _turn(client, _service(client, tmp_path, _Screen()), thread)
-    return thread
-
-
-def _dormant(client, project_id: str, room_id: str, title: str = "没跑过的") -> str:
-    """一条开出来但谁都没跑过的活。"""
-    made: dict[str, str] = {}
-
-    async def _run() -> None:
-        async with client.test_factory() as s:
-            task = await TaskService(s).open_thread(
-                project_id=uuid.UUID(project_id),
-                room_id=uuid.UUID(room_id),
-                title=title,
-                owner_handle="alice",
-                created_by="alice",
-            )
-            made["id"] = str(task.id)
-            await s.commit()
-
-    asyncio.run(_run())
-    return made["id"]
 
 
 def _service(client, tmp_path, screen: _Screen) -> ChatService:
