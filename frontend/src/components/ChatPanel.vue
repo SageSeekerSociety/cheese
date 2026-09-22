@@ -62,6 +62,7 @@ import { useChatScroll } from './room/composables/useChatScroll'
 import { useOutbox } from './room/composables/useOutbox'
 import { useRoomRoster } from './room/composables/useRoomRoster'
 import { useRoomSocket } from './room/composables/useRoomSocket'
+import RoomMessage from './room/RoomMessage.vue'
 import RoomNotice from './room/RoomNotice.vue'
 import AgentControls from './AgentControls.vue'
 import AgentNoticeFrame from './AgentNoticeFrame.vue'
@@ -295,7 +296,6 @@ async function pickOption(m: Block, option: string) {
 
 // ---- Emoji reactions (Slack semantics, 协作平台的消息表情) ----
 // MVP picker: a fixed strip of the 8 most common reactions.
-const QUICK_EMOJIS = ['👍', '✅', '❤️', '😂', '🎉', '👀', '🙏', '➕']
 // Which message's picker is open (one at a time).
 const reactionPickerFor = ref<string | null>(null)
 
@@ -882,6 +882,14 @@ function noticeAgentName(block: Block, notice: PlatformNotice): string | null {
   }
   return null
 }
+/**
+ * 发件箱那一条还没有库里的块，而消息行要的是块。补齐它需要的那几个字段：
+ * `clientId` 当 id 用（重试/删除靠它认人），作者就是自己。
+ */
+function pendingBlock(item: Outgoing): Block {
+  return { id: item.clientId, author: AUTHOR, content: item.content, kind: 'message' } as Block
+}
+
 function outgoingState(item: Outgoing): string {
   if (item.state === 'failed') return item.error ? '待处理' : '未送达'
   return connected.value ? '发送中…' : '等待连接'
@@ -1608,166 +1616,36 @@ onBeforeUnmount(() => {
               @open-resource="(resource, turnId) => emit('open-resource', resource, turnId)"
             />
             <!-- message row -->
-            <div
+            <RoomMessage
               v-else-if="!notice"
-              class="im-row"
-              :class="{ 'im-row--cont': !isRunStart(i), 'im-row--self': isMine(m) }"
-              :data-mid="m.id"
-            >
-              <!-- avatar gutter: only on the first of a run -->
-              <div class="im-gutter">
-                <template v-if="isRunStart(i)">
-                  <CheeseAvatar v-if="isAgentBlock(m)" :size="28" :name="displayName(m)" />
-                  <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
-                     底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
-                     变的只有色块里的字。 -->
-                  <img
-                    v-else-if="avatarSrc(m.author)"
-                    class="im-avatar im-avatar--photo"
-                    :src="avatarSrc(m.author)!"
-                    :alt="displayName(m)"
-                    @error="onAvatarError(m.author)"
-                  />
-                  <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
-                    {{ avatarInitial(displayName(m)) }}
-                  </div>
-                </template>
-              </div>
-
-              <div class="im-main">
-                <div v-if="isRunStart(i)" class="im-meta">
-                  <span class="im-name">{{ displayName(m) }}</span>
-                  <span class="im-time">{{ fmtTime(m.created_at) }}</span>
-                </div>
-                <!-- B3: a reply shows the message it threads under -->
-                <button v-if="showReplyCue(m)" type="button" class="im-replied" @click="scrollToMessage(m.reply_to!)">
-                  <v-icon size="12">mdi-reply</v-icon>
-                  回复 {{ displayName(parentOf(m)!) }}：{{ replySnippet(parentOf(m)!) }}
-                </button>
-                <!-- 图片输入: an attachment block renders as the image itself
-                   (click opens the original in a new tab). 字节在 AttachmentImage
-                   里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
-                <AttachmentImage v-if="isImageBlock(m)" :topic-id="topic?.id ?? null" :path="m.content" />
-                <v-btn
-                  v-else-if="m.kind === 'attachment'"
-                  variant="text"
-                  prepend-icon="mdi-file-document-outline"
-                  append-icon="mdi-download-outline"
-                  class="text-none im-file-link"
-                  :title="`下载 ${m.content.split('/').pop()}`"
-                  @click="downloadAttachment(m)"
-                >
-                  <span class="text-truncate">{{ m.content.split('/').pop() }}</span>
-                </v-btn>
-                <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
-                   写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
-                   分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
-                   和芝士随口说了个路径长得一模一样。
-                   点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
-                <button
-                  v-else-if="m.kind === 'artifact'"
-                  type="button"
-                  class="im-artifact"
-                  :title="`打开 ${artifactName(m)}`"
-                  @click="emit('open-file', m.content, m.task_id ?? null)"
-                >
-                  <span class="att-face im-artifact__face">
-                    <v-icon size="20">{{ fileIcon(m.content) }}</v-icon>
-                  </span>
-                  <span class="im-artifact__text">
-                    <span class="im-artifact__name">{{ artifactName(m) }}</span>
-                    <span class="im-artifact__kind t-meta">{{ artifactKind(m) }}</span>
-                  </span>
-                  <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
-                </button>
-                <div v-else-if="isAgentBlock(m)" class="im-text md-content" v-html="renderMarkdown(m.content)" />
-                <!-- 现场尊重原文: human text renders verbatim — newlines and
-                   spacing preserved (pre-wrap), no markdown reflow. -->
-                <div v-else class="im-text im-text--verbatim" v-html="renderPlain(m.content)" />
-                <!-- 选项问题 (cheese ask): one-click answer buttons; answered
-                   state shows the pick + who made it (everyone sees it). -->
-                <div v-if="askOptions(m)" class="ask-row">
-                  <template v-if="!askAnswered(m)">
-                    <button
-                      v-for="opt in askOptions(m)"
-                      :key="opt"
-                      type="button"
-                      class="ask-option"
-                      :disabled="askBusy === m.id"
-                      @click="pickOption(m, opt)"
-                    >
-                      {{ opt }}
-                    </button>
-                  </template>
-                  <div v-else class="ask-answered">
-                    <v-icon size="13" color="primary">mdi-check-circle</v-icon>
-                    {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
-                  </div>
-                </div>
-                <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
-                   升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
-                   一张表，同时只会有一个非空。 -->
-                <button
-                  v-if="m.upgraded_to_task_id || m.upgraded_to_topic_id"
-                  type="button"
-                  class="im-upgraded"
-                  @click="emit('open-topic', (m.upgraded_to_task_id || m.upgraded_to_topic_id)!)"
-                >
-                  <v-icon size="13">mdi-arrow-top-right</v-icon>
-                  已升级为话题，点击查看
-                </button>
-                <!-- 忘了 @ 的补救：房间里最后一句是对着人说的，芝士就不会动，
-                   而在这一行出现之前，房间里没有任何东西说明这一点。 -->
-                <div v-if="showSummonHint(m, i)" class="summon-hint">
-                  <span class="summon-hint-text">这条没叫{{ agentName }}，它不会现在动</span>
-                  <button type="button" class="summon-hint-btn" :disabled="summonBusy" @click="summonNow">
-                    让它现在就看
-                  </button>
-                </div>
-                <!-- Emoji reaction chips (Slack): count per emoji, own reactions
-                   highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
-                <div v-if="m.reactions?.length" class="rx-row">
-                  <button
-                    v-for="r in m.reactions"
-                    :key="r.emoji"
-                    type="button"
-                    class="rx-chip"
-                    :class="{ 'rx-chip--mine': myReacted(r) }"
-                    :title="r.authors.join('、')"
-                    @click="onReact(m, r.emoji)"
-                  >
-                    <span class="rx-emoji">{{ r.emoji }}</span>
-                    <span class="rx-count">{{ r.count }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <!-- hover action bar, top-right of the row (Feishu). Only actions
-                 we actually implement are shown (no dead buttons). -->
-              <div class="im-actions" :class="{ 'im-actions--open': reactionPickerFor === m.id }">
-                <button
-                  type="button"
-                  class="im-act rx-toggle"
-                  :class="{ 'im-act--on': reactionPickerFor === m.id }"
-                  title="添加表情"
-                  @click="reactionPickerFor = reactionPickerFor === m.id ? null : m.id"
-                >
-                  <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
-                </button>
-                <button type="button" class="im-act" title="回复" @click="setReply(m)">
-                  <v-icon size="15">mdi-reply-outline</v-icon>
-                </button>
-                <button type="button" class="im-act" title="升级为话题" @click="emit('upgrade-message', m.id)">
-                  <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
-                </button>
-                <!-- MVP emoji picker: the 8 common reactions, Slack-style. -->
-                <div v-if="reactionPickerFor === m.id" class="rx-picker">
-                  <button v-for="e in QUICK_EMOJIS" :key="e" type="button" class="rx-pick" @click="onReact(m, e)">
-                    {{ e }}
-                  </button>
-                </div>
-              </div>
-            </div>
+              :block="m"
+              :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
+              :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
+              :run-start="isRunStart(i)"
+              :mine="isMine(m)"
+              :topic-id="topic?.id ?? null"
+              :author-name="displayName(m)"
+              :avatar="avatarSrc(m.author)"
+              :is-agent="isAgentBlock(m)"
+              :time="fmtTime(m.created_at)"
+              :refs="refMaps"
+              :viewer="AUTHOR"
+              :picker-open="reactionPickerFor === m.id"
+              :ask-busy="askBusy === m.id"
+              :summon-hint="showSummonHint(m, i) ? agentName : null"
+              :summon-busy="summonBusy"
+              @open-file="(path, taskId) => emit('open-file', path, taskId)"
+              @open-topic="emit('open-topic', $event)"
+              @upgrade="emit('upgrade-message', $event)"
+              @reply="setReply"
+              @react="onReact"
+              @toggle-picker="reactionPickerFor = reactionPickerFor === $event ? null : $event"
+              @answer="pickOption"
+              @download="downloadAttachment"
+              @jump="scrollToMessage"
+              @summon="summonNow"
+              @avatar-error="onAvatarError"
+            />
           </template>
 
           <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
@@ -1780,33 +1658,32 @@ onBeforeUnmount(() => {
           />
 
           <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
-             只是右边多一行状态——「立即显示」是第一位的，送达状态是第二位的。 -->
-          <div v-for="item in outbox" :key="item.clientId" class="im-row im-row--pending im-row--self">
-            <div class="im-gutter">
-              <img
-                v-if="avatarSrc(AUTHOR)"
-                class="im-avatar im-avatar--photo"
-                :src="avatarSrc(AUTHOR)!"
-                alt=""
-                @error="onAvatarError(AUTHOR)"
-              />
-              <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(AUTHOR) }">
-                {{ avatarInitial(myName) }}
-              </div>
-            </div>
-            <div class="im-main">
-              <div class="im-meta">
-                <span class="im-name">{{ myName }}</span>
-                <span class="im-time">{{ outgoingState(item) }}</span>
-              </div>
-              <div class="im-text im-text--verbatim" v-html="renderPlain(item.content)" />
-              <p v-if="item.error" class="outbox-error" role="alert">{{ item.error }}</p>
-              <div v-if="item.state === 'failed'" class="outbox-actions">
-                <button type="button" class="outbox-act" @click="retrySend(item.clientId)">重试</button>
-                <button type="button" class="outbox-act" @click="dropSend(item.clientId)">删除</button>
-              </div>
-            </div>
-          </div>
+             只是时间那一格写的是送达状态——「立即显示」是第一位的，送达状态是
+             第二位的。 -->
+          <RoomMessage
+            v-for="item in outbox"
+            :key="item.clientId"
+            :block="pendingBlock(item)"
+            :parent="null"
+            :parent-name="null"
+            :run-start="true"
+            :mine="true"
+            :topic-id="topic?.id ?? null"
+            :author-name="myName"
+            :avatar="avatarSrc(AUTHOR)"
+            :is-agent="false"
+            :time="outgoingState(item)"
+            :refs="refMaps"
+            :viewer="AUTHOR"
+            :picker-open="false"
+            :ask-busy="false"
+            :summon-hint="null"
+            :summon-busy="false"
+            :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+            @retry="retrySend(item.clientId)"
+            @drop="dropSend(item.clientId)"
+            @avatar-error="onAvatarError"
+          />
 
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
@@ -2040,6 +1917,8 @@ onBeforeUnmount(() => {
     </template>
   </div>
 </template>
+
+<style scoped src="./room/room-row.css"></style>
 
 <style scoped>
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
@@ -2417,154 +2296,6 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-/* ---- Feishu group chat rows (Fix 2) ---- */
-.im-row {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 4px 16px;
-  /* 换一个人说话时空开一档。气泡没了之后，分界全靠这段留白和下面那行名字 ——
-     同一个人连着说的那几条仍然贴在一起（.im-row--cont），两档差出来的就是
-     「这是另一个人开口了」。 */
-  margin-top: 16px;
-}
-/* continuation rows of the same author sit tight under the first */
-.im-row--cont {
-  margin-top: 0;
-}
-/* 悬停只改颜色不改位置（设计系统 §9.1）。刷的是整行 —— 气泡在的时候刷不了，
-   气泡自己就是 --fill，整行一刷它就跟背景融了，只好退而求其次去刷气泡内部那
-   一档。现在这一档腾出来了。 */
-.im-row:hover {
-  background: var(--fill);
-}
-.im-gutter {
-  width: 28px;
-  flex: 0 0 28px;
-}
-/* Human avatar: colored initial on a per-user deterministic background
-   (hash → hue), matching the Space avatars' visual language. */
-.im-avatar {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--fill);
-  /* Literal on purpose: the real ground is avatarColor() (a fixed hsl bound
-     inline in the template), identical in both themes — so is the initial. */
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 8px;
-}
-/* 真头像：同一个 28px 方槽，图片裁进去，不撑变消息行。 */
-.im-avatar--photo {
-  object-fit: cover;
-  background: var(--fill);
-}
-.im-main {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-.im-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-.im-name {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  font-weight: 600;
-  color: var(--ink);
-}
-/* 自己说的那几条安静一档。气泡在的时候「是不是我」由左右两侧说，那件事没了之后
-   不必再找一个同样响的说法替它 —— 在一个房间里你要找的是别人说了什么、芝士做了
-   什么，自己说过的话是上下文。所以这里是往下压，不是往上提。 */
-.im-row--self .im-name {
-  font-weight: 500;
-  color: var(--muted);
-}
-.im-time {
-  font-family: var(--font-mono);
-  font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
-  color: var(--faint);
-}
-/* ---- 正文平铺，不套气泡 ----
-   气泡是给短句用的。这一栏里最长的一半内容是芝士的产出 —— markdown、代码块、
-   diff、几十行 —— 给一篇文档套个框，框没帮上任何忙：它吃掉宽度，它让一屏出现
-   几十个带描边的灰块（「杂乱」最直接的来源），而代码块自己有底色，外面再压一层
-   灰底就是两层灰贴在一起。
-   判据是内容长度，不是人数：微信群、Telegram 群、飞书以短句为主，气泡成立；
-   Slack、Discord、GitHub 要装代码块和长帖，全是平铺。这一栏属于后者。
-   分界改由留白、头像和名字那一行承担，够用 —— 同一个人连着说的还是合并，
-   只在第一条上出名字（.im-row--cont）。 */
-.im-text {
-  max-width: 100%;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
-  word-break: break-word;
-}
-/* 现场尊重原文: exactly what the human typed, line breaks included. */
-.im-text--verbatim {
-  white-space: pre-wrap;
-}
-/* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
-   「这不是一句话，是一个可以打开的东西」。 */
-.im-artifact {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: 100%;
-  padding: 8px 12px 8px 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease;
-}
-.im-artifact:hover {
-  background: var(--fill);
-  border-color: var(--faint);
-}
-.im-artifact__face {
-  width: 32px;
-  height: 32px;
-}
-.im-artifact__text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.im-artifact__name {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  font-weight: 600;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.im-artifact__kind {
-  text-align: left;
-}
-.im-artifact__go {
-  flex: none;
-  color: var(--faint);
-}
-.im-file-link {
-  max-width: 100%;
-}
-.im-file-link :deep(.v-btn__content) {
-  min-width: 0;
-}
 /* 待发条。一格长什么样归 AttachmentTile，这里只排它们；行距留 10px，因为每格
    右上角那个移除按钮探出了边界 6px。 */
 .att-strip {
@@ -2611,207 +2342,6 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.im-upgraded {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--accent-ink);
-  background: var(--fill);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.im-upgraded:hover {
-  background: var(--surface);
-  border-color: var(--accent);
-}
-/* @mention: neutral inset, ink text — not amber. */
-.im-text :deep(.mention) {
-  color: var(--accent-ink);
-  background: var(--fill);
-  border-radius: var(--radius-sm);
-  padding: 0 3px;
-  font-weight: 500;
-  cursor: pointer;
-}
-/* @person handle reads as a link: persistent accent underline. File/topic
-   refs (file icon / #) keep their chip look and only underline on hover. */
-.im-text :deep(.mention:not(.file-ref):not(.topic-ref)) {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.im-text :deep(.mention:hover) {
-  text-decoration: underline;
-}
-/* 文件 chip 前的 mdi 图标。不挂在 .im-text 下：同样的 chip 也出现在动作卡
-   (.action-verb) 和系统事件行里，那两处不在 .im-text 里面。 */
-:deep(.file-ref__icon) {
-  margin-right: 3px;
-  font-size: 0.92em;
-}
-
-/* per-row hover action bar (Feishu), floats at the row's top-right */
-.im-actions {
-  position: absolute;
-  top: -12px;
-  right: 12px;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-1);
-  opacity: 0;
-  transition: opacity 0.12s ease;
-  pointer-events: none;
-}
-/* One quiet square button per action: muted ink, fill on hover — the harsh
-   default round icon-buttons inside a rounded pill read as unfinished. */
-.im-act {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 0.1s ease,
-    color 0.1s ease;
-}
-.im-act:hover {
-  background: var(--fill);
-  color: var(--ink);
-}
-.im-act--on {
-  background: rgba(var(--v-theme-primary), 0.12);
-  color: rgb(var(--v-theme-primary));
-}
-.im-row:hover .im-actions,
-.im-actions--open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* ---- Emoji reactions (Slack) ---- */
-/* MVP picker: a strip of the 8 common emoji, floating under the action bar. */
-.rx-picker {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  display: flex;
-  gap: 2px;
-  padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-2);
-  z-index: 5;
-}
-.rx-pick {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  border-radius: 6px;
-  /* 这个 16px 量的是一枚 emoji 字形，不是正文，所以不走字号阶梯；`line-height: 1`
-     同理——它是把字形在 28px 方格里居中的手段，不是一段话的行距。 */
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-.rx-pick:hover {
-  background: var(--fill);
-}
-/* 选项问题 buttons (cheese ask): quiet outlined pills, amber on hover. */
-.ask-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-.ask-option {
-  border: 1px solid var(--line-2);
-  background: var(--surface);
-  border-radius: var(--radius-md);
-  padding: 5px 14px;
-  font-size: 13px;
-  cursor: pointer;
-  transition:
-    border-color 0.12s,
-    background 0.12s;
-}
-.ask-option:hover {
-  border-color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.06);
-}
-.ask-option:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.ask-answered {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-/* Reaction chips under a message: emoji + count; own reactions get the amber
-   outline (Slack's "you reacted" affordance). */
-.rx-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
-.rx-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: var(--fill);
-  font-size: 12px;
-  line-height: 1;
-  color: var(--muted);
-  cursor: pointer;
-  transition: border-color 0.12s ease;
-}
-.rx-chip:hover {
-  border-color: var(--accent);
-}
-.rx-chip--mine {
-  border-color: var(--accent);
-  background: var(--surface);
-  color: var(--ink);
-}
-.rx-emoji {
-  font-size: 13px;
-}
-.rx-count {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-@keyframes incident-pulse {
-  50% {
-    box-shadow: 0 0 0 6px transparent;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-}
-
 .caret {
   display: inline-block;
   width: 2px;
@@ -2825,84 +2355,5 @@ onBeforeUnmount(() => {
   50% {
     opacity: 0;
   }
-}
-/* Rendered markdown for 芝士's replies (v-html → :deep). */
-/* 渲染出来的 markdown 走 style.css 里 .md-content 那份的行距约定（全局是 1.7），
-   不走 chrome 的 --lh-* 阶梯：这里是连续正文，而阶梯的比例（1.43）是给界面文字
-   定的，用在成段的正文上偏挤。字号折到 14px 是为了让下面那几个 em 的子元素
-   （h1/h2/h3、code）有一个干净的基数。 */
-.md-content {
-  font-size: 14px;
-  line-height: 1.6;
-}
-.md-content :deep(p) {
-  margin: 0 0 8px;
-}
-.md-content :deep(p:last-child) {
-  margin-bottom: 0;
-}
-.md-content :deep(h1),
-.md-content :deep(h2),
-.md-content :deep(h3) {
-  font-size: 1.02em;
-  font-weight: 600;
-  margin: 10px 0 4px;
-}
-.md-content :deep(ul),
-.md-content :deep(ol) {
-  margin: 4px 0;
-  padding-left: 20px;
-}
-.md-content :deep(li) {
-  margin: 2px 0;
-}
-.md-content :deep(li::marker) {
-  color: var(--faint);
-}
-.md-content :deep(a) {
-  color: var(--accent-ink);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-.md-content :deep(a:hover) {
-  text-decoration: underline;
-}
-.md-content :deep(img) {
-  max-width: 100%;
-  height: auto;
-  border-radius: 8px;
-}
-.md-content :deep(table) {
-  display: block;
-  width: max-content;
-  max-width: 100%;
-  overflow-x: auto;
-}
-/* 气泡里那一层往回走到「面」那一级配一条更浅的线：一层比一层亮，和两侧的气泡
-   底色（--fill / --fill-2）都分得开。留在 --fill 的话它和左侧气泡同色，糊成一块。 */
-.md-content :deep(code) {
-  font-family: var(--font-mono);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  padding: 0.5px 5px;
-  border-radius: var(--radius-sm);
-  font-size: 0.88em;
-}
-.md-content :deep(pre) {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  padding: 11px 13px;
-  border-radius: 8px;
-  overflow-x: auto;
-}
-.md-content :deep(pre) code {
-  background: none;
-  padding: 0;
-}
-.md-content :deep(blockquote) {
-  margin: 6px 0;
-  padding-left: 12px;
-  border-left: 2px solid var(--line-2);
-  color: var(--muted);
 }
 </style>
