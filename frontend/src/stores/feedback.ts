@@ -108,7 +108,12 @@ let mineSeq = 0
  *  到另一类 —— 共用计数器一自增，那一份还在飞的响应就被判成「过期」，于是第一类永远
  *  停在 `null`，切回去还要再拉一次。而「过期」在这里的**真实含义**只是「后来又问了同
  *  一类」，切到别的类并没有让谁过期。 */
-const statsSeq: Record<StatsKind, number> = { feedback: 0, usage: 0, platform: 0 }
+const statsSeq: Record<StatsKind, number> = {
+  feedback: 0,
+  usage: 0,
+  platform: 0,
+  performance: 0,
+}
 /** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回一次），
  *  所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与 `_adminWrite`。 */
 let adminDetailSeq = 0
@@ -287,7 +292,8 @@ type StatsBucket = { [K in StatsKind]: StatsShapes[K] | null }
 function assignStats(bucket: StatsBucket, kind: StatsKind, value: StatsShapes[StatsKind]): void {
   if (kind === 'feedback') bucket.feedback = value as StatsShapes['feedback']
   else if (kind === 'usage') bucket.usage = value as StatsShapes['usage']
-  else bucket.platform = value as StatsShapes['platform']
+  else if (kind === 'platform') bucket.platform = value as StatsShapes['platform']
+  else bucket.performance = value as StatsShapes['performance']
 }
 
 /** 把表单折成请求体。**只有这一个地方做这件事**：两条提交路走的是同一个动作，
@@ -393,6 +399,7 @@ export const useFeedbackStore = defineStore('feedback', {
       feedback: null,
       usage: null,
       platform: null,
+      performance: null,
     } as { [K in StatsKind]: StatsShapes[K] | null },
     /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
        但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
@@ -405,7 +412,12 @@ export const useFeedbackStore = defineStore('feedback', {
      *  失败」，哪怕当前这一类马上就会成功。
      *  对外仍然只暴露一个 `statsLoading`（下面那个 getter，读的是**当前这一类**那一格），
      *  所以页面上的读法一行都不用改。 */
-    statsBusy: { feedback: false, usage: false, platform: false } as Record<StatsKind, boolean>,
+    statsBusy: {
+      feedback: false,
+      usage: false,
+      platform: false,
+      performance: false,
+    } as Record<StatsKind, boolean>,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
        服务端的 WHERE 就不是同一个。 ---- */

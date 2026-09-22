@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.response import ok
 from app.api.routes.admin_common import PlatformAdminDep
 from app.core.db import get_db
+from app.domain.platform_stats.performance import performance_snapshot
 from app.domain.platform_stats.services import PlatformStatsService
 
 router = APIRouter(prefix="/admin/stats", tags=["admin"])
@@ -83,3 +84,17 @@ async def platform_stats(
     查的那一列，理由写在 `MachineInventoryRepository` 的模块 docstring 里。
     """
     return ok(await service.platform(days=days))
+
+@router.get("/performance")
+async def performance_stats(handle: PlatformAdminDep) -> dict:
+    """第四类：**这一刻**的接口耗时，按路由。
+
+    它和上面三条有三处不同，都在签名上：**没有 `days`**（这一类没有窗口 ——
+    数据在进程内存里，重启即清零），**没有库**（不走 `PlatformStatsService`，
+    直接读 `core/metrics.py` 的注册表），以及**只有一个进程**的数字（生产上业务
+    API 就一个 backend 进程；dev/base 栈里那个 device-connection 是另一份）。
+
+    「过去一周怎么变的」是另一个问题，原料在日志里（`main.py` 每个请求一行带
+    毫秒），要的话是另做一件只读的事 —— 不是把这一条加上 `days`。
+    """
+    return ok(performance_snapshot())

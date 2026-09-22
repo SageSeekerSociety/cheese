@@ -33,7 +33,12 @@ import { useFeedbackStore } from '@/stores/feedback'
 
 /** 三条看板接口。**整段相等**匹配，不用前缀：`/api/admin/stats/feedback` 和
  *  `/api/admin/feedback`（列表）差一个词，前缀匹配会把它们混成一件事。 */
-const STATS = ['/api/admin/stats/feedback', '/api/admin/stats/usage', '/api/admin/stats/platform'] as const
+const STATS = [
+  '/api/admin/stats/feedback',
+  '/api/admin/stats/usage',
+  '/api/admin/stats/platform',
+  '/api/admin/stats/performance',
+] as const
 
 /** 假数据那层 fetch。**存成常量**：每次测试又包一层的话，包装器读的是个会变的变量，
  *  第二层就会调到自己，撞成栈溢出。 */
@@ -125,6 +130,30 @@ describe('看板页', () => {
     await fireEvent.click(tab('反馈', getAllByRole))
     expect(await findByText('每天新增 / 解决 / 上线')).toBeTruthy()
     expect(hits.length).toBe(before)
+  })
+
+  it('第四类「性能」：只拉它那一条，按 p95 列路由，没样本的分位数画「—」', async () => {
+    const { findByText, getAllByRole, queryByText } = await mountDashboard()
+    await loaded('feedback')
+
+    await fireEvent.click(tab('性能', getAllByRole))
+    const store = await loaded('performance')
+
+    // 它和另外三类共用那一条路径规则：切过去才拉，而且只拉它。
+    expect(hits).toContain('/api/admin/stats/performance')
+    expect(store.stats.feedback).not.toBeNull() // 手上那一份没被顶掉
+
+    // 表里列的是**路由模板**（带 `{}`），不是带 uuid 的原始路径 —— 那一列是
+    // 「哪一条慢」的答案，而答案必须能被人念出来。
+    expect(await findByText('/feedback/{feedback_id}')).toBeTruthy()
+
+    // **没有样本的分位数画「—」，不是 0**：0 是一个读数（「真的很快」），null 是
+    // 「这一格没有数据」。画成同一个数，会让一条从没人访问过的路由以 0ms 排在最前。
+    expect(queryByText('0 ms')).toBeNull()
+
+    // 这一类是唯一读**进程内存**的，口径必须写在页面上 —— 少了它，这些数会被读成
+    // 「有历史的、整个平台的」。
+    expect(await findByText(/进程内存/)).toBeTruthy()
   })
 
   it('平台那一类把机器报成存量，并写明它不是在线数', async () => {
