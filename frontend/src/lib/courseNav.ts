@@ -68,7 +68,9 @@ export function spaceEntryRoute(space: { id: number; isCourse?: boolean }): {
   params: { spaceId: number }
 } {
   return {
-    name: space.isCourse ? 'SpacesCourseHome' : 'SpacesDetailTasksList',
+    // 不是课的落点仍然是 `/spaces/{id}` 这个地址本身（它 redirect 到题目列表）——
+    // 老题目板的链接一个字符都不变。
+    name: space.isCourse ? 'SpacesCourseHome' : 'SpacesDetail',
     params: { spaceId: space.id },
   }
 }

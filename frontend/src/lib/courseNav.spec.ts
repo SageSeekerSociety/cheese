@@ -44,12 +44,13 @@ describe('courseNav', () => {
       params: { spaceId: 7 },
     })
     expect(spaceEntryRoute({ id: 7, isCourse: false })).toEqual({
-      name: 'SpacesDetailTasksList',
+      name: 'SpacesDetail',
       params: { spaceId: 7 },
     })
-    // 老题目板：服务端不说，就是没有壳 → 今天的第一屏，一个字不变。
+    // 老题目板：服务端不说，就是没有壳 → 还是今天那条地址（它自己 redirect 到题目
+    // 列表），所以链接一个字符都没变。
     expect(spaceEntryRoute({ id: 7 })).toEqual({
-      name: 'SpacesDetailTasksList',
+      name: 'SpacesDetail',
       params: { spaceId: 7 },
     })
   })
