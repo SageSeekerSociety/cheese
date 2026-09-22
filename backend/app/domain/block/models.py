@@ -53,6 +53,11 @@ class BlockKind(enum.StrEnum):
     # image/svg+xml). The latest artifact of a topic is its "current preview";
     # created via `cheese show`. Never inferred from prose — the AI names it.
     artifact = "artifact"
+    # 一份周报 (spec §7.1 周报集): content = 周报正文，meta 里的 `since`/`until`
+    # 是它讲的那一周。和 `decision` 同属「项目自己的话」——项目文档页按项目列出
+    # 它们。区别是它讲的是一段历史而不是一个当前状态，所以带时间窗：并排摆着
+    # 的几份周报，是那个窗口把它们分开的。
+    weekly = "weekly"
 
 
 class AuthorType(enum.StrEnum):

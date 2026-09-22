@@ -1594,6 +1594,13 @@ export function getProjectDecisions(projectId: string): Promise<ListPayload<Bloc
   return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/decisions`)
 }
 
+// 周报集 (spec §7.1): the project's weekly reports, newest first. Each Block
+// carries the stretch it covers in `meta` (`since`/`until`) and points back to
+// the room it was written in via `topic_id`.
+export function getProjectWeeklies(projectId: string): Promise<ListPayload<Block>> {
+  return request<ListPayload<Block>>(`/projects/${encodeURIComponent(projectId)}/weeklies`)
+}
+
 // 选项问题 (cheese ask): one-click answer.
 export function answerOptions(blockId: string, option: string, author: string): Promise<Block> {
   return request<Block>(`/topics/blocks/${encodeURIComponent(blockId)}/answer`, {
@@ -2134,9 +2141,13 @@ export interface FeedbackListQuery {
   q?: string
   sort?: string
   pageStart?: number
-  /** 三段日期窗口。**只有管理端那条列表吃它们** —— 用户侧没有「点一个数字看那一段」
-   *  的入口，映射写进 `listAdminFeedback` 而不是在这里的每一个函数里。 */
-  since?: string
+  author?: string | null
+  kind?: string | null
+  status?: string | null
+  /** 起始时间（ISO）。**两条列表都吃**：管理端是「点看板上一个数字，看那一段」，
+   *  反馈中心是「最近 24 小时 / 7 天 / 30 天」那个下拉。客户端只负责把「最近 N 天」
+   *  折成一个时刻，窗口的对齐由服务端那套 UTC 日说。 */
+  since?: string | null
   resolvedSince?: string
   deployedSince?: string
 }
@@ -2151,6 +2162,11 @@ export function listFeedback(query: FeedbackListQuery): Promise<FeedbackListPayl
       sort: query.sort,
       page_start: query.pageStart,
       page_size: query.pageSize,
+      // 四个筛选。空值由 `feedbackQuery` 丢掉，所以「不限」就是不传。
+      author: query.author,
+      kind: query.kind,
+      status: query.status,
+      since: query.since,
     })}`
   )
 }
@@ -2223,6 +2239,18 @@ export function createFeedbackComment(
 /** 删一条评论。**只是这一条**，除非它是顶层评论 —— 楼里的回复由服务端一起删掉
  *  （一条回复挂在一个查不到的父亲下面，是没人再问起的孤儿），客户端不需要自己
  *  遍历，多算一次就会和服务端的答案漂开。 */
+/** 删掉**整条反馈**（软删，连带它下面的评论）。
+ *
+ *  **谁能删由服务端说了算**：每一条详情上的 `can_delete` 就是那个答案（作者 —— 写它的
+ *  那个 handle 或按下发送的那个 —— 或平台管理员），客户端不自己拼一遍判据。这个仓库
+ *  已经吃过一次「客户端重算一遍服务端的规则」的亏（`deployed` 那次：按钮亮着、服务端
+ *  回 412），评论那一层也因此把 `can_delete` 交给服务端算。 */
+export function deleteFeedback(feedbackId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/feedback/${encodeURIComponent(feedbackId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function deleteFeedbackComment(feedbackId: string, commentId: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(
     `/feedback/${encodeURIComponent(feedbackId)}/comments/${encodeURIComponent(commentId)}`,
@@ -2280,18 +2308,34 @@ export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
  * 三块各自有名字之后，这种「路径悄悄指向另一个资源」不可能再发生。
  */
 
-/** 反馈那一块：七个栏位的全量计数，加窗口内按天的新增 / 修复 / 上线。 */
+/** 反馈那一块：**全量口径**的总量 / 四栏 / 四级状态，加窗口内按天的三条曲线。
+ *
+ *  口径是这个类型的全部内容：看板数的是**整个板子**，不是公开那一臂。此前
+ *  `counts` 走的是反馈中心那一行标签页的数（被 `PUBLIC_ONLY` 收窄，因为匿名读者
+ *  不该从一个数字里得知私密反馈有多少），而旁边的 `series` 是全量 —— 卡片和曲线
+ *  各答各的问题。现在两边都是全量，形状上也把三个切口分开写，不再挤在一个扁平的
+ *  字典里让人猜哪个是哪个。
+ *
+ *  `columns` 的四个是**筛选，不是划分**（`agent` 是来源，和公开/私密重叠），所以
+ *  它们**加起来不等于** `total.all` —— 和队列那四栏是同一批判据。
+ */
 export interface StatsFeedback {
   days: number
-  counts: {
+  /** 一句话答完的几个数。`open`/`closed` 用的是和别处同一个 `CLOSED_STATUSES`。 */
+  total: {
     all: number
-    hot: number
-    active: number
-    resolved: number
-    deployed: number
-    unread: number
+    open: number
+    closed: number
     unassigned: number
+    /** 压着没人管的急件（high/urgent 且未办完）—— 分诊台最该先动的一格。 */
+    urgent_open: number
   }
+  /** 队列那四栏，重拼成计数。**加起来不等于 `total.all`**，理由见上。 */
+  columns: { public: number; private: number; agent: number; security: number }
+  /** 梯子上的每一级，全量。这是四处里唯一并排展示四级状态的地方。 */
+  status: { received: number; in_progress: number; resolved: number; deployed: number }
+  /** 这个管理员自己的未读数 —— 人各一份，和板子有多大无关。 */
+  unread: number
   /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */
   series: { date: string; created: number; resolved: number; deployed: number }[]
 }
@@ -2307,6 +2351,23 @@ export interface StatsUsage {
    *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
    *  只按名字连线，两个同名项目会合成一根柱子。 */
   top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
+  /** 按模型拆。和 `by_route` 是两个正交的切口：「贵的是模型还是计费方式」要两个一起看。 */
+  by_model: {
+    model: string
+    tokens: number
+    calls: number
+    cost_usd: number
+    /** 同一行上的「算不出价钱」的那部分。订阅按月计费，0 是「没有价」不是「免费」。 */
+    unpriced_tokens: number
+  }[]
+  /** 按供给通路拆：gateway（网关）/ subscription（订阅）/ native（自带凭据）/ ''（旧数据）。 */
+  by_route: {
+    route: string
+    tokens: number
+    calls: number
+    cost_usd: number
+    unpriced_tokens: number
+  }[]
 }
 
 /** 平台那一块。`machines` 是四张台账的**存量**，不是在线数 —— 在线状态住在进程内存
@@ -2315,15 +2376,52 @@ export interface StatsPlatform {
   days: number
   people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
+  /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
+  health: {
+    overall: 'healthy' | 'degraded' | 'unknown'
+    checks: Record<string, { status: string; detail?: string | number | null }>
+  }
+}
+
+/** 接口耗时那一块。**和上面三块有一条根本区别：它读进程内存，不读库。**
+ *
+ *  所以它**没有 `days`**（没有窗口）、重启即清零，而且只覆盖这一个进程 —— 生产上
+ *  业务 API 就一个 backend 进程，dev 栈里那个 device-connection 是另一份。口径写在
+ *  响应里（`routes_total` 与 `routes_shown`），页面照读。
+ *
+ *  `p50/p95/p99` 单位是**毫秒**，没有样本的路由是 `null` 不是 0：0 是一个读数
+ *  （「真的很快」），null 是「没有数据」，两者画成同一个数会骗人。 */
+export interface StatsPerformance {
+  /** 采集到耗时的路由**总数**（不是画出来的条数）。 */
+  routes_total: number
+  routes_shown: number
+  routes: {
+    method: string
+    /** 路由**模板**（`/feedback/{feedback_id}`），不是带 uuid 的原始路径。 */
+    route: string
+    status: string
+    count: number
+    p50: number | null
+    p95: number | null
+    p99: number | null
+  }[]
+  /** 这一刻正在处理的请求数。**探针（`/health`、`/metrics`）不算**，否则读它的那一次
+   *  自己就在里面、这个数恒 ≥1。 */
+  active_requests: number
+  /** 这个进程起来了多久。 */
+  uptime_seconds: number
+  /** 事件循环的滞后：接口慢而 p95 不高时，答案常常在这里。 */
+  loop_lag: { recent_ms: number; worst_ms: number }
 }
 
 /** 分类 → 它那条接口的形状。`getStats` 的返回类型由这个映射查出来，所以调用方
- *  拿到的永远是它问的那一类，而不是一个三选一的联合（联合要在每个用的地方再窄化
+ *  拿到的永远是它问的那一类，而不是一个四选一的联合（联合要在每个用的地方再窄化
  *  一次，而那正是「切到用量页却读了反馈的字段」这类错会藏身的地方）。 */
 export interface StatsShapes {
   feedback: StatsFeedback
   usage: StatsUsage
   platform: StatsPlatform
+  performance: StatsPerformance
 }
 export type StatsKind = keyof StatsShapes
 

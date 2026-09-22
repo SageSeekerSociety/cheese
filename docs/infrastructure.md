@@ -312,8 +312,28 @@ Two mechanisms, deliberately different in kind:
   installed on the dev/agent boxes** — so on those boxes nothing was watching
   the things that actually fill them.
 - **`deploy/dev-box-disk-cleanup.sh`** is the *routine* reclaim for any box.
-  Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic.
-  Run by hand — nothing schedules it.
+  Reports by default; `--apply` deletes; `--self-test` checks its own arithmetic;
+  `--needed` answers whether the box is above the mark at all and exits 0/1.
+  `deploy/install-disk-cleanup-timer.sh` installs it, and
+  `cheese-disk-cleanup.timer` runs it nightly above 75%.
+
+  It watches **every filesystem it reclaims on, not just `/`** — including each
+  temp root (`$TMPDIR`, `/var/tmp`) when that is a filesystem of its own. Which
+  filesystems those are, and what the mark is, live in this script and nowhere
+  else: the unit asks `--needed` rather than spelling out a `df` of its own.
+
+  That indirection is the fix for 2026-09-22, when the dev box could not open a
+  new topic. `/tmp` is a **32G tmpfs** — RAM, not the disk — and it is where
+  every pytest run leaves its temp tree: 13G of them had accumulated, the
+  largest single tree 5.3G. `/tmp` reached 100% while `/` sat at 51%, so every
+  write under `/tmp` began failing with ENOSPC and the environment-preparation
+  step for each new room died at startup. The nightly unit never ran —
+  `systemctl status` says `Result: exec-condition`, because its condition was
+  `df /` and the filesystem it asked about was healthy. The trees are
+  regenerable by definition and nothing pruned them across runs, so the reclaim
+  takes them now: the newest `CHEESE_PYTEST_TEMP_KEEP` (2) per user are left
+  alone, and the rest must also be older than `CHEESE_PYTEST_TEMP_AGE_MINUTES`
+  (360), so a suite still running is not swept out from under itself.
 - **`deploy/reclaim-room-caches.sh`** is the *room-local* reclaim, and the only
   one of the three a deploy runs on its own (`deploy-docker.sh`, right before
   `DEPLOY OK`). Every room of a project now installs out of one store, so the

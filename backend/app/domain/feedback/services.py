@@ -37,11 +37,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_topic
+from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -53,6 +54,7 @@ from app.domain.feedback import repositories as repo
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
+    FeedbackKind,
     FeedbackStatus,
     FeedbackVisibility,
 )
@@ -214,13 +216,71 @@ class FeedbackService:
         """
         return is_admin or (handle is not None and row.author_handle == handle)
 
+    def may_delete_feedback(
+        self, row: Feedback, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """谁可以删掉**一整条反馈** —— 提它的人，或者平台管理员。
+
+        和评论那条判据（`may_delete_comment`）同一个形状，但作者那一档多算一个人：
+        一条反馈有**两个**都算「我提的」的 handle —— 写它的（agent 提案时是那个 agent）
+        和按下发送的（人）。只认前者的话，从提案卡提交的人删不掉自己刚提交的东西；
+        只认后者的话，agent 自己经手的那条谁也删不掉（`submitted_by_handle` 在那种
+        情况下可能是别人）。
+
+        管理员这一档是需求方要的（「不然我怕有人恶意刷」）：删除是**事后清理**，
+        挡不住刷 —— 那要在提交侧限流。这里给的只是「× 掉一条」的能力，而这正是
+        管理员今天没有的那一个。
+
+        判据只有这一处：`delete_feedback` 删之前问它，`detail_of` 拿它填
+        `can_delete`。两处各写一遍就是「按钮画得出来、点下去 403」的来源，这个功能
+        已经为那个形状付过一次学费（见 `may_delete_comment` 的 docstring）。
+        """
+        if is_admin:
+            return True
+        if handle is None:
+            return False
+        return handle in (row.author_handle, row.submitted_by_handle)
+
     # --- 读 -----------------------------------------------------------------
 
     async def list_public(
-        self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
+        self,
+        *,
+        tab: str,
+        q: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        author: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
+        """公开列表，四个可选的筛选叠在栏位之上。
+
+        **不认识的取值一律 400，不退回「全不筛」** —— 和 `tab` / `sort` 同一条规矩：
+        猜错一个筛选会让人以为「没有这样的反馈」，而它其实只是被别的条件挡住了。
+        反馈中心那几个筛选是**控件**，控件里的值只能来自这份词表（服务端随 meta 下发
+        的 `statuses` / `kinds`），所以走到这里的一定是客户端版本落后了，而不是有人
+        手打了什么。
+        """
+        # 「办完了」那一栏装的是两级（修复 + 上线），而状态筛选是**单级**的。两者
+        # 不冲突：栏目先说「哪些还在桌上」，筛选再从那批里挑一级。所以这里不与
+        # `_tab_where` 合并，只保证两边都成立。
+        if status is not None and status not in {s.value for s in FeedbackStatus}:
+            raise BadRequestError(f"未知的状态：{status}")
+        if kind is not None and kind not in {k.value for k in FeedbackKind}:
+            raise BadRequestError(f"未知的类型：{kind}")
         return await self._repo.list_public(
-            tab=tab, q=q, sort=sort, limit=limit, offset=offset
+            tab=tab,
+            q=q,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+            author=author,
+            status=status,
+            kind=kind,
+            since=since,
         )
 
     async def list_admin(
@@ -335,6 +395,19 @@ class FeedbackService:
     # ——「到过」问的是时间线而不是列、同一个状态可以有多行所以数的是
     # `distinct feedback_id`——都写在仓储的 docstring 里，调用点自己拼一遍
     # `select` 就是各自重答一遍，而两处答出两个口径时两边看着都「对」。
+
+    async def admin_board_counts(self) -> dict[str, dict[str, int]]:
+        """管理看板那一块的计数 —— **全量口径**。
+
+        和 :meth:`counts` 的分工：`counts` 是反馈中心那一行标签页的数（用户侧，被
+        `PUBLIC_ONLY` 收窄，因为匿名读者不该从一个数字里得知私密反馈有多少）；
+        这一条是管理看板问的「现在一共有多少事」，四栏、四级状态、总量一起给，
+        一条私密反馈也要算进去。
+
+        两个口径**不能互相替代**，这正是看板此前的 bug：它拿 `counts` 去填 KPI，
+        于是卡片写的是公开那一臂、旁边那条曲线写的是全量，两边各自都看着对。
+        """
+        return await self._repo.admin_counts()
 
     async def created_series(
         self, *, since: datetime, until: datetime
@@ -504,6 +577,8 @@ class FeedbackService:
         """
         page = await self._repo.page_comments(row.id)
         activity = await self._repo.latest_activity_of([row.id])
+        # 和 `delete_feedback` 共用同一个判据，所以按钮和权限不会分家。
+        can_delete = self.may_delete_feedback(row, handle=handle, is_admin=is_admin)
         # Notes are admin-only, so resolving faces for them is not extra work a
         # non-admin pays for: the list is empty and contributes no handles.
         notes = await self._repo.list_notes(row.id) if is_admin else []
@@ -542,6 +617,7 @@ class FeedbackService:
             thread_next_cursor=page.next_cursor,
             timeline=await self._repo.list_timeline(row.id),
             notes=notes,
+            can_delete=can_delete,
         )
 
     async def mark_read(self, *, handle: str) -> datetime:
@@ -598,6 +674,27 @@ class FeedbackService:
                 proposal=proposal,
                 submitted_by_handle=actor_handle,
                 submitted_by_user_id=actor_user_id,
+            )
+        # The author's daily cap, and it sits HERE rather than above the proposal
+        # branch on purpose: that branch is already limited (per topic, per
+        # fingerprint, and against what was dismissed), and its author is the
+        # agent that found the problem, not the person who sent it. This cap is
+        # about a person or a script writing straight into a public list.
+        #
+        # Lock first, then count: the pair is a read-then-insert, and the whole
+        # point is the moment somebody is at the cap. See `lock_author`.
+        await self._repo.lock_author(actor_handle)
+        # Rolling 24 hours, not a calendar day — the same choice, for the same
+        # reason, as the proposal cap: a calendar day resets at midnight, so two
+        # minutes either side of it fit twice the limit.
+        recent = await self._repo.count_author_since(
+            actor_handle, datetime.now(UTC) - timedelta(days=1)
+        )
+        cap = settings.feedback_reports_per_author_per_day
+        if recent >= cap:
+            raise PreconditionFailedError(
+                f"你 24 小时内提了 {recent} 条反馈，达到上限（{cap} 条 / 24 小时）。"
+                "这是防刷的上限，不是对你的评价——过几个小时再提。"
             )
         visibility = body.visibility
         row = await self._repo.add(
@@ -875,6 +972,24 @@ class FeedbackService:
         if not self.may_delete_comment(comment, handle=handle, is_admin=is_admin):
             raise ForbiddenError("只能删除自己的评论")
         await self._repo.soft_delete_comment(comment)
+
+    async def delete_feedback(
+        self,
+        feedback_id: uuid.UUID,
+        *,
+        handle: str,
+        is_admin: bool,
+    ) -> None:
+        """软删一条反馈（连带它的评论）。
+
+        `visible_row` 先过一遍**可见性**：看不见的东西回 404 而不是 403 —— 私人反馈
+        存不存在本身就不该被一个看不见它的人问出来。可见之后再判「能不能删」，
+        那是 403：这时候他已经知道这条存在了，再说「不存在」是另一句假话。
+        """
+        row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
+        if not self.may_delete_feedback(row, handle=handle, is_admin=is_admin):
+            raise ForbiddenError("只能删除自己提交的反馈")
+        await self._repo.soft_delete_feedback(row)
 
     async def note(
         self, feedback_id: uuid.UUID, body: str, *, author_handle: str

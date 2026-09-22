@@ -18,7 +18,18 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, exists, func, or_, select, true, update
+from sqlalchemy import (
+    Select,
+    and_,
+    case,
+    exists,
+    func,
+    or_,
+    select,
+    text,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -357,15 +368,81 @@ def matching(q: str) -> Any:
     Backslash goes first: it is the escape character, so a reader who typed one
     would otherwise escape whatever follows it and turn a literal into syntax a
     second way.
+
+    **Each word is its own term, and the terms are ANDed.** One pattern over the
+    whole query means 「导出 报表」 only finds a row where those two words are
+    adjacent with that exact space — so the reader who names two things they
+    remember gets *nothing*, while a reader who happens to remember one of them
+    gets their row. That is backwards: the more you remember, the fewer results.
+    Terms are ANDed rather than ORed because a second word is a further
+    restriction, not an alternative (「导出 报表」 is not 「导出」 or 「报表」).
+
+    Recall, not ranking: the rows come back in the tab's order, not by how well
+    each one matches. Relevance ranking is a different and larger thing — it
+    needs a text index (`pg_search` is in the image, unused) and a maintenance
+    story for a table that also takes status updates.
     """
-    literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    pattern = f"%{literal}%"
-    return or_(
-        Feedback.title.ilike(pattern, escape="\\"),
-        Feedback.summary.ilike(pattern, escape="\\"),
-        Feedback.problem.ilike(pattern, escape="\\"),
-        Feedback.author_handle.ilike(pattern, escape="\\"),
+    columns = (
+        Feedback.title,
+        Feedback.summary,
+        Feedback.problem,
+        Feedback.author_handle,
     )
+    terms = q.split()
+    if not terms:
+        # Whitespace is not a search: it must not be read as 「find rows with a
+        # space in them」 (what the single-pattern version did) nor as nothing at
+        # all (an empty AND would match every row and silently drop the filter
+        # the caller thinks it applied).
+        return true()
+    return and_(
+        *[
+            or_(*[column.ilike(_like_pattern(term), escape="\\") for column in columns])
+            for term in terms
+        ]
+    )
+
+
+def _like_pattern(term: str) -> str:
+    """One search term, as a `LIKE` pattern with its own syntax escaped."""
+    literal = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{literal}%"
+
+
+def search_rank(q: str) -> Any | None:
+    """How well a row answers what was typed, as an integer to sort on.
+
+    **The title is the only weight**, and that is a deliberate floor rather than a
+    finished ranking. A term that lands in the title is nearly always the thing
+    the reader meant — titles are written to be the one line that says what the
+    report is about — while a term in the body is often incidental (a stack
+    trace, a word in passing). Counting **how many of the typed terms hit the
+    title** is the cheapest honest version of 「哪条最像是我要找的」, and it needs
+    nothing that is not already in the query: no new column, no index, no
+    extension.
+
+    What it is NOT, and the reason it is not called relevance in the usual sense:
+    it ignores term frequency and rarity, so it cannot tell a row that says
+    「报表」 five times from one that says it once. Doing that needs a text index
+    with statistics behind it (`pg_search` is in the image and unused — see issue
+    #1461 for what that would take). Until then, this orders the rows a reader is
+    most likely to have meant above the ones whose only mention was somewhere in
+    the body, which is the difference they actually notice.
+
+    Returns None for a query with no terms, so the caller keeps its own order —
+    whitespace is not a search.
+    """
+    terms = q.split()
+    if not terms:
+        return None
+    exprs = [
+        case((Feedback.title.ilike(_like_pattern(term), escape="\\"), 1), else_=0)
+        for term in terms
+    ]
+    rank = exprs[0]
+    for expr in exprs[1:]:
+        rank = rank + expr
+    return rank
 
 
 class FeedbackRepository:
@@ -373,6 +450,38 @@ class FeedbackRepository:
         self._session = session
 
     # --- 主表 ---------------------------------------------------------------
+
+    async def lock_author(self, handle: str) -> None:
+        """Serialize one author's publishes, for the length of this transaction.
+
+        The daily cap below is a read-then-insert, so without this two requests
+        that arrive together both read a count below the cap and both insert —
+        the cap fails exactly when it is doing its job, which is the one moment
+        it has to hold. A lock is the same answer `proposals.py` gives its own
+        cap, and for the same reason: it covers the window that needs covering
+        and nothing longer, and dying mid-transaction releases it.
+
+        Namespaced with a string so two features cannot collide on the hash of
+        one handle.
+        """
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"feedback-reports:{handle}"},
+        )
+
+    async def count_author_since(self, handle: str, since: datetime) -> int:
+        """How many reports this person has filed since a moment.
+
+        Counts what they WROTE, not what they sent: `author_handle` is the same
+        column the cap's message names, and on the direct path the author is the
+        caller. Deleted rows count too — the cap is about how much somebody is
+        producing, and deleting a report is not a way to buy more quota.
+        """
+        stmt = select(func.count(Feedback.id)).where(
+            Feedback.author_handle == handle,
+            Feedback.created_at >= since,
+        )
+        return int((await self._session.execute(stmt)).scalar_one() or 0)
 
     async def add(
         self,
@@ -462,6 +571,7 @@ class FeedbackRepository:
         sort: str,
         limit: int,
         offset: int,
+        q: str | None = None,
     ) -> Select[tuple[Feedback]]:
         # Total on purpose: `supports` is the only non-default branch, so any
         # other string means newest-first rather than "no ordering". Callers that
@@ -473,41 +583,47 @@ class FeedbackRepository:
             # 一条两周前的 4 票和一条今天的 2 票热度相同（都是 2.0），按原始支持数排会
             # 把旧的那条放在前面，于是上面那行「两周前的 4 票和今天的 2 票一样热」当场
             # 被这个排序推翻。判据用哪个分，排序就用哪个分。
-            stmt = (
-                stmt.outerjoin(
-                    FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
-                )
-                .group_by(Feedback.id)
-                .order_by(
-                    hot_score().desc(),
-                    Feedback.created_at.desc(),
-                    Feedback.display_no.desc(),
-                )
-            )
+            stmt = stmt.outerjoin(
+                FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
+            ).group_by(Feedback.id)
+            order: list[Any] = [
+                hot_score().desc(),
+                Feedback.created_at.desc(),
+                Feedback.display_no.desc(),
+            ]
         elif sort == "supports":
             # `hot` sorts by support count. `GROUP BY feedback.id` rather than a
             # denormalised counter column: MVP lists 20 rows, and this repo has
             # no precedent for a redundant counter (`BlockReaction` has none,
             # `comments.count_votes` is a live aggregate).
-            stmt = (
-                stmt.outerjoin(
-                    FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
-                )
-                .group_by(Feedback.id)
-                # `display_no` as the tiebreak, same as the `new` branch below:
-                # `created_at` comes from the application clock, so two rows made
-                # in the same millisecond compare equal and an OFFSET page can
-                # repeat or skip one between two requests. An ordering that two
-                # rows can tie on is not an ordering.
-                .order_by(
-                    func.count(FeedbackSupport.id).desc(),
-                    Feedback.created_at.desc(),
-                    Feedback.display_no.desc(),
-                )
-            )
+            stmt = stmt.outerjoin(
+                FeedbackSupport, FeedbackSupport.feedback_id == Feedback.id
+            ).group_by(Feedback.id)
+            # `display_no` as the tiebreak, same as the `new` branch below:
+            # `created_at` comes from the application clock, so two rows made
+            # in the same millisecond compare equal and an OFFSET page can
+            # repeat or skip one between two requests. An ordering that two
+            # rows can tie on is not an ordering.
+            order = [
+                func.count(FeedbackSupport.id).desc(),
+                Feedback.created_at.desc(),
+                Feedback.display_no.desc(),
+            ]
         else:
-            stmt = stmt.order_by(Feedback.created_at.desc(), Feedback.display_no.desc())
-        return stmt.limit(limit).offset(offset)
+            order = [Feedback.created_at.desc(), Feedback.display_no.desc()]
+        # **What the search found, before which tab it is in.** The tab's order
+        # answers 「这一栏里先看哪条」, and a reader who just typed something is
+        # asking a narrower question: 「哪条最像是我要找的」. Answering the second
+        # one with the first one's order is what makes a search feel like it
+        # ignored you — the row you meant sits wherever its age puts it.
+        #
+        # Still the tab's order underneath, so the two are consistent for paging
+        # and a search inside 「热门」 stays hot-ordered among equals.
+        if q:
+            rank = search_rank(q)
+            if rank is not None:
+                order.insert(0, rank.desc())
+        return stmt.order_by(*order).limit(limit).offset(offset)
 
     async def _count(self, where: Sequence[Any]) -> int:
         stmt = select(func.count(Feedback.id)).where(
@@ -594,7 +710,17 @@ class FeedbackRepository:
         return [sunk]
 
     async def list_public(
-        self, *, tab: str, q: str | None, sort: str, limit: int, offset: int
+        self,
+        *,
+        tab: str,
+        q: str | None,
+        sort: str,
+        limit: int,
+        offset: int,
+        author: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+        since: datetime | None = None,
     ) -> tuple[list[Feedback], int]:
         # Everything that narrows the tab **except** the hot rule itself. The hot
         # rule is then expressed against this list rather than appended to it —
@@ -607,6 +733,18 @@ class FeedbackRepository:
         where.extend(self._tab_where(tab))
         if q:
             where.append(matching(q))
+        # 四个筛选**加在栏位之上**，不替换它：它们是同一批行的进一步收窄
+        # （`tab` 说的是「哪一栏」，这四个说的是「那一栏里哪些」）。全部走等值比较
+        # 与 `>=`，所以都能吃到 `ix_feedback_visibility_status_created` 那一组索引的
+        # 前缀；`author` 另有 `ix_feedback_author_created`。
+        if author is not None:
+            where.append(Feedback.author_handle == author)
+        if status is not None:
+            where.append(Feedback.status == status)
+        if kind is not None:
+            where.append(Feedback.kind == kind)
+        if since is not None:
+            where.append(Feedback.created_at >= since)
         if tab == "hot":
             # `hot` is a filter **and** an ordering, and both come from
             # `hot_score()` — the tab's definition, not just its sort.
@@ -621,7 +759,9 @@ class FeedbackRepository:
         rows = list(
             (
                 await self._session.execute(
-                    self._list_stmt(where=where, sort=sort, limit=limit, offset=offset)
+                    self._list_stmt(
+                        where=where, sort=sort, limit=limit, offset=offset, q=q
+                    )
                 )
             )
             .scalars()
@@ -714,7 +854,9 @@ class FeedbackRepository:
         rows = list(
             (
                 await self._session.execute(
-                    self._list_stmt(where=where, sort=sort, limit=limit, offset=offset)
+                    self._list_stmt(
+                        where=where, sort=sort, limit=limit, offset=offset, q=q
+                    )
                 )
             )
             .scalars()
@@ -1148,6 +1290,32 @@ class FeedbackRepository:
         )
         await self._session.flush()
 
+    async def soft_delete_feedback(self, row: Feedback) -> None:
+        """软删一条反馈，**连同它下面所有还在的评论**。
+
+        和 `soft_delete_comment` 同一个形状、同一个理由：读侧过滤 `deleted_at`
+        （`_public_where` / `_admin_where` 与 `live_comment_clause`），所以打了时间戳
+        的行从列表、详情、计数和搜索里一起消失。
+
+        **评论必须跟着走**：留下的话，它们挂在一条谁也读不到的反馈下面 —— 楼还在、
+        帖子没了，而「这栋楼在回哪条反馈」是永远查不出来的那一半。一条 `UPDATE` 全
+        带走，不做逐条，理由同评论那一处（有人正在等这个请求）。
+
+        **不硬删**。这一动作有两个调用者（作者删自己的、管理员删别人的），而管理员
+        删的是别人写的东西 —— 那是需要留痕的一类动作，`deleted_at` 就是那条痕。
+        """
+        deleted_at = datetime.now(UTC)
+        row.deleted_at = deleted_at
+        await self._session.execute(
+            update(FeedbackComment)
+            .where(
+                FeedbackComment.feedback_id == row.id,
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .values(deleted_at=deleted_at)
+        )
+        await self._session.flush()
+
     # --- 评论点赞 -------------------------------------------------------------
     #
     # Read side is batched for the whole thread, for the same reason the report
@@ -1381,6 +1549,66 @@ class FeedbackRepository:
             Feedback.status.not_in(list(CLOSED_STATUSES)),
         )
         return int((await self._session.execute(stmt)).scalar_one() or 0)
+
+    async def admin_counts(self) -> dict[str, dict[str, int]]:
+        """The admin dashboard's numbers — the WHOLE board, not the public arm.
+
+        `public_counts` is the user-side tab arithmetic: it is narrowed by
+        `PUBLIC_ONLY` because a non-admin must not learn how many private rows
+        exist. The admin dashboard asks the opposite question (「现在一共有多少
+        事」), and feeding it `public_counts` is the bug this method exists to
+        fix — every KPI on that page then described only the public arm while
+        the series beside it counted everything, so a card and the line under it
+        answered two different questions and both looked right.
+
+        Three buckets, and the split is the admin UI's own vocabulary:
+
+        * `columns` — the queue's four columns, re-spelled as counts. **They are
+          filters, not a partition**: `agent` is a source (it overlaps public and
+          private), exactly as `list_admin` reads them, so they deliberately do
+          not sum to `total`.
+        * `status` — every rung of the ladder, full board. This is the only place
+          the four rungs are shown side by side; `public_counts` only ever had
+          `active` / `resolved` (a filter, not a partition — see `_tab_where`).
+        * `total` — the one-number answers. `open` / `closed` use the same
+          `CLOSED_STATUSES` as everywhere else, so a fifth rung lands here too.
+
+        One round trip per bucket rather than one giant CASE: this table is
+        still small (rows are filed by humans and agents, not per API call), and
+        three readable queries beat one that nobody can verify against
+        `list_admin`.
+        """
+        live = [Feedback.deleted_at.is_(None)]
+
+        async def _count(*where: Any) -> int:
+            return await self._count([*live, *where])
+
+        columns = {
+            "public": await _count(*PUBLIC_ONLY),
+            "private": await _count(
+                Feedback.visibility == FeedbackVisibility.private,
+                Feedback.security.is_(False),
+            ),
+            "agent": await _count(Feedback.author_is_agent.is_(True)),
+            "security": await _count(Feedback.security.is_(True)),
+        }
+        status = {
+            status.value: await _count(Feedback.status == status)
+            for status in FeedbackStatus
+        }
+        total = {
+            "all": await _count(),
+            "open": await _count(Feedback.status.not_in(list(CLOSED_STATUSES))),
+            "closed": await _count(Feedback.status.in_(list(CLOSED_STATUSES))),
+            "unassigned": await self.unassigned_count(),
+            # 「压着没人管的急件」— 分诊台最该先动的一格。全量口径，和 `unassigned`
+            # 同一条边界（`CLOSED_STATUSES`），只是再收一层优先级。
+            "urgent_open": await _count(
+                Feedback.status.not_in(list(CLOSED_STATUSES)),
+                Feedback.priority.in_([FeedbackPriority.high, FeedbackPriority.urgent]),
+            ),
+        }
+        return {"columns": columns, "status": status, "total": total}
 
     async def comment_counts(self, ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
         """Live comment counts for a page — one query, same reason as supports."""

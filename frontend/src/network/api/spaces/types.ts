@@ -27,6 +27,30 @@ export type PostSpaceJoinRequestData = {
   code: string
 }
 
+/**
+ * The course link's payload. The link decides only WHERE the student lands,
+ * never what he may see, so this carries the code and nothing else.
+ */
+export type PostSpaceEnrollRequestData = {
+  code?: string
+}
+
+/** What opening a course link leaves behind: the board, and his project in it. */
+export type SpaceEnrollment = {
+  space: { id: number; name: string }
+  /** null when the course has nothing to hang a project on yet. */
+  project: { id: string; name: string; root_topic_id: string | null } | null
+}
+
+/** Teacher-side: the link to copy into the group chat, and the code inside it. */
+export type SpaceCourseLink = {
+  path: string
+  code: string
+  maxUses: number
+  useCount: number
+  expiresAt: number | null
+}
+
 export type PostSpaceMemberRequestData = {
   userId: number
 }

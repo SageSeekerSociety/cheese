@@ -1380,6 +1380,7 @@ def seed_task_with_protocol(
     resource_pack: dict | None = None,
     default_role: str | None = None,
     shell: str | None = None,
+    teaching: dict | None = None,
     override: dict | None = None,
     space_id: int | None = None,
 ) -> int:
@@ -1389,7 +1390,8 @@ def seed_task_with_protocol(
     space admin and a filled form, and none of that is what the protocol tests
     are about. `override` populates the 赛题's own `protocol_override` (#370
     option (c)). `shell` and `override` carry the 壳 layer the same way, so a
-    项目集-level 壳 and a 赛题-level one are set up in one call.
+    项目集-level 壳 and a 赛题-level one are set up in one call. `teaching` is
+    the 课程级教学配置 (#8d772257), on the same row and by the same route.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -1425,6 +1427,7 @@ def seed_task_with_protocol(
                 conditions=conditions or [],
                 default_role=default_role,
                 shell=shell,
+                teaching=teaching or {},
                 created_at=now,
                 updated_at=now,
             )

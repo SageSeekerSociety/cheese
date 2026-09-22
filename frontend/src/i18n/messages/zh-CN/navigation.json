@@ -15,5 +15,12 @@
     "project": "项目",
     "topic": "话题"
   },
-  "workspace": "工作区"
+  "workspace": "工作区",
+  "feedback": {
+    "label": "帮助与反馈",
+    "unread": "帮助与反馈，有未读更新",
+    "center": "反馈中心",
+    "mine": "我的反馈",
+    "admin": "管理后台"
+  }
 }

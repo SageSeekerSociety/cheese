@@ -133,7 +133,9 @@
       "inProgress": "In progress",
       "resolved7d": "Resolved · 7d",
       "created7d": "New · 7d",
-      "unread": "Unread"
+      "unread": "Unread",
+      "urgent": "{n} of them urgent and unassigned",
+      "urgentShort": "{n} urgent"
     },
     "chart": {
       "title": "New / resolved / deployed per day",
@@ -145,32 +147,56 @@
       "title": "Needs action · {count}"
     },
     "cost": {
-      "label": "Cost · last 7 days",
-      "value": "{calls} calls · {usd} · no daily breakdown",
-      "unpriced": "{tokens} more tokens have no unit price (subscription plans bill monthly) and are not in the figure above"
+      "kpi": "Cost",
+      "unpricedLabel": "Unpriced tokens",
+      "note": "Priced by the gateway's per-token rate. Unpriced tokens come from plans billed monthly, so they carry no rate and are not in that figure."
     },
     "empty": {
       "title": "No data yet",
-      "desc": "The platform hasn't produced any feedback yet."
+      "desc": "The platform hasn't produced any data yet."
     },
     "error": {
       "title": "Couldn't load the dashboard",
       "desc": "Check your connection and try again."
     },
-    "partial": {
-      "title": "Cost data is unavailable",
-      "hint": "The usage endpoint didn't respond"
-    },
     "tab": {
       "feedback": "Feedback",
       "usage": "Usage",
-      "platform": "Platform"
+      "platform": "Platform",
+      "performance": "Performance"
+    },
+    "perf": {
+      "active": "In flight",
+      "uptime": "Process uptime",
+      "lag": "Event-loop lag",
+      "routes": "Routes measured",
+      "routesTruncated": "{shown} of {total}",
+      "durationMinutes": "{n} min",
+      "durationHours": "{h} h {m} min",
+      "durationDays": "{d} d {h} h",
+      "col": {
+        "route": "Endpoint",
+        "count": "Calls"
+      },
+      "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
+      "slowest": "Slowest p95"
     },
     "usage": {
       "tokens": "Tokens · window",
       "calls": "Calls · window",
       "chart": "Tokens per day",
-      "top": "Top projects by tokens"
+      "top": "Top projects by tokens",
+      "byModel": "By model",
+      "byModelNote": "Bar is tokens; the last two columns are money and unpriced tokens. All three together answer \"is it the model or the billing\".",
+      "byRoute": "By supply route",
+      "byRouteNote": "Subscriptions are billed monthly, so their tokens carry no rate — that's where the unpriced column concentrates, and where the KPI's number comes from.",
+      "unknownModel": "(unlabelled model)",
+      "route": {
+        "gateway": "Gateway",
+        "subscription": "Subscription",
+        "native": "Pinned credentials",
+        "unknown": "(old row, unlabelled)"
+      }
     },
     "people": {
       "total": "Accounts",
@@ -185,6 +211,30 @@
       "warm": "Warm machines",
       "project": "Project machines",
       "note": "These four are stock counts from four ledgers, not live online counts — online state lives in process memory and has no column in the database."
+    },
+    "column": {
+      "title": "By column",
+      "public": "Public",
+      "private": "Private",
+      "agent": "Agent-filed",
+      "security": "Security",
+      "note": "These four are filters, not a partition: \"Agent-filed\" is a source and overlaps public/private, so they don't sum to the total."
+    },
+    "status": {
+      "title": "By status",
+      "received": "Received",
+      "inProgress": "In progress",
+      "resolved": "Resolved",
+      "deployed": "Deployed"
+    },
+    "health": {
+      "title": "Platform health",
+      "database": "Database",
+      "redis": "Redis",
+      "event_loop": "Event loop",
+      "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
+      "healthy": "Healthy",
+      "degraded": "Degraded"
     }
   },
   "chart": {
@@ -209,6 +259,13 @@
     }
   },
   "detail": {
+    "delete": {
+      "label": "Delete",
+      "confirm": "Delete it",
+      "cancel": "Cancel",
+      "ask": "Delete this report?",
+      "askWithComments": "Delete this report and its {n} comments?"
+    },
     "missing": {
       "title": "This feedback doesn't exist",
       "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the room when it was filed can see it."

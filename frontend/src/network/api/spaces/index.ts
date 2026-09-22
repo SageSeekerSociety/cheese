@@ -13,6 +13,7 @@ import type {
   PostSpaceAdminRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
+  PostSpaceEnrollRequestData,
   PostSpaceInviteCodeRequestData,
   PostSpaceJoinRequestData,
   PostSpaceMemberRequestData,
@@ -21,6 +22,8 @@ import type {
   SpaceAnalyticsOverview,
   SpaceAnalyticsParticipants,
   SpaceAnalyticsPublishers,
+  SpaceCourseLink,
+  SpaceEnrollment,
   SpaceLearningFilters,
   SpaceLearningOutline,
   SpaceLearningQuestions,
@@ -76,6 +79,24 @@ export namespace SpacesApi {
       url: '/spaces/join',
       method: 'POST',
       data,
+    })
+
+  /**
+   * Opening a course link: redeem the code it carries, then come away with the
+   * student's project in that course. Doing it twice is not an error.
+   */
+  export const enroll = (spaceId: number, data: PostSpaceEnrollRequestData = {}) =>
+    NewApiInstance.request<SpaceEnrollment>({
+      url: `/spaces/${spaceId}/enroll`,
+      method: 'POST',
+      data,
+    })
+
+  /** Teacher-side: the one link to hand out for this course. */
+  export const courseLink = (spaceId: number) =>
+    NewApiInstance.request<SpaceCourseLink>({
+      url: `/spaces/${spaceId}/course-link`,
+      method: 'GET',
     })
 
   export const listMembers = (spaceId: number) =>

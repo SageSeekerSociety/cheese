@@ -71,6 +71,25 @@ def _days_ago(days: int) -> datetime:
     return _today() - timedelta(days=days) + timedelta(hours=12)
 
 
+def _mark_agent(client, feedback_id: str) -> None:
+    """把一行标成 agent 提的（服务层在提案路径上会写，这里直接落库）。
+
+    和 `_stamp_feedback` 同一套写法：**必须写在 `client` 那个库**
+    （`client.test_factory`），不能开一个新的 session —— 见文件头那段
+    关于两个库的警告。
+    """
+    fid = uuid.UUID(feedback_id)
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            await session.execute(
+                update(Feedback).where(Feedback.id == fid).values(author_is_agent=True)
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
 def _stamp_feedback(client, at: datetime, *feedback_ids: str) -> None:
     """把几条反馈的 `created_at` 按到 ``at``。写在 `client` 那个库里。"""
     ids = [uuid.UUID(x) for x in feedback_ids]
@@ -249,9 +268,52 @@ def test_feedback_series_counts_the_window_and_fills_the_days_in_between(
     assert series[-1]["date"] == _today().date().isoformat()
     # 逐日：第 3 天一条、今天一条；中间那天**在**、值是 0；30 天前那条一天也不占。
     assert [s["created"] for s in series] == [0, 0, 0, 1, 0, 0, 1]
-    # counts 是全量口径（不收窗口），三条都在里面。
-    assert body["counts"]["all"] == 3
-    assert body["counts"]["unassigned"] == 3
+    # total 是全量口径（不收窗口），三条都在里面。
+    assert body["total"]["all"] == 3
+    assert body["total"]["unassigned"] == 3
+
+
+def test_the_admin_board_counts_every_visibility_not_just_public(client, as_admin):
+    """**这是这次要钉的那个 bug**：看板此前走 `public_counts`（被 `PUBLIC_ONLY`
+    收窄），于是私密、Agent 发现、安全问题全没进数 —— 而旁边的 `series` 是全量，
+    卡片和曲线各答各的问题，两边各自都看着对。
+
+    这条用四种可见性各建一条，断言四个都进数、并且四栏加起来不等于总数（`agent`
+    是来源，和公开/私密重叠 —— 那是筛选，不是划分）。
+    """
+    # 公开
+    _report(client, REPORTER, title="公开那条")
+    # 私密
+    _report(client, REPORTER, title="私密那条", visibility="private")
+    # Agent 发现（来源是 agent，可见性可以是公开/私密任一）。
+    # `author_is_agent` 不是创建字段 —— 它由服务层按「提的人是不是 agent」写下来
+    # （agent 提案走 `/feedback/proposals`），这里直接改库最省事：这条用例钉的是
+    # **计数**会不会漏掉它，不是「怎么成为 agent」。
+    agent_row = _report(client, REPORTER, title="Agent 提的")
+    _mark_agent(client, agent_row["id"])
+    # 安全问题（security 标志，由管理员分诊时打上 —— 走 PATCH，不是别的路）
+    sec = _report(client, REPORTER, title="安全那条", visibility="private")
+    r = client.patch(
+        f"/admin/feedback/{sec['id']}",
+        json={"security": True},
+        headers=session_auth_headers(as_admin),
+    )
+    assert r.status_code == 200, r.text
+
+    body = _stats(client, as_admin, "feedback", days=DAYS)
+
+    assert body["total"]["all"] == 4
+    # **重叠是故意的**：Agent 那条默认可见性是 public，所以它同时进「公开」和
+    # 「Agent 发现」两栏；安全那条被 `security` 从「私密」里挤出去（私密那一栏的判据
+    # 和队列一样是 `private AND NOT security`），落进「安全问题」。四栏加起来是 5，
+    # 比总数多 1 —— 这就是「筛选不是划分」，页面上那句口径说的也是它。
+    assert body["columns"]["public"] == 2
+    assert body["columns"]["private"] == 1
+    assert body["columns"]["agent"] == 1
+    assert body["columns"]["security"] == 1
+    assert sum(body["columns"].values()) == body["total"]["all"] + 1
+    # 四级状态加起来等于总数（这是划分，和 columns 不同）。
+    assert sum(body["status"].values()) == body["total"]["all"]
 
 
 def test_the_deployed_count_sits_beside_the_resolved_pair(client, as_admin):
@@ -264,21 +326,30 @@ def test_the_deployed_count_sits_beside_the_resolved_pair(client, as_admin):
     row = _report(client, REPORTER)
     _set_status(client, as_admin, row["id"], "deployed")
 
-    counts = _stats(client, as_admin, "feedback", days=DAYS)["counts"]
+    body = _stats(client, as_admin, "feedback", days=DAYS)
 
-    assert set(counts) == {
+    # 三个切口各是一组，不再挤在一个扁平字典里。
+    assert set(body["total"]) == {
         "all",
-        "hot",
-        "active",
+        "open",
+        "closed",
+        "unassigned",
+        "urgent_open",
+    }
+    assert set(body["columns"]) == {"public", "private", "agent", "security"}
+    assert set(body["status"]) == {
+        "received",
+        "in_progress",
         "resolved",
         "deployed",
-        "unread",
-        "unassigned",
     }
-    assert counts["deployed"] == 1
-    assert counts["resolved"] == 1
+    assert body["status"]["deployed"] == 1
+    # 「已修复」那一级只数**现在停在 resolved** 的，和用户侧 `resolved` 栏（修复+上线
+    # 那一对）不是一个口径 —— 那个是筛选，这个是划分（四级加起来等于 total.all）。
+    assert body["status"]["resolved"] == 0
+    assert body["total"]["closed"] == 1
     # 上线也是「办完了」，所以它从「还没人管」里出去了 —— 同一个 `CLOSED_STATUSES`。
-    assert counts["unassigned"] == 0
+    assert body["total"]["unassigned"] == 0
 
 
 def test_a_transition_is_counted_on_its_own_day_and_the_list_filters_by_it(
@@ -416,12 +487,13 @@ def test_platform_reports_accounts_by_day_and_machine_stock(client, as_admin):
 # --- 三条路由都要管理员 -------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", ["feedback", "usage", "platform"])
+@pytest.mark.parametrize("kind", ["feedback", "usage", "platform", "performance"])
 def test_a_non_admin_cannot_read_any_of_the_three(client, as_admin, kind):
-    """三条路由共用 `PlatformAdminDep`，所以三条一起试。
+    """四条路由共用 `PlatformAdminDep`，所以四条一起试。
 
     只试一条的话，「新加的那条忘了挂门」是可想象的一种改法 —— 按分类 parametrize，
-    每一类都被问一遍。顺带断言管理员那一侧是 200：403 也可能是路由根本没挂上。
+    每一类都被问一遍（**加一类就要加一个词**：这一条第一次就是漏了 performance）。
+    顺带断言管理员那一侧是 200：403 也可能是路由根本没挂上。
     """
     r = client.get(f"/admin/stats/{kind}", headers=session_auth_headers(STRANGER))
     assert r.status_code == 403, r.text
@@ -429,3 +501,75 @@ def test_a_non_admin_cannot_read_any_of_the_three(client, as_admin, kind):
 
     allowed = client.get(f"/admin/stats/{kind}", headers=session_auth_headers(as_admin))
     assert allowed.status_code == 200, allowed.text
+
+
+# --- 第四类：性能（进程内，不是历史） -----------------------------------------
+
+
+def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admin):
+    """第四类报的是**这一刻**的接口耗时，而且数来自中间件真的在记的那些。
+
+    三件事一起钉：
+
+    * **它在记**。这一条用例自己刚刚发过请求，所以 `/admin/stats/performance` 必须
+      能看到至少一条路由 —— 指标定义了却没人调用，正是这一格坏掉的方式（`/metrics`
+      曾经返回 7 个恒为 0 的指标，而全仓找不到一处 `.observe(`）。
+    * **标签是路由模板，不是原始路径**。按原始路径打标签的话，每个 UUID 一条时间
+      序列，而直方图永远留在进程内存里 —— 这一条要看到 `{` 出现在 route 里。
+    * **没有样本的分位数是 `None`，不是 0**。0 是一个读数（「真的很快」），None 是
+      「这一格没有数据」；画成同一个数会让一条没人访问过的路由以 0ms 排在最前面。
+    """
+    # 先制造一次真实流量（打一条读接口），这样注册表里一定有东西。
+    assert client.get("/feedback/meta").status_code == 200
+
+    r = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+
+    # 这一类的口径必须写在响应里，否则会被当成「整个平台的、有历史的」数。
+    assert data["routes_total"] >= data["routes_shown"] >= 1
+    assert data["routes"], data
+    assert isinstance(data["uptime_seconds"], (int, float))
+    assert data["active_requests"] >= 0
+    assert "recent_ms" in data["loop_lag"]
+
+    row = data["routes"][0]
+    assert row["method"] and row["route"]
+    assert row["count"] >= 1
+    assert set(row) >= {"method", "route", "status", "count", "p50", "p95", "p99"}
+
+    # **数值**也要看一眼，不能只看「有这个键」。这一条是补的：`quantile` 曾经把
+    # 逐桶的计数当成累加的，于是样本落在两个以上桶里的路由 p95 永远返回最后一个桶的
+    # 上界 —— 也就是每条接口都报 10 秒 —— 而这一条用例当时只断言形状，一路绿着过去。
+    # 这里的请求是本机打本机，界取得很宽（5 秒），它拦不住较真，但拦得住「返回了桶的
+    # 上界」这一类。数值本身由 `test_core_utils` 那条按已知分布断言。
+    assert row["p50"] is not None and 0 <= row["p50"] < 5000
+    assert row["p95"] is not None and 0 <= row["p95"] < 5000
+
+    # 路由模板：至少有一条带参数的路由是 `{...}` 而不是一个真 uuid。这条用例自己
+    # 打的都是固定路径，所以另发一条带 id 的（404 也算流量，中间件照样记）。
+    client.get("/feedback/00000000-0000-4000-8000-000000000000")
+    again = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
+    routes = [row["route"] for row in again.json()["data"]["routes"]]
+    assert any("{" in route for route in routes), routes
+    assert not any("0000-4000-8000" in route for route in routes), routes
+
+    # **没进路由表的那些路径也只能占一个标签**。它们不是用户流量，是扫描器和拼错的
+    # 地址 —— 路径由外面随手写，按原始路径打标签等于让公网决定这个进程内存里长多少
+    # 条时间序列。上面那条带上 uuid 的走的是**匹配上的**路由（`/feedback/{id}` 存在），
+    # 所以这一条另打几条**谁也匹配不上**的。
+    for word in ("zzz-one", "zzz-two", "zzz-three"):
+        assert client.get(f"/{word}/inspect.php").status_code == 404
+    after = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
+    labels = [row["route"] for row in after.json()["data"]["routes"]]
+    assert not any("zzz" in label for label in labels), labels
+    assert labels.count("(unmatched)") <= 1, labels
+
+    # **正在处理的请求数扣掉了读它的这一条**。这条用例是串行打的，所以取快照的这一刻
+    # 除了它自己之外没有任何请求在飞 —— 报 0 才是真的 0，报 1 会让空闲的平台看着像
+    # 「有一条请求一直没处理完」。
+    assert after.json()["data"]["active_requests"] == 0

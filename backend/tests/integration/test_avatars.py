@@ -198,6 +198,48 @@ class TestAvatarsGetIntegration:
         )
         assert response.status_code == 404
 
+    def test_if_none_match_answers_304(self):
+        """带着 ETag 回来问的客户端，拿到 304 而不是再收一遍字节。
+
+        `ETag` 发出去很久了，而**没有任何地方读回它** —— 于是刷新、缓存被驱逐、
+        换一台设备共享缓存这些真正会走「再验证一次」的路径，每次都被重新灌一遍
+        整张图。这一条钉的就是那个读回：同一个 ETag 再来一次必须是 304、没有正
+        文、且仍然带缓存头（否则中间缓存会把 304 当成不可缓存）。
+
+        **反面也要立住**：换一个 ETag 必须回 200，而墓碑式的「只要带 If-None-Match
+        就 304」会让所有人永远看不到新换的头像。
+        """
+        first = self.client.get(f"/avatars/{self.avatar_id}", headers=self.headers)
+        assert first.status_code == 200
+        etag = first.headers["etag"]
+
+        again = self.client.get(
+            f"/avatars/{self.avatar_id}",
+            headers={**self.headers, "If-None-Match": etag},
+        )
+        assert again.status_code == 304
+        assert again.content == b""
+        assert again.headers["etag"] == etag
+        assert "max-age=31536000" in again.headers["cache-control"]
+
+        # 通配与弱标签都认（浏览器与代理实际会发的两种写法）。
+        for form in ("*", f"W/{etag}", f'"stale-thing", {etag}'):
+            assert (
+                self.client.get(
+                    f"/avatars/{self.avatar_id}",
+                    headers={**self.headers, "If-None-Match": form},
+                ).status_code
+                == 304
+            ), form
+
+        # 对不上的那一份：照常给正文。
+        stale = self.client.get(
+            f"/avatars/{self.avatar_id}",
+            headers={**self.headers, "If-None-Match": '"not-this-one"'},
+        )
+        assert stale.status_code == 200
+        assert stale.content == first.content
+
     def _upload(self, filename: str, content: bytes, content_type: str) -> int:
         response = self.client.post(
             "/avatars",

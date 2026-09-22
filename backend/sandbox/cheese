@@ -166,11 +166,14 @@ FEEDBACK_DESCRIPTION = (
 )
 
 FEEDBACK_PROPOSE_DESCRIPTION = (
-    "落一张提案卡。人在聊天里按「提交反馈」才算发布,所以不用等他,"
+    "把你发现的问题提成一张提案卡,交给人决定发不发。"
+    "人在聊天里按「提交反馈」才算发布,所以不用等他,"
     "也不用在正文里宣布你提了这件事——卡本身就是那句话。\n"
     "\n"
     "每一项都是短标签加一两行,不要写成叙事段落。只写事实:"
-    "观察到的 vs 期望的,错误原文短就照抄。根因没在会话里验证过就不要写。"
+    "观察到的 vs 期望的,错误原文短就照抄。"
+    "**根因没在会话里验证过就不要写**;拿不准的字段留空,不要填一个猜测。"
+    "不要把密钥、凭据或别人的隐私写进去。"
 )
 
 
@@ -222,6 +225,13 @@ PLATFORM_TOOLS = ToolTable(
             },
         },
         {
+            # ⚠️ 这一段和下面 `feedback propose` 那个 argparse 叶子的 `description`
+            # **说的是同一件事，两处都要改**：claude_code 读的是会话侧这一张常量表
+            # （结论 21：表在这里，机器离线时它也在），而 pi / codex 那两条路是从
+            # argparse 树翻出来的。只改一处，模型看到的就是两种说法里的随机一种。
+            #
+            # 触发时机原来只写在 argparse 的**父** parser 上，而翻树那条路只取叶子
+            # ——所以它一个字都没到过模型。这一份当时连触发时机都没有。
             "name": "cheese_feedback_propose",
             "description": join_descriptions(
                 FEEDBACK_DESCRIPTION, FEEDBACK_PROPOSE_DESCRIPTION
@@ -1666,6 +1676,9 @@ def build_parser() -> argparse.ArgumentParser:
     pfbprop = pfbsub.add_parser(
         "propose",
         help="把你发现的问题提成一张提案卡,交给人决定发不发",
+        # ⚠️ 这一段是**叶子**的说明。cli_worker._tools() 现在会把祖先 parser 的
+        # description 按序拼在它前面，所以「什么时候提」那段写在上面 `feedback` 父
+        # parser 的 FEEDBACK_DESCRIPTION 里即可，不必在这里复制一遍。
         description=FEEDBACK_PROPOSE_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

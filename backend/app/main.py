@@ -30,6 +30,7 @@ from app.core import background
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import BaseError, register_exception_handlers
+from app.core.metrics import active_requests, registry
 from app.core.obs import (
     ResponseIntegrityAudit,
     bind_context,
@@ -399,6 +400,32 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
 
 _http_log = get_logger("http")
 
+#: 没进路由表的那一类请求（404、扫描器、拼错的地址）共用的标签。
+_UNMATCHED_ROUTE = "(unmatched)"
+
+
+def _route_label(request: Request) -> str:
+    """这一条请求算在**哪一条路由**上 —— 路径的模板，不是原始路径。
+
+    这是这套指标里唯一容易做错的地方，而且错起来很安静：原始路径里带 UUID，拿它当
+    标签，等于给每一条反馈、每一个项目各建一条时间序列 —— 基数随数据长，而直方图是
+    **永久**留在进程内存里的。`/metrics` 会变成一份读不完、也画不出来的东西。
+
+    Starlette 把匹配到的路由挂在 `scope["route"]` 上，中间件在 `call_next` 之后能读到
+    （路由匹配发生在它里面）。路由模板来自路由表，所以这一支**天然有界**。
+
+    读不到时**不许退回原始路径**：404 那一支看着也能折，其实折不住 —— 只有 UUID 和
+    纯数字的段会被折成 `{id}`，`/random-word/inspect.php` 这种原样留着。而 404 的路
+    径**是请求方随手写的**（扫描器、爬虫、别人拼错的链接），于是标签空间由外部输入
+    决定，还是那条老路：内存里的时间序列随外面的请求长。退回一个常量，这一支就只剩
+    一条序列，它出现在「最慢的路由」里也照样说明问题（404 慢是真慢）。
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return _UNMATCHED_ROUTE
+
 
 @app.middleware("http")
 async def request_context(request: Request, call_next: Callable):  # type: ignore[type-arg]
@@ -411,6 +438,21 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
     bind_context(req=rid)
     t0 = time.perf_counter()
+    # **探针不算**。`/health` 与 `/metrics` 是基础设施在按固定间隔敲的门，不是用户
+    # 流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正的路由挤下去，而
+    # 「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面）。这一条和上面
+    # 那条日志里的 `/health` 例外是同一个判断。
+    path_now = request.url.path
+    probe = (
+        path_now == "/metrics"
+        or path_now == "/health"
+        or path_now.startswith("/health/")
+    )
+    if not probe:
+        # 正在处理的请求数。**必须在 `call_next` 外面一进一出**，而且走 `finally`
+        # —— 异常路径上不 `dec` 的话，这个数会随每一次失败往上爬，最后变成一个只增
+        # 不减的假数（而它正是「现在平台忙不忙」那一格）。
+        active_requests.inc()
     try:
         response = await call_next(request)
     except Exception:
@@ -419,8 +461,26 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
         )
         raise
     finally:
+        if not probe:
+            active_requests.dec()
         clear_context("req")
-    ms = round((time.perf_counter() - t0) * 1000, 1)
+    elapsed = time.perf_counter() - t0
+    ms = round(elapsed * 1000, 1)
+    # 按路由记一笔。**标签只取 method / 路由模板 / 状态码**，理由见 `_route_label`。
+    # 这两个指标在 `core/metrics.py` 里定义了很久、却一处调用都没有 —— `/metrics`
+    # 一直返回一份恒为 0 的表。接上它们就是这一行。
+    if not probe:
+        labels = {
+            "method": request.method,
+            "route": _route_label(request),
+            "status": str(response.status_code),
+        }
+        registry.counter("http_requests_total", labels).inc()
+        registry.histogram(
+            "http_request_duration_seconds",
+            labels,
+            buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+        ).observe(elapsed)
     # WS upgrades and health probes are logged by their own layers; skip noise.
     if request.url.path != "/health":
         # Who and from where, when known. `auth_user_id` is set by

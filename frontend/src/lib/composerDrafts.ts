@@ -1,7 +1,20 @@
 /**
- * 输入框草稿的落盘（localStorage）。
+ * 「这个话题里你写了什么」——两层存储，一个家。
  *
- * 为什么不只是 ChatPanel 里那个内存 Map：**每次发版，开着的页面都会自己刷新**
+ * 两层各自答一个问题，谁也替不了谁：
+ *
+ * - **内存层**（下面的 `composerMemory`）跨「切话题」。它带着发件箱，所以它是权威。
+ * - **磁盘层**（localStorage）跨「刷新」。它不带发件箱，理由见下。
+ *
+ * 这两层一度分居：磁盘这半在本文件，内存那半是 `ChatPanel.vue` 里一个模块级 Map。
+ * 于是同一个概念有两套规则——这半有 20 个话题上限、7 天过期、单条长度上限、
+ * 换人登录清空，那半一条都没有。**而 `restoreComposer` 先读内存**，也就是说规则严的
+ * 那份是备胎、没规则的那份是权威：`clearComposerDrafts()` 在换账号时清掉了磁盘，
+ * 内存里上一个人的半句话、回复目标、已上传附件和没发出去的消息原样留着，
+ * 下一个人打开同一个房间就看得见（SPA 换账号不刷新页面）。
+ * 所以两层现在住在一起，清理入口只有一个，不会再只清一半。
+ *
+ * 为什么磁盘这层非有不可：**每次发版，开着的页面都会自己刷新**
  * （service worker 换新 → `window.location.reload()`，见 pwa.ts）。刷新没有
  * 「离开这个话题」这一步，`onBeforeUnmount` / 切话题那个 watcher 一个都不会跑，
  * 于是打了一半的话在用户眼皮底下消失。草稿落盘是让「更新会自动发生」成立的前提。
@@ -42,6 +55,55 @@ export interface StoredComposerDraft {
   draft: string
   reply: Block | null
   atts: ChatAttachment[]
+}
+
+/** 发件箱里一条还没落库的消息。 */
+export interface Outgoing {
+  clientId: string
+  content: string
+  replyTo?: string
+  atts?: ChatAttachment[]
+  /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
+  state: 'queued' | 'sending' | 'failed'
+  /** 服务端明确拒了这一条时它说的话。没有这一句的 failed 是「等超了」。 */
+  error?: string
+}
+
+/** 内存层存的一份：磁盘那份的全部，加上发件箱。 */
+export interface ComposerMemory {
+  draft: string
+  reply: Block | null
+  atts: ChatAttachment[]
+  /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
+  outbox: Outgoing[]
+}
+
+/**
+ * 内存层。模块作用域而不是组件内的 ref：对话栏会因为切话题、切桌面/手机布局、
+ * 去别的页面再回来而卸载重建，组件内的状态装不住「你在那个房间里写了什么」。
+ *
+ * 没有条数上限和过期——它跟着这一次页面会话一起没，而一次会话里开过的房间数
+ * 本来就是有限的。真正需要上限的是磁盘那层（localStorage 只有几 MB）。
+ */
+const composerMemory = new Map<string, ComposerMemory>()
+
+/** 空的等于没有：正文、回复目标、附件、发件箱全空就删掉这条记录。 */
+function memoryIsEmpty(value: ComposerMemory): boolean {
+  return !value.draft.trim() && !value.reply && !value.atts.length && !value.outbox.length
+}
+
+/** 记下这个话题的输入状态（含发件箱）。 */
+export function saveComposerMemory(topicId: string, value: ComposerMemory): void {
+  const id = topicId.trim()
+  if (!id) return
+  if (memoryIsEmpty(value)) composerMemory.delete(id)
+  else composerMemory.set(id, value)
+}
+
+/** 取回这个话题的输入状态；没写过就是 undefined。 */
+export function loadComposerMemory(topicId: string): ComposerMemory | undefined {
+  const id = topicId.trim()
+  return id ? composerMemory.get(id) : undefined
 }
 
 function storageKey(topicId: string): string | null {
@@ -145,7 +207,14 @@ export function loadComposerDraft(topicId: string, now: number = Date.now()): St
   }
 }
 
-/** 忘掉一个话题的草稿（发出去了、或者被清空了）。 */
+/**
+ * 忘掉磁盘上那份（发出去了、或者被清空了）。
+ *
+ * **只管磁盘这一层。** 两层的「空」不是同一个定义：磁盘那份不存发件箱，所以
+ * 「正文和附件都空了」对它就是空，而那一刻内存里可能还压着几条没送出去的消息。
+ * `saveComposerDraft` 判到空会自己调这里，让它顺手清内存，等于消息一发出去
+ * 发件箱就没了。要一次清干净两层的只有 `clearComposerDrafts`（换人的时候）。
+ */
 export function forgetComposerDraft(topicId: string): void {
   const key = storageKey(topicId)
   const store = storage()
@@ -157,8 +226,15 @@ export function forgetComposerDraft(topicId: string): void {
   }
 }
 
-/** 抹掉全部草稿。换人登录 / 退出登录时调用（account.ts）。 */
+/**
+ * 抹掉全部草稿。换人登录 / 退出登录时调用（account.ts）。
+ *
+ * **两层都要清。** 只清磁盘那层等于没清：SPA 换账号不刷新页面，内存层活着，
+ * 而 `loadComposerMemory` 排在 `loadComposerDraft` 前面——下一个人打开同一个房间，
+ * 看到的是上一个人的半句话。
+ */
 export function clearComposerDrafts(): void {
+  composerMemory.clear()
   const store = storage()
   if (!store) return
   try {

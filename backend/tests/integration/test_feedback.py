@@ -2420,6 +2420,87 @@ def test_a_search_reaches_the_body_and_the_author(client, as_admin):
     assert {card["id"] for card in listed} == {mine["id"]}
 
 
+def test_a_second_word_narrows_the_search_instead_of_emptying_it(client, as_admin):
+    """两个词是**与**，不是「这两个字连在一起」。
+
+    原判据是**一个** `%整句%`，所以「导出 报表」只找得到那两个字挨着、中间正好
+    是那个空格的行 —— 记得越多，结果越少，最后什么都没有。而那正是搜索最常见的
+    用法：读者记得两件事，把它们一起打进去。
+
+    **与不是或**：第二个词是进一步收窄，不是另一个选项。「导出 报表」问的不是
+    「有导出 或 有报表」，所以只命中一个词的那条不该出现。反过来写成或的话，
+    多打一个词会把结果**变多**，那比搜不到更让人不信这一栏。
+    """
+    both = _report(
+        client, REPORTER, title="导出报表偶发 502", problem="每次导出季度报表时偶发 502"
+    )
+    # 只含其中一个词，而且两个字从不挨着。
+    one = _report(
+        client, REPORTER, title="导出的按钮点了没反应", problem="导出的时候页面卡住"
+    )
+    other = _report(
+        client, REPORTER, title="报表数字对不上", problem="季度报表合计少了一行"
+    )
+
+    def ids(**params) -> set[str]:
+        return {row["id"] for row in _cards(client, as_admin, **params)}
+
+    # 核心这一条：两个词在正文里**不相邻**，照样找得到。
+    assert both["id"] in ids(q="导出 报表")
+    # 与：各只命中一个词的两条都不出现。
+    assert one["id"] not in ids(q="导出 报表")
+    assert other["id"] not in ids(q="导出 报表")
+    # 顺序反过来问的是同一件事。
+    assert ids(q="报表 导出") == ids(q="导出 报表")
+    # 单个词照旧，而且能同时出现标题和正文各命中的那两条。
+    assert one["id"] in ids(q="导出")
+    assert other["id"] in ids(q="报表")
+    # 多打一个词只会收窄，永远不会变多。
+    assert ids(q="导出 报表") <= ids(q="导出")
+
+    # 只打了空格不算在搜：它既不该被读成「找含空格的行」，也不该把列表清空。
+    # 搜索框里留一个空格是很常见的手滑，而那个状态下读者想看的就是全部。
+    assert ids(q="   ") == ids()
+
+
+def test_a_title_hit_is_put_in_front_of_a_newer_body_only_hit(client, as_admin):
+    """标题命中的排在前面，**哪怕它更旧**。
+
+    这一页的默认顺序是「最新」，而搜索时照旧按时间排，读者要找的那条就会被一条只是
+    正文里顺带提到该词的新报告压下去——搜索框问的是「哪条最像我要找的」，用「哪条最新」
+    回答它是两件不同的事。
+
+    这是一条**只能靠排序通过**的用例：两条都命中，唯一能区分它们的就是「命中在哪一列」，
+    而时间顺序正好相反。
+    """
+    # 先建的这条命中**标题**（更旧）；后建的只命中正文（更新）。
+    titled = _report(
+        client, REPORTER, title="导出报表偶发 502", problem="偶发，重启就好了"
+    )
+    body_only = _report(
+        client,
+        REPORTER,
+        title="和这个无关的标题",
+        problem="顺带提一句：导出报表那条我也遇到过",
+    )
+
+    def ids(**params) -> list[str]:
+        return [row["id"] for row in _cards(client, as_admin, **params)]
+
+    assert ids(q="报表") == [titled["id"], body_only["id"]], ids(q="报表")
+
+    # 而**不搜的时候顺序不变**，还是最新在前：这条判据只在搜索时生效，
+    # 不能顺手把这一页平时的读法改掉。
+    assert ids() == [body_only["id"], titled["id"]]
+    # 一栏之内同样成立：判据挂在列表的排序上，不是挂在某一栏上。用「热门」是因为
+    # 新提的两条只有 0 票、进不了它的门槛，而这一栏会按同一个分数**补足**到 5 条——
+    # 所以两条都在里面，正是要验的那个交集。
+    assert ids(tab="hot", q="报表") == [titled["id"], body_only["id"]]
+
+    # 单条命中的词不再是「整句」——这里两个词分别落在标题和正文里，本来一条都搜不到。
+    assert ids(q="502 重启") == [titled["id"]]
+
+
 def test_a_wildcard_in_the_search_box_is_a_character_not_syntax(client):
     """`%` 和 `_` 是读者打进去的字，不是 `LIKE` 的语法。
 
@@ -2677,3 +2758,249 @@ def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
     # 而不是画成「没有这个人」：后者会让人以为名单已经变了。
     assert _add_admin(client, by=as_admin, target="fb-peng").status_code == 200
     assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True
+
+
+# --- 删掉一条反馈 -------------------------------------------------------------
+
+
+def _delete(client, feedback_id: str, handle: str):
+    return client.delete(
+        f"/feedback/{feedback_id}", headers=session_auth_headers(handle)
+    )
+
+
+def test_an_author_deletes_their_own_report_and_it_leaves_every_list(client):
+    """作者删自己的：删完之后**详情 404、列表里没有、公开计数也跟着少**。
+
+    「连列表和计数一起」不是多余的断言：只把详情那一行藏起来的话，列表里还挂着
+    一条点不开的反馈，计数也还说它在那 —— 那比不删更糟。
+
+    删除是**软删**（`deleted_at`），所以这里断言的每一件都是**读侧过滤**的结果，
+    而不是「那一行没了」。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    _comment(client, STRANGER, row["id"], "我也遇到了")
+
+    before = client.get("/feedback/counts").json()["data"]["all"]
+
+    deleted = _delete(client, row["id"], REPORTER)
+    assert deleted.status_code == 200, deleted.text
+
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    ).status_code == 404
+    assert row["id"] not in {c["id"] for c in _cards(client, REPORTER)}
+    assert row["id"] not in {c["id"] for c in _mine(client, REPORTER)}
+    assert client.get("/feedback/counts").json()["data"]["all"] == before - 1
+
+
+def test_deleting_a_report_takes_its_comments_with_it(client):
+    """评论跟着走：楼还在、帖子没了的话，「这栋楼在回哪条反馈」永远查不出来。
+
+    判据取的是**评论那一层**的读法（`GET /feedback/{id}/comments`）—— 详情页 404
+    只说明帖子没了，说明不了它下面那些行怎么了。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    comment = _comment(client, STRANGER, row["id"], "我也遇到了")
+    assert _delete(client, row["id"], REPORTER).status_code == 200
+
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        headers=session_auth_headers(REPORTER),
+    )
+    # 反馈本身已经读不到了，所以这条路径回 404 而不是空列表 —— 两种都不该是
+    # 「还有一条评论」。
+    assert r.status_code == 404, r.text
+    assert comment["id"] not in r.text
+
+
+def test_a_stranger_cannot_delete_someone_elses_report(client):
+    """看得见但删不掉 → **403**（不是 404）。两种情况分得很清楚：
+
+    * 看不见（私人反馈）→ 404：存不存在这件事不该被一个看不见它的人问出来。
+    * 看得见但不是自己的 → 403：这时候他已经知道它存在了。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    r = _delete(client, row["id"], STRANGER)
+    assert r.status_code == 403, r.text
+    # 没删掉。
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    ).status_code == 200
+
+
+def test_an_admin_deletes_anyones_report(client, as_admin):
+    """管理员删任何一条 —— 需求方要的那一档（「不然我怕有人恶意刷」）。
+
+    删除是**事后清理**，挡不住刷；它给的是「× 掉一条」的能力。
+    """
+    row = _report(client, REPORTER, body="垃圾内容")
+    assert _delete(client, row["id"], as_admin).status_code == 200
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(as_admin))
+    ).status_code == 404
+
+
+def test_can_delete_is_the_servers_answer_and_matches_the_permission(client, as_admin):
+    """每一条上的 `can_delete` 与真删一次的结果必须一致。
+
+    这条断言的是**判据只有一处**：`detail_of` 填 `can_delete`、`delete_feedback`
+    删之前再问一遍，问的是同一个 `may_delete_feedback`。两处各写一遍就是「按钮画得
+    出来、点下去 403」的来源 —— 而这个功能在 `deployed` 那次已经为同一个形状付过
+    学费（按钮亮着、服务端回 412）。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    url = f"/feedback/{row['id']}"
+
+    def can_delete(handle: str) -> bool:
+        r = client.get(url, headers=session_auth_headers(handle))
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["can_delete"]
+
+    assert can_delete(REPORTER) is True
+    assert can_delete(as_admin) is True
+    assert can_delete(STRANGER) is False
+
+    # 判为不能删的那一位，真删也是 403 —— 两边不会分家。
+    assert _delete(client, row["id"], STRANGER).status_code == 403
+
+
+def test_an_unauthenticated_delete_is_refused(client):
+    """没登录的人连「能不能删」都不该问出来（401，不是 403）。"""
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    assert client.delete(f"/feedback/{row['id']}").status_code == 401
+
+
+# --- 公开列表的四个筛选 --------------------------------------------------------
+
+
+def test_the_four_filters_narrow_the_list(client, as_admin):
+    """作者 / 状态 / 类型 / 起始时间：四个都能把结果收窄，而且**缺省即不筛**。
+
+    「缺省即不筛」那半也要断言：老的调用方一个都不传，行为必须一字不变 —— 加筛选最
+    容易出的事就是把某个条件写成必填。
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    bug = _report(client, REPORTER, kind=FeedbackKind.bug, title="按钮点了没反应")
+    idea = _report(client, STRANGER, kind=FeedbackKind.suggestion, title="希望支持导出")
+    old = _report(client, REPORTER, kind=FeedbackKind.bug, title="很老的一条")
+
+    # 把一个状态推到第二级，用来验状态筛选。
+    client.post(
+        f"/admin/feedback/{idea['id']}/status",
+        json={"status": "in_progress"},
+        headers=session_auth_headers(as_admin),
+    )
+
+    async def _backdate() -> None:
+        async with client.test_factory() as s:
+            await s.execute(
+                update(Feedback)
+                .where(Feedback.id == uuid.UUID(old["id"]))
+                .values(created_at=datetime.now(UTC) - timedelta(days=30))
+            )
+            await s.commit()
+
+    asyncio.run(_backdate())
+
+    def ids(**params) -> set[str]:
+        return {row["id"] for row in _cards(client, REPORTER, **params)}
+
+    # 不传就是全部（缺省即不筛）。
+    assert ids() == {bug["id"], idea["id"], old["id"]}
+
+    # 四个各收各的。
+    assert ids(author=REPORTER) == {bug["id"], old["id"]}
+    assert ids(kind="suggestion") == {idea["id"]}
+    assert ids(status="in_progress") == {idea["id"]}
+    since = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    assert ids(since=since) == {bug["id"], idea["id"]}
+
+    # 叠起来是**与**，不是或。
+    assert ids(author=REPORTER, kind="bug") == {bug["id"], old["id"]}
+    assert ids(author=STRANGER, kind="bug") == set()
+
+
+def test_an_unknown_status_or_kind_is_refused_rather_than_ignored(client):
+    """不认识的取值报 **400**，不退回「全不筛」。
+
+    和 `tab` / `sort` 同一条规矩：猜错一个筛选会让人以为「没有这样的反馈」，而它其实
+    只是被别的条件挡住了 —— 页面上看不出任何异常。
+    """
+    assert client.get("/feedback", params={"status": "shipped"}).status_code == 400
+    assert client.get("/feedback", params={"kind": "complaint"}).status_code == 400
+    assert client.get("/feedback", params={"status": "received"}).status_code == 200
+    assert client.get("/feedback", params={"kind": "bug"}).status_code == 200
+
+
+# --- 提交侧的每日上限 -------------------------------------------------------
+
+
+def _submit(client, handle: str, title: str):
+    """发一条，**不**断言成功——上限用例要的就是被拒的那一次。"""
+    return client.post(
+        "/feedback", json={"title": title}, headers=session_auth_headers(handle)
+    )
+
+
+def test_an_author_runs_out_of_reports_for_the_day(client, monkeypatch):
+    """同一个人发到上限之后被拒，而且是 412。
+
+    这是「防刷」那一半：管理员的删除是**事后清理**，一条一条按；在那之前，能
+    直接写进公开列表的人没有任何上限。412 而不是 429，因为它和提案那三道限流
+    对客户端说的是同一句话——**别重试**（`Retry-After` 不存在，客户端也不该
+    等到某个时刻再撞一次）。
+    """
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 3)
+    for n in range(3):
+        assert _submit(client, REPORTER, f"第 {n} 个不同的问题").status_code == 200
+
+    over = _submit(client, REPORTER, "第 4 个问题")
+    assert over.status_code == 412, over.text
+    # 那句话要说清楚是哪条限制、以及上限是多少 —— 这是一条会打在人脸上的拒绝。
+    message = over.json()["message"]
+    assert "3" in message and "上限" in message, message
+
+
+def test_the_cap_is_per_person_not_global(client, monkeypatch):
+    """一个人的上限不是另一个人的。反过来的写法（一张平台级的表）会让第一个
+    把当天额度用完的人顺手把所有人关掉。"""
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    assert _submit(client, REPORTER, "我的第一条").status_code == 200
+    assert _submit(client, REPORTER, "我的第二条").status_code == 412
+    assert _submit(client, STRANGER, "另一个人的第一条").status_code == 200
+
+
+def test_deleting_a_report_does_not_buy_quota(client, monkeypatch):
+    """删掉不能把额度换回来。
+
+    上限算的是**产出**，不是「现存几条」。否则刷屏的写法就是发一条删一条，
+    而这条路上删的正好是它自己的——那正是要防的那个人能自己按的按钮。
+    """
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    row = _report(client, REPORTER, title="先发一条再删掉")
+    assert _delete(client, row["id"], REPORTER).status_code == 200
+    assert _submit(client, REPORTER, "删完之后再发一条").status_code == 412
+
+
+def test_the_cap_counts_a_rolling_day_not_a_calendar_one(client, monkeypatch):
+    """窗口是滚动的 24 小时。自然日会在午夜清零，于是紧挨着午夜的两分钟里能发
+    两倍的量——和提案那条上限同一个理由，也同一个写法。"""
+    monkeypatch.setattr(settings, "feedback_reports_per_author_per_day", 1)
+    assert _submit(client, REPORTER, "第一条").status_code == 200
+
+    # 把那条的 created_at 往回拨 25 小时：它落到窗口外面，额度就回来了。
+    # 直接改那一行而不是等 24 小时 —— 「一天」是窗口的宽度，不是这段测试要睡多久。
+    async def _backdate() -> None:
+        async with client.test_factory() as s:
+            await s.execute(
+                update(Feedback)
+                .where(Feedback.author_handle == REPORTER)
+                .values(created_at=datetime.now(UTC) - timedelta(hours=25))
+            )
+            await s.commit()
+
+    asyncio.run(_backdate())
+    assert _submit(client, REPORTER, "一天之后再发一条").status_code == 200

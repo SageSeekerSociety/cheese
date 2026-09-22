@@ -429,6 +429,16 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
             settings.claude_code_max_subagent_spawn_depth
         ),
         "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4",
+        # 关掉 Claude Code **自带**的 `/feedback` 与 `SendFeedback` 工具。
+        #
+        # 两个意图相同的工具并排放在同一个清单里，模型会选错那一个：它撞到的毛病是
+        # **这个平台**的，而官方那个入口把草稿写进本机队列、由人自己找地方发出去，
+        # 结果就是「提了、但没到平台的反馈里」——一份谁都看不见的证据。
+        #
+        # 这一条必须是**环境变量**：那个开关按设计只在进程启动时读一次，改
+        # settings.json 不管用（官方的开关就是给部署方这么用的）。
+        # （旧名 `DISABLE_BUG_COMMAND` 官方也还认，用新名。）
+        "DISABLE_FEEDBACK_COMMAND": "1",
     }
     if resume_session_id:
         # An OFFER, not an instruction: the launcher takes it only if the

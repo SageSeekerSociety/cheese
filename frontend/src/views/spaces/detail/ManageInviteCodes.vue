@@ -13,6 +13,28 @@
       {{ t('spaces.inviteCodes.help') }}
     </v-alert>
 
+    <!-- 课程链接：老师真正会发出去的东西。码还是要的（它是页面上的另一件事），
+         但群里贴的是一条能点的链接，而不是一串要人手工输入的字。 -->
+    <v-card v-if="courseLinkUrl" variant="tonal" color="primary" class="mx-4 mb-4" rounded="lg">
+      <v-card-title class="text-body-1">
+        {{ t('spaces.inviteCodes.courseLinkTitle') }}
+      </v-card-title>
+      <v-card-text>
+        <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.courseLinkHelp') }}</p>
+        <v-text-field
+          :model-value="courseLinkUrl"
+          readonly
+          autocomplete="off"
+          density="compact"
+          variant="outlined"
+          hide-details
+        ></v-text-field>
+        <v-btn class="mt-3" color="primary" variant="flat" prepend-icon="mdi-content-copy" @click="copyCourseLink">
+          {{ t('spaces.inviteCodes.courseLinkCopy') }}
+        </v-btn>
+      </v-card-text>
+    </v-card>
+
     <div v-if="loading" class="pa-4 text-center">
       <v-progress-circular indeterminate color="primary"></v-progress-circular>
     </div>
@@ -119,6 +141,7 @@ const dialogOpen = ref(false)
 const copiedId = ref<number | null>(null)
 const maxUsesInput = ref('50')
 const expiresOnInput = ref('')
+const courseLinkUrl = ref('')
 
 async function load() {
   loading.value = true
@@ -128,6 +151,30 @@ async function load() {
     toast.error(t('spaces.inviteCodes.loadFailed'))
   } finally {
     loading.value = false
+  }
+  await loadCourseLink()
+}
+
+/**
+ * 课程链接是老师发出去的那一条。拿不到就不画这一块 —— 它是给能发码的人看的，
+ * 后端也只让他们拿（不是管理员会 403），一句报错在这里没有用处。
+ */
+async function loadCourseLink() {
+  try {
+    const { data } = await SpacesApi.courseLink(spaceId)
+    courseLinkUrl.value = `${window.location.origin}${data.path}`
+  } catch {
+    courseLinkUrl.value = ''
+  }
+}
+
+async function copyCourseLink() {
+  if (!courseLinkUrl.value) return
+  try {
+    await navigator.clipboard.writeText(courseLinkUrl.value)
+    toast.success(t('spaces.inviteCodes.courseLinkCopied'))
+  } catch {
+    toast.error(t('spaces.inviteCodes.courseLinkFailed'))
   }
 }
 

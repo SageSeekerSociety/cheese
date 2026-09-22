@@ -77,6 +77,33 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('「加载更多」问的是同一个问题', () => {
+  it('第 2 页带着和第一页一样的四个筛选', async () => {
+    // 这一条是补的：`loadList` 接上了四个筛选，而 `loadMoreList` 当时还是手写的
+    // `{tab, q, pageStart}` —— 表现是**第 2 页起筛选整个失效**，不带筛选的行接在
+    // 筛选结果后面，而两份请求各自看着都对。现在两处共用 `_listQuestion()`。
+    listFeedback.mockResolvedValueOnce({ data: [card('fb-1')], total: 3, counts: {} })
+    const store = useFeedbackStore()
+    await store.loadList()
+
+    store.setFilter({ kind: 'bug', days: 7, author: 'ligan' })
+    listFeedback.mockResolvedValueOnce({ data: [card('fb-1')], total: 3, counts: {} })
+    await store.loadList()
+
+    listFeedback.mockResolvedValueOnce({ data: [card('fb-2')], total: 3, counts: {} })
+    await store.loadMoreList()
+
+    expect(listFeedback).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        kind: 'bug',
+        author: 'ligan',
+        since: expect.any(String),
+        pageStart: expect.any(Number),
+      })
+    )
+  })
+})
+
 describe('加载更多 · 公开列表', () => {
   it('按手上这一页的长度当偏移量，接在后面', async () => {
     const store = useFeedbackStore()
@@ -86,7 +113,17 @@ describe('加载更多 · 公开列表', () => {
     listFeedback.mockResolvedValueOnce(page([card('c'), card('d')], 4))
     await store.loadMoreList()
 
-    expect(listFeedback).toHaveBeenLastCalledWith({ tab: 'all', q: '', pageSize: 50, pageStart: 2 })
+    // 四个筛选一起带着（不筛时是空值）—— 它们和 `tab` / `q` 同源，见 `_listQuestion`。
+    expect(listFeedback).toHaveBeenLastCalledWith({
+      tab: 'all',
+      q: '',
+      pageSize: 50,
+      pageStart: 2,
+      author: '',
+      kind: null,
+      status: null,
+      since: null,
+    })
     expect(ids(store.items)).toEqual(['a', 'b', 'c', 'd'])
     expect(store.listHasMore).toBe(false)
   })

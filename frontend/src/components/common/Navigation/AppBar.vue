@@ -7,24 +7,13 @@
     <div class="text-caption font-weight-bold title-bar flex-grow-1">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
-    <!-- 反馈入口。它是一条**路由**不是一个弹窗：反馈中心是一个完整的页面
-         （有搜索、Tab、详情页、可以分享出去的链接），塞进浮层里这四件事一件都做不
-         了。登录与否都显示——没登录的人遇到的问题同样值得记下来。
-
-         `variant="outlined"` 画的边跟着 currentColor 走，也就是这个按钮本来就在用的
-         `--muted`（见下面那条 CSS）。所以右边这一簇里它成了唯一有可见轮廓的控件，而
-         紧随其后的语言开关仍然只有一条更淡的 `--line`——顺序正好和以前反过来，以前
-         是「切换界面语言」比「给平台提意见」显眼。**一个琥珀色都没加**：这条入口不
-         抢主操作位。
-         图标用 `<template #prepend>` 显式给 14px，不用 `prepend-icon` prop——后者由
-         Vuetify 按按钮尺寸推导，配 12px 文案会偏大。去掉 `title`：按钮已经有可见
-         文案，那个 tooltip 只是把标签再念一遍。 -->
-    <v-btn class="feedback-entry" variant="outlined" color="on-surface-variant" to="/feedback" aria-label="反馈">
-      <template #prepend>
-        <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
-      </template>
-      反馈
-    </v-btn>
+    <!-- 帮助与反馈。**它现在是一个菜单**（`HelpAndFeedbackMenu`），桌面和手机共用：
+         底下的「我的反馈」和「管理后台」今天只能二级跳，收进菜单之后三个目的地都是一次
+         可达；入口本身也从「反馈」变成「帮助与反馈」—— 需求方原话是那两个字太不显眼。
+         代价是直达反馈中心多一次点击，取舍写在那个组件的文件头里。
+         登录与否都显示：没登录的人遇到的问题同样值得记下来（未读点那时画不出来，
+         因为计数要登录）。 -->
+    <HelpAndFeedbackMenu />
     <div class="position-relative d-flex align-center justify-center">
       <v-spacer></v-spacer>
       <LanguageToggle />
@@ -75,6 +64,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import NotificationPanel from '../Notification/NotificationPanel.vue'
 
+import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
 
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
@@ -181,18 +171,6 @@ onMounted(() => {
   min-height: 24px;
   height: 24px;
   padding: 0 8px;
-  font-size: 12px;
-}
-
-/* 和语言开关同一档高度：这条系统栏里的东西高度必须一致，否则整条会看起来参差。
-   高度写在这里，**不用 `:size="24"`** —— 那个 prop 对数字给的是「一个方格」：
-   `useSize` 同时下发内联的 `width` 和 `height`，于是这颗**带文字**的按钮被压成
-   24×24，而里面的「图标 + 反馈」有 25px 宽，`overflow` 又是 visible：字直接压到右边
-   那颗语言开关上（在真浏览器里量到过：按钮右沿 1346、内容右沿 1353）。语言开关是
-   `icon` 按钮，方格正是它要的；这一颗要的是「高 24、宽随内容」。 */
-.app-system-bar .feedback-entry {
-  height: 24px;
-  padding: 0 10px;
   font-size: 12px;
 }
 

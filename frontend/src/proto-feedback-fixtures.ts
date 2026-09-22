@@ -111,6 +111,8 @@ function row(spec: {
   environment?: string
   thread?: FeedbackComment[]
   notes?: FeedbackNote[]
+  /** 默认 true —— 理由写在下面那一行旁边。 */
+  can_delete?: boolean
 }): FeedbackDetail {
   const created = ago(spec.minutesAgo)
   const thread = threadOf(spec.thread ?? [])
@@ -152,6 +154,10 @@ function row(spec: {
     // 就等于「谁都一页装得下」，那个按钮在预览里根本不会出现。
     thread_next_cursor: null,
     notes: spec.notes ?? [],
+    // 预览里的人**就是这几条的提交者**（假后端没有登录态可言），按服务端的判据他
+    // 正是能删的那一位。这一格不能写死 `false`：那会让「删除」这个入口在预览里一次
+    // 都不出现，而预览正是拿来看这类东西的地方。
+    can_delete: spec.can_delete ?? true,
   }
 }
 
@@ -1308,10 +1314,22 @@ function listPage(url: URL, tab: string): { data: FeedbackCard[]; total: number;
   const sort = url.searchParams.get('sort') ?? 'new'
   // 公开那条路由**不校验** `tab` / `sort`（服务端 `list_public` 对不认识的词悄悄
   // 退回默认档，见那一段的 docstring）—— 这是那条路由自己的口径，和管理端不同。
+  //
+  // 四个筛选（作者 / 类型 / 状态 / 起始时间）照抄 `repositories.list_public`：**叠在
+  // 栏位之上**，不是替换它。假后端也得筛 —— 不筛的话预览里那排控件点了没反应，
+  // 而预览正是拿来看这类东西的地方。
+  const author = url.searchParams.get('author')
+  const kind = url.searchParams.get('kind')
+  const status = url.searchParams.get('status')
+  const since = url.searchParams.get('since')
   return paged(
     ROWS.filter(inPublicList)
       .filter((item) => matchesTab(item, tab))
-      .filter((item) => matchesQuery(item, q)),
+      .filter((item) => matchesQuery(item, q))
+      .filter((item) => author === null || item.author_handle === author)
+      .filter((item) => kind === null || item.kind === kind)
+      .filter((item) => status === null || item.status === status)
+      .filter((item) => since === null || item.created_at >= since),
     url,
     sort
   )
@@ -1471,25 +1489,44 @@ function reachedDays(status: FeedbackStatus): Map<string, number> {
   return dayCounts(table)
 }
 
-/** 反馈那一块：栏位计数 + 按天的新增 / 解决 / 上线。
+/** 反馈那一块：**全量口径**的总量 / 四栏 / 四级状态 + 按天的新增 / 解决 / 上线。
  *
- *  `counts` 是**全量口径**（不收窗口），`series` 才是窗口内的 —— 页面上「现在有多少」
- *  和「这七天怎么变的」是两个问题。七个键和 `PlatformStatsService.feedback` 那一个
- *  推导式一样（五个栏位数 + 未读 + 未指派）。 */
+ *  形状和 `PlatformStatsService.feedback` 那一个推导式一一对应（`total` / `columns` /
+ *  `status` / `unread` / `series`）。**口径是全量**：看板数的是整个板子，不是公开那一
+ *  臂 —— 此前它走 `counts()`（被 `PUBLIC_ONLY` 收窄），而 `series` 是全量，卡片和曲线
+ *  各答各的问题。这里直接从 `ROWS` 数，和曲线同一批行，两边永远一致。
+ *
+ *  `columns` 的四个是**筛选不是划分**（`agent` 是来源，和公开/私密重叠），所以它们加
+ *  起来不等于 `total.all` —— 页面上那句口径说的就是这件事。 */
 function feedbackStats(url: URL): Record<string, unknown> {
   const days = windowDays(url)
-  const c = counts()
+  const live = ROWS
+  const isClosed = (i: FeedbackDetail) => i.status === 'resolved' || i.status === 'deployed'
+  const total = {
+    all: live.length,
+    open: live.filter((i) => !isClosed(i)).length,
+    closed: live.filter(isClosed).length,
+    unassigned: live.filter((i) => !i.assignee_handle && !isClosed(i)).length,
+    urgent_open: live.filter((i) => !isClosed(i) && (i.priority === 'high' || i.priority === 'urgent')).length,
+  }
+  const columns = {
+    public: live.filter((i) => i.visibility === 'public' && !i.security).length,
+    private: live.filter((i) => i.visibility === 'private' && !i.security).length,
+    agent: live.filter((i) => i.author_is_agent).length,
+    security: live.filter((i) => i.security).length,
+  }
+  const status = {
+    received: live.filter((i) => i.status === 'received').length,
+    in_progress: live.filter((i) => i.status === 'in_progress').length,
+    resolved: live.filter((i) => i.status === 'resolved').length,
+    deployed: live.filter((i) => i.status === 'deployed').length,
+  }
   return {
     days,
-    counts: {
-      all: c.all,
-      hot: c.hot,
-      active: c.active,
-      resolved: c.resolved,
-      deployed: c.deployed,
-      unread: c.unread,
-      unassigned: c.unassigned,
-    },
+    total,
+    columns,
+    status,
+    unread: counts().unread,
     series: dense(days, {
       created: createdDays(),
       resolved: reachedDays('resolved'),
@@ -1635,7 +1672,57 @@ function usageStats(url: URL): Record<string, unknown> {
     },
     series: bucket.rows.map(({ date, tokens, calls, cost_usd }) => ({ date, tokens, calls, cost_usd })),
     top_projects: topProjects(bucket.tokens, bucket.unpriced),
+    // 两个正交的拆分。**加起来都等于 totals.tokens** —— 「柱子和合计对不上」是这一块
+    // 唯一会被核对的地方。模型那几条是仓库里真跑过的（`deploy/gateway/config.yaml`、
+    // 项目记忆里的智谱/小米端点），通路那三条是 `ResourceUsage.route` 的全部取值。
+    by_model: byModel(bucket),
+    by_route: byRoute(bucket),
   }
+}
+
+const MODELS = ['glm-4.6', 'glm-5.3-flash', 'mimo-v2.6-pro', 'claude-sonnet-5']
+const ROUTES: { key: string; weight: number }[] = [
+  { key: 'gateway', weight: 0.62 },
+  { key: 'subscription', weight: 0.28 },
+  { key: 'native', weight: 0.1 },
+]
+
+function byModel(bucket: ReturnType<typeof usageWindow>) {
+  const shares = splitShares(bucket.tokens, [0.46, 0.24, 0.18])
+  // 最后一条吃掉余数，和 `topProjects` 同一条规则。
+  shares.push(bucket.tokens - shares.reduce((acc, n) => acc + n, 0))
+  return MODELS.map((model, i) => {
+    const tokens = shares[i]
+    // 订阅那一份全在前两个模型上（和 `by_route` 对得上：未定价的总量相等）。
+    const unpriced = i < 2 ? Math.round((bucket.unpriced * (i === 0 ? 0.7 : 0.3)) / 100) * 100 : 0
+    const usd = ((tokens - unpriced) / 1_000_000) * USD_PER_MTOK
+    return {
+      model,
+      tokens,
+      calls: Math.max(1, Math.round(tokens / 3000)),
+      cost_usd: Number(usd.toFixed(4)),
+      unpriced_tokens: unpriced,
+    }
+  })
+}
+
+function byRoute(bucket: ReturnType<typeof usageWindow>) {
+  const shares = splitShares(bucket.tokens, [ROUTES[0].weight, ROUTES[1].weight])
+  shares.push(bucket.tokens - shares.reduce((acc, n) => acc + n, 0))
+  return ROUTES.map((route, i) => {
+    const tokens = shares[i]
+    // **订阅那一行的 unpriced 就是全部未定价** —— 订阅按月计费，行上没有单价。这一行
+    // 和 KPI 里「未定价 token」那个数必须相等，否则「来源就在这里」那句话是假的。
+    const unpriced = route.key === 'subscription' ? bucket.unpriced : 0
+    const usd = ((tokens - unpriced) / 1_000_000) * USD_PER_MTOK
+    return {
+      route: route.key,
+      tokens,
+      calls: Math.max(1, Math.round(tokens / 3000)),
+      cost_usd: Number(usd.toFixed(4)),
+      unpriced_tokens: unpriced,
+    }
+  })
 }
 
 /* ---- 平台 ----------------------------------------------------------------
@@ -1678,6 +1765,16 @@ function platformStats(url: URL): Record<string, unknown> {
       series: dense(days, { created }),
     },
     machines: { ...MACHINE_STOCK },
+    // **这一刻**的健康度（和上面两组的存量/窗口不是一回事）。判据与 `/health/detailed`
+    // 同源。预览里 Redis 偶尔红一次，是为了看「状态色只在这一块用」那个形态。
+    health: {
+      overall: 'healthy',
+      checks: {
+        database: { status: 'up' },
+        redis: { status: 'up' },
+        event_loop: { status: 'up', detail: 3.4 },
+      },
+    },
   }
 }
 
@@ -1773,12 +1870,63 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   // 路由，`stats` 落进 `/admin/feedback/{id}` 被当成一个 uuid 解析，预览一切正常、dev 上
   // 是「看板加载失败」。**替身只该照抄服务端真实存在的东西**；一条为了「两种前端版本都
   // 不报警」而留的别名，代价是发现不了其中一种版本是坏的。
+  /** 第四类：**这一刻**的接口耗时。
+   *
+   *  **这一块在真后端上读的不是库**：`domain/platform_stats/performance.py` 直接读
+   *  `core/metrics.py` 那个进程内的注册表 —— 所以预览里只能编，而且必须编得像
+   *  「这个进程刚被访问过」。形状逐字照抄那个服务。
+   *
+   *  两处是刻意留的：
+   *
+   *   * **列表是按 p95 从大到小排的**，因为真服务就是这么排的（`routes.sort(...)`）——
+   *     预览里顺手按别的顺序摆，会让人以为页面的排序是页面自己做的。
+   *   * **留一条 `p95: null` 的路由**：没有样本的分位数是 `null`、页面画「—」。不留
+   *     一条的话，「没有数据」和「0 毫秒」在预览里长得一模一样，而那一版正是最该被
+   *     看见的一版。
+   */
+  function performanceStats(): Record<string, unknown> {
+    const routes = [
+      { method: 'GET', route: '/feedback', status: '200', count: 412, p50: 18.4, p95: 61.2, p99: 143.8 },
+      { method: 'GET', route: '/projects', status: '200', count: 188, p50: 22.1, p95: 48.9, p99: 96.4 },
+      { method: 'GET', route: '/feedback/{feedback_id}', status: '200', count: 96, p50: 12.7, p95: 33.5, p99: 71.2 },
+      {
+        method: 'POST',
+        route: '/topics/{topic_id}/messages',
+        status: '200',
+        count: 54,
+        p50: 41.3,
+        p95: 122.6,
+        p99: 251.9,
+      },
+      { method: 'GET', route: '/admin/stats/feedback', status: '200', count: 31, p50: 9.8, p95: 24.1, p99: 38.7 },
+      // 刚加过路由、还没人访问过的那一条：分位数是 null，页面画「—」。
+      {
+        method: 'GET',
+        route: '/spaces/{space_id}/discussions',
+        status: '200',
+        count: 0,
+        p50: null,
+        p95: null,
+        p99: null,
+      },
+    ]
+    return {
+      routes_total: routes.length,
+      routes_shown: routes.length,
+      routes,
+      active_requests: 2,
+      uptime_seconds: 5 * 3600 + 37 * 60,
+      loop_lag: { recent_ms: 3.4, worst_ms: 182.6 },
+    }
+  }
+
   const stats = /^\/admin\/stats\/([a-z]+)$/.exec(path)
   if (stats && method === 'GET') {
     if (stats[1] === 'feedback') return { data: feedbackStats(url) }
     if (stats[1] === 'usage') return { data: usageStats(url) }
     if (stats[1] === 'platform') return { data: platformStats(url) }
-    // 分类只有三个，别的没有对应的路由 —— 服务端那是 404，不是「空数据」。
+    if (stats[1] === 'performance') return { data: performanceStats() }
+    // 分类只有这四个，别的没有对应的路由 —— 服务端那是 404，不是「空数据」。
     return { missing: true }
   }
 
@@ -1921,6 +2069,19 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       target.likes += wanted ? 1 : -1
     }
     return { data: { count: target.likes, liked: target.liked } }
+  }
+
+  const oneReport = /^\/feedback\/([^/]+)$/.exec(path)
+  if (oneReport && method === 'DELETE') {
+    const item = find(oneReport[1])
+    if (!item) return { missing: true }
+    // 服务端两条路分得很清楚：看不见 → 404，看得见但删不掉 → 403。预览里假后端的
+    // 世界只有一个人（没有登录态），所以能走到这里的都判为「能删」；`can_delete`
+    // 那半由页面自己按数据画按钮，和真机同一套。
+    if (!item.can_delete) return { forbidden: '只能删除自己提交的反馈' }
+    // 软删的**可观察那一半**：它从每一份列表里消失（真机上由服务端的读侧过滤完成）。
+    ROWS.splice(ROWS.indexOf(item), 1)
+    return { data: { deleted: true } }
   }
 
   const oneComment = /^\/feedback\/([^/]+)\/comments\/([^/]+)$/.exec(path)

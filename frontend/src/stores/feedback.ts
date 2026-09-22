@@ -21,7 +21,7 @@
  * （见下面那几个模块级计数器），否则慢的那次后到，会把快的那次覆盖掉。
  */
 
-import type { FeedbackAdminPatch, StatsKind, StatsShapes } from '@/api'
+import type { FeedbackAdminPatch, FeedbackListQuery, StatsKind, StatsShapes } from '@/api'
 import type {
   FeedbackCard,
   FeedbackComment,
@@ -44,6 +44,7 @@ import {
   createAdminFeedbackNote,
   createFeedback,
   createFeedbackComment,
+  deleteFeedback,
   deleteFeedbackComment,
   dismissFeedbackProposal,
   getAdminFeedback as getAdminFeedbackDetail,
@@ -108,7 +109,12 @@ let mineSeq = 0
  *  到另一类 —— 共用计数器一自增，那一份还在飞的响应就被判成「过期」，于是第一类永远
  *  停在 `null`，切回去还要再拉一次。而「过期」在这里的**真实含义**只是「后来又问了同
  *  一类」，切到别的类并没有让谁过期。 */
-const statsSeq: Record<StatsKind, number> = { feedback: 0, usage: 0, platform: 0 }
+const statsSeq: Record<StatsKind, number> = {
+  feedback: 0,
+  usage: 0,
+  platform: 0,
+  performance: 0,
+}
 /** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回一次），
  *  所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与 `_adminWrite`。 */
 let adminDetailSeq = 0
@@ -287,7 +293,8 @@ type StatsBucket = { [K in StatsKind]: StatsShapes[K] | null }
 function assignStats(bucket: StatsBucket, kind: StatsKind, value: StatsShapes[StatsKind]): void {
   if (kind === 'feedback') bucket.feedback = value as StatsShapes['feedback']
   else if (kind === 'usage') bucket.usage = value as StatsShapes['usage']
-  else bucket.platform = value as StatsShapes['platform']
+  else if (kind === 'platform') bucket.platform = value as StatsShapes['platform']
+  else bucket.performance = value as StatsShapes['performance']
 }
 
 /** 把表单折成请求体。**只有这一个地方做这件事**：两条提交路走的是同一个动作，
@@ -366,6 +373,15 @@ export const useFeedbackStore = defineStore('feedback', {
     loadingMore: false,
     query: '',
     tab: 'all' as FeedbackTab,
+    /* ---- 公开列表的四个筛选（反馈中心那一排控件）。
+       它们是**服务端**的筛选（`GET /feedback?author=&status=&kind=&since=`），和栏位
+       叠在一起：栏位说「哪一栏」，这四个说「那一栏里哪些」。前端再筛一遍就是第二份
+       实现 —— 而两份实现漂开的表现是「翻页之后筛选悄悄失效」，页面上看不出异常。 ---- */
+    filterAuthor: '',
+    filterKind: null as FeedbackKind | null,
+    filterStatus: null as FeedbackStatus | null,
+    /** 时间窗口，按「最近 N 天」存。`null` = 不限。 */
+    filterDays: null as number | null,
     /* ---- 管理端列表 ---- */
     adminItems: [] as FeedbackCard[],
     adminTotal: 0,
@@ -393,6 +409,7 @@ export const useFeedbackStore = defineStore('feedback', {
       feedback: null,
       usage: null,
       platform: null,
+      performance: null,
     } as { [K in StatsKind]: StatsShapes[K] | null },
     /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
        但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
@@ -405,7 +422,12 @@ export const useFeedbackStore = defineStore('feedback', {
      *  失败」，哪怕当前这一类马上就会成功。
      *  对外仍然只暴露一个 `statsLoading`（下面那个 getter，读的是**当前这一类**那一格），
      *  所以页面上的读法一行都不用改。 */
-    statsBusy: { feedback: false, usage: false, platform: false } as Record<StatsKind, boolean>,
+    statsBusy: {
+      feedback: false,
+      usage: false,
+      platform: false,
+      performance: false,
+    } as Record<StatsKind, boolean>,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
        服务端的 WHERE 就不是同一个。 ---- */
@@ -552,14 +574,39 @@ export const useFeedbackStore = defineStore('feedback', {
      *  只是先画，不是答案 —— 这中间别人可能提了新的、管理员可能改了状态，而这一页
      *  上没有任何东西能知道。回来之后照常替换，有没有缓存走的是同一条路。
      */
+    /** 公开列表这一趟问的**是哪个问题** —— 栏位 + 搜索词 + 四个筛选，一次算成
+     *  `{key, params}`：`key` 是缓存指纹，`params` 是请求体。
+     *
+     *  **两样必须同源，而且只有这一处**。上一版把它们分头写在 `loadList` 里，于是
+     *  `loadMoreList` 自己手写了一份只有 `{tab, q}` 的请求 —— 表现是「第 2 页起筛选
+     *  悄悄失效，不带筛选的行拼在筛选结果下面」，而两份各自看着都对。指纹漏掉筛选的
+     *  表现则是「换一个筛选、界面换了、列表还是上一份缓存」。
+     */
+    _listQuestion(): { key: string; params: FeedbackListQuery } {
+      const q = this.query.trim()
+      const author = this.filterAuthor.trim()
+      // 「最近 N 天」在这里折成一个**时刻**发给服务端：窗口的对齐由服务端那套
+      // （半开的 UTC 日）说了算，前端只负责说「从现在往回 N 天」。
+      const since = this.filterDays === null ? null : new Date(Date.now() - this.filterDays * 86400_000).toISOString()
+      return {
+        key: [this.tab, q, author, this.filterKind, this.filterStatus, since].join('\u0000'),
+        params: {
+          tab: this.tab,
+          q,
+          pageSize: PAGE_SIZE,
+          author,
+          kind: this.filterKind,
+          status: this.filterStatus,
+          since,
+        },
+      }
+    },
+
     async loadList(): Promise<void> {
       const seq = ++listSeq
       // 号要在**发请求之前**领，见 `_commitCounts`。
       const rev = takeCountsRev()
-      // 搜的是什么只算一次：指纹和请求体必须用同一个 `q`。两处各 `trim()` 一遍，
-      // 迟早有一处漏掉，于是「命中」说的是另一个问题。
-      const q = this.query.trim()
-      const key = `${this.tab}\u0000${q}`
+      const { key, params } = this._listQuestion()
       const cached = listCache?.key === key ? listCache : null
       if (cached) {
         this.items = cached.items
@@ -570,7 +617,7 @@ export const useFeedbackStore = defineStore('feedback', {
       }
       this.error = null
       try {
-        const page = await listFeedback({ tab: this.tab, q, pageSize: PAGE_SIZE })
+        const page = await listFeedback(params)
         // 只有最后一次请求的结果算数：防抖挡不住「先发的那次后到」。
         if (seq !== listSeq) return
         this.items = page.data
@@ -596,6 +643,47 @@ export const useFeedbackStore = defineStore('feedback', {
     setTab(tab: FeedbackTab): void {
       if (this.tab === tab) return
       this.tab = tab
+      void this.loadList()
+    },
+
+    /** 改一个筛选就重拉。**不防抖**：下拉是离散的一次选择，不像搜索那样每敲一个字
+     *  都变；而这一下必然换一批数据，本地筛是第二份实现。 */
+    setFilter(patch: {
+      author?: string
+      kind?: FeedbackKind | null
+      status?: FeedbackStatus | null
+      days?: number | null
+    }): void {
+      if (patch.author !== undefined) this.filterAuthor = patch.author
+      if (patch.kind !== undefined) this.filterKind = patch.kind
+      if (patch.status !== undefined) this.filterStatus = patch.status
+      if (patch.days !== undefined) this.filterDays = patch.days
+      void this.loadList()
+    },
+
+    /** 有筛选在生效没有。页面据此决定要不要画「清除筛选」那一颗。 */
+    hasFilters(): boolean {
+      return (
+        this.filterAuthor.trim() !== '' ||
+        this.filterKind !== null ||
+        this.filterStatus !== null ||
+        this.filterDays !== null
+      )
+    },
+
+    /** 一次清干净：**栏位、搜索词、四个筛选**，然后拉一次。
+     *
+     *  **只发一次请求**，不是清完让每个控件各自触发一遍（那会发四个，而且中间三个
+     *  页面都停在半筛状态）。栏位和搜索词也在内，是因为空态那颗「清除筛选」和筛选条
+     *  那颗调的是同一个动作：被筛选筛空的人按它，期望的是回到「什么都没筛」的样子。
+     */
+    clearFilters(): void {
+      this.filterAuthor = ''
+      this.filterKind = null
+      this.filterStatus = null
+      this.filterDays = null
+      this.tab = 'all'
+      this.query = ''
       void this.loadList()
     },
 
@@ -632,18 +720,21 @@ export const useFeedbackStore = defineStore('feedback', {
       // 两份清单拼在一起 —— 所以它回来了也只配丢掉。
       const seq = listSeq
       const rev = takeCountsRev()
-      const q = this.query.trim()
+      // **问题只有一份**（见 `_listQuestion`）。上一版这一行是手写的 `{tab, q, …}`，
+      // 于是第 2 页起**四个筛选整个丢掉**：筛选结果后面接着一堆不匹配的行，而两份
+      // 各自看着都对。
+      const { key, params } = this._listQuestion()
       const pageStart = this.items.length
       this.loadingMore = true
       try {
-        const page = await listFeedback({ tab: this.tab, q, pageSize: PAGE_SIZE, pageStart })
+        const page = await listFeedback({ ...params, pageStart })
         if (seq !== listSeq) return
         this.items = appendPage(this.items, page.data)
         this.total = page.total
         // 缓存跟着长：翻进详情页再退回来时，用户已经展开的那几页还在，不必从头再
         // 点一遍。代价是下一次 `loadList` 命中它之后会重拉第一页、把长度收回 50 ——
         // 这是「缓存只是先画」那句话本来就承认的事（见 `loadList`）。
-        listCache = { key: `${this.tab}\u0000${q}`, items: this.items, total: page.total }
+        listCache = { key, items: this.items, total: page.total }
         this._commitCounts(page.counts, rev)
       } catch (error) {
         if (seq !== listSeq) return
@@ -952,6 +1043,35 @@ export const useFeedbackStore = defineStore('feedback', {
       } catch (error) {
         this.error = message(error, '删除失败')
       }
+    },
+
+    /** 删掉**整条反馈** —— 作者删自己的，平台管理员删任何一条。
+     *
+     *  能不能删不在这里判：按钮出不出现看服务端回的 `can_delete`（和路由上那一处
+     *  `may_delete_feedback` 是同一个判据）。这里只负责删完把自己手上那几份数据一起
+     *  收干净 —— **少收一处，下一页就会画出一条点不开的反馈**，而那比不删更糟。
+     */
+    async deleteFeedback(id: string): Promise<boolean> {
+      this.error = null
+      try {
+        await deleteFeedback(id)
+      } catch (error) {
+        this.error = message(error, '删除失败')
+        return false
+      }
+      // 三份列表都在内：`adminItems` 是管理端那条路（管理员从队列点进来删的，删完
+      // 回队列时那一条不该还在）。
+      this.items = this.items.filter((row) => row.id !== id)
+      this.mineItems = this.mineItems.filter((row) => row.id !== id)
+      this.adminItems = this.adminItems.filter((row) => row.id !== id)
+      detailCache.delete(id)
+      if (this.detailId === id) {
+        this.detailId = null
+        this.detail = null
+      }
+      // 计数里它还占着一格。重问一次 —— 数字由服务端数，不在前端减一。
+      void this.refreshCounts()
+      return true
     },
 
     /* ---- 提交表单 ---- */

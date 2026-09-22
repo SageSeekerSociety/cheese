@@ -167,6 +167,39 @@ CATALOG: dict[str, Shell] = {
     for shell in (_DEFAULT, _WORKBENCH, _COURSE_STUDENT, _COURSE_TEACHER)
 }
 
+#: The 壳 a newly created 题目板's default category declares — a 题目板 *is* a
+#: course now, so a new one opens as the course template instead of a blank
+#: board. This is the name only; `SpaceService.create_space` is what writes it.
+#:
+#: It is a DEFAULT and nothing more: it rides the one chain in
+#: `app.domain.task.protocol`, so a single 题目 may replace it and a project's own
+#: `settings["shell"]` still outranks both. A board created before this existed
+#: declares nothing and keeps rendering `default` — the fallback is untouched.
+#:
+#: Student rather than teacher 壳: a 题目板's 壳 reaches the *projects* under it
+#: (a student's project inherits it through the 题目 it linked). The teacher's
+#: course views are the 题目板's own management screens, which are not projects
+#: and consume no 壳 today — so there is no second declaration to make here, and
+#: making one would be the second chain this module exists to avoid.
+DEFAULT_CATEGORY_SHELL_NAME: str = _COURSE_STUDENT.name
+
+#: The 壳 names that mean 「the 题目板 declaring one is a course」.
+#:
+#: A 题目板's own screens are not projects and so read no 壳 — but a board whose
+#: default 分组 declares a course 壳 *is* a course, and its screens need to know
+#: that before they can decide anything (see `SpaceOut.isCourse`). Both names are
+#: here because either says the same thing about the board; which 壳 a *project*
+#: under it inherits stays a question for the chain in
+#: `app.domain.task.protocol`.
+COURSE_SHELL_NAMES: frozenset[str] = frozenset(
+    {_COURSE_STUDENT.name, _COURSE_TEACHER.name}
+)
+
+
+def is_course_shell(name: str | None) -> bool:
+    """Whether this 壳 name says its 题目板 is a course. Undeclared is not."""
+    return bool(name) and name in COURSE_SHELL_NAMES
+
 
 def lookup(name: str | None) -> Shell:
     """The declaration for ``name``, or `default`.

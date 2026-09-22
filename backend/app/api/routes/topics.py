@@ -7,7 +7,7 @@ import re
 import shutil
 import uuid
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import quote
 
@@ -1927,6 +1927,84 @@ async def record_decision(
         content=decision,
         kind=BlockKind.decision,
         refs=[str(topic_id)],
+    )
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
+    return ok(out)
+
+
+def _parse_moment(raw: object) -> datetime | None:
+    """一个可选的 ISO-8601 时刻；空串和缺席是一回事。"""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        moment = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise ValidationError("since/until 要是一个 ISO-8601 时刻") from None
+    # 不带时区的按 UTC 读：否则它和 now() 相减时 naive/aware 直接抛，而调用方
+    # 只写了个「2026-09-06」也得能用。
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _weekly_window(body: dict) -> tuple[datetime, datetime]:
+    """这份周报讲的是哪一段。略过就是「截止到现在的一周」。"""
+    until = _parse_moment(body.get("until")) or datetime.now(UTC)
+    since = _parse_moment(body.get("since")) or until - timedelta(days=7)
+    if since > until:
+        raise ValidationError("since 不能晚于 until")
+    return since, until
+
+
+@router.post("/{topic_id}/weekly")
+async def record_weekly(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """记一份周报到周报集 (spec §7.1) —— 项目文档页的「周报集」就是从这条读的。
+
+    一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是章程和话题文档
+    的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
+    列 —— 它是这一条记录的属性，没有第二处会读它。
+
+    `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去，和决策记录一样。
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    report = (body.get("body") or "").strip()
+    if not report:
+        raise ValidationError("body 不能为空")
+    since, until = _weekly_window(body)
+    report = await canonicalize_refs(
+        db, place.project_id, report, exclude_topic_id=place.room_id
+    )
+    # 重发幂等 (④)，和决策记录同一个道理：一轮重新送达时，同一份正文是同一份
+    # 周报，不能垒出第二行。轮次之外（人在界面上点）没有 continuation，也就没有
+    # 去重 —— 点两次就是两次。
+    continuation = get_work_runner().continuation_for(topic_id)
+    key = action_key(continuation, "weekly", report) if continuation else None
+    if key is not None and not await idem.claim(
+        db, key, action="weekly", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
+    block = await BlockRepository(db).add(
+        project_id=place.project_id,
+        topic_id=topic_id,  # the place; `add` splits it
+        author=(
+            actor.handle
+            if actor.authenticated
+            else await TopicMemberService(db).resolve_agent_handle(
+                topic_id, room_id=place.room_id
+            )
+        ),
+        author_type=AuthorType.participant,
+        content=report,
+        kind=BlockKind.weekly,
+        refs=[str(topic_id)],
+        meta={"since": since.isoformat(), "until": until.isoformat()},
     )
     out = BlockOut.model_validate(block).model_dump(mode="json")
     if key is not None:

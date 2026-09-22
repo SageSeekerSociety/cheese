@@ -11,7 +11,13 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.domain.shell.catalog import CATALOG, DEFAULT_SHELL_NAME
+from app.domain.shell.catalog import (
+    CATALOG,
+    COURSE_SHELL_NAMES,
+    DEFAULT_CATEGORY_SHELL_NAME,
+    DEFAULT_SHELL_NAME,
+    is_course_shell,
+)
 from app.domain.shell.service import resolve_shell
 from app.domain.task.protocol import resolve
 
@@ -123,6 +129,23 @@ def test_an_unknown_shell_name_falls_back_to_default(caplog) -> None:
     )
     assert got.name == DEFAULT_SHELL_NAME
     assert "unknown shell" in caplog.text
+
+
+def test_the_course_shells_are_the_two_that_mean_a_course() -> None:
+    """「这块题目板是不是课」问的是这两个名字，不是一个字符串比较。
+
+    题目板自己的屏幕（课程首页、侧栏）不是项目、读不到壳，`isCourse` 是它们
+    唯一能凭的答复。名字漂了不会报错：一门课会长成题目列表。多的少的都红。
+    """
+    assert is_course_shell("course-student")
+    assert is_course_shell("course-teacher")
+    assert not is_course_shell(DEFAULT_SHELL_NAME)
+    assert not is_course_shell("workbench")
+    assert not is_course_shell(None)
+    assert not is_course_shell("")
+    assert COURSE_SHELL_NAMES == {"course-student", "course-teacher"}
+    # 建版时写下的那一行必须在课程这一边，否则新建的题目板就不是课。
+    assert is_course_shell(DEFAULT_CATEGORY_SHELL_NAME)
 
 
 def test_default_is_todays_interface_verbatim() -> None:
