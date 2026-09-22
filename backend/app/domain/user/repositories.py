@@ -159,6 +159,26 @@ class UserRepository:
         stmt = select(func.count(User.id)).where(User.deleted_at.is_(None))
         return int((await self._session.execute(stmt)).scalar_one() or 0)
 
+    async def count_accounts_by_kind(self) -> dict[str, int]:
+        """存量里有多少真人、多少 agent。
+
+        判据是 `agent_bindings` —— **同一个判据** `IdentityService.is_agent` 和
+        管理员选择器用的那一个，只是从一次一个的探针变成一条聚合 SQL。不在这里
+        另发明一（handle 前缀、email 域名……）：两套判据的症状是「看板说 12 个
+        agent、成员页标出 9 个」。
+
+        agent 有一行 `agent_bindings`，真人没有。分身是一人一行（见
+        `identity/services.py`），所以这里的 agent 数是**身份数**，不是「几个
+        芝士」。
+        """
+        agent = exists().where(AgentBinding.user_id == User.id)
+        stmt = select(
+            func.count(User.id).filter(agent),
+            func.count(User.id).filter(~agent),
+        ).where(User.deleted_at.is_(None))
+        agents, humans = (await self._session.execute(stmt)).one()
+        return {"humans": int(humans or 0), "agents": int(agents or 0)}
+
     async def accounts_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:

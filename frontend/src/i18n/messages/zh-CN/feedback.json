@@ -194,6 +194,8 @@
     },
     "people": {
       "total": "账号总数",
+      "humans": "真人",
+      "agents": "Agent",
       "new": "7 日新增",
       "admins": "平台管理员",
       "chart": "每天新增账号"

@@ -2391,7 +2391,15 @@ export interface StatsUsage {
  *  里，库里没有可以查的那一列。 */
 export interface StatsPlatform {
   days: number
-  people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
+  people: {
+    total: number
+    new: number
+    admins: number
+    /** 真人 / agent 的拆分。判据是 `agent_bindings`，和后端 `IdentityService.is_agent` 同一份。 */
+    humans: number
+    agents: number
+    series: { date: string; created: number }[]
+  }
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
   /** **这一刻**的健康度（和上面两组的「存量 / 窗口」不是一回事）。判据与 `/health/detailed` 同源。 */
   health: {

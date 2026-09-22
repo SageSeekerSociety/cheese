@@ -185,6 +185,14 @@ const pulse = computed(() => {
   return rows
 })
 
+/** 一键一格，给上面那条导轨按 `StatsKind` 取短值用。`pulse` 仍是数组（渲染顺序），
+ *  这里只是同一批数据的按名索引。 */
+const pulseByKey = computed<Record<string, (typeof pulse.value)[number]>>(() => {
+  const out: Record<string, (typeof pulse.value)[number]> = {}
+  for (const row of pulse.value) out[row.key] = row
+  return out
+})
+
 /** 20 万 token 这种短写 —— 摘要条上摆 `204,900` 是把下面 KPI 的同一个数再念一遍。 */
 function shortTokens(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—'
@@ -934,6 +942,20 @@ const peopleKpis = computed(() => [
     value: num(platform.value?.people.total),
     loading: store.statsLoading,
   },
+  // 真人 / agent 分开报，不是一个总数让人自己猜。判据是 `agent_bindings`（和后端
+  // `IdentityService.is_agent` 同一份），所以这两个数必然加得回 `total`。
+  {
+    key: 'humans',
+    label: t('feedback.dashboard.people.humans'),
+    value: num(platform.value?.people.humans),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'agents',
+    label: t('feedback.dashboard.people.agents'),
+    value: num(platform.value?.people.agents),
+    loading: store.statsLoading,
+  },
   {
     key: 'new',
     label: t('feedback.dashboard.people.new'),
@@ -1021,9 +1043,19 @@ onMounted(() => {
         <span class="ad__window t-meta-read">{{ t('feedback.dashboard.window') }}</span>
       </header>
 
-      <!-- 分类控件是这一页的**第一个控件**：读的人先决定看哪一类，再看数字。
-           `v-btn-toggle` 而不是 tabs —— tabs 底下那条线会跟页头那条 `--line-2` 抢同一种
-           「这里是边界」的意思，而分类不是边界，是一次筛选。 -->
+      <!-- 分类控件是这一页的**第一个控件**，也是**唯一**一条目的地导轨：读的人先决定
+           看哪一类，再看数字。`v-btn-toggle` 而不是 tabs —— tabs 底下那条线会跟页头
+           那条 `--line-2` 抢同一种「这里是边界」的意思，而分类不是边界，是一次筛选。
+
+           **两行并成一行**（管理员指着两排问过「这两行是同一个东西」）。原本下面还
+           有一条摘要条 `.ad__pulse`，和这里同一批键、同一批标签、同一个 `selectKind`，
+           只多带一个短值 —— 于是每个目的地在页面上出现两次。现在短值就长在这一行里，
+           摘要条整条删除。
+
+           短值是**附属读数**，不是这个按钮的可访问名字：`aria-hidden` 掉它，按钮的
+           accessible name 保持裸标签（`交付` / `用量` …）。否则 e2e 里
+           `getByRole('button', { name: '反馈', exact: true })` 会因为名字变成
+           「反馈 待分诊 3」而永远匹配不上。提示句放在 `title` 上，够指针用户读。 -->
       <div class="ad__kinds">
         <v-btn-toggle
           :model-value="store.statsKind"
@@ -1033,33 +1065,17 @@ onMounted(() => {
           divided
           @update:model-value="selectKind($event as StatsKind)"
         >
-          <v-btn v-for="k in KINDS" :key="k" :value="k" size="small">
+          <v-btn v-for="k in KINDS" :key="k" :value="k" size="small" :title="pulseByKey[k]?.hint">
             {{ t(TAB_KEY[k]) }}
+            <span
+              v-if="pulseByKey[k]"
+              class="ad__kinds-val t-dense t-num"
+              :class="`ad__kinds-val--${pulseByKey[k]!.tone}`"
+              aria-hidden="true"
+              >{{ pulseByKey[k]!.value }}</span
+            >
           </v-btn>
         </v-btn-toggle>
-      </div>
-
-      <!-- 摘要条：读的人先知道「哪块需要我」，再决定进哪一块。整块是导航（点一块
-           切过去），不是独立卡片。
-           **它是文字 chip，不是第二排大数字卡**：下面那排 KPI 卡已经是「标签 + 大数
-           字」，摘要条再摆一排同样式的大数字就是同一件事说两遍（管理员指着两排问过
-           「这两行是同一个东西」）。所以这里只有名字 + 一个短值，高度压到 chip 档，
-           大数字全留给下面那一排。 -->
-      <div class="ad__pulse" role="tablist" aria-label="看板各块摘要">
-        <button
-          v-for="row in pulse"
-          :key="row.key"
-          type="button"
-          class="ad__pulse-cell"
-          :class="{ 'ad__pulse-cell--on': kind === row.key, [`ad__pulse-cell--${row.tone}`]: true }"
-          role="tab"
-          :aria-selected="kind === row.key"
-          :title="row.hint"
-          @click="selectKind(row.key as StatsKind)"
-        >
-          <span class="ad__pulse-label t-eyebrow-read">{{ row.label }}</span>
-          <span class="ad__pulse-value t-dense t-num">{{ row.value }}</span>
-        </button>
       </div>
 
       <!-- 错误是**整块**的（§9.3）：这一页的主文案只有这一句，页头留着 —— 它是这一页
@@ -1709,60 +1725,24 @@ onMounted(() => {
   line-height: var(--lh-12);
 }
 
-/* 四块摘要 —— 这一页的**第一眼**。四格并排、整块可点，所以它是导航不是卡片：
-   高度比 KPI 卡矮一档（72px），但那一格的数用同一档字号（`t-console-title`），因为
-   「哪块需要我」和「这块的数是多少」是同一眼要读走的。 */
-.ad__pulse {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0 0;
-}
-
-/* chip，不是卡片：高度 28px、横向排、字号 `.t-dense`。大数字只有下面那排 KPI
-   卡才有 —— 摘要条再摆一排 `.t-console-title` 就是同一件事说两遍。 */
-.ad__pulse-cell {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  background: var(--fill);
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .ad__pulse-cell:hover {
-    background: var(--fill-2);
-  }
-}
-
-.ad__pulse-cell--on {
-  background: var(--surface);
-  border-color: var(--line-2);
-}
-
-.ad__pulse-label {
+/* 分类导轨里那个短值 —— 摘要条并进来之后的归宿。它是附属读数，所以字色压一档、
+   不跟标签抢注意力；只有警示/健康/危险三档会改色，其余用 `--muted`。 */
+.ad__kinds-val {
+  margin-left: 6px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.ad__pulse-value {
-  color: var(--ink);
-}
-
-.ad__pulse-cell--warn .ad__pulse-value {
+.ad__kinds-val--warn {
   color: var(--warn-ink);
 }
 
-.ad__pulse-cell--ok .ad__pulse-value {
-  color: var(--ok-ink);
+.ad__kinds-val--ok {
+  color: var(--ok-ink, var(--muted));
 }
 
-.ad__pulse-cell--danger .ad__pulse-value {
-  color: var(--danger-ink);
+.ad__kinds-val--danger {
+  color: var(--danger-ink, var(--warn-ink));
 }
 
 /* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个

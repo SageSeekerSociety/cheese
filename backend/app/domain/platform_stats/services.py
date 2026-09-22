@@ -135,12 +135,17 @@ class PlatformStatsService:
         since, until, buckets = utc_day_window(days)
         created = await self._users.accounts_series(since=since, until=until)
         admins = await AdminService(self._session).admin_handles()
+        kinds = await self._users.count_accounts_by_kind()
         return {
             "days": days,
             "people": {
                 "total": await self._users.count_accounts(),
                 "new": sum(created.values()),
                 "admins": len(admins),
+                # 真人 / agent 的拆分。判据是 `agent_bindings`，和
+                # `IdentityService.is_agent` 同一份 —— 见 `count_accounts_by_kind`。
+                "humans": kinds["humans"],
+                "agents": kinds["agents"],
                 "series": dense_series(buckets, {"created": created}),
             },
             "machines": await self._machines.counts(),

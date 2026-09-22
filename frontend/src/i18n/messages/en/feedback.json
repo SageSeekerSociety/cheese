@@ -194,6 +194,8 @@
     },
     "people": {
       "total": "Accounts",
+      "humans": "Humans",
+      "agents": "Agents",
       "new": "New · 7d",
       "admins": "Platform admins",
       "chart": "New accounts per day"

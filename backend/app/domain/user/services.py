@@ -138,6 +138,12 @@ class AccountService:
     async def count_accounts(self) -> int:
         return await self._repo.count_accounts()
 
+    async def count_accounts_by_kind(self) -> dict[str, int]:
+        """真人 / agent 的存量拆分。判据是 `agent_bindings`（与
+        `IdentityService.is_agent` 同一份），见
+        `UserRepository.count_accounts_by_kind`。"""
+        return await self._repo.count_accounts_by_kind()
+
     async def accounts_series(
         self, *, since: datetime, until: datetime
     ) -> dict[date, int]:
