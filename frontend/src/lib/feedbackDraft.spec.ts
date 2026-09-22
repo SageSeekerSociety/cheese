@@ -32,7 +32,7 @@ function draft(over: Partial<FeedbackDraft> = {}): FeedbackDraft {
     body: '正文',
     repro: '',
     expectation: '',
-    attachments: [],
+    tags: [],
     attachContext: false,
     visibility: 'public',
     ...over,
@@ -49,11 +49,11 @@ beforeEach(() => {
 })
 
 describe('有没有东西', () => {
-  it('标题、正文、附件、提案卡指针，任何一样有内容都算', () => {
+  it('标题、正文、标签、提案卡指针，任何一样有内容都算', () => {
     expect(isDraftMeaningful(draft())).toBe(true)
     expect(isDraftMeaningful(draft({ title: '  ', body: '' }))).toBe(false)
     expect(isDraftMeaningful(draft({ title: '', body: '  ' }))).toBe(false)
-    expect(isDraftMeaningful(draft({ title: '', body: '', attachments: ['a.png'] }))).toBe(true)
+    expect(isDraftMeaningful(draft({ title: '', body: '', tags: ['移动端'] }))).toBe(true)
     expect(isDraftMeaningful(draft({ title: '', body: '', expectation: '应该这样' }))).toBe(true)
     expect(isDraftMeaningful(draft({ title: '', body: '', proposal: { topicId: 't', blockId: 'b' } }))).toBe(true)
     expect(isDraftMeaningful(null)).toBe(false)

@@ -48,7 +48,10 @@ const { t } = useI18n()
 const SECTIONS = [
   { to: '/admin/queue', name: 'AdminQueue', icon: 'mdi-tray-full', label: '队列', badge: true },
   { to: '/admin/dashboard', name: 'AdminDashboard', icon: 'mdi-chart-line', label: '看板', badge: false },
-  { to: '/admin/spaces', name: 'AdminSpaces', icon: 'mdi-check-decagram-outline', label: '题目板审核', badge: false },
+  // 「开板申请」而不是「题目板审核」：需求方在这一页上问过「题目板审核是什么」——
+  // 名字说的是**你对它做什么**（审核），而他要找的是**这里面装的是什么**（有人申请开
+  // 一个新题目板）。入口的名字该回答后者，动作（批准 / 驳回）是页面里的事。
+  { to: '/admin/spaces', name: 'AdminSpaces', icon: 'mdi-check-decagram-outline', label: '开板申请', badge: false },
   { to: '/admin/members', name: 'AdminMembers', icon: 'mdi-account-multiple-outline', label: '成员', badge: false },
 ]
 

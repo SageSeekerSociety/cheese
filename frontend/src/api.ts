@@ -2238,29 +2238,70 @@ export function getAdminFeedback(feedbackId: string): Promise<FeedbackDetail> {
   return request<FeedbackDetail>(`/admin/feedback/${encodeURIComponent(feedbackId)}`)
 }
 
-/** 看板的汇总：四个总数、按天的两条曲线、以及成本合计。
+/* ---- 看板：一个分类一条接口 -------------------------------------------
  *
- *  **单开一条接口**，不是拿列表在前端数出来：看板要的是 7 天的聚合，而列表回的是
- *  「这一栏的第一页」。在前端数，就是把筛选和分页各抄第二份 —— 数出来的数字和它
- *  旁边那一栏会停在某个边界上对不上，而两边各自看着都对。
+ * 服务端把看板拆成三块（`backend/app/api/routes/admin_stats.py`），**切到哪一类才拉
+ * 哪一类**：合成一条的话，切到第二、第三类时读的是几十秒前的数，而这三块里有两块读
+ * 的是全平台增长最快的表（`resource_usage` 每调一次 `/v1/messages` 长一行）。
  *
- *  **这条路径必须在 `/{feedback_id}` 之前注册**：`stats` 不是一个 uuid，后注册的话
- *  它会被那条动态段先吃掉，症状是 422 而不是 404 —— 报错指向的地方和原因差很远。
+ * `days` 默认 7（就是页头上那句「过去 7 天」）。窗口是**页面**问的问题，所以由调用方
+ * 给，不写死在这里。
+ *
+ * ⚠️ 这里以前是一条 `/admin/feedback/stats`。服务端把它拆成下面这三条之后，前端有
+ * 一段时间还指着老路 —— 而老路上没有路由了，`stats` 就落进 `/admin/feedback/{id}`
+ * 那条动态段，回来的是一句「不是合法 uuid」的 400，报错指向的地方和原因差很远。
+ * 三块各自有名字之后，这种「路径悄悄指向另一个资源」不可能再发生。
  */
-export interface AdminFeedbackStats {
-  /** 窗口天数。回显回来，页面不用自己记着问的是几天。 */
+
+/** 反馈那一块：七个栏位的全量计数，加窗口内按天的新增 / 修复 / 上线。 */
+export interface StatsFeedback {
   days: number
-  totals: { untriaged: number; in_progress: number; resolved: number; deployed: number }
-  /** 按天两条曲线，长度恒等于 `days`、最早在前。缺口由服务端补零。 */
-  series: { date: string; created: number; resolved: number }[]
-  /** 用量那本账不在反馈域里，拿不到就是 null —— 页面把那张卡降级，不带走整页。 */
-  cost: { calls: number; usd: number } | null
+  counts: {
+    all: number
+    hot: number
+    active: number
+    resolved: number
+    deployed: number
+    unread: number
+    unassigned: number
+  }
+  /** 长度恒等于 `days`、最早的一天在前。缺的那天是 0，不是一段缺口。 */
+  series: { date: string; created: number; resolved: number; deployed: number }[]
 }
 
-/** `days` 默认 7（就是看板上那句「过去 7 天」）。窗口是**页面**问的问题，所以由
- *  调用方给，不写死在这里。 */
-export function getAdminFeedbackStats(opts?: { days?: number }): Promise<AdminFeedbackStats> {
-  return request<AdminFeedbackStats>(`/admin/feedback/stats${feedbackQuery({ days: opts?.days ?? 7 })}`)
+/** 用量那一块。`unpriced_tokens` 与 `cost_usd` **一起读才对**：前者是「这些 token
+ *  算不出价钱」（订阅按月计费，行上的 0 是「没有价」不是「免费」），少了它，几百万
+ *  token 上印一个 `$0.0000` 读起来像「这个月没花钱」。 */
+export interface StatsUsage {
+  days: number
+  totals: { tokens: number; calls: number; cost_usd: number; unpriced_tokens: number }
+  series: { date: string; tokens: number; calls: number; cost_usd: number }[]
+  /** 柱状图的每一根都带 id 和名字。**今天柱子不点得开**（看板上那一张只报数），
+   *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
+   *  只按名字连线，两个同名项目会合成一根柱子。 */
+  top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
+}
+
+/** 平台那一块。`machines` 是四张台账的**存量**，不是在线数 —— 在线状态住在进程内存
+ *  里，库里没有可以查的那一列。 */
+export interface StatsPlatform {
+  days: number
+  people: { total: number; new: number; admins: number; series: { date: string; created: number }[] }
+  machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
+}
+
+/** 分类 → 它那条接口的形状。`getStats` 的返回类型由这个映射查出来，所以调用方
+ *  拿到的永远是它问的那一类，而不是一个三选一的联合（联合要在每个用的地方再窄化
+ *  一次，而那正是「切到用量页却读了反馈的字段」这类错会藏身的地方）。 */
+export interface StatsShapes {
+  feedback: StatsFeedback
+  usage: StatsUsage
+  platform: StatsPlatform
+}
+export type StatsKind = keyof StatsShapes
+
+export function getStats<K extends StatsKind>(kind: K, opts?: { days?: number }): Promise<StatsShapes[K]> {
+  return request<StatsShapes[K]>(`/admin/stats/${kind}${feedbackQuery({ days: opts?.days ?? 7 })}`)
 }
 
 /** 改了哪几项就传哪几项，`undefined` 表示「别动它」。**没有 visibility**：
@@ -2379,7 +2420,7 @@ export function dismissFeedbackProposal(topicId: string, blockId: string): Promi
 
 /** 发送：把卡变成一条正式反馈。
  *
- *  正文走请求体而不是卡上的原文 —— 抽屉是预填的，人可以改完再发，而按下发送的
+ *  正文走请求体而不是卡上的原文 —— 表单是预填的，人可以改完再发，而按下发送的
  *  人为自己发出去的东西负责。作者从卡上取（提案的 agent），提交者取验证过的
  *  调用者，两个字段都不是客户端能填的。 */
 export function acceptFeedbackProposal(

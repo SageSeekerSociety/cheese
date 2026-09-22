@@ -732,10 +732,21 @@ class TestSpaceDomainGroups:
         api_client: TestClient,
     ):
         """Regression test: non-admin users must be able to list domain groups
-        so they can select access-control domains when publishing/editing tasks."""
+        so they can select access-control domains when publishing/editing tasks.
+
+        A member, not an admin — that was always the point. They have to be in
+        the 题目版 to read anything of it at all, so the owner puts them in.
+        """
         space_id = setup_space_with_groups["space_id"]
+        owner = setup_space_with_groups["owner"]
         other = user_client.create_user()
         other.token = user_client.login(api_client, other.username, other.password)
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": other.user_id},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert added.status_code == 201, added.text
 
         resp = api_client.get(
             f"/spaces/{space_id}/domain-groups",

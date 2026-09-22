@@ -44,7 +44,6 @@ Space:
     updatedAt:
       type: integer
       format: int64
-
 SpaceCategory:
   type: object
   properties:
@@ -146,3 +145,74 @@ CreateCategoryRequest:
       type: string
   required:
     - name
+
+SpaceMember:
+  type: object
+  description: |
+    One person the space is visible to. Membership and the admin relation are
+    different questions: a space's owner and admins keep seeing it without a
+    row here, and removing a member takes nothing else away.
+  properties:
+    userId:
+      type: integer
+      format: int64
+    joinedAt:
+      type: integer
+      format: int64
+    user:
+      $ref: '../user/schemas.yaml#/User'
+
+SpaceInviteCode:
+  type: object
+  description: |
+    A space's own invite code. Not the platform's registration `invite_code`:
+    redeeming this one puts you in the space, it does not create an account.
+  properties:
+    id:
+      type: integer
+      format: int64
+    spaceId:
+      type: integer
+      format: int64
+    code:
+      type: string
+    maxUses:
+      type: integer
+    useCount:
+      type: integer
+    expiresAt:
+      type: integer
+      format: int64
+      nullable: true
+    createdAt:
+      type: integer
+      format: int64
+
+JoinSpaceRequest:
+  type: object
+  properties:
+    code:
+      type: string
+  required:
+    - code
+
+AddSpaceMemberRequest:
+  type: object
+  properties:
+    userId:
+      type: integer
+      format: int64
+  required:
+    - userId
+
+CreateSpaceInviteCodeRequest:
+  type: object
+  properties:
+    maxUses:
+      type: integer
+      description: How many times the code may be redeemed. Defaults to 50.
+    expiresAt:
+      type: integer
+      format: int64
+      nullable: true
+      description: Epoch milliseconds; omit for a code that never expires.

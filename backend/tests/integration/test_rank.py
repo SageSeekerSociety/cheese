@@ -41,6 +41,16 @@ class TestRankIntegration:
         space_id = space_data["id"]
         default_category_id = space_data["defaultCategoryId"]
 
+        # The participant has to be in the 题目版 to read it at all: a board
+        # answers only the people in it, and that includes the ones ranking up
+        # inside it. The creator puts them in, the way a teacher would.
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": participant.user_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert added.status_code == 201, added.text
+
         deadline = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
 
         task1_resp = api_client.post(
@@ -541,6 +551,15 @@ class TestRankIntegration:
         space_id = space_resp.json()["data"]["space"]["id"]
         default_category_id = space_resp.json()["data"]["space"]["defaultCategoryId"]
 
+        # In the 题目版, or the rank they earn inside it is unreadable to them:
+        # the board answers only the people in it.
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": participant.user_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert added.status_code == 201, added.text
+
         task1_resp = api_client.post(
             "/tasks",
             json={
@@ -674,6 +693,15 @@ class TestRankIntegration:
         )
         space_id = space_resp.json()["data"]["space"]["id"]
         default_category_id = space_resp.json()["data"]["space"]["defaultCategoryId"]
+
+        # In the 题目版, or the rank they earn inside it is unreadable to them:
+        # the board answers only the people in it.
+        added = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": participant.user_id},
+            headers={"Authorization": f"Bearer {creator.token}"},
+        )
+        assert added.status_code == 201, added.text
 
         task1_resp = api_client.post(
             "/tasks",

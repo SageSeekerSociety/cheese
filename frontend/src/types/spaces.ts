@@ -13,6 +13,33 @@ export type Space = {
   visibleTaskLimit?: number | null
 }
 
+/** One person the space is visible to — see `SpacesApi.listMembers`. */
+export type SpaceMember = {
+  userId: number
+  joinedAt: number
+  user?: {
+    id: number
+    username: string
+    nickname?: string
+    avatarId?: number | null
+    intro?: string
+  }
+}
+
+/**
+ * A space's own invite code. Not the registration `InviteCode`: redeeming
+ * this one puts you in the space, it does not create an account.
+ */
+export type SpaceInviteCode = {
+  id: number
+  spaceId: number
+  code: string
+  maxUses: number
+  useCount: number
+  expiresAt: number | null
+  createdAt: number
+}
+
 export type SpaceCategory = {
   id: number
   name: string

@@ -5,7 +5,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
-import SubmitFeedbackDrawer from './SubmitFeedbackDrawer.vue'
+import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 
 import { KIND_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -15,7 +15,8 @@ import { useFeedbackStore } from '@/stores/feedback'
 //
 // 它解决的问题是**上下文会丢**：问题是在对话里发现的，复现步骤、会话 ID、现场
 // 日志都在对话里；让人另开一个页面重新打一遍，最有价值的那部分就没了。所以这张卡
-// 自己带着三段现场，点「提交反馈」直接把它们递进同一个抽屉。
+// 自己带着三段现场，点「提交反馈」就地开一个对话框把它们递进去（**不跳页**：跳走会把
+// 这张卡留在身后，而它提交完要就地翻成一张凭证）。
 //
 // 三颗按钮的位置是有讲究的，不是随便排的：
 //   * 查看详情  —— 展开 What happened / Repro / Evidence。默认收起：不展开就先
@@ -31,7 +32,7 @@ import { useFeedbackStore } from '@/stores/feedback'
 //     原型只是把这一帧的 state 改成 dismissed，刷新就回来 —— 而「我拒绝过这个」
 //     恰恰是最需要跨刷新记住的一句话。
 //   * 发出去的是哪条：走 `accept`（`POST .../{block_id}/accept`），作者从卡上取
-//     （提案的 agent），提交者取调用者（我）。正文以抽屉里那份为准 —— 人要为自己
+//     （提案的 agent），提交者取调用者（我）。正文以表单里那份为准 —— 人要为自己
 //     发出去的东西负责，所以他能改。
 //
 // 卡片正文里最显眼的那一块是**用户原话**（`user_said`）。服务端把它做成必填，
@@ -53,8 +54,11 @@ const submitted = ref<Record<string, string>>({})
 const dismissed = ref<Set<string>>(new Set())
 /** 展开着的那些（按 block_id）。 */
 const expanded = ref<Set<string>>(new Set())
-/** 抽屉正为哪张卡开着的。抽屉是全局唯一的那一个，所以只需要记一个。 */
+/** 提交表单正为哪张卡开着。表单是全局唯一的那一份，所以只需要记一个。 */
 const pending = ref<string | null>(null)
+/** 对话框开着没有。它和 `pending` 是两件事：`pending` 说的是「提交成功后算哪张卡的
+ *  凭证」，关掉对话框要给那张卡留一句话，所以它得活到 `onSubmitted` 跑完。 */
+const formOpen = ref(false)
 
 async function load() {
   const asked = props.topicId
@@ -82,7 +86,7 @@ function toggleExpanded(blockId: string) {
   expanded.value = next
 }
 
-function openDrawer(proposal: FeedbackProposal) {
+function openForm(proposal: FeedbackProposal) {
   const p = proposal.payload
   pending.value = proposal.block_id
   store.openSubmit({
@@ -90,6 +94,9 @@ function openDrawer(proposal: FeedbackProposal) {
     title: p.title,
     body: p.problem,
     visibility: p.visibility,
+    // 提案自己带的标签一起填进去：后端一直收 `tags`、也一直在提案上带着它，只是表单
+    // 以前没这一栏。人可以在表单上改 —— 发出去的是他改过的那份。
+    tags: p.tags ?? [],
     // 从这张卡进来时现场默认勾上：卡存在的理由就是别让现场丢掉。
     attachContext: true,
     fromAgent: {
@@ -101,6 +108,7 @@ function openDrawer(proposal: FeedbackProposal) {
     },
     proposal: { topicId: props.topicId, blockId: proposal.block_id },
   })
+  formOpen.value = true
 }
 
 /** 「不用」。服务端按**指纹**记，所以同一个问题的另一种说法回来时是另一条，会被再问一次
@@ -110,7 +118,7 @@ function dismiss(proposal: FeedbackProposal) {
   void store.dismissProposal(props.topicId, proposal.block_id)
 }
 
-/** 抽屉提交完成 —— 它是全局共享的那一个，所以只由**开着它的那张卡**记下来。 */
+/** 提交完成 —— 表单是全局共享的那一份，所以只由**开着它的那张卡**记下来。 */
 function onSubmitted(id: string) {
   const blockId = pending.value
   pending.value = null
@@ -214,15 +222,15 @@ function onSubmitted(id: string) {
           </v-btn>
           <v-btn variant="text" color="secondary" size="small" @click="dismiss(proposal)">不用</v-btn>
           <v-spacer />
-          <v-btn color="primary" size="small" @click="openDrawer(proposal)">提交反馈</v-btn>
+          <v-btn color="primary" size="small" @click="openForm(proposal)">提交反馈</v-btn>
         </div>
       </div>
     </v-card>
   </template>
 
-  <!-- 抽屉挂在卡片外面：它 temporary、fixed 定位，跟着卡片一起被条件渲染的话，
-       点「提交反馈」到抽屉出现之间会多一帧空档，看起来像没反应。 -->
-  <SubmitFeedbackDrawer @submitted="onSubmitted" />
+  <!-- 对话框挂在卡片外面：跟着卡片一起被条件渲染的话，点「提交反馈」到它出现之间会
+       多一帧空档，看起来像没反应。 -->
+  <SubmitFeedbackDialog v-model:open="formOpen" @submitted="onSubmitted" />
 </template>
 
 <style scoped>

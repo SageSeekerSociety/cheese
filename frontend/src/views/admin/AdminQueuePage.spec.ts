@@ -119,6 +119,27 @@ describe('队列页', () => {
     expect(listCalls).toBe(before)
   })
 
+  it('栏位控件：四个都画出来，换了就重新取数', async () => {
+    const { container, getByRole } = await mountQueue()
+    await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
+
+    // 四个**都**画出来，不是一个下拉：这一页最贵的一类错是「管理员以为某条反馈不见了，
+    // 其实它在隔壁那一栏」（服务端那个 400 就是为此存在的），所以当前停在哪一栏必须
+    // 一眼看得见。
+    const lanes = Array.from(container.querySelectorAll('.qpage__lane')).map((el) => el.textContent?.trim())
+    expect(lanes).toEqual(['公开', '私密', 'AI 队友提的', '安全'])
+    expect(getByRole('radio', { name: '公开' }).getAttribute('aria-checked')).toBe('true')
+
+    // 换栏位是**服务端的问法**（`GET /admin/feedback?tab=`），所以必须重新取数 ——
+    // 和上面那条「切状态页签一个请求都不发」正好相反，两者不是一回事。
+    const before = listCalls
+    await fireEvent.click(getByRole('radio', { name: '私密' }))
+
+    await waitFor(() => expect(listCalls).toBeGreaterThan(before))
+    expect(getByRole('radio', { name: '私密' }).getAttribute('aria-checked')).toBe('true')
+    expect(getByRole('radio', { name: '公开' }).getAttribute('aria-checked')).toBe('false')
+  })
+
   it('拉不到列表时画错误态，重试把它救回来', async () => {
     failTimes = 1
 

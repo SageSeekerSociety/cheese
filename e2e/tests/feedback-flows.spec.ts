@@ -97,18 +97,19 @@ test('用户提一条反馈，能看见、能支持、能评论', async ({ page 
   await page.goto('/feedback');
   await page.locator('.fb-page').waitFor();
 
-  // 提一条。页头上那颗「提交反馈」和抽屉里那颗同名，而且抽屉即使关着也留在 DOM 里
-  // （Vuetify 的 navigation-drawer 只是藏起来），所以两边都得限定范围，否则
-  // getByRole 会因为两个同名按钮直接抛 strict mode 的错。抽屉是 .fb-page__inner
-  // 的兄弟节点，按内容区限定就只剩页头那一颗。
-  await page.locator('.fb-page__inner').getByRole('button', { name: '提交反馈' }).click();
-  const drawer = page.locator('.fb-drawer');
-  await drawer.waitFor();
-  await drawer.getByLabel('标题').fill(title);
-  await drawer.getByRole('button', { name: '提交反馈' }).click();
+  // 提一条。提交是**独立页面**（`/feedback/new`），页头那颗渲染成链接 —— 不再是
+  // 抽屉，所以这里也不必再限定范围去躲两个同名按钮。
+  await page.getByRole('link', { name: '提交反馈' }).click();
+  await expect(page).toHaveURL(/\/feedback\/new$/);
 
-  // 提交成功后前端会跳详情页（FeedbackCenterPage 的 onSubmitted），所以这里等的是
-  // 详情页的标题，而不是列表里多了一张卡。
+  // 必填两栏：标题 + 说明（`stores/feedback.ts` 的 `submit` 两栏都查）。说明那一栏
+  // 的标题跟着类型走，而新建的草稿默认是 bug，所以它是「发生了什么」。
+  await page.getByLabel(/^标题/).fill(title);
+  await page.getByLabel(/^发生了什么/).fill(`在反馈中心点了提交，这一条是 e2e 自己造的：${title}`);
+  await page.getByRole('button', { name: '提交反馈' }).click();
+
+  // 提交成功后表单页 `replace` 到详情页（`FeedbackSubmitPage` 的 onSubmitted），所以
+  // 这里等的是详情页的标题，而不是列表里多了一张卡。
   await expect(page.locator('.fb-title')).toHaveText(title);
   await expect(page).toHaveURL(/\/feedback\/[0-9a-f-]{36}$/);
   // 刚提的条目落在梯子的第一级，标签是「已收录」——不是「开放」「待处理」之类。
