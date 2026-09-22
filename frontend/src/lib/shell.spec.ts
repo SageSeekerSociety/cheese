@@ -74,8 +74,8 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
       'workspace',
       'inbox',
     ])
-    // 侧栏那一面 default 只摆资料库：日历和名册在项目名旁边的 ⋯ 菜单里，
-    // 看板就是首页（项目名那一行点下去就到），所以它们不在 nav.project 里。
+    // 侧栏那一面：资料库和名册是常驻那两格，日历默认收进项目名旁边那个 ⋯ 菜单。
+    // 看板不在里面——它就是首页，项目名那一行点下去就到。
     expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual(['calendar', 'project-library', 'project-members'])
   })
 })

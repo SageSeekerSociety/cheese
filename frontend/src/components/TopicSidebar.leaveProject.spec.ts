@@ -9,7 +9,7 @@
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, ref } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -303,5 +303,69 @@ describe('退出：先确认，确认之后退出、刷新、回首页', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     await waitFor(() => expect(leaveProject).toHaveBeenCalledWith('p2'))
     expect(leaveProject).not.toHaveBeenCalledWith('p1')
+  })
+})
+
+describe('转让之后：刷新 → 重判，不重挂', () => {
+  it('setProjectOwner 之后行上的 owner 换了人，退出长出来、转让消失', async () => {
+    meHandle = 'alice'
+    // 可变的项目行——生产里 ProjectSidebar 把 store.projects 传给这一层，而
+    // refreshProjects 是整份换掉它（`projects.value = (await listProjects()).data`）。
+    // host 按当前值往里传（同 ProjectSidebar 的绑定），所以换值之后这一层必须自己
+    // 重判——转让完还能退出，靠的就是这根线。
+    const storeProjects = ref([
+      { id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'alice' },
+    ])
+    refreshProjects.mockImplementation(async () => {
+      storeProjects.value = [
+        { id: 'p1', name: '知是', created_at: '2026-08-10T00:00:00Z', owner_handle: 'bobby' },
+      ]
+    })
+    listProjectMembers.mockResolvedValue({
+      data: [
+        { user_handle: 'bobby', role: 'member', name: '鲍比' },
+        { user_handle: 'alice', role: 'lead', name: '爱丽丝', source: 'owner' },
+      ],
+      total: 2,
+    })
+
+    const HostArc = defineComponent({
+      setup: () => () =>
+        h(VLayout, null, {
+          default: () => [
+            h(Sidebar, {
+              projects: storeProjects.value,
+              selectedProjectId: 'p1',
+              topics,
+              selectedTopicId: null,
+              loadingTopics: false,
+            }),
+          ],
+        }),
+    })
+    if (!document.getElementById('app-bar-slot')) {
+      const slot = document.createElement('div')
+      slot.id = 'app-bar-slot'
+      document.body.appendChild(slot)
+    }
+    const vuetify = createVuetify({ components, directives })
+    const router = makeRouter()
+    const { container } = render(HostArc, {
+      global: { plugins: [vuetify, router, createPinia()] },
+    })
+
+    expect(headerBtn(container, '转让项目')).toBeTruthy()
+    expect(headerBtn(container, '退出项目')).toBeNull()
+
+    await fireEvent.click(headerBtn(container, '转让项目') as Element)
+    await fireEvent.click(await screen.findByText('鲍比'))
+    await fireEvent.click(await screen.findByRole('button', { name: '转让' }))
+    await waitFor(() => expect(setProjectOwner).toHaveBeenCalledWith('p1', 'bobby'))
+    await waitFor(() => expect(refreshProjects).toHaveBeenCalled())
+    await waitFor(() => expect(storeProjects.value[0].owner_handle).toBe('bobby'))
+
+    // 同一棵树，没有重挂：转让那颗消失，退出那颗出现。
+    await waitFor(() => expect(headerBtn(container, '退出项目')).toBeTruthy())
+    expect(headerBtn(container, '转让项目')).toBeNull()
   })
 })

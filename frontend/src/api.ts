@@ -1977,9 +1977,6 @@ export function setProjectOwner(projectId: string, ownerHandle: string): Promise
   })
 }
 
-
-
-
 // ---- 邀请：加人这件事要两个人同意 --------------------------------------------
 // 进了项目就看得见这个项目的全部话题，那是别人的工作内容，所以从界面上加人得由
 // 被加的那个人点头。`addProjectMember` 那条路仍然在，它是接受之后真正把人放上名册
