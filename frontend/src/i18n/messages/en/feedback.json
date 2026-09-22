@@ -143,9 +143,6 @@
       "resolved": "Resolved",
       "deployed": "Deployed"
     },
-    "list": {
-      "title": "Needs action · {count}"
-    },
     "cost": {
       "kpi": "Cost",
       "unpricedLabel": "Unpriced tokens",
@@ -158,12 +155,6 @@
     "error": {
       "title": "Couldn't load the dashboard",
       "desc": "Check your connection and try again."
-    },
-    "tab": {
-      "feedback": "Feedback",
-      "usage": "Usage",
-      "platform": "Platform",
-      "performance": "Performance"
     },
     "perf": {
       "active": "In flight",
@@ -235,6 +226,167 @@
       "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
       "healthy": "Healthy",
       "degraded": "Degraded"
+    },
+    "tab": {
+      "feedback": "Feedback",
+      "usage": "Usage",
+      "platform": "Platform",
+      "performance": "Performance",
+      "pipeline": "Delivery",
+      "product": "Product",
+      "integrations": "Integrations"
+    },
+    "spine": {
+      "title": "Delivery chain",
+      "note": "Four stations are throughput at different moments, not a funnel over one cohort. The merge station counts PR cards only — a card without a PR has pr_merged_at empty forever. The machine gate is retired and not on the chain (#296)."
+    },
+    "dwell": {
+      "minutes": "min",
+      "hours": "h",
+      "days": "d"
+    },
+    "list": {
+      "title": "Needs action · {count}",
+      "all": "All {n}"
+    },
+    "pipeline": {
+      "title": "Delivery pipeline",
+      "kpi": {
+        "live": "In flight",
+        "stuck": "Stuck",
+        "dwell": "Filed to decision",
+        "needsYou": "Needs you"
+      },
+      "station": {
+        "filed": "Filed",
+        "decided": "Decided",
+        "merged": "Merged",
+        "archived": "Archived"
+      },
+      "stuck": {
+        "title": "Stuck cards",
+        "empty": "Nothing is stuck",
+        "note": "Stuck is judged by note_code in the stuck set, never by note text — a code left out of the set is silent forever."
+      },
+      "needs": {
+        "title": "Needs you",
+        "empty": "Nothing is waiting on you",
+        "note": "Three reasons only — the closed set in delivery/addressing.py (reviewer / reporter / asked).",
+        "task": "Task",
+        "room": "Room"
+      },
+      "failures": {
+        "title": "Turn failures",
+        "note": "Structured source is blocks.meta code, not agent_turns — that table has no failure column. Credits refusals are counted separately via credits_refused_at."
+      },
+      "code": {
+        "turn_timeout": "Turn timeout",
+        "prompt_undelivered": "Prompt undelivered",
+        "host_unreachable": "Host unreachable",
+        "storage_exhausted": "Storage exhausted",
+        "runtime_image_missing": "Runtime image missing",
+        "subscription_credential_expired": "Subscription credential expired",
+        "workspace_vcs_perms": "Workspace VCS perms",
+        "other": "Other"
+      },
+      "host": {
+        "title": "Host failure streaks",
+        "empty": "No hosts with a failure streak",
+        "note": "Current streak only — any success deletes the row, so this cannot answer how many were quarantined last week."
+      },
+      "backlog": {
+        "note": "Backlog is stock. A live card blocks the room from re-filing, so in-flight is not just queueing slowly."
+      },
+      "age": {
+        "minutes": "{n}m",
+        "hours": "{h}h",
+        "days": "{d}d"
+      }
+    },
+    "product": {
+      "title": "Product health",
+      "northStar": "Accepted AI artifacts",
+      "northStarNote": "Bucketed by decided_at. It is the LAST decision time and revoke overwrites it — a card accepted then revoked loses its accept moment.",
+      "rejection": {
+        "title": "Where filed cards ended",
+        "note": "Returned = rejected + gate red/blocked + conflict + void. A true revoke is not a return. Denominator is cards filed in the window (including still-live).",
+        "rejected": "Rejected",
+        "voided": "Voided",
+        "revoked": "Revoked after accept",
+        "gate": "Gate red / blocked",
+        "conflict": "Merge conflict",
+        "live": "Still live"
+      },
+      "usefulness": {
+        "title": "Proactive usefulness",
+        "up": "Useful",
+        "down": "Not useful",
+        "unrated": "Read, no rating",
+        "unread": "Unread",
+        "note": "Feedback lives on notifications only. Most proactive speech is in-room blocks, and platform/agent announcements deliberately send no recipients — without this note, 90% useful reads as 90% of what the agent says."
+      },
+      "unavailable": {
+        "title": "Not computable today",
+        "note": "No data source. Any number here would have to be invented.",
+        "summon": "Acceptance rate after summoning the agent: agent_turns has no summon flag and accept_cards has no origin turn — there is no foreign key between them.",
+        "churn": "Churn after credits exhausted: compute_grants has no exhausted_at, user has no last_login."
+      }
+    },
+    "integrations": {
+      "title": "Integrations",
+      "oauth": {
+        "title": "OAuth credentials",
+        "total": "Connections",
+        "expired": "Expired",
+        "expiring": "Expiring in 7 days",
+        "noRefresh": "No refresh_token",
+        "note": "Missing refresh_token is not the same as expired: an expired one can still be refreshed, one without refresh is permanently dead on expiry. token_expires is a fixed expiry, not a recent failure."
+      },
+      "passkey": {
+        "title": "Passkey coverage",
+        "note": "Denominator is all non-deleted accounts, not active ones (user has no last_login). TOTP lives in Redis, not the database — so this reports passkey, not 2FA coverage."
+      },
+      "delivery": {
+        "title": "Delivery ledger",
+        "unsent": "Will retry",
+        "dead": "Dead letters",
+        "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike."
+      },
+      "unavailable": {
+        "title": "Not observable today",
+        "note": "Needs instrumentation. A zero here would mean checked and empty.",
+        "githubAppPermissionGaps": "GitHub App permission gaps: granted_permissions() lives 10 minutes in process memory and is never stored.",
+        "githubAppMintFailureRate": "GitHub App mint failure rate: logged only, never counted.",
+        "loginLockoutStockAndRate": "Login lockout history: login_security rate-limiters are Redis keys with no history.",
+        "meteringPostFreeze": "Metering posting freeze: admission fails open on transport errors and leaves no trace outside the log."
+      }
+    },
+    "credits": {
+      "title": "Credits burnout",
+      "exhausted": "Exhausted",
+      "low": "Running low",
+      "unlimited": "Unlimited",
+      "burn": "Burn rate",
+      "eta": "Exhaust eta",
+      "note": "Exhausted / low / unlimited are three mutually exclusive sets — unlimited is the ABSENCE of a grant. Burn rate is derived from resource_usage (compute_grants has no deduction ledger). ETA is linear extrapolation; unlimited and zero-burn both render —."
+    },
+    "extras": {
+      "disk": {
+        "title": "Disk (this backend)",
+        "note": "Covers only this host's workspace_root. Remote devices and cloud machines have their own disks and are invisible here."
+      },
+      "preview": {
+        "title": "Preview tunnels",
+        "note": "Process memory, cleared on restart. This process only, not platform-wide."
+      },
+      "machines": {
+        "title": "Machine census",
+        "note": "Rows and state distribution across four ledgers, not a container count — one-container-per-room has no transport yet."
+      }
+    },
+    "reliability": {
+      "title": "Delivery and events",
+      "note": "Delivery backlog is stock, not a failure rate. Spool unread is an UPPER bound (reading is not consuming) and only sees this host's spool."
     }
   },
   "chart": {

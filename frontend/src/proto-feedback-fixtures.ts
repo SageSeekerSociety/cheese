@@ -1750,6 +1750,41 @@ function signupsOfDay(day: string): number {
   return weekdayOf(day) === 0 ? 0 : hashDay(`s${day}`) % 4
 }
 
+/** 额度燃尽。三个互斥名单 + 从 resource_usage 推的燃烧速率。 */
+function creditsBurnout(): Record<string, unknown> {
+  return {
+    exhausted: [
+      {
+        project_id: 'p-x',
+        name: '容器',
+        credits_total: 100,
+        credits_used: 110,
+        credits_remaining: -10,
+        ratio: 1,
+      },
+    ],
+    low: [
+      {
+        project_id: 'p-y',
+        name: '城西社区',
+        credits_total: 200,
+        credits_used: 190,
+        credits_remaining: 10,
+        ratio: 0.05,
+      },
+    ],
+    unlimited_project_ids: ['p-z'],
+    unlimited_count: 1,
+    burn: {
+      credits_in_window: 42,
+      credits_per_day: 6,
+      priced_credits: 30,
+      flat_credits: 12,
+      method: 'derived_from_resource_usage',
+    },
+  }
+}
+
 /** 平台那一块：账号的存量与新增、设备台账的存量。 */
 function platformStats(url: URL): Record<string, unknown> {
   const days = windowDays(url)
@@ -1917,16 +1952,267 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       active_requests: 2,
       uptime_seconds: 5 * 3600 + 37 * 60,
       loop_lag: { recent_ms: 3.4, worst_ms: 182.6 },
+      reliability: {
+        delivery_unsent: 2,
+        delivery_dead_letters: 1,
+        spool: { available: true, unread: 3, oldest_age_seconds: 120, spools: 2, note_key: 'perf.spoolNote' },
+      },
+    }
+  }
+
+  /** 交付管线。形状逐字照抄 `domain/platform_stats/pipeline.py`。
+   *
+   *  刻意留的几处：`voided_stock` 和 `revoked` 是两个数（void 不是状态，它是
+   *  `revoked` + `note_code=voided`）；`unavailable` 里的两条带着理由而不是 0；
+   *  `pr_open` 在 `by_status` 里是 0 —— 死写入的档位也要在，缺档和 0 在屏幕上必须
+   *  长得不一样。 */
+  function pipelineStats(): Record<string, unknown> {
+    const now = new Date()
+    const ago = (minutes: number) => new Date(now.getTime() - minutes * 60000).toISOString()
+    return {
+      days: 7,
+      backlog: {
+        by_status: {
+          pending: 4,
+          pending_gate: 0,
+          conflict: 1,
+          accepted: 12,
+          rejected: 2,
+          revoked: 3,
+          gate_failed: 0,
+          gate_blocked: 0,
+          pr_open: 0,
+        },
+        stuck: 2,
+        blocking_refile: 5,
+        voided_stock: 1,
+        live_total: 5,
+        settled_total: 17,
+      },
+      stuck_cards: [
+        {
+          card_id: 'c1',
+          topic_id: 't1',
+          topic_title: '官改文档 的成果待验收',
+          project_id: 'p1',
+          task_id: null,
+          reviewer_handle: 'wangchangxin',
+          status: 'pending',
+          note_code: 'repush_failed',
+          note: '修复没能推上 GitHub',
+          change_subject: 'docs: rewrite the handover doc',
+          age_seconds: 2 * 3600,
+        },
+        {
+          card_id: 'c2',
+          topic_id: 't2',
+          topic_title: '容器 的 PR 卡住了',
+          project_id: 'p2',
+          task_id: null,
+          reviewer_handle: 'wangchangxin',
+          status: 'pending',
+          note_code: 'merge_conflict',
+          note: '合并冲突，已派芝士解决',
+          change_subject: 'feat: add sandbox census',
+          age_seconds: 26 * 3600,
+        },
+      ],
+      dwell: {
+        filed_to_decision: { count: 9, p50_seconds: 4 * 3600, p90_seconds: 30 * 3600, max_seconds: 50 * 3600 },
+        filed_to_merge: { count: 6, p50_seconds: 2.1 * 3600, p90_seconds: 19 * 3600, max_seconds: 30 * 3600 },
+        open_card_age: { count: 5, p50_seconds: 6 * 3600, max_seconds: 26 * 3600 },
+        accepted_not_archived: { count: 2, max_seconds: 12 * 3600 },
+      },
+      needs_you: {
+        reviewer_pending: 4,
+        open_tasks: 3,
+        awaiting_answer: 1,
+        reasons: { reviewer: 4, reporter: 3, asked: 1 },
+        items: [
+          {
+            kind: 'room',
+            id: 't1',
+            title: '官改文档 的成果待验收',
+            project_id: 'p1',
+            topic_id: 't1',
+            at: ago(360),
+          },
+        ],
+      },
+      turn_failures: {
+        by_code: {
+          turn_timeout: 1,
+          prompt_undelivered: 1,
+          host_unreachable: 0,
+          storage_exhausted: 0,
+          runtime_image_missing: 0,
+          subscription_credential_expired: 1,
+          workspace_vcs_perms: 0,
+        },
+        other: 0,
+        credits_refused: 1,
+        prompt_undelivered: 1,
+      },
+      host_health: {
+        tracked: 1,
+        quarantined: 0,
+        rows: [
+          {
+            device_id: 'dev-3',
+            consecutive_failures: 2,
+            last_failure_code: 'storage_exhausted',
+            last_failure_at: ago(120),
+            quarantined_until: null,
+          },
+        ],
+      },
+      unsettled_dispatches: 0,
+    }
+  }
+
+  /** 产品健康。`unavailable` 那两条**今天算不出来** —— 带理由，不画 0。 */
+  function productStats(): Record<string, unknown> {
+    const days = readDays(windowDays(url))
+    const accepted = [2, 3, 5, 4, 6, 8, 10]
+    return {
+      days: windowDays(url),
+      north_star: {
+        total: 38,
+        series: days.map((date, i) => ({ date, accepted: accepted[i] ?? 0 })),
+        note_key: 'product.northStarNote',
+      },
+      rejection: {
+        filed: 10,
+        returned: 3,
+        returned_rate: 0.3,
+        buckets: {
+          accepted: 5,
+          rejected: 1,
+          voided: 1,
+          revoked_after_accept: 1,
+          revoked_other: 0,
+          gate_failed: 1,
+          gate_blocked: 0,
+          conflict: 0,
+          live: 1,
+          pr_open: 0,
+        },
+        note_key: 'product.rejectionNote',
+      },
+      usefulness: {
+        up: 12,
+        down: 3,
+        unrated_read: 8,
+        unread: 4,
+        useful_rate: 0.8,
+        proposal_dismissals: 2,
+        note_key: 'product.usefulnessNote',
+      },
+      unavailable: [
+        {
+          name: 'acceptance_rate_after_summon',
+          reason_key: 'product.unavailable.summon',
+          needs: 'agent_turns.summon 落库，accept_cards 带上来源轮次',
+        },
+        {
+          name: 'churn_after_credits_exhausted',
+          reason_key: 'product.unavailable.churn',
+          needs: 'compute_grants.exhausted_at + 账号活跃心跳',
+        },
+      ],
+    }
+  }
+
+  /** 集成与凭据。**没有 days** —— 存量问题，不是窗口曲线。 */
+  function integrationsStats(): Record<string, unknown> {
+    return {
+      oauth: {
+        total: 40,
+        expired: 3,
+        expiring_7d: 2,
+        no_refresh_token: 5,
+        note_key: 'integrations.oauthNote',
+      },
+      passkey: {
+        accounts: 120,
+        with_passkey: 36,
+        coverage: 0.3,
+        note_key: 'integrations.passkeyNote',
+      },
+      delivery: {
+        unsent: 2,
+        dead_letters: 1,
+        oldest_unsent_at: new Date(Date.now() - 3600000).toISOString(),
+        max_attempts: 5,
+        note_key: 'integrations.deliveryNote',
+      },
+      unavailable: [
+        {
+          name: 'github_app_permission_gaps',
+          reason_key: 'integrations.unavailable.githubPerms',
+          needs: '遍历 project_git_installations 调 granted_permissions() 并落库',
+        },
+        {
+          name: 'github_app_mint_failure_rate',
+          reason_key: 'integrations.unavailable.githubMint',
+          needs: '在 GitHubAppTokens._mint 失败处计数',
+        },
+        {
+          name: 'login_lockout_stock_and_rate',
+          reason_key: 'integrations.unavailable.lockout',
+          needs: '登录限流/锁定事件落库',
+        },
+        {
+          name: 'metering_post_freeze',
+          reason_key: 'integrations.unavailable.metering',
+          needs: '计量代理落账的心跳或对账落库',
+        },
+      ],
     }
   }
 
   const stats = /^\/admin\/stats\/([a-z]+)$/.exec(path)
   if (stats && method === 'GET') {
+    if (stats[1] === 'pipeline') return { data: pipelineStats() }
+    if (stats[1] === 'product') return { data: productStats() }
+    if (stats[1] === 'integrations') return { data: integrationsStats() }
     if (stats[1] === 'feedback') return { data: feedbackStats(url) }
-    if (stats[1] === 'usage') return { data: usageStats(url) }
-    if (stats[1] === 'platform') return { data: platformStats(url) }
+    if (stats[1] === 'usage') {
+      const u = usageStats(url) as Record<string, unknown>
+      u.credits = creditsBurnout()
+      return { data: u }
+    }
+    if (stats[1] === 'platform') {
+      const plat = platformStats(url) as Record<string, unknown>
+      plat.extras = {
+        disk: {
+          available: true,
+          free_gb: 274.9,
+          total_gb: 566.8,
+          used_pct: 51.5,
+          tier: 'ok',
+          warn_pct: 85,
+          critical_pct: 95,
+          note_key: 'platform.diskNote',
+        },
+        preview: { available: true, attached: 1, note_key: 'platform.previewNote' },
+        machines: {
+          devices: 7,
+          hosted_devices: 5,
+          warm_total: 3,
+          warm_by_state: { ready: 2, preparing: 1 },
+          warm_error: 0,
+          project_total: 2,
+          project_by_status: { ready: 2 },
+          project_leased: 1,
+          project_enroll_error: 0,
+          note_key: 'platform.machinesNote',
+        },
+      }
+      return { data: plat }
+    }
     if (stats[1] === 'performance') return { data: performanceStats() }
-    // 分类只有这四个，别的没有对应的路由 —— 服务端那是 404，不是「空数据」。
+    // 别的没有对应的路由 —— 服务端那是 404，不是「空数据」。
     return { missing: true }
   }
 

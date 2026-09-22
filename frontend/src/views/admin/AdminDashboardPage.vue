@@ -8,10 +8,14 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import AdminBarChart from '@/components/admin/AdminBarChart.vue'
+import AdminActionList from '@/components/admin/AdminActionList.vue'
 import AdminBreakTable from '@/components/admin/AdminBreakTable.vue'
 import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
+import AdminLiveSpine from '@/components/admin/AdminLiveSpine.vue'
+import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminNumberList from '@/components/admin/AdminNumberList.vue'
+import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -49,7 +53,15 @@ const DAYS = 7
 
 /** 分类的顺序就是这里的顺序。三类**一一对应服务端那三条接口**，不多不少：把「账号」
  *  和「机器」拆成两个分类的话，它们会各拉一次同一条 `/admin/stats/platform`。 */
-const KINDS: StatsKind[] = ['feedback', 'usage', 'platform', 'performance']
+const KINDS: StatsKind[] = [
+  'pipeline',
+  'product',
+  'feedback',
+  'usage',
+  'platform',
+  'performance',
+  'integrations',
+]
 
 /** 每个分类的名字。**写成一张键名字面量的表**，不在模板里拼
  *  `feedback.dashboard.tab.${kind}` —— 拼出来的键在源码里没有一处字面量出现，
@@ -57,10 +69,13 @@ const KINDS: StatsKind[] = ['feedback', 'usage', 'platform', 'performance']
  *  死词条（它扫的是源码文本，不是运行时的调用）。拼字符串在这里省下的是一行，代价是
  *  每次跑门禁都要重新解释一遍「这三个键其实是活的」。 */
 const TAB_KEY: Record<StatsKind, string> = {
+  pipeline: 'feedback.dashboard.tab.pipeline',
+  product: 'feedback.dashboard.tab.product',
   feedback: 'feedback.dashboard.tab.feedback',
   usage: 'feedback.dashboard.tab.usage',
   platform: 'feedback.dashboard.tab.platform',
   performance: 'feedback.dashboard.tab.performance',
+  integrations: 'feedback.dashboard.tab.integrations',
 }
 
 /** 队列的地址。写**地址**不写路由名：规格 §11 第 9 条钉的是地址。 */
@@ -400,6 +415,430 @@ const costNote = computed(() => (usage.value ? t('feedback.dashboard.cost.note')
  * 出来：没有窗口（只有此刻）、重启即清零、只覆盖业务 API。不说的话，读者会把它当
  * 成「整个平台的、有历史的」数 —— 而它两个都不是。
  */
+
+/* ---- 交付管线（新） ---------------------------------------------------- */
+
+const pipeline = computed(() => store.stats.pipeline)
+
+/** 活四站：建卡 → 决议 → 合并 → 归档。**没有「闸门」那一站** —— 机器闸门已退役
+ *  （#296），画上去就是一个永远空的站。四站各是**不同卡在不同时刻**的通过量，不是
+ *  同一批样本的漏斗，所以 `AdminLiveSpine` 用导轨不用漏斗图。 */
+const spineStages = computed(() => {
+  const p = pipeline.value
+  if (!p) return []
+  const backlog = p.backlog.by_status
+  const accepted = backlog['accepted'] ?? 0
+  const merged = p.dwell.filed_to_merge.count
+  const filed = p.dwell.filed_to_decision.count + p.dwell.open_card_age.count
+  const archived = p.dwell.accepted_not_archived
+    ? Math.max(0, accepted - p.dwell.accepted_not_archived.count)
+    : accepted
+  return [
+    {
+      key: 'filed',
+      label: t(STATION_KEY.filed),
+      count: filed,
+      dwellSeconds: p.dwell.open_card_age.p50_seconds,
+    },
+    {
+      key: 'decided',
+      label: t(STATION_KEY.decided),
+      count: p.dwell.filed_to_decision.count,
+      dwellSeconds: p.dwell.filed_to_decision.p50_seconds,
+    },
+    {
+      key: 'merged',
+      label: t(STATION_KEY.merged),
+      count: merged,
+      dwellSeconds: p.dwell.filed_to_merge.p50_seconds,
+    },
+    {
+      key: 'archived',
+      label: t(STATION_KEY.archived),
+      count: archived,
+      dwellSeconds: p.dwell.accepted_not_archived.max_seconds,
+    },
+  ]
+})
+
+/** 卡点徽章。只在 >0 时出现 —— 空着时不占位置，也不画一个 0 的徽章。 */
+const spineStuck = computed(() => {
+  const p = pipeline.value
+  if (!p) return []
+  const rows: { label: string; count: number }[] = []
+  if (p.backlog.stuck > 0)
+    rows.push({ label: t('feedback.dashboard.pipeline.kpi.stuck'), count: p.backlog.stuck })
+  if (p.needs_you.awaiting_answer > 0)
+    rows.push({
+      label: t('feedback.dashboard.pipeline.kpi.needsYou'),
+      count: p.needs_you.awaiting_answer,
+    })
+  if (p.turn_failures.credits_refused > 0)
+    rows.push({
+      label: t('feedback.dashboard.credits.exhausted'),
+      count: p.turn_failures.credits_refused,
+    })
+  return rows
+})
+
+const pipelineKpis = computed(() => {
+  const p = pipeline.value
+  return [
+    {
+      key: 'live',
+      label: t('feedback.dashboard.pipeline.kpi.live'),
+      value: num(p?.backlog.live_total),
+      loading: store.statsLoading,
+    },
+    {
+      key: 'stuck',
+      label: t('feedback.dashboard.pipeline.kpi.stuck'),
+      value: num(p?.backlog.stuck),
+      loading: store.statsLoading,
+    },
+    {
+      key: 'dwell',
+      label: t('feedback.dashboard.pipeline.kpi.dwell'),
+      value: hoursText(p?.dwell.filed_to_decision.p50_seconds ?? null),
+      loading: store.statsLoading,
+    },
+    {
+      key: 'needs',
+      label: t('feedback.dashboard.pipeline.kpi.needsYou'),
+      value: num(
+        (p?.needs_you.reviewer_pending ?? 0) +
+          (p?.needs_you.open_tasks ?? 0) +
+          (p?.needs_you.awaiting_answer ?? 0),
+      ),
+      loading: store.statsLoading,
+    },
+  ]
+})
+
+const stuckRows = computed(() =>
+  (pipeline.value?.stuck_cards ?? []).map((row) => ({
+    id: row.card_id,
+    title: row.change_subject || row.topic_title,
+    subtitle: `${row.note_code ?? ''} ${row.reviewer_handle}`,
+    statusLabel: row.status,
+    tone: 'warn' as const,
+    age: ageText(row.age_seconds),
+    to: { path: `/topics/${row.topic_id}` },
+  })),
+)
+
+const needsYouRows = computed(() =>
+  (pipeline.value?.needs_you.items ?? []).map((row) => ({
+    id: `${row.kind}:${row.id}`,
+    title: row.title,
+    subtitle: row.kind === 'task' ? t('feedback.dashboard.pipeline.needs.task') : t('feedback.dashboard.pipeline.needs.room'),
+    tone: 'ink' as const,
+    to: { path: `/topics/${row.topic_id}` },
+  })),
+)
+
+const failureRows = computed(() => {
+  const f = pipeline.value?.turn_failures
+  if (!f) return []
+  const rows = Object.entries(f.by_code)
+    .filter(([, n]) => n > 0)
+    .map(([code, n]) => ({
+      label: t(FAIL_CODE_KEY[code] ?? code),
+      value: n,
+      cost: '—',
+      unpriced: '—',
+    }))
+  if (f.other > 0)
+    rows.push({
+      label: t(FAIL_CODE_KEY.other),
+      value: f.other,
+      cost: '—',
+      unpriced: '—',
+    })
+  if (f.credits_refused > 0)
+    rows.push({
+      label: t('feedback.dashboard.credits.exhausted'),
+      value: f.credits_refused,
+      cost: '—',
+      unpriced: '—',
+    })
+  return rows
+})
+
+const hostRows = computed(() =>
+  (pipeline.value?.host_health.rows ?? []).map((row) => ({
+    id: row.device_id,
+    title: row.device_id,
+    subtitle: row.last_failure_code ?? '',
+    statusLabel: String(row.consecutive_failures),
+    tone: row.quarantined_until ? ('danger' as const) : ('warn' as const),
+    to: { path: '/admin' },
+  })),
+)
+
+/* ---- 产品健康（新） ---------------------------------------------------- */
+
+const product = computed(() => store.stats.product)
+
+const productKpis = computed(() => [
+  {
+    key: 'north',
+    label: t('feedback.dashboard.product.northStar'),
+    value: num(product.value?.north_star.total),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'returned',
+    label: t('feedback.dashboard.product.rejection.title'),
+    value:
+      product.value?.rejection.returned_rate === null ||
+      product.value?.rejection.returned_rate === undefined
+        ? ''
+        : `${Math.round(product.value.rejection.returned_rate * 100)}%`,
+    loading: store.statsLoading,
+  },
+  {
+    key: 'useful',
+    label: t('feedback.dashboard.product.usefulness.title'),
+    value:
+      product.value?.usefulness.useful_rate === null ||
+      product.value?.usefulness.useful_rate === undefined
+        ? ''
+        : `${Math.round(product.value.usefulness.useful_rate * 100)}%`,
+    loading: store.statsLoading,
+  },
+  {
+    key: 'dismiss',
+    label: t('feedback.dashboard.product.usefulness.down'),
+    value: num(product.value?.usefulness.proposal_dismissals),
+    loading: store.statsLoading,
+  },
+])
+
+const northSeries = computed<ChartSeries[]>(() => [
+  {
+    name: t('feedback.dashboard.product.northStar'),
+    values: product.value?.north_star.series.map((row) => row.accepted) ?? [],
+    style: 'solid',
+  },
+])
+
+const rejectionSegments = computed(() => {
+  const b = product.value?.rejection.buckets
+  if (!b) return []
+  return [
+    { label: t('feedback.dashboard.product.rejection.rejected'), value: b.rejected, shade: 'ink' as const },
+    {
+      label: t('feedback.dashboard.product.rejection.gate'),
+      value: b.gate_failed + b.gate_blocked,
+      shade: 'muted' as const,
+    },
+    { label: t('feedback.dashboard.product.rejection.conflict'), value: b.conflict, shade: 'muted' as const },
+    { label: t('feedback.dashboard.product.rejection.voided'), value: b.voided, shade: 'faint' as const },
+    { label: t('feedback.dashboard.product.rejection.revoked'), value: b.revoked_after_accept, shade: 'faint' as const },
+    { label: t('feedback.dashboard.product.rejection.live'), value: b.live, shade: 'faint' as const },
+  ].filter((s) => s.value > 0)
+})
+
+const usefulnessSegments = computed(() => {
+  const u = product.value?.usefulness
+  if (!u) return []
+  return [
+    { label: t('feedback.dashboard.product.usefulness.up'), value: u.up, shade: 'ink' as const },
+    { label: t('feedback.dashboard.product.usefulness.down'), value: u.down, shade: 'muted' as const },
+    { label: t('feedback.dashboard.product.usefulness.unrated'), value: u.unrated_read, shade: 'faint' as const },
+    { label: t('feedback.dashboard.product.usefulness.unread'), value: u.unread, shade: 'faint' as const },
+  ].filter((s) => s.value > 0)
+})
+
+/* ---- 集成健康（新） ---------------------------------------------------- */
+
+const integrations = computed(() => store.stats.integrations)
+
+const integrationKpis = computed(() => [
+  {
+    key: 'expired',
+    label: t('feedback.dashboard.integrations.oauth.expired'),
+    value: num(integrations.value?.oauth.expired),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'norefresh',
+    label: t('feedback.dashboard.integrations.oauth.noRefresh'),
+    value: num(integrations.value?.oauth.no_refresh_token),
+    loading: store.statsLoading,
+  },
+  {
+    key: 'passkey',
+    label: t('feedback.dashboard.integrations.passkey.title'),
+    value:
+      integrations.value?.passkey.coverage === null ||
+      integrations.value?.passkey.coverage === undefined
+        ? ''
+        : `${Math.round(integrations.value.passkey.coverage * 100)}%`,
+    loading: store.statsLoading,
+  },
+  {
+    key: 'dead',
+    label: t('feedback.dashboard.integrations.delivery.dead'),
+    value: num(integrations.value?.delivery.dead_letters),
+    loading: store.statsLoading,
+  },
+])
+
+/* ---- 四块补缺：额度燃尽 / 磁盘预览机器 / 投递事件 ---------------------- */
+
+const credits = computed(() => usage.value?.credits ?? null)
+
+const creditMeters = computed(() => {
+  const c = credits.value
+  if (!c) return []
+  const rows: {
+    label: string
+    valueText: string
+    limit: number | null
+    ratio: number
+    tone: 'ink' | 'ok' | 'warn' | 'danger'
+    hint: string
+  }[] = []
+  for (const e of c.exhausted.slice(0, 5)) {
+    rows.push({
+      label: e.name,
+      valueText: fmtNum(Math.round(e.credits_remaining)),
+      limit: e.credits_total,
+      ratio: 1,
+      tone: 'danger',
+      hint: t('feedback.dashboard.credits.exhausted'),
+    })
+  }
+  for (const e of c.low.slice(0, 5)) {
+    rows.push({
+      label: e.name,
+      valueText: fmtNum(Math.round(e.credits_remaining)),
+      limit: e.credits_total,
+      ratio: e.ratio,
+      tone: 'warn',
+      hint: t('feedback.dashboard.credits.low'),
+    })
+  }
+  return rows
+})
+
+const extras = computed(() => platform.value?.extras ?? null)
+
+const extrasRows = computed(() => {
+  const x = extras.value
+  if (!x) return []
+  const rows: {
+    label: string
+    valueText: string
+    limit: number | null
+    ratio: number
+    tone: 'ink' | 'ok' | 'warn' | 'danger'
+    hint: string
+  }[] = []
+  if (x.disk.available && x.disk.used_pct !== undefined) {
+    rows.push({
+      label: t('feedback.dashboard.extras.disk.title'),
+      valueText: `${x.disk.used_pct}%`,
+      limit: 100,
+      ratio: x.disk.used_pct / 100,
+      tone: x.disk.tier === 'critical' ? 'danger' : x.disk.tier === 'warn' ? 'warn' : 'ink',
+      hint: `${x.disk.free_gb} GB`,
+    })
+  }
+  if (x.preview.available) {
+    rows.push({
+      label: t('feedback.dashboard.extras.preview.title'),
+      valueText: num(x.preview.attached),
+      limit: null,
+      ratio: 0,
+      tone: 'ink',
+      hint: '',
+    })
+  }
+  return rows
+})
+
+const reliability = computed(() => {
+  const p = store.stats.performance as (typeof store.stats.performance & { reliability?: any }) | null
+  return p?.reliability ?? null
+})
+
+/* ---- 工具 -------------------------------------------------------------- */
+
+/** 停留时长画成「N 分 / N 小时 / N 天」。没有读数画破折号，不画 0。 */
+function hoursText(seconds: number | null): string {
+  if (seconds === null || seconds === undefined) return ''
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} ${t('feedback.dashboard.dwell.minutes')}`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} ${t('feedback.dashboard.dwell.hours')}`
+  const days = Math.floor(hours / 24)
+  return `${days} ${t('feedback.dashboard.dwell.days')}`
+}
+
+function ageText(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return t('feedback.dashboard.pipeline.age.minutes', { n: minutes })
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('feedback.dashboard.pipeline.age.hours', { h: hours })
+  return t('feedback.dashboard.pipeline.age.days', { d: Math.floor(hours / 24) })
+}
+
+/** 站名。键表而不是拼字符串（同 `TAB_KEY` / `HEALTH_KEY`）。 */
+const STATION_KEY: Record<string, string> = {
+  filed: 'feedback.dashboard.pipeline.station.filed',
+  decided: 'feedback.dashboard.pipeline.station.decided',
+  merged: 'feedback.dashboard.pipeline.station.merged',
+  archived: 'feedback.dashboard.pipeline.station.archived',
+}
+
+const productUnavailable = computed(
+  () =>
+    product.value?.unavailable.map((row) => ({
+      name: row.name,
+      text: t(PRODUCT_UNAVAILABLE_KEY[row.name] ?? row.name),
+    })) ?? [],
+)
+
+/** `name` 是 snake_case，词条是 camelCase。**键写全字面量**（同 `TAB_KEY`）：
+ *  拼出来的键在源码里没有一处字面量出现，`catalog.spec.ts` 会把它判成死键。 */
+const UNAVAILABLE_KEY: Record<string, string> = {
+  github_app_permission_gaps: 'feedback.dashboard.integrations.unavailable.githubAppPermissionGaps',
+  github_app_mint_failure_rate:
+    'feedback.dashboard.integrations.unavailable.githubAppMintFailureRate',
+  login_lockout_stock_and_rate:
+    'feedback.dashboard.integrations.unavailable.loginLockoutStockAndRate',
+  metering_post_freeze: 'feedback.dashboard.integrations.unavailable.meteringPostFreeze',
+}
+
+const PRODUCT_UNAVAILABLE_KEY: Record<string, string> = {
+  acceptance_rate_after_summon: 'feedback.dashboard.product.unavailable.summon',
+  churn_after_credits_exhausted: 'feedback.dashboard.product.unavailable.churn',
+}
+
+/** 轮次失败的码 → 词条。同 `HEALTH_KEY`：不拼字符串。 */
+const FAIL_CODE_KEY: Record<string, string> = {
+  turn_timeout: 'feedback.dashboard.pipeline.code.turn_timeout',
+  prompt_undelivered: 'feedback.dashboard.pipeline.code.prompt_undelivered',
+  host_unreachable: 'feedback.dashboard.pipeline.code.host_unreachable',
+  storage_exhausted: 'feedback.dashboard.pipeline.code.storage_exhausted',
+  runtime_image_missing: 'feedback.dashboard.pipeline.code.runtime_image_missing',
+  subscription_credential_expired:
+    'feedback.dashboard.pipeline.code.subscription_credential_expired',
+  workspace_vcs_perms: 'feedback.dashboard.pipeline.code.workspace_vcs_perms',
+  other: 'feedback.dashboard.pipeline.code.other',
+}
+
+const integrationsUnavailable = computed(
+  () =>
+    integrations.value?.unavailable.map((row) => ({
+      name: row.name,
+      text: t(UNAVAILABLE_KEY[row.name] ?? row.name),
+    })) ?? [],
+)
+
 const perf = computed(() => store.stats.performance)
 
 /** 一条路由的耗时。**`null` 画成「—」不是 0**：0 是一个读数（「真的很快」），
@@ -512,6 +951,9 @@ function onSelectDay(index: number) {
 }
 
 onMounted(() => {
+  // 默认落点是**交付**：管理员早上第一个问题是「现在该我动的是哪几件」，不是
+  // 「今天 token 多少」。所以这一页先回答它，再让运维那几块做诊断抽屉。
+  if (store.statsKind === 'feedback') selectKind('pipeline')
   // 两件事并发：队列那一路给 `counts` 和迷你列表的十行（反馈分类要），看板那一路给当前
   // 分类的曲线。串行只会让首屏多等一个来回。
   void store.loadAdmin()
@@ -570,6 +1012,189 @@ onMounted(() => {
         <span class="ad__none-title">{{ t('feedback.dashboard.error.title') }}</span>
         <span class="ad__none-desc">{{ t('feedback.dashboard.error.desc') }}</span>
       </p>
+
+      <!-- 交付管线：产品自己的主链。默认落点 —— 「现在该我动的是哪几件」排第一。 -->
+      <template v-else-if="kind === 'pipeline'">
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in pipelineKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <!-- 活四站导轨。**没有闸门那一站** —— 它已退役（#296），画上去就是一个永远
+             空的站，而页面第一眼的位置不该放装饰。 -->
+        <AdminLiveSpine
+          :stages="spineStages"
+          :stuck="spineStuck"
+          :loading="store.statsLoading"
+        />
+
+        <div class="ad__row">
+          <AdminActionList
+            :title="t('feedback.dashboard.pipeline.needs.title')"
+            :rows="needsYouRows"
+            :loading="store.statsLoading"
+            :empty="t('feedback.dashboard.pipeline.needs.empty')"
+          />
+          <AdminActionList
+            :title="t('feedback.dashboard.pipeline.stuck.title')"
+            :rows="stuckRows"
+            :loading="store.statsLoading"
+            :empty="t('feedback.dashboard.pipeline.stuck.empty')"
+          />
+        </div>
+
+        <div class="ad__row ad__row--equal">
+          <AdminBreakTable
+            :title="t('feedback.dashboard.pipeline.failures.title')"
+            :note="t('feedback.dashboard.pipeline.failures.note')"
+            :rows="failureRows"
+            :loading="store.statsLoading"
+          />
+          <AdminActionList
+            :title="t('feedback.dashboard.pipeline.host.title')"
+            :rows="hostRows"
+            :loading="store.statsLoading"
+            :empty="t('feedback.dashboard.pipeline.host.empty')"
+          />
+        </div>
+
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.title') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.backlog.note') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.stuck.note') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.needs.note') }}</p>
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.pipeline.host.note') }}</p>
+      </template>
+
+      <!-- 产品健康：北极星 + 两条护栏 + 两条「今天算不出来」。 -->
+      <template v-else-if="kind === 'product'">
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.product.title') }}</p>
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in productKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <div class="ad__row">
+          <AdminLineChart
+            :title="t('feedback.dashboard.product.northStar')"
+            :x-labels="xLabels"
+            :series="northSeries"
+            :loading="store.statsLoading"
+          />
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.northStarNote') }}</p>
+          <AdminShareBar
+            :title="t('feedback.dashboard.product.rejection.title')"
+            :segments="rejectionSegments"
+            :note="t('feedback.dashboard.product.rejection.note')"
+            :loading="store.statsLoading"
+          />
+        </div>
+
+        <AdminShareBar
+          :title="t('feedback.dashboard.product.usefulness.title')"
+          :segments="usefulnessSegments"
+          :note="t('feedback.dashboard.product.usefulness.note')"
+          :loading="store.statsLoading"
+        />
+
+        <!-- 算不出来的那两条：**带理由**，不画一个假 0。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.product.unavailable.title') }}</h2>
+          <p
+            v-for="row in productUnavailable"
+            :key="row.name"
+            class="ad__none-desc t-meta-read"
+          >
+            {{ row.text }}
+          </p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.product.unavailable.note') }}</p>
+        </section>
+      </template>
+
+      <!-- 集成健康：静默降级。**没有 days** —— 凭据与投递是存量问题。 -->
+      <template v-else-if="kind === 'integrations'">
+        <p class="ad__cost-note t-meta">{{ t('feedback.dashboard.integrations.title') }}</p>
+        <div class="ad__kpis">
+          <AdminKpiCard
+            v-for="kpi in integrationKpis"
+            :key="kpi.key"
+            :label="kpi.label"
+            :value="kpi.value"
+            :loading="kpi.loading"
+          />
+        </div>
+
+        <div class="ad__row ad__row--equal">
+          <AdminShareBar
+            :title="t('feedback.dashboard.integrations.oauth.title')"
+            :segments="
+              integrations
+                ? [
+                    { label: t('feedback.dashboard.integrations.oauth.expired'), value: integrations.oauth.expired, shade: 'ink' as const },
+                    { label: t('feedback.dashboard.integrations.oauth.expiring'), value: integrations.oauth.expiring_7d, shade: 'muted' as const },
+                    { label: t('feedback.dashboard.integrations.oauth.noRefresh'), value: integrations.oauth.no_refresh_token, shade: 'faint' as const },
+                  ].filter((s) => s.value > 0)
+                : []
+            "
+            :note="t('feedback.dashboard.integrations.oauth.note')"
+            :loading="store.statsLoading"
+          />
+          <AdminMeterBar
+            :label="t('feedback.dashboard.integrations.passkey.title')"
+            :value-text="
+              integrations ? `${integrations.passkey.with_passkey} / ${integrations.passkey.accounts}` : ''
+            "
+            :limit="integrations?.passkey.accounts ?? null"
+            :ratio="integrations?.passkey.coverage ?? 0"
+            :hint="
+              integrations?.passkey.coverage === null || integrations?.passkey.coverage === undefined
+                ? ''
+                : `${Math.round(integrations.passkey.coverage * 100)}%`
+            "
+            :loading="store.statsLoading"
+          />
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.passkey.note') }}</p>
+        </div>
+
+        <p class="ad__block-note t-meta-read">
+          {{ t('feedback.dashboard.integrations.oauth.total') }} {{ integrations?.oauth.total ?? '—' }}
+        </p>
+
+        <AdminShareBar
+          :title="t('feedback.dashboard.integrations.delivery.title')"
+          :segments="
+            integrations
+              ? [
+                  { label: t('feedback.dashboard.integrations.delivery.unsent'), value: integrations.delivery.unsent, shade: 'ink' as const },
+                  { label: t('feedback.dashboard.integrations.delivery.dead'), value: integrations.delivery.dead_letters, shade: 'muted' as const },
+                ].filter((s) => s.value > 0)
+              : []
+          "
+          :note="t('feedback.dashboard.integrations.delivery.note')"
+          :loading="store.statsLoading"
+        />
+
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.integrations.unavailable.title') }}</h2>
+          <p
+            v-for="row in integrationsUnavailable"
+            :key="row.name"
+            class="ad__none-desc t-meta-read"
+          >
+            {{ row.text }}
+          </p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.integrations.unavailable.note') }}</p>
+        </section>
+      </template>
 
       <!-- 反馈：栏位计数 + 两条曲线 + 需处理那十行。 -->
       <template v-else-if="kind === 'feedback'">
@@ -669,6 +1294,32 @@ onMounted(() => {
             :loading="store.statsLoading"
           />
         </div>
+
+        <!-- 额度燃尽：三个互斥名单（已耗尽 / 快烧完 / 不限量）。少了它，三个项目同时
+             停摆时 token 曲线只是「今天用量下降」，看起来像好消息。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.credits.title') }}</h2>
+          <div class="ad__split-grid">
+            <AdminMeterBar
+              v-for="row in creditMeters"
+              :key="row.label"
+              :label="row.label"
+              :value-text="row.valueText"
+              :limit="row.limit"
+              :ratio="row.ratio"
+              :tone="row.tone"
+              :hint="row.hint"
+              :loading="store.statsLoading"
+            />
+          </div>
+          <p v-if="credits" class="ad__block-note t-meta-read">
+            {{ t('feedback.dashboard.credits.unlimited') }} {{ credits.unlimited_count }}
+            · {{ t('feedback.dashboard.credits.burn') }}
+            {{ credits.burn.credits_per_day.toFixed(1) }}/d
+            · {{ t('feedback.dashboard.credits.eta') }} —
+          </p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.credits.note') }}</p>
+        </section>
       </template>
 
       <!-- 性能：**这一刻**的接口耗时。它是四类里唯一读进程内存的，所以底下那句口径
@@ -722,6 +1373,26 @@ onMounted(() => {
           </table>
           <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
         </div>
+
+        <!-- 投递与事件积压：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。 -->
+        <section v-if="reliability" class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.reliability.title') }}</h2>
+          <div class="ad__split-grid">
+            <div class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.integrations.delivery.unsent') }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_unsent) }}</span>
+            </div>
+            <div class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.integrations.delivery.dead') }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ num(reliability.delivery_dead_letters) }}</span>
+            </div>
+            <div class="ad__split-cell">
+              <span class="ad__split-label t-eyebrow-read">{{ t('feedback.dashboard.reliability.title') }}</span>
+              <span class="ad__split-value t-console-title t-num">{{ num(reliability.spool?.unread) }}</span>
+            </div>
+          </div>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.reliability.note') }}</p>
+        </section>
       </template>
 
       <!-- 平台：账号的存量与新增、以及机器台账的存量。 -->
@@ -768,6 +1439,26 @@ onMounted(() => {
             </div>
           </div>
           <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.health.note') }}</p>
+        </section>
+
+        <!-- 三样缺口：磁盘（只这台后端）/ 预览（进程内存）/ 机器普查（台账行不是容器）。 -->
+        <section class="ad__split">
+          <h2 class="ad__block-title">{{ t('feedback.dashboard.extras.disk.title') }}</h2>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.machines.title') }}</p>
+          <AdminMeterBar
+            v-for="row in extrasRows"
+            :key="row.label"
+            :label="row.label"
+            :value-text="row.valueText"
+            :limit="row.limit"
+            :ratio="row.ratio"
+            :tone="row.tone"
+            :hint="row.hint"
+            :loading="store.statsLoading"
+          />
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.disk.note') }}</p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.preview.note') }}</p>
+          <p class="ad__block-note t-meta-read">{{ t('feedback.dashboard.extras.machines.note') }}</p>
         </section>
       </template>
     </div>

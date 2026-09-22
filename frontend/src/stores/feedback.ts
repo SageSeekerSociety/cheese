@@ -114,6 +114,9 @@ const statsSeq: Record<StatsKind, number> = {
   usage: 0,
   platform: 0,
   performance: 0,
+  pipeline: 0,
+  product: 0,
+  integrations: 0,
 }
 /** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回一次），
  *  所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与 `_adminWrite`。 */
@@ -294,6 +297,9 @@ function assignStats(bucket: StatsBucket, kind: StatsKind, value: StatsShapes[St
   if (kind === 'feedback') bucket.feedback = value as StatsShapes['feedback']
   else if (kind === 'usage') bucket.usage = value as StatsShapes['usage']
   else if (kind === 'platform') bucket.platform = value as StatsShapes['platform']
+  else if (kind === 'pipeline') bucket.pipeline = value as StatsShapes['pipeline']
+  else if (kind === 'product') bucket.product = value as StatsShapes['product']
+  else if (kind === 'integrations') bucket.integrations = value as StatsShapes['integrations']
   else bucket.performance = value as StatsShapes['performance']
 }
 
@@ -410,6 +416,9 @@ export const useFeedbackStore = defineStore('feedback', {
       usage: null,
       platform: null,
       performance: null,
+      pipeline: null,
+      product: null,
+      integrations: null,
     } as { [K in StatsKind]: StatsShapes[K] | null },
     /** 看板当前停在哪一类。页面上的分类控件读它、也写它 —— 分类是**这一页的**状态，
        但它决定了下一个请求打哪条接口，所以由 store 记着，页面重挂载时不会跳回第一类。 */
@@ -427,6 +436,9 @@ export const useFeedbackStore = defineStore('feedback', {
       usage: false,
       platform: false,
       performance: false,
+      pipeline: false,
+      product: false,
+      integrations: false,
     } as Record<StatsKind, boolean>,
     /* ---- 我的反馈（`/feedback/mine`）。和上面那份公开列表是**两套数据**，
        不是同一份的两个视图：公开列表按栏位筛全平台，这一份按「和我的关系」筛，
