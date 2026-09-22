@@ -78,6 +78,8 @@ from app.domain.user.services import UserAuthService, UserProfileService
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
+    from app.domain.user.login_security import LoginRateLimiter
+
 # ── Request Models ────────────────────────────────────────────────────────────
 
 
@@ -1627,6 +1629,20 @@ async def get_auth_methods(
     }
 
 
+async def _spend_login_attempt(limiter: "LoginRateLimiter", username: str) -> int:
+    """Spend one slot of the username's login budget before the credential is
+    checked, and return how many remain; see ``consume_attempt`` for why the
+    slot goes first. The caller clears the budget once the credential holds."""
+    if await limiter.is_locked_out(username):
+        remaining = await limiter.get_remaining_lockout_seconds(username)
+        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+    budget = await limiter.consume_attempt(username)
+    if budget is None:
+        remaining = await limiter.get_remaining_lockout_seconds(username)
+        raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+    return budget
+
+
 @router.post(
     "/auth/login",
     summary="User Login",
@@ -1654,23 +1670,23 @@ async def user_login(
     try:
         rate_limiter = LoginRateLimiter(redis)
 
-        if await rate_limiter.is_locked_out(username):
-            remaining = await rate_limiter.get_remaining_lockout_seconds(username)
-            raise ForbiddenError(f"Account locked. Try again in {remaining} seconds")
+        budget = await _spend_login_attempt(rate_limiter, username)
 
         auth_result = await auth_service.authenticate(
             username=username, password=password
         )
         if auth_result is None:
-            attempts = await rate_limiter.record_failed_attempt(username)
-            remaining_attempts = max(0, 5 - attempts)
-            if remaining_attempts == 0:
+            if budget == 0:
                 raise ForbiddenError("Account locked due to too many failed attempts")
             raise AuthenticationRequiredError(
-                f"Invalid username or password. {remaining_attempts} attempts remaining"
+                f"Invalid username or password. {budget} attempts remaining"
             )
 
         user, profile = auth_result
+        # Refunded as soon as the password is right, not after 2FA: the slot
+        # was spent up front, so returning "2FA required" first would leave it
+        # spent. The second step has a budget of its own.
+        await rate_limiter.clear_attempts(username)
 
         totp_service = TOTPService(redis)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
@@ -1694,8 +1710,6 @@ async def user_login(
             await _spend_2fa_attempt(
                 redis, user.id, lambda: totp_service.verify_2fa(user.id, totp_code)
             )
-
-        await rate_limiter.clear_attempts(username)
 
         session_manager = SessionManager(redis)
         client_ip = request.client.host if request.client else ""
@@ -1849,6 +1863,8 @@ async def srp_login_verify(
             )
         await redis.delete(srp_key)
 
+        await _spend_login_attempt(rate_limiter, username)
+
         success, server_proof_hex = _srp_verify_session(
             server_secret_hex=server_secret,
             client_public_hex=client_public,
@@ -1859,7 +1875,6 @@ async def srp_login_verify(
         )
 
         if not success:
-            await rate_limiter.record_failed_attempt(username)
             raise AuthenticationRequiredError("Invalid username or password")
 
         # SRP verified — clear rate limiter

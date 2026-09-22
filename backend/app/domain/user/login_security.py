@@ -95,23 +95,6 @@ class LoginRateLimiter:
         ttl = await self._redis.ttl(key)
         return max(0, ttl)
 
-    async def record_failed_attempt(self, subject: str) -> int:
-        attempts_key = f"{self._attempts_prefix}{subject}"
-        attempts = await self._redis.incr(attempts_key)
-        await self._redis.expire(attempts_key, LOCKOUT_DURATION_SECONDS)
-
-        if attempts >= self._max_attempts:
-            lockout_key = f"{self._lockout_prefix}{subject}"
-            await self._redis.setex(lockout_key, LOCKOUT_DURATION_SECONDS, "1")
-            logger.warning(
-                "%s locked out for %s after %d failed attempts",
-                subject,
-                self._what,
-                attempts,
-            )
-
-        return attempts
-
     async def consume_attempt(self, subject: str) -> int | None:
         """Take one attempt from the budget *before* the credential is checked.
 

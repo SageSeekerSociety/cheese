@@ -3,6 +3,7 @@
 import re
 import uuid
 
+import pyotp
 import pytest
 from fastapi.testclient import TestClient
 
@@ -172,3 +173,67 @@ class TestOverlongPasswords:
         reset = api_client.post(path, json={"token": token, "password": new_password})
         assert reset.status_code == 200, reset.text
         assert _login(api_client, user.username, new_password).status_code == 200
+
+
+class TestLoginBudget:
+    def test_the_budget_counts_down_locks_and_refuses_the_right_password(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        forget_redis_state,
+    ):
+        user = user_client.create_user()
+        forget_redis_state(user)
+
+        for left in (4, 3, 2, 1):
+            resp = _login(api_client, user.username, "wrong-Password!")
+            assert resp.status_code == 401, resp.text
+            assert f"{left} attempts remaining" in resp.json()["error"]["message"]
+
+        fifth = _login(api_client, user.username, "wrong-Password!")
+        assert fifth.status_code == 403, fifth.text
+
+        right = _login(api_client, user.username, user.password)
+        assert right.status_code == 403, right.text
+        assert "Try again in" in right.json()["error"]["message"]
+
+    def test_a_right_password_gives_the_budget_back(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        forget_redis_state,
+    ):
+        user = user_client.create_user()
+        forget_redis_state(user)
+
+        for _ in range(4):
+            _login(api_client, user.username, "wrong-Password!")
+        assert _login(api_client, user.username, user.password).status_code == 200
+
+        resp = _login(api_client, user.username, "wrong-Password!")
+        assert "4 attempts remaining" in resp.json()["error"]["message"]
+
+    def test_stopping_at_the_2fa_prompt_spends_nothing(
+        self,
+        api_client: TestClient,
+        authenticated_user: CreatedUser,
+        auth_headers: dict[str, str],
+        forget_redis_state,
+    ):
+        user = authenticated_user
+        forget_redis_state(user)
+        init = api_client.post(
+            f"/users/{user.user_id}/2fa/enable", headers=auth_headers, json={}
+        )
+        secret = init.json()["data"]["secret"]
+        confirm = api_client.post(
+            f"/users/{user.user_id}/2fa/enable",
+            headers=auth_headers,
+            json={"secret": secret, "code": pyotp.TOTP(secret).now()},
+        )
+        assert confirm.status_code == 200, confirm.text
+
+        for _ in range(6):
+            resp = _login(api_client, user.username, user.password)
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["data"]["requires2FA"] is True

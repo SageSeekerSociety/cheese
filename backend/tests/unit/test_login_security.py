@@ -25,21 +25,6 @@ class TestLoginRateLimiter:
         assert await rate_limiter.is_locked_out("testuser") is True
 
     @pytest.mark.anyio
-    async def test_record_failed_attempt_increments(
-        self, rate_limiter, mock_redis
-    ) -> None:
-        mock_redis.incr.return_value = 1
-        attempts = await rate_limiter.record_failed_attempt("testuser")
-        assert attempts == 1
-        mock_redis.expire.assert_called_once()
-
-    @pytest.mark.anyio
-    async def test_lockout_after_max_attempts(self, rate_limiter, mock_redis) -> None:
-        mock_redis.incr.return_value = 5
-        await rate_limiter.record_failed_attempt("testuser")
-        mock_redis.setex.assert_called_once()
-
-    @pytest.mark.anyio
     async def test_clear_attempts(self, rate_limiter, mock_redis) -> None:
         await rate_limiter.clear_attempts("testuser")
         mock_redis.delete.assert_called_once()
