@@ -5,7 +5,7 @@
 **教育字段不新开一套继承规则。** 上半段的断言和 `test_task_protocol.py` 里那三
 键是同一组（项目集 → 赛题覆盖 → 项目 settings），只是换成 `teaching`
 ——`test_every_key_rides_the_same_three_levels` 把四个键放在同一个参数化表里，
-所以「同语义」是断言出来的，不是注释里说的。
+所以「同语义」是断言出来的，不是注释里说的（`shell` 那一行同理，它随 #1292 进来）。
 
 **非课程项目一个字都不多。** 下半段盯住这条：空配置既不渲染标题，也不因为传了
 一个空的 `TeachingContext` 就让 prompt 变样——`build_system_prompt` 的输出与这
@@ -36,6 +36,7 @@ def _category(**kw) -> SimpleNamespace:
         resource_pack=kw.get("resource_pack", {}),
         conditions=kw.get("conditions", []),
         default_role=kw.get("default_role"),
+        shell=kw.get("shell"),
         teaching=kw.get("teaching", {}),
     )
 
@@ -91,6 +92,17 @@ _KEYS = [
         lambda stored: stored,
     ),
     (
+        # `shell` made the trip for #1292 and `teaching` for this task: the row
+        # is here so "they ride the same chain" is asserted for both rather than
+        # believed, and so the union of the two keys survives the next edit.
+        "shell",
+        "course-student",
+        "workbench",
+        "default",
+        lambda p: p.shell,
+        lambda stored: stored,
+    ),
+    (
         "teaching",
         WEEK_THREE,
         {"current_week": 9},
@@ -111,7 +123,7 @@ def test_every_key_rides_the_same_three_levels(
 ) -> None:
     """项目集 → 赛题 → 项目, for all four keys, most specific last.
 
-    The failure this is written against is a `teaching` field that gets its own
+    The failure this is written against is a key that gets its own
     resolution path ("education config is different, it needs the current week")
     — and then disagrees with the other three the first time someone edits one.
     """
@@ -130,7 +142,7 @@ def test_every_key_rides_the_same_three_levels(
     overridden_by_project = resolve(
         category=_category(**{key: category_value}),
         task=_task({key: task_override}),
-        project=_project({"protocol": {key: project_override}}),
+        project=_project({key: project_override}),
     )
     assert read(overridden_by_project) == parse(project_override)
 
@@ -154,10 +166,12 @@ def test_a_level_replaces_its_key_whole_and_leaves_the_others() -> None:
     assert got.compute_credits == 500  # an untouched key is still inherited
 
 
-def test_the_project_level_reads_the_protocol_key_and_ignores_the_rest() -> None:
+def test_the_project_level_reads_its_own_keys_and_ignores_the_rest() -> None:
     """`Project.settings` is free-form and already holds unrelated keys
-    (`forge_kind`, the compute profile). Only `settings["protocol"]` is read, and
-    anything else under it that is not a dict is treated as absent — the reader
+    (`forge_kind`, the compute profile). Only the protocol's own names are read,
+    spelled FLAT — the same place `app.domain.shell.service.SHELL_KEY` reads a
+    project's 壳 — so a stranger key cannot be mistaken for a protocol field, and
+    a `settings` that is not a dict is absent rather than an error. The reader
     here runs on every turn of every project, not on the form that wrote it."""
     assert (
         resolve(
@@ -168,7 +182,7 @@ def test_the_project_level_reads_the_protocol_key_and_ignores_the_rest() -> None
         == Protocol()
     )
 
-    for junk in ({"protocol": "not-a-dict"}, {"protocol": ["nope"]}, {"protocol": 7}):
+    for junk in ("not-a-dict", ["nope"], 7):
         assert (
             resolve(
                 category=_category(teaching=WEEK_THREE),

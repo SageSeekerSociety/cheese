@@ -4702,7 +4702,8 @@ class ChatService:
                 and project.root_topic_id != place.room_id
                 else None
             )
-            overview_doc_text = overview_root.content if overview_root else None            # Read the selected agent once so this turn's role and model agree.
+            overview_doc_text = overview_root.content if overview_root else None
+            # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
             # 骨架是这个项目跑的那一个——项目设置盖过部署设置（结论 28），不是
             # 这个参与者的属性。这一轮只解析这一次，往下每一处都读它：会话行的键
