@@ -286,6 +286,30 @@ class ProjectRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_space_and_owner(
+        self, *, space_id: int, owner_handle: str
+    ) -> list[Project]:
+        """One person's projects created from 赛题 published under this Space.
+
+        This is the course link's own question — 「他在这门课里已经有项目了吗」.
+        Asking it by anchor 赛题 would answer it wrong: the anchor is whichever 题
+        the course hangs its projects on, and that can move as the course grows.
+        Asking by Space keeps 一学期一个项目 true across that move.
+        """
+        from app.domain.task.models import Task
+
+        stmt = (
+            select(Project)
+            .where(
+                Project.external_task_id.in_(
+                    select(Task.id).where(Task.space_id == space_id)
+                ),
+                Project.owner_handle == owner_handle,
+            )
+            .order_by(Project.created_at.asc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_external_task(self, task_id: int) -> list[Project]:
         """Every project created from this 赛题 — the way back the link exists for."""
         result = await self._session.execute(

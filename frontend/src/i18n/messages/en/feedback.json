@@ -133,7 +133,9 @@
       "inProgress": "In progress",
       "resolved7d": "Resolved · 7d",
       "created7d": "New · 7d",
-      "unread": "Unread"
+      "unread": "Unread",
+      "urgent": "{n} of them urgent and unassigned",
+      "urgentShort": "{n} urgent"
     },
     "chart": {
       "title": "New / resolved / deployed per day",
@@ -151,7 +153,7 @@
     },
     "empty": {
       "title": "No data yet",
-      "desc": "The platform hasn't produced any feedback yet."
+      "desc": "The platform hasn't produced any data yet."
     },
     "error": {
       "title": "Couldn't load the dashboard",
@@ -176,13 +178,25 @@
         "route": "Endpoint",
         "count": "Calls"
       },
-      "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead."
+      "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
+      "slowest": "Slowest p95"
     },
     "usage": {
       "tokens": "Tokens · window",
       "calls": "Calls · window",
       "chart": "Tokens per day",
-      "top": "Top projects by tokens"
+      "top": "Top projects by tokens",
+      "byModel": "By model",
+      "byModelNote": "Bar is tokens; the last two columns are money and unpriced tokens. All three together answer \"is it the model or the billing\".",
+      "byRoute": "By supply route",
+      "byRouteNote": "Subscriptions are billed monthly, so their tokens carry no rate — that's where the unpriced column concentrates, and where the KPI's number comes from.",
+      "unknownModel": "(unlabelled model)",
+      "route": {
+        "gateway": "Gateway",
+        "subscription": "Subscription",
+        "native": "Pinned credentials",
+        "unknown": "(old row, unlabelled)"
+      }
     },
     "people": {
       "total": "Accounts",
@@ -197,6 +211,30 @@
       "warm": "Warm machines",
       "project": "Project machines",
       "note": "These four are stock counts from four ledgers, not live online counts — online state lives in process memory and has no column in the database."
+    },
+    "column": {
+      "title": "By column",
+      "public": "Public",
+      "private": "Private",
+      "agent": "Agent-filed",
+      "security": "Security",
+      "note": "These four are filters, not a partition: \"Agent-filed\" is a source and overlaps public/private, so they don't sum to the total."
+    },
+    "status": {
+      "title": "By status",
+      "received": "Received",
+      "inProgress": "In progress",
+      "resolved": "Resolved",
+      "deployed": "Deployed"
+    },
+    "health": {
+      "title": "Platform health",
+      "database": "Database",
+      "redis": "Redis",
+      "event_loop": "Event loop",
+      "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
+      "healthy": "Healthy",
+      "degraded": "Degraded"
     }
   },
   "chart": {
