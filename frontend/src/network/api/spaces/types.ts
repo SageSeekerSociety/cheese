@@ -23,6 +23,20 @@ export type PostSpaceRequestData = {
   visibleTaskLimit?: number | null
 }
 
+export type PostSpaceJoinRequestData = {
+  code: string
+}
+
+export type PostSpaceMemberRequestData = {
+  userId: number
+}
+
+export type PostSpaceInviteCodeRequestData = {
+  maxUses?: number
+  /** Epoch milliseconds; omit for a code that never expires. */
+  expiresAt?: number | null
+}
+
 export type PatchSpaceRequestData = {
   name?: string
   intro?: string

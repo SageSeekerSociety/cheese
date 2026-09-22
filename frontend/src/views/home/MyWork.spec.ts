@@ -16,6 +16,7 @@ import MyWork from './MyWork.vue'
 
 import { listAwaitingMe, listProjects, listTopics } from '@/api'
 import { setLocale } from '@/i18n'
+import { SpacesApi } from '@/network/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 
 vi.mock('@/api', async (original) => ({
@@ -25,6 +26,12 @@ vi.mock('@/api', async (original) => ({
   listAwaitingMe: vi.fn(async () => ({ data: [], total: 0 })),
 }))
 vi.mock('@/network/api/tasks', () => ({ TasksApi: { detail: vi.fn(async () => ({ data: { task: {} } })) } }))
+vi.mock('@/network/api/spaces', () => ({
+  SpacesApi: {
+    list: vi.fn(async () => ({ data: { spaces: [], page: { hasMore: false } } })),
+    join: vi.fn(async () => ({ data: { space: { id: 1 } } })),
+  },
+}))
 vi.mock('@/composables/useNewProjectDialog', () => ({
   useNewProjectDialog: () => ({ show: vi.fn() }),
 }))
@@ -224,13 +231,12 @@ describe('我的工作页', () => {
     expect(card?.getAttribute('href')).toBe('/projects/p1')
   })
 
-  it('我加入的空间是顶部那一横排，去得成，且「全部空间」还在', async () => {
-    vi.mocked(listProjects).mockResolvedValue({
-      data: [project('p1', '论文复现', { external_task_id: 42 })],
-      total: 1,
-    })
-    vi.mocked(TasksApi.detail).mockResolvedValue({
-      data: { task: { space: { id: 7, name: '春季课程' } } },
+  it('我加入的题目版是顶部那一横排，去得成，且「全部空间」还在', async () => {
+    // 横排问的是服务端，不是从项目反推：一个刚用邀请码加入、还没来得及在里面建
+    // 项目的题目版必须也在这一排里，否则加入看起来像没成功。
+    vi.mocked(listProjects).mockResolvedValue({ data: [], total: 0 })
+    vi.mocked(SpacesApi.list).mockResolvedValue({
+      data: { spaces: [{ id: 7, name: '春季课程' }], page: { hasMore: false } },
     } as never)
 
     const view = await mount()
@@ -242,6 +248,15 @@ describe('我的工作页', () => {
     )
     // 空间列表降级成这一块之后，`/spaces` 这个地址仍然到得了。
     expect((await findText(view, '全部空间')).closest('a')?.getAttribute('href')).toBe('/spaces')
+  })
+
+  it('一个新账号也看得见「用邀请码加入」', async () => {
+    // 入口挂在那一排上，而那一排现在总是画：一个题目版都没有的人，正是唯一
+    // 需要这个入口的人。
+    vi.mocked(listProjects).mockResolvedValue({ data: [], total: 0 })
+
+    const view = await mount()
+    expect(await findText(view, '用邀请码加入')).toBeTruthy()
   })
 
   // 手机上这一页是**列表**，不是卡片详情：项目名 + 所属空间 + 最近在发生什么一行。

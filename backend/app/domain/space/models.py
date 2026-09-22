@@ -6,11 +6,13 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Index,
     Integer,
     Sequence,
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,6 +25,8 @@ space_user_rank_seq = Sequence("space_user_rank_seq")
 space_admin_relation_seq = Sequence("space_admin_relation_seq")
 space_domain_group_seq = Sequence("space_domain_group_seq")
 space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
+space_member_seq = Sequence("space_member_seq")
+space_invite_code_seq = Sequence("space_invite_code_seq")
 
 
 class Space(Base):
@@ -45,6 +49,8 @@ class Space(Base):
     enable_rank: Mapped[bool] = mapped_column(
         "enable_rank", Boolean, nullable=False, default=False
     )
+    # There is no visibility tier. Who can see a 题目版 exists is answered by
+    # membership and nothing else — see ``SpaceMember``.
     visible_task_limit: Mapped[int | None] = mapped_column(
         "visible_task_limit", Integer, nullable=True
     )
@@ -215,6 +221,92 @@ class SpaceClassificationTagRelation(Base):
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     tag_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceMember(Base):
+    """A user who is *in* a 题目版 — the whole of who can see it.
+
+    Membership and the admin relation are two different questions: this row
+    says "this 题目版 is mine to see and I am counted among its members",
+    ``SpaceAdminRelation`` says "I may manage it". The creator and any admins
+    therefore keep seeing it without a row here, and removing a member here
+    takes nothing else away — not their tasks, not their submissions, not
+    their projects.
+    """
+
+    __tablename__ = "space_member"
+    __table_args__ = (
+        # At most one LIVE row per (space, person). Without this, two requests
+        # landing together both read "not a member" and both write — and then
+        # every later `get_member` raises `MultipleResultsFound` instead of
+        # answering, which turns the documented double-tap no-op into a 500.
+        # Partial because a soft-deleted row is the record of a removal and a
+        # re-join revives it rather than adding a second: those rows are
+        # outside the index, so a removal does not block the join that follows.
+        Index(
+            "uq_space_member_active",
+            "space_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # The pair lookup itself, deleted rows included: `_get_any_member`
+        # reads the pair without the `deleted_at` filter (that is the point of
+        # it), so the partial index above cannot serve it, and `list_members`
+        # reads a whole space by the leading column.
+        Index("ix_space_member_space_user", "space_id", "user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, space_member_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceInviteCode(Base):
+    """A code that, when redeemed, makes the redeemer a member of a 题目版.
+
+    Every 题目版 is created holding one, because a 题目版 nobody else can
+    reach is not much use: the creator hands the code out and the people who
+    take it are the ones who can see the board at all.
+
+    Deliberately NOT the platform's ``invite_code`` table (that one admits a
+    person to the platform at registration and has nothing to do with any
+    space); the two share a shape and nothing else, so they share no table.
+    """
+
+    __tablename__ = "space_invite_code"
+
+    id: Mapped[int] = mapped_column(BigInteger, space_invite_code_seq, primary_key=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    code: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

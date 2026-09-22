@@ -81,10 +81,12 @@ def test_review_controls_visibility_and_task_creation(client, actors):
         ).status_code
         == 200
     )
-    assert (
-        client.get("/spaces", headers=stranger).json()["data"]["spaces"][0]["id"] == sid
-    )
-    assert client.get(f"/spaces/{sid}", headers=stranger).status_code == 200
+    # Approval is not what makes it visible — membership is. The owner sees
+    # the board they just had approved; the stranger still does not.
+    assert client.get("/spaces", headers=owner).json()["data"]["spaces"][0]["id"] == sid
+    assert client.get(f"/spaces/{sid}", headers=owner).status_code == 200
+    assert client.get("/spaces", headers=stranger).json()["data"]["spaces"] == []
+    assert client.get(f"/spaces/{sid}", headers=stranger).status_code == 404
     assert client.post("/tasks", json=task, headers=owner).status_code == 200
     assert (
         client.post(
