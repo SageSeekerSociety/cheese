@@ -46,7 +46,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "srp-rs",
     "structlog>=26.1.0",
-    "uvicorn[standard]>=0.49.0",
+    "uvicorn[standard]>=0.53.0",
     "webauthn>=3.0.0",
     "websockets>=16.0",
     "fusepy>=3.0.1",
