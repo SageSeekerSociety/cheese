@@ -179,6 +179,31 @@
       </v-form>
     </v-card>
   </v-dialog>
+
+  <!-- 建完版当场把邀请码给他：码是后端建版时就发好的，创建者不看着它就没处知道。 -->
+  <v-dialog v-model="codeDialog" max-width="460">
+    <v-card :title="t('spaces.inviteCodes.createdTitle')">
+      <v-card-text>
+        <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.createdBody') }}</p>
+        <div class="d-flex align-center ga-2">
+          <span class="invite-code-text">{{ createdInviteCode }}</span>
+          <v-btn
+            :icon="codeCopied ? 'mdi-check' : 'mdi-content-copy'"
+            size="small"
+            variant="text"
+            :title="t('spaces.inviteCodes.copy')"
+            @click="copyCreatedCode"
+          ></v-btn>
+        </div>
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn color="primary" variant="flat" @click="codeDialog = false">
+          {{ t('spaces.inviteCodes.gotIt') }}
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
 </template>
 
 <script lang="ts" setup>
@@ -238,6 +263,22 @@ const spaceIntro = ref('')
 const selectedAvatar = ref<File>()
 const existingAvatarId = ref<number>()
 const createError = ref('')
+// 建版的响应里就带着刚发好的邀请码，从前这里是 `await SpacesApi.create(payload)`
+// 把整个响应丢掉，于是创建者根本不知道自己的码是什么。留住它，建完当场给他看。
+const createdInviteCode = ref<string | null>(null)
+const codeDialog = ref(false)
+const codeCopied = ref(false)
+
+async function copyCreatedCode() {
+  if (!createdInviteCode.value) return
+  try {
+    await navigator.clipboard.writeText(createdInviteCode.value)
+    codeCopied.value = true
+    setTimeout(() => (codeCopied.value = false), 1600)
+  } catch {
+    // 剪贴板被拒（非安全上下文 / 没授权）——码还留在框里，手工选中复制即可。
+  }
+}
 
 function openCreateSpace() {
   resubmittingId.value = null
@@ -259,8 +300,14 @@ async function createSpace() {
       const { data } = await AvatarsApi.createAvatar(selectedAvatar.value)
       payload.avatarId = data.avatarId
     }
-    if (resubmittingId.value !== null) await SpacesApi.resubmit(resubmittingId.value, payload)
-    else await SpacesApi.create(payload)
+    if (resubmittingId.value !== null) {
+      await SpacesApi.resubmit(resubmittingId.value, payload)
+    } else {
+      const { data } = await SpacesApi.create(payload)
+      createdInviteCode.value = data.inviteCode?.code ?? null
+      codeCopied.value = false
+      if (createdInviteCode.value) codeDialog.value = true
+    }
     createDialog.value = false
     applicationOffset.value = 0
     await loadApplications()
@@ -336,6 +383,13 @@ onMounted(async () => {
 <style scoped>
 .board-avatar-picker {
   width: 120px;
+}
+
+.invite-code-text {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
 }
 
 .application-copy {

@@ -233,6 +233,11 @@ export default {
       component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
     },
     {
+      path: 'manage/invite-codes',
+      name: 'SpacesDetailManageInviteCodes',
+      component: () => import('@/views/spaces/detail/ManageInviteCodes.vue'),
+    },
+    {
       path: 'discussions',
       name: 'SpacesDetailDiscussions',
       component: () => import('@/views/spaces/detail/Discussions.vue'),
