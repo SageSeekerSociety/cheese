@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Annotated, Any, Literal
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -431,11 +432,10 @@ async def control_state(
             # the reader can see why rather than a 500 painted over the room.
             result["tasks_unread"] = True
             result["device_error"] = str(exc)
-        except TimeoutError:
-            # Not an error the room needs told about: the rest of this response
-            # is already correct, and the next poll reads the list again. The
-            # owner keeps the call it is running, so giving up on the answer
-            # here does not stop the work that produces it.
+        except (TimeoutError, httpx.TransportError):
+            # A timeout or a connection lost during owner replacement leaves
+            # only this task list unknown. Preserve the rest of the state and
+            # let the next poll read it; do not replay a possibly executed RPC.
             result["tasks_unread"] = True
         else:
             result["tasks"].update({task["task_id"]: task for task in tasks["tasks"]})
