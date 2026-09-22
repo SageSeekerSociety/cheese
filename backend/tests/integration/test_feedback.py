@@ -2677,3 +2677,114 @@ def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
     # 而不是画成「没有这个人」：后者会让人以为名单已经变了。
     assert _add_admin(client, by=as_admin, target="fb-peng").status_code == 200
     assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True
+
+
+# --- 删掉一条反馈 -------------------------------------------------------------
+
+
+def _delete(client, feedback_id: str, handle: str):
+    return client.delete(
+        f"/feedback/{feedback_id}", headers=session_auth_headers(handle)
+    )
+
+
+def test_an_author_deletes_their_own_report_and_it_leaves_every_list(client):
+    """作者删自己的：删完之后**详情 404、列表里没有、公开计数也跟着少**。
+
+    「连列表和计数一起」不是多余的断言：只把详情那一行藏起来的话，列表里还挂着
+    一条点不开的反馈，计数也还说它在那 —— 那比不删更糟。
+
+    删除是**软删**（`deleted_at`），所以这里断言的每一件都是**读侧过滤**的结果，
+    而不是「那一行没了」。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    _comment(client, STRANGER, row["id"], "我也遇到了")
+
+    before = client.get("/feedback/counts").json()["data"]["all"]
+
+    deleted = _delete(client, row["id"], REPORTER)
+    assert deleted.status_code == 200, deleted.text
+
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    ).status_code == 404
+    assert row["id"] not in {c["id"] for c in _cards(client, REPORTER)}
+    assert row["id"] not in {c["id"] for c in _mine(client, REPORTER)}
+    assert client.get("/feedback/counts").json()["data"]["all"] == before - 1
+
+
+def test_deleting_a_report_takes_its_comments_with_it(client):
+    """评论跟着走：楼还在、帖子没了的话，「这栋楼在回哪条反馈」永远查不出来。
+
+    判据取的是**评论那一层**的读法（`GET /feedback/{id}/comments`）—— 详情页 404
+    只说明帖子没了，说明不了它下面那些行怎么了。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    comment = _comment(client, STRANGER, row["id"], "我也遇到了")
+    assert _delete(client, row["id"], REPORTER).status_code == 200
+
+    r = client.get(
+        f"/feedback/{row['id']}/comments",
+        headers=session_auth_headers(REPORTER),
+    )
+    # 反馈本身已经读不到了，所以这条路径回 404 而不是空列表 —— 两种都不该是
+    # 「还有一条评论」。
+    assert r.status_code == 404, r.text
+    assert comment["id"] not in r.text
+
+
+def test_a_stranger_cannot_delete_someone_elses_report(client):
+    """看得见但删不掉 → **403**（不是 404）。两种情况分得很清楚：
+
+    * 看不见（私人反馈）→ 404：存不存在这件事不该被一个看不见它的人问出来。
+    * 看得见但不是自己的 → 403：这时候他已经知道它存在了。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    r = _delete(client, row["id"], STRANGER)
+    assert r.status_code == 403, r.text
+    # 没删掉。
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(REPORTER))
+    ).status_code == 200
+
+
+def test_an_admin_deletes_anyones_report(client, as_admin):
+    """管理员删任何一条 —— 需求方要的那一档（「不然我怕有人恶意刷」）。
+
+    删除是**事后清理**，挡不住刷；它给的是「× 掉一条」的能力。
+    """
+    row = _report(client, REPORTER, body="垃圾内容")
+    assert _delete(client, row["id"], as_admin).status_code == 200
+    assert (
+        client.get(f"/feedback/{row['id']}", headers=session_auth_headers(as_admin))
+    ).status_code == 404
+
+
+def test_can_delete_is_the_servers_answer_and_matches_the_permission(client, as_admin):
+    """每一条上的 `can_delete` 与真删一次的结果必须一致。
+
+    这条断言的是**判据只有一处**：`detail_of` 填 `can_delete`、`delete_feedback`
+    删之前再问一遍，问的是同一个 `may_delete_feedback`。两处各写一遍就是「按钮画得
+    出来、点下去 403」的来源 —— 而这个功能在 `deployed` 那次已经为同一个形状付过
+    学费（按钮亮着、服务端回 412）。
+    """
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    url = f"/feedback/{row['id']}"
+
+    def can_delete(handle: str) -> bool:
+        r = client.get(url, headers=session_auth_headers(handle))
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["can_delete"]
+
+    assert can_delete(REPORTER) is True
+    assert can_delete(as_admin) is True
+    assert can_delete(STRANGER) is False
+
+    # 判为不能删的那一位，真删也是 403 —— 两边不会分家。
+    assert _delete(client, row["id"], STRANGER).status_code == 403
+
+
+def test_an_unauthenticated_delete_is_refused(client):
+    """没登录的人连「能不能删」都不该问出来（401，不是 403）。"""
+    row = _report(client, REPORTER, body="按钮点了没反应")
+    assert client.delete(f"/feedback/{row['id']}").status_code == 401

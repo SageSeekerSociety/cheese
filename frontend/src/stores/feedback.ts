@@ -44,6 +44,7 @@ import {
   createAdminFeedbackNote,
   createFeedback,
   createFeedbackComment,
+  deleteFeedback,
   deleteFeedbackComment,
   dismissFeedbackProposal,
   getAdminFeedback as getAdminFeedbackDetail,
@@ -952,6 +953,35 @@ export const useFeedbackStore = defineStore('feedback', {
       } catch (error) {
         this.error = message(error, '删除失败')
       }
+    },
+
+    /** 删掉**整条反馈** —— 作者删自己的，平台管理员删任何一条。
+     *
+     *  能不能删不在这里判：按钮出不出现看服务端回的 `can_delete`（和路由上那一处
+     *  `may_delete_feedback` 是同一个判据）。这里只负责删完把自己手上那几份数据一起
+     *  收干净 —— **少收一处，下一页就会画出一条点不开的反馈**，而那比不删更糟。
+     */
+    async deleteFeedback(id: string): Promise<boolean> {
+      this.error = null
+      try {
+        await deleteFeedback(id)
+      } catch (error) {
+        this.error = message(error, '删除失败')
+        return false
+      }
+      // 三份列表都在内：`adminItems` 是管理端那条路（管理员从队列点进来删的，删完
+      // 回队列时那一条不该还在）。
+      this.items = this.items.filter((row) => row.id !== id)
+      this.mineItems = this.mineItems.filter((row) => row.id !== id)
+      this.adminItems = this.adminItems.filter((row) => row.id !== id)
+      detailCache.delete(id)
+      if (this.detailId === id) {
+        this.detailId = null
+        this.detail = null
+      }
+      // 计数里它还占着一格。重问一次 —— 数字由服务端数，不在前端减一。
+      void this.refreshCounts()
+      return true
     },
 
     /* ---- 提交表单 ---- */

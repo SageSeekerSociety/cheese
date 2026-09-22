@@ -209,6 +209,13 @@
     }
   },
   "detail": {
+    "delete": {
+      "label": "Delete",
+      "confirm": "Delete it",
+      "cancel": "Cancel",
+      "ask": "Delete this report?",
+      "askWithComments": "Delete this report and its {n} comments?"
+    },
     "missing": {
       "title": "This feedback doesn't exist",
       "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the room when it was filed can see it."

@@ -366,6 +366,11 @@ class FeedbackDetail(FeedbackCard):
     #: Admin-only; empty for everyone else. The field is present either way so
     #: the frontend has one shape, and the service is what empties it.
     notes: list[NoteOut] = Field(default_factory=list)
+    #: 调用者能不能删掉**整条反馈**。**服务端算**，和 `DELETE /feedback/{id}` 共用
+    #: `may_delete_feedback` 一处判据 —— 作者（写它的那个 handle，或按下发送的那个）
+    #: 与平台管理员各一档。客户端自己拼一遍 `handle == mine || isAdmin` 就是「按钮
+    #: 画得出来、点下去 403」的来源，评论那一层已经为此付过学费。
+    can_delete: bool = False
 
     @classmethod
     def from_row(
@@ -381,6 +386,7 @@ class FeedbackDetail(FeedbackCard):
         thread: list[CommentOut] | None = None,
         thread_next_cursor: str | None = None,
         notes: list[FeedbackNote] | None = None,
+        can_delete: bool = False,
     ) -> FeedbackDetail:
         card = FeedbackCard.from_row(
             row,
@@ -417,6 +423,7 @@ class FeedbackDetail(FeedbackCard):
             thread=list(thread or []),
             thread_next_cursor=thread_next_cursor,
             notes=[NoteOut.from_row(x, avatars=avatars) for x in notes or []],
+            can_delete=can_delete,
         )
 
 

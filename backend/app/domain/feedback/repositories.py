@@ -1148,6 +1148,32 @@ class FeedbackRepository:
         )
         await self._session.flush()
 
+    async def soft_delete_feedback(self, row: Feedback) -> None:
+        """软删一条反馈，**连同它下面所有还在的评论**。
+
+        和 `soft_delete_comment` 同一个形状、同一个理由：读侧过滤 `deleted_at`
+        （`_public_where` / `_admin_where` 与 `live_comment_clause`），所以打了时间戳
+        的行从列表、详情、计数和搜索里一起消失。
+
+        **评论必须跟着走**：留下的话，它们挂在一条谁也读不到的反馈下面 —— 楼还在、
+        帖子没了，而「这栋楼在回哪条反馈」是永远查不出来的那一半。一条 `UPDATE` 全
+        带走，不做逐条，理由同评论那一处（有人正在等这个请求）。
+
+        **不硬删**。这一动作有两个调用者（作者删自己的、管理员删别人的），而管理员
+        删的是别人写的东西 —— 那是需要留痕的一类动作，`deleted_at` 就是那条痕。
+        """
+        deleted_at = datetime.now(UTC)
+        row.deleted_at = deleted_at
+        await self._session.execute(
+            update(FeedbackComment)
+            .where(
+                FeedbackComment.feedback_id == row.id,
+                FeedbackComment.deleted_at.is_(None),
+            )
+            .values(deleted_at=deleted_at)
+        )
+        await self._session.flush()
+
     # --- 评论点赞 -------------------------------------------------------------
     #
     # Read side is batched for the whole thread, for the same reason the report

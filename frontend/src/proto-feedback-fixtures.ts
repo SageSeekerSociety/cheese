@@ -111,6 +111,8 @@ function row(spec: {
   environment?: string
   thread?: FeedbackComment[]
   notes?: FeedbackNote[]
+  /** 默认 true —— 理由写在下面那一行旁边。 */
+  can_delete?: boolean
 }): FeedbackDetail {
   const created = ago(spec.minutesAgo)
   const thread = threadOf(spec.thread ?? [])
@@ -152,6 +154,10 @@ function row(spec: {
     // 就等于「谁都一页装得下」，那个按钮在预览里根本不会出现。
     thread_next_cursor: null,
     notes: spec.notes ?? [],
+    // 预览里的人**就是这几条的提交者**（假后端没有登录态可言），按服务端的判据他
+    // 正是能删的那一位。这一格不能写死 `false`：那会让「删除」这个入口在预览里一次
+    // 都不出现，而预览正是拿来看这类东西的地方。
+    can_delete: spec.can_delete ?? true,
   }
 }
 
@@ -1921,6 +1927,19 @@ function routes(url: URL, method: string, body: unknown): MockReply {
       target.likes += wanted ? 1 : -1
     }
     return { data: { count: target.likes, liked: target.liked } }
+  }
+
+  const oneReport = /^\/feedback\/([^/]+)$/.exec(path)
+  if (oneReport && method === 'DELETE') {
+    const item = find(oneReport[1])
+    if (!item) return { missing: true }
+    // 服务端两条路分得很清楚：看不见 → 404，看得见但删不掉 → 403。预览里假后端的
+    // 世界只有一个人（没有登录态），所以能走到这里的都判为「能删」；`can_delete`
+    // 那半由页面自己按数据画按钮，和真机同一套。
+    if (!item.can_delete) return { forbidden: '只能删除自己提交的反馈' }
+    // 软删的**可观察那一半**：它从每一份列表里消失（真机上由服务端的读侧过滤完成）。
+    ROWS.splice(ROWS.indexOf(item), 1)
+    return { data: { deleted: true } }
   }
 
   const oneComment = /^\/feedback\/([^/]+)\/comments\/([^/]+)$/.exec(path)

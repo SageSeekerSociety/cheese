@@ -161,6 +161,35 @@ function loadMoreReplies(parentId: string) {
   void store.loadMoreReplies(item.value.id, parentId)
 }
 
+/** 删除的**就地确认**：不开弹窗，就地换成「确认 / 取消」两个按钮。
+ *
+ *  和评论那一条同一个形状（`FeedbackCommentItem`），理由也一样：一次误触的代价是
+ *  整条反馈没了，而弹窗会把「我按的是哪一条」这件事从屏幕上挪走。 */
+const confirmingDelete = ref(false)
+const deletingDelete = ref(false)
+
+/** 确认那一句**必须带条数**：「删掉这条反馈」而实际删掉它下面 12 条评论，是在骗
+ *  按按钮的人。没有评论时那句只说这一条 —— 凭空多出一个 0 同样是在骗。 */
+const deleteAsk = computed(() => {
+  const count = item.value?.comments ?? 0
+  return count > 0 ? t('feedback.detail.delete.askWithComments', { n: count }) : t('feedback.detail.delete.ask')
+})
+
+async function doDelete() {
+  if (!item.value || deletingDelete.value) return
+  deletingDelete.value = true
+  const ok = await store.deleteFeedback(item.value.id)
+  deletingDelete.value = false
+  if (!ok) {
+    // 失败时**留在原地**：`store.error` 是服务端的原话，它就在上面那块 alert 里，
+    // 而这一页还在、人还能重试。跳走等于把失败藏起来。
+    confirmingDelete.value = false
+    return
+  }
+  // 删完回反馈中心。用 `replace`：这一条已经不存在了，回退键不该回到一个 404。
+  void router.replace('/feedback')
+}
+
 async function share() {
   try {
     await navigator.clipboard.writeText(window.location.href)
@@ -211,7 +240,27 @@ async function share() {
              窄屏的顺序因此是「页头 → 进展/计数/来源 → 正文 → 评论区」，宽屏（≥1280）
              用 grid-area 把 aside 拉回右栏，屏幕上和改动前一样。 -->
         <div class="fb-head">
-          <h1 class="t-page-title fb-title">{{ item.title }}</h1>
+          <!-- 标题那一行右侧挂删除。**只在服务端说 `can_delete` 时出现** —— 判据
+               （作者或平台管理员）和删那条路由共用一处，所以按钮画得出来就一定删得掉。 -->
+          <div v-if="item.can_delete" class="fb-head__row">
+            <h1 class="t-page-title fb-title">{{ item.title }}</h1>
+            <v-spacer />
+            <template v-if="!confirmingDelete">
+              <v-btn variant="text" color="secondary" size="small" @click="confirmingDelete = true">
+                {{ t('feedback.detail.delete.label') }}
+              </v-btn>
+            </template>
+            <template v-else>
+              <span class="fb-del__ask t-meta">{{ deleteAsk }}</span>
+              <v-btn variant="text" color="error" size="small" :loading="deletingDelete" @click="doDelete">
+                {{ t('feedback.detail.delete.confirm') }}
+              </v-btn>
+              <v-btn variant="text" color="secondary" size="small" @click="confirmingDelete = false">
+                {{ t('feedback.detail.delete.cancel') }}
+              </v-btn>
+            </template>
+          </div>
+          <h1 v-else class="t-page-title fb-title">{{ item.title }}</h1>
 
           <div class="d-flex align-center flex-wrap ga-2 mb-2">
             <FeedbackStatusChip :status="item.status" />
@@ -576,6 +625,19 @@ async function share() {
     grid-area: aside;
   }
 }
+/* 标题 + 删除那一行。标题本来单独占一行；有删除按钮时两者同排，标题照旧由
+   `.fb-title` 管自己的字号与下边距。 */
+.fb-head__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* 确认那一句：和「删除」同一行、贴着按钮，读的人不用在屏幕上找它。 */
+.fb-del__ask {
+  align-self: center;
+}
+
 .fb-title {
   margin-bottom: 8px;
 }

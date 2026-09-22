@@ -214,6 +214,31 @@ class FeedbackService:
         """
         return is_admin or (handle is not None and row.author_handle == handle)
 
+    def may_delete_feedback(
+        self, row: Feedback, *, handle: str | None, is_admin: bool
+    ) -> bool:
+        """谁可以删掉**一整条反馈** —— 提它的人，或者平台管理员。
+
+        和评论那条判据（`may_delete_comment`）同一个形状，但作者那一档多算一个人：
+        一条反馈有**两个**都算「我提的」的 handle —— 写它的（agent 提案时是那个 agent）
+        和按下发送的（人）。只认前者的话，从提案卡提交的人删不掉自己刚提交的东西；
+        只认后者的话，agent 自己经手的那条谁也删不掉（`submitted_by_handle` 在那种
+        情况下可能是别人）。
+
+        管理员这一档是需求方要的（「不然我怕有人恶意刷」）：删除是**事后清理**，
+        挡不住刷 —— 那要在提交侧限流。这里给的只是「× 掉一条」的能力，而这正是
+        管理员今天没有的那一个。
+
+        判据只有这一处：`delete_feedback` 删之前问它，`detail_of` 拿它填
+        `can_delete`。两处各写一遍就是「按钮画得出来、点下去 403」的来源，这个功能
+        已经为那个形状付过一次学费（见 `may_delete_comment` 的 docstring）。
+        """
+        if is_admin:
+            return True
+        if handle is None:
+            return False
+        return handle in (row.author_handle, row.submitted_by_handle)
+
     # --- 读 -----------------------------------------------------------------
 
     async def list_public(
@@ -504,6 +529,8 @@ class FeedbackService:
         """
         page = await self._repo.page_comments(row.id)
         activity = await self._repo.latest_activity_of([row.id])
+        # 和 `delete_feedback` 共用同一个判据，所以按钮和权限不会分家。
+        can_delete = self.may_delete_feedback(row, handle=handle, is_admin=is_admin)
         # Notes are admin-only, so resolving faces for them is not extra work a
         # non-admin pays for: the list is empty and contributes no handles.
         notes = await self._repo.list_notes(row.id) if is_admin else []
@@ -542,6 +569,7 @@ class FeedbackService:
             thread_next_cursor=page.next_cursor,
             timeline=await self._repo.list_timeline(row.id),
             notes=notes,
+            can_delete=can_delete,
         )
 
     async def mark_read(self, *, handle: str) -> datetime:
@@ -875,6 +903,24 @@ class FeedbackService:
         if not self.may_delete_comment(comment, handle=handle, is_admin=is_admin):
             raise ForbiddenError("只能删除自己的评论")
         await self._repo.soft_delete_comment(comment)
+
+    async def delete_feedback(
+        self,
+        feedback_id: uuid.UUID,
+        *,
+        handle: str,
+        is_admin: bool,
+    ) -> None:
+        """软删一条反馈（连带它的评论）。
+
+        `visible_row` 先过一遍**可见性**：看不见的东西回 404 而不是 403 —— 私人反馈
+        存不存在本身就不该被一个看不见它的人问出来。可见之后再判「能不能删」，
+        那是 403：这时候他已经知道这条存在了，再说「不存在」是另一句假话。
+        """
+        row = await self.visible_row(feedback_id, handle=handle, is_admin=is_admin)
+        if not self.may_delete_feedback(row, handle=handle, is_admin=is_admin):
+            raise ForbiddenError("只能删除自己提交的反馈")
+        await self._repo.soft_delete_feedback(row)
 
     async def note(
         self, feedback_id: uuid.UUID, body: str, *, author_handle: str
