@@ -1,5 +1,7 @@
 from collections.abc import Sequence
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.knowledge.models import Knowledge
 from app.domain.knowledge.repositories import KnowledgeRepository
@@ -19,6 +21,26 @@ class KnowledgeService:
         self._team_repo = team_repo
         self._user_repo = user_repo
         self._profile_repo = profile_repo
+
+    @classmethod
+    def for_lookup(cls, session: AsyncSession) -> "KnowledgeService":
+        """A reader another domain can build without our DI graph.
+
+        The import guard keeps other domains out of our repository, and the
+        constructors they would have to copy need the team and user
+        repositories. This hands them only what a plain fetch needs.
+        """
+        return cls(repo=KnowledgeRepository(session), team_repo=TeamRepository(session))
+
+    async def get_many(self, knowledge_ids: Sequence[int]) -> list[Knowledge]:
+        """Whatever of these ids is still readable, in the order asked for.
+
+        No membership check: the caller is a 课程 resolving the ids its teacher
+        configured, and a teacher can only point at entries they could already
+        see. `content` comes back with the row — trimming it is the caller's
+        call, because only the caller knows how big its own prompt may grow.
+        """
+        return await self._repo.get_by_ids(knowledge_ids)
 
     async def create(
         self,

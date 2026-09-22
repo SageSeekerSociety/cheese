@@ -115,6 +115,34 @@ class PatchSpaceRequest(BaseModel):
         return value
 
 
+class TeachingRequest(BaseModel):
+    """课程级教学配置 (#8d772257) — 项目集级最小编辑入口。
+
+    **The strict end of this key.** `Teaching.from_json` on the read path drops a
+    bad field rather than raising, because `resolve()` runs on every turn of
+    every project and a typo in one field of a 项目集 must not take down the
+    twenty 赛题 under it. Here a person is looking at the form and can be told
+    which field is wrong, so every field is checked and the ids are typed.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: 课程级 system prompt 模板；`{current_week}` / `{allowed_topics}` /
+    #: `{avoid_in_code}` 在里面会被本周的值替换掉。
+    system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
+    allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
+    avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
+    #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
+    #: 存指向它们的 id。
+    material_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="materialIds"
+    )
+    knowledge_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        default_factory=list, alias="knowledgeIds"
+    )
+
+
 class CreateSpaceCategoryRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -131,6 +159,11 @@ class PatchSpaceCategoryRequest(BaseModel):
     display_order: int | None = Field(default=None, alias="displayOrder")
     archived: bool | None = None
     archived_at: int | None = Field(default=None, alias="archivedAt")
+    #: 课程级教学配置。Sending it replaces the WHOLE teaching config (the
+    #: protocol's whole-key semantics — a half-merged week is harder to reason
+    #: about than either version alone); omitting it leaves it exactly as it is,
+    #: so a PATCH that only renames a 项目集 does not wipe the 教学安排.
+    teaching: TeachingRequest | None = None
 
 
 class CreateSpaceDomainGroupRequest(BaseModel):
@@ -397,6 +430,10 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
         "name": cat.name,
         "description": cat.description,
         "displayOrder": cat.display_order,
+        # 课程级教学配置 (#8d772257), `{}` when this 项目集 is not a course — the
+        # edit form reads it back, so it has to be here rather than only on the
+        # write path.
+        "teaching": getattr(cat, "teaching", None) or {},
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,
@@ -1642,6 +1679,12 @@ async def patch_space_category(
         description=payload.description,
         display_order=payload.display_order,
         archived=archived,
+        # `model_dump()` (field names, not aliases): what lands in the column is
+        # the shape `Teaching.from_json` reads back, so the write path and the
+        # read path cannot drift into two different spellings of one config.
+        teaching=(
+            payload.teaching.model_dump() if payload.teaching is not None else None
+        ),
     )
     return {
         "code": 200,
