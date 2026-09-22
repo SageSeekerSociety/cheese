@@ -65,12 +65,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 FROM build-base AS deps
 WORKDIR /app
 
-# Copy dependency files and srp_rs source (needed for build). `.python-version`
-# is REQUIRED here: pyproject requires-python is ">=3.13", so without the pin uv
-# fetches the newest satisfying interpreter — now Python 3.14, which pyo3 0.24
-# (srp_rs) refuses to build against. The pin keeps uv on 3.13.
-COPY pyproject.toml uv.lock README.md .python-version ./
-COPY srp_rs/ ./srp_rs/
+# Install Python before dependency inputs so a lockfile edit does not download it again.
+COPY .python-version ./
 
 # Belt-and-braces: even if .python-version is ever dropped, hold uv on 3.13 so
 # the srp_rs / pyo3 native build can't silently break on a newer interpreter.
@@ -83,6 +79,12 @@ ENV UV_PYTHON=3.13
 # path so production can COPY it too. (UV_LINK_MODE=copy does NOT fix this — it
 # only affects package files, not the interpreter symlink.)
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
+
+RUN uv python install
+
+# README is not a dependency input for this non-packaged project.
+COPY pyproject.toml uv.lock ./
+COPY srp_rs/ ./srp_rs/
 
 # Install dependencies using uv (includes building srp_rs from source).
 # The cache mounts keep uv's wheel downloads and Cargo's registry/build output
