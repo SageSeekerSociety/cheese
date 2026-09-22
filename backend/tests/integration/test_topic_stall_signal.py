@@ -93,6 +93,25 @@ def test_a_turn_that_died_mid_tool_is_reported_stalled(client):
     assert stall["last_block"]["kind"] == "event"
 
 
+def test_a_turn_that_died_right_after_showing_something_is_reported_stalled(client):
+    # A shown file is in the timeline, so it can be the last block — and a turn
+    # that ends properly always says something after showing it.
+    pid, tid = _project_and_topic(client)
+    _seed_block(
+        client,
+        pid,
+        tid,
+        kind=BlockKind.artifact,
+        author_type=AuthorType.participant,
+        content="report.html",
+        age=timedelta(minutes=45),
+    )
+
+    stall = _stall(client, tid)
+    assert stall["stalled"] is True
+    assert stall["reason"] == "no_live_turn"
+
+
 def test_a_topic_that_just_acted_is_not_stalled(client):
     """Same shape, seconds old — a turn between two tool calls is the normal
     state of a working topic, and calling that dead would make the signal
