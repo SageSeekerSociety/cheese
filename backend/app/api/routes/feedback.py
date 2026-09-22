@@ -127,7 +127,9 @@ async def get_feedback_meta(
         status_ladder=list(feedback_services.STATUS_LADDER),
         tabs=list(feedback_services.PUBLIC_TABS),
         admin_tabs=list(feedback_services.ADMIN_TABS),
-        hot_supports=feedback_services.repo.HOT_SUPPORTS,
+        hot_score=feedback_services.repo.HOT_SCORE,
+        hot_half_life_days=feedback_services.repo.HOT_HALF_LIFE_DAYS,
+        hot_min_items=feedback_services.repo.HOT_MIN_ITEMS,
         is_admin=await _is_admin(service, who.handle if who.authenticated else None),
     )
     return ok(meta.model_dump(mode="json"))
@@ -155,6 +157,7 @@ async def get_feedback_counts(
         hot=counts["hot"],
         active=counts["active"],
         resolved=counts["resolved"],
+        deployed=counts["deployed"],
         unread=counts["unread"],
     )
     return ok(payload.model_dump(mode="json"))

@@ -1,6 +1,7 @@
 import account from './account.json'
 import comments from './comments.json'
 import editor from './editor.json'
+import feedback from './feedback.json'
 import global from './global.json'
 import navigation from './navigation.json'
 import notifications from './notifications.json'
@@ -21,6 +22,7 @@ export default {
   publicSite,
   account,
   editor,
+  feedback,
   questions,
   users,
   comments,

@@ -1,0 +1,202 @@
+{
+  "queue": {
+    "label": "Feedback queue",
+    "tab": {
+      "all": "All"
+    },
+    "search": {
+      "placeholder": "Search feedback",
+      "scope": "Titles, summaries, bodies and submitters"
+    },
+    "view": {
+      "list": "List",
+      "table": "Table"
+    },
+    "refresh": "Refresh",
+    "unread": "{n} unread",
+    "foot": {
+      "rows": "{n} rows",
+      "end": "End of list"
+    },
+    "pager": {
+      "prev": "Previous",
+      "next": "Next"
+    },
+    "empty": {
+      "title": "No feedback yet",
+      "desc": "Nobody has submitted feedback yet. New submissions show up in this queue."
+    },
+    "error": {
+      "title": "Couldn't load the queue",
+      "desc": "Check your connection and try again.",
+      "retry": "Retry"
+    },
+    "filtered": {
+      "title": "No feedback matches",
+      "desc": "Try another keyword, or click \"All\" to clear the filters.",
+      "clear": "Clear filters"
+    },
+    "col": {
+      "title": "Title",
+      "assignee": "Assignee",
+      "updated": "Updated",
+      "next": "Next"
+    },
+    "advance": {
+      "inProgress": "Start",
+      "resolved": "Mark fixed",
+      "deployed": "Mark shipped"
+    },
+    "supports": "Supports {n}"
+  },
+  "queueDetail": {
+    "back": "Back",
+    "triage": "Triage",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "status": "Status",
+    "assign": "Assignee",
+    "assignTo": "Assign to",
+    "priority": "Priority",
+    "priorityValue": "Priority {label}",
+    "author": "Submitted by",
+    "created": "Submitted",
+    "lastActivity": "Last activity",
+    "source": "Source",
+    "kind": "Kind",
+    "timeline": "Timeline",
+    "comments": "Comments",
+    "unassigned": "Unassigned",
+    "problem": "Body",
+    "why": "Why it's needed",
+    "expectation": "Expected solution",
+    "context": "Context",
+    "repro": "Steps to reproduce",
+    "evidence": "Evidence",
+    "logs": "Logs",
+    "sessionInfo": "Session info",
+    "session": "Session",
+    "environment": "Environment",
+    "discussion": "Discussion",
+    "noReplies": "Nobody has replied yet.",
+    "security": "Security",
+    "securityHint": "Once marked as a security issue this item is hidden from your colleagues: only the submitter and you, an admin, can see it. Anyone else who opens it just sees that it cannot be opened.",
+    "securityMark": "Mark as a security issue",
+    "notes": "Internal notes",
+    "notesHint": "Only admins can see these, not the submitter. Once added a note stays put: it cannot be edited or deleted.",
+    "noNotes": "No notes yet",
+    "notePlaceholder": "Write something for whoever picks this up next",
+    "submitNote": "Submit note"
+  },
+  "table": {
+    "label": "Feedback list",
+    "empty": {
+      "title": "No feedback yet",
+      "desc": "Nobody has submitted feedback yet."
+    },
+    "col": {
+      "id": "ID",
+      "title": "Title",
+      "user": "User",
+      "source": "Source",
+      "kind": "Kind",
+      "priority": "Priority",
+      "status": "Status",
+      "supports": "Supports",
+      "comments": "Comments",
+      "assignee": "Assignee",
+      "updated": "Updated"
+    },
+    "error": {
+      "title": "Couldn't load the table",
+      "desc": "Check your connection and try again.",
+      "retry": "Retry"
+    },
+    "filtered": {
+      "title": "No feedback matches",
+      "desc": "Try another keyword, or click \"All\" to clear the filters.",
+      "clear": "Clear filters"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "window": "Last 7 days",
+    "kpi": {
+      "untriaged": "Untriaged",
+      "inProgress": "In progress",
+      "resolved7d": "Resolved · 7d",
+      "deployed7d": "Shipped · 7d",
+      "created7d": "New · 7d",
+      "resolvedTotal": "Resolved · all time",
+      "deployedTotal": "Shipped · all time",
+      "all": "All feedback",
+      "hot": "Hot",
+      "unread": "Unread",
+      "noSeries": "no source yet"
+    },
+    "chart": {
+      "title": "New / resolved per day",
+      "created": "New",
+      "resolved": "Resolved"
+    },
+    "list": {
+      "title": "Needs action · {count}"
+    },
+    "cost": {
+      "label": "Cost · last 7 days",
+      "value": "{calls} calls · {usd} · no daily breakdown"
+    },
+    "empty": {
+      "title": "No data yet",
+      "desc": "The platform hasn't produced any feedback yet."
+    },
+    "error": {
+      "title": "Couldn't load the dashboard",
+      "desc": "Check your connection and try again."
+    },
+    "partial": {
+      "title": "Cost data is unavailable",
+      "desc": "The usage endpoint didn't respond. The other numbers are unaffected.",
+      "hint": "The usage endpoint didn't respond"
+    }
+  },
+  "chart": {
+    "dataTable": "View data table",
+    "date": "Date"
+  },
+  "numberList": {
+    "viewAll": "View all"
+  },
+  "center": {
+    "empty": {
+      "title": "No feedback yet",
+      "desc": "Feedback you submit shows up here."
+    },
+    "error": {
+      "title": "Couldn't load feedback",
+      "desc": "Check your connection and try again."
+    },
+    "search": {
+      "title": "No matching feedback",
+      "desc": "Try another keyword. Search covers titles, summaries, bodies and submitters."
+    }
+  },
+  "detail": {
+    "missing": {
+      "title": "This feedback doesn't exist",
+      "desc": "It may have been deleted — or only the person who filed it, platform admins, and the people who were in the room when it was filed can see it."
+    },
+    "error": {
+      "title": "Couldn't load the details",
+      "desc": "Check your connection and try again."
+    },
+    "comments": {
+      "title": "No comments yet",
+      "desc": "Nobody has replied yet."
+    }
+  },
+  "undo": {
+    "message": "Changed to \"{status}\"",
+    "action": "Undo"
+  }
+}
