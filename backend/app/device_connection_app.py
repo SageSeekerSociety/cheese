@@ -246,6 +246,19 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
             task = asyncio.create_task(device_hub.call_executor(**body))
             task.add_done_callback(_read_the_failure)
             _executor_calls[trace_id] = task
+            if (
+                body["method"] == "control"
+                and body["params"].get("subtype") == "background_tasks"
+                and not body["params"].get("tool_use_id")
+            ):
+                # Polls return a full inventory; retaining each copy multiplies
+                # its memory by the replay-cache length. A tool_use_id instead
+                # backgrounds that tool, so its result must remain replayable.
+                def forget_inventory(completed: asyncio.Task) -> None:
+                    if _executor_calls.get(trace_id) is completed:
+                        _executor_calls.pop(trace_id)
+
+                task.add_done_callback(forget_inventory)
         # Shield makes an HTTP client disappearing during backend rollout unable
         # to cancel the call that the stable owner has already sent to the device.
         return await asyncio.shield(task)
