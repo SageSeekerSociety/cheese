@@ -77,6 +77,8 @@ jobs:
           # Preserve this slot's builder state; other slots use different builder names.
           name: ${{ env.PRIVATE_BUILDER }}
           keep-state: true
+          # Runner slots share Docker's current-builder setting; select explicitly below.
+          use: false
           driver-opts: |
             image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
           buildkitd-config-inline: |
@@ -92,7 +94,7 @@ jobs:
               maxUsedSpace = "3GB"
               minFreeSpace = "10GB"
       - name: Build private execution image
-        run: docker buildx build --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
+        run: docker buildx build --builder "$PRIVATE_BUILDER" --load -f backend/sandbox/Dockerfile.private -t cheese-private-executor:2.1.277 .
       - name: Keep the private image available during tests
         id: private-image
         # Cached images retain their creation date. A running container keeps
