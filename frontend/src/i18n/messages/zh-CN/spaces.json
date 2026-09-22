@@ -44,12 +44,29 @@
       "openWork": "去交这一周的作业",
       "nothingToHandIn": "这一周不用交东西"
     },
-    "stage": {
-      "assignments": {
-        "title": "作业与验收",
-        "body": "这一屏收作业、做验收：老师看到等批的提交，学生看到这一周要交的东西。内容由「作业与验收」那条任务填。"
-      }
+    "assignments": {
+      "title": "作业与验收",
+      "queue": "待验收",
+      "all": "全部",
+      "statParticipants": "报名学生",
+      "statSubmitted": "已交",
+      "statPending": "等你看",
+      "statMissing": "还没交",
+      "student": "学生",
+      "assignment": "作业",
+      "submittedAt": "交于",
+      "state": "状态",
+      "statePending": "等你看",
+      "stateAccepted": "通过",
+      "stateRejected": "驳回",
+      "grade": "看与打分",
+      "open": "打开",
+      "dialogTitle": "提交与评审",
+      "emptyTitle": "还没有人交",
+      "emptyBody": "这门课的学生交作业之后会出现在这里，按「等你看 / 全部」筛。",
+      "publish": "去发布作业"
     },
+    "stage": {},
     "people": {
       "title": "学生与分组",
       "count": "{n} 名学生",

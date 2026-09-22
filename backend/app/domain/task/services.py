@@ -922,6 +922,87 @@ class TaskSubmissionService:
 
         return items, total
 
+    async def list_for_space(
+        self,
+        *,
+        space_id: int,
+        task_id: int | None = None,
+        reviewed: bool | None = None,
+        limit: int,
+        offset: int = 0,
+        sort_by: str = "createdAt",
+        sort_order: str = "desc",
+    ) -> tuple[list[dict], int]:
+        """一整门课的提交，按板子取一次（课程的「作业与验收」用）。
+
+        每一行在 ``list_submissions`` 那份 DTO 之上多带三样：``taskId``（哪道
+        作业）、``taskTitle``（那道题叫什么，教师看的是「谁的哪份作业」）、
+        ``participantId``（报名记录 id，前端拿它去调提交与评审那几条既有接口）。
+        """
+        rows = await self._submission_repo.list_for_space(
+            space_id=space_id,
+            task_id=task_id,
+            reviewed=reviewed,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        total = await self._submission_repo.count_for_space(
+            space_id=space_id,
+            task_id=task_id,
+            reviewed=reviewed,
+        )
+
+        items: list[dict] = []
+        for submission, membership, task in rows:
+            entries = list(
+                await self._entry_repo.list_by_submission_id(
+                    submission_id=submission.id
+                )
+            )
+            review = await self._review_repo.get_by_submission_id(submission.id)
+            dto = await self._build_submission_dto(
+                submission=submission,
+                membership=membership,
+                entries=entries,
+                review=review,
+            )
+            dto["taskId"] = task.id
+            dto["taskTitle"] = task.name
+            dto["participantId"] = membership.id
+            items.append(dto)
+
+        return items, total
+
+    async def summary_for_space(
+        self,
+        *,
+        space_id: int,
+        task_id: int | None = None,
+    ) -> dict:
+        """课程那一屏的三个数字：交了多少、还等多少人、多少份等着看。
+
+        **没交的人数 = 报名人数 − 交过东西的人数**（交过东西的人数就是
+        ``count_for_space``，因为那条查询每人只算最新一版）。``None`` 表示那个
+        数字这次拿不到 —— 前端对此的处理是整块不显示，而不是画一个 0。
+        """
+        submissions = await self._submission_repo.count_for_space(
+            space_id=space_id, task_id=task_id, reviewed=None
+        )
+        pending = await self._submission_repo.count_for_space(
+            space_id=space_id, task_id=task_id, reviewed=False
+        )
+        memberships = await self._membership_repo.list_memberships_for_space(space_id)
+        if task_id is not None:
+            memberships = [m for m in memberships if m.task_id == task_id]
+        return {
+            "participants": len(memberships),
+            "submissions": submissions,
+            "pendingReview": pending,
+            "missing": len(memberships) - submissions,
+        }
+
 
 class TaskSubmissionReviewService:
     """Simplified Python port of TaskSubmissionReviewService with rank hooks."""

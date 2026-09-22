@@ -44,12 +44,29 @@
       "openWork": "Open this week's assignment",
       "nothingToHandIn": "Nothing to hand in this week"
     },
-    "stage": {
-      "assignments": {
-        "title": "Assignments",
-        "body": "This screen collects work and reviews it: the teacher sees submissions waiting, the student sees what is due this week. The assignments task fills it in."
-      }
+    "assignments": {
+      "title": "Assignments",
+      "queue": "Waiting on me",
+      "all": "All",
+      "statParticipants": "Enrolled",
+      "statSubmitted": "Handed in",
+      "statPending": "Waiting on me",
+      "statMissing": "Nothing yet",
+      "student": "Student",
+      "assignment": "Assignment",
+      "submittedAt": "Handed in",
+      "state": "State",
+      "statePending": "Waiting on me",
+      "stateAccepted": "Accepted",
+      "stateRejected": "Sent back",
+      "grade": "Open and grade",
+      "open": "Open",
+      "dialogTitle": "Submission and review",
+      "emptyTitle": "Nothing handed in yet",
+      "emptyBody": "Once students hand work in it shows up here, filtered by waiting / all.",
+      "publish": "Publish an assignment"
     },
+    "stage": {},
     "people": {
       "title": "Students & groups",
       "count": "{n} students",
