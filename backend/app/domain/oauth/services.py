@@ -688,7 +688,7 @@ class OAuthService:
         """
         from sqlalchemy import select
 
-        from app.domain.passkey.repositories import PasskeyRepository
+        from app.domain.passkey.services import PasskeyService
         from app.domain.user.models import User
 
         conn = await self._repo.get(connection_id)
@@ -707,9 +707,7 @@ class OAuthService:
                 c.id != connection_id and c.provider_id not in LINK_ONLY_PROVIDERS
                 for c in await self._repo.list_by_user(user_id)
             )
-            has_passkey = bool(
-                await PasskeyRepository(session=session).list_by_user(user_id)
-            )
+            has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
             if not (user.hashed_password or has_passkey or other_sign_in):
                 raise ConflictError(
                     "这是你唯一的登录方式，请先设置密码或添加通行密钥后再解绑"
