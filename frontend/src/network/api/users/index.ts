@@ -247,6 +247,7 @@ export namespace UserApi {
     | '2fa:settings'
     | 'passkey:add'
     | 'passkey:delete'
+    | 'password:change'
 
   export const verifySudoPassword = (password: string, purpose?: SudoPurpose) =>
     ApiInstance.request<VerifySudoResponse & { srpUpgraded?: boolean }>({
@@ -399,6 +400,7 @@ export namespace UserApi {
     data: {
       srpSalt: string
       srpVerifier: string
+      sudoTicket: string
     }
   ) =>
     ApiInstance.request({
