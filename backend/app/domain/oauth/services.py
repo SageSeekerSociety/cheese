@@ -8,11 +8,12 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.domain.oauth.repositories import OAuthConnectionRepository
 
 logger = logging.getLogger(__name__)
@@ -422,15 +423,25 @@ class OAuthService:
         refresh_token: str | None = None,
         token_expires: datetime | None = None,
     ) -> dict:
-        conn = await self._repo.create(
-            user_id=user_id,
-            provider_id=provider_id,
-            provider_user_id=provider_user_id,
-            raw_profile=raw_profile,
-            access_token=encrypt_text(access_token) if access_token else None,
-            refresh_token=encrypt_text(refresh_token) if refresh_token else None,
-            token_expires=token_expires,
-        )
+        """Raises ``ConflictError`` when this provider identity is already
+        linked, whatever a preceding lookup said."""
+        try:
+            conn = await self._repo.create(
+                user_id=user_id,
+                provider_id=provider_id,
+                provider_user_id=provider_user_id,
+                raw_profile=raw_profile,
+                access_token=encrypt_text(access_token) if access_token else None,
+                refresh_token=encrypt_text(refresh_token) if refresh_token else None,
+                token_expires=token_expires,
+            )
+        except IntegrityError:
+            if await self._repo.get_by_provider(provider_id, provider_user_id) is None:
+                raise
+            raise ConflictError(
+                "This OAuth account is already linked",
+                data={"providerId": provider_id},
+            ) from None
         return self._connection_to_dict(conn)
 
     async def update_connection_tokens(

@@ -4,6 +4,7 @@ from collections.abc import Iterable, Sequence
 from datetime import date, datetime
 
 import bcrypt
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import UnprocessableEntityError
@@ -283,18 +284,13 @@ class UserAuthService:
                 bcrypt.hashpw, password.encode("utf-8"), bcrypt.gensalt()
             )
         ).decode("utf-8")
-        user = await self._user_repo.create_user(
+        return await self._create_account(
             username=username,
             email=email,
             hashed_password=hashed,
-        )
-        profile = await self._profile_repo.create_profile(
-            user_id=user.id,
             nickname=nickname,
-            intro="",
             avatar_id=default_avatar_id,
         )
-        return user, profile
 
     async def register_with_srp(
         self,
@@ -318,18 +314,13 @@ class UserAuthService:
             raise ValueError("EMAIL_TAKEN")
 
         srp_data = f"SRP:{srp_salt}:{srp_verifier}"
-        user = await self._user_repo.create_user(
+        return await self._create_account(
             username=username,
             email=email,
             hashed_password=srp_data,
-        )
-        profile = await self._profile_repo.create_profile(
-            user_id=user.id,
             nickname=nickname,
-            intro="",
             avatar_id=default_avatar_id,
         )
-        return user, profile
 
     async def register_oauth_decision(
         self,
@@ -346,16 +337,46 @@ class UserAuthService:
         without one the account authenticates solely through the provider."""
         self._reject_reserved(username)
         hashed = f"SRP:{srp_salt}:{srp_verifier}" if srp_salt and srp_verifier else None
-        user = await self._user_repo.create_user(
+        return await self._create_account(
             username=username,
             email=email,
             hashed_password=hashed,
+            nickname=nickname or username,
+            avatar_id=default_avatar_id,
         )
+
+    async def _create_account(
+        self,
+        *,
+        username: str,
+        email: str,
+        hashed_password: str | None,
+        nickname: str,
+        avatar_id: int,
+    ) -> tuple[User, UserProfile]:
+        """Insert the user and its profile; the unique indexes decide.
+
+        The callers' taken-checks only give an earlier answer: two requests can
+        both pass them. The loser's insert fails on ``uq_user_username_lower``
+        or ``uq_user_email_lower`` and gets the same errors the checks raise.
+        """
+        try:
+            user = await self._user_repo.create_user(
+                username=username,
+                email=email,
+                hashed_password=hashed_password,
+            )
+        except IntegrityError:
+            if await self._user_repo.is_username_taken(username):
+                raise ValueError("USERNAME_TAKEN") from None
+            if await self._user_repo.is_email_taken(email):
+                raise ValueError("EMAIL_TAKEN") from None
+            raise
         profile = await self._profile_repo.create_profile(
             user_id=user.id,
-            nickname=nickname or username,
+            nickname=nickname,
             intro="",
-            avatar_id=default_avatar_id,
+            avatar_id=avatar_id,
         )
         return user, profile
 

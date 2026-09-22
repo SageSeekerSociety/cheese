@@ -42,6 +42,7 @@ from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
+    ConflictError,
     ForbiddenError,
     InternalServerError,
     NotFoundError,
@@ -1402,14 +1403,14 @@ async def register_user(
     except ValueError as exc:
         msg = str(exc)
         if msg == "USERNAME_TAKEN":
-            raise UnprocessableEntityError("Username already registered") from exc
+            raise ConflictError("Username already registered") from exc
         if msg == "USERNAME_RESERVED":
             # Deliberately says WHY rather than reusing "already registered":
             # nobody holds this name, and telling the user it is taken would be
             # a lie they cannot act on (#345).
             raise UnprocessableEntityError("该用户名是平台保留字，请换一个") from exc
         if msg == "EMAIL_TAKEN":
-            raise UnprocessableEntityError("Email already registered") from exc
+            raise ConflictError("Email already registered") from exc
         raise
 
     # Consume invite code after successful registration
@@ -3933,6 +3934,7 @@ async def get_oauth_state(
 
 async def _complete_oauth_binding(
     *,
+    session: AsyncSession,
     auth_service: UserAuthService,
     oauth_service: OAuthService,
     user_id: int,
@@ -3940,24 +3942,35 @@ async def _complete_oauth_binding(
     user_info: dict,
     **extra: str | None,
 ) -> RedirectResponse:
-    """Create the provider↔user connection (idempotence guard) and log in."""
+    """Create the provider↔user connection (idempotence guard) and log in.
+
+    When the identity belongs to someone else, everything this request wrote
+    is rolled back, so an account created for the binding does not outlive it.
+    """
+    provider_user_id = str(user_info.get("id"))
     existing = await oauth_service.get_connection_by_provider(
-        provider_id=provider_id, provider_user_id=str(user_info.get("id"))
+        provider_id=provider_id, provider_user_id=provider_user_id
     )
-    if existing:
-        if existing["userId"] != user_id:
-            return _oauth_error_redirect(
-                "ALREADY_LINKED", "This OAuth account is linked to another user"
+    if existing is None:
+        try:
+            await oauth_service.create_connection(
+                user_id=user_id,
+                provider_id=provider_id,
+                provider_user_id=provider_user_id,
+                raw_profile={
+                    "email": user_info.get("email"),
+                    "name": user_info.get("name"),
+                },
             )
-    else:
-        await oauth_service.create_connection(
-            user_id=user_id,
-            provider_id=provider_id,
-            provider_user_id=str(user_info.get("id")),
-            raw_profile={
-                "email": user_info.get("email"),
-                "name": user_info.get("name"),
-            },
+        except ConflictError:
+            # Linked by a concurrent request since the lookup above.
+            existing = await oauth_service.get_connection_by_provider(
+                provider_id=provider_id, provider_user_id=provider_user_id
+            )
+    if existing is not None and existing["userId"] != user_id:
+        await session.rollback()
+        return _oauth_error_redirect(
+            "ALREADY_LINKED", "This OAuth account is linked to another user"
         )
     return await _oauth_login_redirect(auth_service, user_id, provider_id, **extra)
 
@@ -4008,6 +4021,7 @@ async def oauth_verify_conflict(
                 )
 
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=user_id,
@@ -4059,20 +4073,37 @@ async def oauth_create_user(
         return _oauth_error_redirect("USERNAME_RESERVED", "Username is reserved")
     if await auth_service.is_username_taken(username):
         return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+    # Before the account is created, not after: a replayed stateToken would
+    # otherwise leave a second account behind with nothing linked to it.
+    if await oauth_service.get_connection_by_provider(
+        provider_id=provider_id, provider_user_id=str(user_info.get("id"))
+    ):
+        return _oauth_error_redirect(
+            "ALREADY_LINKED", "This OAuth account is linked to another user"
+        )
 
     try:
         email = (
             user_info.get("email")
             or f"oauth-{provider_id}-{user_info.get('id')}@placeholder.internal"
         )
-        user, _profile = await auth_service.register_oauth_decision(
-            email=email,
-            username=username,
-            nickname=_clean_nickname(nickname),
-            srp_salt=srpSalt if passwordMode == "srp" else None,
-            srp_verifier=srpVerifier if passwordMode == "srp" else None,
-        )
+        try:
+            user, _profile = await auth_service.register_oauth_decision(
+                email=email,
+                username=username,
+                nickname=_clean_nickname(nickname),
+                srp_salt=srpSalt if passwordMode == "srp" else None,
+                srp_verifier=srpVerifier if passwordMode == "srp" else None,
+            )
+        except ValueError as exc:
+            # Lost a race the checks above could not see.
+            if str(exc) == "USERNAME_TAKEN":
+                return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
+            if str(exc) == "EMAIL_TAKEN":
+                return _oauth_error_redirect("EMAIL_TAKEN", "Email already registered")
+            raise
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=user.id,
@@ -4121,6 +4152,7 @@ async def oauth_bind_user(
 
     try:
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=user.id,
@@ -4223,6 +4255,7 @@ async def oauth_bind_srp_verify(
 
     try:
         return await _complete_oauth_binding(
+            session=session,
             auth_service=auth_service,
             oauth_service=oauth_service,
             user_id=int(pending["userId"]),

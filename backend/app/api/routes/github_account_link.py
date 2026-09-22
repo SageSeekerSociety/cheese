@@ -27,7 +27,7 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import InternalServerError
+from app.core.errors import ConflictError, InternalServerError
 from app.core.github_install_state import (
     ACCOUNT_LINK_TTL_S,
     mint_account_link_state,
@@ -191,15 +191,23 @@ async def github_account_link_callback(
             user_info.id,
         )
     else:
-        await oauth_service.create_connection(
-            user_id=claims.user_id,
-            provider_id=_PROVIDER_ID,
-            provider_user_id=user_info.id,
-            raw_profile=profile,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_expires=token_expires,
-        )
+        try:
+            await oauth_service.create_connection(
+                user_id=claims.user_id,
+                provider_id=_PROVIDER_ID,
+                provider_user_id=user_info.id,
+                raw_profile=profile,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                token_expires=token_expires,
+            )
+        except ConflictError:
+            # Linked by a concurrent flow since the lookup above.
+            return _link_redirect(
+                claims.return_project_id,
+                github_account="error",
+                reason="already_linked",
+            )
         logger.info(
             "github account link: created uid=%s github_id=%s",
             claims.user_id,
