@@ -10,7 +10,7 @@ import type { ProjectMemberRow } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const inviteProjectMember = vi.fn()
@@ -20,6 +20,8 @@ const updateProjectMemberRole = vi.fn()
 const removeProjectMember = vi.fn()
 const leaveProject = vi.fn()
 const listProjectAgents = vi.fn()
+const setProjectOwner = vi.fn()
+const listProjectMembers = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -32,6 +34,8 @@ vi.mock('@/api', async () => {
     removeProjectMember: (...a: unknown[]) => removeProjectMember(...a),
     leaveProject: (...a: unknown[]) => leaveProject(...a),
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
+    setProjectOwner: (...a: unknown[]) => setProjectOwner(...a),
+    listProjectMembers: (...a: unknown[]) => listProjectMembers(...a),
   }
 })
 
@@ -50,11 +54,16 @@ const refreshMembers = vi.fn()
 const refreshProjects = vi.fn()
 let members: ProjectMemberRow[] = []
 let privateUnreadMap: Record<string, number> = {}
+// 项目行是「我是不是所有者」的唯一出处。做成可换的：行没到货（空清单）时的那条
+// 缝要用它来复现——那一刻不能被当成「我不是所有者」。
+let projects: { id: string; name: string; created_at: string; owner_handle?: string | null }[] = [
+  { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' },
+]
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     members,
     privateUnreadMap,
-    projects: [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }],
+    projects,
     refreshMembers,
     refreshProjects,
   }),
@@ -106,7 +115,10 @@ beforeEach(() => {
   updateProjectMemberRole.mockReset().mockResolvedValue({})
   removeProjectMember.mockReset().mockResolvedValue({ deleted: true })
   leaveProject.mockReset().mockResolvedValue({ deleted: true })
+  setProjectOwner.mockReset().mockResolvedValue({})
+  listProjectMembers.mockReset().mockResolvedValue({ data: [], total: 0 })
   refreshProjects.mockReset().mockResolvedValue(undefined)
+  projects = [{ id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice' }]
   listProjectAgents.mockReset().mockResolvedValue({
     data: [
       { handle: 'cheese', display_name: '芝士', is_default: true, is_active: true },
@@ -244,7 +256,7 @@ describe('成员页', () => {
     expect(queryByText(/退出失败/)).toBeNull()
   })
 
-  it('退不掉时把后端那句理由说出来，人留在原地', async () => {
+  it('退不掉时把后端那句理由说出来，弹窗不关、人留在原地', async () => {
     meHandle = 'ligan'
     leaveProject.mockRejectedValue(new Error('你对这个项目的访问来自所属小队，退出项目要在小队里操作'))
     const { getByText } = mount()
@@ -252,11 +264,63 @@ describe('成员页', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '退出' }))
     expect(await screen.findByText(/退出项目要在小队里操作/)).toBeTruthy()
     expect(push).not.toHaveBeenCalled()
+    // 弹窗**不关**：人还没退成，「取消」和「退出」都还在（老行为是关掉弹窗、把理由
+    // 挂到页面顶上那条错误条里；新行为把理由留在弹窗里，因为那句话就是他要的下一步）。
+    expect(await screen.findByRole('button', { name: '退出' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: '取消' })).toBeTruthy()
   })
 
-  it('所有者看不到退出项目——后端会拒他，按钮不该先给一个必定失败的动作', () => {
+  it('所有者看到的是转让项目，不是退出——他退不掉，但界面上有一条真能走的路', () => {
     const { queryByText } = mount()
     expect(queryByText('退出项目')).toBeNull()
+    expect(queryByText('转让项目')).toBeTruthy()
+  })
+
+  it('转让：选名册上的一个人，走 PUT /projects/{id}/owner，然后刷新', async () => {
+    listProjectMembers.mockResolvedValue({
+      data: [
+        { user_handle: 'alice', role: 'lead', name: '爱丽丝', source: 'owner' },
+        { user_handle: 'bobby', role: 'lead', name: '波比' },
+        { user_handle: 'ligan', role: 'member', name: '李干' },
+      ],
+      total: 3,
+    })
+    const { getByText } = mount()
+    await fireEvent.click(getByText('转让项目'))
+    // 点名必须落在**弹窗里**那一行上：页面名册上也有一个「波比」，点到他等于点开
+    // 他的主页，选人这一下就丢了。
+    const dialog = await screen.findByRole('dialog')
+    await fireEvent.click(await within(dialog).findByText('波比'))
+    await fireEvent.click(within(dialog).getByRole('button', { name: '转让' }))
+    await waitFor(() => expect(setProjectOwner).toHaveBeenCalledWith('p1', 'bobby'))
+    await waitFor(() => expect(refreshProjects).toHaveBeenCalled())
+    expect(refreshMembers).toHaveBeenCalled()
+  })
+
+  it('转让被拒也把理由留在弹窗里，不关窗', async () => {
+    listProjectMembers.mockResolvedValue({
+      data: [{ user_handle: 'bobby', role: 'lead', name: '波比' }],
+      total: 1,
+    })
+    setProjectOwner.mockRejectedValue(new Error('bobby 不是这个项目的成员——请先把 TA 加进项目成员，再转交'))
+    const { getByText } = mount()
+    await fireEvent.click(getByText('转让项目'))
+    const dialog = await screen.findByRole('dialog')
+    await fireEvent.click(await within(dialog).findByText('波比'))
+    await fireEvent.click(within(dialog).getByRole('button', { name: '转让' }))
+    expect(await within(dialog).findByText(/请先把 TA 加进项目成员/)).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: '转让' })).toBeTruthy()
+    expect(refreshProjects).not.toHaveBeenCalled()
+  })
+
+  it('项目行没到货时不给退出也不给转让——没行 ≠ 不是所有者', () => {
+    // 行没到货时 owner 是 undefined，老写法会当成「我不是所有者」把退出递出去，
+    // 所有者点下去就是 403。没行 = 不知道 = 两颗都不长。
+    meHandle = 'alice'
+    projects = []
+    const { queryByText } = mount()
+    expect(queryByText('退出项目')).toBeNull()
+    expect(queryByText('转让项目')).toBeNull()
   })
 
   // 邀请按 uid，不按 handle：uid 抄得准（就在个人主页地址里），而 handle 打错一个
