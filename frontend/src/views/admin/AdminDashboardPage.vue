@@ -48,7 +48,7 @@ const DAYS = 7
 
 /** 分类的顺序就是这里的顺序。三类**一一对应服务端那三条接口**，不多不少：把「账号」
  *  和「机器」拆成两个分类的话，它们会各拉一次同一条 `/admin/stats/platform`。 */
-const KINDS: StatsKind[] = ['feedback', 'usage', 'platform']
+const KINDS: StatsKind[] = ['feedback', 'usage', 'platform', 'performance']
 
 /** 每个分类的名字。**写成一张键名字面量的表**，不在模板里拼
  *  `feedback.dashboard.tab.${kind}` —— 拼出来的键在源码里没有一处字面量出现，
@@ -59,6 +59,7 @@ const TAB_KEY: Record<StatsKind, string> = {
   feedback: 'feedback.dashboard.tab.feedback',
   usage: 'feedback.dashboard.tab.usage',
   platform: 'feedback.dashboard.tab.platform',
+  performance: 'feedback.dashboard.tab.performance',
 }
 
 /** 队列的地址。写**地址**不写路由名：规格 §11 第 9 条钉的是地址。 */
@@ -240,6 +241,46 @@ const topProjects = computed(() =>
  *  一行字，跟着那两张卡走；`usage` 还没到时不画。 */
 const costNote = computed(() => (usage.value ? t('feedback.dashboard.cost.note') : ''))
 
+/* ---- 性能那一块 ----
+ *
+ * 它是四类里唯一**读进程内存**的（另外三类读库），所以页面上必须把那三件口径说
+ * 出来：没有窗口（只有此刻）、重启即清零、只覆盖业务 API。不说的话，读者会把它当
+ * 成「整个平台的、有历史的」数 —— 而它两个都不是。
+ */
+const perf = computed(() => store.stats.performance)
+
+/** 一条路由的耗时。**`null` 画成「—」不是 0**：0 是一个读数（「真的很快」），
+ *  `null` 是「这一格没有数据」。 */
+const ms = (v: number | null | undefined): string => (v === null || v === undefined ? '—' : `${v} ms`)
+
+/** 进程跑了多久 —— 这一格回答的是「这份数据从什么时候开始算」。 */
+const uptimeText = computed(() => {
+  const total = perf.value?.uptime_seconds
+  if (total === undefined) return ''
+  const minutes = Math.floor(total / 60)
+  if (minutes < 60) return t('feedback.dashboard.perf.durationMinutes', { n: minutes })
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return t('feedback.dashboard.perf.durationHours', { h: hours, m: minutes % 60 })
+  return t('feedback.dashboard.perf.durationDays', { d: Math.floor(hours / 24), h: hours % 24 })
+})
+
+const perfRoutes = computed(() => perf.value?.routes ?? [])
+
+/** 被截断的那部分要说出来：表里只有前 N 条，写「12 条」而不写「共 34 条」的话，
+ *  读者会以为这就是全部。 */
+const routesText = computed(() => {
+  const p = perf.value
+  if (!p) return ''
+  return p.routes_total > p.routes_shown
+    ? t('feedback.dashboard.perf.routesTruncated', { shown: p.routes_shown, total: p.routes_total })
+    : String(p.routes_total)
+})
+
+const lagText = computed(() => {
+  const lag = perf.value?.loop_lag
+  return lag === undefined ? '' : `${lag.recent_ms} ms`
+})
+
 /* ---- 平台那一块 ---- */
 
 const peopleKpis = computed(() => [
@@ -417,6 +458,59 @@ onMounted(() => {
         <p v-if="costNote" class="ad__cost-note t-meta">{{ costNote }}</p>
       </template>
 
+      <!-- 性能：**这一刻**的接口耗时。它是四类里唯一读进程内存的，所以底下那句口径
+           不是装饰 —— 少了它，这些数会被读成「有历史的、整个平台的」。 -->
+      <template v-else-if="kind === 'performance'">
+        <div class="ad__kpis">
+          <AdminKpiCard
+            :label="t('feedback.dashboard.perf.active')"
+            :value="num(perf?.active_requests)"
+            :loading="store.statsLoading"
+          />
+          <AdminKpiCard
+            :label="t('feedback.dashboard.perf.uptime')"
+            :value="uptimeText"
+            :loading="store.statsLoading"
+          />
+          <AdminKpiCard :label="t('feedback.dashboard.perf.lag')" :value="lagText" :loading="store.statsLoading" />
+          <AdminKpiCard
+            :label="t('feedback.dashboard.perf.routes')"
+            :value="routesText"
+            :loading="store.statsLoading"
+          />
+        </div>
+
+        <div class="ad__perf">
+          <table class="ad__perf-table">
+            <thead>
+              <tr>
+                <th scope="col">{{ t('feedback.dashboard.perf.col.route') }}</th>
+                <th scope="col">{{ t('feedback.dashboard.perf.col.count') }}</th>
+                <th scope="col">p50</th>
+                <th scope="col">p95</th>
+                <th scope="col">p99</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in perfRoutes" :key="`${row.method} ${row.route} ${row.status}`">
+                <!-- 方法 + 路由**模板** + 状态码。模板里那个 `{id}` 要看得见：读者
+                     说「这条慢」时，指的正是这个模板。 -->
+                <td class="ad__perf-where">
+                  <span class="ad__perf-method">{{ row.method }}</span>
+                  <span class="ad__perf-path">{{ row.route }}</span>
+                  <span class="t-num ad__perf-status">{{ row.status }}</span>
+                </td>
+                <td class="t-num ad__perf-num">{{ fmtNum(row.count) }}</td>
+                <td class="t-num ad__perf-num">{{ ms(row.p50) }}</td>
+                <td class="t-num ad__perf-num">{{ ms(row.p95) }}</td>
+                <td class="t-num ad__perf-num">{{ ms(row.p99) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="ad__perf-note t-meta">{{ t('feedback.dashboard.perf.note') }}</p>
+        </div>
+      </template>
+
       <!-- 平台：账号的存量与新增、以及机器台账的存量。 -->
       <template v-else>
         <div class="ad__kpis">
@@ -491,6 +585,73 @@ onMounted(() => {
   flex: 0 0 auto;
   align-items: center;
   margin: 16px 0 0;
+}
+
+/* 性能那一类的路由表。它是一整块表而不是卡片：这一类的读法是竖着扫「哪一条 p95
+   最高」，卡片一多就扫不动了。 */
+.ad__perf {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+.ad__perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  line-height: var(--lh-12);
+}
+
+.ad__perf-table th,
+.ad__perf-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ad__perf-table th {
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+}
+
+.ad__perf-table tr:last-child td {
+  border-bottom: 0;
+}
+
+/* 数值列右对齐（含表头）：一列数字竖着看要对得上位。第一列是「接口」，不参与。 */
+.ad__perf-table th:not(:first-child),
+.ad__perf-table td:not(:first-child) {
+  text-align: right;
+}
+
+.ad__perf-where {
+  color: var(--muted);
+}
+
+/* 方法是大写英文、路由是模板，两者之间留一点气口；状态码再淡一档。 */
+.ad__perf-method {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ad__perf-status {
+  margin-left: 6px;
+  color: var(--faint);
+}
+
+.ad__perf-num {
+  color: var(--ink);
+}
+
+.ad__perf-note {
+  margin: 12px 0 0;
+  line-height: var(--lh-12);
 }
 
 .ad__kpis {

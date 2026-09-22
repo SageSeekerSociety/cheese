@@ -60,11 +60,44 @@ class Histogram:
     def observe(self, value: float) -> None:
         self._sum += value
         self._count += 1
+        # 累加式（Prometheus 的形状）：`_counts[i]` 是「≤ buckets[i] 的样本数」，
+        # 所以只要撞到第一个够大的桶就停 —— 后面的桶天然包含它。`_counts[-1]` 是
+        # +Inf 那一格。
         for i, bucket in enumerate(self.buckets):
             if value <= bucket:
                 self._counts[i] += 1
                 return
         self._counts[-1] += 1
+
+    @property
+    def count(self) -> int:
+        """观测到的样本数。和 `sum` 一样是读侧要的公开读法 —— 别的域不该去碰
+        `_count`（那是这个类的实现细节，而跨模块读下划线属性是下次改这个类时的地雷）。"""
+        return self._count
+
+    def quantile(self, q: float) -> float | None:
+        """q 分位（0..1），桶内线性插值。没有样本时返回 None，不返回 0。
+
+        **不返回 0** 是有意的：0 秒是一个读数（「真的很快」），None 是「这一格没有
+        数据」。看板上把两者画成同一个数，就等于用一条平线宣布平台健康，而那可能
+        只是这一刻还没有人访问过。
+
+        插值是桶级的近似 —— 桶宽在 5ms..10s 之间，所以 p95 落在最后一个有限桶里时
+        报的是那个桶的上界，不会去追 +Inf。
+        """
+        if self._count == 0:
+            return None
+        target = q * self._count
+        prev_bound = 0.0
+        prev_count = 0
+        for bound, count in zip(self.buckets, self._counts, strict=False):
+            if count >= target:
+                if count == prev_count:
+                    return bound
+                frac = (target - prev_count) / (count - prev_count)
+                return prev_bound + (bound - prev_bound) * frac
+            prev_bound, prev_count = bound, count
+        return self.buckets[-1] if self.buckets else None
 
 
 class MetricsRegistry:
@@ -103,6 +136,11 @@ class MetricsRegistry:
                     kwargs["buckets"] = buckets
                 self._histograms[key] = Histogram(**kwargs)
             return self._histograms[key]
+
+    def histograms_named(self, name: str) -> list[Histogram]:
+        """这个名下**所有**标签组合的直方图（一个标签组合一条）。"""
+        with self._lock:
+            return [h for h in self._histograms.values() if h.name == name]
 
     def _key(self, name: str, labels: dict[str, str] | None) -> str:
         if not labels:

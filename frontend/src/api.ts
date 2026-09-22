@@ -2325,13 +2325,45 @@ export interface StatsPlatform {
   machines: { devices: number; hosted_devices: number; warm_machines: number; project_machines: number }
 }
 
+/** 接口耗时那一块。**和上面三块有一条根本区别：它读进程内存，不读库。**
+ *
+ *  所以它**没有 `days`**（没有窗口）、重启即清零，而且只覆盖这一个进程 —— 生产上
+ *  业务 API 就一个 backend 进程，dev 栈里那个 device-connection 是另一份。口径写在
+ *  响应里（`routes_total` 与 `routes_shown`），页面照读。
+ *
+ *  `p50/p95/p99` 单位是**毫秒**，没有样本的路由是 `null` 不是 0：0 是一个读数
+ *  （「真的很快」），null 是「没有数据」，两者画成同一个数会骗人。 */
+export interface StatsPerformance {
+  /** 采集到耗时的路由**总数**（不是画出来的条数）。 */
+  routes_total: number
+  routes_shown: number
+  routes: {
+    method: string
+    /** 路由**模板**（`/feedback/{feedback_id}`），不是带 uuid 的原始路径。 */
+    route: string
+    status: string
+    count: number
+    p50: number | null
+    p95: number | null
+    p99: number | null
+  }[]
+  /** 这一刻正在处理的请求数。**探针（`/health`、`/metrics`）不算**，否则读它的那一次
+   *  自己就在里面、这个数恒 ≥1。 */
+  active_requests: number
+  /** 这个进程起来了多久。 */
+  uptime_seconds: number
+  /** 事件循环的滞后：接口慢而 p95 不高时，答案常常在这里。 */
+  loop_lag: { recent_ms: number; worst_ms: number }
+}
+
 /** 分类 → 它那条接口的形状。`getStats` 的返回类型由这个映射查出来，所以调用方
- *  拿到的永远是它问的那一类，而不是一个三选一的联合（联合要在每个用的地方再窄化
+ *  拿到的永远是它问的那一类，而不是一个四选一的联合（联合要在每个用的地方再窄化
  *  一次，而那正是「切到用量页却读了反馈的字段」这类错会藏身的地方）。 */
 export interface StatsShapes {
   feedback: StatsFeedback
   usage: StatsUsage
   platform: StatsPlatform
+  performance: StatsPerformance
 }
 export type StatsKind = keyof StatsShapes
 

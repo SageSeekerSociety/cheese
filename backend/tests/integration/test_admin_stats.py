@@ -416,12 +416,13 @@ def test_platform_reports_accounts_by_day_and_machine_stock(client, as_admin):
 # --- 三条路由都要管理员 -------------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", ["feedback", "usage", "platform"])
+@pytest.mark.parametrize("kind", ["feedback", "usage", "platform", "performance"])
 def test_a_non_admin_cannot_read_any_of_the_three(client, as_admin, kind):
-    """三条路由共用 `PlatformAdminDep`，所以三条一起试。
+    """四条路由共用 `PlatformAdminDep`，所以四条一起试。
 
     只试一条的话，「新加的那条忘了挂门」是可想象的一种改法 —— 按分类 parametrize，
-    每一类都被问一遍。顺带断言管理员那一侧是 200：403 也可能是路由根本没挂上。
+    每一类都被问一遍（**加一类就要加一个词**：这一条第一次就是漏了 performance）。
+    顺带断言管理员那一侧是 200：403 也可能是路由根本没挂上。
     """
     r = client.get(f"/admin/stats/{kind}", headers=session_auth_headers(STRANGER))
     assert r.status_code == 403, r.text
@@ -429,3 +430,49 @@ def test_a_non_admin_cannot_read_any_of_the_three(client, as_admin, kind):
 
     allowed = client.get(f"/admin/stats/{kind}", headers=session_auth_headers(as_admin))
     assert allowed.status_code == 200, allowed.text
+
+
+# --- 第四类：性能（进程内，不是历史） -----------------------------------------
+
+
+def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admin):
+    """第四类报的是**这一刻**的接口耗时，而且数来自中间件真的在记的那些。
+
+    三件事一起钉：
+
+    * **它在记**。这一条用例自己刚刚发过请求，所以 `/admin/stats/performance` 必须
+      能看到至少一条路由 —— 指标定义了却没人调用，正是这一格坏掉的方式（`/metrics`
+      曾经返回 7 个恒为 0 的指标，而全仓找不到一处 `.observe(`）。
+    * **标签是路由模板，不是原始路径**。按原始路径打标签的话，每个 UUID 一条时间
+      序列，而直方图永远留在进程内存里 —— 这一条要看到 `{` 出现在 route 里。
+    * **没有样本的分位数是 `None`，不是 0**。0 是一个读数（「真的很快」），None 是
+      「这一格没有数据」；画成同一个数会让一条没人访问过的路由以 0ms 排在最前面。
+    """
+    # 先制造一次真实流量（打一条读接口），这样注册表里一定有东西。
+    assert client.get("/feedback/meta").status_code == 200
+
+    r = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+
+    # 这一类的口径必须写在响应里，否则会被当成「整个平台的、有历史的」数。
+    assert data["routes_total"] >= data["routes_shown"] >= 1
+    assert data["routes"], data
+    assert isinstance(data["uptime_seconds"], (int, float))
+    assert data["active_requests"] >= 0
+    assert "recent_ms" in data["loop_lag"]
+
+    row = data["routes"][0]
+    assert row["method"] and row["route"]
+    assert row["count"] >= 1
+    assert set(row) >= {"method", "route", "status", "count", "p50", "p95", "p99"}
+
+    # 路由模板：至少有一条带参数的路由是 `{...}` 而不是一个真 uuid。这条用例自己
+    # 打的都是固定路径，所以另发一条带 id 的（404 也算流量，中间件照样记）。
+    client.get("/feedback/00000000-0000-4000-8000-000000000000")
+    again = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
+    routes = [row["route"] for row in again.json()["data"]["routes"]]
+    assert any("{" in route for route in routes), routes
+    assert not any("0000-4000-8000" in route for route in routes), routes

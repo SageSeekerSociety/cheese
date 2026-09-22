@@ -160,7 +160,23 @@
     "tab": {
       "feedback": "Feedback",
       "usage": "Usage",
-      "platform": "Platform"
+      "platform": "Platform",
+      "performance": "Performance"
+    },
+    "perf": {
+      "active": "In flight",
+      "uptime": "Process uptime",
+      "lag": "Event-loop lag",
+      "routes": "Routes measured",
+      "routesTruncated": "{shown} of {total}",
+      "durationMinutes": "{n} min",
+      "durationHours": "{h} h {m} min",
+      "durationDays": "{d} d {h} h",
+      "col": {
+        "route": "Endpoint",
+        "count": "Calls"
+      },
+      "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead."
     },
     "usage": {
       "tokens": "Tokens · window",

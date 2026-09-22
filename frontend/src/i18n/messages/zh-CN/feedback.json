@@ -160,7 +160,23 @@
     "tab": {
       "feedback": "反馈",
       "usage": "用量",
-      "platform": "平台"
+      "platform": "平台",
+      "performance": "性能"
+    },
+    "perf": {
+      "active": "正在处理",
+      "uptime": "进程已运行",
+      "lag": "事件循环滞后",
+      "routes": "在采的路由",
+      "routesTruncated": "{shown} / 共 {total} 条",
+      "durationMinutes": "{n} 分钟",
+      "durationHours": "{h} 小时 {m} 分",
+      "durationDays": "{d} 天 {h} 小时",
+      "col": {
+        "route": "接口",
+        "count": "次数"
+      },
+      "note": "接口耗时按路由统计，数在进程内存里：只有此刻的、重启就清零，而且只覆盖这一个进程（业务 API）。要「过去一周怎么变的」得另做——原料在请求日志里。"
     },
     "usage": {
       "tokens": "窗口内 token",

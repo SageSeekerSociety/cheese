@@ -1779,12 +1779,63 @@ function routes(url: URL, method: string, body: unknown): MockReply {
   // 路由，`stats` 落进 `/admin/feedback/{id}` 被当成一个 uuid 解析，预览一切正常、dev 上
   // 是「看板加载失败」。**替身只该照抄服务端真实存在的东西**；一条为了「两种前端版本都
   // 不报警」而留的别名，代价是发现不了其中一种版本是坏的。
+  /** 第四类：**这一刻**的接口耗时。
+   *
+   *  **这一块在真后端上读的不是库**：`domain/platform_stats/performance.py` 直接读
+   *  `core/metrics.py` 那个进程内的注册表 —— 所以预览里只能编，而且必须编得像
+   *  「这个进程刚被访问过」。形状逐字照抄那个服务。
+   *
+   *  两处是刻意留的：
+   *
+   *   * **列表是按 p95 从大到小排的**，因为真服务就是这么排的（`routes.sort(...)`）——
+   *     预览里顺手按别的顺序摆，会让人以为页面的排序是页面自己做的。
+   *   * **留一条 `p95: null` 的路由**：没有样本的分位数是 `null`、页面画「—」。不留
+   *     一条的话，「没有数据」和「0 毫秒」在预览里长得一模一样，而那一版正是最该被
+   *     看见的一版。
+   */
+  function performanceStats(): Record<string, unknown> {
+    const routes = [
+      { method: 'GET', route: '/feedback', status: '200', count: 412, p50: 18.4, p95: 61.2, p99: 143.8 },
+      { method: 'GET', route: '/projects', status: '200', count: 188, p50: 22.1, p95: 48.9, p99: 96.4 },
+      { method: 'GET', route: '/feedback/{feedback_id}', status: '200', count: 96, p50: 12.7, p95: 33.5, p99: 71.2 },
+      {
+        method: 'POST',
+        route: '/topics/{topic_id}/messages',
+        status: '200',
+        count: 54,
+        p50: 41.3,
+        p95: 122.6,
+        p99: 251.9,
+      },
+      { method: 'GET', route: '/admin/stats/feedback', status: '200', count: 31, p50: 9.8, p95: 24.1, p99: 38.7 },
+      // 刚加过路由、还没人访问过的那一条：分位数是 null，页面画「—」。
+      {
+        method: 'GET',
+        route: '/spaces/{space_id}/discussions',
+        status: '200',
+        count: 0,
+        p50: null,
+        p95: null,
+        p99: null,
+      },
+    ]
+    return {
+      routes_total: routes.length,
+      routes_shown: routes.length,
+      routes,
+      active_requests: 2,
+      uptime_seconds: 5 * 3600 + 37 * 60,
+      loop_lag: { recent_ms: 3.4, worst_ms: 182.6 },
+    }
+  }
+
   const stats = /^\/admin\/stats\/([a-z]+)$/.exec(path)
   if (stats && method === 'GET') {
     if (stats[1] === 'feedback') return { data: feedbackStats(url) }
     if (stats[1] === 'usage') return { data: usageStats(url) }
     if (stats[1] === 'platform') return { data: platformStats(url) }
-    // 分类只有三个，别的没有对应的路由 —— 服务端那是 404，不是「空数据」。
+    if (stats[1] === 'performance') return { data: performanceStats() }
+    // 分类只有这四个，别的没有对应的路由 —— 服务端那是 404，不是「空数据」。
     return { missing: true }
   }
 
