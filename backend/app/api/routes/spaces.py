@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.api.auth import ActorResolverDep
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import is_space_admin
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -311,6 +312,21 @@ async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
         raise NotFoundError(
             "Resource space not found", data={"type": "space", "id": space_id}
         )
+
+
+async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
+    """「教师版面的门」: 只有题目板的管理员/创建者能过。
+
+    先按 ``_ensure_space_visible`` 答 404 —— 一个你不在的题目板不该被确认存在；
+    再看是不是管理员，不是就明确 403（不静默返回空内容：空 CSV 会让导出的人以为
+    「这个班没人」，而真相是「你没权限」）。
+
+    和 ``_ensure_space_visible`` 一样，判据只有一处 —— ``app.auth.space_access``
+    的 ``is_space_admin``，与打分、发题、项目对话读权同一个答案。
+    """
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=user_id)
+    if not await is_space_admin(session=db, space_id=space_id, user_id=user_id):
+        raise ForbiddenError("Only a board manager can perform this action")
 
 
 def _space_to_api_model(space: Space) -> dict:
@@ -1009,7 +1025,7 @@ async def export_space_participants(
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
     db=Depends(get_db),
 ) -> Response:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     if format.lower() != "csv":
         raise BadRequestError("Only csv format is supported")
@@ -1127,7 +1143,10 @@ async def get_space_analytics_participants(
     db=Depends(get_db),
 ) -> dict:
     """Return participant population and completion analytics."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    # 这一格把 ``_decode_identity`` 出来的年级/专业/班级做成分组统计 —— 是学生
+    # 个人信息的聚合，所以和下面的导出同一个门：教师版面只有教师看。非管理员答
+    # 403（不是空的分布），原因和导出一样：空的会把「你没权限」说成「这个班没人」。
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_participants(
         space_id=space_id,
@@ -1170,7 +1189,10 @@ async def export_space_analytics_participants(
     target user to audit real-name data access, matching NT's
     `auditSpaceParticipantExport` behavior.
     """
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    # 教师版面：这份 CSV 逐行写着学生的真实姓名、学号、年级、专业、班级、电话、
+    # 邮箱（``_decode_identity`` 负责解密），所以只有题目板的管理员/创建者能拿。
+    # 非管理员明确 403 —— 不返回空 CSV，空的会把「你没权限」误报成「这个班没人」。
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     csv_text, memberships = await service.export_participants_csv(
         space_id=space_id,
         from_ts=from_ts,

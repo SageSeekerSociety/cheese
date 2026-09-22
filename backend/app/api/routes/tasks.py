@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import may_grade_task, may_publish_in_space
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
@@ -1029,6 +1030,16 @@ async def _create_task_entity(
     if space is None or space.review_status != "APPROVED":
         raise BadRequestError("Space must be approved before creating tasks")
 
+    # 发布题目收权：只有这个题目板的管理员/创建者（= 教师）能发题。判据在
+    # ``app.auth.space_access``，和评审、导出参与者同一处 —— 「只有空间管理员和
+    # 空间创建者具有教师版面，也只有他们能发布题目」。放在这里而不是两个路由各写
+    # 一遍，是因为 ``POST /tasks`` 与 PDF 批量发布（``publish/from-pdf/confirm``）
+    # 都从这里走，漏掉任一条就等于没收权。
+    if not await may_publish_in_space(
+        session=db, space_id=space_id, user_id=creator_user_id
+    ):
+        raise ForbiddenError("Only a board manager can publish tasks here")
+
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await _validate_and_get_category_id(
         space_repo=space_repo,
@@ -1107,7 +1118,9 @@ async def create_task(
     """Create a new task (simplified port of Kotlin TaskService.createTask).
 
     NOTE:
-    - 当前版本不检查复杂权限，只要求提供 space 并验证 category 归属；
+    - 权限：调用者必须是 ``space`` 的管理员/创建者（= 教师），否则 403 ——
+      从前这条 route 只要求提供 space 并验证 category 归属，任何登录用户都能发题，
+      现在收权了（见 ``_create_task_entity`` 里的 ``may_publish_in_space``）；
     - submissionSchema / topics 仅做占位处理，暂不影响提交与评分。
     """
     task = await _create_task_entity(
@@ -2830,14 +2843,15 @@ async def post_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can create review")
+    if not await may_grade_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can create review")
 
     existing = await review_service.get_review_dto(submission_id)
     if existing.get("reviewed"):
@@ -2897,14 +2911,15 @@ async def patch_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can update review")
+    if not await may_grade_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can update review")
 
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
@@ -2933,14 +2948,15 @@ async def put_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can update review")
+    if not await may_grade_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can update review")
 
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
@@ -2968,14 +2984,15 @@ async def delete_task_submission_review(
     ),
     task_service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     _ = participant_id
 
     task = await task_service.get_task(task_id=task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if task.creator_id != auth_user.user_id:
-        raise ForbiddenError("Only task owner can delete review")
+    if not await may_grade_task(session=db, task=task, user_id=auth_user.user_id):
+        raise ForbiddenError("Only the author or a board manager can delete review")
 
     existing = await review_service.get_review_dto(submission_id)
     if not existing.get("reviewed"):
