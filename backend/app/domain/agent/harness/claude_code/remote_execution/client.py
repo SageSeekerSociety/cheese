@@ -23,6 +23,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 if __package__:
     from app.domain.agent.executor_transport import (
@@ -69,7 +70,7 @@ PRIVATE_INSTRUCTIONS = (
 
 def prepare(
     directory,
-    target,
+    target: dict[str, Any],
     *,
     claude="claude",
     extra_args=(),
@@ -894,7 +895,7 @@ def deliver_send_user_file(client, config, payload, args, invoke):
     caption = args.get("caption")
     if delivered and isinstance(caption, str) and caption.strip():
         client.publish_message(payload, {"content": caption.strip()})
-    result = {"attachments": attachments}
+    result: dict[str, Any] = {"attachments": attachments}
     if isinstance(caption, str):
         result["caption"] = caption
     if isinstance(args.get("display"), str):
@@ -1211,21 +1212,31 @@ def transport(config, target_path):
                 if isinstance(image, dict) and image.get("type") == "image":
                     # Base64 in text hits Claude Code's MCP text-output limit.
                     # Keep native Read metadata in text and pixels in an image block.
-                    file = image["file"]
-                    metadata = {k: v for k, v in file.items() if k != "base64"}
+                    image_file = image["file"]
+                    metadata = {k: v for k, v in image_file.items() if k != "base64"}
                     outcome = {"result": {**image, "file": metadata}}
                     value = {
                         "content": [
                             {"type": "text", "text": json.dumps(outcome)},
                             {
                                 "type": "image",
-                                "data": file["base64"],
-                                "mimeType": file["type"],
+                                "data": image_file["base64"],
+                                "mimeType": image_file["type"],
                             },
                         ]
                     }
                 else:
-                    value = {"content": [{"type": "text", "text": json.dumps(outcome)}]}
+                    encoded = json.dumps(outcome)
+                    if tool == "invoke" and len(encoded) > 32_000:
+                        # MCP replaces large text with prose; the plugin needs
+                        # the original receipt, including an Edit's file state.
+                        receipts = Path(target_path).parent / "tool-results"
+                        receipts.mkdir(exist_ok=True, mode=0o700)
+                        receipt_path = receipts / f"{uuid.uuid4().hex}.json"
+                        receipt_path.write_text(encoded)
+                        receipt_path.chmod(0o600)
+                        encoded = json.dumps({"receipt_path": str(receipt_path)})
+                    value = {"content": [{"type": "text", "text": encoded}]}
             elif method == "ping":
                 value = {}
             else:

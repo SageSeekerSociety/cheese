@@ -9,11 +9,11 @@
  */
 import type { Component } from 'vue'
 
+import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { ref } from 'vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const leaveProject = vi.fn()

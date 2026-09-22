@@ -45,13 +45,13 @@ async function sendUserFile($, tool_use_id, args) {
     let upload_error;
     for (const candidate of localPaths(path)) {
       try {
-        const stat = await $.fs.stat({ path: candidate, resolve: false });
+        const stat = await $.fs.stat(candidate, { resolve: false });
         if (stat.kind !== "file") continue;
         if (stat.size > SEND_USER_FILE_MAX_BYTES) {
           upload_error = `file is over the ${SEND_USER_FILE_MAX_BYTES / (1024 * 1024)}MB limit`;
           break;
         }
-        data_b64 = (await $.fs.read({ path: candidate, as: "bytes" })).base64;
+        data_b64 = (await $.fs.read(candidate, { as: "bytes" })).base64;
         break;
       } catch (error) {
         // $.fs.read refuses anything over its own transfer cap; the transport
@@ -102,7 +102,11 @@ export function register(on) {
           id: tool_use_id, tool, args, session_id: await $.session.id(),
         });
         if (response.isError) return { deny: JSON.stringify(response.content) };
-        const outcome = JSON.parse(response.content[0].text);
+        let outcome = JSON.parse(response.content[0].text);
+        if (outcome.receipt_path) {
+          const receipt = await $.fs.read(outcome.receipt_path, { as: "text" });
+          outcome = JSON.parse(receipt);
+        }
         // 一个 TaskStop 的 id 有两个主人：执行机上后台跑着的那条命令，和这条会话
         // 里起着的一条子线程。执行器只认前者——它答「不认识」的那个 id 就是后者，
         // 让回给 harness 自己停（结论 43「父线程能停掉它」）。判据是执行器认不认

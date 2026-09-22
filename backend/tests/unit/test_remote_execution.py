@@ -95,6 +95,38 @@ def test_subagent_identity_is_not_forwarded_as_a_tool_argument():
     """)
 
 
+def test_large_edit_receipt_reaches_the_caller_without_replaying_the_edit():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const result = {result: {originalFile: 'large file\\n'.repeat(20000)}};
+        let calls = 0;
+        const api = {
+          session: {id: async () => 'session'},
+          mcp: {call: async () => {
+            calls++;
+            return {content: [{type: 'text', text: JSON.stringify({
+              receipt_path: '/config/tool-results/result.json',
+            })}]};
+          }},
+          fs: {read: async (path, {as}) => {
+            assert.equal(path, '/config/tool-results/result.json');
+            assert.equal(as, 'text');
+            return JSON.stringify(result);
+          }},
+        };
+        const answer = await handlers['tool.call'](api, {
+          tool: 'Edit', tool_use_id: 'edit', file_path: '/work/large.txt',
+          old_string: 'before', new_string: 'after',
+        });
+        assert.deepEqual(answer, result);
+        assert.equal(calls, 1);
+    """)
+
+
 def test_a_task_stop_the_executor_does_not_own_goes_back_to_the_harness():
     """父线程停掉一条子线程，那一手是 harness 自己的（结论 43）。
 
@@ -157,11 +189,11 @@ def test_send_user_file_is_delivered_to_the_room_never_to_the_anthropic_upload()
         const api = {
           session: {id: async () => 'session'},
           fs: {
-            stat: async ({path, resolve}) => {
+            stat: async (path, {resolve}) => {
               assert.equal(typeof resolve, 'boolean');
               return {kind: 'file', size: bytes.length, mtimeMs: 0, isLink: false};
             },
-            read: async ({path, as}) => {
+            read: async (path, {as}) => {
               assert.equal(path, 'report.pdf');
               assert.equal(as, 'bytes');
               return {base64: bytes.toString('base64')};
@@ -221,12 +253,12 @@ def test_send_user_file_reaches_a_file_the_model_spelled_on_the_executor():
         const api = {
           session: {id: async () => 'session'},
           fs: {
-            stat: async ({path}) => {
+            stat: async (path) => {
               asked.push(path);
               if (path.startsWith('/work/')) throw new Error('ENOENT');
               return {kind: 'file', size: bytes.length, mtimeMs: 0, isLink: false};
             },
-            read: async ({path}) => {
+            read: async (path) => {
               if (path.startsWith('/work/')) throw new Error('ENOENT');
               assert.equal(path, '/center/shot.png');
               return {base64: bytes.toString('base64')};

@@ -24,8 +24,8 @@ import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
-import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import LeaveProjectDialog from './LeaveProjectDialog.vue'
 import TransferProjectDialog from './TransferProjectDialog.vue'
 
 import { t } from '@/i18n'

@@ -720,6 +720,36 @@ def native_call(process, identifier, command):
     return json.loads(result["content"][0]["text"])
 
 
+def test_large_edit_receipt_preserves_the_successful_mutation(central_transport):
+    process, _, _, work = central_transport
+    path = work / "large.txt"
+    original = "some text on a line\n" * 12_000 + "before\n"
+    path.write_text(original)
+    response = process.call(
+        "tools/call",
+        {
+            "name": "invoke",
+            "arguments": {
+                "id": "large-edit",
+                "tool": "Edit",
+                "args": {
+                    "file_path": str(path),
+                    "old_string": "before",
+                    "new_string": "after",
+                },
+                "session_id": "fixture",
+            },
+        },
+    )
+    encoded = response["content"][0]["text"]
+    assert len(encoded) < 32_000
+    envelope = json.loads(encoded)
+    result = json.loads(Path(envelope["receipt_path"]).read_text())
+    assert "deny" not in result
+    assert result["result"]["originalFile"] == original
+    assert path.read_text() == original.replace("before", "after")
+
+
 @pytest.mark.anyio
 async def test_codex_tool_retry_uses_the_executor_mutation_receipt(
     central_transport, tmp_path, monkeypatch

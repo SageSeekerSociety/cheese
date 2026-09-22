@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { artifactVersionBytes } from '../api'
 import { t } from '../i18n'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, NEEDS_CONVERSION, imageMimeOf, suffixOf } from '../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
 
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'

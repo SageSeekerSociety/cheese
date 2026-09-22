@@ -10,11 +10,12 @@ import type { ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import { listProjectMembers, setProjectOwner } from '@/api'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { getAvatarUrl } from '@/utils/materials'
 
 const props = defineProps<{ projectId: string }>()
 const open = defineModel<boolean>({ required: true })
