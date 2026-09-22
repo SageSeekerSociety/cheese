@@ -5,7 +5,7 @@ import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { KIND_LABEL } from '@/lib/feedbackMeta'
-import { useFeedbackStore } from '@/stores/feedback'
+import { EXPECTATION_KINDS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
 
 // 提交反馈的右侧抽屉。
 //
@@ -17,11 +17,20 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 是一个 `v-alert`，不是一个自动把单选框拨到「私密」的 watch —— 公开还是私密是
 // 提交者的判断，界面可以提醒他一次，不能替他决定。
 //
+// 表单问什么由**类型**决定：`bug` 问「怎么重现」，`bug` 和建议都问「你以为会发生
+// 什么」（见 `REPRO_KINDS` / `EXPECTATION_KINDS`，`toCreateBody` 用的是同一对常量）。
+// 两栏都可留空 —— 提交的门槛只有标题，把「撞上了但说不清步骤」的人挡在门外，恰好
+// 挡掉最该被看见的那一条。
+//
 // 两处还没接的东西，写在界面上而不是藏着：
-//   * **附件不随反馈上传**（后端还没有附件字段）。所以文件选择是灰的，并说清原因 ——
-//     一个能点、点了什么都不发生的按钮比一个灰按钮更让人困惑。
+//   * **附件整个不在表单里**（后端还没有附件字段）。原先那行绿字「上传还没接」是拿掉
+//     过的：它解释的是**我们**还没做什么，而读的人只想知道自己能提交什么。
 //   * **「附带现场」只在从 Agent 卡片来时才有意义**：那三段会话信息是卡片带来的。
 //     自己从头填的人没有会话可附带，所以那个勾选框对他不出现。
+//
+// 每一栏都挂了 `@update:model-value="store.touchDraft()"`：**草稿落盘是靠这一串调用
+// 驱动的**。少挂一栏的表现是「这一栏写的东西刷新之后没了」，而别的栏都还在 —— 看着
+// 像随机丢字，不像漏了一行。
 const emit = defineEmits<{ (e: 'submitted', id: string): void }>()
 
 const store = useFeedbackStore()
@@ -44,6 +53,13 @@ const kinds = computed<FeedbackKind[]>(() => store.meta?.kinds ?? ['bug', 'sugge
 /** 从提案卡打开的那条：作者是提案的 agent，提交者是我，所以两个入口的说法不一样。 */
 const fromProposal = computed(() => !!store.draft.proposal)
 const canSubmit = computed(() => store.draft.title.trim().length > 0 && !store.submitting)
+
+// 按类型出现的两栏。**表单项和请求体问的是同一个问题**（`toCreateBody` 用的就是
+// 这两个常量），所以这里也读它们，不在这份文件里再写一遍 `kind === 'bug'`：两处各写
+// 一遍的话，改口径时表单和请求体会漂开，而漂开的方向恰好是最难看出来的那一种 ——
+// 屏幕上问了、提交上去却没有。
+const askRepro = computed(() => REPRO_KINDS.includes(store.draft.kind))
+const askExpectation = computed(() => EXPECTATION_KINDS.includes(store.draft.kind))
 
 async function submit() {
   const id = await store.submit()
@@ -89,6 +105,7 @@ async function submit() {
           variant="outlined"
           divided
           class="mb-4"
+          @update:model-value="store.touchDraft()"
         >
           <v-btn v-for="kind in kinds" :key="kind" :value="kind" size="small">{{ KIND_LABEL[kind] }}</v-btn>
         </v-btn-toggle>
@@ -100,16 +117,50 @@ async function submit() {
           placeholder="一句话说清发生了什么"
           hide-details
           class="mb-4"
+          @update:model-value="store.touchDraft()"
         />
 
         <v-textarea
           v-model="store.draft.body"
           autocomplete="off"
           label="描述"
-          placeholder="你做了什么、期望发生什么、实际发生了什么"
+          placeholder="你做了什么、实际发生了什么"
           rows="5"
           hide-details
           class="mb-4"
+          @update:model-value="store.touchDraft()"
+        />
+
+        <!-- 按类型出现的两栏。它们不是「选填的额外信息」，而是把正文里常常混成一段的
+             两件事分开：**你以为会发生什么**（哪里不对）和**怎么重现**（别人能不能看到
+             同一件事）。问错对象的代价最大的是复现 —— 建议类问「怎么重现」是在问一个
+             不存在的东西，所以它只在 bug 那一类出现。
+             两栏都可留空：**提交的门槛只有标题**。必填会把「说不清复现步骤但确实撞上了」
+             的人挡在门外，而那正是最该有人看见的一条。
+             换类型时已经填过的值**不清掉**（`toCreateBody` 按类型决定带不带），所以选错
+             了改回来，刚才写的还在。 -->
+        <v-textarea
+          v-if="askExpectation"
+          v-model="store.draft.expectation"
+          autocomplete="off"
+          label="你以为会发生什么"
+          placeholder="同一个操作，你原本期待的结果是什么"
+          rows="3"
+          hide-details
+          class="mb-4"
+          @update:model-value="store.touchDraft()"
+        />
+
+        <v-textarea
+          v-if="askRepro"
+          v-model="store.draft.repro"
+          autocomplete="off"
+          label="怎么重现"
+          placeholder="从打开页面到看见问题的最短一串操作"
+          rows="3"
+          hide-details
+          class="mb-4"
+          @update:model-value="store.touchDraft()"
         />
 
         <!-- 这里原本有一个禁用的「选择文件」和一句「上传还没接」。两样都删了：一个按不动
@@ -124,6 +175,7 @@ async function submit() {
             label="附带芝士发来的现场（发生了什么 / 复现步骤 / 证据 / 会话与环境）"
             hide-details
             class="mb-2"
+            @update:model-value="store.touchDraft()"
           />
           <v-alert v-if="store.draft.attachContext" type="warning" density="compact" variant="tonal" class="mb-4">
             现场里可能包含你的代码片段、文件路径或对话内容。选「私密」时，能看到它们的是你、平台管理员、以及提出它时在那个房间里的人。
@@ -131,7 +183,12 @@ async function submit() {
         </template>
 
         <div class="t-eyebrow mb-2">可见范围</div>
-        <v-radio-group v-model="store.draft.visibility" hide-details class="mb-2">
+        <v-radio-group
+          v-model="store.draft.visibility"
+          hide-details
+          class="mb-2"
+          @update:model-value="store.touchDraft()"
+        >
           <v-radio value="public">
             <template #label>
               <div>

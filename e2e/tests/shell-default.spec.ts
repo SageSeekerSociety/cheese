@@ -68,3 +68,59 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
   // 留一张图给这次验收：屏幕上就是上面断言的那一屏。
   await page.screenshot({ path: 'shell-default-desktop.png', fullPage: false });
 });
+
+// 顶栏那个「反馈」入口：它得是右边这一簇里唯一有**可见轮廓**的东西，而且和语言开关
+// 同高。两个数都不是审美偏好，是修掉之后的读数：
+//
+//  · 高度。这一簇里两个控件的高度来自两处互不相干的规则：按钮那侧是 Vuetify 的
+//    `:size` 给出的**内联** height（CSS 里的 `min-height` 压不过它），语言开关那侧
+//    是这条系统栏里的一条规则。两边各改各的，量出来就差着（历史读数 28 对 26、24
+//    对 26），而旁边那行注释写的正是「这条系统栏里的东西高度必须一致」。所以现在是
+//    **两边都钉死 24**：`AppBar.vue` 里给语言开关补了 `height: 24px`，按钮继续靠
+//    `:size="24"`。注释与代码不一致，只有真量一次才发现。
+//  · 描边。`variant="outlined"` 画的是 `1px solid currentColor`，也就是这个按钮本来
+//    就在用的 `--muted`。这条断言同时钉两件事：它**有**边（以前 `variant="text"` 一条
+//    线都没有，而它右边的语言开关有一圈带描边的 chip，于是同一簇里唯一没有形状的控件
+//    恰恰是「给平台提意见」这个），以及这圈边**不是琥珀色**（`--accent` 当线色在浅色
+//    下只有 2.65:1，设计系统 §7.3 明令不许）。
+//
+// 它还必须仍然是一条真 `<a href>`：键盘 Tab 到、中键开新标签、右键复制链接都要能用。
+// 改样式最容易顺手弄丢的就是这个。
+test('顶栏的反馈入口：和语言开关同高、有一圈中性描边，而且还是个链接', async ({ page }) => {
+  await login(page);
+
+  const box = await page.locator('.feedback-entry').evaluate((el) => {
+    const s = getComputedStyle(el);
+    const lang = document.querySelector('.language-toggle');
+    return {
+      height: el.getBoundingClientRect().height,
+      langHeight: lang ? lang.getBoundingClientRect().height : null,
+      borderWidth: s.borderTopWidth,
+      borderStyle: s.borderTopStyle,
+      borderColor: s.borderTopColor,
+      color: s.color,
+      tag: el.tagName,
+      href: el.getAttribute('href'),
+      icons: el.querySelectorAll('.v-icon').length,
+    };
+  });
+
+  // 同一档高度（「这条系统栏里的东西高度必须一致」那句注释要成立就得靠这个）。
+  // 判据写「两个数相等」而不是「等于 24」：两边的高度来自两处不同的规则，该钉的是
+  // 「它们一样」这件事本身，不是一个我手抄下来的数字。0.5px 的容差是为了不跟亚像素
+  // 较劲；要拦的回归也很明确——按钮那边 `:size` 回到 28 那一档（差 4px）、或者
+  // 语言开关那侧的 `height` 被删掉变回内容撑（差 2px），两条都能红。
+  expect(box.langHeight).not.toBeNull();
+  expect(box.height).toBeCloseTo(box.langHeight as number, 0);
+  // 有形状：一整圈实线，而且跟着文字色走（不是一个写死的色值）
+  expect(box.borderStyle).toBe('solid');
+  expect(box.borderWidth).toBe('1px');
+  expect(box.borderColor).toBe(box.color);
+  // 那圈边不是琥珀：`--accent` 不许当线色，这个入口也一个琥珀都不该加
+  expect(box.color).not.toBe('rgb(245, 127, 23)');
+  // 形状 + 字形 + 文案：这一版补的是第一件
+  expect(box.icons).toBe(1);
+  // 仍然是一条真链接
+  expect(box.tag).toBe('A');
+  expect(box.href).toContain('/feedback');
+});

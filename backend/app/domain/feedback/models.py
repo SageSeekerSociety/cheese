@@ -418,7 +418,13 @@ class FeedbackTimeline(UuidPk, Base):
     """
 
     __tablename__ = "feedback_timeline"
-    __table_args__ = (Index("ix_feedback_timeline_feedback_at", "feedback_id", "at"),)
+    __table_args__ = (
+        Index("ix_feedback_timeline_feedback_at", "feedback_id", "at"),
+        #: 跨反馈按时间范围查（管理看板的「解决/上线」序列与 `resolved_since` /
+        #: `deployed_since` 筛选）。上面那条的打头列是 `feedback_id`，服务的是
+        #: 「这一条的变迁」，范围扫的入口得是 `at` 自己。
+        Index("ix_feedback_timeline_at", "at"),
+    )
 
     feedback_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("feedback.id", ondelete="CASCADE")

@@ -15,12 +15,24 @@ export default defineConfig({
   base: './',
   plugins: [vue({ template: { transformAssetUrls } }), svgLoader(), vueJsx(), vuetify({ autoImport: true })],
   resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    // 数组形式而不是对象：`@/router` 那条必须是**精确匹配**（前缀匹配会连
+    // `@/router/feedback` 一起吃掉，那份才是预览真正要的路由表），而精确匹配只能
+    // 用正则写。数组按顺序取第一个命中的规则，所以精确的那几条排在 `@/` 前面。
+    alias: [
       // UpdateBanner 经 @/pwa 引到 vite-plugin-pwa 的虚模块，这份构建里没有
       // 那个插件（产物是单文件、没有 service worker 可注册），补个替身。
-      'virtual:pwa-register': fileURLToPath(new URL('./src/proto-pwa-stub.ts', import.meta.url)),
-    },
+      {
+        find: /^virtual:pwa-register$/,
+        replacement: fileURLToPath(new URL('./src/proto-pwa-stub.ts', import.meta.url)),
+      },
+      // `@/router` 的替身。原因见替身文件顶部：那一跳会带进整棵应用路由树
+      // （工作区、WorkPanel、CodeEditor、monaco，proto.js 从 ~2MB 涨到 12.5MB）。
+      {
+        find: /^@\/router$/,
+        replacement: fileURLToPath(new URL('./src/proto-router-stub.ts', import.meta.url)),
+      },
+      { find: /^@\//, replacement: fileURLToPath(new URL('./src/', import.meta.url)) },
+    ],
   },
   build: {
     outDir: 'dist-feedback-proto',
