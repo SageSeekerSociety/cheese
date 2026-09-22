@@ -98,24 +98,36 @@ def test_the_resident_valkey_has_room_for_every_slot():
     assert int(default[1]) >= 2 * isolation.REDIS_DATABASES_PER_SLOT, default[1]
 
 
-def test_buildkit_uses_the_mirror_and_keeps_cache_on_the_persistent_runner():
+def test_image_builds_leave_the_service_host_and_keep_separate_external_caches():
     workflow = load_workflow("build.yml")
     assert workflow["env"]["BUILDKIT_IMAGE"].startswith(MIRROR)
     assert "@sha256:" in workflow["env"]["BUILDKIT_IMAGE"]
 
-    for name in ("build-backend", "build-sandbox", "build-frontend"):
+    scopes = set()
+    for name in (
+        "build-backend",
+        "build-sandbox",
+        "build-frontend",
+        "build-office-render",
+        "build-browser-render",
+        "build-gateway",
+    ):
         job = workflow["jobs"][name]
+        assert isinstance(job["runs-on"], str) and job["runs-on"].startswith("ubuntu-")
         setup = step_named(job, "Set up Docker Buildx")
-        retain = step_named(job, "Retain the BuildKit image")
-        reclaim = step_named(job, "Reclaim build cache")
-
-        assert setup["with"]["keep-state"] is True
-        assert "mirror.gcr.io" in setup["with"]["buildkitd-config-inline"]
         assert "BUILDKIT_IMAGE" in setup["with"]["driver-opts"]
-        assert "cheese-buildkit-image-retainer" in retain["run"]
-        assert "docker buildx prune" in reclaim["run"]
-        assert "--max-used-space 20GB" in reclaim["run"]
-        assert "--min-free-space 10GB" in reclaim["run"]
+        build = next(
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith("docker/build-push-action@")
+        )["with"]
+        cache_from = dict(part.split("=", 1) for part in build["cache-from"].split(","))
+        cache_to = dict(part.split("=", 1) for part in build["cache-to"].split(","))
+        assert cache_from["type"] == cache_to["type"] == "gha"
+        assert cache_from["version"] == cache_to["version"] == "2"
+        assert cache_from["scope"] == cache_to["scope"]
+        assert cache_to["scope"] not in scopes
+        scopes.add(cache_to["scope"])
 
 
 def test_connector_payload_is_verified_inside_the_backend_image_build():
