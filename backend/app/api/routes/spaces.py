@@ -51,6 +51,10 @@ from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
+from app.domain.task.services import TaskService
+from app.domain.teaching.models import TeachingUnit
+from app.domain.teaching.repositories import TeachingUnitRepository
+from app.domain.teaching.services import TeachingUnitService
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -1949,3 +1953,176 @@ async def patch_space_manager(
         return {"code": 200, "message": "OK", "data": None}
     space_data = await _build_full_space_payload(space, service=service, db=db)
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
+
+
+# ── 教学单元（一门课的时间线） ─────────────────────────────────────────────────
+#
+# 读的一次给所有人，写的一次给教师：学生只看得到发布过的，而「发布过」这个判断在
+# ``TeachingUnitService`` 的查询里，不在这里的分支里 —— 前端过滤过不了这一关，
+# 将来 agent 注入也复用同一条查询。
+
+
+class CreateTeachingUnitRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    week: int
+    title: str = Field(..., min_length=1, max_length=255)
+    summary: str = ""
+    knowledge_point_ids: list[int] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
+    material_ids: list[int] = Field(default_factory=list, alias="materialIds")
+    assignment_task_id: int | None = Field(default=None, alias="assignmentTaskId")
+    due_at: datetime | None = Field(default=None, alias="dueAt")
+    published: bool = False
+
+
+class PatchTeachingUnitRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    week: int | None = None
+    title: str | None = None
+    summary: str | None = None
+    knowledge_point_ids: list[int] | None = Field(
+        default=None, alias="knowledgePointIds"
+    )
+    material_ids: list[int] | None = Field(default=None, alias="materialIds")
+    assignment_task_id: int | None = Field(default=None, alias="assignmentTaskId")
+    clear_assignment: bool = Field(default=False, alias="clearAssignment")
+    due_at: datetime | None = Field(default=None, alias="dueAt")
+    clear_due_at: bool = Field(default=False, alias="clearDueAt")
+    published: bool | None = None
+
+
+async def get_teaching_unit_service(
+    db=Depends(get_db),
+) -> TeachingUnitService:
+    return TeachingUnitService(
+        repo=TeachingUnitRepository(db), task_service=TaskService(TaskRepository(db))
+    )
+
+
+def _teaching_unit_to_api_model(unit: TeachingUnit) -> dict:
+    def _ts(value: datetime | None) -> int | None:
+        return int(value.timestamp() * 1000) if value else None
+
+    return {
+        "id": unit.id,
+        "spaceId": unit.space_id,
+        "week": unit.week,
+        "title": unit.title,
+        "summary": unit.summary,
+        "knowledgePointIds": list(unit.knowledge_point_ids or []),
+        "materialIds": list(unit.material_ids or []),
+        "assignmentTaskId": unit.assignment_task_id,
+        "publishedAt": _ts(unit.published_at),
+        "dueAt": _ts(unit.due_at),
+    }
+
+
+@router.get(
+    "/{spaceId}/units",
+    summary="List Teaching Units",
+)
+async def list_space_units(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
+    can_teach = await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+    units = await service.list_units(space_id=space_id, published_only=not can_teach)
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {
+            "units": [_teaching_unit_to_api_model(unit) for unit in units],
+            "canTeach": can_teach,
+        },
+    }
+
+
+@router.post(
+    "/{spaceId}/units",
+    summary="Create Teaching Unit",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_space_unit(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    payload: CreateTeachingUnitRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    unit = await service.create_unit(
+        space_id=space_id,
+        actor_id=auth_user.user_id,
+        week=payload.week,
+        title=payload.title,
+        summary=payload.summary,
+        knowledge_point_ids=payload.knowledge_point_ids,
+        material_ids=payload.material_ids,
+        assignment_task_id=payload.assignment_task_id,
+        published=payload.published,
+        due_at=payload.due_at,
+    )
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"unit": _teaching_unit_to_api_model(unit)},
+    }
+
+
+@router.patch(
+    "/{spaceId}/units/{unitId}",
+    summary="Update Teaching Unit",
+)
+async def patch_space_unit(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
+    payload: PatchTeachingUnitRequest,
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> dict:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    unit = await service.update_unit(
+        space_id=space_id,
+        unit_id=unit_id,
+        week=payload.week,
+        title=payload.title,
+        summary=payload.summary,
+        knowledge_point_ids=payload.knowledge_point_ids,
+        material_ids=payload.material_ids,
+        assignment_task_id=payload.assignment_task_id,
+        clear_assignment=payload.clear_assignment,
+        published=payload.published,
+        due_at=payload.due_at,
+        clear_due_at=payload.clear_due_at,
+    )
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"unit": _teaching_unit_to_api_model(unit)},
+    }
+
+
+@router.delete(
+    "/{spaceId}/units/{unitId}",
+    summary="Delete Teaching Unit",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_space_unit(
+    space_id: Annotated[int, Path(ge=1, alias="spaceId")],
+    unit_id: Annotated[int, Path(ge=1, alias="unitId")],
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    service: TeachingUnitService = Depends(get_teaching_unit_service),
+    db=Depends(get_db),
+) -> Response:
+    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
+    await service.delete_unit(space_id=space_id, unit_id=unit_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
