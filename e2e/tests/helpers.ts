@@ -68,3 +68,42 @@ export async function openFirstProject(page: Page) {
   await rows.first().waitFor();
   return rows;
 }
+
+// ---- 控制台噪声：哪些不是被测页面的问题 ----------------------------------
+//
+// 一登录就替项目磁贴取这几张图——**在任何一页上都会出现，包括完全不碰这一页的页**。
+// 种子里只给默认头像写了文件，所以任何新部署的项目磁贴都会缺图，这是一个真问题，
+// 记在话题文档的待办里。放行范围写死到这个形状，不写成「忽略所有 404」：页面自己
+// 发出的请求挂掉时仍然要红。
+const AVATAR_404 =
+  /^\[console\] Failed to load resource: the server responded with a status of 404 \(Not Found\) @ https?:\/\/[^\s]+\/api\/avatars\/\d+$/;
+
+const RESOURCE_FAILED = /^\[console\] Failed to load resource: .*? @ (\S+)$/;
+
+/**
+ * 这条控制台报错是不是环境的，不是这一页的。
+ *
+ * 外部源上的资源（字体、CDN）取不到，CI 机器网络抖一下就是一条
+ * `net::ERR_NETWORK_CHANGED`——而任何一条用例想问的都不是「第三方 CDN 现在可不可
+ * 用」。**按源判，不按错误码、也不按域名判**：换一个 CDN、换一种失败码，规则照样
+ * 成立；而页面自己发的请求都是同源的，一条都放不进去。
+ *
+ * 写死域名的那种写法已经红过一次：放行名单上写着 jsdelivr，而那天挂的是
+ * fonts.gstatic.com，于是一份和管理端毫无关系的字体没取到，整条用例跟着红。
+ */
+export function isEnvironmentNoise(entry: string, appOrigin: string): boolean {
+  if (AVATAR_404.test(entry)) return true;
+  const failed = RESOURCE_FAILED.exec(entry);
+  if (!failed) return false;
+  try {
+    return new URL(failed[1]).origin !== appOrigin;
+  } catch {
+    // 取不到位置（控制台那句可能不带 URL，我们写成 `@ ?`）时不当外部源，照旧报出来。
+    return false;
+  }
+}
+
+/** 配置里那个 baseURL 的源——按定义就是被测应用自己的源，和当前停在哪一页无关。 */
+export function appOriginOf(baseURL: string | undefined): string {
+  return new URL(baseURL!).origin;
+}

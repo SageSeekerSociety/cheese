@@ -125,7 +125,16 @@ def test_summon_is_not_an_http_or_ws_input():
     # 查的是**发出去的那个对象有哪些键**，不是某一行怎么拼写的：`summon: true`、
     # 换个变量名、对象展开，都得一样红。发出去的 payload 里没有这一位，是由
     # ChatPanelComposer.test.ts 真发一条消息断的。
-    sends = (FRONTEND / "components" / "ChatPanel.vue").read_text()
-    start = sends.index("const msg: WsClientChatMessage = {")
-    literal = sends[start : sends.index("}", start)]
-    assert "summon" not in literal, f"发送时又往帧上放了 summon：{literal}"
+    #
+    # 全仓扫而不是盯住某一个文件：这一段在前端搬过家（对话栏拆成组件时进了
+    # `room/composables/useOutbox.ts`），盯文件的写法那次直接抛 ValueError，而它
+    # 真正要防的东西一次都没被查过。顺带，第二处拼帧的地方原本整个在覆盖之外。
+    builds = [
+        (path, text[start : text.index("}", start)])
+        for path, text in _sources(FRONTEND, (".ts", ".vue"))
+        for start in [text.find(": WsClientChatMessage = {")]
+        if start >= 0
+    ]
+    assert builds, "前端没有任何一处拼出这个帧了——这条守卫已经查不到东西"
+    for path, literal in builds:
+        assert "summon" not in literal, f"{path} 发送时又往帧上放了 summon：{literal}"

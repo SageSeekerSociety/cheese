@@ -20,6 +20,10 @@ import { listRoomOutputs, saveRoomOutputToLibrary } from '@/api'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{ topicId: string | null }>()
+const emit = defineEmits<{
+  /** 点开这一份：上面那块只看得到最后一样，前面几样从这里开成自己的页签。 */
+  (e: 'open', path: string): void
+}>()
 
 const outputs = ref<RoomOutput[]>([])
 const saving = ref('')
@@ -82,7 +86,14 @@ defineExpose({ reload: load })
     <p v-if="error" role="alert" class="outs__error t-meta">{{ error }}</p>
     <ul class="outs__list">
       <li v-for="output in files" :key="output.path" class="outs-row">
-        <span class="outs-row__name t-body" :title="output.path">{{ name(output.path) }}</span>
+        <button
+          type="button"
+          class="outs-row__name t-body"
+          :title="`打开 ${output.path}`"
+          @click="emit('open', output.path)"
+        >
+          {{ name(output.path) }}
+        </button>
         <span class="outs-row__when t-meta c-faint">{{ relTime(output.shown_at) }}</span>
         <span v-if="saved[output.path]" class="t-meta c-faint">{{ saved[output.path] }}</span>
         <v-btn
@@ -129,10 +140,19 @@ defineExpose({ reload: load })
 .outs-row__name {
   flex: 1 1 auto;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.outs-row__name:hover {
+  color: var(--ink);
+  text-decoration: underline;
 }
 .outs-row__when {
   flex: 0 0 auto;

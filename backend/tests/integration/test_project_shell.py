@@ -58,9 +58,10 @@ def test_a_project_with_no_shell_anywhere_gets_the_default(client):
     assert shell["home"] == "workspace-running"
     # 「零感知」 means the default declares what the product ALREADY does — not
     # what it did before #1330. That change moved 日历 and 成员 next to the
-    # project name and left 资料库 on the rail, so the default declaration
-    # follows it; a 壳 that still listed all seven would put them back.
-    assert shell["hidden"] == ["calendar", "project-members"]
+    # project name and left 资料库 on the rail; 成员 has since come back out
+    # (退出项目 lives on the 名册 page and was unreachable behind the ⋯), so only
+    # 日历 stays collapsed. A 壳 that still listed all seven would put them back.
+    assert shell["hidden"] == ["calendar"]
     assert shell["nav"]["project"] == ["calendar", "project-library", "project-members"]
     assert shell["terms"] == {}
 

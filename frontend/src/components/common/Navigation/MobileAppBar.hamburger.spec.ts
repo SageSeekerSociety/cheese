@@ -9,12 +9,18 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import MobileAppBar from './MobileAppBar.vue'
 
 import i18n from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
+
+vi.mock('@/api', async (original) => ({
+  ...(await original<typeof import('@/api')>()),
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
+}))
 
 const blank = { template: '<div />' }
 const routes = [

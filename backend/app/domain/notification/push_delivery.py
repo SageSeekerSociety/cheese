@@ -44,6 +44,8 @@ def _send_one(*, endpoint: str, p256dh: str, auth: str, body: str) -> int:
         data=body,
         vapid_private_key=settings.vapid_private_key,
         vapid_claims={"sub": settings.vapid_subject},
+        # Use a positive TTL for WNS compatibility; notices expire after five minutes.
+        ttl=300,
         timeout=10,
     )
     return int(getattr(response, "status_code", 201))

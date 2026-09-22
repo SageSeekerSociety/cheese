@@ -255,7 +255,8 @@ function topicTo(topicId: string | null | undefined) {
                 icon="mdi-delete-outline"
                 size="x-small"
                 variant="text"
-                class="c-muted memory-card__del"
+                color="medium-emphasis"
+                class="memory-card__del"
                 title="删除这条记忆"
                 @click="removeMemory(e.id)"
               />
@@ -306,7 +307,7 @@ function topicTo(topicId: string | null | undefined) {
                     :to="topicTo(d.topic_id)"
                     size="x-small"
                     variant="text"
-                    class="c-muted"
+                    color="medium-emphasis"
                     append-icon="mdi-arrow-top-right"
                   >
                     来自话题
@@ -352,7 +353,7 @@ function topicTo(topicId: string | null | undefined) {
                     :to="topicTo(w.topic_id)"
                     size="x-small"
                     variant="text"
-                    class="c-muted"
+                    color="medium-emphasis"
                     append-icon="mdi-arrow-top-right"
                   >
                     来自话题

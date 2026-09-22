@@ -37,16 +37,35 @@ MACHINE_OUT_OF_REACH = (
     "这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。"
 )
 
-# 但「够不着」是关于机器的一句断言，不是「非 200」的同义词。够不着的只有这三个：
-# 502/504 是中间那一跳转不过去，503 是执行器没在听。一个 500 是机器上某个工具处理
-# 函数抛了异常，一个 401 是执行令牌过期，一个 4xx 是那台机器上的执行器比后端旧 ——
-# 手好好的，下一次工具调用照样通。把它们也说成够不着，agent 会照着这句话放弃这一轮
-# 全部文件与命令操作、并向人报告机器掉线，而那是假话。
+# 但「够不着」是关于机器的一句断言，不是「非 200」的同义词。光看状态码判得出来的只
+# 有这三个：502/504 是中间那一跳转不过去，503 是执行器没在听。还有一个得连形状一起看
+# 的 409（`_device_is_offline`）：链路断了那一种同样够不着，代际冲突那一种机器好好的。
+# 其余的 —— 500 是机器上某个工具处理函数抛了异常，401 是执行令牌过期，别的 4xx 是那
+# 台机器上的执行器比后端旧 —— 手好好的，下一次工具调用照样通。把它们也说成够不着，
+# agent 会照着这句话放弃这一轮全部文件与命令操作、并向人报告机器掉线，而那是假话。
 OUT_OF_REACH_STATUSES = frozenset({502, 503, 504})
 
 # 够不着以外的那些。同样不给裸状态码（结论 23）：数字会把 agent 送回自己的工具调用
 # 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
+
+
+def _device_is_offline(response) -> bool:
+    """Whether this answer says the hands are gone rather than one call went wrong.
+
+    The canonical rule is ``device_hub_rpc.py:245-247``'s: on 409, and only
+    there, ``X-Device-Id`` is the signal. The one producer of an offline answer
+    this call path can receive is ``core/errors._handle_device_offline``
+    (``DeviceOffline`` / ``DeviceUnreachable``, which serialize under that one
+    name). ``device_connection_app.call``'s header-only 409 is not one this
+    classifier reads: its sole client is ``DeviceHubRPC._call_owner``, which
+    already classifies it before any answer is re-emitted. A ``ConflictError``
+    ("Execution generation is no longer current") is also 409 and is NOT out of
+    reach: the machine is fine, only the lease is stale. Lumping both into
+    ``EXECUTOR_CALL_FAILED`` ("机器还在") is what made a dead websocket look like
+    a retryable one-call failure while chat and platform tools kept working.
+    """
+    return response.status == 409 and response.getheader("X-Device-Id") is not None
 
 
 class MachineOutOfReach(RuntimeError):
@@ -369,7 +388,10 @@ class RemoteClient:
                         logger.warning(
                             "executor %s -> %s: %s", method, response.status, data[:200]
                         )
-                        if response.status in OUT_OF_REACH_STATUSES:
+                        if (
+                            response.status in OUT_OF_REACH_STATUSES
+                            or _device_is_offline(response)
+                        ):
                             raise MachineOutOfReach
                         raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)

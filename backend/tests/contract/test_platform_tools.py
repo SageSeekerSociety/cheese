@@ -9,12 +9,16 @@
 执行器要清单，这里就会红。
 """
 
+import argparse
+import importlib.util
 import json
 import os
 import sys
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +36,8 @@ SIX = (
     "cheese_note",
     "cheese_deliver_at",
 )
+
+CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
 #: 每一样调得通的那一次调用，和它该落在平台的哪个地址上。
 CALLS = {
@@ -146,6 +152,19 @@ def _listing(process):
     return [tool["name"] for tool in process.call("tools/list", {})["tools"]]
 
 
+def _tools_by_name(process):
+    return {tool["name"]: tool for tool in process.call("tools/list", {})["tools"]}
+
+
+def _cli_subparser(parser, name):
+    group = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    return group.choices[name]
+
+
 def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone):
     """机器够不着，六样一个不少 —— 而且这份清单没有向任何人打听过。
 
@@ -161,14 +180,56 @@ def test_the_tool_table_is_complete_while_the_machine_is_offline(machine_is_gone
     assert executor_calls == [], "列一份工具表不该去问那台机器"
 
 
-def test_the_table_is_exactly_the_six_plus_the_two_the_transport_owns(machine_is_gone):
+def test_the_table_is_exactly_the_six_plus_the_three_the_transport_owns(
+    machine_is_gone,
+):
     """表上只有六样（结论 21）。
 
-    另外两个不是产品动作，是这条传输自己的两个口子：`invoke` 是项目工具（文件、命
-    令）过河的那一程，`platform_request` 是没有对应工具时的原始 API 入口。
+    另外三个不是产品动作，是这条传输自己的三个口子：`invoke` 是项目工具（文件、命
+    令）过河的那一程，`platform_request` 是没有对应工具时的原始 API 入口，
+    `send_user_file` 是 SendUserFile 把文件递进本房间的那一程。
     """
     process, _, _ = machine_is_gone
-    assert set(_listing(process)) == {*SIX, "invoke", "platform_request"}
+    assert set(_listing(process)) == {
+        *SIX,
+        "invoke",
+        "platform_request",
+        "send_user_file",
+    }
+
+
+def test_feedback_propose_description_carries_the_cli_guidance(machine_is_gone):
+    """`cheese_feedback_propose` 的 description 必须是父命令 `cheese feedback -h` 的文案
+    **加上** 叶子 `cheese feedback propose -h` 的文案，两段都少不得。
+
+    只抄叶子命令的文案（「落一张提案卡……」）就是这次的 bug：四条触发和
+    「什么时候不该提」写在父命令上，agent 在 MCP 这一侧根本看不见，于是它不知道
+    什么时候该用这个工具。这里同时钉住两件事：文案内容，以及它和 argparse 树
+    线程出来的那一份一字不差。
+    """
+    process, _, _ = machine_is_gone
+    description = _tools_by_name(process)["cheese_feedback_propose"]["description"]
+
+    loader = SourceFileLoader("cheese_cli_contract", str(CLI))
+    spec = importlib.util.spec_from_loader("cheese_cli_contract", loader)
+    assert spec is not None
+    cli = importlib.util.module_from_spec(spec)
+    loader.exec_module(cli)
+    feedback = _cli_subparser(cli.build_parser(), "feedback")
+    propose = _cli_subparser(feedback, "propose")
+    assert description == feedback.description + "\n\n" + propose.description
+
+    for trigger in (
+        "某个工具或命令反复失败",
+        "你做不到用户要求的事",
+        "用户指出你的错,或者你自己发现犯了错",
+        "用户让你提",
+    ):
+        assert trigger in description
+    assert "什么时候不该提" in description
+    assert description.index("什么时候该提") < description.index(
+        "把你发现的问题提成一张提案卡"
+    )
 
 
 @pytest.mark.parametrize("tool", SIX)

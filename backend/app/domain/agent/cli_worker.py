@@ -55,12 +55,12 @@ def _schema(action):
     return value
 
 
-def _leaf_commands(parser, prefix=()):
+def _leaf_commands(parser, prefix=(), ancestors=()):
     subparsers = next(
         (a for a in parser._actions if isinstance(a, argparse._SubParsersAction)), None
     )
     if subparsers is None:
-        yield prefix, parser
+        yield prefix, ancestors, parser
         return
     seen = set()
     for name, child in subparsers.choices.items():
@@ -68,18 +68,31 @@ def _leaf_commands(parser, prefix=()):
         if id(child) in seen:
             continue
         seen.add(id(child))
-        yield from _leaf_commands(child, (*prefix, name))
+        yield from _leaf_commands(child, (*prefix, name), (*ancestors, parser))
 
 
 def _tool_name(command):
     return "cheese_" + "_".join(part.replace("-", "_") for part in command)
 
 
-def _tools(parser):
+def _default_join(*parts: str) -> str:
+    return "\n\n".join(p for p in parts if p)
+
+
+def _description(ancestors, leaf, join=_default_join):
+    body = leaf.description or leaf.format_usage().strip()
+    # ancestors[0] is the program root. Its description is how to read the CLI
+    # as a whole, not any one tool's 什么时候该用 — threading it in buries every
+    # tool schema under the same boilerplate.
+    context = [parser.description for parser in ancestors[1:] if parser.description]
+    return join(*context, body) if context else body
+
+
+def _tools(parser, join=_default_join):
     if parser is None:
         raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
     tools = []
-    for command, leaf in _leaf_commands(parser):
+    for command, ancestors, leaf in _leaf_commands(parser):
         properties = {}
         required = []
         for action in leaf._actions:
@@ -95,7 +108,7 @@ def _tools(parser):
         tools.append(
             {
                 "name": _tool_name(command),
-                "description": leaf.description or leaf.format_usage().strip(),
+                "description": _description(ancestors, leaf, join),
                 "inputSchema": schema,
             }
         )
@@ -105,7 +118,7 @@ def _tools(parser):
 def _command(parser, tool, arguments):
     if parser is None:
         raise RuntimeError("Installed Cheese CLI does not publish an argparse parser")
-    for command, leaf in _leaf_commands(parser):
+    for command, _, leaf in _leaf_commands(parser):
         if _tool_name(command) != tool:
             continue
         option_argv: list[str] = []
@@ -174,7 +187,10 @@ class Handler(socketserver.BaseRequestHandler):
         if request and request["method"] == "tools/list":
             for descriptor in descriptors:
                 os.close(descriptor)
-            result = {"status": 0, "result": {"tools": _tools(server.parser)}}
+            result = {
+                "status": 0,
+                "result": {"tools": _tools(server.parser, server.join_descriptions)},
+            }
             self.request.sendall(json.dumps(result).encode() + b"\n")
             return
         # Recreate wrappers: inherited file streams retain seekability after dup2.
@@ -244,6 +260,12 @@ class Server(socketserver.ForkingMixIn, socketserver.UnixStreamServer):
         exec(self.code, namespace)
         build_parser = namespace.get("build_parser")
         self.parser = build_parser() if build_parser else None
+        join = namespace.get("join_descriptions")
+        self.join_descriptions = (
+            join
+            if callable(join)
+            else lambda *parts: "\n\n".join(p for p in parts if p)
+        )
         if threading.active_count() != 1:
             raise RuntimeError("CLI preload must remain single-threaded before fork")
         self.signature = signature

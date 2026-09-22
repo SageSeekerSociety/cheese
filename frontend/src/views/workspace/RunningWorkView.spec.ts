@@ -26,6 +26,7 @@ vi.mock('@/api', async () => {
     ...actual,
     listProjectTasks: (...a: unknown[]) => listProjectTasks(...a),
     listProjectArtifacts: () => Promise.resolve({ data: [], total: 0 }),
+    getProjectSite: () => Promise.resolve({ site: null, source_revision: null, candidates: [], can_publish: false }),
   }
 })
 
