@@ -63,15 +63,21 @@ const shown = computed(() => (props.value.trim() === '' ? '—' : props.value))
 </template>
 
 <style scoped>
-/* 宽高写死是这一行宽度算式的前提：4 × 263 + 3 × 16 = 1100（§4.2）。让卡片自己去量内容
-   的话，四张卡会各自取一个数，那一行就不再是 1100 —— 而 1100 是这一页的列宽。 */
+/* 高度写死、**宽度交给格子**。
+   高度 92 是这一行高度算式的前提（§4.2）。宽度一度写死成 263px（4 × 263 + 3 × 16 =
+   1100），那只是**在设计宽度下**成立的等式 —— 而格子本来就是 `minmax(0, 1fr)`，宽度
+   由它给。写死之后，任何比设计宽度窄的窗口里卡片都**溢出自己那一格、压到隔壁**上
+   （真浏览器里量到过：1100px 下两张卡的标题重叠 12px、手机上 148px）。
+   `min-width: 0` 是让格子真的收得动：网格项的自动最小尺寸是 min-content，不写这条，
+   长标题仍然会把格子顶回去。 */
 .akpi {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 8px;
   box-sizing: border-box;
-  width: 263px;
+  width: 100%;
+  min-width: 0;
   height: 92px;
   padding: 16px;
   background: var(--surface);
@@ -80,6 +86,15 @@ const shown = computed(() => (props.value.trim() === '' ? '—' : props.value))
   border-top-right-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
   border-bottom-left-radius: var(--radius-lg);
+}
+
+/* 窄屏：数字缩一档。手机上是两列、每列约 150px，23px 的六位数字会把卡片撑破一点点
+   （真浏览器里量到过：`204,900` 与隔壁那张的 `55` 交叠 3px）。20px 仍是「大数字」那一档
+   （`.t-console-title` 的下一级），但它装得下。 */
+@media (max-width: 600px) {
+  .akpi__num {
+    font-size: 20px;
+  }
 }
 
 .akpi__label {

@@ -201,6 +201,21 @@ const usageKpis = computed(() => [
     loading: store.statsLoading,
     to: queue(),
   },
+  /* 成本和「算不出价钱的 token」是两张卡，不是页脚的一行字。两件事各自是一个数，而
+     「一行正文 + 一行脚注」那种写法把它们降级成了注释 —— 和左边那样的四张卡对齐之后，
+     这一类的 KPI 行才和反馈那一类长得一样。两张都不带 `to`：队列没有按钱筛的口径。 */
+  {
+    key: 'cost',
+    label: t('feedback.dashboard.cost.kpi'),
+    value: usage.value ? fmtCost(usage.value.totals.cost_usd) : '',
+    loading: store.statsLoading,
+  },
+  {
+    key: 'unpriced',
+    label: t('feedback.dashboard.cost.unpricedLabel'),
+    value: num(usage.value?.totals.unpriced_tokens),
+    loading: store.statsLoading,
+  },
 ])
 
 /** 窗口内每天的 token。**只画 token 一条**：调用次数和钱各自有不同的量级，三条线画在
@@ -213,29 +228,17 @@ const usageSeries = computed<ChartSeries[]>(() => [
   },
 ])
 
-/** 用量最高的几个项目。柱子只报 token —— 同一根柱子上再叠一个「花了多少钱」，两根
- *  柱子的长度就各自代表不同的东西，而长短本来是用来比的。 */
+/** 用量最高的几个项目。条只报 token —— 同一根条上再叠一个「花了多少钱」，它们的长度
+ *  就各自代表不同的东西，而长短本来是用来比的。项目名原样给组件（它自己省略号）。 */
 const topProjects = computed(() =>
   (usage.value?.top_projects ?? []).map((row) => ({ label: row.name, value: row.tokens }))
 )
 
-const costText = computed(() => {
-  const totals = usage.value?.totals
-  return totals === undefined
-    ? ''
-    : t('feedback.dashboard.cost.value', { calls: fmtNum(totals.calls), usd: fmtCost(totals.cost_usd) })
-})
-
-/** 「没有算进上面那个金额的 token」。**它必须和 `cost_usd` 一起读**（api.ts 里那条
- *  注释就是这么写的）：订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是「没有单价」而
- *  不是「免费」—— 不把它写出来，几百万 token 上印一个 `$0.0000` 读起来像「这个月没
- *  花钱」。后端一直单独回这一份数（`totals.unpriced_tokens`），但页面从来不读，于是
- *  那句口径只活在代码注释里。为零时不画：一句话说的是一个不存在的数字。 */
-const unpricedText = computed(() => {
-  const totals = usage.value?.totals
-  if (!totals || totals.unpriced_tokens <= 0) return ''
-  return t('feedback.dashboard.cost.unpriced', { tokens: fmtNum(totals.unpriced_tokens) })
-})
+/** 成本那一行下面那句口径。两个数（金额、没有单价的 token）各自已经是 KPI 卡了，
+ *  这句话说的是**它们之间的关系** —— 订阅按月计费，那些行上的 `cost_usd = 0.0` 意思是
+ *  「没有单价」而不是「免费」，所以金额里没有它们，也不该被读成「这个月没花钱」。
+ *  一行字，跟着那两张卡走；`usage` 还没到时不画。 */
+const costNote = computed(() => (usage.value ? t('feedback.dashboard.cost.note') : ''))
 
 /* ---- 平台那一块 ---- */
 
@@ -408,26 +411,10 @@ onMounted(() => {
           <AdminBarChart :title="t('feedback.dashboard.usage.top')" :rows="topProjects" :loading="store.statsLoading" />
         </div>
 
-        <div class="ad__cost" :class="{ 'ad__cost--partial': !store.statsLoading && !usage }">
-          <span class="ad__cost-label t-meta-read">{{ t('feedback.dashboard.cost.label') }}</span>
-          <v-skeleton-loader v-if="store.statsLoading" type="text" class="ad__cost-skel" />
-          <!-- 「拿到了」这一支是一个 `<template>`，不是一颗 `<span>`：脚注要挂在**同一个
-               分支**里。分开写的话（先一颗 `v-else-if="usage"` 的 span、再一颗独立的
-               `v-if="usage && unpricedText"`）下面那个 `v-else` 会认到脚注那颗头上 ——
-               于是 `unpriced_tokens = 0` 时（窗口里一条用量行都没有就是这个数）页面会
-               同时画出真金额和「成本数据未取到 ?」，把「都有单价」说成「没拿到」。 -->
-          <template v-else-if="usage">
-            <span class="ad__cost-value t-meta-read t-num">{{ costText }}</span>
-            <!-- 自己占一整行（`flex: 1 0 100%`）：它是上面那个金额的**脚注**，横着挤在
-                 同一行里会被读成同一个句子的一部分。 -->
-            <span v-if="unpricedText" class="ad__cost-unpriced t-meta-read">{{ unpricedText }}</span>
-          </template>
-          <!-- §9.3 第 4 态：这一趟没拿到就说没拿到，别拿 0 冒充读数。 -->
-          <template v-else>
-            <span class="ad__cost-value t-meta-read">{{ t('feedback.dashboard.partial.title') }}</span>
-            <span class="ad__cost-hint t-meta-read" :title="t('feedback.dashboard.partial.hint')">?</span>
-          </template>
-        </div>
+        <!-- 成本与「未定价 token」这两件事已经是上面那两张 KPI 卡了，这里只剩**它们
+             之间的关系**那一句：金额里没有「算不出价钱」的那部分。以前它们挤在页脚一行
+             里（一行正文加一行脚注），两个数被降级成了注释。 -->
+        <p v-if="costNote" class="ad__cost-note t-meta">{{ costNote }}</p>
       </template>
 
       <!-- 平台：账号的存量与新增、以及机器台账的存量。 -->
@@ -561,44 +548,11 @@ onMounted(() => {
   color: var(--muted);
 }
 
-.ad__cost {
-  display: flex;
-  /* 折行是给下面那条脚注留的：它自己占一整行的宽度（`flex: 1 0 100%`），所以这一行
-     会变成两行。宽屏上没脚注时仍然是原来那一行。 */
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-}
-
-.ad__cost--partial {
-  color: var(--muted);
-}
-
-.ad__cost-label {
-  flex: 0 0 auto;
-}
-
-.ad__cost-value {
-  flex: 1;
-  min-width: 0;
-}
-
-.ad__cost-hint {
-  cursor: help;
-  color: var(--muted);
-}
-
-.ad__cost-skel {
-  flex: 1;
-}
-/* 成本那一行的脚注（没有单价的那部分 token）。整行宽：它是上面那个数的注解，不是它的
-   后缀。 */
-.ad__cost-unpriced {
-  flex: 1 0 100%;
-  margin-top: 2px;
+/* 成本那句口径。整行、缩进与上面那两张卡对齐，字号是元信息那一档 —— 它是一条
+   注解，不是第三个数。 */
+.ad__cost-note {
+  margin: 12px 0 0;
+  line-height: var(--lh-12);
 }
 
 .ad__machines {

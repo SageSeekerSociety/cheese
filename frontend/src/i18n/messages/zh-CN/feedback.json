@@ -145,9 +145,9 @@
       "title": "需处理 · {count}"
     },
     "cost": {
-      "label": "成本（过去 7 天）",
-      "value": "合计 {calls} 次调用 · {usd} · 不按天拆分",
-      "unpriced": "另有 {tokens} token 没有单价（订阅制按月计费），没有算进上面的金额"
+      "kpi": "成本",
+      "unpricedLabel": "未定价 token",
+      "note": "金额按网关的单价算。「未定价 token」来自按月计费的订阅，那些行没有单价，所以不在金额里。"
     },
     "empty": {
       "title": "暂无数据",
@@ -156,10 +156,6 @@
     "error": {
       "title": "看板加载失败",
       "desc": "检查网络后重试。"
-    },
-    "partial": {
-      "title": "成本数据暂不可用",
-      "hint": "用量接口未返回"
     },
     "tab": {
       "feedback": "反馈",
