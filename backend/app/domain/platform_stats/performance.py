@@ -51,7 +51,7 @@ def performance_snapshot() -> dict:
             }
         )
 
-    rows.sort(key=lambda r: (r["p95"] if r["p95"] is not None else -1), reverse=True)
+    rows.sort(key=lambda r: r["p95"] if r["p95"] is not None else -1, reverse=True)
     shown = rows[:ROUTES_SHOWN]
     return {
         # 「被看过多少条路」和「画出来几条」是两个数：截断要说出来，否则读者会以为

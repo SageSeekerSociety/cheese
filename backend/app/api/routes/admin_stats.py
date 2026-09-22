@@ -85,6 +85,7 @@ async def platform_stats(
     """
     return ok(await service.platform(days=days))
 
+
 @router.get("/performance")
 async def performance_stats(handle: PlatformAdminDep) -> dict:
     """第四类：**这一刻**的接口耗时，按路由。

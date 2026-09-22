@@ -431,6 +431,7 @@ def test_a_non_admin_cannot_read_any_of_the_three(client, as_admin, kind):
     allowed = client.get(f"/admin/stats/{kind}", headers=session_auth_headers(as_admin))
     assert allowed.status_code == 200, allowed.text
 
+
 # --- 第四类：性能（进程内，不是历史） -----------------------------------------
 
 
@@ -469,7 +470,9 @@ def test_performance_reads_the_metrics_the_middleware_now_writes(client, as_admi
     # 路由模板：至少有一条带参数的路由是 `{...}` 而不是一个真 uuid。这条用例自己
     # 打的都是固定路径，所以另发一条带 id 的（404 也算流量，中间件照样记）。
     client.get("/feedback/00000000-0000-4000-8000-000000000000")
-    again = client.get("/admin/stats/performance", headers=session_auth_headers(as_admin))
+    again = client.get(
+        "/admin/stats/performance", headers=session_auth_headers(as_admin)
+    )
     routes = [row["route"] for row in again.json()["data"]["routes"]]
     assert any("{" in route for route in routes), routes
     assert not any("0000-4000-8000" in route for route in routes), routes
